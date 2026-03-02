@@ -348,6 +348,10 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     needs_cube = any(m in kernel_text for m in cube_markers)
 
     sv = (soc_version or "").lower()
+    if "950" in sv or "a5" in sv:
+        # Ascend950 (A5) uses A5 instruction set. pto-isa examples build A5
+        # kernels with dav-c310-{vec|cube}.
+        return "dav-c310-cube" if needs_cube else "dav-c310-vec"
     if "910b" in sv:
         # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
@@ -827,7 +831,12 @@ def generate_testcase(
         # section macros instead.
         if has_dav_cube or has_dav_vec:
             sv = (soc_version or "").lower()
-            aicore_arch = "dav-c310-vec" if "910b" in sv else "dav-c220-vec"
+            if "950" in sv or "a5" in sv:
+                aicore_arch = "dav-c310-vec"
+            elif "910b" in sv:
+                aicore_arch = "dav-c310-vec"
+            else:
+                aicore_arch = "dav-c220-vec"
         else:
             aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
 
@@ -1178,8 +1187,11 @@ def generate_testcase(
     )
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
+    # pto-isa selects instruction implementations based on MEMORY_BASE vs
+    # REGISTER_BASE. Ascend A5 (e.g. Ascend950) and Ascend910B use REGISTER_BASE.
     mem_base_define = "MEMORY_BASE"
-    if "910b" in (soc_version or "").lower():
+    sv = (soc_version or "").lower()
+    if "910b" in sv or "950" in sv or "a5" in sv:
         mem_base_define = "REGISTER_BASE"
 
     cce_stack_size_opt = ""
