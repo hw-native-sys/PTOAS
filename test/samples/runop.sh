@@ -291,6 +291,26 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard for issue #185: barrier_sync must support op types
+    # beyond TMATMUL/TVEC and lower to the expected per-pipe barrier.
+    if [[ "$base" == "test_barrier_sync" ]]; then
+      if ! grep -Fq "pipe_barrier(PIPE_MTE2)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_MTE2) lowering for barrier_sync[TLOAD]"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "pipe_barrier(PIPE_MTE3)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_MTE3) lowering for barrier_sync[TSTORE_VEC]"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_V) lowering for barrier_sync[TVEC]"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard for issue #117: vector mask must be reset for each
     # `pto.section.vector` region to avoid cross-kernel state leakage.
     # Use an existing sample (Complex/cv_region.py) that contains a vector section.

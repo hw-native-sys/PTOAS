@@ -120,13 +120,13 @@ struct BarrierSyncLowering : public OpRewritePattern<BarrierSyncOp> {
   LogicalResult matchAndRewrite(BarrierSyncOp op,
                                 PatternRewriter &rewriter) const override {
     SyncOpType ty = op.getOpType().getOpType();
-    // Only support TMATMUL / TVEC for now
-    if (ty != SyncOpType::TMATMUL && ty != SyncOpType::TVEC)
-      return op.emitError("barrier_sync supports only TMATMUL or TVEC");
-
     PIPE pipe = getPipeFromOpType(ty);
-    if (pipe == PIPE::PIPE_UNASSIGNED)
-      return op.emitError("Failed to map SyncOpType to hardware pipe during barrier lowering.");
+    if (pipe == PIPE::PIPE_UNASSIGNED) {
+      auto diag = op.emitError(
+          "barrier_sync failed to map SyncOpType to hardware pipe during lowering: ");
+      diag << op.getOpType();
+      return failure();
+    }
 
     rewriter.replaceOpWithNewOp<BarrierOp>(
         op, PipeAttr::get(op.getContext(), pipe));
