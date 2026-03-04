@@ -39,8 +39,10 @@ def build_module():
                 c0 = idx(0)
 
                 shape = [idx(1), idx(1), idx(16), idx(1024), idx(1024)]
-                # Keep the same stride pattern as the existing 5D partition sample.
-                strides = [idx(1048576), idx(1048576), idx(1048576), idx(1024), idx(1)]
+                # DN (col-major) for the minor 2D dims (rows x cols):
+                #   addr(r, c) = base + r * 1 + c * rows
+                # so we want strides [..., 1, rows] for the last two dims.
+                strides = [idx(1048576), idx(1048576), idx(1048576), idx(1), idx(1024)]
 
                 src_view = pto.MakeTensorViewOp(
                     tensor_view_ty, src, shape, strides, layout=layout_dn
@@ -73,4 +75,3 @@ def build_module():
 
 if __name__ == "__main__":
     print(build_module())
-
