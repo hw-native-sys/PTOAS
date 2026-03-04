@@ -1931,6 +1931,55 @@ def TDivSOp : PTO_TOp<"tdivs", [
 
 }
 
+def TFusionOp : PTO_TOp<"tfusion", [
+  AttrSizedOperandSegments,
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Internal elemwise chain fusion op (destination-style, multi-dst)";
+  let description = [{
+    Encodes a linear chain of binary elemwise ops for tile fusion.
+
+    v0.1 conventions:
+      - ops: op codes for each stage (0=tadd, 1=tsub, 2=tmul, 3=tdiv)
+      - prev_pos[i]: for stage i+1, where previous stage result is placed
+                     (0 => src0, 1 => src1)
+      - dsts[0]: final stage output
+      - dsts[1..]: optional kept intermediate stage outputs
+      - keep_stage[k]: stage index captured by dsts[k+1]
+      - fusion_kind: currently fixed to "elemwise_chain"
+  }];
+
+  let arguments = (ins
+    Variadic<PTODpsType>:$srcs,
+    Variadic<PTODpsType>:$dsts,
+    DenseI32ArrayAttr:$ops,
+    DenseI32ArrayAttr:$prev_pos,
+    DenseI32ArrayAttr:$keep_stage,
+    StrAttr:$fusion_kind
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $srcs `:` type($srcs) `)`
+    `outs` `(` $dsts `:` type($dsts) `)`
+    `ops` `=` $ops `,`
+    `prev_pos` `=` $prev_pos `,`
+    `keep_stage` `=` $keep_stage `,`
+    `fusion_kind` `=` $fusion_kind
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstsMutable(); }
+  }];
+}
+
 def TExpOp : PTO_TOp<"texp", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,

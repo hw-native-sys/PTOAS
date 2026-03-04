@@ -1580,6 +1580,96 @@ mlir::LogicalResult mlir::pto::TDivSOp::verify() {
 
   return mlir::success();
 }
+
+mlir::LogicalResult mlir::pto::TFusionOp::verify() {
+  DenseI32ArrayAttr opsAttr = getOpsAttr();
+  DenseI32ArrayAttr prevPosAttr = getPrevPosAttr();
+  DenseI32ArrayAttr keepStageAttr = getKeepStageAttr();
+
+  ArrayRef<int32_t> ops = opsAttr.asArrayRef();
+  ArrayRef<int32_t> prevPos = prevPosAttr.asArrayRef();
+  ArrayRef<int32_t> keepStage = keepStageAttr.asArrayRef();
+
+  if (ops.size() < 2)
+    return emitOpError("expects at least 2 stages (ops.size() >= 2)");
+
+  if (getSrcs().size() != ops.size() + 1)
+    return emitOpError("expects srcs.size() == ops.size() + 1");
+
+  if (prevPos.size() != ops.size() - 1)
+    return emitOpError("expects prev_pos.size() == ops.size() - 1");
+
+  if (getDsts().empty())
+    return emitOpError("expects at least one dst operand");
+
+  if (keepStage.size() != getDsts().size() - 1)
+    return emitOpError("expects keep_stage.size() == dsts.size() - 1");
+
+  if (getFusionKindAttr().getValue() != "elemwise_chain")
+    return emitOpError("expects fusion_kind to be \"elemwise_chain\"");
+
+  for (int32_t code : ops) {
+    if (code < 0 || code > 3)
+      return emitOpError("unsupported op code in ops, expected values in [0, 3]");
+  }
+
+  for (int32_t pos : prevPos) {
+    if (pos != 0 && pos != 1)
+      return emitOpError("prev_pos values must be 0 or 1");
+  }
+
+  int32_t prevKeep = -1;
+  for (int32_t stage : keepStage) {
+    if (stage < 0 || stage >= static_cast<int32_t>(ops.size()) - 1)
+      return emitOpError("keep_stage values must be in [0, ops.size()-2]");
+    if (stage <= prevKeep)
+      return emitOpError("keep_stage must be strictly increasing and unique");
+    prevKeep = stage;
+  }
+
+  Type expectedElemType;
+  SmallVector<int64_t, 4> expectedShape;
+  bool hasExpected = false;
+  auto verifyOperandType = [&](Value v, llvm::StringRef name) -> LogicalResult {
+    Type ty = v.getType();
+    if (!isPTOShapedLike(ty))
+      return emitOpError() << name << " must be PTO shaped-like type";
+
+    Type elemTy = getElemTy(ty);
+    if (!elemTy)
+      return emitOpError() << "failed to get element type from " << name;
+
+    SmallVector<int64_t, 4> shape = getShapeVec(ty);
+    if (!hasExpected) {
+      expectedElemType = elemTy;
+      expectedShape = shape;
+      hasExpected = true;
+      return success();
+    }
+
+    if (elemTy != expectedElemType)
+      return emitOpError() << "all srcs/dsts must have identical element type";
+    if (shape != expectedShape)
+      return emitOpError() << "all srcs/dsts must have compatible shape";
+    return success();
+  };
+
+  for (Value src : getSrcs()) {
+    if (failed(verifyOperandType(src, "src")))
+      return failure();
+  }
+  for (Value dst : getDsts()) {
+    if (failed(verifyOperandType(dst, "dst")))
+      return failure();
+  }
+
+  const bool hasDiv =
+      llvm::any_of(ops, [](int32_t code) { return code == 3; });
+  if (hasDiv && !expectedElemType.isF16() && !expectedElemType.isF32())
+    return emitOpError("tdiv stage requires f16/f32 element type");
+
+  return success();
+}
 //===----------------------------------------------------------------------===//
 // TExpOp_DPS verifier
 //===----------------------------------------------------------------------===//
@@ -4208,6 +4298,16 @@ void TDivSOp::getEffects(
   PTO_ADD_READ(getSrcMutable());
   PTO_ADD_READ(getScalarMutable());
   PTO_ADD_WRITE(getDstMutable());
+}
+
+void TFusionOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  for (OpOperand &src : getSrcsMutable()) {
+    PTO_ADD_READ(src);
+  }
+  for (OpOperand &dst : getDstsMutable()) {
+    PTO_ADD_WRITE(dst);
+  }
 }
 
 PTO_DEFINE_UNARY_EFFECTS(TExpOp, getSrcMutable(), getDstMutable())
