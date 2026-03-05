@@ -1,6 +1,37 @@
 #!/usr/bin/env python3
-from pathlib import Path
 
+PTO_IR = r"""
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @rar_hazard_check(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c1 = arith.constant 1 : index
+    
+    // 两个不同的 GM 源
+    %view0 = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %view1 = pto.make_tensor_view %arg1, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %pt0 = pto.partition_view %view0, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    %pt1 = pto.partition_view %view1, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    
+    // 两个 UB Buffer
+    %buf0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %buf1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    // [Test Target] 连续两个 GM Load
+    // 它们都在 MTE2 流水线上，都读取 GM。
+    // 这是一个 RAR (Read-After-Read) 场景。
+    
+    // Load 1
+    pto.tload ins(%pt0 : !pto.partition_tensor_view<32x32xf32>) outs(%buf0 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    
+    // Load 2
+    // 预期：这里不应该有 Barrier！
+    pto.tload ins(%pt1 : !pto.partition_tensor_view<32x32xf32>) outs(%buf1 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    
+    return
+  }
+}
+"""
 
 if __name__ == "__main__":
-    print(Path(__file__).with_suffix(".pto").read_text(encoding="utf-8"))
+    print(PTO_IR.strip())

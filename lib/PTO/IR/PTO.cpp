@@ -448,7 +448,10 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
     return failure();
 
   // strides = [ ... ]
-  if (parser.parseComma() || parser.parseKeyword("strides") || parser.parseEqual() ||
+  // Backward-compatibility: accept both
+  //   ", strides = [...]" and "strides = [...]".
+  (void)parser.parseOptionalComma();
+  if (parser.parseKeyword("strides") || parser.parseEqual() ||
       parser.parseLSquare() ||
       parser.parseOperandList(strideOps) ||
       parser.parseRSquare())

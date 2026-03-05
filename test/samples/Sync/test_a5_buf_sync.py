@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
-from pathlib import Path
 
+PTO_IR = r"""
+module {
+  func.func @test_a5_buf_sync() {
+    // Minimal smoke for A5 buffer-id synchronization ops.
+    // These ops are lowered to the CCEC builtin intrinsics `get_buf/rls_buf`.
+    pto.section.cube {
+      pto.get_buf[<PIPE_MTE2>, 0]
+      pto.rls_buf[<PIPE_MTE2>, 0]
+      pto.get_buf[<PIPE_V>, 0]
+      pto.rls_buf[<PIPE_V>, 0]
+    }
+    return
+  }
+}
+
+"""
 
 if __name__ == "__main__":
-    print(Path(__file__).with_suffix(".pto").read_text(encoding="utf-8"))
+    print(PTO_IR.strip())
