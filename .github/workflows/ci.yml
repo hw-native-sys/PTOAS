@@ -173,6 +173,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${PTO_INSTALL_DIR}" \
             -DCMAKE_BUILD_TYPE=Release
           ninja -C build ptoas
+          ninja -C build ptobc
           ninja -C build install
 
       - name: Run sample tests (py -> pto -> cpp)
@@ -187,7 +188,7 @@ jobs:
           export PYTHONPATH="${MLIR_PYTHON_ROOT}:${PTO_PYTHON_ROOT}:${PYTHONPATH:-}"
           export LD_LIBRARY_PATH="${LLVM_DIR}/lib:${PTO_INSTALL_DIR}/lib:${LD_LIBRARY_PATH:-}"
           export PTOAS_OUT_DIR="${PAYLOAD_DIR}/test/samples"
-          bash test/samples/runop.sh all
+          bash test/samples/runop.sh --enablebc all
 
       - name: Build payload artifact
         if: >-
@@ -323,6 +324,26 @@ jobs:
         with:
           name: ptoas_payload
           path: ${{ env.PAYLOAD_DOWNLOAD_DIR }}
+
+      - name: Vendor pto-isa into payload (offline remote)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp_root="${RUNNER_TEMP:-${GITHUB_WORKSPACE}/.tmp}"
+          work="$(mktemp -d "${tmp_root}/ptoas_payload_unpack.XXXXXX")"
+          tar -xzf "${PAYLOAD_TGZ}" -C "${work}"
+
+          rm -rf "${work}/pto-isa"
+          git clone "${PTO_ISA_REPO}" "${work}/pto-isa"
+          if [[ -n "${PTO_ISA_COMMIT}" ]]; then
+            git -C "${work}/pto-isa" checkout -f "${PTO_ISA_COMMIT}"
+          else
+            git -C "${work}/pto-isa" checkout -f origin/HEAD || true
+          fi
+          # Ship a working tree only; remote should not need outbound network.
+          rm -rf "${work}/pto-isa/.git"
+
+          tar -czf "${PAYLOAD_TGZ}" -C "${work}" .
 
       - name: Copy payload to remote
         shell: bash
