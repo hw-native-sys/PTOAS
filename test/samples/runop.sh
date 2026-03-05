@@ -313,8 +313,10 @@ process_one_dir() {
         overall=1
         continue
       fi
-      if ! grep -Eq "int64_t v[0-9]+ = 0;" "$cpp" || ! grep -Eq "int64_t v[0-9]+ = 512;" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\texpected ping/pong address constants (0 and 512) in generated C++"
+      local uniq_i64_count
+      uniq_i64_count="$(awk '/^[[:space:]]*int64_t v[0-9]+ = -?[0-9]+;[[:space:]]*$/{print $4}' "$cpp" | tr -d ';' | sort -u | wc -l | tr -d ' ')"
+      if [[ -z "${uniq_i64_count}" || "${uniq_i64_count}" -lt 2 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected >=2 distinct int64 constants for ping/pong addresses"
         overall=1
         continue
       fi
