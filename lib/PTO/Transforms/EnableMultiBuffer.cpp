@@ -246,13 +246,6 @@ struct PTOEnableMultiBufferPass
         return signalPassFailure();
       }
 
-      auto ptr0 = rewriter.create<pto::PointerCastOp>(
-          op.getLoc(), op.getType(), ValueRange{c0}, vRow ? vRow : Value(),
-          vCol ? vCol : Value(), config);
-      auto ptr1 = rewriter.create<pto::PointerCastOp>(
-          op.getLoc(), op.getType(), ValueRange{c1}, vRow ? vRow : Value(),
-          vCol ? vCol : Value(), config);
-
       // Build (or reuse) loop-parity condition and select the active buffer.
       Value cond;
       auto it = loop2Cond.find(baseLoop.getOperation());
@@ -267,14 +260,23 @@ struct PTOEnableMultiBufferPass
         loop2Cond[baseLoop.getOperation()] = cond;
       }
 
+      // Select the *address* and build a loop-local pointer_cast. This keeps
+      // `pto.bind_tile` lowering able to trace back to a defining PointerCastOp
+      // and avoids relying on C++ casts from Tile<> to raw pointers (which are
+      // not guaranteed to be supported by the ISA headers).
       rewriter.setInsertionPointAfter(cond.getDefiningOp());
-      Value selected = rewriter.create<arith::SelectOp>(
-          op.getLoc(), cond, ptr1.getResult(), ptr0.getResult());
+      Value selectedAddr =
+          rewriter.create<arith::SelectOp>(op.getLoc(), cond, c1, c0);
+      rewriter.setInsertionPointAfter(selectedAddr.getDefiningOp());
+      auto selectedCast = rewriter.create<pto::PointerCastOp>(
+          op.getLoc(), op.getType(), ValueRange{selectedAddr},
+          vRow ? vRow : Value(), vCol ? vCol : Value(), config);
+      Value selected = selectedCast.getResult();
 
       // Materialize loop-local equivalents of values in the alias closure.
       DenseMap<Value, Value> loopLocal;
       loopLocal[op.getResult()] = selected;
-      Operation *insertAfter = selected.getDefiningOp();
+      Operation *insertAfter = selectedCast.getOperation();
 
       auto materialize = [&](Value v, auto &materializeRef) -> Value {
         if (auto it = loopLocal.find(v); it != loopLocal.end())

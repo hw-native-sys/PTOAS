@@ -303,15 +303,28 @@ process_one_dir() {
         overall=1
         continue
       fi
-      local tassign_count
-      tassign_count="$(grep -c "TASSIGN(" "$cpp")"
-      if [[ "${tassign_count}" -lt 2 ]]; then
-        echo -e "${A}(${base}.py)\tFAIL\texpected >=2 TASSIGN calls (ping/pong pointer_cast hoisting)"
+      if ! grep -Fq "?" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing ternary select for ping/pong buffer selection"
         overall=1
         continue
       fi
-      if ! grep -Fq "?" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing ternary select for ping/pong buffer selection"
+      if ! grep -Fq "TASSIGN(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TASSIGN for selected ping/pong address"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "int64_t v[0-9]+ = 0;" "$cpp" || ! grep -Eq "int64_t v[0-9]+ = 512;" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected ping/pong address constants (0 and 512) in generated C++"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "int64_t v[0-9]+ = .*\\? .* : .*;" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing int64 ternary selection for ping/pong address"
+        overall=1
+        continue
+      fi
+      if grep -Fq "(__ubuf__" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected Tile->pointer cast (may break NPU compilation)"
         overall=1
         continue
       fi
