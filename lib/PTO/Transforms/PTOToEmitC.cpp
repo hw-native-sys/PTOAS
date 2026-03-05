@@ -3615,9 +3615,12 @@ struct PTOSetFlagDynToEmitC
                                          /*operands=*/ValueRange{adaptor.getEventId()})
             .getResult(0);
 
+    // NOTE: emitc.call_opaque mixes literal tokens (OpaqueAttr) and SSA operands
+    // via integer placeholders. IntegerAttr(0) prints operands[0].
     auto argsAttr = rewriter.getArrayAttr({
         emitc::OpaqueAttr::get(ctx, srcTok),
         emitc::OpaqueAttr::get(ctx, dstTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
     });
 
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
@@ -3655,6 +3658,7 @@ struct PTOWaitFlagDynToEmitC
     auto argsAttr = rewriter.getArrayAttr({
         emitc::OpaqueAttr::get(ctx, srcTok),
         emitc::OpaqueAttr::get(ctx, dstTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
     });
 
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(

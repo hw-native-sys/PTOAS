@@ -290,6 +290,19 @@ process_one_dir() {
         overall=1
         continue
       fi
+      # Ensure the dynamic event id is actually passed to set/wait flag calls.
+      # (CallOpaqueOp requires an IntegerAttr placeholder, otherwise the operand
+      # is silently dropped and we emit a 2-arg wait_flag/set_flag.)
+      if ! grep -Eq "wait_flag\\(PIPE_MTE3, PIPE_MTE2, v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic wait_flag(..., <var>) for ping/pong back-edge"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "set_flag\\(PIPE_MTE3, PIPE_MTE2, v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic set_flag(..., <var>) for ping/pong back-edge"
+        overall=1
+        continue
+      fi
       local tassign_count
       tassign_count="$(grep -c "TASSIGN(" "$cpp")"
       if [[ "${tassign_count}" -lt 2 ]]; then
