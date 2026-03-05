@@ -342,21 +342,20 @@ This operation defines the physical "base" and stride rules for global memory. I
 dim = get_tensor_view_dim(tv_or_mr, dim_index)
 ```
 
-This op is primarily defined on `!pto.tensor_view`, but after lowering it is also allowed to operate on the memref view produced by `pto.make_tensor_view`.
+This op is primarily defined on `!pto.tensor_view`.
 
 **Arguments:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `tensor_view` | `!pto.tensor_view<...>` or `memref<...>` | Logical tensor view or its lowered memref |
+| `tensor_view` | `!pto.tensor_view<...>` | Logical tensor view |
 | `dim_index` | `index` | Dimension index (0-based) |
 
 **Results:** `index` — the runtime size of the requested dimension.
 
 **Notes:**
 
-- Commonly used to drive `partition_view`/`memref.subview` sizes when the tensor_view shape is dynamic.
-- If PPC lowering has already converted the view to `memref`, this op lowers to a plain `memref.dim`.
+- Commonly used to drive `partition_view` sizes when the tensor_view shape is dynamic.
 
 **Basic Example:**
 
@@ -674,7 +673,7 @@ pto.tstore ins(%tb : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=1
 
 ##### `pto.load_scalar` - Load Single Scalar Element
 
-**Summary:** Loads a single scalar element from a pointer or memref at the given offset.
+**Summary:** Loads a single scalar element from a pointer at the given offset.
 
 **Semantics:**
 
@@ -686,7 +685,7 @@ value = ptr[offset]
 
 | Name | Type | Description |
 |------|------|-------------|
-| `ptr` | `!pto.ptr<...>` or `memref<...>` | Source pointer or memref |
+| `ptr` | `!pto.ptr<...>` | Source pointer |
 | `offset` | `index` | Element offset |
 
 **Results:** `AnyType` — the element type of the pointed-to memory.
@@ -710,7 +709,7 @@ value = ptr[offset]
 
 ##### `pto.store_scalar` - Store Single Scalar Element
 
-**Summary:** Stores a single scalar element to a pointer or memref at the given offset.
+**Summary:** Stores a single scalar element to a pointer at the given offset.
 
 **Semantics:**
 
@@ -723,7 +722,7 @@ ptr[offset] = value
 | Name | Type | Description |
 |------|------|-------------|
 | `value` | `AnyType` | Value to store |
-| `ptr` | `!pto.ptr<...>` or `memref<...>` | Destination pointer or memref |
+| `ptr` | `!pto.ptr<...>` | Destination pointer |
 | `offset` | `index` | Element offset |
 
 **Results:** None.
@@ -4769,7 +4768,7 @@ pto.tci ins(%start : i32) outs(%dst : !pto.tile_buf<...>)
 
 ##### `pto.tgetval` - Read Single Element
 
-**Summary:** Reads a single element from a tile or memref at a linear offset.
+**Summary:** Reads a single element from a tile at a linear offset.
 
 **Semantics:**
 
@@ -4781,7 +4780,7 @@ result = src[offset]
 
 | Name | Type | Description |
 |------|------|-------------|
-| `src` | `pto.tile_buf / AnyMemRef` | Source tile/memref |
+| `src` | `pto.tile_buf` | Source tile |
 | `offset` | `Index` | Linear element offset |
 
 **Results:** Scalar value (`AnyType`)
@@ -4804,7 +4803,7 @@ result = src[offset]
 
 ##### `pto.tsetval` - Write Single Element
 
-**Summary:** Writes a scalar value into a tile or memref at a linear offset.
+**Summary:** Writes a scalar value into a tile at a linear offset.
 
 **Semantics:**
 
@@ -4816,7 +4815,7 @@ dst[offset] = val
 
 | Name | Type | Description |
 |------|------|-------------|
-| `dst` | `pto.tile_buf / AnyMemRef` | Destination tile/memref |
+| `dst` | `pto.tile_buf` | Destination tile |
 | `offset` | `Index` | Linear element offset |
 | `val` | `AnyType` | Scalar value to write |
 

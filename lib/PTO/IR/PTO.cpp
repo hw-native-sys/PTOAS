@@ -2039,10 +2039,12 @@ LogicalResult TSetValOp::verify() {
 }
 // ---- TGetValOp ----
 LogicalResult TGetValOp::verify() {
-  if (auto shaped = dyn_cast<ShapedType>(getSrc().getType())) {
-    if (shaped.getElementType() != getDst().getType())
-      return emitOpError("expects dst type to match src element type");
-  }
+  Type srcTy = getSrc().getType();
+  if (!srcTy.isa<pto::TileBufType, MemRefType>())
+    return emitOpError("expects src to be tile_buf or memref type");
+
+  if (getElemTy(srcTy) != getDst().getType())
+    return emitOpError("expects dst type to match src element type");
   return success();
 }
 
