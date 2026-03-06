@@ -292,6 +292,41 @@ process_one_dir() {
       fi
     fi
 
+    # Scalar sync regression: scalar store/load should participate in PIPE_S
+    # auto-sync and correctly connect with DMA pipelines.
+    if [[ "$base" == "test_inject_sync_scalar_cross_pipe" ]]; then
+      if ! grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_S->PIPE_MTE2"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_S->PIPE_MTE2"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "set_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_MTE3->PIPE_S"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_MTE3->PIPE_S"
+        overall=1
+        continue
+      fi
+    fi
+
+    # Scalar intra-pipe regression: dependent scalar PIPE_S accesses should be
+    # serialized by a per-pipe barrier.
+    if [[ "$base" == "test_inject_sync_scalar_intra_pipe_barrier" ]]; then
+      if ! grep -Fq "pipe_barrier(PIPE_S)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_S) for scalar intra-pipe dependency"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard for issue #185: barrier_sync must support op types
     # beyond TMATMUL/TVEC and lower to the expected per-pipe barrier.
     if [[ "$base" == "test_barrier_sync" ]]; then

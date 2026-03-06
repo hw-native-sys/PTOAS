@@ -1,4 +1,5 @@
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -21,6 +22,10 @@ static constexpr unsigned kPipeStateSize =
 
 static bool isValidPipeIndex(PipelineType pipe) {
   return static_cast<unsigned>(pipe) < kPipeStateSize;
+}
+
+static bool isScalarMemoryOp(Operation *op) {
+  return isa<pto::LoadScalarOp, pto::StoreScalarOp>(op);
 }
 
 // ==============================================================================
@@ -122,7 +127,11 @@ bool InsertSyncAnalysis::IsNoNeedToInsertSync(
   const PipelineType nowPipe = nowCompound->kPipeValue;
 
   if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S) {
-    return true;
+    Operation *nowOp = nowCompound->elementOp;
+    Operation *frontOp = frontCompound->elementOp;
+    if (!isScalarMemoryOp(nowOp) && !isScalarMemoryOp(frontOp)) {
+      return true;
+    }
   }
 
   if (nowCompound->elementOp == frontCompound->elementOp && !isBackwardDep) {
