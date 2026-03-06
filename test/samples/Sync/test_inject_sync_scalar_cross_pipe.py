@@ -48,15 +48,13 @@ def build():
                 ub = pto.AllocTileOp(tile_buf).result
 
                 src_off = pto.addptr(src, c4)
-                one = arith.ConstantOp(f32, 1.0).result
-                pto.store_scalar(src_off, c0, one)
-
-                pto.TLoadOp(None, src_part, ub)
-                pto.TStoreOp(None, ub, dst_part)
-
                 dst_off = pto.addptr(dst, c4)
+                one = arith.ConstantOp(f32, 1.0).result
+                pto.TLoadOp(None, src_part, ub)
+                pto.store_scalar(src_off, c0, one)
                 loaded = pto.load_scalar(f32, dst_off, c0)
                 pto.store_scalar(dst_off, c1, loaded)
+                pto.TStoreOp(None, ub, dst_part)
 
                 func.ReturnOp([])
 

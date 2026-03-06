@@ -292,36 +292,50 @@ process_one_dir() {
       fi
     fi
 
-    # Scalar sync regression: scalar store/load should participate in PIPE_S
-    # auto-sync and correctly connect with DMA pipelines.
+    # Scalar sync regression: scalar load/store should participate in PIPE_S
+    # auto-sync and correctly connect with supported DMA directions.
     if [[ "$base" == "test_inject_sync_scalar_cross_pipe" ]]; then
-      if ! grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_S->PIPE_MTE2"
+      if ! grep -Eq "set_flag\\(PIPE_MTE2,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_MTE2->PIPE_S"
         overall=1
         continue
       fi
-      if ! grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_S->PIPE_MTE2"
+      if ! grep -Eq "wait_flag\\(PIPE_MTE2,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_MTE2->PIPE_S"
         overall=1
         continue
       fi
-      if ! grep -Eq "set_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_MTE3->PIPE_S"
+      if ! grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_S->PIPE_MTE3"
         overall=1
         continue
       fi
-      if ! grep -Eq "wait_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_MTE3->PIPE_S"
+      if ! grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_S->PIPE_MTE3"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_S->PIPE_MTE2 event in scalar cross-pipe case"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_MTE3->PIPE_S event in scalar cross-pipe case"
         overall=1
         continue
       fi
     fi
 
-    # Scalar intra-pipe regression: dependent scalar PIPE_S accesses should be
-    # serialized by a per-pipe barrier.
+    # Scalar intra-pipe regression: dependent scalar accesses should be
+    # serialized by an extra safety barrier (beyond the function-tail PIPE_ALL).
     if [[ "$base" == "test_inject_sync_scalar_intra_pipe_barrier" ]]; then
-      if ! grep -Fq "pipe_barrier(PIPE_S)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_S) for scalar intra-pipe dependency"
+      local bar_all_cnt
+      bar_all_cnt="$(grep -Fc "pipe_barrier(PIPE_ALL)" "$cpp" || true)"
+      if [[ "${bar_all_cnt}" -lt 2 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing extra pipe_barrier(PIPE_ALL) for scalar intra-pipe dependency"
         overall=1
         continue
       fi
