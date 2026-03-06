@@ -156,6 +156,7 @@ static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
 //   PTOAS__TILE_SET_VALUE(dst, offset, val) -> dst.SetValue(offset, val)
 //   PTOAS__TILE_GET_VALUE(src, offset)      -> src.GetValue(offset)
 //   PTOAS__TILE_DATA(obj)                  -> obj.data()
+//   PTOAS__TILE_ADDR(obj)                  -> reinterpret_cast<uint64_t>(obj.data())
 //   PTOAS__PTR_LOAD(ptr, offset)           -> ptr[offset]
 //   PTOAS__PTR_STORE(ptr, offset, val)     -> ptr[offset] = val
 // --------------------------------------------------------------------------
@@ -244,6 +245,49 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
   return changed;
 }
 
+static bool rewriteTileAddrMarkers(std::string &cpp) {
+  constexpr llvm::StringLiteral marker = "PTOAS__TILE_ADDR";
+  size_t searchPos = 0;
+  bool changed = false;
+  while (true) {
+    size_t markerPos = cpp.find(marker.str(), searchPos);
+    if (markerPos == std::string::npos)
+      break;
+
+    size_t lparenPos = markerPos + marker.size();
+    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
+      searchPos = markerPos + marker.size();
+      continue;
+    }
+
+    size_t argsBegin = lparenPos + 1;
+    int parenDepth = 0;
+    size_t rparenPos = std::string::npos;
+    for (size_t i = argsBegin; i < cpp.size(); ++i) {
+      char c = cpp[i];
+      if (c == '(') {
+        ++parenDepth;
+      } else if (c == ')') {
+        if (parenDepth == 0) {
+          rparenPos = i;
+          break;
+        }
+        --parenDepth;
+      }
+    }
+    if (rparenPos == std::string::npos)
+      break;
+
+    llvm::StringRef arg(cpp.data() + argsBegin, rparenPos - argsBegin);
+    std::string replacement =
+        "reinterpret_cast<uint64_t>(" + arg.trim().str() + ".data())";
+    cpp.replace(markerPos, (rparenPos - markerPos) + 1, replacement);
+    changed = true;
+    searchPos = markerPos + replacement.size();
+  }
+  return changed;
+}
+
 static void rewriteTileGetSetValueMarkers(std::string &cpp) {
   // Keep applying until fixed-point in case rewrites shift subsequent matches.
   bool changed = true;
@@ -255,6 +299,7 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
         cpp, "PTOAS__TILE_GET_VALUE", "GetValue", /*expectedNumArgs=*/2);
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
+    changed |= rewriteTileAddrMarkers(cpp);
   }
 }
 

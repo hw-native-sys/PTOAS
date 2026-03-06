@@ -85,6 +85,75 @@ static Value peelUnrealized(Value v) {
   return v;
 }
 
+static bool isTileOpaqueType(Type type) {
+  auto opaqueType = dyn_cast<emitc::OpaqueType>(type);
+  if (!opaqueType)
+    return false;
+  StringRef typeName = opaqueType.getValue();
+  return typeName.contains("Tile<") || typeName.contains("ConvTile<");
+}
+
+static bool isPointerLikeType(Type type) {
+  if (isa<emitc::PointerType>(type))
+    return true;
+  auto opaqueType = dyn_cast<emitc::OpaqueType>(type);
+  return opaqueType && opaqueType.getValue().ends_with("*");
+}
+
+static Value peelTileAddressSource(Value value) {
+  Value current = value;
+  while (true) {
+    if (auto castOp = current.getDefiningOp<emitc::CastOp>()) {
+      Value operand = castOp.getOperand();
+      if (isTileOpaqueType(operand.getType()))
+        return operand;
+      current = operand;
+      continue;
+    }
+    if (auto castOp = current.getDefiningOp<UnrealizedConversionCastOp>()) {
+      Value operand = castOp.getOperand(0);
+      if (isTileOpaqueType(operand.getType()))
+        return operand;
+      current = operand;
+      continue;
+    }
+    break;
+  }
+  return value;
+}
+
+static Value materializeIntegralAddress(Location loc,
+                                        ConversionPatternRewriter &rewriter,
+                                        Value value) {
+  auto *ctx = rewriter.getContext();
+  auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+  if (value.getType() == u64Ty)
+    return value;
+
+  value = peelTileAddressSource(value);
+
+  if (isTileOpaqueType(value.getType())) {
+    return rewriter
+        .create<emitc::CallOpaqueOp>(loc, u64Ty, "PTOAS__TILE_ADDR",
+                                     ArrayAttr{}, ArrayAttr{},
+                                     ValueRange{value})
+        .getResult(0);
+  }
+
+  if (isPointerLikeType(value.getType())) {
+    auto rcU64 =
+        rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+    return rewriter
+        .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                     /*args=*/ArrayAttr{},
+                                     /*templateArgs=*/rcU64,
+                                     /*operands=*/ValueRange{value})
+        .getResult(0);
+  }
+
+  return value;
+}
+
 //===----------------------------------------------------------------------===//
 // Type Converter
 //===----------------------------------------------------------------------===//
@@ -2246,24 +2315,23 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
                    sourcePtr.getDefiningOp<UnrealizedConversionCastOp>()) {
       tileCandidate = uc.getOperand(0);
     }
-    if (auto ot = dyn_cast<emitc::OpaqueType>(tileCandidate.getType())) {
-      auto tyStr = ot.getValue();
-      if (tyStr.find("Tile<") != std::string::npos ||
-          tyStr.find("ConvTile<") != std::string::npos) {
-        std::string elemTok = elemTypeToString(srcType.getElementType());
-        std::string qualifier = "__gm__";
-        if (auto asAttr =
-                dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace()))
-          qualifier = addrSpaceQualifier(asAttr.getAddressSpace());
-        auto rawPtrTy =
-            emitc::OpaqueType::get(ctx, qualifier + " " + elemTok + "*");
-        sourcePtr =
-            rewriter
-                .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
-                                             "PTOAS__TILE_DATA", ArrayAttr{},
-                                             ArrayAttr{}, ValueRange{tileCandidate})
-                .getResult(0);
-      }
+    if (isTileOpaqueType(tileCandidate.getType())) {
+      std::string elemTok = elemTypeToString(srcType.getElementType());
+      std::string qualifier = "__gm__";
+      if (auto asAttr =
+              dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace()))
+        qualifier = addrSpaceQualifier(asAttr.getAddressSpace());
+      auto rawPtrTy =
+          emitc::OpaqueType::get(ctx, qualifier + " " + elemTok + "*");
+      auto rawPtrTemplateArgs = rewriter.getArrayAttr(
+          {emitc::OpaqueAttr::get(ctx, rawPtrTy.getValue())});
+      Value tileAddr = materializeIntegralAddress(loc, rewriter, tileCandidate);
+      sourcePtr =
+          rewriter
+              .create<emitc::CallOpaqueOp>(loc, rawPtrTy, "reinterpret_cast",
+                                           ArrayAttr{}, rawPtrTemplateArgs,
+                                           ValueRange{tileAddr})
+              .getResult(0);
     }
     Value newPtr;
     {
@@ -3049,18 +3117,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     }
 
     // TASSIGN: pto-isa expects an integral address.
-    Value addr = adaptor.getAddrs()[0];
-    if (isa<emitc::PointerType>(addr.getType()) ||
-        (isa<emitc::OpaqueType>(addr.getType()) &&
-         cast<emitc::OpaqueType>(addr.getType()).getValue().ends_with("*"))) {
-      auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
-      auto rcU64 = rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
-      addr = rewriter.create<emitc::CallOpaqueOp>(
-                 loc, u64Ty, "reinterpret_cast",
-                 /*args=*/ArrayAttr{}, /*templateArgs=*/rcU64,
-                 /*operands=*/ValueRange{addr})
-                 .getResult(0);
-    }
+    Value addr = materializeIntegralAddress(loc, rewriter, adaptor.getAddrs()[0]);
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TASSIGN",
@@ -4053,34 +4110,7 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     // Compute an integer address and assign it to the new tile.
     // NOTE: pto-isa TASSIGN requires an integral address (not a pointer).
     auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
-    auto rcU64 = rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
-
-    // Non-GM reinterpret_cast operands come from UB/L1/L0 tiles.
-    // We need the underlying address, but `__cce_get_tile_ptr()` is only valid
-    // inside `__tf__` functions. Use `tile.data()` (via a post-processed marker)
-    // and compute the adjusted address in bytes.
-    Value rawPtr = source;
-    if (auto ot = dyn_cast<emitc::OpaqueType>(source.getType())) {
-      // Only Tiles have a `.data()` member. For plain address-space pointers
-      // (e.g. `__ubuf__ float*`), use the pointer value directly.
-      if (ot.getValue().starts_with("Tile<")) {
-        std::string rawPtrTok =
-            std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
-        auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
-        rawPtr = rewriter
-                     .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
-                                                  "PTOAS__TILE_DATA", ArrayAttr{},
-                                                  ArrayAttr{}, ValueRange{source})
-                     .getResult(0);
-      }
-    }
-
-    Value baseAddr = rewriter
-                         .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
-                                                      /*args=*/ArrayAttr{},
-                                                      /*templateArgs=*/rcU64,
-                                                      /*operands=*/ValueRange{rawPtr})
-                         .getResult(0);
+    Value baseAddr = materializeIntegralAddress(loc, rewriter, source);
 
     Value addr = baseAddr;
     if (offsetVal) {

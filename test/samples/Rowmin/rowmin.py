@@ -18,15 +18,15 @@ def build():
             tile_view_32x1 = pto.PartitionTensorViewType.get([32, 1], f32, ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            bl_col = pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
+            cfg_col = pto.TileBufConfigAttr.get(bl_col, sl, fractal_ab_size, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
-            # TROWMIN reduces cols -> (R x 1). Keep a 32x32 physical tile for alignment,
-            # but set valid shape to (32 x 1) so only the meaningful column is stored.
-            tile_buf_32x1 = pto.TileBufType.get([32, 32], f32, vec, [32, 1], cfg, ctx)
+            tile_buf_32x1 = pto.TileBufType.get([32, 1], f32, vec, [32, 1], cfg_col, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):

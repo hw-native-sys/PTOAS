@@ -20,6 +20,7 @@ def build():
             bl_col = pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+            layout_dn = pto.LayoutAttr.get(pto.Layout.DN, ctx)
 
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg_row = pto.TileBufConfigAttr.get(bl_row, sl, fractal_ab_size, pd, ctx)
@@ -43,11 +44,12 @@ def build():
                 # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
                 # 这里用原生 builder：通常签名会是 (result_type, ptr, shape, strides)
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
-                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
+                tv1 = pto.MakeTensorViewOp(
+                    tv2_f32, arg1, [c32, c32], [c1, c32], layout=layout_dn
+                ).result
 
                 # Replaced immediate numbers with constants c0 and c32
                 sv0 = pto.PartitionViewOp(tile_view_32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
-                sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_32_row).result

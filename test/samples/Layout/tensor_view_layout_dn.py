@@ -21,11 +21,15 @@ def build_module():
 
         f32 = builtin.F32Type.get()
         mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
+        bl = pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx)
+        sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
+        pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+        cfg = pto.TileBufConfigAttr.get(bl, sl, pto.TileConfig.fractalABSize, pd, ctx)
 
         tensor_view_ty = pto.TensorViewType.get([1, 1, 16, 1024, 1024], f32)
         part_view_ty = pto.PartitionTensorViewType.get([1, 1, 16, 16, 16], f32)
         tile_buf_ty = pto.TileBufType.get(
-            [256, 16], f32, mat, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
+            [16, 256], f32, mat, [16, 256], cfg, ctx
         )
 
         ptr_f32 = pto.PtrType.get(f32)
@@ -39,9 +43,6 @@ def build_module():
                 c0 = idx(0)
 
                 shape = [idx(1), idx(1), idx(16), idx(1024), idx(1024)]
-                # DN (col-major) for the minor 2D dims (rows x cols):
-                #   addr(r, c) = base + r * 1 + c * rows
-                # so we want strides [..., 1, rows] for the last two dims.
                 strides = [idx(1048576), idx(1048576), idx(1048576), idx(1), idx(1024)]
 
                 src_view = pto.MakeTensorViewOp(

@@ -51,6 +51,8 @@ def build():
                 tb0 = pto.AllocTileOp(tile_buf_32).result
                 tb1 = pto.AllocTileOp(tile_buf_32).result
                 tb2 = pto.AllocTileOp(tile_buf_32).result
+                tb_tmp = pto.AllocTileOp(tile_buf_32).result
+                zero = arith.ConstantOp(f32, 0.0).result
 
                 # pto.load_dps_tb ins(%sv) outs(%tb)
                 # 原生 builder 一般会把 optional operands/attrs 做成可选参数
@@ -58,9 +60,10 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)  # result=None
                 pto.TLoadOp(None, sv1, tb1)  # result=None
 
-                # pto.addf_dps_tb ins(%tb0,%tb1) outs(%tb2)
-                # 你在 ODS 里提供了 builders (lhs,rhs,dst) 版本，所以这里直接这么构造
-                pto.TPReluOp(tb0, tb1, tb2)
+                pto.TMinSOp(tb0, zero, tb_tmp)
+                pto.TMulOp(tb_tmp, tb1, tb2)
+                pto.TMaxSOp(tb0, zero, tb_tmp)
+                pto.TAddOp(tb2, tb_tmp, tb2)
 
                 # %8 = subview on output tensor_view
                 sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
