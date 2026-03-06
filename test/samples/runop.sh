@@ -329,13 +329,24 @@ process_one_dir() {
       fi
     fi
 
-    # Scalar intra-pipe regression: dependent scalar accesses should be
-    # serialized by an extra safety barrier (beyond the function-tail PIPE_ALL).
+    # Scalar intra-pipe regression: PIPE_S local dependency should not inject
+    # extra sync (PIPE_S is in-order); only function-tail PIPE_ALL remains.
     if [[ "$base" == "test_inject_sync_scalar_intra_pipe_barrier" ]]; then
       local bar_all_cnt
       bar_all_cnt="$(grep -Fc "pipe_barrier(PIPE_ALL)" "$cpp" || true)"
-      if [[ "${bar_all_cnt}" -lt 2 ]]; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing extra pipe_barrier(PIPE_ALL) for scalar intra-pipe dependency"
+      if grep -Fq "pipe_barrier(PIPE_S)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected pipe_barrier(PIPE_S) for scalar intra-pipe dependency"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_S<->PIPE_S event sync for scalar intra-pipe dependency"
+        overall=1
+        continue
+      fi
+      if [[ "${bar_all_cnt}" -ne 1 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_ALL barrier count=${bar_all_cnt} (expect 1 tail barrier)"
         overall=1
         continue
       fi

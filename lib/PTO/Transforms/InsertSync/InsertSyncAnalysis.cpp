@@ -24,18 +24,11 @@ static bool isValidPipeIndex(PipelineType pipe) {
   return static_cast<unsigned>(pipe) < kPipeStateSize;
 }
 
-static bool isScalarMemoryOp(Operation *op) {
-  return isa<pto::LoadScalarOp, pto::StoreScalarOp>(op);
-}
-
 static bool needsPipeAllBarrier(PipelineType srcPipe, PipelineType dstPipe) {
   // A3 runtime is unstable for these scalar synchronization forms:
-  // 1) PIPE_S local barrier
-  // 2) PIPE_S -> PIPE_MTE2
-  // 3) PIPE_MTE3 -> PIPE_S
+  // 1) PIPE_S -> PIPE_MTE2
+  // 2) PIPE_MTE3 -> PIPE_S
   // Conservatively fall back to PIPE_ALL barrier to preserve correctness.
-  if (srcPipe == PipelineType::PIPE_S && dstPipe == PipelineType::PIPE_S)
-    return true;
   if (srcPipe == PipelineType::PIPE_S && dstPipe == PipelineType::PIPE_MTE2)
     return true;
   if (srcPipe == PipelineType::PIPE_MTE3 && dstPipe == PipelineType::PIPE_S)
@@ -141,13 +134,9 @@ bool InsertSyncAnalysis::IsNoNeedToInsertSync(
   const PipelineType frontPipe = frontCompound->kPipeValue;
   const PipelineType nowPipe = nowCompound->kPipeValue;
 
-  if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S) {
-    Operation *nowOp = nowCompound->elementOp;
-    Operation *frontOp = frontCompound->elementOp;
-    if (!isScalarMemoryOp(nowOp) && !isScalarMemoryOp(frontOp)) {
-      return true;
-    }
-  }
+  // Scalar pipe is in-order on target hardware; skip same-pipe sync.
+  if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S)
+    return true;
 
   if (nowCompound->elementOp == frontCompound->elementOp && !isBackwardDep) {
     return true;
