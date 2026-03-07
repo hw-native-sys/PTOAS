@@ -3240,9 +3240,10 @@ mlir::LogicalResult mlir::pto::TSyncOp::verify() {
 
 mlir::LogicalResult mlir::pto::TPrintOp::verify() {
   auto srcType = getSrc().getType();
-  
+
   // Support TileBufType and PartitionTensorViewType (replaces legacy TileView).
   if (mlir::dyn_cast<mlir::pto::TileBufType>(srcType) ||
+      mlir::dyn_cast<MemRefType>(srcType) ||
       mlir::dyn_cast<mlir::pto::PartitionTensorViewType>(srcType)) {
     return mlir::success();
   }
@@ -4347,6 +4348,7 @@ void TTransOp::getEffects(
 void TPrintOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getSrcMutable());
 }
 
 #undef PTO_DEFINE_TERNARY_EFFECTS
