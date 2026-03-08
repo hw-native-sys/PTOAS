@@ -440,6 +440,18 @@ PY
 	      fi
 	    fi
 
+	    # Regression guard for row reductions:
+	    # Their (32 x 1) output views are contiguous and layout-ambiguous. These
+	    # samples must explicitly stay ND so TSTORE remains compatible with the
+	    # RowMajor reduction tile emitted by PTOAS.
+	    if [[ "$base" == "rowmax" || "$base" == "rowmin" || "$base" == "rowsum" ]]; then
+	      if grep -Fq "pto::Layout::DN" "$cpp"; then
+	        echo -e "${A}(${base}.py)\tFAIL\tunexpected pto::Layout::DN in emitted GlobalTensor"
+	        overall=1
+	        continue
+	      fi
+	    fi
+
 	    # Sync regression: InjectSync samples use `make_tensor_view` for GM.
 	    # They must not fall back to inferring a fractal (NZ) layout in C++.
 	    if [[ "$base" == "test_inject_sync_if" || \

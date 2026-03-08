@@ -20,6 +20,7 @@ def build():
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+            layout_nd = pto.LayoutAttr.get(pto.Layout.ND, ctx)
 
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
@@ -42,7 +43,12 @@ def build():
 
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
                 # Output is (32 x 1), stored contiguously.
-                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c1], [c1, c1]).result
+                # (32 x 1) contiguous GM storage is layout-ambiguous. Force ND so
+                # the emitted GlobalTensor stays compatible with the RowMajor
+                # reduction tile used by TROWMIN/TSTORE.
+                tv1 = pto.MakeTensorViewOp(
+                    tv2_f32, arg1, [c32, c1], [c1, c1], layout=layout_nd
+                ).result
 
                 sv0 = pto.PartitionViewOp(tile_view_32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
 
