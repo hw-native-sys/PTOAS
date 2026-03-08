@@ -340,6 +340,11 @@ process_one_dir() {
         overall=1
         continue
       fi
+      if ! grep -Fq "pto.multi_buffer = 2 : i32" "$pto_input"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pto.multi_buffer=2 annotation for subset ping/pong"
+        overall=1
+        continue
+      fi
       local tassign_count
       tassign_count="$(grep -c "TASSIGN(" "$cpp" || true)"
       if [[ -z "${tassign_count}" || "${tassign_count}" -lt 3 ]]; then

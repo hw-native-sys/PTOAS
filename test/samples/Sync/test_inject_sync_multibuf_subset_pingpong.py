@@ -1,6 +1,6 @@
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import arith, func, scf, pto
-from mlir.ir import F16Type, IndexType
+from mlir.ir import F16Type, IndexType, IntegerAttr, IntegerType
 
 
 def build():
@@ -12,6 +12,7 @@ def build():
 
             f16 = F16Type.get(ctx)
             idx = IndexType.get(ctx)
+            i32 = IntegerType.get_signless(32, ctx)
 
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
 
@@ -51,7 +52,11 @@ def build():
 
                 # Hand-written multibuffer style:
                 # one workspace tile split into ping/pong by subset.
-                workspace = pto.AllocTileOp(workspace_ty).result
+                # `pto.multi_buffer=2` tells PlanMemory/InsertSync this is a
+                # ping/pong candidate.
+                alloc = pto.AllocTileOp(workspace_ty)
+                alloc.operation.attributes["pto.multi_buffer"] = IntegerAttr.get(i32, 2)
+                workspace = alloc.result
                 ping = pto.SubsetOp(workspace, [c0, c0], sizes=[16, 16]).result
                 pong = pto.SubsetOp(workspace, [c0, c16], sizes=[16, 16]).result
 
