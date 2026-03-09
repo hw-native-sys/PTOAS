@@ -3734,4 +3734,29 @@ def TPopOp : PTO_TOp<"tpop", [
   }];
 }
 
+// --- Data Transfer: Free (consumer slot release) ---
+
+def TFreeOp : PTO_TOp<"tfree", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Release pipe slot after consumer finishes using data";
+
+  let arguments = (ins
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `:` qualified(type($pipe_handle)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOOPS

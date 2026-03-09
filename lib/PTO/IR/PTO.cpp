@@ -4533,6 +4533,19 @@ void TPopOp::getEffects(
   addEffect(effects, &getTileMutable(), MemoryEffects::Write::get());
 }
 
+LogicalResult TFreeOp::verify() {
+  if (!isInsideSectionCube(getOperation()) && !isInsideSectionVector(getOperation()))
+    return emitOpError("must be inside a section.cube or section.vector");
+  return success();
+}
+
+void TFreeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+}
+
 // [Include 必须放在最后]
 #include "PTO/IR/PTOInterfaces.cpp.inc"
 #define GET_OP_CLASSES

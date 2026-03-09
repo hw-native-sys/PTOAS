@@ -3862,6 +3862,33 @@ struct PTOTPopToEmitC
   }
 };
 
+struct PTOTFreeToEmitC
+    : public OpConversionPattern<mlir::pto::TFreeOp> {
+  PTOTFreeToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                  PTOArch targetArch)
+      : OpConversionPattern<mlir::pto::TFreeOp>(typeConverter, ctx),
+        targetArch(targetArch) {}
+
+  LogicalResult matchAndRewrite(mlir::pto::TFreeOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    if (targetArch == PTOArch::A5) {
+      rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+          op, TypeRange{}, "TFREE",
+          /*args=*/ArrayAttr{},
+          /*templateArgs=*/ArrayAttr{},
+          /*operands=*/ValueRange{
+              peelUnrealized(adaptor.getPipeHandle()),
+          });
+    } else {
+      // A2A3: tfree is a no-op, slot already released by tpop
+      rewriter.eraseOp(op);
+    }
+    return success();
+  }
+
+  PTOArch targetArch;
+};
+
 struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
   PTOSyncSetToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
                     PTOArch targetArch)
@@ -7412,6 +7439,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOInitializePipeToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTOTPushToEmitC>(typeConverter, ctx);
   patterns.add<PTOTPopToEmitC>(typeConverter, ctx);
+  patterns.add<PTOTFreeToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTOXORSToEmitC>(typeConverter, ctx);
   patterns.add<PTOSYNCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubSToEmitC>(typeConverter, ctx);
@@ -7584,6 +7612,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   populateCallOpTypeConversionPattern(patterns, typeConverter);
 }
 
+//===----------------------------------------------------------------------===//
 //===----------------------------------------------------------------------===//
 // Pass
 //===----------------------------------------------------------------------===//
