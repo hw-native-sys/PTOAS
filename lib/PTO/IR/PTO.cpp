@@ -1011,6 +1011,8 @@ LogicalResult pto::TAddSOp::verify() {
     return emitOpError("src and dst shape must match");
 
   Type scalarTy = getScalar().getType();
+  if (!scalarTy.isa<IndexType, IntegerType, FloatType>())
+    return emitOpError("scalar must be a scalar type (index/integer/float)");
   if (scalarTy != elem)
     return emitOpError("scalar type must equal src/dst element type");
 
@@ -3144,6 +3146,12 @@ mlir::LogicalResult mlir::pto::TSubSOp::verify() {
 
   if (getElemTy(srcTy) != getElemTy(dstTy))
     return emitOpError() << "expects src and dst to have the same element type";
+
+  Type scalarTy = getScalar().getType();
+  if (!scalarTy.isa<IndexType, IntegerType, FloatType>())
+    return emitOpError("scalar must be a scalar type (index/integer/float)");
+  if (scalarTy != getElemTy(srcTy))
+    return emitOpError() << "expects scalar to have the same type as src/dst element type";
 
   return mlir::success();
 }

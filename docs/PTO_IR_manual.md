@@ -697,7 +697,7 @@ value = ptr[offset]
 
 **Hardware Mapping:**
 
-- Scalar load from global or local memory
+- Scalar load from global
 
 **Basic Example:**
 
@@ -734,7 +734,7 @@ ptr[offset] = value
 
 **Hardware Mapping:**
 
-- Scalar store to global or local memory
+- Scalar store to global memory space.
 
 **Basic Example:**
 

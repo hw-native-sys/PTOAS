@@ -1541,7 +1541,7 @@ def TAddSOp : PTO_TOp<"tadds", [
 
   let arguments = (ins
     PTODpsType:$src,
-    AnyType:$scalar,
+    PrintScalarType:$scalar,
     PTODpsType:$dst
   );
 
@@ -3469,7 +3469,7 @@ def TSubSOp: PTO_TOp<"tsubs", [
 
   let arguments = (ins
     PTODpsType:$src,
-    F32:$scalar,
+    PrintScalarType:$scalar,
     PTODpsType:$dst
   );
 
