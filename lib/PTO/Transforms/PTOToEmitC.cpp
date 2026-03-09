@@ -1672,6 +1672,84 @@ static emitc::OpaqueType getWiderUnsignedIntOpaqueType(MLIRContext *ctx,
   }
 }
 
+static FailureOr<Value>
+createSiblingTileWithElementType(Location loc, Value exemplar,
+                                 StringRef elemTypeTok,
+                                 ConversionPatternRewriter &rewriter) {
+  auto tileTy = dyn_cast<emitc::OpaqueType>(exemplar.getType());
+  if (!tileTy)
+    return failure();
+
+  StringRef tileTypeStr = tileTy.getValue();
+  if (!tileTypeStr.starts_with("Tile<") || !tileTypeStr.ends_with(">"))
+    return failure();
+
+  StringRef body = tileTypeStr.drop_front(5).drop_back(1);
+  SmallVector<std::string, 12> parts;
+  size_t partBegin = 0;
+  int angleDepth = 0;
+  for (size_t i = 0; i < body.size(); ++i) {
+    char c = body[i];
+    if (c == '<') {
+      ++angleDepth;
+    } else if (c == '>') {
+      if (angleDepth > 0)
+        --angleDepth;
+    } else if (c == ',' && angleDepth == 0) {
+      parts.push_back(body.slice(partBegin, i).trim().str());
+      partBegin = i + 1;
+    }
+  }
+  parts.push_back(body.drop_front(partBegin).trim().str());
+
+  if (parts.size() < 7)
+    return failure();
+
+  parts[1] = elemTypeTok.str();
+
+  bool rowIsDynamic = StringRef(parts[5]).trim() == "-1";
+  bool colIsDynamic = StringRef(parts[6]).trim() == "-1";
+
+  std::string rebuilt = "Tile<";
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i)
+      rebuilt += ", ";
+    rebuilt += parts[i];
+  }
+  rebuilt += ">";
+
+  auto *ctx = rewriter.getContext();
+  auto rebuiltTy = emitc::OpaqueType::get(ctx, rebuilt);
+  if (!rowIsDynamic && !colIsDynamic) {
+    return rewriter
+        .create<emitc::VariableOp>(loc, rebuiltTy,
+                                   emitc::OpaqueAttr::get(ctx, ""))
+        .getResult();
+  }
+
+  auto u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
+  SmallVector<Value, 2> ctorArgs;
+  if (rowIsDynamic) {
+    ctorArgs.push_back(rewriter
+                           .create<emitc::CallOpaqueOp>(
+                               loc, u32Ty, "PTOAS__TILE_GET_VALID_ROW",
+                               ArrayAttr{}, ArrayAttr{}, ValueRange{exemplar})
+                           .getResult(0));
+  }
+  if (colIsDynamic) {
+    ctorArgs.push_back(rewriter
+                           .create<emitc::CallOpaqueOp>(
+                               loc, u32Ty, "PTOAS__TILE_GET_VALID_COL",
+                               ArrayAttr{}, ArrayAttr{}, ValueRange{exemplar})
+                           .getResult(0));
+  }
+
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, rebuiltTy, rebuilt, ArrayAttr{},
+                                   ArrayAttr{}, ValueRange(ctorArgs))
+      .getResult(0);
+}
+
 static Value makeEmitCOpaqueConstant(ConversionPatternRewriter &rewriter,
                                      Location loc, Type type,
                                      llvm::StringRef literal) {
@@ -5387,9 +5465,12 @@ struct PTOPreluToEmitC : public OpConversionPattern<pto::TPReluOp> {
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    // pto-isa TPRELU requires a tmp tile argument. Current NPU implementation
-    // does not use tmp, so we safely pass dst as tmp for compatibility.
-    SmallVector<Value, 4> operands{dst, src0, src1, dst};
+    auto tmpOr = createSiblingTileWithElementType(loc, dst, "uint8_t", rewriter);
+    if (failed(tmpOr))
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize uint8 tmp tile for TPRELU");
+
+    SmallVector<Value, 4> operands{dst, src0, src1, *tmpOr};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TPRELU",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

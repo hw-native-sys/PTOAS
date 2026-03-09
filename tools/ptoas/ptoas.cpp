@@ -155,6 +155,8 @@ static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
 // first-class op for member-function invocation. After translation, we rewrite:
 //   PTOAS__TILE_SET_VALUE(dst, offset, val) -> dst.SetValue(offset, val)
 //   PTOAS__TILE_GET_VALUE(src, offset)      -> src.GetValue(offset)
+//   PTOAS__TILE_GET_VALID_ROW(obj)          -> obj.GetValidRow()
+//   PTOAS__TILE_GET_VALID_COL(obj)          -> obj.GetValidCol()
 //   PTOAS__TILE_DATA(obj)                  -> obj.data()
 //   PTOAS__PTR_LOAD(ptr, offset)           -> ptr[offset]
 //   PTOAS__PTR_STORE(ptr, offset, val)     -> ptr[offset] = val
@@ -253,6 +255,12 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
         cpp, "PTOAS__TILE_SET_VALUE", "SetValue", /*expectedNumArgs=*/3);
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_GET_VALUE", "GetValue", /*expectedNumArgs=*/2);
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__TILE_GET_VALID_ROW", "GetValidRow",
+        /*expectedNumArgs=*/1);
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__TILE_GET_VALID_COL", "GetValidCol",
+        /*expectedNumArgs=*/1);
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
   }
