@@ -3,7 +3,7 @@ set -euo pipefail
 
 STAGE="${STAGE:-run}"         # build|run
 RUN_MODE="${RUN_MODE:-npu}"   # npu|sim
-SOC_VERSION="${SOC_VERSION:-Ascend910}"
+PTO_ARCH="${PTO_ARCH:-a3}"
 GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
 PTO_ISA_REPO="${PTO_ISA_REPO:-https://github.com/PTO-ISA/pto-isa.git}"
 PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-}"
@@ -24,7 +24,7 @@ fi
 log() { echo "[$(date +'%F %T')] $*"; }
 
 log "=== Remote NPU Validation ==="
-log "STAGE=${STAGE} RUN_MODE=${RUN_MODE} SOC_VERSION=${SOC_VERSION}"
+log "STAGE=${STAGE} RUN_MODE=${RUN_MODE} PTO_ARCH=${PTO_ARCH}"
 log "GOLDEN_MODE=${GOLDEN_MODE}"
 log "DEVICE_ID=${DEVICE_ID}"
 log "PTO_ISA_REPO=${PTO_ISA_REPO}"
@@ -121,16 +121,17 @@ fi
 
 export LD_LIBRARY_PATH="${ASCEND_HOME_PATH}/lib64:${LD_LIBRARY_PATH:-}"
 
-# Some CANN installs do not provide a simulator directory named exactly
-# "Ascend910". Map it to a real directory so we can link/run camodel.
+pto_arch_lc="$(printf '%s' "${PTO_ARCH}" | tr '[:upper:]' '[:lower:]')"
+case "${pto_arch_lc}" in
+  a5) SOC_VERSION="Ascend910_9599" ;;
+  a3) SOC_VERSION="Ascend910B1" ;;
+  *)
+    SOC_VERSION="Ascend910B1"
+    pto_arch_lc="a3"
+    ;;
+esac
+
 SIM_SOC_VERSION="${SOC_VERSION}"
-if [[ "${SOC_VERSION}" == "Ascend910" ]]; then
-  if [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910A/lib" ]]; then
-    SIM_SOC_VERSION="Ascend910A"
-  elif [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910ProA/lib" ]]; then
-    SIM_SOC_VERSION="Ascend910ProA"
-  fi
-fi
 log "SIM_SOC_VERSION=${SIM_SOC_VERSION}"
 
 LD_LIBRARY_PATH_NPU="${LD_LIBRARY_PATH}"
@@ -211,12 +212,16 @@ while IFS= read -r -d '' cpp; do
   nv_dir="${OUTPUT_ROOT}/${sample_name}/${testcase}"
 
   set +e
+  pto_arch_args=()
+  if [[ -n "${PTO_ARCH}" ]]; then
+    pto_arch_args+=(--pto-arch "${PTO_ARCH}")
+  fi
   python3 "${ROOT_DIR}/test/npu_validation/scripts/generate_testcase.py" \
     --input "${cpp}" \
     --testcase "${testcase}" \
     --output-root "${OUTPUT_ROOT}" \
     --run-mode "${RUN_MODE}" \
-    --soc-version "${SIM_SOC_VERSION}"
+    "${pto_arch_args[@]}"
   gen_rc=$?
   set -euo pipefail
   if [[ $gen_rc -ne 0 ]]; then
