@@ -3888,21 +3888,6 @@ LogicalResult TGetValOp::verify() {
   if (!srcTy.isa<pto::TileBufType, MemRefType>())
     return emitOpError("expects src to be tile_buf or memref type");
 
-  // Memory space must be vec (Ascend does not support getval from MAT etc.).
-  Attribute memSpace =
-      isa<pto::TileBufType>(srcTy)
-          ? cast<pto::TileBufType>(srcTy).getMemorySpace()
-          : cast<MemRefType>(srcTy).getMemorySpace();
-  auto addrSpaceAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(memSpace);
-  if (!addrSpaceAttr ||
-      addrSpaceAttr.getAddressSpace() != pto::AddressSpace::VEC) {
-    if (addrSpaceAttr &&
-        addrSpaceAttr.getAddressSpace() == pto::AddressSpace::MAT)
-      return emitOpError(
-          "Ascend hardware does not support reading from Mat tile_buf to Scalar unit");
-    return emitOpError("expects src memory space to be vec");
-  }
-
   if (getElemTy(srcTy) != getDst().getType())
     return emitOpError("expects dst type to match src element type");
   return success();
@@ -4741,6 +4726,93 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
 
 static bool isTileBufOrMemref(Type ty) {
   return ty.isa<MemRefType, pto::TileBufType>();
+}
+
+static std::optional<int64_t> getConstIndexLike(Value v) {
+  if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>())
+    return cOp.value();
+  if (auto cInt = v.getDefiningOp<arith::ConstantIntOp>())
+    return cInt.value();
+  if (auto cOp = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto ia = dyn_cast<IntegerAttr>(cOp.getValue()))
+      return ia.getInt();
+  }
+  if (auto castOp = v.getDefiningOp<arith::IndexCastOp>())
+    return getConstIndexLike(castOp.getIn());
+  if (auto extOp = v.getDefiningOp<arith::ExtSIOp>())
+    return getConstIndexLike(extOp.getIn());
+  if (auto extOp = v.getDefiningOp<arith::ExtUIOp>())
+    return getConstIndexLike(extOp.getIn());
+  if (auto truncOp = v.getDefiningOp<arith::TruncIOp>())
+    return getConstIndexLike(truncOp.getIn());
+  return std::nullopt;
+}
+
+mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
+  auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType());
+  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError("expects tile_buf source and tile_buf result");
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError("expects rank-2 tile_buf source/result");
+
+  if (srcTy.getShape() != dstTy.getShape())
+    return emitOpError("expects source/result to have the same shape");
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError("expects source/result to have the same element type");
+
+  if (srcTy.getMemorySpace() != dstTy.getMemorySpace())
+    return emitOpError("expects source/result to have the same memorySpace");
+
+  auto srcCfg = srcTy.getConfigAttr();
+  auto dstCfg = dstTy.getConfigAttr();
+  if (srcCfg != dstCfg)
+    return emitOpError("expects source/result to have the same tile config");
+
+  ArrayRef<int64_t> shape = dstTy.getShape();
+  ArrayRef<int64_t> validShape = dstTy.getValidShape();
+  if (validShape.size() != 2)
+    return emitOpError("expects result validShape to be rank-2");
+
+  auto checkDim = [&](Value operand, unsigned dimIdx,
+                      StringRef dimName) -> LogicalResult {
+    int64_t maxStatic = shape[dimIdx];
+    int64_t resultValid = validShape[dimIdx];
+
+    if (resultValid < -1)
+      return emitOpError() << "expects result " << dimName
+                           << " valid dim to be >= -1";
+    if (maxStatic != ShapedType::kDynamic && resultValid > maxStatic)
+      return emitOpError() << "expects result " << dimName
+                           << " valid dim <= shape dim (" << maxStatic << ")";
+
+    auto constVal = getConstIndexLike(operand);
+    if (!constVal) {
+      if (resultValid >= 0)
+        return emitOpError() << "expects dynamic result " << dimName
+                             << " valid dim when operand is not constant";
+      return success();
+    }
+
+    if (*constVal < 0)
+      return emitOpError() << "expects " << dimName << " operand to be non-negative";
+    if (maxStatic != ShapedType::kDynamic && *constVal > maxStatic)
+      return emitOpError() << "expects " << dimName << " operand <= shape dim ("
+                           << maxStatic << ")";
+    if (resultValid >= 0 && resultValid != *constVal)
+      return emitOpError() << "expects static result " << dimName
+                           << " valid dim to match operand constant " << *constVal;
+    return success();
+  };
+
+  if (failed(checkDim(getValidRow(), /*dimIdx=*/0, "row")))
+    return failure();
+  if (failed(checkDim(getValidCol(), /*dimIdx=*/1, "col")))
+    return failure();
+
+  return success();
 }
 
 mlir::LogicalResult mlir::pto::TReshapeOp::verify() {

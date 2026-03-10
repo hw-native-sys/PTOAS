@@ -307,6 +307,40 @@ def SubsetOp : PTO_Op<"subset", [
   }];
 }
 
+def SetValidShapeOp : PTO_Op<"set_validshape", [
+    Pure,
+    ViewLikeOpInterface
+  ]> {
+  let summary = "Create a tile alias with updated valid row/col metadata";
+  let description = [{
+    Returns a new tile_buf handle that aliases the same underlying storage as
+    the source tile buffer but carries a different runtime valid_row/valid_col.
+
+    This op does not mutate the source in place. It is an SSA view-like op and
+    is intended to model "reuse the same tile storage, but reinterpret the
+    currently valid region as (row, col)".
+  }];
+
+  let arguments = (ins
+    TileBufType:$source,
+    Index:$valid_row,
+    Index:$valid_col
+  );
+
+  let results = (outs TileBufType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `,` $valid_row `,` $valid_col attr-dict `:`
+    qualified(type($source)) `->` qualified(type($result))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getSource(); }
+  }];
+}
+
 // ============================================================================
 // SSA TileBuf Config Ops (aliasing views)
 // ============================================================================

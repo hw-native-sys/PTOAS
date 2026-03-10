@@ -496,6 +496,51 @@ result = source[offsets] with static sizes
 %sub = pto.subset %src[%i, %j] sizes [32, 32] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
+##### `pto.set_validshape` - Rebind Tile Valid Row/Col
+
+**Summary:** Creates a new tile alias that reuses the same storage as the source tile but carries new valid row/col metadata.
+
+**Semantics:**
+
+```
+result = alias(source) with runtime valid_row / valid_col
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `source` | `pto.tile_buf` | Source tile buffer whose storage is reused |
+| `valid_row` | `Index` | Runtime valid row count for the new tile handle |
+| `valid_col` | `Index` | Runtime valid column count for the new tile handle |
+
+**Results:** `pto.tile_buf`
+
+**Constraints & Verification:**
+
+- `source` and `result` must both be rank-2 `pto.tile_buf`
+- `source` and `result` must have the same:
+  - shape
+  - element type
+  - memory space
+  - tile config
+- If `valid_row` / `valid_col` are not compile-time constants, the corresponding result valid dims must be dynamic (`?`)
+- If `valid_row` / `valid_col` are compile-time constants and the result valid dims are static, they must match
+
+**Hardware Mapping:**
+
+- No hardware pipeline (metadata/view op only)
+- Lowers to a `pto.bind_tile` alias during `PTOViewToMemref`
+
+**Basic Example:**
+
+```mlir
+%src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%dyn = pto.set_validshape %src, %vr, %vc
+  : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+ -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+```
+
 ---
 
 ### 4.2 Buffer-ID Token Operations (A5)
