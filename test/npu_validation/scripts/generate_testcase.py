@@ -1405,7 +1405,7 @@ def main():
     parser.add_argument("--testcase", default=None, help="Testcase name (default: derived from input filename)")
     parser.add_argument("--output-root", default=None, help="Output testcases root directory")
     parser.add_argument("--run-mode", default="npu", choices=["sim", "npu"], help="Run mode for run.sh")
-    parser.add_argument("--pto-arch", default=None, help="Target PTO arch (a3 or a5).")
+    parser.add_argument("--pto-arch", default="a3", help="Target PTO arch (a3 or a5).")
     parser.add_argument(
         "--aicore-arch",
         default=None,
