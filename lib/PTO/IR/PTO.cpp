@@ -3888,6 +3888,21 @@ LogicalResult TGetValOp::verify() {
   if (!srcTy.isa<pto::TileBufType, MemRefType>())
     return emitOpError("expects src to be tile_buf or memref type");
 
+  // Memory space must be vec (Ascend does not support getval from MAT etc.).
+  Attribute memSpace =
+      isa<pto::TileBufType>(srcTy)
+          ? cast<pto::TileBufType>(srcTy).getMemorySpace()
+          : cast<MemRefType>(srcTy).getMemorySpace();
+  auto addrSpaceAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(memSpace);
+  if (!addrSpaceAttr ||
+      addrSpaceAttr.getAddressSpace() != pto::AddressSpace::VEC) {
+    if (addrSpaceAttr &&
+        addrSpaceAttr.getAddressSpace() == pto::AddressSpace::MAT)
+      return emitOpError(
+          "Ascend hardware does not support reading from Mat tile_buf to Scalar unit");
+    return emitOpError("expects src memory space to be vec");
+  }
+
   if (getElemTy(srcTy) != getDst().getType())
     return emitOpError("expects dst type to match src element type");
   return success();
