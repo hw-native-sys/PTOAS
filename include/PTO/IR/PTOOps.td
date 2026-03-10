@@ -45,7 +45,7 @@ def ScalarPtrOrMemRef :
     CPred<"::mlir::pto::isScalarPtrOrMemRef($_self)">,
     "Ptr or MemRef in GM">;
 
-def PrintScalarType :
+def ScalarType :
   AnyTypeOf<[Index, AnySignlessInteger, AnyFloat], "numeric (index/integer/float)">;
 
 //===----------------------------------------------------------------------===//
@@ -1275,7 +1275,7 @@ def PrintOp : PTO_Op<"print", [MemoryEffects<[MemRead, MemWrite]>]> {
     Debug print op. First argument is the format string (string attribute), second is a scalar value.
     Format in IR: `pto.print ins("format", %scalar : type(%scalar))`
   }];
-  let arguments = (ins StrAttr:$format, PrintScalarType:$scalar);
+  let arguments = (ins StrAttr:$format, ScalarType:$scalar);
   let results = (outs);
   let assemblyFormat = [{
     `ins` `(` $format `,` $scalar `:` type($scalar) `)`
@@ -1541,7 +1541,7 @@ def TAddSOp : PTO_TOp<"tadds", [
 
   let arguments = (ins
     PTODpsType:$src,
-    AnyType:$scalar,
+    ScalarType:$scalar,
     PTODpsType:$dst
   );
 
@@ -3469,7 +3469,7 @@ def TSubSOp: PTO_TOp<"tsubs", [
 
   let arguments = (ins
     PTODpsType:$src,
-    F32:$scalar,
+    ScalarType:$scalar,
     PTODpsType:$dst
   );
 

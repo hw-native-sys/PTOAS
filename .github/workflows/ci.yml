@@ -45,8 +45,10 @@ on:
       pto_isa_commit:
         description: "pto-isa ref (commit/tag/branch; empty = default branch)"
         type: string
-        # NOTE: Leave empty to use the latest default-branch pto-isa.
-        default: ""
+        # NOTE: Pin a known-good commit for deterministic runs.
+        # GitCode 082b94a3d2eaa17d63d1e5b0d74714a00594ace0 (TSEL bugfix) is
+        # already included in the initial import on GitHub.
+        default: 68b7cd178622763f658be42f013e84ddeaa4beee
       remote_host:
         description: "SSH host/IP for the NPU machine"
         type: string

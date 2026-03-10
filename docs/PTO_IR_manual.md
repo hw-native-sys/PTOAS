@@ -697,7 +697,7 @@ value = ptr[offset]
 
 **Hardware Mapping:**
 
-- Scalar load from global or local memory
+- Scalar load from global
 
 **Basic Example:**
 
@@ -734,7 +734,7 @@ ptr[offset] = value
 
 **Hardware Mapping:**
 
-- Scalar store to global or local memory
+- Scalar store to global memory space.
 
 **Basic Example:**
 
@@ -1825,7 +1825,7 @@ For each element (i, j):
 | Name | Type | Description |
 |------|------|-------------|
 | `src` | `pto.tile_buf` | Source tile buffer containing the input data |
-| `scalar` | `AnyType` (e.g. `f32`, `f16`) | Scalar value to add to each element |
+| `scalar` | `ScalarType` (`index` / integer / float) | Scalar value to add to each element |
 | `dst` | `pto.tile_buf` | Destination tile buffer for the result |
 
 **Results:** None. The operation writes results into `dst` following the Destination-Passing Style (DPS) pattern.
@@ -1841,8 +1841,7 @@ pto.tadds ins(<src>, <scalar> : <src_type>, <scalar_type>)
 
 - The operation has a custom verifier that checks:
   - `src` and `dst` must have same shapes and element types
-  - `scalar` type must be compatible with the element type of the tile buffers
-- Tile operands are `tile_buf` types; scalar is a builtin scalar type (e.g. `f32`)
+  - `scalar` must be a scalar type (`index` / integer / float)
 
 **Hardware Mapping:**
 
@@ -1879,8 +1878,8 @@ For each element (i, j):
 | Name | Type | Description |
 |------|------|-------------|
 | `src` | `pto.tile_buf` | Source tile buffer |
-| `scalar` | `F32` | Scalar value to subtract |
-| `dst` | `pto.tile_buf` | Destination tile buffer |
+| `scalar` | `ScalarType` (`index` / integer / float) | Scalar value to subtract |
+| `dst` | `pto.tile_buf` | Destination tile buffer for the result |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -1895,7 +1894,7 @@ pto.tsubs ins(<src>, <scalar> : <src_type>, <scalar_type>)
 
 - The operation has a custom verifier that checks:
   - `src` and `dst` must have same shapes and element types
-  - Tile operands are `tile_buf` types; scalar is a builtin scalar type (currently `f32`)
+  - `scalar` must be a scalar type (`index` / integer / float)
 
 **Hardware Mapping:**
 

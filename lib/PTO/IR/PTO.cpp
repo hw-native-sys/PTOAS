@@ -1011,8 +1011,8 @@ LogicalResult pto::TAddSOp::verify() {
     return emitOpError("src and dst shape must match");
 
   Type scalarTy = getScalar().getType();
-  if (scalarTy != elem)
-    return emitOpError("scalar type must equal src/dst element type");
+  if (!scalarTy.isa<IndexType, IntegerType, FloatType>())
+    return emitOpError("scalar must be a scalar type (index/integer/float)");
 
   auto isOK = [&](Type t) -> bool {
     if (auto it = t.dyn_cast<IntegerType>()) {
@@ -3212,6 +3212,10 @@ mlir::LogicalResult mlir::pto::TSubSOp::verify() {
   if (getElemTy(srcTy) != getElemTy(dstTy))
     return emitOpError() << "expects src and dst to have the same element type";
 
+  Type scalarTy = getScalar().getType();
+  if (!scalarTy.isa<IndexType, IntegerType, FloatType>())
+    return emitOpError("scalar must be a scalar type (index/integer/float)");
+
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
@@ -3307,9 +3311,10 @@ mlir::LogicalResult mlir::pto::TSyncOp::verify() {
 
 mlir::LogicalResult mlir::pto::TPrintOp::verify() {
   auto srcType = getSrc().getType();
-  
+
   // Support TileBufType and PartitionTensorViewType (replaces legacy TileView).
   if (mlir::dyn_cast<mlir::pto::TileBufType>(srcType) ||
+      mlir::dyn_cast<MemRefType>(srcType) ||
       mlir::dyn_cast<mlir::pto::PartitionTensorViewType>(srcType)) {
     return mlir::success();
   }
@@ -4414,6 +4419,7 @@ void TTransOp::getEffects(
 void TPrintOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getSrcMutable());
 }
 
 #undef PTO_DEFINE_TERNARY_EFFECTS
