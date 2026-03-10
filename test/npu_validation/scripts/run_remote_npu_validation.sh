@@ -123,10 +123,10 @@ export LD_LIBRARY_PATH="${ASCEND_HOME_PATH}/lib64:${LD_LIBRARY_PATH:-}"
 
 pto_arch_lc="$(printf '%s' "${PTO_ARCH}" | tr '[:upper:]' '[:lower:]')"
 case "${pto_arch_lc}" in
-  a5) SOC_VERSION="a5" ;;
-  a3) SOC_VERSION="a3" ;;
+  a5) SOC_VERSION="Ascend910_95" ;;
+  a3) SOC_VERSION="Ascend910B" ;;
   *)
-    SOC_VERSION="a3"
+    SOC_VERSION="Ascend910B"
     pto_arch_lc="a3"
     ;;
 esac
@@ -212,16 +212,12 @@ while IFS= read -r -d '' cpp; do
   nv_dir="${OUTPUT_ROOT}/${sample_name}/${testcase}"
 
   set +e
-  pto_arch_args=()
-  if [[ -n "${PTO_ARCH}" ]]; then
-    pto_arch_args+=(--pto-arch "${PTO_ARCH}")
-  fi
   python3 "${ROOT_DIR}/test/npu_validation/scripts/generate_testcase.py" \
     --input "${cpp}" \
     --testcase "${testcase}" \
     --output-root "${OUTPUT_ROOT}" \
     --run-mode "${RUN_MODE}" \
-    "${pto_arch_args[@]}"
+    --pto-arch "${PTO_ARCH}"
   gen_rc=$?
   set -euo pipefail
   if [[ $gen_rc -ne 0 ]]; then
