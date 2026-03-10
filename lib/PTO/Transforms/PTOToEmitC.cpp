@@ -1672,10 +1672,8 @@ static emitc::OpaqueType getWiderUnsignedIntOpaqueType(MLIRContext *ctx,
   }
 }
 
-static FailureOr<Value>
-createSiblingTileWithElementType(Location loc, Value exemplar,
-                                 StringRef elemTypeTok,
-                                 ConversionPatternRewriter &rewriter) {
+static LogicalResult parseEmitCTileType(Value exemplar,
+                                        SmallVectorImpl<std::string> &parts) {
   auto tileTy = dyn_cast<emitc::OpaqueType>(exemplar.getType());
   if (!tileTy)
     return failure();
@@ -1685,7 +1683,6 @@ createSiblingTileWithElementType(Location loc, Value exemplar,
     return failure();
 
   StringRef body = tileTypeStr.drop_front(5).drop_back(1);
-  SmallVector<std::string, 12> parts;
   size_t partBegin = 0;
   int angleDepth = 0;
   for (size_t i = 0; i < body.size(); ++i) {
@@ -1701,8 +1698,113 @@ createSiblingTileWithElementType(Location loc, Value exemplar,
     }
   }
   parts.push_back(body.drop_front(partBegin).trim().str());
+  return success(parts.size() >= 7);
+}
 
-  if (parts.size() < 7)
+static FailureOr<std::string> getEmitCTileElementTypeToken(Value exemplar) {
+  SmallVector<std::string, 12> parts;
+  if (failed(parseEmitCTileType(exemplar, parts)))
+    return failure();
+  return parts[1];
+}
+
+static FailureOr<int64_t> getEmitCTileStorageSizeBytes(Value exemplar) {
+  SmallVector<std::string, 12> parts;
+  if (failed(parseEmitCTileType(exemplar, parts)))
+    return failure();
+
+  int64_t rows = 0;
+  int64_t cols = 0;
+  if (StringRef(parts[2]).trim().getAsInteger(10, rows) ||
+      StringRef(parts[3]).trim().getAsInteger(10, cols))
+    return failure();
+
+  int64_t elemBytes = 0;
+  StringRef elemTok = StringRef(parts[1]).trim();
+  if (elemTok == "half" || elemTok == "float16_t" || elemTok == "bfloat16_t" ||
+      elemTok == "int16_t" || elemTok == "uint16_t") {
+    elemBytes = 2;
+  } else if (elemTok == "float" || elemTok == "int32_t" ||
+             elemTok == "uint32_t") {
+    elemBytes = 4;
+  } else if (elemTok == "double" || elemTok == "int64_t" ||
+             elemTok == "uint64_t") {
+    elemBytes = 8;
+  } else if (elemTok == "int8_t" || elemTok == "uint8_t" ||
+             elemTok == "bool") {
+    elemBytes = 1;
+  } else {
+    return failure();
+  }
+
+  return rows * cols * elemBytes;
+}
+
+static FailureOr<Value>
+buildIntegralAddressFromTileLike(Location loc, Value sourceValue,
+                                 ConversionPatternRewriter &rewriter) {
+  auto *ctx = rewriter.getContext();
+  auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+  auto rcU64 =
+      rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+
+  Value rawPtr = sourceValue;
+  if (auto ot = dyn_cast<emitc::OpaqueType>(sourceValue.getType())) {
+    StringRef tyStr = ot.getValue();
+    if (tyStr.starts_with("Tile<")) {
+      SmallVector<std::string, 12> parts;
+      if (failed(parseEmitCTileType(sourceValue, parts)))
+        return failure();
+
+      StringRef roleTok = StringRef(parts[0]).trim();
+      StringRef elemTok = StringRef(parts[1]).trim();
+      std::string qualifier;
+      if (roleTok == "TileType::Vec") {
+        qualifier = "__ubuf__";
+      } else if (roleTok == "TileType::Mat") {
+        qualifier = "__cbuf__";
+      } else if (roleTok == "TileType::Left") {
+        qualifier = "__ca__";
+      } else if (roleTok == "TileType::Right") {
+        qualifier = "__cb__";
+      } else if (roleTok == "TileType::Acc") {
+        qualifier = "__cc__";
+      } else if (roleTok == "TileType::Scaling") {
+        qualifier = "__fbuf__";
+      } else {
+        return failure();
+      }
+
+      auto rawPtrTy =
+          emitc::OpaqueType::get(ctx, qualifier + " " + elemTok.str() + "*");
+      rawPtr = rewriter
+                   .create<emitc::CallOpaqueOp>(loc, rawPtrTy, "PTOAS__TILE_DATA",
+                                                ArrayAttr{}, ArrayAttr{},
+                                                ValueRange{sourceValue})
+                   .getResult(0);
+    }
+  }
+
+  if (isa<emitc::PointerType>(rawPtr.getType()) ||
+      (isa<emitc::OpaqueType>(rawPtr.getType()) &&
+       cast<emitc::OpaqueType>(rawPtr.getType()).getValue().ends_with("*"))) {
+    return rewriter
+        .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                     ArrayAttr{}, rcU64, ValueRange{rawPtr})
+        .getResult(0);
+  }
+
+  if (rawPtr.getType() == u64Ty)
+    return rawPtr;
+  return rewriter.create<emitc::CastOp>(loc, u64Ty, rawPtr).getResult();
+}
+
+static FailureOr<Value>
+createSiblingTileWithElementType(Location loc, Value exemplar,
+                                 StringRef elemTypeTok,
+                                 ConversionPatternRewriter &rewriter) {
+  SmallVector<std::string, 12> parts;
+  if (failed(parseEmitCTileType(exemplar, parts)))
     return failure();
 
   parts[1] = elemTypeTok.str();
@@ -5465,10 +5567,45 @@ struct PTOPreluToEmitC : public OpConversionPattern<pto::TPReluOp> {
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    auto tmpOr = createSiblingTileWithElementType(loc, dst, "uint8_t", rewriter);
+    auto elemTokOr = getEmitCTileElementTypeToken(dst);
+    if (failed(elemTokOr))
+      return rewriter.notifyMatchFailure(
+          op, "failed to recover tile element type token for TPRELU tmp");
+
+    auto tmpOr = createSiblingTileWithElementType(loc, dst, *elemTokOr, rewriter);
     if (failed(tmpOr))
       return rewriter.notifyMatchFailure(
-          op, "failed to materialize uint8 tmp tile for TPRELU");
+          op, "failed to materialize sibling tmp tile for TPRELU");
+
+    auto src0AddrOr = buildIntegralAddressFromTileLike(loc, src0, rewriter);
+    auto src1AddrOr = buildIntegralAddressFromTileLike(loc, src1, rewriter);
+    auto dstAddrOr = buildIntegralAddressFromTileLike(loc, dst, rewriter);
+    auto tileBytesOr = getEmitCTileStorageSizeBytes(dst);
+    if (failed(src0AddrOr) || failed(src1AddrOr) || failed(dstAddrOr) ||
+        failed(tileBytesOr))
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize non-overlapping tmp storage for TPRELU");
+
+    auto *ctx = rewriter.getContext();
+    auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+    Value tileBytes = rewriter.create<emitc::ConstantOp>(
+        loc, u64Ty, emitc::OpaqueAttr::get(ctx, std::to_string(*tileBytesOr)));
+    Value src0LtSrc1 = rewriter.create<emitc::CmpOp>(
+        loc, rewriter.getI1Type(), emitc::CmpPredicate::lt, *src0AddrOr,
+        *src1AddrOr);
+    Value maxSrcAddr = rewriter.create<emitc::ConditionalOp>(
+        loc, u64Ty, src0LtSrc1, *src1AddrOr, *src0AddrOr);
+    Value maxSrcLtDst = rewriter.create<emitc::CmpOp>(
+        loc, rewriter.getI1Type(), emitc::CmpPredicate::lt, maxSrcAddr,
+        *dstAddrOr);
+    Value maxAddr = rewriter.create<emitc::ConditionalOp>(
+        loc, u64Ty, maxSrcLtDst, *dstAddrOr, maxSrcAddr);
+    Value tmpAddr =
+        rewriter.create<emitc::AddOp>(loc, u64Ty, maxAddr, tileBytes);
+
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{*tmpOr, tmpAddr});
 
     SmallVector<Value, 4> operands{dst, src0, src1, *tmpOr};
     rewriter.create<emitc::CallOpaqueOp>(
