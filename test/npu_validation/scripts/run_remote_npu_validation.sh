@@ -132,6 +132,15 @@ case "${pto_arch_lc}" in
 esac
 
 SIM_SOC_VERSION="${SOC_VERSION}"
+# Some CANN installs do not provide a simulator directory named exactly
+# "Ascend910". Map it to a real directory so we can link/run camodel.
+if [[ "${SOC_VERSION}" == "Ascend910" ]]; then
+  if [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910A/lib" ]]; then
+    SIM_SOC_VERSION="Ascend910A"
+  elif [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910ProA/lib" ]]; then
+    SIM_SOC_VERSION="Ascend910ProA"
+  fi
+fi
 log "SIM_SOC_VERSION=${SIM_SOC_VERSION}"
 
 LD_LIBRARY_PATH_NPU="${LD_LIBRARY_PATH}"
