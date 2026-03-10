@@ -5,31 +5,27 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
     %c1 = arith.constant 1 : index
     
     // 1. 创建 Tensor View (Global Memory Handle)
-    %view = pto.make_tensor_view %arg0, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<2xf32>
+    %view = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %pt = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     
     // 2. 分配 Tile (Unified Buffer)
-    %buf = pto.alloc_tile : <32x32xf32, memory_space = #pto.address_space<ub>>
+    %buf = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
     // 场景：Then 分支有 Load (产生信号)，Else 分支为空。
     // 我们期望 CodeGen 能在 Else 分支自动补齐 Yield 和 Set (Compensation)。
     scf.if %cond {
         // [Producer] Load GM -> UB
-        // 创建 Load 专用的 Subview
-        %load_tile = pto.subview %view, offsets=[%c0, %c0], sizes=[32,32] : !pto.tensor_view<2xf32> -> !pto.tile_view<32x32xf32>
-        pto.tload ins(%load_tile : <32x32xf32>) outs(%buf : <32x32xf32, memory_space = #pto.address_space<ub>>)
+        pto.tload ins(%pt : !pto.partition_tensor_view<32x32xf32>) outs(%buf : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     } 
     // 注意：这里显式没有 Else 块！
 
     // [Consumer] Store UB -> GM
     // 强制依赖 %buf。这会迫使 SyncAnalyzer 认为 If 块必须产生信号。
-    
-    // [Fix] 创建 Store 专用的 Subview (修复类型错误)
-    %store_tile = pto.subview %view, offsets=[%c0, %c0], sizes=[32,32] : !pto.tensor_view<2xf32> -> !pto.tile_view<32x32xf32>
-    
+
     // 由于 Else 没有信号，Analyzer 会生成一个 isCompensation=true 的 Phantom Set。
     // 手动写的 Wait 是为了模拟依赖，实际 InsertSync Pass 会根据分析结果插入正确的 Wait。
     // 这里我们不仅看 Wait，更要看生成的代码里 Else 分支是否被补全。
-    pto.tstore ins(%buf : <32x32xf32, memory_space = #pto.address_space<ub>>) outs(%store_tile : <32x32xf32>)
+    pto.tstore ins(%buf : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%pt : !pto.partition_tensor_view<32x32xf32>)
     
     return
   }

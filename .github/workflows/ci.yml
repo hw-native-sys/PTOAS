@@ -41,13 +41,14 @@ on:
       pto_isa_repo:
         description: "pto-isa repo URL on remote"
         type: string
-        default: https://gitcode.com/cann/pto-isa.git
+        default: https://github.com/PTO-ISA/pto-isa.git
       pto_isa_commit:
         description: "pto-isa ref (commit/tag/branch; empty = default branch)"
         type: string
-        # NOTE: Remote NPU validation depends on upstream pto-isa. Pin a known-good
-        # commit by default to keep scheduled runs deterministic.
-        default: 082b94a3d2eaa17d63d1e5b0d74714a00594ace0
+        # NOTE: Pin a known-good commit for deterministic runs.
+        # GitCode 082b94a3d2eaa17d63d1e5b0d74714a00594ace0 (TSEL bugfix) is
+        # already included in the initial import on GitHub.
+        default: 68b7cd178622763f658be42f013e84ddeaa4beee
       remote_host:
         description: "SSH host/IP for the NPU machine"
         type: string
@@ -174,6 +175,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${PTO_INSTALL_DIR}" \
             -DCMAKE_BUILD_TYPE=Release
           ninja -C build ptoas
+          ninja -C build ptobc
           ninja -C build install
 
       - name: Run sample tests (py -> pto -> cpp)
@@ -188,7 +190,7 @@ jobs:
           export PYTHONPATH="${MLIR_PYTHON_ROOT}:${PTO_PYTHON_ROOT}:${PYTHONPATH:-}"
           export LD_LIBRARY_PATH="${LLVM_DIR}/lib:${PTO_INSTALL_DIR}/lib:${LD_LIBRARY_PATH:-}"
           export PTOAS_OUT_DIR="${PAYLOAD_DIR}/test/samples"
-          bash test/samples/runop.sh all
+          bash test/samples/runop.sh --enablebc all
 
       - name: Build payload artifact
         if: >-
@@ -237,8 +239,6 @@ jobs:
       # Update this list as we fix the underlying issues.
       DEFAULT_SKIP_CASES: >-
         mix_kernel,vadd_validshape,vadd_validshape_dynamic
-      # Keep nightly runs deterministic by pinning pto-isa unless overridden.
-      DEFAULT_PTO_ISA_COMMIT: 082b94a3d2eaa17d63d1e5b0d74714a00594ace0
     steps:
       - name: Resolve validation parameters
         shell: bash
@@ -249,7 +249,7 @@ jobs:
           DEVICE_ID: ${{ github.event.inputs.device_id || '2' }}
           SKIP_CASES: ${{ github.event.inputs.skip_cases || '' }}
           RUN_ONLY_CASES: ${{ github.event.inputs.run_only_cases || '' }}
-          PTO_ISA_REPO: ${{ github.event.inputs.pto_isa_repo || 'https://gitcode.com/cann/pto-isa.git' }}
+          PTO_ISA_REPO: ${{ github.event.inputs.pto_isa_repo || 'https://github.com/PTO-ISA/pto-isa.git' }}
           PTO_ISA_COMMIT: ${{ github.event.inputs.pto_isa_commit || '' }}
           REMOTE_HOST: ${{ github.event.inputs.remote_host || '101.245.68.6' }}
           REMOTE_USER: ${{ github.event.inputs.remote_user || 'zhongxuan' }}
@@ -263,10 +263,29 @@ jobs:
             if [[ -z "${SKIP_CASES}" ]]; then
               SKIP_CASES="${DEFAULT_SKIP_CASES}"
             fi
-            if [[ -z "${PTO_ISA_COMMIT}" ]]; then
-              PTO_ISA_COMMIT="${DEFAULT_PTO_ISA_COMMIT}"
+          fi
+
+          # Some validation samples have A3 vs A5 variants due to stricter
+          # pto-isa static checks on Ascend950 (A5). When running the full test
+          # suite (RUN_ONLY_CASES is empty), skip the non-matching variant based
+          # on SOC_VERSION to keep the remote validation portable.
+          A3_ONLY_CASES="partition5d,partition5d_dynamic,mrgsort,tmatmulk_autosync"
+          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5"
+
+          sv_lc="$(printf '%s' "${SOC_VERSION}" | tr '[:upper:]' '[:lower:]')"
+          is_a5=0
+          if [[ "${sv_lc}" == *"950"* || "${sv_lc}" == *"a5"* ]]; then
+            is_a5=1
+          fi
+
+          if [[ -z "${RUN_ONLY_CASES}" ]]; then
+            if [[ ${is_a5} -eq 1 ]]; then
+              SKIP_CASES="${SKIP_CASES:+${SKIP_CASES},}${A3_ONLY_CASES}"
+            else
+              SKIP_CASES="${SKIP_CASES:+${SKIP_CASES},}${A5_ONLY_CASES}"
             fi
           fi
+
           echo "STAGE=${STAGE}" >> "${GITHUB_ENV}"
           echo "RUN_MODE=${RUN_MODE}" >> "${GITHUB_ENV}"
           echo "SOC_VERSION=${SOC_VERSION}" >> "${GITHUB_ENV}"
@@ -307,6 +326,26 @@ jobs:
         with:
           name: ptoas_payload
           path: ${{ env.PAYLOAD_DOWNLOAD_DIR }}
+
+      - name: Vendor pto-isa into payload (offline remote)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp_root="${RUNNER_TEMP:-${GITHUB_WORKSPACE}/.tmp}"
+          work="$(mktemp -d "${tmp_root}/ptoas_payload_unpack.XXXXXX")"
+          tar -xzf "${PAYLOAD_TGZ}" -C "${work}"
+
+          rm -rf "${work}/pto-isa"
+          git clone "${PTO_ISA_REPO}" "${work}/pto-isa"
+          if [[ -n "${PTO_ISA_COMMIT}" ]]; then
+            git -C "${work}/pto-isa" checkout -f "${PTO_ISA_COMMIT}"
+          else
+            git -C "${work}/pto-isa" checkout -f origin/HEAD || true
+          fi
+          # Ship a working tree only; remote should not need outbound network.
+          rm -rf "${work}/pto-isa/.git"
+
+          tar -czf "${PAYLOAD_TGZ}" -C "${work}" .
 
       - name: Copy payload to remote
         shell: bash

@@ -85,6 +85,61 @@ static Value peelUnrealized(Value v) {
   return v;
 }
 
+static std::optional<mlir::pto::Layout> getLayoutAttrFromOp(Operation *op) {
+  if (!op)
+    return std::nullopt;
+  if (auto attr = op->getAttrOfType<mlir::pto::LayoutAttr>("layout"))
+    return attr.getLayout();
+  return std::nullopt;
+}
+
+static std::optional<mlir::pto::Layout> resolveLayoutFromValueChain(Value v) {
+  v = peelUnrealized(v);
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto layout = getLayoutAttrFromOp(def))
+      return layout;
+    if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
+      v = peelUnrealized(subview.getSource());
+      continue;
+    }
+    if (auto reinterpret = dyn_cast<memref::ReinterpretCastOp>(def)) {
+      v = peelUnrealized(reinterpret.getSource());
+      continue;
+    }
+    if (auto cast = dyn_cast<memref::CastOp>(def)) {
+      v = peelUnrealized(cast.getSource());
+      continue;
+    }
+    if (auto unrealized = dyn_cast<UnrealizedConversionCastOp>(def)) {
+      if (unrealized->getNumOperands() == 0)
+        break;
+      v = peelUnrealized(unrealized.getOperand(0));
+      continue;
+    }
+    break;
+  }
+  return std::nullopt;
+}
+
+static std::optional<mlir::pto::Layout>
+resolveLayoutForGlobalTensor(Operation *anchor, Value basePtr) {
+  if (auto layout = getLayoutAttrFromOp(anchor))
+    return layout;
+  return resolveLayoutFromValueChain(basePtr);
+}
+
+static std::string layoutToEmitCString(mlir::pto::Layout layout) {
+  switch (layout) {
+  case mlir::pto::Layout::ND:
+    return "pto::Layout::ND";
+  case mlir::pto::Layout::DN:
+    return "pto::Layout::DN";
+  case mlir::pto::Layout::NZ:
+    return "pto::Layout::NZ";
+  }
+  return "pto::Layout::ND";
+}
+
 //===----------------------------------------------------------------------===//
 // Type Converter
 //===----------------------------------------------------------------------===//
@@ -2472,63 +2527,56 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     std::string shapeCppType = "pto::Shape<" + shapeParams + ">";
     std::string strideCppType = "pto::Stride<" + strideParams + ">";
 
-    // 3.0 计算推导出的 Layout；若用户已指定 layout，保持一致性校验
-    auto strToInt = [](const std::string &s, int64_t &out) -> bool {
+    // 3.0 Layout: prefer the attribute from InferPTOLayout; only fall back to
+    // local inference when the pass is disabled.
+    std::string layoutEnum = "pto::Layout::ND";
+    if (auto layout = resolveLayoutForGlobalTensor(op, op.getSource())) {
+      layoutEnum = layoutToEmitCString(*layout);
+    } else {
+      auto strToInt = [](const std::string &s, int64_t &out) -> bool {
         return s != "-1" && llvm::to_integer(s, out);
-    };
-    SmallVector<int64_t, 5> shapeInt(5, -1), strideInt(5, -1);
-    bool allStatic = true;
-    for (int i = 0; i < 5; ++i) {
-        if (!strToInt(finalShape[i], shapeInt[i]) || !strToInt(finalStride[i], strideInt[i]))
-            allStatic = false;
-    }
-    // 推导规则与 InferPTOLayout 保持一致
-    int layoutTag = 0; // ND
-    auto elemBytes = 4; // default float
-    if (elemTypeStr.find("half") != std::string::npos || elemTypeStr.find("f16") != std::string::npos ||
-        elemTypeStr.find("bf16") != std::string::npos)
+      };
+      SmallVector<int64_t, 5> shapeInt(5, -1), strideInt(5, -1);
+      bool allStatic = true;
+      for (int i = 0; i < 5; ++i) {
+        if (!strToInt(finalShape[i], shapeInt[i]) ||
+            !strToInt(finalStride[i], strideInt[i]))
+          allStatic = false;
+      }
+
+      int layoutTag = 0; // ND
+      auto elemBytes = 4; // default float
+      if (elemTypeStr.find("half") != std::string::npos ||
+          elemTypeStr.find("f16") != std::string::npos ||
+          elemTypeStr.find("bf16") != std::string::npos)
         elemBytes = 2;
-    else if (elemTypeStr.find("double") != std::string::npos || elemTypeStr.find("f64") != std::string::npos)
+      else if (elemTypeStr.find("double") != std::string::npos ||
+               elemTypeStr.find("f64") != std::string::npos)
         elemBytes = 8;
-    if (allStatic) {
-        // NZ 判定
+
+      if (allStatic) {
         if (shapeInt[2] == 16 && shapeInt[2] * shapeInt[3] * elemBytes == 512 &&
             strideInt[4] == 1 && strideInt[3] == shapeInt[4]) {
-            layoutTag = 2; // NZ
+          layoutTag = 2; // NZ
         } else {
-            bool isRow = strideInt[4] == 1;
-            for (int i = 3; i >= 0; --i)
-                isRow &= (strideInt[i] == strideInt[i + 1] * shapeInt[i + 1]);
-            bool isCol = strideInt[0] == 1;
-            for (int i = 0; i < 4; ++i)
-                isCol &= (strideInt[i + 1] == strideInt[i] * shapeInt[i]);
-            if (isCol) layoutTag = 1; // DN
-            else layoutTag = isRow ? 0 : 0; // fallback ND
+          bool isRow = strideInt[4] == 1;
+          for (int i = 3; i >= 0; --i)
+            isRow &= (strideInt[i] == strideInt[i + 1] * shapeInt[i + 1]);
+          bool isCol = strideInt[0] == 1;
+          for (int i = 0; i < 4; ++i)
+            isCol &= (strideInt[i + 1] == strideInt[i] * shapeInt[i]);
+          if (isCol)
+            layoutTag = 1; // DN
+          else
+            layoutTag = isRow ? 0 : 0; // fallback ND
         }
-    }
-    // 若源 IR 上存在 layout 属性，则校验是否一致，不一致时报错
-    if (auto attr = op->getAttrOfType<mlir::pto::LayoutAttr>("layout")) {
-        int userTag = 0;
-        switch (attr.getLayout()) {
-        case mlir::pto::Layout::ND: userTag = 0; break;
-        case mlir::pto::Layout::DN: userTag = 1; break;
-        case mlir::pto::Layout::NZ: userTag = 2; break;
-        }
-        if (userTag != layoutTag) {
-            return rewriter.notifyMatchFailure(
-                op, "layout mismatch: user-specified layout=" +
-                        std::string(attr.getLayout() == mlir::pto::Layout::ND ? "ND" :
-                                    attr.getLayout() == mlir::pto::Layout::DN ? "DN" : "NZ") +
-                        " but inferred layout tag=" + std::to_string(layoutTag));
-        }
-        layoutTag = userTag; // align with user
-    }
-    // 生成枚举字符串
-    std::string layoutEnum = "pto::Layout::ND";
-    if (layoutTag == 1)
+      }
+
+      if (layoutTag == 1)
         layoutEnum = "pto::Layout::DN";
-    else if (layoutTag == 2)
+      else if (layoutTag == 2)
         layoutEnum = "pto::Layout::NZ";
+    }
     // GlobalTensor takes a Layout non-type template parameter; directly use the
     // enum constant.
 
@@ -2718,37 +2766,45 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   rewriter.create<emitc::VerbatimOp>(
       loc, "using " + strideTypeName + " = pto::Stride<" + strideParams + ">;");
 
-  // Infer layout (same rules as Subview lowering)
-  SmallVector<int64_t, 5> shapeInt(5, -1), strideInt(5, -1);
-  for (int i = 0; i < 5; ++i) {
-    (void)llvm::to_integer(finalShape[i], shapeInt[i]);
-    (void)llvm::to_integer(finalStride[i], strideInt[i]);
-  }
-  int layoutTag = 0; // ND
-  int elemBytes = 4;
-  if (elemTypeStr.find("half") != std::string::npos ||
-      elemTypeStr.find("bf16") != std::string::npos)
-    elemBytes = 2;
-  else if (elemTypeStr.find("double") != std::string::npos)
-    elemBytes = 8;
-  if (shapeInt[2] == 16 && shapeInt[2] * shapeInt[3] * elemBytes == 512 &&
-      strideInt[4] == 1 && strideInt[3] == shapeInt[4]) {
-    layoutTag = 2; // NZ
-  } else {
-    bool isRow = strideInt[4] == 1;
-    for (int i = 3; i >= 0; --i)
-      isRow &= (strideInt[i] == strideInt[i + 1] * shapeInt[i + 1]);
-    bool isCol = strideInt[0] == 1;
-    for (int i = 0; i < 4; ++i)
-      isCol &= (strideInt[i + 1] == strideInt[i] * shapeInt[i]);
-    if (isCol) layoutTag = 1; // DN
-    else layoutTag = isRow ? 0 : 0; // fallback ND
-  }
+  // Layout: prefer the attribute from InferPTOLayout; only fall back to local
+  // inference when the pass is disabled.
   std::string layoutEnum = "pto::Layout::ND";
-  if (layoutTag == 1)
-    layoutEnum = "pto::Layout::DN";
-  else if (layoutTag == 2)
-    layoutEnum = "pto::Layout::NZ";
+  bool hasLayoutAttr = false;
+  if (auto layout = resolveLayoutForGlobalTensor(anchor, basePtr)) {
+    layoutEnum = layoutToEmitCString(*layout);
+    hasLayoutAttr = true;
+  }
+  if (!hasLayoutAttr) {
+    SmallVector<int64_t, 5> shapeInt(5, -1), strideInt(5, -1);
+    for (int i = 0; i < 5; ++i) {
+      (void)llvm::to_integer(finalShape[i], shapeInt[i]);
+      (void)llvm::to_integer(finalStride[i], strideInt[i]);
+    }
+    int layoutTag = 0; // ND
+    int elemBytes = 4;
+    if (elemTypeStr.find("half") != std::string::npos ||
+        elemTypeStr.find("bf16") != std::string::npos)
+      elemBytes = 2;
+    else if (elemTypeStr.find("double") != std::string::npos)
+      elemBytes = 8;
+    if (shapeInt[2] == 16 && shapeInt[2] * shapeInt[3] * elemBytes == 512 &&
+        strideInt[4] == 1 && strideInt[3] == shapeInt[4]) {
+      layoutTag = 2; // NZ
+    } else {
+      bool isRow = strideInt[4] == 1;
+      for (int i = 3; i >= 0; --i)
+        isRow &= (strideInt[i] == strideInt[i + 1] * shapeInt[i + 1]);
+      bool isCol = strideInt[0] == 1;
+      for (int i = 0; i < 4; ++i)
+        isCol &= (strideInt[i + 1] == strideInt[i] * shapeInt[i]);
+      if (isCol) layoutTag = 1; // DN
+      else layoutTag = isRow ? 0 : 0; // fallback ND
+    }
+    if (layoutTag == 1)
+      layoutEnum = "pto::Layout::DN";
+    else if (layoutTag == 2)
+      layoutEnum = "pto::Layout::NZ";
+  }
   std::string layoutConstName = gtTypeName + "_layout";
   rewriter.create<emitc::VerbatimOp>(
       loc, "constexpr pto::Layout " + layoutConstName + " = " + layoutEnum + ";");
@@ -3789,10 +3845,10 @@ struct PTOSetValToSETVAL : public OpConversionPattern<pto::TSetValOp> {
     return success();
   }
 };
-struct PTOGetValToGETVAL : public OpConversionPattern<pto::GetValDpsOp> {
-  using OpConversionPattern<pto::GetValDpsOp>::OpConversionPattern;
+struct PTOGetValToGETVAL : public OpConversionPattern<pto::TGetValOp> {
+  using OpConversionPattern<pto::TGetValOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::GetValDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TGetValOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value src = peelUnrealized(adaptor.getSrc());
 
@@ -5443,31 +5499,6 @@ struct PTORemSToEmitC : public OpConversionPattern<pto::TRemSOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// PTOConvert.cpp  (add lowering + patterns.add for TRESHAPE DPS/memref op)
-//===----------------------------------------------------------------------===//
-
-struct PTOReshapeToEmitC : public OpConversionPattern<pto::TReshapeOp> {
-  using OpConversionPattern<pto::TReshapeOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::TReshapeOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value src = peelUnrealized(adaptor.getSrc());
-    Value dst = peelUnrealized(adaptor.getDst());
-
-    SmallVector<Value, 2> operands{dst, src};
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TRESHAPE",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/operands);
-
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-//===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TROWEXPAND DPS/memref op)
 //===----------------------------------------------------------------------===//
 
@@ -6317,48 +6348,309 @@ struct PTOSYNCToEmitC : public OpConversionPattern<pto::TSyncOp> {
 struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
   using OpConversionPattern::OpConversionPattern;
 
+  static bool getIndexConst(Value v, int64_t &out) {
+    if (!v)
+      return false;
+    if (auto cst = v.getDefiningOp<arith::ConstantOp>()) {
+      if (auto ia = dyn_cast<IntegerAttr>(cst.getValue())) {
+        out = ia.getValue().getSExtValue();
+        return true;
+      }
+    }
+    return false;
+  }
+
   LogicalResult matchAndRewrite(pto::BindTileOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    // 获取 Config
+    auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
     auto configAttr = op.getConfigAttr();
+    auto viewSemantics = op->getAttrOfType<StringAttr>("pto.view_semantics");
 
-    // [关键修复] 回溯寻找原始物理地址
-    // BindTile 的输入 (op.getSource()) 通常是由 alloc -> pointer_cast 产生的。
-    // 我们需要那个 pointer_cast 使用的原始整数地址 (I64)，而不是中间的 MemRef。
-    
+    auto peelAllCasts = [](Value v) {
+      while (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
+        v = castOp.getOperand(0);
+      if (auto castOp = v.getDefiningOp<emitc::CastOp>())
+        v = castOp.getOperand();
+      return v;
+    };
+    auto isTileLike = [](Value v) -> bool {
+      auto ot = dyn_cast<emitc::OpaqueType>(v.getType());
+      if (!ot)
+        return false;
+      StringRef s = ot.getValue();
+      return s.contains("Tile<") || s.contains("ConvTile<");
+    };
+
+    auto buildTileValue = [&]() -> FailureOr<Value> {
+      auto resMrTy = dyn_cast<MemRefType>(op.getType());
+      if (!resMrTy)
+        return failure();
+
+      const char *roleTok = "TileType::Vec";
+      if (auto asAttr =
+              dyn_cast_or_null<pto::AddressSpaceAttr>(resMrTy.getMemorySpace())) {
+        switch (asAttr.getAddressSpace()) {
+        case pto::AddressSpace::VEC:
+          roleTok = "TileType::Vec";
+          break;
+        case pto::AddressSpace::MAT:
+          roleTok = "TileType::Mat";
+          break;
+        case pto::AddressSpace::LEFT:
+          roleTok = "TileType::Left";
+          break;
+        case pto::AddressSpace::RIGHT:
+          roleTok = "TileType::Right";
+          break;
+        case pto::AddressSpace::ACC:
+          roleTok = "TileType::Acc";
+          break;
+        case pto::AddressSpace::BIAS:
+          roleTok = "TileType::Bias";
+          break;
+        case pto::AddressSpace::SCALING:
+          roleTok = "TileType::Scaling";
+          break;
+        case pto::AddressSpace::GM:
+        case pto::AddressSpace::Zero:
+          roleTok = "TileType::Vec";
+          break;
+        }
+      }
+
+      Type elemTy = resMrTy.getElementType();
+      Type emitElemTy = getTypeConverter()->convertType(elemTy);
+      if (!emitElemTy)
+        return failure();
+      auto emitElemOpaque = dyn_cast<emitc::OpaqueType>(emitElemTy);
+      if (!emitElemOpaque)
+        return failure();
+      std::string elemTypeStr = emitElemOpaque.getValue().str();
+
+      if (resMrTy.getRank() < 2)
+        return failure();
+      int64_t rows = resMrTy.getDimSize(0);
+      int64_t cols = resMrTy.getDimSize(1);
+      if (rows == ShapedType::kDynamic || cols == ShapedType::kDynamic)
+        return failure();
+
+      std::string blTok = "BLayout::RowMajor";
+      if (auto blAttr = dyn_cast<BLayoutAttr>(configAttr.getBLayout())) {
+        if (static_cast<int32_t>(blAttr.getValue()) == 1)
+          blTok = "BLayout::ColMajor";
+      }
+
+      std::string slTok = "SLayout::NoneBox";
+      if (auto slAttr = dyn_cast<SLayoutAttr>(configAttr.getSLayout())) {
+        int32_t slVal = static_cast<int32_t>(slAttr.getValue());
+        slTok = (slVal == 1) ? "SLayout::RowMajor"
+                             : (slVal == 2) ? "SLayout::ColMajor"
+                                            : "SLayout::NoneBox";
+      }
+
+      int32_t fractal = 512;
+      if (auto frAttr = dyn_cast<IntegerAttr>(configAttr.getSFractalSize()))
+        fractal = frAttr.getInt();
+
+      std::string padTok = "PadValue::Null";
+      if (auto padAttr = dyn_cast<PadValueAttr>(configAttr.getPad())) {
+        switch (static_cast<int32_t>(padAttr.getValue())) {
+        case 1:
+          padTok = "PadValue::Zero";
+          break;
+        case 2:
+          padTok = "PadValue::Max";
+          break;
+        case 3:
+          padTok = "PadValue::Min";
+          break;
+        default:
+          padTok = "PadValue::Null";
+          break;
+        }
+      }
+
+      std::string vrowTok, vcolTok;
+      bool useConstructor = false;
+      bool rowIsDynamic = false;
+      bool colIsDynamic = false;
+      SmallVector<Value> constructorArgs;
+
+      Value vRow = op.getValidRow();
+      Value vCol = op.getValidCol();
+      Value vRowEmitC = adaptor.getValidRow();
+      Value vColEmitC = adaptor.getValidCol();
+      int64_t cRow = 0, cCol = 0;
+
+      if (vRow && getIndexConst(vRow, cRow)) {
+        vrowTok = std::to_string(cRow);
+      } else if (vRow) {
+        vrowTok = "-1";
+        rowIsDynamic = true;
+        useConstructor = true;
+      } else {
+        vrowTok = std::to_string(rows);
+      }
+
+      if (vCol && getIndexConst(vCol, cCol)) {
+        vcolTok = std::to_string(cCol);
+      } else if (vCol) {
+        vcolTok = "-1";
+        colIsDynamic = true;
+        useConstructor = true;
+      } else {
+        vcolTok = std::to_string(cols);
+      }
+
+      if (useConstructor) {
+        if (rowIsDynamic && vRowEmitC)
+          constructorArgs.push_back(vRowEmitC);
+        if (colIsDynamic && vColEmitC)
+          constructorArgs.push_back(vColEmitC);
+      }
+
+      std::string tileTypeStr = std::string("Tile<") + roleTok + ", " +
+                                elemTypeStr + ", " + std::to_string(rows) +
+                                ", " + std::to_string(cols) + ", " + blTok +
+                                ", " + vrowTok + ", " + vcolTok + ", " + slTok +
+                                ", " + std::to_string(fractal) + ", " + padTok +
+                                ">";
+
+      auto tileType = emitc::OpaqueType::get(ctx, tileTypeStr);
+      if (useConstructor) {
+        return rewriter
+            .create<emitc::CallOpaqueOp>(loc, tileType, tileTypeStr, ArrayAttr{},
+                                         ArrayAttr{}, ValueRange(constructorArgs))
+            .getResult(0);
+      }
+
+      return rewriter
+          .create<emitc::VariableOp>(loc, tileType, emitc::OpaqueAttr::get(ctx, ""))
+          .getResult();
+    };
+
+    auto emitElemTypeToString = [&](Type elemTy) -> std::string {
+      if (elemTy.isF16())
+        return "half";
+      if (elemTy.isBF16())
+        return "bfloat16_t";
+      if (elemTy.isF32())
+        return "float";
+      if (elemTy.isF64())
+        return "double";
+      if (elemTy.isInteger(8)) {
+        if (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
+          return "int8_t";
+        return "uint8_t";
+      }
+      if (elemTy.isInteger(16)) {
+        if (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
+          return "int16_t";
+        return "uint16_t";
+      }
+      if (elemTy.isInteger(32)) {
+        if (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
+          return "int32_t";
+        return "uint32_t";
+      }
+      if (elemTy.isInteger(64)) {
+        return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
+      }
+      return "float";
+    };
+
+    auto buildIntegralAddress = [&](Value sourceValue) -> FailureOr<Value> {
+      auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+      auto rcU64 =
+          rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+
+      Value rawPtr = sourceValue;
+      if (auto ot = dyn_cast<emitc::OpaqueType>(sourceValue.getType())) {
+        StringRef tyStr = ot.getValue();
+        if (tyStr.contains("Tile<") || tyStr.contains("ConvTile<")) {
+          auto srcMrTy = dyn_cast<MemRefType>(op.getSource().getType());
+          if (!srcMrTy)
+            return failure();
+          std::string elemTok = emitElemTypeToString(srcMrTy.getElementType());
+          pto::AddressSpace as = pto::AddressSpace::GM;
+          if (auto asAttr =
+                  dyn_cast_or_null<pto::AddressSpaceAttr>(srcMrTy.getMemorySpace()))
+            as = asAttr.getAddressSpace();
+          std::string rawPtrTok =
+              std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
+          auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
+          rawPtr = rewriter
+                       .create<emitc::CallOpaqueOp>(
+                           loc, rawPtrTy, "PTOAS__TILE_DATA", ArrayAttr{},
+                           ArrayAttr{}, ValueRange{sourceValue})
+                       .getResult(0);
+        }
+      }
+
+      if (isa<emitc::PointerType>(rawPtr.getType()) ||
+          (isa<emitc::OpaqueType>(rawPtr.getType()) &&
+           cast<emitc::OpaqueType>(rawPtr.getType()).getValue().ends_with("*"))) {
+        return rewriter
+            .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                         ArrayAttr{}, rcU64, ValueRange{rawPtr})
+            .getResult(0);
+      }
+
+      if (rawPtr.getType() == u64Ty)
+        return rawPtr;
+      return rewriter.create<emitc::CastOp>(loc, u64Ty, rawPtr).getResult();
+    };
+
+    Value tileCandidate = peelAllCasts(adaptor.getSource());
+    if (viewSemantics && viewSemantics.getValue() == "bitcast" &&
+        isTileLike(tileCandidate)) {
+      FailureOr<Value> dstTile = buildTileValue();
+      if (failed(dstTile))
+        return failure();
+      FailureOr<Value> addr = buildIntegralAddress(tileCandidate);
+      if (failed(addr))
+        return failure();
+
+      rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                           ArrayAttr{}, ArrayAttr{},
+                                           ValueRange{*dstTile, *addr});
+      rewriter.replaceOp(op, *dstTile);
+      return success();
+    }
+
+    if (viewSemantics && viewSemantics.getValue() == "treshape" &&
+        isTileLike(tileCandidate)) {
+      FailureOr<Value> dstTile = buildTileValue();
+      if (failed(dstTile))
+        return failure();
+
+      rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TRESHAPE",
+                                           ArrayAttr{}, ArrayAttr{},
+                                           ValueRange{*dstTile, tileCandidate});
+      rewriter.replaceOp(op, *dstTile);
+      return success();
+    }
+
     SmallVector<Value> physAddrs;
     Value source = op.getSource();
 
-    // 1. 尝试跳过可能存在的 Cast
-    while (auto castOp = source.getDefiningOp<UnrealizedConversionCastOp>()) {
+    while (auto castOp = source.getDefiningOp<UnrealizedConversionCastOp>())
       source = castOp.getOperand(0);
-    }
 
-    // 2. 检查定义该 Value 的 Op 是否为 PointerCastOp
     if (auto upstreamCast = source.getDefiningOp<pto::PointerCastOp>()) {
-      // 找到了！窃取它的输入操作数 (即原始 offset/address)
       auto upstreamOperands = upstreamCast.getAddrs();
       physAddrs.append(upstreamOperands.begin(), upstreamOperands.end());
     } else {
-      // Fallback: 如果追溯不到 PointerCast (例如源头是函数参数 Function Argument)，
-      // 那么只能使用当前的 source (此时它是指针类型)。
-      // TASSIGN(tile, ptr) 通常也是合法的。
       physAddrs.push_back(adaptor.getSource());
     }
 
     Value vRow = op.getValidRow();
     Value vCol = op.getValidCol();
 
-    // 创建 PointerCastOp
-    // ODS 定义要求：ValueRange addrs, Value row, Value col, Attribute config
     rewriter.replaceOpWithNewOp<pto::PointerCastOp>(
-        op, 
-        op.getType(), 
-        physAddrs,     
-        vRow ? vRow : Value(), // 如果为空，传空 Value()，Builder 会处理
-        vCol ? vCol : Value(),          
-        configAttr
-    );
+        op, op.getType(), physAddrs, vRow ? vRow : Value(),
+        vCol ? vCol : Value(), configAttr);
 
     return success();
   }
@@ -6957,7 +7249,6 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTODivSToEmitC>(typeConverter, ctx);
   patterns.add<PTOTDivSToEmitC>(typeConverter, ctx);
   patterns.add<PTORemToEmitC>(typeConverter, ctx);
-  patterns.add<PTOReshapeToEmitC>(typeConverter, ctx);
   patterns.add<PTORecipToEmitC>(typeConverter, ctx);
   patterns.add<PTOMulsToEmitC>(typeConverter, ctx);
   patterns.add<PTOExpToEmitC>(typeConverter, ctx);

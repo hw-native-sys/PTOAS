@@ -1,0 +1,32 @@
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @nested_loop_sync(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    %c32 = arith.constant 32 : index
+    
+    // [Fix] 使用 2D 形状 (32x32 = 1024 elements)
+    // 这样 strides 和 offsets 都是 2 个元素，避免越界
+    %src = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %dst = pto.make_tensor_view %arg1, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %src_pt = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    %dst_pt = pto.partition_view %dst, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+
+    // [Fix] Tile 也是 2D (32x32)
+    %buf = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    // Outer Loop
+    scf.for %i = %c0 to %c10 step %c1 {
+      // Producer: Load GM -> UB (Write %buf)
+      // 这里的 Write 必须等待上一轮 Inner Loop 的 Read 完成
+      pto.tload ins(%src_pt : !pto.partition_tensor_view<32x32xf32>) outs(%buf : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+      // Inner Loop
+      scf.for %j = %c0 to %c10 step %c1 {
+        // Consumer: Store UB -> GM (Read %buf)
+        pto.tstore ins(%buf : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst_pt : !pto.partition_tensor_view<32x32xf32>)
+      }
+    }
+    return
+  }
+}

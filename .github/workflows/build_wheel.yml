@@ -5,6 +5,9 @@ on:
     tags-ignore:
       - '**'
   pull_request:
+  # Nightly build & publish (UTC time).
+  schedule:
+    - cron: "10 17 * * *"
   workflow_dispatch:
   release:
     types: [published]
@@ -182,11 +185,39 @@ jobs:
 
   upload_release_assets:
     name: Upload release assets
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'schedule'
     needs: build_wheel
     runs-on: ubuntu-latest
 
     steps:
+      - name: Compute release metadata
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+            echo "RELEASE_NAME=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+            echo "RELEASE_PRERELEASE=false" >> "$GITHUB_ENV"
+            echo "RELEASE_MAKE_LATEST=true" >> "$GITHUB_ENV"
+            {
+              echo "RELEASE_BODY<<EOF"
+              echo "Published release assets for ${GITHUB_REF_NAME}."
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=nightly" >> "$GITHUB_ENV"
+            echo "RELEASE_NAME=Nightly Build" >> "$GITHUB_ENV"
+            echo "RELEASE_PRERELEASE=true" >> "$GITHUB_ENV"
+            echo "RELEASE_MAKE_LATEST=false" >> "$GITHUB_ENV"
+            {
+              echo "RELEASE_BODY<<EOF"
+              echo "Automated nightly build."
+              echo ""
+              echo "- Commit: ${GITHUB_SHA}"
+              echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo "- Date (UTC): $(date -u +'%Y-%m-%d %H:%M:%S')"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
       - name: Download all wheel artifacts
         uses: actions/download-artifact@v4
         with:
@@ -217,6 +248,13 @@ jobs:
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ env.RELEASE_PRERELEASE }}
+          make_latest: ${{ env.RELEASE_MAKE_LATEST }}
+          body: ${{ env.RELEASE_BODY }}
+          overwrite_files: true
           files: |
             release-artifacts/*.whl
             release-artifacts/*.tar.gz

@@ -40,6 +40,18 @@ pto-project/
 
 ⚠️ **重要提示**：本项目严格依赖 **LLVM llvmorg-19.1.7** 版本。
 
+### 3.x 预编译安装 (Prebuilt Install, Linux)
+
+如果你只是想快速使用 `ptoas`（不编译 LLVM / 不需要本地 Python Binding），可以直接安装 Release 里的预编译包：
+
+```bash
+# Install latest
+curl -sSL https://raw.githubusercontent.com/zhangstevenunity/PTOAS/main/install.sh | bash
+
+# Install a specific version
+curl -sSL https://raw.githubusercontent.com/zhangstevenunity/PTOAS/main/install.sh | bash -s -- --tag v0.3
+```
+
 ### 3.0 环境变量配置 (Configuration)
 
 为了简化构建流程，**请首先根据您的实际环境修改并运行以下命令**。后续步骤将直接引用这些变量。

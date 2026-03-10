@@ -100,7 +100,7 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
 static llvm::cl::opt<bool> disableInferLayout(
     "disable-infer-layout",
     llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
-    llvm::cl::init(true)); // 默认关闭，需显式开启
+    llvm::cl::init(false));
 
 static llvm::cl::opt<bool> emitAddPtrTrace(
     "emit-addptr-trace",
@@ -640,9 +640,9 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   
-  pm.addPass(pto::createPTOViewToMemrefPass());
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
+  pm.addPass(pto::createPTOViewToMemrefPass());
   // bufferizationPipeline(pm);
   //pm.addPass(createInferPTOMemScopePass());
 
@@ -672,14 +672,17 @@ int main(int argc, char **argv) {
   std::string arch = ptoTargetArch;
   for (char &c : arch)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (arch == "a3") {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
-  } else if (arch == "a5") {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
-  } else {
+  if (arch != "a3" && arch != "a5") {
     llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
                  << "'. Expected 'a3' or 'a5'.\n";
     return 1;
+  }
+  module->getOperation()->setAttr("pto.target_arch",
+                                  mlir::StringAttr::get(&context, arch));
+  if (arch == "a3") {
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
+  } else {
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
   }
   pm.addPass(emitc::createFormExpressionsPass());
   pm.addPass(mlir::createCSEPass());

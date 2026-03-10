@@ -218,40 +218,6 @@ static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
   return mlir::Type();
 }
 
-
-ParseResult LoadOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand src;
-  if (parser.parseOperand(src))
-    return failure();
-
-  if (parser.parseOptionalAttrDict(result.attributes))
-    return failure();
-
-  if (parser.parseColon())
-    return failure();
-
-  Type srcTy = parsePTOTypeAllowNoBang(parser);
-  if (!srcTy) return parser.emitError(parser.getCurrentLocation(), "failed to parse source type");
-
-  if (parser.parseArrow()) return failure();
-
-  Type resTy = parsePTOTypeAllowNoBang(parser);
-  if (!resTy) return parser.emitError(parser.getCurrentLocation(), "failed to parse result type");
-
-  if (parser.resolveOperand(src, srcTy, result.operands))
-    return failure();
-
-  result.addTypes(resTy);
-  return success();
-}
-
-void LoadOp::print(OpAsmPrinter &p) {
-  p << " " << getSrc();
-
-  p.printOptionalAttrDict((*this)->getAttrs());
-  p << " : " << getSrc().getType() << " -> " << getResult().getType();
-}
-
 mlir::Type TensorViewType::parse(::mlir::AsmParser &parser) {
   SmallVector<int64_t, 4> shape;
   Type elementType;
@@ -262,47 +228,6 @@ mlir::Type TensorViewType::parse(::mlir::AsmParser &parser) {
 
 void TensorViewType::print(::mlir::AsmPrinter &printer) const {
   printShapeAndElem(printer, getShape(), getElementType());
-}
-
-//===----------------------------------------------------------------------===//
-// pto.store custom asm to support `-> ()` exactly (IR text unchanged)
-//===----------------------------------------------------------------------===//
-
-ParseResult StoreOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand dst, src;
-  Type dstTy, srcTy;
-
-  // %dst, %src
-  if (parser.parseOperand(dst) || parser.parseComma() || parser.parseOperand(src))
-    return failure();
-
-  // attr-dict
-  if (parser.parseOptionalAttrDict(result.attributes))
-    return failure();
-
-  // : (type(dst), type(src)) -> ()
-  if (parser.parseColon() || parser.parseLParen())
-    return failure();
-
-  dstTy = parsePTOTypeAllowNoBang(parser);
-  if (!dstTy) return parser.emitError(parser.getCurrentLocation(), "failed to parse dst type");
-  if (parser.parseComma()) return failure();
-  srcTy = parsePTOTypeAllowNoBang(parser);
-  if (!srcTy) return parser.emitError(parser.getCurrentLocation(), "failed to parse src type");
-  if (parser.parseRParen()) return failure();
-  if (parser.parseArrow() || parser.parseLParen() || parser.parseRParen()) return failure();
-
-  if (parser.resolveOperand(dst, dstTy, result.operands)) return failure();
-  if (parser.resolveOperand(src, srcTy, result.operands)) return failure();
-
-  return success();
-}
-
-void StoreOp::print(OpAsmPrinter &p) {
-  p << " " << getDst() << ", " << getSrc();
-
-  p.printOptionalAttrDict((*this)->getAttrs());
-  p << " : (" << getDst().getType() << ", " << getSrc().getType() << ") -> ()";
 }
 
 //===----------------------------------------------------------------------===//
@@ -523,7 +448,7 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
     return failure();
 
   // strides = [ ... ]
-  if (parser.parseKeyword("strides") || parser.parseEqual() ||
+  if (parser.parseComma() || parser.parseKeyword("strides") || parser.parseEqual() ||
       parser.parseLSquare() ||
       parser.parseOperandList(strideOps) ||
       parser.parseRSquare())
@@ -570,14 +495,14 @@ void mlir::pto::MakeTensorViewOp::print(OpAsmPrinter &p) {
 
   p << ", shape = [";
   p.printOperands(getShape());
-  p << "] ";
+  p << "]";
 
-  p << "strides = [";
+  p << ", strides = [";
   p.printOperands(getStrides());
   p << "]";
 
   p.printOptionalAttrDict((*this)->getAttrs(),
-                        /*elidedAttrs=*/{"operandSegmentSizes", "layout"});
+                        /*elidedAttrs=*/{"operandSegmentSizes"});
 
   p << " : " << getResult().getType();
 }
@@ -822,18 +747,7 @@ static LogicalResult verifyMemrefTensorStore(Operation *op, Value dst, Value src
   return success();
 }
 
-LogicalResult LoadOp::verify() {
-  Type srcType = getSrc().getType();
-  int64_t rank = getPTOTypeRank(srcType);
-
-  if (rank == -1) {
-    return emitOpError("source type ") << srcType << " does not support PTO type";
-  }
-
-  return success();
-}
-
- LogicalResult AllocTileOp::verify() {
+LogicalResult AllocTileOp::verify() {
   auto ty = getResult().getType(); // TileBufType
 
   // op 上有没有传 operands
@@ -910,59 +824,6 @@ LogicalResult mlir::pto::SetFFTsOp::verify() {
     return emitOpError("expects element type i64 (or i8)");
 
   return mlir::success();
-}
-LogicalResult mlir::pto::LoadOp::inferReturnTypes(
-    MLIRContext *context, std::optional<Location> location,
-    ValueRange operands, DictionaryAttr attributes,
-    OpaqueProperties properties, RegionRange regions,
-    SmallVectorImpl<Type> &inferredReturnTypes) {
-  (void)location;
-  (void)attributes;
-  (void)properties;
-  (void)regions;
-
-  if (operands.size() != 1)
-    return failure();
-
-  Type srcTy = operands[0].getType();
-
-  if (auto mr = dyn_cast<MemRefType>(srcTy)) {
-    SmallVector<int64_t, 4> shape(mr.getRank(), ShapedType::kDynamic);
-    for (int64_t i = 0; i < mr.getRank(); ++i)
-      shape[i] = mr.getDimSize(i);
-    inferredReturnTypes.push_back(
-        RankedTensorType::get(shape, mr.getElementType()));
-    return success();
-  }
-
-  if (auto tv = dyn_cast<mlir::pto::PartitionTensorViewType>(srcTy)) {
-    SmallVector<int64_t, 4> shape;
-    shape.append(tv.getShape().begin(), tv.getShape().end());
-    inferredReturnTypes.push_back(
-        mlir::pto::TileType::get(context, shape, tv.getElementType()));
-    return success();
-  }
-
-  return failure();
-}
-
-
-LogicalResult StoreOp::verify() {
-  if (getOperation()->getNumResults() != 0)
-    return emitOpError("expects 0 results");
-
-  if (failed(verifyMemrefTensorStore(getOperation(), getDst(), getSrc())))
-    return failure();
-
-
-  Type dstType = getDst().getType();
-  int64_t rank = getPTOTypeRank(dstType);
-
-  if (rank == -1) {
-    return emitOpError("destination type ") << dstType << " does not support PTO type";
-  }
-
-  return success();
 }
 
 LogicalResult TStoreOp::verify() {
@@ -1150,8 +1011,8 @@ LogicalResult pto::TAddSOp::verify() {
     return emitOpError("src and dst shape must match");
 
   Type scalarTy = getScalar().getType();
-  if (scalarTy != elem)
-    return emitOpError("scalar type must equal src/dst element type");
+  if (!scalarTy.isa<IndexType, IntegerType, FloatType>())
+    return emitOpError("scalar must be a scalar type (index/integer/float)");
 
   auto isOK = [&](Type t) -> bool {
     if (auto it = t.dyn_cast<IntegerType>()) {
@@ -2071,19 +1932,6 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
 
   return success();
 }
-// ---- GetValDpsOp ----
-LogicalResult GetValDpsOp::verify() {
-  auto memTy = dyn_cast<MemRefType>(getSrc().getType());
-  if (!memTy)
-    return emitOpError("expects src to be a tilebuf type");
-
-  // Optional: if dst is a scalar type, require it matches tilebuf element type.
-  Type elemTy = memTy.getElementType();
-  if (getDst().getType() != elemTy)
-    return emitOpError("expects dst type to match src element type");
-
-  return success();
-}
 
 // ---- LoadScalarOp ----
 LogicalResult LoadScalarOp::verify() {
@@ -2191,10 +2039,27 @@ LogicalResult TSetValOp::verify() {
 }
 // ---- TGetValOp ----
 LogicalResult TGetValOp::verify() {
-  if (auto shaped = dyn_cast<ShapedType>(getSrc().getType())) {
-    if (shaped.getElementType() != getDst().getType())
-      return emitOpError("expects dst type to match src element type");
+  Type srcTy = getSrc().getType();
+  if (!srcTy.isa<pto::TileBufType, MemRefType>())
+    return emitOpError("expects src to be tile_buf or memref type");
+
+  // Memory space must be vec (Ascend does not support getval from MAT etc.).
+  Attribute memSpace =
+      isa<pto::TileBufType>(srcTy)
+          ? cast<pto::TileBufType>(srcTy).getMemorySpace()
+          : cast<MemRefType>(srcTy).getMemorySpace();
+  auto addrSpaceAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(memSpace);
+  if (!addrSpaceAttr ||
+      addrSpaceAttr.getAddressSpace() != pto::AddressSpace::VEC) {
+    if (addrSpaceAttr &&
+        addrSpaceAttr.getAddressSpace() == pto::AddressSpace::MAT)
+      return emitOpError(
+          "Ascend hardware does not support reading from Mat tile_buf to Scalar unit");
+    return emitOpError("expects src memory space to be vec");
   }
+
+  if (getElemTy(srcTy) != getDst().getType())
+    return emitOpError("expects dst type to match src element type");
   return success();
 }
 
@@ -2750,15 +2615,125 @@ mlir::LogicalResult mlir::pto::TRemSOp::verify() {
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add verifier for TRESHAPE DPS/tilebuf op)
+// PTO.cpp  (verifiers for SSA treshape / bitcast)
 //===----------------------------------------------------------------------===//
+
+static std::optional<int64_t> getStaticNumElements(ArrayRef<int64_t> shape) {
+  int64_t numel = 1;
+  for (int64_t d : shape) {
+    if (d == ShapedType::kDynamic)
+      return std::nullopt;
+    if (d < 0)
+      return std::nullopt;
+    numel *= d;
+  }
+  return numel;
+}
+
+static std::optional<int64_t> getElemBytes(Type elemTy) {
+  if (!elemTy)
+    return std::nullopt;
+  if (auto ft = dyn_cast<FloatType>(elemTy)) {
+    if (ft.isF16() || ft.isBF16())
+      return 2;
+    if (ft.isF32())
+      return 4;
+    if (ft.isF64())
+      return 8;
+    return std::nullopt;
+  }
+  if (auto it = dyn_cast<IntegerType>(elemTy)) {
+    int64_t bits = it.getWidth();
+    if (bits <= 0)
+      return std::nullopt;
+    return std::max<int64_t>(1, bits / 8);
+  }
+  return std::nullopt;
+}
+
+static bool isTileBufOrMemref(Type ty) {
+  return ty.isa<MemRefType, pto::TileBufType>();
+}
 
 mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   Type ts = getSrc().getType();
-  Type td = getDst().getType();
-  if (!isPTOShapedLike(ts) || !isPTOShapedLike(td))
-    return emitOpError("expects src/dst to be memref/tensor/tile_buf/tile_view types");
-  return mlir::success();
+  Type tr = getResult().getType();
+  if (!isTileBufOrMemref(ts) || !isTileBufOrMemref(tr))
+    return emitOpError("expects src/result to be tile_buf or memref types");
+
+  // Memory space must match (treshape is an aliasing view).
+  Attribute srcSpace;
+  Attribute dstSpace;
+  if (auto tb = dyn_cast<pto::TileBufType>(ts))
+    srcSpace = tb.getMemorySpace();
+  else
+    srcSpace = cast<MemRefType>(ts).getMemorySpace();
+  if (auto tb = dyn_cast<pto::TileBufType>(tr))
+    dstSpace = tb.getMemorySpace();
+  else
+    dstSpace = cast<MemRefType>(tr).getMemorySpace();
+  if (srcSpace != dstSpace)
+    return emitOpError("expects src/result to have the same memorySpace");
+
+  // Reshape only changes shape/layout/config; dtype changes are modeled by
+  // pto.bitcast.
+  Type es = getElemTy(ts);
+  Type er = getElemTy(tr);
+  if (!es || !er)
+    return emitOpError("failed to get element type for operands");
+  if (es != er)
+    return emitOpError("expects src/result to have the same element type; use pto.bitcast for dtype changes");
+
+  auto srcNumel = getStaticNumElements(getShapeVec(ts));
+  auto dstNumel = getStaticNumElements(getShapeVec(tr));
+  if (!srcNumel.has_value() || !dstNumel.has_value())
+    return emitOpError("expects static shapes for treshape");
+  if (srcNumel.value() != dstNumel.value())
+    return emitOpError("expects src/result to have the same total element count");
+
+  return success();
+}
+
+mlir::LogicalResult mlir::pto::BitcastOp::verify() {
+  auto srcTy = llvm::dyn_cast<TileBufType>(getSrc().getType());
+  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError("expects tile_buf src and tile_buf result");
+
+  if (srcTy.getMemorySpace() != dstTy.getMemorySpace())
+    return emitOpError("expects src/result to have the same memorySpace");
+
+  if (srcTy.getElementType() == dstTy.getElementType())
+    return emitOpError(
+        "expects src/result to have different element types; use "
+        "pto.treshape for shape/config changes");
+
+  if (srcTy.getShape() != dstTy.getShape())
+    return emitOpError("expects src/result to have the same shape; use pto.treshape for shape changes");
+
+  if (srcTy.getValidShape() != dstTy.getValidShape())
+    return emitOpError("expects src/result to have the same validShape");
+
+  auto srcCfg = srcTy.getConfigAttr();
+  auto dstCfg = dstTy.getConfigAttr();
+  if (srcCfg != dstCfg)
+    return emitOpError("expects src/result to have the same tile config");
+
+  auto numel = getStaticNumElements(srcTy.getShape());
+  if (!numel.has_value())
+    return emitOpError("expects static shapes for bitcast");
+
+  auto srcBytes = getElemBytes(srcTy.getElementType());
+  auto dstBytes = getElemBytes(dstTy.getElementType());
+  if (!srcBytes.has_value() || !dstBytes.has_value())
+    return emitOpError("unsupported element type for bitcast");
+
+  int64_t srcTotalBytes = numel.value() * srcBytes.value();
+  int64_t dstTotalBytes = numel.value() * dstBytes.value();
+  if (dstTotalBytes > srcTotalBytes)
+    return emitOpError("bitcast result requires more bytes than source storage");
+
+  return success();
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TROWEXPAND DPS/tilebuf op)
@@ -3185,6 +3160,10 @@ mlir::LogicalResult mlir::pto::TSubSOp::verify() {
   if (getElemTy(srcTy) != getElemTy(dstTy))
     return emitOpError() << "expects src and dst to have the same element type";
 
+  Type scalarTy = getScalar().getType();
+  if (!scalarTy.isa<IndexType, IntegerType, FloatType>())
+    return emitOpError("scalar must be a scalar type (index/integer/float)");
+
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
@@ -3280,9 +3259,10 @@ mlir::LogicalResult mlir::pto::TSyncOp::verify() {
 
 mlir::LogicalResult mlir::pto::TPrintOp::verify() {
   auto srcType = getSrc().getType();
-  
+
   // Support TileBufType and PartitionTensorViewType (replaces legacy TileView).
   if (mlir::dyn_cast<mlir::pto::TileBufType>(srcType) ||
+      mlir::dyn_cast<MemRefType>(srcType) ||
       mlir::dyn_cast<mlir::pto::PartitionTensorViewType>(srcType)) {
     return mlir::success();
   }
@@ -4313,7 +4293,6 @@ PTO_DEFINE_UNARY_EFFECTS(TRecipOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TReluOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TRemOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TRemSOp, getSrcMutable(), getDstMutable())
-PTO_DEFINE_UNARY_EFFECTS(TReshapeOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TRowExpandOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TRowExpandDivOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TRowExpandMulOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
@@ -4388,6 +4367,7 @@ void TTransOp::getEffects(
 void TPrintOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getSrcMutable());
 }
 
 #undef PTO_DEFINE_TERNARY_EFFECTS

@@ -45,7 +45,7 @@ def ScalarPtrOrMemRef :
     CPred<"::mlir::pto::isScalarPtrOrMemRef($_self)">,
     "Ptr or MemRef in GM">;
 
-def PrintScalarType :
+def ScalarType :
   AnyTypeOf<[Index, AnySignlessInteger, AnyFloat], "numeric (index/integer/float)">;
 
 //===----------------------------------------------------------------------===//
@@ -302,6 +302,39 @@ def SubsetOp : PTO_Op<"subset", [
     // ViewLikeOpInterface 可能还需要 getOffsets (如果 Variadic 不自动匹配)
     // 但通常 Variadic<Index>:$offsets 会生成 getOffsets()，这应该没问题。
     // 如果后续报 getOffsets 错，也可以在这里加。
+  }];
+}
+
+// ============================================================================
+// SSA TileBuf Config Ops (aliasing views)
+// ============================================================================
+
+def BitcastOp : PTO_Op<"bitcast", [
+    Pure,
+    ViewLikeOpInterface
+  ]> {
+  let summary = "SSA dtype reinterpretation of a tile buffer view (aliases src storage)";
+  let description = [{
+    Returns a tile buffer view with a different element type (dtype) while
+    reusing the same underlying storage as the source.
+
+    This op is a metadata/config rewrite only (no data movement).
+  }];
+
+  let arguments = (ins
+    TileBufType:$src
+  );
+
+  let results = (outs
+    TileBufType:$result
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
+
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getSrc(); }
   }];
 }
 
@@ -929,40 +962,6 @@ def TMovOp  : PTO_TOp<"tmov", [
   }];
 }
 
-// -------------------------
-// non-DPS versions (no suffix)
-//   NOTE: here we keep them permissive so that:
-//     - old IR: tile_view -> tile
-//     - new IR: memref -> tensor
-//   can BOTH parse. Strict checks are done in PTO.cpp only for memref/tensor case.
-// -------------------------
-
-def LoadOp : PTO_Op<"load", [
-    DeclareOpInterfaceMethods<InferTypeOpInterface>
-  ]> {
-  let summary = "PTO load (polymorphic): tile_view->tile OR memref->tensor.";
-  
-  let arguments = (ins 
-    AnyType:$src);
-  
-  let results   = (outs AnyType:$result);
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
-
-}
-
-def StoreOp : PTO_Op<"store"> {
-  let summary = "PTO store (polymorphic): (tile_view,tile)->() OR (tensor,memref)->().";
-  
-  let arguments = (ins 
-    AnyType:$src, // Value to store
-    AnyType:$dst // Destination memory
-  );
-  
-  let results = (outs);
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
-}
 
 //===----------------------------------------------------------------------===//
 // Pointer Cast Op (existing)
@@ -1254,18 +1253,6 @@ def BarrierOp : PTO_Op<"barrier"> {
   let assemblyFormat = "$pipe attr-dict";
 }
 
-// High-Level Mov: 值语义
-def MovOp : PTO_Op<"mov", [
-    SameOperandsAndResultType, // 输入输出类型相同 (!pto.tile -> !pto.tile)
-    DeclareOpInterfaceMethods<InferTypeOpInterface>
-  ]> {
-  let summary = "Move data between Cube and Vector domains.";
-  
-  let arguments = (ins AnyType:$src);
-  let results = (outs AnyType:$result);
-
-  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
-}
 
 //===----------------------------------------------------------------------===//
 // FFT Configuration Operation
@@ -1288,7 +1275,7 @@ def PrintOp : PTO_Op<"print", [MemoryEffects<[MemRead, MemWrite]>]> {
     Debug print op. First argument is the format string (string attribute), second is a scalar value.
     Format in IR: `pto.print ins("format", %scalar : type(%scalar))`
   }];
-  let arguments = (ins StrAttr:$format, PrintScalarType:$scalar);
+  let arguments = (ins StrAttr:$format, ScalarType:$scalar);
   let results = (outs);
   let assemblyFormat = [{
     `ins` `(` $format `,` $scalar `:` type($scalar) `)`
@@ -1338,44 +1325,7 @@ def MGatherOp : PTO_TOp<"mgather", [
   }];
 }
 
-//===----------------------------------------------------------------------===//
-// MSCATTER (DPS)  +  TMSCATTER (tile world TOp)
-//===----------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// GETVAL (DPS)  +  TGETVAL (tile world TOp)
-//   Read a single element into a scalar.
-//===----------------------------------------------------------------------===//
-
-// ---- DPS version ----
-// pto.getval_dps ins(%src, %offset) outs(%dst) : memref<...>, index -> T
-def GetValDpsOp : PTO_Op<"getval_dps", []> {
-  let summary = "Read a single element from src at offset into a scalar (ins/outs).";
-
-  let arguments = (ins
-    AnyMemRef:$src,
-    Index:$offset
-  );
-
-  let results = (outs AnyType:$dst);
-
-  let hasVerifier = 1;
-
-
-  let assemblyFormat = [{
-    `ins` `(` $src `,` $offset `:` qualified(type($src)) `,` type($offset) `)`
-    `outs` `:` qualified(type($dst) )
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "GETVAL"; }
-  }];
-}
-//===----------------------------------------------------------------------===//
-// SETVAL (DPS) + TSETVAL (tile world TOp)
-//   Write a scalar into a single element at offset.
-//===----------------------------------------------------------------------===//
 
 // ---- tile-world TOp version ----
 // pto.tsetval ins(%offset, %val) outs(%dst) : PTODpsType, index, T
@@ -1591,7 +1541,7 @@ def TAddSOp : PTO_TOp<"tadds", [
 
   let arguments = (ins
     PTODpsType:$src,
-    AnyType:$scalar,
+    ScalarType:$scalar,
     PTODpsType:$dst
   );
 
@@ -2834,34 +2784,31 @@ def TRemSOp: PTO_TOp<"trems", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TRESHAPE TBDPS/tile buffer op)
+// PTOOps.td  (TRESHAPE: SSA view op; aliases src storage)
 //===----------------------------------------------------------------------===//
 
 def TReshapeOp: PTO_TOp<"treshape", [
-  PTO_DpsInitOpInterface,
   OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  Pure,
+  ViewLikeOpInterface
 ]> {
-  let summary = "TRESHAPE: Elementwise remainder with a scalar";
+  let summary = "TRESHAPE: Reinterpret a tile buffer view (SSA; aliases src storage)";
 
   let arguments = (ins
-    PTODpsType:$src,
-    PTODpsType:$dst
+    PTODpsType:$src
   );
 
-  let results = (outs);
+  let results = (outs
+    PTODpsType:$result
+  );
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
+  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::Value getViewSource() { return getSrc(); }
   }];
 }
 //===----------------------------------------------------------------------===//
@@ -3522,7 +3469,7 @@ def TSubSOp: PTO_TOp<"tsubs", [
 
   let arguments = (ins
     PTODpsType:$src,
-    F32:$scalar,
+    ScalarType:$scalar,
     PTODpsType:$dst
   );
 

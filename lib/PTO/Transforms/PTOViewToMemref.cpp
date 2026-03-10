@@ -622,6 +622,9 @@ struct PTOViewToMemrefPass
         if (foldedAddPtr) {
           rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
         }
+        if (auto layoutAttr = op.getLayoutAttr()) {
+          rc->setAttr("layout", layoutAttr);
+        }
 
         rewriter.replaceOp(op, rc.getResult());
       }
@@ -832,6 +835,11 @@ struct PTOViewToMemrefPass
             mixedSizes, 
             mixedStrides
         );
+        if (Operation *srcDef = src.getDefiningOp()) {
+          if (auto layoutAttr = srcDef->getAttrOfType<pto::LayoutAttr>("layout")) {
+            sv->setAttr("layout", layoutAttr);
+          }
+        }
         
         rewriter.replaceOp(op, sv.getResult());
       }
@@ -1021,6 +1029,110 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
+      // Stage 2.75: Lower SSA tile_buf view ops (pto.treshape / pto.bitcast)
+      // ------------------------------------------------------------------
+      auto lowerTileBufViewLike = [&](Operation *anchorOp, Value src,
+                                      mlir::pto::TileBufType tbTy,
+                                      StringRef viewSemantics) -> Value {
+        Location loc = anchorOp->getLoc();
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(anchorOp);
+
+        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+        if (!srcMrTy) {
+          anchorOp->emitError("tile_buf view op src must be lowered to memref first");
+          signalPassFailure();
+          return Value();
+        }
+
+        auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
+        if (!targetType) {
+          anchorOp->emitError("failed to convert tile_buf type to memref type");
+          signalPassFailure();
+          return Value();
+        }
+
+        // Require static shape for now (alloc_tile lowering also requires this).
+        for (int64_t d : targetType.getShape()) {
+          if (d == ShapedType::kDynamic) {
+            anchorOp->emitError("dynamic shapes are not supported for tile_buf view ops");
+            signalPassFailure();
+            return Value();
+          }
+        }
+
+        // Re-bind (possibly-updated) tile metadata.
+        Value parentVRow;
+        Value parentVCol;
+        lookupValidDims(src, parentVRow, parentVCol);
+
+        Value vRow = parentVRow;
+        Value vCol = parentVCol;
+        ArrayRef<int64_t> validShape = tbTy.getValidShape();
+        if (!tbTy.hasDynamicValid()) {
+          if (validShape.size() >= 1 && validShape[0] >= 0) {
+            vRow = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[0]))
+                       .getResult();
+          }
+          if (validShape.size() >= 2 && validShape[1] >= 0) {
+            vCol = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[1]))
+                       .getResult();
+          }
+        }
+
+        auto configAttr = tbTy.getConfigAttr();
+        if (!configAttr) configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+
+        auto bindOp = rewriter.create<pto::BindTileOp>(
+            loc, targetType, src,
+            vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+        if (!viewSemantics.empty())
+          bindOp->setAttr("pto.view_semantics",
+                          rewriter.getStringAttr(viewSemantics));
+        return bindOp.getResult();
+      };
+
+      SmallVector<mlir::pto::TReshapeOp, 8> reshapes;
+      func.walk([&](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
+
+      for (auto op : reshapes) {
+        Value src = op->getOperand(0);
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op->getResult(0).getType());
+        if (!tbTy) {
+          op.emitError("treshape result must be tile_buf type");
+          signalPassFailure();
+          return;
+        }
+        Value lowered = lowerTileBufViewLike(op, src, tbTy, "treshape");
+        if (!lowered)
+          return;
+        IRRewriter rewriter(ctx);
+        rewriter.replaceOp(op, lowered);
+      }
+
+      SmallVector<mlir::pto::BitcastOp, 8> bitcasts;
+      func.walk([&](mlir::pto::BitcastOp op) { bitcasts.push_back(op); });
+
+      for (auto op : bitcasts) {
+        Value src = op->getOperand(0);
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op->getResult(0).getType());
+        if (!tbTy) {
+          op.emitError("bitcast result must be tile_buf type");
+          signalPassFailure();
+          return;
+        }
+        Value lowered = lowerTileBufViewLike(op, src, tbTy, "bitcast");
+        if (!lowered)
+          return;
+        IRRewriter rewriter(ctx);
+        rewriter.replaceOp(op, lowered);
+      }
+
+      // ------------------------------------------------------------------
       // Stage 3: Rewrite Compute Ops 
       // [关键] 全面使用 op->getOperand(i) 避免 Typed Accessor Crash
       // ------------------------------------------------------------------
@@ -1034,10 +1146,11 @@ struct PTOViewToMemrefPass
           
           Value src = op->getOperand(0); 
           Value dst = op->getOperand(1);
-          
-          auto config = lookupConfig(dst); // Config on Tile
 
-          rewriter.replaceOpWithNewOp<pto::TLoadOp>(op, TypeRange{}, src, dst);
+          auto newOp =
+              rewriter.create<pto::TLoadOp>(op.getLoc(), TypeRange{}, src, dst);
+          newOp->setAttrs(op->getAttrs());
+          rewriter.replaceOp(op, newOp->getResults());
       }
 
       // --- TStoreOp [Src, Dst] ---
@@ -1050,9 +1163,10 @@ struct PTOViewToMemrefPass
         Value src = op->getOperand(0); 
         Value dst = op->getOperand(1);
 
-        auto config = lookupConfig(src); // Config on Tile
-
-        rewriter.replaceOpWithNewOp<pto::TStoreOp>(op, TypeRange{}, src, dst);
+        auto newOp = rewriter.create<pto::TStoreOp>(op.getLoc(), TypeRange{},
+                                                    src, dst);
+        newOp->setAttrs(op->getAttrs());
+        rewriter.replaceOp(op, newOp->getResults());
       }
 
        // --- TTransOp [Src, Tmp, Dst] ---
@@ -1880,7 +1994,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        auto newOp = rewriter.create<pto::GetValDpsOp>(
+        auto newOp = rewriter.create<pto::TGetValOp>(
             op.getLoc(),
             dstType,
             src,
