@@ -696,37 +696,6 @@ void MemPlan::EmitPlanMemoryFailureInfo() {
   }
 }
 
-bool MemPlan::RecordOverflowIfAny() {
-  if (!failApplyBufferInfo.empty()) {
-    return true;
-  }
-  if (planMode != MemPlanMode::LOCAL_MEM_PLAN ||
-      memscope2rootStorageEntry.empty()) {
-    return false;
-  }
-
-  for (auto &it : memscope2rootStorageEntry) {
-    auto *rootStorageEntry = it.second;
-    if (!rootStorageEntry) {
-      continue;
-    }
-    auto bufferSpaceInfo =
-        GetBufferSpaceInfo(rootStorageEntry->bufInfo->bufferScope);
-    size_t maxBits = bufferSpaceInfo.second;
-    uint64_t maxAllocBits = rootStorageEntry->alignedConstBits;
-    for (auto *child : rootStorageEntry->mergedChildren) {
-      maxAllocBits =
-          std::max(maxAllocBits, child->bitsOffset + child->alignedConstBits);
-    }
-    if (maxAllocBits > maxBits) {
-      failApplyBufferInfo[rootStorageEntry->bufInfo->bufferScope] =
-          maxAllocBits;
-    }
-  }
-
-  return !failApplyBufferInfo.empty();
-}
-
 // Plan Memory algorithm.
 LogicalResult MemPlan::plan() {
   // Construct StorageEntry structure.
@@ -736,10 +705,6 @@ LogicalResult MemPlan::plan() {
                       ? PlanLocalMemAddress()
                       : PlanWorkSpaceMemAddress();
   if (as == PlanStatus::PLAN_FAILED) {
-    EmitPlanMemoryFailureInfo();
-    return failure();
-  }
-  if (RecordOverflowIfAny()) {
     EmitPlanMemoryFailureInfo();
     return failure();
   }
@@ -1788,66 +1753,88 @@ void MemPlan::ReportAllocatedEntryDebugInfo(StorageEntry *rootStorageEntry) {
 }
 
 LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
-  struct MemSpec {
-    int ubSpaceSize;
-    int l1SpaceSize;
-    int l0aSpaceSize;
-    int l0bSpaceSize;
-    int l0cSpaceSize;
-    int ubAlignSize;
-    int l1AlignSize;
-    int l0cAlignSize;
-    int l0aAlignSize;
-    int l0bAlignSize;
-    int biasAlignSize;
-    int biasSpaceSize;
-    int scalingAlignSize;
-    int scalingSpaceSize;
-  };
-
-  const MemSpec kA3 = {
-      1572864, 4194304, 524288, 524288, 1048576, 256, 256,
-      4096,    4096,    4096,   256,    524288, 256, 1572864};
-  const MemSpec kA5 = {
-      2031616, 4194304, 524288, 524288, 2097152, 256, 256,
-      4096,    4096,    4096,   256,    524288, 256, 2031616};
-
-  auto applySpec = [this](const MemSpec &spec) {
-    ubSpaceSize = spec.ubSpaceSize;
-    l1SpaceSize = spec.l1SpaceSize;
-    l0aSpaceSize = spec.l0aSpaceSize;
-    l0bSpaceSize = spec.l0bSpaceSize;
-    l0cSpaceSize = spec.l0cSpaceSize;
-    ubAlignSize = spec.ubAlignSize;
-    l1AlignSize = spec.l1AlignSize;
-    l0cAlignSize = spec.l0cAlignSize;
-    l0aAlignSize = spec.l0aAlignSize;
-    l0bAlignSize = spec.l0bAlignSize;
-    biasAlignSize = spec.biasAlignSize;
-    biasSpaceSize = spec.biasSpaceSize;
-    scalingAlignSize = spec.scalingAlignSize;
-    scalingSpaceSize = spec.scalingSpaceSize;
-  };
-
-  // Default to a3.
-  applySpec(kA3);
+  ubSpaceSize = 1572864;
+  l1SpaceSize = 4194304;
+  l0aSpaceSize = 524288;
+  l0bSpaceSize = 524288;
+  l0cSpaceSize = 1048576;
+  ubAlignSize = 256;
+  l1AlignSize = 256;
+  l0cAlignSize = 4096;
+  l0aAlignSize = 4096;
+  l0bAlignSize = 4096;
+  biasAlignSize = 256;
+  biasSpaceSize = 524288;
+  scalingAlignSize = 256;
+  scalingSpaceSize = 1572864;
 
   auto moduleOp = getTopLevelModuleOp(funcOp);
-  StringAttr archAttr = moduleOp->getAttrOfType<StringAttr>("pto.target_arch");
-  if (!archAttr) {
+  StringAttr strAttr = moduleOp->getAttrOfType<StringAttr>("pto.device-spec");
+  if (!strAttr) {
     return success();
   }
 
-  std::string arch = archAttr.getValue().str();
-  for (char &c : arch)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
-  // --pto-arch options:
-  // a3 -> default memory spec
-  // a5 -> override memory spec
-  if (arch == "a5") {
-    applySpec(kA5);
+  if (strAttr.getValue().str() == "Ascend910B1" ||
+      strAttr.getValue().str() == "Ascend910B2" ||
+      strAttr.getValue().str() == "Ascend910B3" ||
+      strAttr.getValue().str() == "Ascend910B4" ||
+      strAttr.getValue().str() == "Ascend910_9362" ||
+      strAttr.getValue().str() == "Ascend910_9372" ||
+      strAttr.getValue().str() == "Ascend910_9381" ||
+      strAttr.getValue().str() == "Ascend910_9382" ||
+      strAttr.getValue().str() == "Ascend910_9391" ||
+      strAttr.getValue().str() == "Ascend910_9392") {
+    return success();
   }
+
+  if (strAttr.getValue().str() == "Ascend310B1" ||
+      strAttr.getValue().str() == "Ascend310B2" ||
+      strAttr.getValue().str() == "Ascend310B3" ||
+      strAttr.getValue().str() == "Ascend310B4") {
+    ubSpaceSize = 2097152;
+    l1SpaceSize = 8388608;
+    l0aSpaceSize = 524288;
+    l0bSpaceSize = 524288;
+    l0cSpaceSize = 1048576;
+    ubAlignSize = 256;
+    l1AlignSize = 256;
+    l0cAlignSize = 4096;
+    l0aAlignSize = 4096;
+    l0bAlignSize = 4096;
+    biasAlignSize = 256;
+    biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2097152;
+    return success();
+  }
+
+  if (strAttr.getValue().str() == "Ascend910_950z" ||
+      strAttr.getValue().str() == "Ascend910_9579" ||
+      strAttr.getValue().str() == "Ascend910_957b" ||
+      strAttr.getValue().str() == "Ascend910_957d" ||
+      strAttr.getValue().str() == "Ascend910_950z" ||
+      strAttr.getValue().str() == "Ascend910_9581" ||
+      strAttr.getValue().str() == "Ascend910_9589" ||
+      strAttr.getValue().str() == "Ascend910_958a" ||
+      strAttr.getValue().str() == "Ascend910_958b" ||
+      strAttr.getValue().str() == "Ascend910_9599") {
+    ubSpaceSize = 2031616;
+    l1SpaceSize = 4194304;
+    l0aSpaceSize = 524288;
+    l0bSpaceSize = 524288;
+    l0cSpaceSize = 2097152;
+    ubAlignSize = 256;
+    l1AlignSize = 256;
+    l0cAlignSize = 4096;
+    l0aAlignSize = 4096;
+    l0bAlignSize = 4096;
+    biasAlignSize = 256;
+    biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2031616;
+    return success();
+  }
+  
   return success();
 }
 
