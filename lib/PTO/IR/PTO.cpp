@@ -4764,19 +4764,25 @@ static std::optional<int64_t> getConstIndexLike(Value v) {
 }
 
 mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
-  auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType());
-  if (!srcTy)
-    return emitOpError("expects tile_buf source");
+  SmallVector<int64_t> shape;
+  if (auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType())) {
+    if (srcTy.getRank() != 2)
+      return emitOpError("expects rank-2 tile_buf source");
 
-  if (srcTy.getRank() != 2)
-    return emitOpError("expects rank-2 tile_buf source");
+    ArrayRef<int64_t> validShape = srcTy.getValidShape();
+    if (validShape.size() != 2)
+      return emitOpError("expects source validShape to be rank-2");
+    if (!srcTy.hasDynamicValid())
+      return emitOpError("expects source tile_buf to have dynamic validShape (?, ?)");
 
-  ArrayRef<int64_t> shape = srcTy.getShape();
-  ArrayRef<int64_t> validShape = srcTy.getValidShape();
-  if (validShape.size() != 2)
-    return emitOpError("expects source validShape to be rank-2");
-  if (!srcTy.hasDynamicValid())
-    return emitOpError("expects source tile_buf to have dynamic validShape (?, ?)");
+    shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
+  } else if (auto srcTy = llvm::dyn_cast<MemRefType>(getSource().getType())) {
+    if (srcTy.getRank() != 2)
+      return emitOpError("expects rank-2 memref source after tile lowering");
+    shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
+  } else {
+    return emitOpError("expects tile_buf source (or lowered memref source)");
+  }
 
   auto checkDim = [&](Value operand, unsigned dimIdx,
                       StringRef dimName) -> LogicalResult {
