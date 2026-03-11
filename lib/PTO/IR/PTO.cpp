@@ -1562,6 +1562,12 @@ static mlir::LogicalResult verifyTFillPadLike(Operation *op, Type srcTy, Type ds
   if (!(srcB == 1 || srcB == 2 || srcB == 4))
     return op->emitError("expects element size to be 1, 2, or 4 bytes");
 
+  if (auto dstTileTy = mlir::dyn_cast<mlir::pto::TileBufType>(dstTy)) {
+    auto padAttr = mlir::dyn_cast<mlir::pto::PadValueAttr>(dstTileTy.getPadValueAttr());
+    if (!padAttr || padAttr.getValue() == mlir::pto::PadValue::Null)
+      return op->emitError() << "expects dst PadVal != Null for " << opName;
+  }
+
   if (!allowDstExpand) {
     if (srcShape != dstShape)
       return op->emitError()
