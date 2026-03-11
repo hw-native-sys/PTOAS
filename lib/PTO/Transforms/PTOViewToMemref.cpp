@@ -18,7 +18,6 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
@@ -1131,53 +1130,6 @@ struct PTOViewToMemrefPass
           return;
         IRRewriter rewriter(ctx);
         rewriter.replaceOp(op, lowered);
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 2.5: lower pto.set_validshape (in-place) -> re-bind + rewrite
-      // dominated uses to the new tile metadata handle.
-      // ------------------------------------------------------------------
-      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
-      func.walk([&](mlir::pto::SetValidShapeOp op) { setValidShapes.push_back(op); });
-
-      for (auto op : setValidShapes) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPointAfter(op);
-        Location loc = op.getLoc();
-
-        Value src = op->getOperand(0);
-        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
-        if (!srcMrTy) {
-          op.emitError("pto.set_validshape source must be lowered to memref first");
-          signalPassFailure();
-          return;
-        }
-
-        auto configAttr = lookupConfig(src);
-        if (!configAttr)
-          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-        Value vRow = ensureIndex(rewriter, loc, op.getValidRow(), op);
-        Value vCol = ensureIndex(rewriter, loc, op.getValidCol(), op);
-        if (!vRow || !vCol) {
-          signalPassFailure();
-          return;
-        }
-
-        auto bindOp = rewriter.create<pto::BindTileOp>(loc, srcMrTy, src, vRow, vCol,
-                                                       configAttr);
-
-        DominanceInfo dom(func);
-        src.replaceUsesWithIf(bindOp.getResult(), [&](OpOperand &use) {
-          Operation *owner = use.getOwner();
-          if (owner == op.getOperation() || owner == bindOp.getOperation())
-            return false;
-          if (owner->getBlock() == op->getBlock())
-            return op->isBeforeInBlock(owner);
-          return dom.dominates(op.getOperation(), owner);
-        });
-
-        rewriter.eraseOp(op);
       }
 
       // ------------------------------------------------------------------

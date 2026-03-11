@@ -40,6 +40,9 @@ def PTODpsType :
 def PtrOrMemRef :
   AnyTypeOf<[PtrType, AnyMemRef], "Ptr or MemRef">;
 
+def TileBufOrMemRef :
+  AnyTypeOf<[TileBufType, AnyMemRef], "TileBuf or MemRef">;
+
 def ScalarPtrOrMemRef :
   TypeConstraint<
     CPred<"::mlir::pto::isScalarPtrOrMemRef($_self)">,
@@ -318,7 +321,7 @@ def SetValidShapeOp : PTO_Op<"set_validshape", [
   }];
 
   let arguments = (ins
-    TileBufType:$source,
+    TileBufOrMemRef:$source,
     Index:$valid_row,
     Index:$valid_col
   );
