@@ -890,7 +890,10 @@ struct PTOViewToMemrefPass
 
       auto lowerSetValidShapeOp = [&](mlir::pto::SetValidShapeOp op,
                                       bool requireMemRefSource) -> LogicalResult {
-        Value src = op.getSource();
+        // Use raw operand access here: by the time this helper runs, source
+        // may already be rewritten to memref type, while typed accessors on
+        // SetValidShapeOp still expect tile_buf and can assert in debug builds.
+        Value src = op->getOperand(0);
         auto srcMrTy = dyn_cast<MemRefType>(src.getType());
         if (!srcMrTy) {
           if (!requireMemRefSource)
