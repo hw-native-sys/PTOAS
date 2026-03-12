@@ -3,10 +3,6 @@ from mlir.ir import (
     IndexType, IntegerType, F16Type, F32Type, StringAttr
 )
 from mlir.dialects import func, arith, scf, pto, builtin
-from mlir.dialects.pto import (
-    TLOAD, TMOV_M2L, TMATMUL, TSTORE_ACC,
-    EVENT_ID0
-)
 from mlir.dialects.arith import CmpIPredicate
 
 
@@ -22,6 +18,13 @@ def build(
     s_fractal_ab=512,
     s_fractal_c=1024,
 ):
+    # This sample intentionally contains NO explicit sync ops.
+    #
+    # Use it with:
+    #   ptoas --enable-insert-sync
+    #
+    # so synchronization is inserted during PTOAS lowering instead of being
+    # hard-coded into the front-end source.
     assert K % BASEK == 0
     iters = K // BASEK
 
@@ -197,10 +200,6 @@ def build(
                 with InsertionPoint(if_load_bias.else_block):
                     scf.YieldOp([])
 
-                # ---- sync: MTE2 -> MTE1 ----
-                pto.record_event(TLOAD, TMOV_M2L, EVENT_ID0)
-                pto.wait_event  (TLOAD, TMOV_M2L, EVENT_ID0)
-
                 # ---- TMOV ----
                 # TMOV 也传对应 tile 的 valid dims（a/b/bias）
                 pto.TMovOp(None, aMatTile, aTile)
@@ -212,10 +211,6 @@ def build(
                     scf.YieldOp([])
                 with InsertionPoint(if_mov_bias.else_block):
                     scf.YieldOp([])
-
-                # ---- sync: MTE1 -> M ----
-                pto.record_event(TMOV_M2L, TMATMUL, EVENT_ID0)
-                pto.wait_event  (TMOV_M2L, TMATMUL, EVENT_ID0)
 
                 # ---- i == 0 ? (bias? TMATMUL_BIAS : TMATMUL) : TMATMUL_ACC ----
                 is_i0 = arith.CmpIOp(CmpIPredicate.eq, i, c0).result
@@ -241,16 +236,9 @@ def build(
                     pto.TMatmulAccOp(None, cTile, aTile, bTile, cTile)
                     scf.YieldOp([])
 
-                # ---- sync: M -> MTE2 ----
-                pto.record_event(TMATMUL, TLOAD, EVENT_ID0)
-                pto.wait_event  (TMATMUL, TLOAD, EVENT_ID0)
-
                 scf.YieldOp([])
 
             # ---- after loop ----
-            pto.record_event(TMATMUL, TSTORE_ACC, EVENT_ID0)
-            pto.wait_event  (TMATMUL, TSTORE_ACC, EVENT_ID0)
-
             # ---- TSTORE ----
             # 写回 OUT，传 C 的 valid dims
             svOut = pto.PartitionViewOp(tile_view_out, tvOut, offsets=[c0, c0], sizes=[cTileM, cTileN]).result
