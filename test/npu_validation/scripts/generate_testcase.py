@@ -1231,8 +1231,14 @@ project({testcase}_npu_validation)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if(NOT DEFINED SOC_VERSION)
-    set(SOC_VERSION Ascend910B1)
+if(NOT DEFINED PTO_ARCH)
+    set(PTO_ARCH a3)
+endif()
+string(TOLOWER "${PTO_ARCH}" PTO_ARCH_LC)
+if(PTO_ARCH_LC STREQUAL "a5")
+    set(SIM_SOC_DIR Ascend910_9599)
+else()
+    set(SIM_SOC_DIR Ascend910B1)
 endif()
 option(ENABLE_SIM_GOLDEN "Build Ascend simulator (camodel) executable" ON)
 
@@ -1339,9 +1345,9 @@ if(ENABLE_SIM_GOLDEN)
     )
     target_link_directories({testcase}_sim PUBLIC
         ${{ASCEND_HOME_PATH}}/lib64
-        ${{ASCEND_HOME_PATH}}/aarch64-linux/simulator/${{SOC_VERSION}}/lib
-        ${{ASCEND_HOME_PATH}}/simulator/${{SOC_VERSION}}/lib
-        ${{ASCEND_HOME_PATH}}/tools/simulator/${{SOC_VERSION}}/lib
+        ${{ASCEND_HOME_PATH}}/aarch64-linux/simulator/${{SIM_SOC_DIR}}/lib
+        ${{ASCEND_HOME_PATH}}/simulator/${{SIM_SOC_DIR}}/lib
+        ${{ASCEND_HOME_PATH}}/tools/simulator/${{SIM_SOC_DIR}}/lib
     )
     target_link_libraries({testcase}_sim PRIVATE
         {testcase}_kernel
@@ -1397,12 +1403,10 @@ endif()
     )
 
     arch_for_runsh = (pto_arch or "a3").strip().lower()
-    soc_for_runsh = _soc_version_for_arch(arch_for_runsh)
     run_sh = (templates_root / "run_sh_template.sh").read_text(encoding="utf-8")
     run_sh = run_sh.replace("@EXECUTABLE@", testcase)
     run_sh = run_sh.replace("@RUN_MODE@", run_mode)
     run_sh = run_sh.replace("@PTO_ARCH@", arch_for_runsh)
-    run_sh = run_sh.replace("@SOC_VERSION@", soc_for_runsh)
     run_path = output_dir / "run.sh"
     run_path.write_text(run_sh, encoding="utf-8")
     run_path.chmod(0o755)

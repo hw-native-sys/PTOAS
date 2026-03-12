@@ -123,32 +123,21 @@ export LD_LIBRARY_PATH="${ASCEND_HOME_PATH}/lib64:${LD_LIBRARY_PATH:-}"
 
 pto_arch_lc="$(printf '%s' "${PTO_ARCH}" | tr '[:upper:]' '[:lower:]')"
 case "${pto_arch_lc}" in
-  a5) SOC_VERSION="Ascend910_9599" ;;
-  a3) SOC_VERSION="Ascend910B1" ;;
+  a5) SIM_SOC_DIR="Ascend910_9599" ;;
+  a3) SIM_SOC_DIR="Ascend910B1" ;;
   *)
-    SOC_VERSION="Ascend910B1"
+    SIM_SOC_DIR="Ascend910B1"
     pto_arch_lc="a3"
     ;;
 esac
-
-SIM_SOC_VERSION="${SOC_VERSION}"
-# Some CANN installs do not provide a simulator directory named exactly
-# "Ascend910". Map it to a real directory so we can link/run camodel.
-if [[ "${SOC_VERSION}" == "Ascend910" ]]; then
-  if [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910A/lib" ]]; then
-    SIM_SOC_VERSION="Ascend910A"
-  elif [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910ProA/lib" ]]; then
-    SIM_SOC_VERSION="Ascend910ProA"
-  fi
-fi
-log "SIM_SOC_VERSION=${SIM_SOC_VERSION}"
+log "SIM_SOC_DIR=${SIM_SOC_DIR}"
 
 LD_LIBRARY_PATH_NPU="${LD_LIBRARY_PATH}"
 LD_LIBRARY_PATH_SIM="${LD_LIBRARY_PATH}"
 for d in \
-  "${ASCEND_HOME_PATH}/aarch64-linux/simulator/${SIM_SOC_VERSION}/lib" \
-  "${ASCEND_HOME_PATH}/simulator/${SIM_SOC_VERSION}/lib" \
-  "${ASCEND_HOME_PATH}/tools/simulator/${SIM_SOC_VERSION}/lib"; do
+  "${ASCEND_HOME_PATH}/aarch64-linux/simulator/${SIM_SOC_DIR}/lib" \
+  "${ASCEND_HOME_PATH}/simulator/${SIM_SOC_DIR}/lib" \
+  "${ASCEND_HOME_PATH}/tools/simulator/${SIM_SOC_DIR}/lib"; do
   [[ -d "$d" ]] && LD_LIBRARY_PATH_SIM="$d:${LD_LIBRARY_PATH_SIM}"
 done
 
@@ -246,7 +235,7 @@ while IFS= read -r -d '' cpp; do
     enable_sim_golden="OFF"
     [[ "${GOLDEN_MODE}" == "sim" ]] && enable_sim_golden="ON"
     cmake -S . -B ./build \
-      -DSOC_VERSION="${SIM_SOC_VERSION}" \
+      -DPTO_ARCH="${PTO_ARCH}" \
       -DENABLE_SIM_GOLDEN="${enable_sim_golden}" \
       -DPTO_ISA_ROOT="${PTO_ISA_ROOT}"
     cmake --build ./build --parallel
