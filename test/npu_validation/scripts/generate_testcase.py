@@ -332,11 +332,11 @@ def _inject_packed_pred_mask_preload(
     return kernel_text[:insert_at] + block + kernel_text[insert_at:]
 
 
-def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
+def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     # Heuristic: kernels that touch cube/L0/L1 tile types or cbuf memories need
     # the "cube" arch; pure vector kernels can use the vector arch.
     #
-    # IMPORTANT: the default arch depends on the target architecture.
+    # IMPORTANT: the default arch depends on the Ascend SoC.
     cube_markers = (
         "TileType::Mat",
         "TileType::Left",
@@ -354,16 +354,26 @@ def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     )
     needs_cube = any(m in kernel_text for m in cube_markers)
 
-    arch = (pto_arch or "").strip().lower()
-    if arch == "a5":
-        # A5 uses A5 instruction set. pto-isa examples build A5 kernels with
-        # dav-c310-{vec|cube}.
+    sv = (soc_version or "").lower()
+    if "950" in sv or "a5" in sv:
+        # Ascend950 (A5) uses A5 instruction set. pto-isa examples build A5
+        # kernels with dav-c310-{vec|cube}.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
-    if arch == "a3":
+    if "910b" in sv:
+        # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
+        return "dav-c310-cube" if needs_cube else "dav-c310-vec"
+    if "a3" in sv:
         # A2/A3 uses dav-c220 toolchain arch.
         return "dav-c220-cube" if needs_cube else "dav-c220-vec"
-    # Default to Ascend910 (dav-c220) when arch is unknown.
+    # Default to Ascend910 (dav-c220) when SoC is unknown.
     return "dav-c220-cube" if needs_cube else "dav-c220-vec"
+
+
+def _soc_version_for_arch(arch: Optional[str]) -> str:
+    a = (arch or "").strip().lower()
+    if a == "a5":
+        return "Ascend910_9599"
+    return "Ascend910B1"
 
 
 def _parse_int_list(blob: str):
@@ -828,6 +838,7 @@ def generate_testcase(
     has_dav_cube = "__DAV_CUBE__" in raw_kernel
     has_dav_vec = "__DAV_VEC__" in raw_kernel
 
+    soc_version = _soc_version_for_arch(pto_arch)
     if aicore_arch is None:
         # Sectioned kernels contain `#if defined(__DAV_CUBE__)` / `__DAV_VEC__`
         # blocks. They frequently rely on cross-section synchronization (e.g.
@@ -836,15 +847,15 @@ def generate_testcase(
         # may be unavailable; build with a vector arch and explicitly enable the
         # section macros instead.
         if has_dav_cube or has_dav_vec:
-            arch = (pto_arch or "").strip().lower()
-            if arch == "a5":
+            sv = (soc_version or "").lower()
+            if "950" in sv or "a5" in sv:
                 aicore_arch = "dav-c310-vec"
-            elif arch == "a3":
-                aicore_arch = "dav-c220-vec"
+            elif "910b" in sv:
+                aicore_arch = "dav-c310-vec"
             else:
                 aicore_arch = "dav-c220-vec"
         else:
-            aicore_arch = _infer_aicore_arch(raw_kernel, pto_arch)
+            aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
 
     # Force-define DAV section macros so both sections are compiled into the
     # same binary. This keeps the generated validation executable self-contained
@@ -1194,10 +1205,10 @@ def generate_testcase(
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
     # pto-isa selects instruction implementations based on MEMORY_BASE vs
-    # REGISTER_BASE. A5 uses REGISTER_BASE.
+    # REGISTER_BASE. A5 and Ascend910B use REGISTER_BASE.
     mem_base_define = "MEMORY_BASE"
-    arch = (pto_arch or "").strip().lower()
-    if arch == "a5":
+    sv = (soc_version or "").lower()
+    if "910b" in sv or "950" in sv or "a5" in sv:
         mem_base_define = "REGISTER_BASE"
 
     # CCE printing support is gated behind `--cce-enable-print` on some bisheng
@@ -1225,7 +1236,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(NOT DEFINED SOC_VERSION)
-    set(SOC_VERSION Ascend910)
+    set(SOC_VERSION Ascend910B1)
 endif()
 option(ENABLE_SIM_GOLDEN "Build Ascend simulator (camodel) executable" ON)
 
@@ -1389,11 +1400,13 @@ endif()
         encoding="utf-8",
     )
 
-    arch_for_runsh = pto_arch or "Ascend910"
+    arch_for_runsh = (pto_arch or "a3").strip().lower()
+    soc_for_runsh = _soc_version_for_arch(arch_for_runsh)
     run_sh = (templates_root / "run_sh_template.sh").read_text(encoding="utf-8")
     run_sh = run_sh.replace("@EXECUTABLE@", testcase)
     run_sh = run_sh.replace("@RUN_MODE@", run_mode)
-    run_sh = run_sh.replace("@SOC_VERSION@", arch_for_runsh)
+    run_sh = run_sh.replace("@PTO_ARCH@", arch_for_runsh)
+    run_sh = run_sh.replace("@SOC_VERSION@", soc_for_runsh)
     run_path = output_dir / "run.sh"
     run_path.write_text(run_sh, encoding="utf-8")
     run_path.chmod(0o755)

@@ -466,6 +466,9 @@ private:
   /// Print successful memory alloc.
   void PrintSuccessfulAllocatedMaxBits();
 
+  /// Post-plan sanity check for local memory overflow.
+  bool RecordOverflowIfAny();
+
   /// Prepare the memref.alloc plan.
   PlanStatus PlanLocalMemAddress();
 

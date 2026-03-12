@@ -2,7 +2,17 @@
 set -euo pipefail
 
 RUN_MODE="@RUN_MODE@"
-SOC_VERSION="@SOC_VERSION@"
+PTO_ARCH="${PTO_ARCH:-@PTO_ARCH@}"
+SOC_VERSION="${SOC_VERSION:-@SOC_VERSION@}"
+if [[ -z "${PTO_ARCH}" || "${PTO_ARCH}" == "@PTO_ARCH@" ]]; then
+  PTO_ARCH="a3"
+fi
+if [[ -z "${SOC_VERSION}" || "${SOC_VERSION}" == "@SOC_VERSION@" ]]; then
+  case "${PTO_ARCH,,}" in
+    a5) SOC_VERSION="Ascend910_9599" ;;
+    *) SOC_VERSION="Ascend910B1" ;;
+  esac
+fi
 GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
 BUILD_DIR="${BUILD_DIR:-build}"
 
