@@ -18,11 +18,8 @@ namespace {
 static Type getTileBufType(Type type, pto::AddressSpace addrSpace) {
   if (auto tile = llvm::dyn_cast<pto::TileType>(type)) {
     MLIRContext *ctx = tile.getContext();
-    
-    // 使用传入的 addrSpace 创建属性
     auto addrSpaceAttr = pto::AddressSpaceAttr::get(ctx, addrSpace);
-
-    return pto::TileBufType::get(ctx, tile.getShape(), tile.getElementType(), addrSpaceAttr);
+    return tile.toBuffer(addrSpaceAttr);
   }
   return Type();
 }

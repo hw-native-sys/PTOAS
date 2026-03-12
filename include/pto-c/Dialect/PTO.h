@@ -49,6 +49,12 @@ MlirType mlirPTOTileTypeGet(MlirContext ctx, intptr_t rank,
 intptr_t mlirPTOTileTypeGetRank(MlirType type);
 MlirType mlirPTOTileTypeGetElementType(MlirType type);
 const int64_t *mlirPTOTileTypeGetShape(MlirType type, intptr_t *numDimsOut);
+MLIR_CAPI_EXPORTED MlirType mlirPTOTileTypeMaterializeBuffer(
+    MlirType tileType,
+    MlirAttribute memorySpace,
+    intptr_t validRank,
+    const int64_t *validShape,
+    MlirAttribute config);
 
 // ---- TileBufType ----
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsATileBufType(MlirType type);

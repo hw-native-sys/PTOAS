@@ -3981,9 +3981,10 @@ LogicalResult SubsetOp::inferReturnTypes(
   if (!cfg) cfg = TileBufConfigAttr::getDefault(context);
 
   // 4. 构建 Result Type
-  auto resultType = TileBufType::get(
-      context, resultShape, sourceType.getElementType(),
-      sourceType.getMemorySpace(), validShape, cfg);
+  auto logicalTileType =
+      TileType::get(context, resultShape, sourceType.getElementType());
+  auto resultType =
+      logicalTileType.toBuffer(sourceType.getMemorySpace(), validShape, cfg);
 
   inferredReturnTypes.push_back(resultType);
   return success();

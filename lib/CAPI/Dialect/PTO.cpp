@@ -162,6 +162,22 @@ const int64_t *mlirPTOTileTypeGetShape(MlirType type, intptr_t *numDimsOut) {
   return shape.data();
 }
 
+MlirType mlirPTOTileTypeMaterializeBuffer(MlirType tileType,
+                                          MlirAttribute memorySpace,
+                                          intptr_t validRank,
+                                          const int64_t *validShape,
+                                          MlirAttribute config) {
+  auto tile = cast<mlir::pto::TileType>(unwrap(tileType));
+  llvm::SmallVector<int64_t, 4> valid;
+  if (validShape && validRank > 0) {
+    valid.assign(validShape, validShape + validRank);
+  }
+
+  auto cfg = unwrap(config).dyn_cast_or_null<mlir::pto::TileBufConfigAttr>();
+  auto ty = tile.toBuffer(unwrap(memorySpace), llvm::ArrayRef<int64_t>(valid), cfg);
+  return wrap(ty);
+}
+
 bool mlirPTOTypeIsATileBufType(MlirType type) {
   return unwrap(type).isa<mlir::pto::TileBufType>();
 }

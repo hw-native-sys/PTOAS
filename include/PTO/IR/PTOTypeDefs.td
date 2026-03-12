@@ -105,6 +105,10 @@ def TileType : TypeDef<PTO_Dialect, "Tile"> {
       for (int64_t dim : getShape()) num *= dim;
       return num;
     }
+    mlir::pto::TileBufType toBuffer(
+        mlir::Attribute memorySpace,
+        ArrayRef<int64_t> validShape = {},
+        mlir::pto::TileBufConfigAttr config = {}) const;
   }];
 }
 

@@ -5069,6 +5069,11 @@ pto.barrier_sync [<TVEC>]
 
 **Summary:** Records an event for synchronization between producer and consumer operation classes.
 
+**Authoring note:** This is a low-level PTO IR operation. In the current
+PTO-DSL migration flow on `ascend910b`, front-end kernels should normally stay
+free of explicit event wiring and rely on `ptoas --enable-insert-sync` to
+materialize synchronization.
+
 **Semantics:**
 
 ```
@@ -5104,6 +5109,11 @@ pto.record_event [#pto.pipe_event_type<EVENT_LOAD_FROM_GM>, #pto.pipe_event_type
 ##### `pto.wait_event`
 
 **Summary:** Waits for a recorded event between producer and consumer operation classes.
+
+**Authoring note:** This is a low-level PTO IR operation. In the current
+PTO-DSL migration flow on `ascend910b`, front-end kernels should normally stay
+free of explicit event wiring and rely on `ptoas --enable-insert-sync` to
+materialize synchronization.
 
 **Semantics:**
 

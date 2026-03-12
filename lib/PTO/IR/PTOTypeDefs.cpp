@@ -5,6 +5,22 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+TileBufType TileType::toBuffer(Attribute memorySpace,
+                               ArrayRef<int64_t> validShape,
+                               TileBufConfigAttr config) const {
+  MLIRContext *ctx = getContext();
+  SmallVector<int64_t, 4> valid;
+  if (validShape.empty()) {
+    valid.assign(getShape().begin(), getShape().end());
+  } else {
+    valid.assign(validShape.begin(), validShape.end());
+  }
+  if (!config)
+    config = TileBufConfigAttr::getDefault(ctx);
+  return TileBufType::get(ctx, getShape(), getElementType(), memorySpace,
+                          llvm::ArrayRef<int64_t>(valid), config);
+}
+
 TileBufConfigAttr TileBufType::getConfigAttr() const {
   // 情况 A：getConfig() 已经是 TileBufConfigAttr
   if constexpr (std::is_same_v<decltype(getConfig()), TileBufConfigAttr>) {

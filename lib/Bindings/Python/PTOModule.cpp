@@ -511,7 +511,38 @@ PYBIND11_MODULE(_pto, m) {
         intptr_t n = 0;
         const int64_t *data = mlirPTOTileTypeGetShape(self, &n);
         return shapeToPyList(data, n);
-        });
+        })
+    .def(
+        "to_buffer",
+        [](MlirType self,
+           MlirAttribute memorySpace,
+           py::object validShapeObj,
+           py::object configObj) -> py::object {
+          intptr_t validRank = 0;
+          std::vector<int64_t> validShape;
+          if (!validShapeObj.is_none()) {
+            py::list lst = validShapeObj.cast<py::list>();
+            validShape.resize(lst.size());
+            for (ssize_t i = 0; i < lst.size(); ++i) {
+              py::object e = lst[i];
+              validShape[i] = e.is_none() ? -1 : e.cast<int64_t>();
+            }
+            validRank = static_cast<intptr_t>(validShape.size());
+          }
+
+          MlirAttribute cfg = mlirAttributeGetNull();
+          if (!configObj.is_none())
+            cfg = configObj.cast<MlirAttribute>();
+
+          MlirType ty = mlirPTOTileTypeMaterializeBuffer(
+              self, memorySpace, validRank,
+              validShape.empty() ? nullptr : validShape.data(), cfg);
+          if (mlirTypeIsNull(ty)) return py::none();
+          return py::cast(ty);
+        },
+        py::arg("memory_space"),
+        py::arg("valid_shape") = py::none(),
+        py::arg("config") = py::none());
 
     // ---- TileBufConfigAttr ----
     mlir_attribute_subclass(m, "TileBufConfigAttr",
