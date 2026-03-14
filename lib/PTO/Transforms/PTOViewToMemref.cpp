@@ -2660,11 +2660,11 @@ struct PTOViewToMemrefPass
       // ------------------------------------------------------------------
       // Stage 4: Reconcile control-flow result types
       // ------------------------------------------------------------------
-      if (failed(reconcileSCFForResultTypes(func))) {
+      if (failed(reconcileSCFIfResultTypes(func))) {
         signalPassFailure();
         return;
       }
-      if (failed(reconcileSCFIfResultTypes(func))) {
+      if (failed(reconcileSCFForResultTypes(func))) {
         signalPassFailure();
         return;
       }
