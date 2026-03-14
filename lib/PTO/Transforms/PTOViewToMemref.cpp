@@ -449,6 +449,62 @@ static LogicalResult reconcileSCFIfResultTypes(func::FuncOp func) {
   return success();
 }
 
+// Ensure scf.for loop-carried types follow the rewritten init/yield operand
+// types.
+//
+// PTOViewToMemref rewrites tile values to memref inside loop bodies, but the
+// scf.for region iter_args and results are not updated automatically. For
+// loop-carried values this leaves the op structurally inconsistent:
+//   init arg     : memref<...>
+//   region arg   : !pto.tile_buf<...>
+//   scf.yield    : memref<...>
+//   scf.for res  : !pto.tile_buf<...>
+//
+// We only reconcile when the external init operand and yielded value already
+// agree on the same type; otherwise this pass has not fully lowered the loop
+// consistently and we should fail loudly instead of guessing.
+static LogicalResult reconcileSCFForResultTypes(func::FuncOp func) {
+  SmallVector<scf::ForOp, 8> forOps;
+  func.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
+
+  for (scf::ForOp forOp : forOps) {
+    if (forOp.getNumRegionIterArgs() == 0)
+      continue;
+
+    auto yieldOp =
+        dyn_cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    if (!yieldOp) {
+      forOp.emitError("loop-carried scf.for must end with scf.yield");
+      return failure();
+    }
+
+    if (yieldOp.getNumOperands() != forOp.getNumRegionIterArgs()) {
+      forOp.emitError("scf.for iter_arg count does not match yielded values");
+      return failure();
+    }
+
+    for (unsigned i = 0; i < forOp.getNumRegionIterArgs(); ++i) {
+      Type initTy = forOp.getInitArgs()[i].getType();
+      Type yieldTy = yieldOp.getOperand(i).getType();
+      if (initTy != yieldTy) {
+        forOp.emitError()
+            << "scf.for loop-carried type mismatch at iter_arg #" << i
+            << ": init=" << initTy << ", yield=" << yieldTy;
+        return failure();
+      }
+
+      BlockArgument iterArg = forOp.getRegionIterArg(i);
+      if (iterArg.getType() != initTy)
+        iterArg.setType(initTy);
+
+      if (forOp.getResult(i).getType() != initTy)
+        forOp.getResult(i).setType(initTy);
+    }
+  }
+
+  return success();
+}
+
 // =============================================================================
 // The Pass Implementation
 // =============================================================================
@@ -2604,6 +2660,10 @@ struct PTOViewToMemrefPass
       // ------------------------------------------------------------------
       // Stage 4: Reconcile control-flow result types
       // ------------------------------------------------------------------
+      if (failed(reconcileSCFForResultTypes(func))) {
+        signalPassFailure();
+        return;
+      }
       if (failed(reconcileSCFIfResultTypes(func))) {
         signalPassFailure();
         return;

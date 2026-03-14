@@ -1,0 +1,29 @@
+// RUN: ptoas %s 2>&1 1>/dev/null | FileCheck %s
+
+module {
+  func.func @for_tile_iter_arg_reconcile() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %zero = arith.constant 0.000000e+00 : f32
+
+    %acc0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tmuls ins(%acc0, %zero : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%acc0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%tmp, %zero : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    %acc = scf.for %i = %c0 to %c2 step %c1 iter_args(%iter = %acc0) -> (!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+      pto.tadd ins(%iter, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      scf.yield %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    }
+
+    pto.tmuls ins(%acc, %zero : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: scf.for
+// CHECK-SAME: iter_args(%{{.*}} = %{{.*}}) -> (memref<16x1xf32
+// CHECK: pto.tadd ins(%{{.*}}, %{{.*}} : memref<16x1xf32
+// CHECK: scf.yield %{{.*}} : memref<16x1xf32
+// CHECK-NOT: error:
