@@ -479,6 +479,41 @@ process_one_dir() {
       fi
     fi
 
+    if [[ "$base" == "sels" ]]; then
+      if grep -Fq "TSELS(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tpto.tsels should lower via TMOV branches, not TSELS()"
+        overall=1
+        continue
+      fi
+      if [[ $(grep -c "TMOV(" "$cpp") -lt 2 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\tpto.tsels should emit copy-style TMOV() branches"
+        overall=1
+        continue
+      fi
+    fi
+
+    if [[ "$base" == "xor" || "$base" == "xors" ]]; then
+      if ! "$python" - "$cpp" "$base" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], "r", encoding="utf-8").read()
+callee = "TXOR" if sys.argv[2] == "xor" else "TXORS"
+match = re.search(rf"{callee}\(([^)]*)\);", text)
+if not match:
+    sys.exit(1)
+operands = [item.strip() for item in match.group(1).split(",")]
+if len(operands) != 4:
+    sys.exit(1)
+sys.exit(0 if operands[0] != operands[3] else 1)
+PY
+      then
+        echo -e "${A}(${base}.py)\tFAIL\t${base} lowering must pass a distinct planned tmp tile"
+        overall=1
+        continue
+      fi
+    fi
+
     if [[ "$base" == "bitcast_dtype_alias" ]]; then
       if ! grep -Eq "Tile<[^>]*, int32_t," "$cpp"; then
         echo -e "${A}(${base}.py)	FAIL	missing int32_t Tile declaration for pto.bitcast"

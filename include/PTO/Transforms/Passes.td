@@ -32,6 +32,18 @@ def PTOConvertToDPS : Pass<"pto-convert-to-dps", "func::FuncOp"> {
   ];
 }
 
+def PTOExpandImplicitScratch : Pass<"pto-expand-implicit-scratch", "func::FuncOp"> {
+  let summary = "Materialize scratch tiles for PTO ops that need real temp storage";
+  let description = [{
+    Rewrites PTO ops with implicit scratch requirements into internal forms
+    that carry explicit tmp tiles before memory planning.
+  }];
+  let constructor = "mlir::pto::createPTOExpandImplicitScratchPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 // Define PTOInsertSync Pass
 def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   let summary = "Insert synchronization flags for PTO dialect";

@@ -6027,17 +6027,35 @@ struct PTOSelSToEmitC : public OpConversionPattern<pto::TSelSOp> {
   LogicalResult matchAndRewrite(pto::TSelSOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
 
     Value src0 = peelUnrealized(adaptor.getSrc0());
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value selectMode = peelUnrealized(adaptor.getSelectMode());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 4> operands{dst, src0, src1, selectMode};
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TSELS",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/operands);
+    Type u8Ty = getUnsignedIntOpaqueType(ctx, 8);
+    Value selectModeU8 = emitCCast(rewriter, loc, u8Ty, selectMode);
+    Value one = makeEmitCIntConstant(rewriter, loc, u8Ty, 1);
+    Value selectSrc0 = rewriter.create<emitc::CmpOp>(
+        loc, rewriter.getI1Type(), emitc::CmpPredicate::eq, selectModeU8, one);
+
+    auto ifOp = rewriter.create<emitc::IfOp>(loc, selectSrc0,
+                                             /*withElseRegion=*/true);
+    {
+      OpBuilder thenBuilder = ifOp.getThenBodyBuilder();
+      thenBuilder.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, "TMOV", /*args=*/ArrayAttr{},
+          /*templateArgs=*/ArrayAttr{}, /*operands=*/ValueRange{dst, src0});
+      thenBuilder.create<emitc::YieldOp>(loc);
+    }
+    {
+      OpBuilder elseBuilder = ifOp.getElseBodyBuilder();
+      elseBuilder.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, "TMOV", /*args=*/ArrayAttr{},
+          /*templateArgs=*/ArrayAttr{}, /*operands=*/ValueRange{dst, src1});
+      elseBuilder.create<emitc::YieldOp>(loc);
+    }
 
     rewriter.eraseOp(op);
     return success();
@@ -6330,20 +6348,19 @@ struct PTOSubSCToEmitC : public OpConversionPattern<pto::TSubSCOp> {
 // PTOConvert.cpp  (add lowering + patterns.add for TXOR DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOXORToEmitC : public OpConversionPattern<pto::TXorOp> {
-  using OpConversionPattern<pto::TXorOp>::OpConversionPattern;
+struct PTOXORToEmitC : public OpConversionPattern<pto::TXorWithTmpOp> {
+  using OpConversionPattern<pto::TXorWithTmpOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::TXorOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TXorWithTmpOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
     Value src0 = peelUnrealized(adaptor.getSrc0());
     Value src1 = peelUnrealized(adaptor.getSrc1());
+    Value tmp = peelUnrealized(adaptor.getTmp());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    // pto-isa TXOR requires a tmp tile argument. Current NPU implementation
-    // does not use tmp, so we safely pass dst as tmp for compatibility.
-    SmallVector<Value, 4> operands{dst, src0, src1, dst};
+    SmallVector<Value, 4> operands{dst, src0, src1, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXOR",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -6378,20 +6395,19 @@ struct PTOTTransToEmitC : public OpConversionPattern<pto::TTransOp> {
 // PTOConvert.cpp  (add lowering + patterns.add for TXORS DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOXORSToEmitC : public OpConversionPattern<pto::TXorSOp> {
-  using OpConversionPattern<pto::TXorSOp>::OpConversionPattern;
+struct PTOXORSToEmitC : public OpConversionPattern<pto::TXorSWithTmpOp> {
+  using OpConversionPattern<pto::TXorSWithTmpOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::TXorSOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TXorSWithTmpOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
     Value src = peelUnrealized(adaptor.getSrc());
     Value scalar = peelUnrealized(adaptor.getScalar());
+    Value tmp = peelUnrealized(adaptor.getTmp());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    // pto-isa TXORS requires a tmp tile argument. Current NPU implementation
-    // does not use tmp, so we safely pass dst as tmp for compatibility.
-    SmallVector<Value, 4> operands{dst, src, scalar, dst};
+    SmallVector<Value, 4> operands{dst, src, scalar, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXORS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -7572,7 +7588,8 @@ struct EmitPTOManualPass
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<emitc::EmitCDialect, func::FuncDialect, arith::ArithDialect,
                     memref::MemRefDialect, affine::AffineDialect,
-                    mlir::cf::ControlFlowDialect, mlir::pto::PTODialect>();
+                    mlir::cf::ControlFlowDialect, mlir::scf::SCFDialect,
+                    mlir::pto::PTODialect>();
   }
 
 	  void runOnOperation() override {

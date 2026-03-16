@@ -3013,19 +3013,35 @@ mlir::LogicalResult mlir::pto::TSelSOp::verify() {
   Type td = getDst().getType();
   if (!isPTOShapedLike(t0) || !isPTOShapedLike(t1) || !isPTOShapedLike(td))
     return emitOpError("expects src0/src1/dst to be memref/tensor/tile_buf/tile_view types");
-  Type es = getElemTy(t0), ed = getElemTy(td);
-  if (!es || !ed)
+  Type e0 = getElemTy(t0), e1 = getElemTy(t1), ed = getElemTy(td);
+  if (!e0 || !e1 || !ed)
     return emitOpError("failed to get element type for operands");
-  if (es != ed)
-    return emitOpError("expects src0 and dst to have the same element type");
+  if (e0 != e1 || e0 != ed)
+    return emitOpError("expects src0/src1/dst to have the same element type");
   auto isAllowedElem = [&](mlir::Type t) -> bool {
     if (t.isF16() || t.isF32() || t.isBF16()) return true;
     if (auto it = mlir::dyn_cast<mlir::IntegerType>(t))
       return (it.getWidth() == 8 || it.getWidth() == 16 || it.getWidth() == 32);
     return false;
   };
-  if (!isAllowedElem(es))
-    return emitOpError("expects src0 and dst element type to be i8/i16/i32/f16/bf16/f32");
+  if (!isAllowedElem(e0))
+    return emitOpError("expects src0/src1/dst element type to be i8/i16/i32/f16/bf16/f32");
+
+  auto s0 = getShapeVec(t0);
+  auto s1 = getShapeVec(t1);
+  auto sd = getShapeVec(td);
+  if (s0.size() != s1.size() || s0.size() != sd.size())
+    return emitOpError("expects src0/src1/dst to have the same rank");
+  for (size_t i = 0; i < s0.size(); ++i) {
+    if (s0[i] != mlir::ShapedType::kDynamic &&
+        s1[i] != mlir::ShapedType::kDynamic &&
+        s0[i] != s1[i])
+      return emitOpError("expects src0 and src1 static shapes to match");
+    if (s0[i] != mlir::ShapedType::kDynamic &&
+        sd[i] != mlir::ShapedType::kDynamic &&
+        s0[i] != sd[i])
+      return emitOpError("expects src0 and dst static shapes to match");
+  }
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
@@ -3266,6 +3282,62 @@ mlir::LogicalResult mlir::pto::TXorOp::verify() {
   if (elem != getElemTy(src1Ty) || elem != getElemTy(dstTy))
     return emitOpError() << "expects src0, src1, and dst to have the same element type";
 
+  auto src0Shape = getShapeVec(src0Ty);
+  auto src1Shape = getShapeVec(src1Ty);
+  auto dstShape = getShapeVec(dstTy);
+  if (src0Shape.size() != src1Shape.size() || src0Shape.size() != dstShape.size())
+    return emitOpError() << "expects src0, src1, and dst to have the same rank";
+  for (size_t i = 0; i < src0Shape.size(); ++i) {
+    if (src0Shape[i] != mlir::ShapedType::kDynamic &&
+        src1Shape[i] != mlir::ShapedType::kDynamic &&
+        src0Shape[i] != src1Shape[i])
+      return emitOpError() << "expects src0 and src1 static shapes to match";
+    if (src0Shape[i] != mlir::ShapedType::kDynamic &&
+        dstShape[i] != mlir::ShapedType::kDynamic &&
+        src0Shape[i] != dstShape[i])
+      return emitOpError() << "expects src0 and dst static shapes to match";
+  }
+
+  return mlir::success();
+}
+
+mlir::LogicalResult mlir::pto::TXorWithTmpOp::verify() {
+  Type src0Ty = getSrc0().getType();
+  Type src1Ty = getSrc1().getType();
+  Type tmpTy = getTmp().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(src0Ty) || !isPTOShapedLike(src1Ty) ||
+      !isPTOShapedLike(tmpTy) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src0, src1, tmp, and dst";
+
+  auto elem = getElemTy(src0Ty);
+  if (elem != getElemTy(src1Ty) || elem != getElemTy(tmpTy) ||
+      elem != getElemTy(dstTy))
+    return emitOpError()
+           << "expects src0, src1, tmp, and dst to have the same element type";
+
+  auto src0Shape = getShapeVec(src0Ty);
+  auto src1Shape = getShapeVec(src1Ty);
+  auto tmpShape = getShapeVec(tmpTy);
+  auto dstShape = getShapeVec(dstTy);
+  if (src0Shape.size() != src1Shape.size() || src0Shape.size() != tmpShape.size() ||
+      src0Shape.size() != dstShape.size())
+    return emitOpError() << "expects src0, src1, tmp, and dst to have the same rank";
+  for (size_t i = 0; i < src0Shape.size(); ++i) {
+    if (src0Shape[i] != mlir::ShapedType::kDynamic &&
+        src1Shape[i] != mlir::ShapedType::kDynamic &&
+        src0Shape[i] != src1Shape[i])
+      return emitOpError() << "expects src0 and src1 static shapes to match";
+    if (src0Shape[i] != mlir::ShapedType::kDynamic &&
+        tmpShape[i] != mlir::ShapedType::kDynamic &&
+        src0Shape[i] != tmpShape[i])
+      return emitOpError() << "expects src0 and tmp static shapes to match";
+    if (src0Shape[i] != mlir::ShapedType::kDynamic &&
+        dstShape[i] != mlir::ShapedType::kDynamic &&
+        src0Shape[i] != dstShape[i])
+      return emitOpError() << "expects src0 and dst static shapes to match";
+  }
+
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
@@ -3280,6 +3352,46 @@ mlir::LogicalResult mlir::pto::TXorSOp::verify() {
 
   if (getElemTy(srcTy) != getElemTy(dstTy))
     return emitOpError() << "expects src and dst to have the same element type";
+
+  auto srcShape = getShapeVec(srcTy);
+  auto dstShape = getShapeVec(dstTy);
+  if (srcShape.size() != dstShape.size())
+    return emitOpError() << "expects src and dst to have the same rank";
+  for (size_t i = 0; i < srcShape.size(); ++i) {
+    if (srcShape[i] != mlir::ShapedType::kDynamic &&
+        dstShape[i] != mlir::ShapedType::kDynamic &&
+        srcShape[i] != dstShape[i])
+      return emitOpError() << "expects src and dst static shapes to match";
+  }
+
+  return mlir::success();
+}
+
+mlir::LogicalResult mlir::pto::TXorSWithTmpOp::verify() {
+  Type srcTy = getSrc().getType();
+  Type tmpTy = getTmp().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(tmpTy) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src, tmp, and dst";
+
+  if (getElemTy(srcTy) != getElemTy(tmpTy) || getElemTy(srcTy) != getElemTy(dstTy))
+    return emitOpError() << "expects src, tmp, and dst to have the same element type";
+
+  auto srcShape = getShapeVec(srcTy);
+  auto tmpShape = getShapeVec(tmpTy);
+  auto dstShape = getShapeVec(dstTy);
+  if (srcShape.size() != tmpShape.size() || srcShape.size() != dstShape.size())
+    return emitOpError() << "expects src, tmp, and dst to have the same rank";
+  for (size_t i = 0; i < srcShape.size(); ++i) {
+    if (srcShape[i] != mlir::ShapedType::kDynamic &&
+        tmpShape[i] != mlir::ShapedType::kDynamic &&
+        srcShape[i] != tmpShape[i])
+      return emitOpError() << "expects src and tmp static shapes to match";
+    if (srcShape[i] != mlir::ShapedType::kDynamic &&
+        dstShape[i] != mlir::ShapedType::kDynamic &&
+        srcShape[i] != dstShape[i])
+      return emitOpError() << "expects src and dst static shapes to match";
+  }
 
   return mlir::success();
 }
@@ -4405,6 +4517,19 @@ PTO_DEFINE_BINARY_EFFECTS(TSubSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMu
 
 PTO_DEFINE_UNARY_EFFECTS(TXorSOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TXorOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+void TXorSWithTmpOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+void TXorWithTmpOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getSrc1Mutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
 
 // TTRANS: Read(src) -> Write(tmp, dst)
 void TTransOp::getEffects(

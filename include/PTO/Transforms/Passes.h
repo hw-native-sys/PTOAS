@@ -60,6 +60,7 @@ createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 
 std::unique_ptr<Pass> createPTOInsertCVMovPass();
 std::unique_ptr<Pass> createPTOConvertToDPSPass();
+std::unique_ptr<Pass> createPTOExpandImplicitScratchPass();
 std::unique_ptr<Pass> createPTORemoveRedundantBarrierPass();
 std::unique_ptr<Pass> createPTOViewToMemrefPass();
 std::unique_ptr<mlir::Pass> createPTOInsertLoadStoreForMixCVPass();

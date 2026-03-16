@@ -2,6 +2,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertLoadStoreForMixCV.cpp
   PTOInsertCVMov.cpp
   PTOConvertToDPS.cpp
+  PTOExpandImplicitScratch.cpp
   InsertSync/PTOInsertSync.cpp
   InsertSync/InsertSyncDebug.cpp
   PTOViewToMemref.cpp
