@@ -1193,6 +1193,26 @@ LogicalResult pto::TColExpandOp::verify() {
     return emitOpError("expects src/dst to have same shape");
   return success();
 }
+LogicalResult pto::TColExpandMulOp::verify() {
+  Type t0 = getSrc0().getType();
+  Type t1 = getSrc1().getType();
+  Type td = getDst().getType();
+  if (!isPTOShapedLike(t0) || !isPTOShapedLike(t1) || !isPTOShapedLike(td))
+    return emitOpError("expects src0/src1/dst to be PTO shaped-like types");
+
+  Type e0 = getElemTy(t0);
+  Type e1 = getElemTy(t1);
+  Type ed = getElemTy(td);
+  if (!e0 || !e1 || !ed)
+    return emitOpError("failed to get element type for src0/src1/dst");
+
+  auto ft1 = e1.dyn_cast<FloatType>();
+  auto ftd = ed.dyn_cast<FloatType>();
+  if (!ft1 || !ftd || (!ft1.isF16() && !ft1.isF32()) || (!ftd.isF16() && !ftd.isF32()))
+    return emitOpError("expects src1/dst element type to be f16 or f32");
+
+  return success();
+}
 LogicalResult pto::TColMaxOp::verify() {
   Type srcTy = getSrc().getType();
   Type dstTy = getDst().getType();
@@ -4243,6 +4263,7 @@ PTO_DEFINE_BINARY_EFFECTS(TCmpOp, getSrc0Mutable(), getSrc1Mutable(), getDstMuta
 PTO_DEFINE_UNARY_EFFECTS(TCmpSOp, getSrcMutable(), getDstMutable())
 
 PTO_DEFINE_UNARY_EFFECTS(TColExpandOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TColExpandMulOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TColMaxOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TColMinOp, getSrcMutable(), getDstMutable())
 

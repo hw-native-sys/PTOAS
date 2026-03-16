@@ -3318,6 +3318,62 @@ pto.tcolexpand ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16,
 
 ---
 
+##### `pto.tcolexpandmul` - Row-wise Broadcast Multiply
+
+**Summary:** Multiplies each row of `src0` by a per-column scalar from `src1`.
+
+**Semantics:**
+
+```
+For each element (i, j):
+    dst[i, j] = src0[i, j] * src1[0, j]
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `src0` | `pto.tile_buf` | Source tile buffer |
+| `src1` | `pto.tile_buf` | Per-column scalar vector |
+| `dst` | `pto.tile_buf` | Destination tile buffer |
+
+**Results:** None. Writes into `dst` via DPS pattern.
+
+**Assembly Format:**
+
+```
+pto.tcolexpandmul ins(<src0>, <src1> : <src0_type>, <src1_type>)
+                  outs(<dst> : <dst_type>)
+```
+
+**Constraints & Verification:**
+
+- **Implementation checks**:
+  - `dst`, `src0`, and `src1` must have the same element type.
+  - The shared element type must be one of: `half`, `float`.
+  - `dst` must use row-major layout (`blayout=row_major`).
+ 
+**Hardware Mapping:**
+
+- Executes on the **Vector pipeline** (`PIPE_V`)
+- Operates on data in the **VEC (UB)** memory space
+
+**Basic Example:**
+
+```mlir
+pto.tcolexpandmul ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                      v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+                      fractal=512, pad=0>,
+                      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
+                      v_row=16, v_col=1, blayout=row_major, slayout=none_box,
+                      fractal=512, pad=0>)
+                  outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                      v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+                      fractal=512, pad=0>)
+```
+
+---
+
 ##### `pto.trowexpandmul` - Row-wise Broadcast Multiply
 
 **Summary:** Multiplies each row of `src0` by a per-row scalar from `src1`.
