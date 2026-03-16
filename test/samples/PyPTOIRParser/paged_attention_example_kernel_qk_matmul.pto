@@ -1,4 +1,4 @@
-module {
+module attributes {"pto.target_arch" = "a5"} {
   func.func @kernel_qk_matmul(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>, %arg2: !pto.ptr<f32>) {
   %c16 = arith.constant 16 : index
   %c128 = arith.constant 128 : index

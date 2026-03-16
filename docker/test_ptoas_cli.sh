@@ -10,6 +10,18 @@
 
 set -e
 
+detect_pto_target_arch() {
+  local pto_file="$1"
+  [ -f "$pto_file" ] || return 0
+
+  local arch
+  arch="$(grep -Eom1 '"?pto\.target_arch"?[[:space:]]*=[[:space:]]*"[^"]+"' "$pto_file" 2>/dev/null | sed -E 's/.*"([^"]+)"/\1/' | tr '[:upper:]' '[:lower:]')"
+  case "$arch" in
+    a3|a5) printf '%s\n' "$arch" ;;
+    *) ;;
+  esac
+}
+
 # Validate required environment variables
 for var in PTO_SOURCE_DIR LLVM_BUILD_DIR PTO_INSTALL_DIR; do
   if [ -z "${!var}" ]; then
@@ -44,7 +56,12 @@ fi
 echo "Testing MatMul sample..."
 cd "${PTO_SOURCE_DIR}/test/samples/MatMul/"
 python ./tmatmulk.py > ./tmatmulk.pto
-ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
+matmul_arch="$(detect_pto_target_arch ./tmatmulk.pto)"
+if [ -n "${matmul_arch}" ]; then
+  ptoas "--pto-arch=${matmul_arch}" ./tmatmulk.pto -o ./tmatmulk.cpp
+else
+  ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
+fi
 echo "MatMul test passed"
 
 # Test Abs sample

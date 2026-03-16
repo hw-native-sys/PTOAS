@@ -1,4 +1,4 @@
-from mlir.ir import Context, Location, Module, InsertionPoint, Attribute, IntegerType
+from mlir.ir import Context, Location, Module, InsertionPoint, Attribute, IntegerType, StringAttr
 from mlir.dialects import func, arith, pto
 from mlir.ir import F32Type, IndexType
 
@@ -9,6 +9,7 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
 
         with Location.unknown(ctx):
             m = Module.create()
+            m.operation.attributes["pto.target_arch"] = StringAttr.get("a5")
 
             f32 = F32Type.get(ctx)
             ptr_f32 = pto.PtrType.get(f32, ctx)

@@ -105,6 +105,18 @@ resolve_ptobc_bin() {
   return 1
 }
 
+detect_pto_target_arch() {
+  local pto_file="$1"
+  [[ -f "$pto_file" ]] || return 0
+
+  local arch
+  arch="$(grep -Eom1 '"?pto\.target_arch"?[[:space:]]*=[[:space:]]*"[^"]+"' "$pto_file" 2>/dev/null | sed -E 's/.*"([^"]+)"/\1/' | tr '[:upper:]' '[:lower:]')"
+  case "$arch" in
+    a3|a5) printf '%s\n' "$arch" ;;
+    *) ;;
+  esac
+}
+
 process_one_dir() {
   local A="$1" # folder name (e.g. Abs)
   local out_dir="$2"
@@ -139,19 +151,17 @@ process_one_dir() {
   fi
 
   local target_arch="a3"
+  local has_explicit_ptoas_arch=0
   if ((${#ptoas_flags[@]})); then
     for ((idx=0; idx<${#ptoas_flags[@]}; ++idx)); do
       if [[ "${ptoas_flags[idx]}" == "--pto-arch" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
         target_arch="${ptoas_flags[idx + 1]}"
+        has_explicit_ptoas_arch=1
       elif [[ "${ptoas_flags[idx]}" == --pto-arch=* ]]; then
         target_arch="${ptoas_flags[idx]#--pto-arch=}"
+        has_explicit_ptoas_arch=1
       fi
     done
-  fi
-  local expected_vec_barrier="pipe_barrier(PIPE_V)"
-  local skip_vec_barrier=0
-  if [[ "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" == "a5" ]]; then
-    skip_vec_barrier=1
   fi
 
   local -a ptoas_cmd_base=("$ptoas")
@@ -277,7 +287,25 @@ process_one_dir() {
     fi
 
     # Write output via -o to avoid mixing debug prints with generated C++.
-    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$pto_input" -o "$cpp")
+    local sample_target_arch
+    sample_target_arch="$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')"
+    local detected_target_arch=""
+    if [[ $has_explicit_ptoas_arch -eq 0 ]]; then
+      detected_target_arch="$(detect_pto_target_arch "$pto_input")"
+      if [[ -n "$detected_target_arch" ]]; then
+        sample_target_arch="$detected_target_arch"
+      fi
+    fi
+    local expected_vec_barrier="pipe_barrier(PIPE_V)"
+    local sample_skip_vec_barrier=0
+    if [[ "$sample_target_arch" == "a5" ]]; then
+      sample_skip_vec_barrier=1
+    fi
+    local -a ptoas_cmd=("${ptoas_cmd_base[@]}")
+    if [[ $has_explicit_ptoas_arch -eq 0 && -n "$detected_target_arch" ]]; then
+      ptoas_cmd+=("--pto-arch=${detected_target_arch}")
+    fi
+    ptoas_cmd+=("$pto_input" -o "$cpp")
     local ptoas_log="${out_subdir}/${base}-ptoas.log"
     if ! "${ptoas_cmd[@]}" >"${ptoas_log}" 2>&1; then
       if [[ $expect_fail -eq 1 ]]; then
@@ -327,7 +355,7 @@ process_one_dir() {
     # Regression guard: intra-pipe dependencies must be serialized by a
     # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
     if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then
-      if [[ "${skip_vec_barrier}" == "1" ]]; then
+      if [[ "${sample_skip_vec_barrier}" == "1" ]]; then
         if grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
           echo -e "${A}(${base}.py)\tFAIL\tunexpected pipe_barrier(PIPE_V) on A5"
           overall=1
@@ -402,7 +430,7 @@ process_one_dir() {
         overall=1
         continue
       fi
-      if [[ "${skip_vec_barrier}" == "1" ]]; then
+      if [[ "${sample_skip_vec_barrier}" == "1" ]]; then
         if grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
           echo -e "${A}(${base}.py)\tFAIL\tunexpected pipe_barrier(PIPE_V) lowering for barrier_sync[TVEC] on A5"
           overall=1
@@ -673,7 +701,25 @@ PY
         pto_input="$decoded_pto"
       fi
 
-      local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$pto_input" -o "$cpp")
+      local sample_target_arch
+      sample_target_arch="$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')"
+      local detected_target_arch=""
+      if [[ $has_explicit_ptoas_arch -eq 0 ]]; then
+        detected_target_arch="$(detect_pto_target_arch "$pto_input")"
+        if [[ -n "$detected_target_arch" ]]; then
+          sample_target_arch="$detected_target_arch"
+        fi
+      fi
+      local expected_vec_barrier="pipe_barrier(PIPE_V)"
+      local sample_skip_vec_barrier=0
+      if [[ "$sample_target_arch" == "a5" ]]; then
+        sample_skip_vec_barrier=1
+      fi
+      local -a ptoas_cmd=("${ptoas_cmd_base[@]}")
+      if [[ $has_explicit_ptoas_arch -eq 0 && -n "$detected_target_arch" ]]; then
+        ptoas_cmd+=("--pto-arch=${detected_target_arch}")
+      fi
+      ptoas_cmd+=("$pto_input" -o "$cpp")
       if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
         echo -e "${A}(${base}.pto)\tFAIL\tptoas failed: $(basename "$f")"
         overall=1
@@ -694,7 +740,7 @@ PY
       # Regression guard: intra-pipe dependencies must be serialized by a
       # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
       if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then
-        if [[ "${skip_vec_barrier}" == "1" ]]; then
+        if [[ "${sample_skip_vec_barrier}" == "1" ]]; then
           if grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
             echo -e "${A}(${base}.pto)\tFAIL\tunexpected pipe_barrier(PIPE_V) on A5"
             overall=1
