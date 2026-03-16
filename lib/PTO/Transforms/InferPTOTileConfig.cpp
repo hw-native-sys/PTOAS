@@ -23,6 +23,48 @@ using namespace mlir::pto;
 
 namespace {
 
+static StringRef stringifyPTOAddressSpace(AddressSpace space) {
+  switch (space) {
+  case AddressSpace::Zero:
+    return "zero";
+  case AddressSpace::GM:
+    return "gm";
+  case AddressSpace::MAT:
+    return "mat";
+  case AddressSpace::LEFT:
+    return "left";
+  case AddressSpace::RIGHT:
+    return "right";
+  case AddressSpace::ACC:
+    return "acc";
+  case AddressSpace::VEC:
+    return "vec";
+  case AddressSpace::BIAS:
+    return "bias";
+  case AddressSpace::SCALING:
+    return "scaling";
+  }
+  llvm_unreachable("unknown address space");
+}
+
+static StringRef stringifyArch(PTOArch arch) {
+  return arch == PTOArch::A5 ? "a5" : "a3";
+}
+
+static std::string stringifyBLayoutValue(Attribute attr) {
+  auto blayout = cast<BLayoutAttr>(attr);
+  return stringifyBLayout(blayout.getValue()).str();
+}
+
+static std::string stringifySLayoutValue(Attribute attr) {
+  auto slayout = cast<SLayoutAttr>(attr);
+  return stringifySLayout(slayout.getValue()).str();
+}
+
+static std::string stringifyFractalValue(IntegerAttr attr) {
+  return std::to_string(attr.getInt());
+}
+
 static PTOArch getTargetArch(Operation *op) {
   auto module = dyn_cast<ModuleOp>(op);
   if (!module)
@@ -102,6 +144,102 @@ static TileBufConfigAttr mergeTileConfig(TileBufType tileTy,
                                 getFractal(), getPad());
 }
 
+static TileBufConfigAttr inferMemRefTileConfig(Type memrefLikeType, PTOArch arch,
+                                               MLIRContext *ctx,
+                                               TileBufConfigAttr currentConfig);
+
+static LogicalResult verifyExplicitConfigFields(
+    TileBufConfigAttr currentConfig, TileBufConfigAttr expectedConfig,
+    uint32_t explicitMask, AddressSpace space, PTOArch arch,
+    function_ref<InFlightDiagnostic()> emitError) {
+  auto emitMismatch = [&](StringRef field, StringRef expected,
+                          StringRef actual) -> LogicalResult {
+    auto diag = emitError();
+    diag << "explicit tile config field '" << field << "' for loc="
+         << stringifyPTOAddressSpace(space) << " on arch "
+         << stringifyArch(arch)
+         << " must be " << expected << ", got " << actual;
+    return failure();
+  };
+
+  if ((explicitMask & TileBufType::kExplicitBLayoutMask) &&
+      currentConfig.getBLayout() != expectedConfig.getBLayout()) {
+    return emitMismatch(
+        "blayout", stringifyBLayoutValue(expectedConfig.getBLayout()),
+        stringifyBLayoutValue(currentConfig.getBLayout()));
+  }
+
+  if ((explicitMask & TileBufType::kExplicitSLayoutMask) &&
+      currentConfig.getSLayout() != expectedConfig.getSLayout()) {
+    return emitMismatch(
+        "slayout", stringifySLayoutValue(expectedConfig.getSLayout()),
+        stringifySLayoutValue(currentConfig.getSLayout()));
+  }
+
+  if ((explicitMask & TileBufType::kExplicitFractalMask) &&
+      currentConfig.getSFractalSize() != expectedConfig.getSFractalSize()) {
+    return emitMismatch(
+        "fractal", stringifyFractalValue(expectedConfig.getSFractalSize()),
+        stringifyFractalValue(currentConfig.getSFractalSize()));
+  }
+
+  return success();
+}
+
+static LogicalResult verifyExplicitTileBufType(
+    TileBufType tileTy, PTOArch arch,
+    function_ref<InFlightDiagnostic()> emitError) {
+  auto spaceAttr = dyn_cast_or_null<AddressSpaceAttr>(tileTy.getMemorySpace());
+  if (!spaceAttr || !tileTy.hasExplicitConfig())
+    return success();
+
+  auto expectedConfig = inferTileConfigForSpace(
+      tileTy.getContext(), spaceAttr.getAddressSpace(), arch,
+      dyn_cast_or_null<PadValueAttr>(tileTy.getConfigAttr().getPad()));
+  if (!expectedConfig)
+    return success();
+
+  uint32_t explicitMask = tileTy.getExplicitConfigMaskValue() &
+                          (TileBufType::kExplicitBLayoutMask |
+                           TileBufType::kExplicitSLayoutMask |
+                           TileBufType::kExplicitFractalMask);
+  if (explicitMask == 0)
+    return success();
+
+  return verifyExplicitConfigFields(tileTy.getConfigAttr(), expectedConfig,
+                                    explicitMask,
+                                    spaceAttr.getAddressSpace(), arch,
+                                    emitError);
+}
+
+static LogicalResult verifyExplicitMemRefConfig(
+    Type memrefLikeType, TileBufConfigAttr currentConfig, PTOArch arch,
+    function_ref<InFlightDiagnostic()> emitError) {
+  if (!currentConfig)
+    return success();
+
+  auto memrefTy = dyn_cast<BaseMemRefType>(memrefLikeType);
+  if (!memrefTy)
+    return success();
+  auto spaceAttr = dyn_cast_or_null<AddressSpaceAttr>(memrefTy.getMemorySpace());
+  if (!spaceAttr)
+    return success();
+
+  auto expectedConfig = inferMemRefTileConfig(memrefLikeType, arch,
+                                              memrefLikeType.getContext(),
+                                              currentConfig);
+  if (!expectedConfig)
+    return success();
+
+  constexpr uint32_t kRelevantExplicitMask =
+      TileBufType::kExplicitBLayoutMask | TileBufType::kExplicitSLayoutMask |
+      TileBufType::kExplicitFractalMask;
+  return verifyExplicitConfigFields(currentConfig, expectedConfig,
+                                    kRelevantExplicitMask,
+                                    spaceAttr.getAddressSpace(), arch,
+                                    emitError);
+}
+
 static TileBufType normalizeTileBufType(TileBufType tileTy, PTOArch arch) {
   auto spaceAttr =
       dyn_cast_or_null<AddressSpaceAttr>(tileTy.getMemorySpace());
@@ -144,6 +282,26 @@ static Type normalizeType(Type type, PTOArch arch) {
     return type;
   auto normalizedTy = normalizeTileBufType(tileTy, arch);
   return normalizedTy ? Type(normalizedTy) : type;
+}
+
+static LogicalResult validateFunctionSignature(func::FuncOp func, PTOArch arch) {
+  for (Type inputType : func.getFunctionType().getInputs()) {
+    if (auto tileTy = dyn_cast<TileBufType>(inputType)) {
+      if (failed(verifyExplicitTileBufType(
+              tileTy, arch, [&]() { return func.emitOpError(); })))
+        return failure();
+    }
+  }
+
+  for (Type resultType : func.getFunctionType().getResults()) {
+    if (auto tileTy = dyn_cast<TileBufType>(resultType)) {
+      if (failed(verifyExplicitTileBufType(
+              tileTy, arch, [&]() { return func.emitOpError(); })))
+        return failure();
+    }
+  }
+
+  return success();
 }
 
 static bool normalizeValue(Value value, PTOArch arch) {
@@ -241,17 +399,39 @@ struct InferPTOTileConfigPass
     ModuleOp module = getOperation();
     PTOArch arch = getTargetArch(module);
 
-    auto normalizeRegion = [&](Region &region, auto &self) -> void {
+    auto normalizeRegion = [&](Region &region, auto &self) -> LogicalResult {
       for (Block &block : region) {
-        for (BlockArgument arg : block.getArguments())
+        for (BlockArgument arg : block.getArguments()) {
+          if (auto tileTy = dyn_cast<TileBufType>(arg.getType())) {
+            auto *owner = arg.getOwner() ? arg.getOwner()->getParentOp() : nullptr;
+            auto emitError = [&]() -> InFlightDiagnostic {
+              if (owner)
+                return owner->emitOpError();
+              return mlir::emitError(arg.getLoc());
+            };
+            if (failed(verifyExplicitTileBufType(tileTy, arch, emitError)))
+              return failure();
+          }
           (void)normalizeValue(arg, arch);
+        }
 
         for (Operation &op : block) {
-          for (Value result : op.getResults())
+          for (Value result : op.getResults()) {
+            if (auto tileTy = dyn_cast<TileBufType>(result.getType())) {
+              if (failed(verifyExplicitTileBufType(
+                      tileTy, arch, [&]() { return op.emitOpError(); })))
+                return failure();
+            }
             (void)normalizeValue(result, arch);
+          }
 
           if (auto pointerCast = dyn_cast<pto::PointerCastOp>(op)) {
             auto currentConfig = pointerCast.getConfig();
+            if (failed(verifyExplicitMemRefConfig(
+                    pointerCast.getResult().getType(),
+                    currentConfig ? *currentConfig : TileBufConfigAttr(), arch,
+                    [&]() { return pointerCast.emitOpError(); })))
+              return failure();
             if (!currentConfig) {
               auto desiredConfig = inferMemRefTileConfig(
                   pointerCast.getResult().getType(), arch, &getContext(),
@@ -261,15 +441,31 @@ struct InferPTOTileConfigPass
             }
           }
 
+          if (auto bindTile = dyn_cast<pto::BindTileOp>(op)) {
+            if (failed(verifyExplicitMemRefConfig(
+                    bindTile.getResult().getType(), bindTile.getConfig(), arch,
+                    [&]() { return bindTile.emitOpError(); })))
+              return failure();
+          }
+
           for (Region &nested : op.getRegions())
-            self(nested, self);
+            if (failed(self(nested, self)))
+              return failure();
         }
       }
+      return success();
     };
 
     for (func::FuncOp func : module.getOps<func::FuncOp>()) {
+      if (failed(validateFunctionSignature(func, arch))) {
+        signalPassFailure();
+        return;
+      }
       if (!func.isExternal())
-        normalizeRegion(func.getBody(), normalizeRegion);
+        if (failed(normalizeRegion(func.getBody(), normalizeRegion))) {
+          signalPassFailure();
+          return;
+        }
       if (failed(syncFunctionSignature(func, arch))) {
         signalPassFailure();
         return;

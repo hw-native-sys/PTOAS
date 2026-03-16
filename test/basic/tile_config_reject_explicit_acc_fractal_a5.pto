@@ -1,0 +1,10 @@
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @reject_explicit_acc_fractal_a5() {
+    %acc = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, fractal=512>
+    return
+  }
+}
+
+// CHECK: error: 'pto.alloc_tile' op explicit tile config field 'fractal' for loc=acc on arch a5 must be 1024, got 512
