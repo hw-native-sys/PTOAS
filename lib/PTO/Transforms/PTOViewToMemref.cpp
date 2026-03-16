@@ -65,38 +65,6 @@ static DenseI64ArrayAttr getFunctionArgTileValidShape(Value v) {
                                                   kTileValidShapeAttrName);
 }
 
-static func::FuncOp lookupCallCallee(Value v) {
-  auto call = v.getDefiningOp<func::CallOp>();
-  if (!call)
-    return {};
-  auto module = call->getParentOfType<ModuleOp>();
-  if (!module)
-    return {};
-  return module.lookupSymbol<func::FuncOp>(call.getCallee());
-}
-
-static TileBufConfigAttr getCallResultTileConfig(Value v) {
-  auto result = dyn_cast<OpResult>(v);
-  if (!result)
-    return {};
-  auto callee = lookupCallCallee(v);
-  if (!callee || result.getResultNumber() >= callee.getNumResults())
-    return {};
-  return callee.getResultAttrOfType<TileBufConfigAttr>(result.getResultNumber(),
-                                                       kTileConfigAttrName);
-}
-
-static DenseI64ArrayAttr getCallResultTileValidShape(Value v) {
-  auto result = dyn_cast<OpResult>(v);
-  if (!result)
-    return {};
-  auto callee = lookupCallCallee(v);
-  if (!callee || result.getResultNumber() >= callee.getNumResults())
-    return {};
-  return callee.getResultAttrOfType<DenseI64ArrayAttr>(
-      result.getResultNumber(), kTileValidShapeAttrName);
-}
-
 // =============================================================================
 // Helper: Metadata Backtracking (核心机制)
 // =============================================================================
@@ -127,8 +95,6 @@ static mlir::pto::TileBufConfigAttr lookupConfig(Value v) {
   }
 
   if (auto cfg = getFunctionArgTileConfig(v))
-    return cfg;
-  if (auto cfg = getCallResultTileConfig(v))
     return cfg;
   
   // 如果追溯到 BlockArgument (函数参数) 或其他无法穿透的 Op，则返回空
@@ -181,10 +147,6 @@ static void lookupValidDims(IRRewriter &rewriter, Location loc, Value v,
     return;
   }
   if (auto validShape = getFunctionArgTileValidShape(v)) {
-    materializeStaticValidDims(rewriter, loc, validShape, vRow, vCol);
-    return;
-  }
-  if (auto validShape = getCallResultTileValidShape(v)) {
     materializeStaticValidDims(rewriter, loc, validShape, vRow, vCol);
     return;
   }
@@ -531,11 +493,6 @@ static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
       auto tbTy = dyn_cast<TileBufType>(type);
       if (!tbTy)
         continue;
-      if (tbTy.hasExplicitConfig())
-        func.setResultAttr(idx, kTileConfigAttrName, tbTy.getConfigAttr());
-      if (!tbTy.getValidShape().empty())
-        func.setResultAttr(idx, kTileValidShapeAttrName,
-                           builder.getDenseI64ArrayAttr(tbTy.getValidShape()));
     }
 
     auto newFnTy = convertFunctionTypeToMemRef(func.getFunctionType(), ctx);
