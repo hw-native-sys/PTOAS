@@ -1,0 +1,9 @@
+// RUN: not ptoas %s 2>&1 | FileCheck %s
+
+module {
+  func.func @kernel(%arg0: i32) -> i32 {
+    return %arg0 : i32
+  }
+}
+
+// CHECK: PTO entry functions must return void

@@ -35,6 +35,8 @@
 #include "mlir/Dialect/EmitC/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include <string>
@@ -48,6 +50,118 @@ using namespace pto;
 
 static void printPTOASVersion(llvm::raw_ostream &os) {
   os << "ptoas " << PTOAS_RELEASE_VERSION << "\n";
+}
+
+static LogicalResult reorderEmitCFunctions(ModuleOp module) {
+  SmallVector<emitc::FuncOp> declarations;
+  SmallVector<emitc::FuncOp> definitions;
+  llvm::DenseMap<StringAttr, emitc::FuncOp> definitionsByName;
+
+  for (auto func : module.getOps<emitc::FuncOp>()) {
+    if (func.isDeclaration()) {
+      declarations.push_back(func);
+      continue;
+    }
+    definitions.push_back(func);
+    definitionsByName[func.getSymNameAttr()] = func;
+  }
+
+  llvm::DenseMap<Operation *, unsigned> indegree;
+  llvm::DenseMap<Operation *, SmallVector<Operation *>> outgoing;
+  for (auto func : definitions)
+    indegree[func.getOperation()] = 0;
+
+  for (auto caller : definitions) {
+    Operation *callerOp = caller.getOperation();
+    llvm::SmallPtrSet<Operation *, 8> seenCallees;
+    bool hasCycle = false;
+    caller.walk([&](emitc::CallOp call) {
+      auto calleeAttr = call.getCalleeAttr();
+      if (!calleeAttr)
+        return;
+      auto it = definitionsByName.find(calleeAttr.getLeafReference());
+      if (it == definitionsByName.end())
+        return;
+      Operation *calleeOp = it->second.getOperation();
+      if (calleeOp == callerOp) {
+        hasCycle = true;
+        return;
+      }
+      if (!seenCallees.insert(calleeOp).second)
+        return;
+      outgoing[calleeOp].push_back(callerOp);
+      ++indegree[callerOp];
+    });
+    if (hasCycle) {
+      return caller.emitOpError()
+             << "recursive function calls are not supported for EmitC C++ "
+                "emission";
+    }
+  }
+
+  SmallVector<Operation *> ready;
+  for (auto func : definitions) {
+    if (indegree[func.getOperation()] == 0)
+      ready.push_back(func.getOperation());
+  }
+
+  SmallVector<emitc::FuncOp> sortedDefinitions;
+  while (!ready.empty()) {
+    Operation *next = ready.front();
+    ready.erase(ready.begin());
+    auto nextFunc = cast<emitc::FuncOp>(next);
+    sortedDefinitions.push_back(nextFunc);
+
+    for (Operation *user : outgoing[next]) {
+      unsigned &userIndegree = indegree[user];
+      if (--userIndegree == 0)
+        ready.push_back(user);
+    }
+  }
+
+  if (sortedDefinitions.size() != definitions.size()) {
+    return module.emitError()
+           << "cyclic function call graph is not supported for EmitC C++ emission";
+  }
+
+  if (declarations.empty() && definitions.size() <= 1)
+    return success();
+
+  SmallVector<emitc::FuncOp> desiredOrder;
+  desiredOrder.append(declarations.begin(), declarations.end());
+  desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
+
+  Block &body = module.getBodyRegion().front();
+  Operation *anchor = nullptr;
+  for (Operation &op : body.getOperations()) {
+    if (isa<emitc::FuncOp>(op)) {
+      anchor = &op;
+      break;
+    }
+  }
+  if (!anchor)
+    return success();
+
+  auto advanceAnchor = [&]() {
+    while (anchor) {
+      anchor = anchor->getNextNode();
+      if (!anchor || isa<emitc::FuncOp>(anchor))
+        return;
+    }
+  };
+
+  for (auto func : desiredOrder) {
+    if (func.getOperation() == anchor) {
+      advanceAnchor();
+      continue;
+    }
+    if (anchor)
+      func->moveBefore(anchor);
+    else
+      func->moveBefore(&body, body.end());
+  }
+
+  return success();
 }
 
 // #define ADD_CANONICALIZER_PASS \
@@ -754,6 +868,10 @@ int main(int argc, char **argv) {
 
   dropEmptyEmitCExpressions(module.get());
   materializeControlFlowOperands(module.get());
+  if (failed(reorderEmitCFunctions(module.get()))) {
+    llvm::errs() << "Error: Failed to order emitted functions for C++ emission.\n";
+    return 1;
+  }
 
   // Emit C++ to string, then post-process, then write to output file.
   std::string cppOutput;

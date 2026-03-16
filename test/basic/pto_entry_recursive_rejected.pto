@@ -1,0 +1,10 @@
+// RUN: not ptoas %s 2>&1 | FileCheck %s
+
+module {
+  func.func @kernel(%arg0: i32) attributes {pto.entry} {
+    func.call @kernel(%arg0) : (i32) -> ()
+    return
+  }
+}
+
+// CHECK: recursive function calls are not supported for EmitC C++ emission

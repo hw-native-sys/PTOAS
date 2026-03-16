@@ -35,8 +35,8 @@ def build():
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             cfg_a_mat = pto.TileBufConfigAttr.get(
-                pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
-                pto.SLayoutAttr.get(pto.SLayout.ColMajor, ctx),
+                pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
                 pto.TileConfig.fractalABSize,
                 pd,
                 ctx,

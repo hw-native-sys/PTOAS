@@ -14,6 +14,7 @@
 #define MLIR_DIALECT_PTO_IR_PTO_H_
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -75,6 +76,23 @@ AddressSpaceAttr getPTOAddressSpaceAttr(Type type);
 
 /// Return true if type is a ptr/memref in GM address space (or default).
 bool isScalarPtrOrMemRef(Type type);
+
+
+/// Function attribute that marks an explicit PTO kernel entry.
+inline constexpr llvm::StringLiteral kPTOEntryAttrName = "pto.entry";
+inline constexpr llvm::StringLiteral kLegacyHACCEntryAttrName = "hacc.entry";
+
+/// Return true if the function carries an explicit entry marker.
+bool hasExplicitPTOEntryAttr(func::FuncOp func);
+
+/// Return true if the function should be emitted as an AICORE entry.
+bool isPTOEntryFunction(func::FuncOp func);
+
+/// Validate module-level PTO entry configuration before EmitC lowering.
+LogicalResult validatePTOEntryFunctions(ModuleOp module);
+
+/// Materialize the effective PTO entry selection onto function attributes.
+void annotatePTOEntryFunctions(ModuleOp module);
 
 } // namespace pto
 } // namespace mlir
