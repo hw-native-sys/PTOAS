@@ -8,6 +8,7 @@
 
 #include "PTOPlanMemory.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -15,6 +16,8 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/Support/Debug.h"
+
+#include <limits>
 
 #define DEBUG_TYPE "pto-plan-memory"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X)
@@ -68,6 +71,273 @@ namespace {
 //   }
 //   return false;
 // }
+
+} // namespace
+
+namespace {
+
+static FailureOr<uint64_t> getStaticNumElements(ArrayRef<int64_t> shape) {
+  uint64_t numel = 1;
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic || dim < 0)
+      return failure();
+    numel *= static_cast<uint64_t>(dim);
+  }
+  return numel;
+}
+
+static FailureOr<uint64_t> getStaticTypeBytes(Type ty) {
+  Type elemTy;
+  SmallVector<int64_t, 4> shape;
+
+  if (auto memrefTy = dyn_cast<MemRefType>(ty)) {
+    elemTy = memrefTy.getElementType();
+    shape.assign(memrefTy.getShape().begin(), memrefTy.getShape().end());
+  } else if (auto tileBufTy = dyn_cast<pto::TileBufType>(ty)) {
+    elemTy = tileBufTy.getElementType();
+    shape.assign(tileBufTy.getShape().begin(), tileBufTy.getShape().end());
+  } else if (auto tileTy = dyn_cast<pto::TileType>(ty)) {
+    elemTy = tileTy.getElementType();
+    shape.assign(tileTy.getShape().begin(), tileTy.getShape().end());
+  } else {
+    return failure();
+  }
+
+  auto numel = getStaticNumElements(shape);
+  if (failed(numel))
+    return failure();
+
+  unsigned bitWidth = elemTy.getIntOrFloatBitWidth();
+  if (bitWidth == 0)
+    return failure();
+
+  uint64_t totalBits = (*numel) * static_cast<uint64_t>(bitWidth);
+  return (totalBits + 7) / 8;
+}
+
+static std::optional<pto::AddressSpace> getAddressSpaceFromType(Type ty) {
+  if (auto memrefTy = dyn_cast<MemRefType>(ty)) {
+    if (auto as = dyn_cast_or_null<pto::AddressSpaceAttr>(memrefTy.getMemorySpace()))
+      return as.getAddressSpace();
+    return std::nullopt;
+  }
+  if (auto tileBufTy = dyn_cast<pto::TileBufType>(ty)) {
+    if (auto as = dyn_cast_or_null<pto::AddressSpaceAttr>(tileBufTy.getMemorySpace()))
+      return as.getAddressSpace();
+  }
+  return std::nullopt;
+}
+
+static FailureOr<uint64_t> getPipeSlotBytes(Location loc, pto::PipeType pipeTy) {
+  auto srcBytes = getStaticTypeBytes(pipeTy.getSrcTileType());
+  if (failed(srcBytes)) {
+    emitError(loc) << "cannot compute static size for pipe src tile type";
+    return failure();
+  }
+  auto dstBytes = getStaticTypeBytes(pipeTy.getDstTileType());
+  if (failed(dstBytes)) {
+    emitError(loc) << "cannot compute static size for pipe dst tile type";
+    return failure();
+  }
+  return std::max(*srcBytes, *dstBytes);
+}
+
+static FailureOr<pto::AddressSpace> getPipeLocalSpace(Location loc,
+                                                      pto::PipeType pipeTy,
+                                                      int8_t dirMask) {
+  if (auto space = getAddressSpaceFromType(pipeTy.getDstTileType()))
+    return *space;
+
+  if (dirMask == 1)
+    return pto::AddressSpace::VEC;
+  if (dirMask == 2)
+    return pto::AddressSpace::MAT;
+
+  emitError(loc) << "unsupported dir_mask for pipe local space";
+  return failure();
+}
+
+static FailureOr<uint64_t> getL2G2LLocalBytes(pto::InitializeL2G2LPipeOp op) {
+  auto pipeTy = dyn_cast<pto::PipeType>(op.getPipe().getType());
+  if (!pipeTy)
+    return emitError(op.getLoc()) << "expected !pto.pipe result type", failure();
+
+  int64_t depth = 2;
+  if (auto depthAttr = op.getLocalFifoDepthAttr())
+    depth = depthAttr.getInt();
+  if (depth <= 0) {
+    emitError(op.getLoc()) << "local_fifo_depth must be positive";
+    return failure();
+  }
+
+  auto slotBytes = getPipeSlotBytes(op.getLoc(), pipeTy);
+  if (failed(slotBytes))
+    return failure();
+  return static_cast<uint64_t>(depth) * (*slotBytes);
+}
+
+static FailureOr<uint64_t> getL2LLocalBytes(pto::InitializeL2LPipeOp op) {
+  auto pipeTy = dyn_cast<pto::PipeType>(op.getPipe().getType());
+  if (!pipeTy)
+    return emitError(op.getLoc()) << "expected !pto.pipe result type", failure();
+
+  int64_t depth = 8;
+  if (auto depthAttr = op->getAttrOfType<IntegerAttr>("local_fifo_depth"))
+    depth = depthAttr.getInt();
+  if (depth <= 0) {
+    emitError(op.getLoc()) << "local_fifo_depth must be positive";
+    return failure();
+  }
+
+  auto slotBytes = getPipeSlotBytes(op.getLoc(), pipeTy);
+  if (failed(slotBytes))
+    return failure();
+  return static_cast<uint64_t>(depth) * (*slotBytes);
+}
+
+static LogicalResult computeMaxUsedBytes(
+    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+    DenseMap<pto::AddressSpace, uint64_t> &maxUsedBytes) {
+  for (auto &it : buffer2Offsets) {
+    Value buffer = it.first;
+    auto memSpaceAttr = GetBufferSpaceAttr(buffer);
+    if (!memSpaceAttr)
+      continue;
+    auto bytes = getStaticTypeBytes(buffer.getType());
+    if (failed(bytes))
+      return failure();
+    auto space = memSpaceAttr->getAddressSpace();
+    for (uint64_t offsetBytes : it.second) {
+      uint64_t endBytes = offsetBytes + (*bytes);
+      auto cur = maxUsedBytes.find(space);
+      if (cur == maxUsedBytes.end() || endBytes > cur->second)
+        maxUsedBytes[space] = endBytes;
+    }
+  }
+  return success();
+}
+
+static LogicalResult assignPipeLocalAddrs(func::FuncOp funcOp, MemPlan &memPlan) {
+  DenseMap<pto::AddressSpace, uint64_t> maxUsedBytes;
+  auto buffer2Offsets = memPlan.GetBuffer2Offsets();
+  if (failed(computeMaxUsedBytes(buffer2Offsets, maxUsedBytes))) {
+    funcOp.emitError("PlanMemory: failed to compute existing buffer sizes");
+    return failure();
+  }
+
+  IRRewriter rewriter(funcOp.getContext());
+
+  SmallVector<Operation *> pending;
+  funcOp.walk([&](pto::InitializeL2G2LPipeOp op) {
+    if (!op.getLocalAddr())
+      pending.push_back(op.getOperation());
+  });
+  funcOp.walk([&](pto::InitializeL2LPipeOp op) {
+    if (op.getLocalAddrs().empty())
+      pending.push_back(op.getOperation());
+  });
+
+  for (Operation *rawOp : pending) {
+    if (auto op = dyn_cast<pto::InitializeL2G2LPipeOp>(rawOp)) {
+      auto pipeTy = dyn_cast<pto::PipeType>(op.getPipe().getType());
+      if (!pipeTy) {
+        op.emitError("expected !pto.pipe result type");
+        return failure();
+      }
+
+      int8_t dirMask = static_cast<int8_t>(op.getDirMask());
+      auto space = getPipeLocalSpace(op.getLoc(), pipeTy, dirMask);
+      if (failed(space))
+        return failure();
+
+      auto localBytes = getL2G2LLocalBytes(op);
+      if (failed(localBytes))
+        return failure();
+
+      auto [alignBits, spaceBits] = memPlan.GetBufferSpaceInfoPublic(*space);
+      uint64_t alignBytes = (alignBits + 7) / 8;
+      if (alignBytes == 0)
+        alignBytes = 1;
+
+      uint64_t base = maxUsedBytes[*space];
+      uint64_t offset = AlignUp(base, alignBytes);
+      uint64_t end = offset + (*localBytes);
+      uint64_t maxBytes = spaceBits / 8;
+
+      if (end > maxBytes) {
+        op.emitError()
+            << "local fifo allocation (" << *localBytes
+            << " bytes) exceeds available " << maxBytes
+            << " bytes in " << stringifyEnum(*space);
+        return failure();
+      }
+      if (offset > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+        op.emitError("local_addr exceeds i32 range");
+        return failure();
+      }
+
+      maxUsedBytes[*space] = end;
+
+      rewriter.setInsertionPoint(op);
+      Value addr =
+          rewriter.create<arith::ConstantIntOp>(op.getLoc(), offset, 32);
+      rewriter.updateRootInPlace(op, [&]() {
+        op->insertOperands(op->getNumOperands(), addr);
+      });
+      continue;
+    }
+
+    auto op = dyn_cast<pto::InitializeL2LPipeOp>(rawOp);
+    if (!op)
+      continue;
+
+    auto pipeTy = dyn_cast<pto::PipeType>(op.getPipe().getType());
+    if (!pipeTy) {
+      op.emitError("expected !pto.pipe result type");
+      return failure();
+    }
+
+    int8_t dirMask = static_cast<int8_t>(op.getDirMask());
+    auto space = getPipeLocalSpace(op.getLoc(), pipeTy, dirMask);
+    if (failed(space))
+      return failure();
+
+    auto localBytes = getL2LLocalBytes(op);
+    if (failed(localBytes))
+      return failure();
+
+    auto [alignBits, spaceBits] = memPlan.GetBufferSpaceInfoPublic(*space);
+    uint64_t alignBytes = (alignBits + 7) / 8;
+    if (alignBytes == 0)
+      alignBytes = 1;
+
+    uint64_t base = maxUsedBytes[*space];
+    uint64_t offset = AlignUp(base, alignBytes);
+    uint64_t end = offset + (*localBytes);
+    uint64_t maxBytes = spaceBits / 8;
+
+    if (end > maxBytes) {
+      op.emitError()
+          << "local fifo allocation (" << *localBytes
+          << " bytes) exceeds available " << maxBytes
+          << " bytes in " << stringifyEnum(*space);
+      return failure();
+    }
+    if (offset > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+      op.emitError("local_addr exceeds i32 range");
+      return failure();
+    }
+
+    maxUsedBytes[*space] = end;
+
+    rewriter.setInsertionPoint(op);
+    Value addr =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), offset, 32);
+    rewriter.updateRootInPlace(op, [&]() { op->insertOperands(0, addr); });
+  }
+
+  return success();
+}
 
 } // namespace
 
@@ -1247,7 +1517,7 @@ void MemPlan::ReorderContinuousPingPongEntry(
 }
 
 std::pair<size_t, size_t>
-MemPlan::GetBufferSpaceInfo(pto::AddressSpace &space) const {
+MemPlan::GetBufferSpaceInfo(const pto::AddressSpace &space) const {
   switch (space) {
   case pto::AddressSpace::VEC:
     return std::make_pair(ubAlignSize, ubSpaceSize);
@@ -1987,6 +2257,12 @@ void PlanMemoryPass::runOnOperation() {
     //     vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
     if (failed(memPlan.plan())) {
       return signalPassFailure();
+    }
+
+    if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
+      if (failed(assignPipeLocalAddrs(funcOp, memPlan))) {
+        return signalPassFailure();
+      }
     }
 
     RewritePatternSet patterns(&getContext());

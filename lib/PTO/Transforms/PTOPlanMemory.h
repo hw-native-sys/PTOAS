@@ -515,7 +515,13 @@ private:
                                size_t alignUnit);
 
   /// Obtain buffer space size and alignment information.
-  std::pair<size_t, size_t> GetBufferSpaceInfo(pto::AddressSpace &space) const;
+  std::pair<size_t, size_t> GetBufferSpaceInfo(const pto::AddressSpace &space) const;
+
+  /// Public wrapper for space info (align, size in bits).
+  inline std::pair<size_t, size_t>
+  GetBufferSpaceInfoPublic(const pto::AddressSpace &space) const {
+    return GetBufferSpaceInfo(space);
+  }
 
   /// Emit buffer applied failure message.
   void EmitPlanMemoryFailureInfo();
