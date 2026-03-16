@@ -115,7 +115,8 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     "mlir::Type":$elementType,
     "mlir::Attribute":$memorySpace,
     ArrayRefParameter<"int64_t">:$validShape,
-    "mlir::pto::TileBufConfigAttr":$config // TileBufConfigAttr (or null -> default)
+    "mlir::pto::TileBufConfigAttr":$config, // nullable: null means config omitted in source
+    "mlir::IntegerAttr":$explicitConfigMask // nullable: bitmask of explicitly written config fields
   );
 
   let hasCustomAssemblyFormat = 1;
@@ -128,12 +129,12 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
       "Type":$elementType,
       "Attribute":$memorySpace
     ), [{
-      auto cfg = mlir::pto::TileBufConfigAttr::getDefault($_ctxt);
-
       // ✅ 默认 validShape = shape（你要求的语义）
       SmallVector<int64_t, 2> vs(shape.begin(), shape.end());
 
-      return Base::get($_ctxt, shape, elementType, memorySpace, vs, cfg);
+      return Base::get($_ctxt, shape, elementType, memorySpace, vs,
+                       mlir::pto::TileBufConfigAttr(),
+                       mlir::IntegerAttr());
     }]>,
 
     // (2) 兼容接口：shape/elem/memorySpace/config
@@ -145,7 +146,11 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     ), [{
       // ✅ 默认 validShape = shape
       SmallVector<int64_t, 2> vs(shape.begin(), shape.end());
-      return Base::get($_ctxt, shape, elementType, memorySpace, vs, config);
+      auto explicitConfigMask =
+          config ? mlir::IntegerAttr::get(mlir::IntegerType::get($_ctxt, 32), 15)
+                 : mlir::IntegerAttr();
+      return Base::get($_ctxt, shape, elementType, memorySpace, vs, config,
+                       explicitConfigMask);
     }]>,
 
     // (3) 便利接口：shape/elem/memorySpace/validShape（config 默认）
@@ -155,12 +160,36 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
       "Attribute":$memorySpace,
       "ArrayRef<int64_t>":$validShape
     ), [{
-      auto cfg = mlir::pto::TileBufConfigAttr::getDefault($_ctxt);
-      return Base::get($_ctxt, shape, elementType, memorySpace, validShape, cfg);
+      return Base::get($_ctxt, shape, elementType, memorySpace, validShape,
+                       mlir::pto::TileBufConfigAttr(),
+                       mlir::IntegerAttr());
+    }]>,
+
+    // (4) 兼容接口：shape/elem/memorySpace/validShape/config
+    TypeBuilder<(ins
+      "ArrayRef<int64_t>":$shape,
+      "Type":$elementType,
+      "Attribute":$memorySpace,
+      "ArrayRef<int64_t>":$validShape,
+      "mlir::pto::TileBufConfigAttr":$config
+    ), [{
+      auto explicitConfigMask =
+          config ? mlir::IntegerAttr::get(mlir::IntegerType::get($_ctxt, 32), 15)
+                 : mlir::IntegerAttr();
+      return Base::get($_ctxt, shape, elementType, memorySpace, validShape,
+                       config, explicitConfigMask);
     }]>
   ];
 
   let extraClassDeclaration = [{
+    static constexpr uint32_t kExplicitBLayoutMask = 1u << 0;
+    static constexpr uint32_t kExplicitSLayoutMask = 1u << 1;
+    static constexpr uint32_t kExplicitFractalMask = 1u << 2;
+    static constexpr uint32_t kExplicitPadMask = 1u << 3;
+    static constexpr uint32_t kAllConfigFieldsMask =
+        kExplicitBLayoutMask | kExplicitSLayoutMask |
+        kExplicitFractalMask | kExplicitPadMask;
+
     int64_t getRank() const { return getShape().size(); }
 
     bool hasValidShape() const { return !getValidShape().empty(); }
@@ -170,7 +199,11 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     }
 
     mlir::pto::TileBufConfigAttr getConfigAttr() const;
+    bool hasExplicitConfig() const;
+    bool hasCompleteConfig() const;
     bool hasNonDefaultConfig() const;
+    uint32_t getExplicitConfigMaskValue() const;
+    bool isConfigFieldExplicit(uint32_t maskBit) const;
 
     // ✅ 返回强类型 Attr，而不是 enum
     mlir::Attribute getBLayoutAttr() const;

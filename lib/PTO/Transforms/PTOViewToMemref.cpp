@@ -38,6 +38,65 @@ namespace pto {
 
 namespace {
 
+constexpr StringLiteral kTileConfigAttrName = "pto.tile_config";
+constexpr StringLiteral kTileValidShapeAttrName = "pto.tile_valid_shape";
+
+static TileBufConfigAttr getFunctionArgTileConfig(Value v) {
+  auto arg = dyn_cast<BlockArgument>(v);
+  if (!arg)
+    return {};
+  auto *owner = arg.getOwner() ? arg.getOwner()->getParentOp() : nullptr;
+  auto func = dyn_cast_or_null<func::FuncOp>(owner);
+  if (!func)
+    return {};
+  return func.getArgAttrOfType<TileBufConfigAttr>(arg.getArgNumber(),
+                                                  kTileConfigAttrName);
+}
+
+static DenseI64ArrayAttr getFunctionArgTileValidShape(Value v) {
+  auto arg = dyn_cast<BlockArgument>(v);
+  if (!arg)
+    return {};
+  auto *owner = arg.getOwner() ? arg.getOwner()->getParentOp() : nullptr;
+  auto func = dyn_cast_or_null<func::FuncOp>(owner);
+  if (!func)
+    return {};
+  return func.getArgAttrOfType<DenseI64ArrayAttr>(arg.getArgNumber(),
+                                                  kTileValidShapeAttrName);
+}
+
+static func::FuncOp lookupCallCallee(Value v) {
+  auto call = v.getDefiningOp<func::CallOp>();
+  if (!call)
+    return {};
+  auto module = call->getParentOfType<ModuleOp>();
+  if (!module)
+    return {};
+  return module.lookupSymbol<func::FuncOp>(call.getCallee());
+}
+
+static TileBufConfigAttr getCallResultTileConfig(Value v) {
+  auto result = dyn_cast<OpResult>(v);
+  if (!result)
+    return {};
+  auto callee = lookupCallCallee(v);
+  if (!callee || result.getResultNumber() >= callee.getNumResults())
+    return {};
+  return callee.getResultAttrOfType<TileBufConfigAttr>(result.getResultNumber(),
+                                                       kTileConfigAttrName);
+}
+
+static DenseI64ArrayAttr getCallResultTileValidShape(Value v) {
+  auto result = dyn_cast<OpResult>(v);
+  if (!result)
+    return {};
+  auto callee = lookupCallCallee(v);
+  if (!callee || result.getResultNumber() >= callee.getNumResults())
+    return {};
+  return callee.getResultAttrOfType<DenseI64ArrayAttr>(
+      result.getResultNumber(), kTileValidShapeAttrName);
+}
+
 // =============================================================================
 // Helper: Metadata Backtracking (核心机制)
 // =============================================================================
@@ -66,6 +125,11 @@ static mlir::pto::TileBufConfigAttr lookupConfig(Value v) {
   if (auto cast = v.getDefiningOp<memref::CastOp>()) {
     return lookupConfig(cast.getSource());
   }
+
+  if (auto cfg = getFunctionArgTileConfig(v))
+    return cfg;
+  if (auto cfg = getCallResultTileConfig(v))
+    return cfg;
   
   // 如果追溯到 BlockArgument (函数参数) 或其他无法穿透的 Op，则返回空
   return {}; 
@@ -74,7 +138,26 @@ static mlir::pto::TileBufConfigAttr lookupConfig(Value v) {
 // =============================================================================
 // Helper: Valid dims backtracking (v_row / v_col)
 // =============================================================================
-static void lookupValidDims(Value v, Value &vRow, Value &vCol) {
+static void materializeStaticValidDims(IRRewriter &rewriter, Location loc,
+                                       DenseI64ArrayAttr validShape, Value &vRow,
+                                       Value &vCol) {
+  if (!validShape)
+    return;
+  auto values = validShape.asArrayRef();
+  if (values.size() >= 1 && values[0] >= 0)
+    vRow = rewriter
+               .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                          rewriter.getIndexAttr(values[0]))
+               .getResult();
+  if (values.size() >= 2 && values[1] >= 0)
+    vCol = rewriter
+               .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                          rewriter.getIndexAttr(values[1]))
+               .getResult();
+}
+
+static void lookupValidDims(IRRewriter &rewriter, Location loc, Value v,
+                            Value &vRow, Value &vCol) {
   if (auto bind = v.getDefiningOp<mlir::pto::BindTileOp>()) {
     vRow = bind.getValidRow();
     vCol = bind.getValidCol();
@@ -86,15 +169,23 @@ static void lookupValidDims(Value v, Value &vRow, Value &vCol) {
     return;
   }
   if (auto subview = v.getDefiningOp<memref::SubViewOp>()) {
-    lookupValidDims(subview.getSource(), vRow, vCol);
+    lookupValidDims(rewriter, loc, subview.getSource(), vRow, vCol);
     return;
   }
   if (auto cast = v.getDefiningOp<memref::ReinterpretCastOp>()) {
-    lookupValidDims(cast.getSource(), vRow, vCol);
+    lookupValidDims(rewriter, loc, cast.getSource(), vRow, vCol);
     return;
   }
   if (auto cast = v.getDefiningOp<memref::CastOp>()) {
-    lookupValidDims(cast.getSource(), vRow, vCol);
+    lookupValidDims(rewriter, loc, cast.getSource(), vRow, vCol);
+    return;
+  }
+  if (auto validShape = getFunctionArgTileValidShape(v)) {
+    materializeStaticValidDims(rewriter, loc, validShape, vRow, vCol);
+    return;
+  }
+  if (auto validShape = getCallResultTileValidShape(v)) {
+    materializeStaticValidDims(rewriter, loc, validShape, vRow, vCol);
     return;
   }
   vRow = Value();
@@ -407,6 +498,101 @@ static Type convertPTOTypeToMemRef(Type t) {
   return t;
 }
 
+static FunctionType convertFunctionTypeToMemRef(FunctionType fnTy,
+                                                MLIRContext *ctx) {
+  SmallVector<Type> newInputs;
+  newInputs.reserve(fnTy.getNumInputs());
+  for (Type t : fnTy.getInputs())
+    newInputs.push_back(convertPTOTypeToMemRef(t));
+
+  SmallVector<Type> newResults;
+  newResults.reserve(fnTy.getNumResults());
+  for (Type t : fnTy.getResults())
+    newResults.push_back(convertPTOTypeToMemRef(t));
+
+  return FunctionType::get(ctx, newInputs, newResults);
+}
+
+static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
+                                                       MLIRContext *ctx) {
+  for (auto func : mod.getOps<func::FuncOp>()) {
+    Builder builder(ctx);
+    for (auto [idx, type] : llvm::enumerate(func.getFunctionType().getInputs())) {
+      auto tbTy = dyn_cast<TileBufType>(type);
+      if (!tbTy)
+        continue;
+      if (tbTy.hasExplicitConfig())
+        func.setArgAttr(idx, kTileConfigAttrName, tbTy.getConfigAttr());
+      if (!tbTy.getValidShape().empty())
+        func.setArgAttr(idx, kTileValidShapeAttrName,
+                        builder.getDenseI64ArrayAttr(tbTy.getValidShape()));
+    }
+    for (auto [idx, type] : llvm::enumerate(func.getFunctionType().getResults())) {
+      auto tbTy = dyn_cast<TileBufType>(type);
+      if (!tbTy)
+        continue;
+      if (tbTy.hasExplicitConfig())
+        func.setResultAttr(idx, kTileConfigAttrName, tbTy.getConfigAttr());
+      if (!tbTy.getValidShape().empty())
+        func.setResultAttr(idx, kTileValidShapeAttrName,
+                           builder.getDenseI64ArrayAttr(tbTy.getValidShape()));
+    }
+
+    auto newFnTy = convertFunctionTypeToMemRef(func.getFunctionType(), ctx);
+
+    if (!func.isExternal()) {
+      Block &entry = func.front();
+      if (entry.getNumArguments() != newFnTy.getNumInputs()) {
+        return func.emitOpError(
+            "entry block argument count does not match rewritten signature");
+      }
+
+      for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
+        if (entry.getArgument(i).getType() != newFnTy.getInput(i))
+          entry.getArgument(i).setType(newFnTy.getInput(i));
+      }
+    }
+
+    if (func.getFunctionType() != newFnTy)
+      func.setFunctionType(newFnTy);
+  }
+
+  SmallVector<func::CallOp> callOps;
+  mod.walk([&](func::CallOp call) { callOps.push_back(call); });
+
+  for (func::CallOp call : callOps) {
+    auto callee = mod.lookupSymbol<func::FuncOp>(call.getCallee());
+    if (!callee)
+      continue;
+
+    auto calleeTy = callee.getFunctionType();
+    if (call.getNumOperands() != calleeTy.getNumInputs()) {
+      return call.emitOpError("operand count does not match rewritten callee "
+                              "signature for ")
+             << callee.getSymName();
+    }
+
+    bool needsRewrite = !llvm::equal(call.getResultTypes(), calleeTy.getResults());
+    for (auto [idx, operand] : llvm::enumerate(call.getOperands())) {
+      if (operand.getType() != calleeTy.getInput(idx)) {
+        needsRewrite = true;
+        break;
+      }
+    }
+    if (!needsRewrite)
+      continue;
+
+    OpBuilder builder(call);
+    auto newCall =
+        builder.create<func::CallOp>(call.getLoc(), callee, call.getOperands());
+    newCall->setAttrs(call->getAttrs());
+    call.replaceAllUsesWith(newCall.getResults());
+    call.erase();
+  }
+
+  return success();
+}
+
 // Ensure scf.if result types follow the rewritten yield operand types.
 // PTOViewToMemref rewrites tile values to memref in branch bodies, but scf.if
 // result types are not auto-updated by those op-local rewrites.
@@ -475,6 +661,11 @@ struct PTOViewToMemrefPass
 
     // Debug output before pass
     // dumpPretty(mod.getOperation(), llvm::errs());
+
+    if (failed(rewriteFunctionInterfacesToMemRef(mod, ctx))) {
+      signalPassFailure();
+      return;
+    }
 
     for (auto func : mod.getOps<func::FuncOp>()) {
       if (func.isExternal()) continue;
@@ -1054,7 +1245,7 @@ struct PTOViewToMemrefPass
         // 6. Re-bind tile metadata (config + valid dims)
         Value parentVRow;
         Value parentVCol;
-        lookupValidDims(src, parentVRow, parentVCol);
+        lookupValidDims(rewriter, loc, src, parentVRow, parentVCol);
 
         Value vRow;
         Value vCol;
@@ -1108,7 +1299,7 @@ struct PTOViewToMemrefPass
         // Re-bind (possibly-updated) tile metadata.
         Value parentVRow;
         Value parentVCol;
-        lookupValidDims(src, parentVRow, parentVCol);
+        lookupValidDims(rewriter, loc, src, parentVRow, parentVCol);
 
         Value vRow = parentVRow;
         Value vCol = parentVCol;

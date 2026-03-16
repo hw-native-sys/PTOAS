@@ -171,8 +171,8 @@ MlirType mlirPTOTileBufTypeGet(MlirContext ctx, intptr_t rank,
                                MlirAttribute memorySpace) {
   MLIRContext *c = unwrap(ctx);
   auto shp = llvm::ArrayRef<int64_t>(shape, rank);
-  auto cfg = mlir::pto::TileBufConfigAttr::getDefault(c);
-  auto ty = mlir::pto::TileBufType::get(c, shp, unwrap(elementType), unwrap(memorySpace), llvm::ArrayRef<int64_t>{}, cfg);
+  auto ty = mlir::pto::TileBufType::get(
+      c, shp, unwrap(elementType), unwrap(memorySpace));
   return wrap(ty);
 }
 
@@ -182,7 +182,6 @@ MlirType mlirPTOTileBufTypeGetWithConfig(MlirContext ctx, intptr_t rank,
   MLIRContext *c = unwrap(ctx);
   auto shp = llvm::ArrayRef<int64_t>(shape, rank);
   auto cfg = unwrap(config).dyn_cast_or_null<mlir::pto::TileBufConfigAttr>();
-  if (!cfg) cfg = mlir::pto::TileBufConfigAttr::getDefault(c);
   auto ty = mlir::pto::TileBufType::get(c, shp, unwrap(elementType), unwrap(memorySpace), cfg);
   return wrap(ty);
 }
@@ -197,10 +196,9 @@ MlirType mlirPTOTileBufTypeGetWithValidShape(MlirContext ctx,
   MLIRContext *c = unwrap(ctx);
   auto shp = llvm::ArrayRef<int64_t>(shape, rank);
   auto vs  = llvm::ArrayRef<int64_t>(validShape, validRank);
-  auto cfg = mlir::pto::TileBufConfigAttr::getDefault(c);
-
   auto ty = mlir::pto::TileBufType::get(c, shp, unwrap(elementType),
-                                       unwrap(memorySpace), vs, cfg);
+                                       unwrap(memorySpace), vs,
+                                       mlir::pto::TileBufConfigAttr());
   return wrap(ty);
 }
 

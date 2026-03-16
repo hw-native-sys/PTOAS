@@ -3889,14 +3889,19 @@ LogicalResult SubsetOp::inferReturnTypes(
     validShape.push_back(vdim);
   }
 
-  // 3. 继承 Config (若为空使用默认)
-  auto cfg = sourceType.getConfigAttr();
-  if (!cfg) cfg = TileBufConfigAttr::getDefault(context);
+  // 3. 继承 Config：源里显式写了就保留，源里省略了就继续省略。
+  TileBufConfigAttr cfg;
+  IntegerAttr explicitConfigMask;
+  if (sourceType.hasExplicitConfig())
+    cfg = sourceType.getConfigAttr();
+  if (sourceType.hasExplicitConfig())
+    explicitConfigMask = IntegerAttr::get(
+        IntegerType::get(context, 32), sourceType.getExplicitConfigMaskValue());
 
   // 4. 构建 Result Type
   auto resultType = TileBufType::get(
       context, resultShape, sourceType.getElementType(),
-      sourceType.getMemorySpace(), validShape, cfg);
+      sourceType.getMemorySpace(), validShape, cfg, explicitConfigMask);
 
   inferredReturnTypes.push_back(resultType);
   return success();

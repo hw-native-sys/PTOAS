@@ -5,21 +5,56 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-TileBufConfigAttr TileBufType::getConfigAttr() const {
-  // 情况 A：getConfig() 已经是 TileBufConfigAttr
-  if constexpr (std::is_same_v<decltype(getConfig()), TileBufConfigAttr>) {
-    auto cfg = getConfig();
-    if (!cfg) cfg = TileBufConfigAttr::getDefault(getContext());
-    return cfg;
-  } else {
-    // 情况 B：getConfig() 是 Attribute
-    auto cfg = llvm::dyn_cast_or_null<TileBufConfigAttr>(getConfig());
-    if (!cfg) cfg = TileBufConfigAttr::getDefault(getContext());
-    return cfg;
-  }
+namespace {
+
+static TileBufConfigAttr getRawConfigAttr(TileBufType tileTy) {
+  if constexpr (std::is_same_v<decltype(tileTy.getConfig()), TileBufConfigAttr>)
+    return tileTy.getConfig();
+  return llvm::dyn_cast_or_null<TileBufConfigAttr>(tileTy.getConfig());
 }
+
+static IntegerAttr getRawExplicitConfigMaskAttr(TileBufType tileTy) {
+  if constexpr (std::is_same_v<decltype(tileTy.getExplicitConfigMask()),
+                               IntegerAttr>)
+    return tileTy.getExplicitConfigMask();
+  return llvm::dyn_cast_or_null<IntegerAttr>(tileTy.getExplicitConfigMask());
+}
+
+static IntegerAttr getExplicitConfigMaskAttr(MLIRContext *ctx, uint32_t mask) {
+  if (mask == 0)
+    return {};
+  return IntegerAttr::get(IntegerType::get(ctx, 32), mask);
+}
+
+} // namespace
+
+TileBufConfigAttr TileBufType::getConfigAttr() const {
+  auto cfg = getRawConfigAttr(*this);
+  if (!cfg)
+    cfg = TileBufConfigAttr::getDefault(getContext());
+  return cfg;
+}
+
+uint32_t TileBufType::getExplicitConfigMaskValue() const {
+  if (auto maskAttr = getRawExplicitConfigMaskAttr(*this))
+    return static_cast<uint32_t>(maskAttr.getInt());
+  return getRawConfigAttr(*this) ? kAllConfigFieldsMask : 0;
+}
+
+bool TileBufType::hasExplicitConfig() const {
+  return getExplicitConfigMaskValue() != 0;
+}
+
+bool TileBufType::hasCompleteConfig() const {
+  return getExplicitConfigMaskValue() == kAllConfigFieldsMask;
+}
+
+bool TileBufType::isConfigFieldExplicit(uint32_t maskBit) const {
+  return (getExplicitConfigMaskValue() & maskBit) != 0;
+}
+
 bool TileBufType::hasNonDefaultConfig() const {
-  return !getConfigAttr().isDefault();
+  return hasExplicitConfig() && !getConfigAttr().isDefault();
 }
 
 mlir::Attribute TileBufType::getBLayoutAttr() const { return getConfigAttr().getBLayout(); }
@@ -61,9 +96,14 @@ Type TileBufType::parse(AsmParser &parser) {
   Type dtype;
   int64_t rows = 0, cols = 0;
   int64_t vrow = -1, vcol = -1;
-  std::string blayoutStr, slayoutStr;
-  int64_t fractal = 0;
-  uint32_t padInt;
+  TileBufConfigAttr defaultConfig = TileBufConfigAttr::getDefault(ctx);
+  std::string blayoutStr = stringifyBLayout(
+      llvm::cast<BLayoutAttr>(defaultConfig.getBLayout()).getValue()).str();
+  std::string slayoutStr = stringifySLayout(
+      llvm::cast<SLayoutAttr>(defaultConfig.getSLayout()).getValue()).str();
+  int64_t fractal = defaultConfig.getSFractalSize().getInt();
+  uint32_t padInt = 0;
+  uint32_t explicitConfigMask = 0;
 
   auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
     if (failed(parser.parseKeyword(expectedKey)))
@@ -133,39 +173,64 @@ Type TileBufType::parse(AsmParser &parser) {
             return Type();
         }
     }
-    if (failed(parser.parseComma())) return Type();
   }
 
-  // blayout=RowMajor
-  {
-    if (failed(parseKeyEq("blayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&blayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
+  if (failed(parser.parseOptionalGreater())) {
+    if (failed(parser.parseComma()))
+      return Type();
+
+    while (true) {
+      StringRef key;
+      if (failed(parser.parseKeyword(&key)))
+        return Type();
+      if (failed(parser.parseEqual()))
+        return Type();
+
+      if (key == "blayout") {
+        if (explicitConfigMask & TileBufType::kExplicitBLayoutMask) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate blayout");
+          return Type();
+        }
+        explicitConfigMask |= TileBufType::kExplicitBLayoutMask;
+        if (failed(parser.parseKeywordOrString(&blayoutStr)))
+          return Type();
+      } else if (key == "slayout") {
+        if (explicitConfigMask & TileBufType::kExplicitSLayoutMask) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate slayout");
+          return Type();
+        }
+        explicitConfigMask |= TileBufType::kExplicitSLayoutMask;
+        if (failed(parser.parseKeywordOrString(&slayoutStr)))
+          return Type();
+      } else if (key == "fractal") {
+        if (explicitConfigMask & TileBufType::kExplicitFractalMask) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate fractal");
+          return Type();
+        }
+        explicitConfigMask |= TileBufType::kExplicitFractalMask;
+        if (failed(parser.parseInteger(fractal)))
+          return Type();
+      } else if (key == "pad") {
+        if (explicitConfigMask & TileBufType::kExplicitPadMask) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate pad");
+          return Type();
+        }
+        explicitConfigMask |= TileBufType::kExplicitPadMask;
+        if (failed(parser.parseInteger(padInt)))
+          return Type();
+      } else {
+        parser.emitError(parser.getCurrentLocation(),
+                         "unknown key in tile_buf type: ")
+            << key;
+        return Type();
+      }
+
+      if (succeeded(parser.parseOptionalGreater()))
+        break;
+      if (failed(parser.parseComma()))
+        return Type();
+    }
   }
-
-
-  // slayout=NoneBox
-  {
-    if (failed(parseKeyEq("slayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&slayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // fractal=512
-  {
-    if (failed(parseKeyEq("fractal"))) return Type();
-    if (failed(parser.parseInteger(fractal))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // pad=Null
-  {
-    if (failed(parseKeyEq("pad"))) return Type();
-    if (failed(parser.parseInteger(padInt))) return Type();
-  }
-
-  if (failed(parser.parseGreater()))
-    return Type();
 
   // -------- 语义校验/构造 --------
   if (rows < 0 || cols < 0) {
@@ -209,12 +274,19 @@ Type TileBufType::parse(AsmParser &parser) {
       IntegerAttr::get(IntegerType::get(ctx, 32), fractal);
   auto padAttr = PadValueAttr::get(ctx, pv.value());
   auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
+  TileBufConfigAttr cfg;
+  IntegerAttr explicitConfigMaskAttr;
+  if (explicitConfigMask != 0) {
+    cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
+    explicitConfigMaskAttr = getExplicitConfigMaskAttr(ctx, explicitConfigMask);
+  }
 
   SmallVector<int64_t, 2> shape{rows, cols};
   SmallVector<int64_t, 2> validShape{vrow, vcol};
 
-  return TileBufType::get(ctx, shape, dtype, memorySpaceAttr, llvm::ArrayRef<int64_t>(validShape), cfg);
+  return TileBufType::get(ctx, shape, dtype, memorySpaceAttr,
+                          llvm::ArrayRef<int64_t>(validShape), cfg,
+                          explicitConfigMaskAttr);
 }
 
 static llvm::StringRef stringifyLocFromMemorySpace(mlir::Attribute memorySpace) {
@@ -250,8 +322,9 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     int64_t rows = shape.size() > 0 ? shape[0] : 0;
     int64_t cols = shape.size() > 1 ? shape[1] : 0;
 
-    auto cfg = getConfigAttr();
-    if (!cfg) cfg = mlir::pto::TileBufConfigAttr::getDefault(getContext());
+    uint32_t explicitConfigMask = getExplicitConfigMaskValue();
+    auto cfg = explicitConfigMask != 0 ? getConfigAttr()
+                                       : mlir::pto::TileBufConfigAttr::getDefault(getContext());
 
     llvm::StringRef locStr = stringifyLocFromMemorySpace(getMemorySpace());
 
@@ -281,9 +354,25 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     if (vcol < 0) printer << "?";
     else printer << vcol;
 
-    printer << ", blayout=" << stringifyBLayout(blayout.getValue())
-        << ", slayout=" << stringifySLayout(slayout.getValue())
-        << ", fractal=" << cfg.getSFractalSize().getInt()
-        << ", pad=" << stringifyLocFromPad(cfg.getPad())
-        << ">";
+    if (explicitConfigMask == 0) {
+        printer << ">";
+        return;
+    }
+
+    bool needsComma = true;
+    auto printConfigField = [&](StringRef name, auto value) {
+      printer << (needsComma ? ", " : "") << name << "=" << value;
+      needsComma = true;
+    };
+
+    if (isConfigFieldExplicit(kExplicitBLayoutMask))
+      printConfigField("blayout", stringifyBLayout(blayout.getValue()));
+    if (isConfigFieldExplicit(kExplicitSLayoutMask))
+      printConfigField("slayout", stringifySLayout(slayout.getValue()));
+    if (isConfigFieldExplicit(kExplicitFractalMask))
+      printConfigField("fractal", cfg.getSFractalSize().getInt());
+    if (isConfigFieldExplicit(kExplicitPadMask))
+      printConfigField("pad", stringifyLocFromPad(cfg.getPad()));
+
+    printer << ">";
 }
