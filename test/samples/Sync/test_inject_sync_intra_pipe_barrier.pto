@@ -12,17 +12,17 @@ module {
   // CHECK: pto.tadd
   // CHECK: pto.barrier <PIPE_ALL>
   func.func @test_intra_pipe_barrier() {
-    %ub0 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %ub1 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
+    %ub0 = memref.alloc() : memref<16x16xf16, #pto.address_space<vec>>
+    %ub1 = memref.alloc() : memref<16x16xf16, #pto.address_space<vec>>
 
     // Both ops are on PIPE_V and touch %ub0, so there is an intra-pipe RAW/WAW
     // hazard that must be serialized by a per-pipe barrier.
-    pto.tadd ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
-                             memref<16x16x16xf16, #pto.address_space<vec>>)
-             outs(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tadd ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
-                             memref<16x16x16xf16, #pto.address_space<vec>>)
-             outs(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
+    pto.tadd ins(%ub0, %ub0 : memref<16x16xf16, #pto.address_space<vec>>,
+                             memref<16x16xf16, #pto.address_space<vec>>)
+             outs(%ub0 : memref<16x16xf16, #pto.address_space<vec>>)
+    pto.tadd ins(%ub0, %ub0 : memref<16x16xf16, #pto.address_space<vec>>,
+                             memref<16x16xf16, #pto.address_space<vec>>)
+             outs(%ub1 : memref<16x16xf16, #pto.address_space<vec>>)
     return
   }
 }

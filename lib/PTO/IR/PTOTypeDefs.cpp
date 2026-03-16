@@ -13,6 +13,15 @@ static TileBufConfigAttr getRawConfigAttr(TileBufType tileTy) {
   return llvm::dyn_cast_or_null<TileBufConfigAttr>(tileTy.getConfig());
 }
 
+static SmallVector<int64_t, 4>
+canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
+  SmallVector<int64_t, 4> canonical;
+  canonical.reserve(validShape.size());
+  for (int64_t dim : validShape)
+    canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
+  return canonical;
+}
+
 static IntegerAttr getRawExplicitConfigMaskAttr(TileBufType tileTy) {
   if constexpr (std::is_same_v<decltype(tileTy.getExplicitConfigMask()),
                                IntegerAttr>)
@@ -283,9 +292,10 @@ Type TileBufType::parse(AsmParser &parser) {
 
   SmallVector<int64_t, 2> shape{rows, cols};
   SmallVector<int64_t, 2> validShape{vrow, vcol};
+  auto canonicalValidShape = canonicalizeTileBufValidShape(validShape);
 
   return TileBufType::get(ctx, shape, dtype, memorySpaceAttr,
-                          llvm::ArrayRef<int64_t>(validShape), cfg,
+                          llvm::ArrayRef<int64_t>(canonicalValidShape), cfg,
                           explicitConfigMaskAttr);
 }
 

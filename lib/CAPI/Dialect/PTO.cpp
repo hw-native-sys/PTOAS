@@ -21,6 +21,14 @@
 
 using namespace mlir;
 
+static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
+  SmallVector<int64_t, 4> canonical;
+  canonical.reserve(validShape.size());
+  for (int64_t dim : validShape)
+    canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
+  return canonical;
+}
+
 // Dialect registration (provides mlirGetDialectHandle__pto__()).
 // NOTE: adjust the third argument if your dialect class name/namespace differs.
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(PTO, pto, mlir::pto::PTODialect)
@@ -214,9 +222,10 @@ MlirType mlirPTOTileBufTypeGetWithValidShapeAndConfig(MlirContext ctx,
   auto shp = llvm::ArrayRef<int64_t>(shape, rank);
   auto vs  = llvm::ArrayRef<int64_t>(validShape, validRank);
   auto cfg = mlir::cast<mlir::pto::TileBufConfigAttr>(unwrap(config));
+  auto canonicalValidShape = canonicalizeTileBufValidShape(vs);
 
   auto ty = mlir::pto::TileBufType::get(c, shp, unwrap(elementType),
-                                       unwrap(memorySpace), vs, cfg);
+                                       unwrap(memorySpace), canonicalValidShape, cfg);
   return wrap(ty);
 }
 

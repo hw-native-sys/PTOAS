@@ -1,0 +1,26 @@
+// RUN: ptoas --pto-arch a5 --enable-insert-sync %s | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend950"} {
+  // A5: vec->vec TINSERT should use non-custom path (PIPE_FIX).
+  func.func @tinsert_vec_vec_pipeline(%a: memref<32x32xf16, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %src_vec = memref.alloc() : memref<32x32xf16, #pto.address_space<vec>>
+    %dst_vec = memref.alloc() : memref<32x32xf16, #pto.address_space<vec>>
+    %out_vec = memref.alloc() : memref<32x32xf16, #pto.address_space<vec>>
+
+    pto.tload ins(%a : memref<32x32xf16, #pto.address_space<gm>>)
+              outs(%src_vec : memref<32x32xf16, #pto.address_space<vec>>) {layout = #pto.layout<nd>}
+    pto.tinsert ins(%src_vec, %c0, %c0 : memref<32x32xf16, #pto.address_space<vec>>, index, index)
+               outs(%dst_vec : memref<32x32xf16, #pto.address_space<vec>>)
+    pto.tmov ins(%dst_vec : memref<32x32xf16, #pto.address_space<vec>>)
+             outs(%out_vec : memref<32x32xf16, #pto.address_space<vec>>)
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void tinsert_vec_vec_pipeline(
+// CHECK: set_flag(PIPE_MTE2, PIPE_FIX, EVENT_ID0);
+// CHECK: wait_flag(PIPE_MTE2, PIPE_FIX, EVENT_ID0);
+// CHECK: TINSERT(
+// CHECK: set_flag(PIPE_FIX, PIPE_V, EVENT_ID0);
+// CHECK: wait_flag(PIPE_FIX, PIPE_V, EVENT_ID0);

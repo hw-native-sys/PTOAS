@@ -74,7 +74,7 @@ inline constexpr OpInfo kOpTable[] = {
   {0x102A, "pto.tgemv", 1, 0x00, 0x01, 0, 0, 0, 0x00},
   {0x102B, "pto.tgetval", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x102C, "pto.timg2col", 0, 0x00, 0x00, 2, 0, 0, 0x00},
-  {0x102D, "pto.tinsert", 0, 0x00, 0x00, 3, 0, 0, 0x00},
+  {0x102D, "pto.tinsert", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x102E, "pto.tinsert_fp", 0, 0x00, 0x00, 5, 0, 0, 0x00},
   {0x102F, "pto.tload", 0, 0x00, 0x00, 2, 0, 0, 0x00},
   {0x1030, "pto.tlog", 0, 0x00, 0x00, 2, 0, 0, 0x00},
@@ -136,10 +136,9 @@ inline constexpr OpInfo kOpTable[] = {
   {0x1068, "pto.tsubc", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x1069, "pto.tsubs", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x106A, "pto.tsubsc", 0, 0x00, 0x00, 4, 0, 0, 0x00},
-  {0x106B, "pto.tsync", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x106C, "pto.ttrans", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x106D, "pto.ttri", 0, 0x00, 0x00, 3, 0, 0, 0x00},
-  {0x106E, "pto.txor", 0, 0x00, 0x00, 3, 0, 0, 0x00},
+  {0x106E, "pto.txor", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x106F, "pto.txors", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x1070, "pto.wait_event", 0, 0x00, 0x00, 0, 0, 0, 0x02},
   {0x2000, "arith.addi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
@@ -297,7 +296,6 @@ inline std::optional<uint16_t> lookupOpcodeByName(llvm::StringRef name) {
     .Case("pto.tsubc", 0x1068)
     .Case("pto.tsubs", 0x1069)
     .Case("pto.tsubsc", 0x106A)
-    .Case("pto.tsync", 0x106B)
     .Case("pto.ttrans", 0x106C)
     .Case("pto.ttri", 0x106D)
     .Case("pto.txor", 0x106E)
@@ -444,7 +442,6 @@ inline std::optional<OpcodeAndVariant> lookupOpcodeAndVariantByFullName(llvm::St
     .Case("pto.tsubc", OpcodeAndVariant{0x1068, 0, 0})
     .Case("pto.tsubs", OpcodeAndVariant{0x1069, 0, 0})
     .Case("pto.tsubsc", OpcodeAndVariant{0x106A, 0, 0})
-    .Case("pto.tsync", OpcodeAndVariant{0x106B, 0, 0})
     .Case("pto.ttrans", OpcodeAndVariant{0x106C, 0, 0})
     .Case("pto.ttri", OpcodeAndVariant{0x106D, 0, 0})
     .Case("pto.txor", OpcodeAndVariant{0x106E, 0, 0})

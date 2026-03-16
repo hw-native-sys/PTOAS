@@ -2104,6 +2104,96 @@ struct PTOViewToMemrefPass
             dst);
       }
 
+      SmallVector<mlir::pto::TColExpandMulOp, 8> colexpandmulops;
+      func.walk([&](mlir::pto::TColExpandMulOp op) {
+        colexpandmulops.push_back(op);
+      });
+
+      for (auto op : colexpandmulops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src0 = op.getSrc0();
+        Value src1 = op.getSrc1();
+        Value dst = op.getDst();
+
+        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
+        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
+        auto dstTy = dyn_cast<MemRefType>(dst.getType());
+        if (!src0Ty || !src1Ty || !dstTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::TColExpandMulOp>(
+            op,
+            TypeRange{},
+            src0,
+            src1,
+            dst);
+      }
+
+      SmallVector<mlir::pto::TColExpandMaxOp, 8> colexpandmaxops;
+      func.walk([&](mlir::pto::TColExpandMaxOp op) {
+        colexpandmaxops.push_back(op);
+      });
+
+      for (auto op : colexpandmaxops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src0 = op.getSrc0();
+        Value src1 = op.getSrc1();
+        Value dst = op.getDst();
+
+        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
+        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
+        auto dstTy = dyn_cast<MemRefType>(dst.getType());
+        if (!src0Ty || !src1Ty || !dstTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::TColExpandMaxOp>(
+            op,
+            TypeRange{},
+            src0,
+            src1,
+            dst);
+      }
+
+      SmallVector<mlir::pto::TColExpandMinOp, 8> colexpandminops;
+      func.walk([&](mlir::pto::TColExpandMinOp op) {
+        colexpandminops.push_back(op);
+      });
+
+      for (auto op : colexpandminops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src0 = op.getSrc0();
+        Value src1 = op.getSrc1();
+        Value dst = op.getDst();
+
+        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
+        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
+        auto dstTy = dyn_cast<MemRefType>(dst.getType());
+        if (!src0Ty || !src1Ty || !dstTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::TColExpandMinOp>(
+            op,
+            TypeRange{},
+            src0,
+            src1,
+            dst);
+      }
+
       SmallVector<mlir::pto::TColSumOp, 8> colsumops;
       func.walk([&](mlir::pto::TColSumOp op) { colsumops.push_back(op); });
 

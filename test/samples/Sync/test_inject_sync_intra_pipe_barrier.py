@@ -1,6 +1,6 @@
 from mlir.ir import Context, Location, Module, InsertionPoint
-from mlir.ir import F16Type, MemRefType
-from mlir.dialects import func, memref, pto
+from mlir.ir import F16Type
+from mlir.dialects import func, pto
 
 
 def build():
@@ -12,7 +12,11 @@ def build():
 
             f16 = F16Type.get(ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
-            ub_ty = MemRefType.get([16, 16, 16], f16, memory_space=vec)
+            bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
+            pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+            cfg = pto.TileBufConfigAttr.get(bl, sl, pto.TileConfig.fractalABSize, pd, ctx)
+            ub_ty = pto.TileBufType.get([16, 16], f16, vec, [16, 16], cfg, ctx)
 
             fn_ty = func.FunctionType.get([], [])
             with InsertionPoint(m.body):
@@ -20,8 +24,8 @@ def build():
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
-                ub0 = memref.AllocOp(ub_ty, [], []).result
-                ub1 = memref.AllocOp(ub_ty, [], []).result
+                ub0 = pto.AllocTileOp(ub_ty).result
+                ub1 = pto.AllocTileOp(ub_ty).result
 
                 # Two dependent PIPE_V ops on the same buffer should be
                 # serialized by an intra-pipe barrier when auto insert sync is

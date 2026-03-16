@@ -131,6 +131,9 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     ), [{
       // ✅ 默认 validShape = shape（你要求的语义）
       SmallVector<int64_t, 2> vs(shape.begin(), shape.end());
+      for (int64_t &dim : vs)
+        if (dim < 0)
+          dim = mlir::ShapedType::kDynamic;
 
       return Base::get($_ctxt, shape, elementType, memorySpace, vs,
                        mlir::pto::TileBufConfigAttr(),
@@ -149,6 +152,9 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
       auto explicitConfigMask =
           config ? mlir::IntegerAttr::get(mlir::IntegerType::get($_ctxt, 32), 15)
                  : mlir::IntegerAttr();
+      for (int64_t &dim : vs)
+        if (dim < 0)
+          dim = mlir::ShapedType::kDynamic;
       return Base::get($_ctxt, shape, elementType, memorySpace, vs, config,
                        explicitConfigMask);
     }]>,
@@ -160,7 +166,11 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
       "Attribute":$memorySpace,
       "ArrayRef<int64_t>":$validShape
     ), [{
-      return Base::get($_ctxt, shape, elementType, memorySpace, validShape,
+      SmallVector<int64_t, 4> vs(validShape.begin(), validShape.end());
+      for (int64_t &dim : vs)
+        if (dim < 0)
+          dim = mlir::ShapedType::kDynamic;
+      return Base::get($_ctxt, shape, elementType, memorySpace, vs,
                        mlir::pto::TileBufConfigAttr(),
                        mlir::IntegerAttr());
     }]>,
@@ -173,10 +183,14 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
       "ArrayRef<int64_t>":$validShape,
       "mlir::pto::TileBufConfigAttr":$config
     ), [{
+      SmallVector<int64_t, 4> vs(validShape.begin(), validShape.end());
+      for (int64_t &dim : vs)
+        if (dim < 0)
+          dim = mlir::ShapedType::kDynamic;
       auto explicitConfigMask =
           config ? mlir::IntegerAttr::get(mlir::IntegerType::get($_ctxt, 32), 15)
                  : mlir::IntegerAttr();
-      return Base::get($_ctxt, shape, elementType, memorySpace, validShape,
+      return Base::get($_ctxt, shape, elementType, memorySpace, vs,
                        config, explicitConfigMask);
     }]>
   ];

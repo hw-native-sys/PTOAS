@@ -33,7 +33,7 @@ on:
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
         type: string
-        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print"
+        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,test_intercore_sync_a3,test_intercore_sync_a5"
       run_only_cases:
         description: "Comma/space separated testcase names to run (empty = run all)"
         type: string
@@ -237,8 +237,11 @@ jobs:
       PAYLOAD_TGZ: ${{ github.workspace }}/_payload/ptoas_payload.tgz
       # Temporary CI gate: skip cases that still error/flap on the remote NPU.
       # Update this list as we fix the underlying issues.
+      # NOTE:
+      # - test_intercore_sync_a3/a5 are structural lowering gates (compile-shape checks),
+      #   not functional dataflow kernels; running them as standalone NPU cases is unstable.
       DEFAULT_SKIP_CASES: >-
-        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print
+        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,test_intercore_sync_a3,test_intercore_sync_a5
     steps:
       - name: Resolve validation parameters
         shell: bash
