@@ -4,7 +4,7 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
   func.func @bind_tile_config_infer_a5() {
     %c32 = arith.constant 32 : index
     %alloc_l = memref.alloc() : memref<32x32xf32, #pto.address_space<left>>
-    %lhs = pto.bind_tile %alloc_l, %c32, %c32 {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<row_major>, s_fractal_size=512, pad=#pto.pad_value<null>>} : memref<32x32xf32, #pto.address_space<left>> -> memref<32x32xf32, #pto.address_space<left>>
+    %lhs = pto.bind_tile %alloc_l, %c32, %c32 {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>} : memref<32x32xf32, #pto.address_space<left>> -> memref<32x32xf32, #pto.address_space<left>>
     %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>
     pto.tmatmul ins(%lhs, %rhs : memref<32x32xf32, #pto.address_space<left>>, !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>) outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>)
@@ -12,4 +12,6 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
   }
 }
 
-// CHECK: Tile<TileType::Left, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null>
+// CHECK: Tile<TileType::Left, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null>
+// CHECK: Tile<TileType::Right, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::ColMajor, 512, PadValue::Null>
+// CHECK: Tile<TileType::Acc, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 1024, PadValue::Null>
