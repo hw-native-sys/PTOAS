@@ -628,6 +628,10 @@ static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
     }
 
     for (auto [idx, type] : llvm::enumerate(oldFnTy.getResults())) {
+      if (isa<TileBufType>(type))
+        return func.emitOpError(
+            "tile return values are unsupported; use memref/pointer outputs or "
+            "pass tiles through arguments");
       newResults.push_back(convertPTOTypeToMemRef(type));
     }
 

@@ -1,0 +1,17 @@
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @callee(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0> {
+    return %src : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  }
+
+  func.func @caller(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+    %ret = func.call @callee(%src) : (!pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    func.call @sink(%ret) : (!pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> ()
+    return
+  }
+
+  func.func private @sink(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+}
+
+// CHECK: error: 'func.func' op tile return values are unsupported
