@@ -1,0 +1,18 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @kernel(%arg0: !pto.ptr<f32>, %arg1: i32) attributes {pto.entry} {
+    %0 = func.call @helper(%arg1) : (i32) -> i32
+    return
+  }
+
+  func.func private @helper(%arg0: i32) -> i32 {
+    %c1 = arith.constant 1 : i32
+    %0 = arith.addi %arg0, %c1 : i32
+    return %0 : i32
+  }
+}
+
+// CHECK-LABEL: static int32_t helper(
+// CHECK-LABEL: __global__ AICORE void kernel(
+// CHECK: helper(

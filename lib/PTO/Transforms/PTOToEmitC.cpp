@@ -2176,10 +2176,32 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
           op, "EmitC cannot return multiple values");
 
     // Create the EmitC function with the converted signature.
-    auto emitcFunc = rewriter.create<emitc::FuncOp>(op.getLoc(), op.getName(),
-                                                    funcType);
-    emitcFunc.setSpecifiersAttr(
-        rewriter.getStrArrayAttr({"__global__ AICORE"}));
+    auto emitcFunc =
+        rewriter.create<emitc::FuncOp>(op.getLoc(), op.getName(), funcType);
+
+    for (const auto &namedAttr : op->getAttrs()) {
+      StringRef name = namedAttr.getName().strref();
+      if (name == op.getFunctionTypeAttrName() ||
+          name == SymbolTable::getSymbolAttrName() ||
+          name == pto::kPTOEntryAttrName ||
+          name == pto::kLegacyHACCEntryAttrName ||
+          name == "pto.internal.entry")
+        continue;
+      emitcFunc->setAttr(namedAttr.getName(), namedAttr.getValue());
+    }
+
+    if (op.isDeclaration()) {
+      emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({"extern"}));
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    if (pto::isPTOEntryFunction(op)) {
+      emitcFunc.setSpecifiersAttr(
+          rewriter.getStrArrayAttr({"__global__ AICORE"}));
+    } else if (op.isPrivate()) {
+      emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({"static"}));
+    }
 
     // Inline the original body, then convert region/block argument types to
     // match the converted signature (also covers CFG blocks introduced by
@@ -2192,7 +2214,7 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
       entryConv.addInputs(i, funcType.getInput(i));
 
     if (failed(rewriter.convertRegionTypes(&emitcFunc.getBody(),
-                                          *getTypeConverter(), &entryConv)))
+                                           *getTypeConverter(), &entryConv)))
       return failure();
 
     // [Compatibility patch] Preserve existing snippets that rely on `T`.
@@ -3430,6 +3452,28 @@ struct ReturnToEmitC : public OpConversionPattern<func::ReturnOp> {
       return success();
     }
     return rewriter.notifyMatchFailure(op, "EmitC cannot return multiple values");
+  }
+};
+
+struct CallToEmitC : public OpConversionPattern<func::CallOp> {
+  using OpConversionPattern<func::CallOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(func::CallOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    if (op.getNumResults() > 1)
+      return rewriter.notifyMatchFailure(
+          op, "EmitC cannot lower calls with multiple results");
+
+    SmallVector<Type> resultTypes;
+    if (failed(
+            getTypeConverter()->convertTypes(op.getResultTypes(), resultTypes)))
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to convert call result types");
+
+    rewriter.replaceOpWithNewOp<emitc::CallOp>(op, op.getCalleeAttr(),
+                                               resultTypes,
+                                               adaptor.getOperands());
+    return success();
   }
 };
 
@@ -7611,13 +7655,12 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
     PTOBarrierToEmitC
   >(typeConverter, ctx);
 
-  patterns.add<ReturnToEmitC>(typeConverter, ctx);
+  patterns.add<CallToEmitC, ReturnToEmitC>(typeConverter, ctx);
 
   populateSCFToEmitCConversionPatterns(patterns);
   // Keep CFG-style branches type-consistent when block argument types are
   // converted (e.g. after lowering scf.while to cf.br/cf.cond_br).
   populateBranchOpInterfaceTypeConversionPattern(patterns, typeConverter);
-  populateCallOpTypeConversionPattern(patterns, typeConverter);
 }
 
 //===----------------------------------------------------------------------===//
@@ -7641,10 +7684,14 @@ struct EmitPTOManualPass
                     mlir::cf::ControlFlowDialect, mlir::pto::PTODialect>();
   }
 
-	  void runOnOperation() override {
-	    llvm::errs() << "DEBUG: Start PTOToEmitC Pass\n";
-	    MLIRContext *ctx = &getContext();
-	    ModuleOp mop = getOperation();
+  void runOnOperation() override {
+    llvm::errs() << "DEBUG: Start PTOToEmitC Pass\n";
+    MLIRContext *ctx = &getContext();
+    ModuleOp mop = getOperation();
+
+    if (failed(pto::validatePTOEntryFunctions(mop)))
+      return signalPassFailure();
+    pto::annotatePTOEntryFunctions(mop);
 
     // A3 requires explicit FFTS base setup for inter-core sync ops.
     if (targetArch == PTOArch::A3) {
@@ -7812,7 +7859,6 @@ struct EmitPTOManualPass
 
     RewritePatternSet patterns(ctx);
     populatePTOToEmitCPatterns(patterns, typeConverter, ctx, *solver, targetArch);
-    populateCallOpTypeConversionPattern(patterns, typeConverter);
 
     // 4. 执行转换
     if (failed(applyPartialConversion(mop, target, std::move(patterns)))) {

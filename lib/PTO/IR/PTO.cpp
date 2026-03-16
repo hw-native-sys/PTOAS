@@ -1026,6 +1026,90 @@ bool mlir::pto::isScalarPtrOrMemRef(Type type) {
   return false;
 }
 
+bool mlir::pto::hasExplicitPTOEntryAttr(func::FuncOp func) {
+  return func && (func->hasAttrOfType<UnitAttr>(kPTOEntryAttrName) ||
+                  func->hasAttrOfType<UnitAttr>(kLegacyHACCEntryAttrName));
+}
+
+static constexpr StringLiteral kEffectivePTOEntryAttrName =
+    "pto.internal.entry";
+
+static SmallVector<func::FuncOp> getPTOFunctionDefinitions(ModuleOp module) {
+  SmallVector<func::FuncOp> defs;
+  if (!module)
+    return defs;
+  for (auto func : module.getOps<func::FuncOp>()) {
+    if (!func.isDeclaration())
+      defs.push_back(func);
+  }
+  return defs;
+}
+
+bool mlir::pto::isPTOEntryFunction(func::FuncOp func) {
+  if (!func || func.isDeclaration())
+    return false;
+  if (auto attr = func->getAttrOfType<BoolAttr>(kEffectivePTOEntryAttrName))
+    return attr.getValue();
+  if (hasExplicitPTOEntryAttr(func))
+    return true;
+
+  ModuleOp module = func->getParentOfType<ModuleOp>();
+  if (!module)
+    return false;
+  SmallVector<func::FuncOp> defs = getPTOFunctionDefinitions(module);
+  return defs.size() == 1 && defs.front() == func;
+}
+
+LogicalResult mlir::pto::validatePTOEntryFunctions(ModuleOp module) {
+  if (!module)
+    return success();
+
+  SmallVector<func::FuncOp> defs = getPTOFunctionDefinitions(module);
+  bool hasExplicitEntry = false;
+  for (auto func : module.getOps<func::FuncOp>()) {
+    if (!hasExplicitPTOEntryAttr(func))
+      continue;
+    if (func.isDeclaration()) {
+      return func.emitOpError()
+             << "`" << kPTOEntryAttrName
+             << "` is only valid on function definitions";
+    }
+    hasExplicitEntry = true;
+  }
+
+  if (defs.size() <= 1)
+    return success();
+  if (hasExplicitEntry)
+    return success();
+
+  return module.emitError()
+         << "module with multiple function definitions requires at least one `"
+         << kPTOEntryAttrName << "` function";
+}
+
+void mlir::pto::annotatePTOEntryFunctions(ModuleOp module) {
+  if (!module)
+    return;
+
+  SmallVector<func::FuncOp> defs = getPTOFunctionDefinitions(module);
+  for (auto func : module.getOps<func::FuncOp>())
+    func->removeAttr(kEffectivePTOEntryAttrName);
+
+  if (defs.empty())
+    return;
+  if (defs.size() == 1) {
+    defs.front()->setAttr(kEffectivePTOEntryAttrName,
+                          BoolAttr::get(module.getContext(), true));
+    return;
+  }
+
+  for (auto func : defs) {
+    func->setAttr(kEffectivePTOEntryAttrName,
+                  BoolAttr::get(module.getContext(),
+                                hasExplicitPTOEntryAttr(func)));
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // PTO Load/Store/Addf (non-DPS polymorphic) verification + inference.
 //  - If operands are memref/tensor: verify strictly.
