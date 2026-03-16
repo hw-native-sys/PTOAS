@@ -12,11 +12,11 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
 }
 
 // CHECK-LABEL: func.func @callee(
-// CHECK-SAME: %[[SRC:.*]]: memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+// CHECK-SAME: %[[SRC:.*]]: memref<32x32xf32, strided<[?, ?], offset: ?>, #pto.address_space<vec>>
 // CHECK-SAME: %[[ARGVR:.*]]: index, %[[ARGVC:.*]]: index)
 // CHECK-NOT: res_attrs =
 // CHECK-LABEL: func.func @caller(
-// CHECK-SAME: %[[CALLSRC:.*]]: memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+// CHECK-SAME: %[[CALLSRC:.*]]: memref<32x32xf32, strided<[?, ?], offset: ?>, #pto.address_space<vec>>
 // CHECK-SAME: %[[CALLVR:.*]]: index, %[[CALLVC:.*]]: index)
 // CHECK-NOT: res_attrs =
 // CHECK: call @callee(%[[CALLSRC]], %[[CALLVR]], %[[CALLVC]])

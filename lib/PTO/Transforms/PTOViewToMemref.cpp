@@ -575,6 +575,18 @@ static Type convertPTOTypeToMemRef(Type t) {
   return t;
 }
 
+static Type convertPTOTypeToFunctionBoundaryMemRef(Type t) {
+  if (auto tbTy = dyn_cast<mlir::pto::TileBufType>(t)) {
+    SmallVector<int64_t> dynamicStrides(tbTy.getShape().size(),
+                                        ShapedType::kDynamic);
+    auto layoutAttr = StridedLayoutAttr::get(
+        t.getContext(), ShapedType::kDynamic, dynamicStrides);
+    return MemRefType::get(tbTy.getShape(), tbTy.getElementType(), layoutAttr,
+                           tbTy.getMemorySpace());
+  }
+  return convertPTOTypeToMemRef(t);
+}
+
 static FunctionType convertFunctionTypeToMemRef(FunctionType fnTy,
                                                 MLIRContext *ctx) {
   SmallVector<Type> newInputs;
@@ -597,42 +609,59 @@ static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
     FunctionType oldFnTy = func.getFunctionType();
     SmallVector<Type> newInputs;
     SmallVector<Type> newResults;
+    SmallVector<DictionaryAttr> newArgAttrs;
+    SmallVector<Type> appendedInputTypes;
+    SmallVector<DictionaryAttr> appendedArgAttrs;
     newInputs.reserve(oldFnTy.getNumInputs());
     newResults.reserve(oldFnTy.getNumResults());
+    newArgAttrs.reserve(oldFnTy.getNumInputs());
 
     int64_t nextDynamicInputIndex = oldFnTy.getNumInputs();
 
     for (auto [idx, type] : llvm::enumerate(oldFnTy.getInputs())) {
-      newInputs.push_back(convertPTOTypeToMemRef(type));
+      newInputs.push_back(convertPTOTypeToFunctionBoundaryMemRef(type));
+
+      NamedAttrList argAttrs;
+      if (auto existingAttrs = func.getArgAttrDict(idx))
+        argAttrs.append(existingAttrs.begin(), existingAttrs.end());
 
       auto tbTy = dyn_cast<TileBufType>(type);
-      if (!tbTy)
+      if (!tbTy) {
+        newArgAttrs.push_back(argAttrs.getDictionary(ctx));
         continue;
+      }
 
-      func.setArgAttr(idx, kTileConfigAttrName, tbTy.getConfigAttr());
+      argAttrs.set(kTileConfigAttrName, tbTy.getConfigAttr());
       if (!tbTy.getValidShape().empty())
-        func.setArgAttr(idx, kTileValidShapeAttrName,
-                        builder.getDenseI64ArrayAttr(tbTy.getValidShape()));
+        argAttrs.set(kTileValidShapeAttrName,
+                     builder.getDenseI64ArrayAttr(tbTy.getValidShape()));
 
       ArrayRef<int64_t> validShape = tbTy.getValidShape();
       if (validShape.size() > 0 && validShape[0] < 0) {
-        func.setArgAttr(idx, kTileValidRowIndexAttrName,
-                        builder.getI64IntegerAttr(nextDynamicInputIndex++));
-        newInputs.push_back(builder.getIndexType());
+        argAttrs.set(kTileValidRowIndexAttrName,
+                     builder.getI64IntegerAttr(nextDynamicInputIndex++));
+        appendedInputTypes.push_back(builder.getIndexType());
+        appendedArgAttrs.push_back(DictionaryAttr::get(ctx));
       }
       if (validShape.size() > 1 && validShape[1] < 0) {
-        func.setArgAttr(idx, kTileValidColIndexAttrName,
-                        builder.getI64IntegerAttr(nextDynamicInputIndex++));
-        newInputs.push_back(builder.getIndexType());
+        argAttrs.set(kTileValidColIndexAttrName,
+                     builder.getI64IntegerAttr(nextDynamicInputIndex++));
+        appendedInputTypes.push_back(builder.getIndexType());
+        appendedArgAttrs.push_back(DictionaryAttr::get(ctx));
       }
+
+      newArgAttrs.push_back(argAttrs.getDictionary(ctx));
     }
+
+    newInputs.append(appendedInputTypes);
+    newArgAttrs.append(appendedArgAttrs);
 
     for (auto [idx, type] : llvm::enumerate(oldFnTy.getResults())) {
       if (isa<TileBufType>(type))
         return func.emitOpError(
             "tile return values are unsupported; use memref/pointer outputs or "
             "pass tiles through arguments");
-      newResults.push_back(convertPTOTypeToMemRef(type));
+      newResults.push_back(convertPTOTypeToFunctionBoundaryMemRef(type));
     }
 
     if (!func.isExternal()) {
@@ -658,8 +687,13 @@ static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
 
     if (func.getFunctionType() != newFnTy)
       func.setFunctionType(newFnTy);
+    func.setAllArgAttrs(newArgAttrs);
   }
 
+  return success();
+}
+
+static LogicalResult rewriteCallsToMemRef(ModuleOp mod, MLIRContext *ctx) {
   SmallVector<func::CallOp> callOps;
   mod.walk([&](func::CallOp call) { callOps.push_back(call); });
 
@@ -671,8 +705,30 @@ static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
     IRRewriter rewriter(ctx);
     rewriter.setInsertionPoint(call);
 
-    SmallVector<Value> newOperands(call.getOperands().begin(),
-                                   call.getOperands().end());
+    auto calleeTy = callee.getFunctionType();
+    SmallVector<Value> newOperands;
+    newOperands.reserve(calleeTy.getNumInputs());
+    for (auto [idx, operand] : llvm::enumerate(call.getOperands())) {
+      Type expectedType = calleeTy.getInput(idx);
+      if (operand.getType() == expectedType) {
+        newOperands.push_back(operand);
+        continue;
+      }
+
+      auto srcMemRefTy = dyn_cast<BaseMemRefType>(operand.getType());
+      auto dstMemRefTy = dyn_cast<BaseMemRefType>(expectedType);
+      if (!srcMemRefTy || !dstMemRefTy ||
+          !memref::CastOp::areCastCompatible(TypeRange{operand.getType()},
+                                             TypeRange{expectedType})) {
+        return call.emitOpError("operand type does not match rewritten callee "
+                                "signature at index ")
+               << idx << " for " << callee.getSymName();
+      }
+
+      newOperands.push_back(
+          rewriter.create<memref::CastOp>(call.getLoc(), expectedType, operand));
+    }
+
     for (auto [idx, operand] : llvm::enumerate(call.getOperands())) {
       auto rowIndex =
           callee.getArgAttrOfType<IntegerAttr>(idx, kTileValidRowIndexAttrName);
@@ -700,7 +756,6 @@ static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
       }
     }
 
-    auto calleeTy = callee.getFunctionType();
     if (newOperands.size() != calleeTy.getNumInputs()) {
       return call.emitOpError("operand count does not match rewritten callee "
                               "signature for ")
@@ -2935,6 +2990,11 @@ struct PTOViewToMemrefPass
         signalPassFailure();
         return;
       }
+    }
+
+    if (failed(rewriteCallsToMemRef(mod, ctx))) {
+      signalPassFailure();
+      return;
     }
     
     // Debug Output
