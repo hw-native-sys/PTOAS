@@ -261,6 +261,14 @@ struct InferPTOTileConfigPass
             }
           }
 
+          if (auto bindTile = dyn_cast<pto::BindTileOp>(op)) {
+            auto desiredConfig = inferMemRefTileConfig(
+                bindTile.getResult().getType(), arch, &getContext(),
+                bindTile.getConfig());
+            if (desiredConfig && desiredConfig != bindTile.getConfig())
+              bindTile->setAttr("config", desiredConfig);
+          }
+
           for (Region &nested : op.getRegions())
             self(nested, self);
         }
