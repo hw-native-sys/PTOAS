@@ -19,7 +19,6 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
@@ -28,7 +27,6 @@
 #include "Utils.h" // 假设包含一些通用的工具函数
 
 #include <algorithm>
-#include <functional>
 
 using namespace mlir;
 
@@ -79,18 +77,6 @@ static IntegerAttr getFunctionArgTileValidIndex(Value v, StringLiteral attrName)
   return func.getArgAttrOfType<IntegerAttr>(arg.getArgNumber(), attrName);
 }
 
-static func::FuncOp lookupCallCallee(Value v) {
-  auto call = v.getDefiningOp<func::CallOp>();
-  if (!call)
-    return {};
-  auto module = call->getParentOfType<ModuleOp>();
-  if (!module)
-    return {};
-  return module.lookupSymbol<func::FuncOp>(call.getCallee());
-}
-
-static TileBufConfigAttr lookupCallValueConfig(Value value);
-
 static Value materializeValidDimFromBoundary(IRRewriter &rewriter, Location loc,
                                              DenseI64ArrayAttr validShape,
                                              IntegerAttr boundaryIndexAttr,
@@ -118,137 +104,6 @@ static Value materializeValidDimFromBoundary(IRRewriter &rewriter, Location loc,
 static Value computeSubsetValidDim(IRRewriter &rewriter, Location loc,
                                    Value parentValid, Value offset, int64_t size,
                                    Operation *anchorOp);
-
-static bool cloneScalarExprFromCall(IRRewriter &rewriter, Location loc, Value value,
-                                    func::CallOp call,
-                                    DenseMap<Value, Value> &cache,
-                                    Value &cloned) {
-  if (!value) {
-    cloned = Value();
-    return true;
-  }
-
-  if (auto it = cache.find(value); it != cache.end()) {
-    cloned = it->second;
-    return true;
-  }
-
-  if (auto arg = dyn_cast<BlockArgument>(value)) {
-    auto *block = arg.getOwner();
-    if (!block) {
-      cloned = Value();
-      return false;
-    }
-    int64_t argIndex = arg.getArgNumber();
-    if (argIndex < 0 || argIndex >= static_cast<int64_t>(call.getNumOperands())) {
-      cloned = Value();
-      return false;
-    }
-    cloned = call.getOperand(argIndex);
-    cache[value] = cloned;
-    return true;
-  }
-
-  Operation *def = value.getDefiningOp();
-  if (!def) {
-    cloned = Value();
-    return false;
-  }
-
-  if (isa<arith::ConstantOp, arith::ConstantIndexOp, arith::ConstantIntOp>(def)) {
-    Operation *newOp = rewriter.clone(*def);
-    cloned = newOp->getResult(0);
-    cache[value] = cloned;
-    return true;
-  }
-
-  if (!isa<arith::IndexCastOp, arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp,
-           arith::SubIOp, arith::AddIOp, arith::RemUIOp, arith::RemSIOp,
-           arith::CmpIOp, arith::SelectOp>(def)) {
-    cloned = Value();
-    return false;
-  }
-
-  IRMapping mapper;
-  for (Value operand : def->getOperands()) {
-    Value clonedOperand;
-    if (!cloneScalarExprFromCall(rewriter, loc, operand, call, cache,
-                                 clonedOperand) ||
-        !clonedOperand) {
-      cloned = Value();
-      return false;
-    }
-    mapper.map(operand, clonedOperand);
-  }
-
-  Operation *newOp = rewriter.clone(*def, mapper);
-  cloned = newOp->getResult(0);
-  cache[value] = cloned;
-  return true;
-}
-
-static bool lookupCallValueValidDims(IRRewriter &rewriter, Location loc, Value value,
-                                     func::CallOp call,
-                                     DenseMap<Value, Value> &scalarCache,
-                                     Value &vRow, Value &vCol);
-
-static TileBufConfigAttr lookupCallValueConfig(Value value) {
-  if (auto bind = value.getDefiningOp<mlir::pto::BindTileOp>())
-    return bind.getConfig();
-
-  if (auto pc = value.getDefiningOp<mlir::pto::PointerCastOp>()) {
-    if (auto cfg = pc.getConfig())
-      return *cfg;
-    return {};
-  }
-
-  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
-    return lookupCallValueConfig(subview.getSource());
-
-  if (auto cast = value.getDefiningOp<memref::ReinterpretCastOp>())
-    return lookupCallValueConfig(cast.getSource());
-
-  if (auto cast = value.getDefiningOp<memref::CastOp>())
-    return lookupCallValueConfig(cast.getSource());
-
-  if (auto subset = value.getDefiningOp<mlir::pto::SubsetOp>())
-    return lookupCallValueConfig(subset.getSource());
-
-  if (auto reshape = value.getDefiningOp<mlir::pto::TReshapeOp>()) {
-    if (auto tbTy = dyn_cast<TileBufType>(reshape.getResult().getType()))
-      return tbTy.getConfigAttr();
-    return lookupCallValueConfig(reshape.getSrc());
-  }
-
-  if (auto bitcast = value.getDefiningOp<mlir::pto::BitcastOp>()) {
-    if (auto tbTy = dyn_cast<TileBufType>(bitcast.getResult().getType()))
-      return tbTy.getConfigAttr();
-    return lookupCallValueConfig(bitcast.getSrc());
-  }
-
-  if (auto arg = dyn_cast<BlockArgument>(value))
-    return getFunctionArgTileConfig(arg);
-
-  if (auto result = dyn_cast<OpResult>(value)) {
-    if (auto call = dyn_cast<func::CallOp>(result.getOwner())) {
-      auto callee = lookupCallCallee(value);
-      if (!callee || callee.isExternal())
-        return {};
-      SmallVector<func::ReturnOp> returns;
-      callee.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
-      if (returns.size() != 1 ||
-          result.getResultNumber() >= returns.front().getNumOperands())
-        return {};
-      return lookupCallValueConfig(
-          returns.front().getOperand(result.getResultNumber()));
-    }
-  }
-
-  if (auto tbTy = dyn_cast<TileBufType>(value.getType()))
-    return tbTy.getConfigAttr();
-
-  return {};
-}
 
 // =============================================================================
 // Helper: Metadata Backtracking (核心机制)
@@ -279,21 +134,6 @@ static mlir::pto::TileBufConfigAttr lookupConfig(Value v) {
     return lookupConfig(cast.getSource());
   }
 
-  if (auto result = dyn_cast<OpResult>(v)) {
-    if (auto call = dyn_cast<func::CallOp>(result.getOwner())) {
-      auto callee = lookupCallCallee(v);
-      if (callee && !callee.isExternal()) {
-        SmallVector<func::ReturnOp> returns;
-        callee.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
-        if (returns.size() == 1 &&
-            result.getResultNumber() < returns.front().getNumOperands()) {
-          if (auto cfg = lookupCallValueConfig(
-                  returns.front().getOperand(result.getResultNumber())))
-            return cfg;
-        }
-      }
-    }
-  }
   if (auto cfg = getFunctionArgTileConfig(v))
     return cfg;
 
@@ -323,165 +163,6 @@ static void materializeStaticValidDims(IRRewriter &rewriter, Location loc,
                .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
                                           rewriter.getIndexAttr(values[1]))
                .getResult();
-}
-
-static bool lookupCallValueValidDims(IRRewriter &rewriter, Location loc, Value value,
-                                     func::CallOp call,
-                                     DenseMap<Value, Value> &scalarCache,
-                                     Value &vRow, Value &vCol) {
-  if (auto bind = value.getDefiningOp<mlir::pto::BindTileOp>()) {
-    Value row, col;
-    if (!cloneScalarExprFromCall(rewriter, loc, bind.getValidRow(), call, scalarCache,
-                                 row) ||
-        !cloneScalarExprFromCall(rewriter, loc, bind.getValidCol(), call, scalarCache,
-                                 col))
-      return false;
-    vRow = row;
-    vCol = col;
-    return true;
-  }
-
-  if (auto pc = value.getDefiningOp<mlir::pto::PointerCastOp>()) {
-    Value row, col;
-    if (!cloneScalarExprFromCall(rewriter, loc, pc.getValidRow(), call, scalarCache,
-                                 row) ||
-        !cloneScalarExprFromCall(rewriter, loc, pc.getValidCol(), call, scalarCache,
-                                 col))
-      return false;
-    vRow = row;
-    vCol = col;
-    return true;
-  }
-
-  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
-    return lookupCallValueValidDims(rewriter, loc, subview.getSource(), call,
-                                    scalarCache, vRow, vCol);
-
-  if (auto cast = value.getDefiningOp<memref::ReinterpretCastOp>())
-    return lookupCallValueValidDims(rewriter, loc, cast.getSource(), call,
-                                    scalarCache, vRow, vCol);
-
-  if (auto cast = value.getDefiningOp<memref::CastOp>())
-    return lookupCallValueValidDims(rewriter, loc, cast.getSource(), call,
-                                    scalarCache, vRow, vCol);
-
-  if (auto subset = value.getDefiningOp<mlir::pto::SubsetOp>()) {
-    Value parentVRow;
-    Value parentVCol;
-    if (!lookupCallValueValidDims(rewriter, loc, subset.getSource(), call,
-                                  scalarCache, parentVRow, parentVCol))
-      return false;
-
-    ArrayAttr sizeAttr = subset.getSizes();
-    SmallVector<int64_t> staticSizes;
-    staticSizes.reserve(sizeAttr.size());
-    for (Attribute attr : sizeAttr)
-      staticSizes.push_back(cast<IntegerAttr>(attr).getInt());
-
-    if (!staticSizes.empty()) {
-      Value clonedOffset;
-      if (!cloneScalarExprFromCall(rewriter, loc, subset.getOffsets()[0], call,
-                                   scalarCache, clonedOffset))
-        return false;
-      vRow = computeSubsetValidDim(rewriter, loc, parentVRow, clonedOffset,
-                                   staticSizes[0], subset);
-    }
-
-    if (staticSizes.size() > 1) {
-      Value clonedOffset;
-      if (!cloneScalarExprFromCall(rewriter, loc, subset.getOffsets()[1], call,
-                                   scalarCache, clonedOffset))
-        return false;
-      vCol = computeSubsetValidDim(rewriter, loc, parentVCol, clonedOffset,
-                                   staticSizes[1], subset);
-    }
-    return true;
-  }
-
-  if (auto alloc = value.getDefiningOp<mlir::pto::AllocTileOp>()) {
-    auto tbTy = dyn_cast<TileBufType>(alloc.getResult().getType());
-    vRow = alloc.getValidRow();
-    vCol = alloc.getValidCol();
-    if (tbTy && !tbTy.hasDynamicValid()) {
-      materializeStaticValidDims(
-          rewriter, loc,
-          rewriter.getDenseI64ArrayAttr(tbTy.getValidShape()), vRow, vCol);
-    }
-    return true;
-  }
-
-  if (auto reshape = value.getDefiningOp<mlir::pto::TReshapeOp>()) {
-    if (!lookupCallValueValidDims(rewriter, loc, reshape.getSrc(), call, scalarCache,
-                                  vRow, vCol))
-      return false;
-    auto tbTy = dyn_cast<TileBufType>(reshape.getResult().getType());
-    if (tbTy && !tbTy.hasDynamicValid()) {
-      materializeStaticValidDims(
-          rewriter, loc,
-          rewriter.getDenseI64ArrayAttr(tbTy.getValidShape()), vRow, vCol);
-    }
-    return true;
-  }
-
-  if (auto bitcast = value.getDefiningOp<mlir::pto::BitcastOp>()) {
-    if (!lookupCallValueValidDims(rewriter, loc, bitcast.getSrc(), call, scalarCache,
-                                  vRow, vCol))
-      return false;
-    auto tbTy = dyn_cast<TileBufType>(bitcast.getResult().getType());
-    if (tbTy && !tbTy.hasDynamicValid()) {
-      materializeStaticValidDims(
-          rewriter, loc,
-          rewriter.getDenseI64ArrayAttr(tbTy.getValidShape()), vRow, vCol);
-    }
-    return true;
-  }
-
-  if (auto arg = dyn_cast<BlockArgument>(value)) {
-    auto validShape = getFunctionArgTileValidShape(value);
-    auto rowIndex =
-        getFunctionArgTileValidIndex(value, kTileValidRowIndexAttrName);
-    auto colIndex =
-        getFunctionArgTileValidIndex(value, kTileValidColIndexAttrName);
-
-    if (validShape) {
-      auto values = validShape.asArrayRef();
-      if (values.size() > 0 && values[0] >= 0)
-        vRow = rewriter
-                   .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
-                                              rewriter.getIndexAttr(values[0]))
-                   .getResult();
-      if (values.size() > 1 && values[1] >= 0)
-        vCol = rewriter
-                   .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
-                                              rewriter.getIndexAttr(values[1]))
-                   .getResult();
-    }
-
-    if (rowIndex) {
-      int64_t idx = rowIndex.getInt();
-      if (idx >= 0 && idx < static_cast<int64_t>(call.getNumOperands()))
-        vRow = call.getOperand(idx);
-    }
-    if (colIndex) {
-      int64_t idx = colIndex.getInt();
-      if (idx >= 0 && idx < static_cast<int64_t>(call.getNumOperands()))
-        vCol = call.getOperand(idx);
-    }
-
-    return static_cast<bool>(validShape) || static_cast<bool>(rowIndex) ||
-           static_cast<bool>(colIndex);
-  }
-
-  if (auto tbTy = dyn_cast<TileBufType>(value.getType())) {
-    if (!tbTy.hasDynamicValid()) {
-      materializeStaticValidDims(
-          rewriter, loc,
-          rewriter.getDenseI64ArrayAttr(tbTy.getValidShape()), vRow, vCol);
-      return true;
-    }
-  }
-
-  return false;
 }
 
 static void lookupValidDims(IRRewriter &rewriter, Location loc, Value v,
@@ -571,25 +252,6 @@ static void lookupValidDims(IRRewriter &rewriter, Location loc, Value v,
                                            block, 1);
     if (validShape || rowIndex || colIndex)
       return;
-  }
-  if (auto result = dyn_cast<OpResult>(v)) {
-    if (auto call = dyn_cast<func::CallOp>(result.getOwner())) {
-      DenseMap<Value, Value> scalarCache;
-      if (auto callee = lookupCallCallee(v);
-          callee && !callee.isExternal() &&
-          result.getResultNumber() < call.getNumResults()) {
-        SmallVector<func::ReturnOp> returns;
-        callee.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
-        if (returns.size() == 1 &&
-            result.getResultNumber() < returns.front().getNumOperands() &&
-            lookupCallValueValidDims(rewriter, loc,
-                                     returns.front().getOperand(
-                                         result.getResultNumber()),
-                                     call, scalarCache, vRow, vCol)) {
-          return;
-        }
-      }
-    }
   }
   if (auto validShape = getFunctionArgTileValidShape(v)) {
     materializeStaticValidDims(rewriter, loc, validShape, vRow, vCol);
