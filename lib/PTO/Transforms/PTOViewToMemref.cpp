@@ -37,70 +37,6 @@ namespace pto {
 
 namespace {
 
-constexpr StringLiteral kTileConfigAttrName = "pto.tile_config";
-constexpr StringLiteral kTileValidShapeAttrName = "pto.tile_valid_shape";
-constexpr StringLiteral kTileValidRowIndexAttrName = "pto.tile_valid_row_index";
-constexpr StringLiteral kTileValidColIndexAttrName = "pto.tile_valid_col_index";
-
-static TileBufConfigAttr getFunctionArgTileConfig(Value v) {
-  auto arg = dyn_cast<BlockArgument>(v);
-  if (!arg)
-    return {};
-  auto *owner = arg.getOwner() ? arg.getOwner()->getParentOp() : nullptr;
-  auto func = dyn_cast_or_null<func::FuncOp>(owner);
-  if (!func)
-    return {};
-  return func.getArgAttrOfType<TileBufConfigAttr>(arg.getArgNumber(),
-                                                  kTileConfigAttrName);
-}
-
-static DenseI64ArrayAttr getFunctionArgTileValidShape(Value v) {
-  auto arg = dyn_cast<BlockArgument>(v);
-  if (!arg)
-    return {};
-  auto *owner = arg.getOwner() ? arg.getOwner()->getParentOp() : nullptr;
-  auto func = dyn_cast_or_null<func::FuncOp>(owner);
-  if (!func)
-    return {};
-  return func.getArgAttrOfType<DenseI64ArrayAttr>(arg.getArgNumber(),
-                                                  kTileValidShapeAttrName);
-}
-
-static IntegerAttr getFunctionArgTileValidIndex(Value v, StringLiteral attrName) {
-  auto arg = dyn_cast<BlockArgument>(v);
-  if (!arg)
-    return {};
-  auto *owner = arg.getOwner() ? arg.getOwner()->getParentOp() : nullptr;
-  auto func = dyn_cast_or_null<func::FuncOp>(owner);
-  if (!func)
-    return {};
-  return func.getArgAttrOfType<IntegerAttr>(arg.getArgNumber(), attrName);
-}
-
-static Value materializeValidDimFromBoundary(IRRewriter &rewriter, Location loc,
-                                             DenseI64ArrayAttr validShape,
-                                             IntegerAttr boundaryIndexAttr,
-                                             Block *block, unsigned dim) {
-  if (validShape) {
-    auto values = validShape.asArrayRef();
-    if (values.size() > dim && values[dim] >= 0) {
-      return rewriter
-          .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
-                                     rewriter.getIndexAttr(values[dim]))
-          .getResult();
-    }
-  }
-
-  if (!boundaryIndexAttr || !block)
-    return Value();
-
-  int64_t boundaryIndex = boundaryIndexAttr.getInt();
-  if (boundaryIndex < 0 ||
-      boundaryIndex >= static_cast<int64_t>(block->getNumArguments()))
-    return Value();
-  return block->getArgument(boundaryIndex);
-}
-
 static Value computeSubsetValidDim(IRRewriter &rewriter, Location loc,
                                    Value parentValid, Value offset, int64_t size,
                                    Operation *anchorOp);
@@ -133,9 +69,6 @@ static mlir::pto::TileBufConfigAttr lookupConfig(Value v) {
   if (auto cast = v.getDefiningOp<memref::CastOp>()) {
     return lookupConfig(cast.getSource());
   }
-
-  if (auto cfg = getFunctionArgTileConfig(v))
-    return cfg;
 
   if (auto tbTy = dyn_cast<TileBufType>(v.getType()))
     return tbTy.getConfigAttr();
@@ -237,24 +170,6 @@ static void lookupValidDims(IRRewriter &rewriter, Location loc, Value v,
   }
   if (auto cast = v.getDefiningOp<memref::CastOp>()) {
     lookupValidDims(rewriter, loc, cast.getSource(), vRow, vCol);
-    return;
-  }
-  if (auto arg = dyn_cast<BlockArgument>(v)) {
-    auto validShape = getFunctionArgTileValidShape(v);
-    Block *block = arg.getOwner();
-    auto rowIndex =
-        getFunctionArgTileValidIndex(v, kTileValidRowIndexAttrName);
-    auto colIndex =
-        getFunctionArgTileValidIndex(v, kTileValidColIndexAttrName);
-    vRow = materializeValidDimFromBoundary(rewriter, loc, validShape, rowIndex,
-                                           block, 0);
-    vCol = materializeValidDimFromBoundary(rewriter, loc, validShape, colIndex,
-                                           block, 1);
-    if (validShape || rowIndex || colIndex)
-      return;
-  }
-  if (auto validShape = getFunctionArgTileValidShape(v)) {
-    materializeStaticValidDims(rewriter, loc, validShape, vRow, vCol);
     return;
   }
   if (auto tbTy = dyn_cast<TileBufType>(v.getType())) {
@@ -575,99 +490,29 @@ static Type convertPTOTypeToMemRef(Type t) {
   return t;
 }
 
-static Type convertPTOTypeToFunctionBoundaryMemRef(Type t) {
-  if (auto tbTy = dyn_cast<mlir::pto::TileBufType>(t)) {
-    SmallVector<int64_t> dynamicStrides(tbTy.getShape().size(),
-                                        ShapedType::kDynamic);
-    auto layoutAttr = StridedLayoutAttr::get(
-        t.getContext(), ShapedType::kDynamic, dynamicStrides);
-    return MemRefType::get(tbTy.getShape(), tbTy.getElementType(), layoutAttr,
-                           tbTy.getMemorySpace());
-  }
-  return convertPTOTypeToMemRef(t);
-}
-
-static FunctionType convertFunctionTypeToMemRef(FunctionType fnTy,
-                                                MLIRContext *ctx) {
-  SmallVector<Type> newInputs;
-  newInputs.reserve(fnTy.getNumInputs());
-  for (Type t : fnTy.getInputs())
-    newInputs.push_back(convertPTOTypeToMemRef(t));
-
-  SmallVector<Type> newResults;
-  newResults.reserve(fnTy.getNumResults());
-  for (Type t : fnTy.getResults())
-    newResults.push_back(convertPTOTypeToMemRef(t));
-
-  return FunctionType::get(ctx, newInputs, newResults);
-}
-
 static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
                                                        MLIRContext *ctx) {
   for (auto func : mod.getOps<func::FuncOp>()) {
-    Builder builder(ctx);
     FunctionType oldFnTy = func.getFunctionType();
     SmallVector<Type> newInputs;
     SmallVector<Type> newResults;
     SmallVector<DictionaryAttr> newArgAttrs;
-    SmallVector<Type> appendedInputTypes;
-    SmallVector<DictionaryAttr> appendedArgAttrs;
     newInputs.reserve(oldFnTy.getNumInputs());
     newResults.reserve(oldFnTy.getNumResults());
     newArgAttrs.reserve(oldFnTy.getNumInputs());
 
-    int64_t nextDynamicInputIndex = oldFnTy.getNumInputs();
-
     for (auto [idx, type] : llvm::enumerate(oldFnTy.getInputs())) {
-      newInputs.push_back(convertPTOTypeToFunctionBoundaryMemRef(type));
+      newInputs.push_back(convertPTOTypeToMemRef(type));
 
       NamedAttrList argAttrs;
       if (auto existingAttrs = func.getArgAttrDict(idx))
         argAttrs.append(existingAttrs.begin(), existingAttrs.end());
 
-      auto tbTy = dyn_cast<TileBufType>(type);
-      if (!tbTy) {
-        newArgAttrs.push_back(argAttrs.getDictionary(ctx));
-        continue;
-      }
-
-      argAttrs.set(kTileConfigAttrName, tbTy.getConfigAttr());
-      if (!tbTy.getValidShape().empty())
-        argAttrs.set(kTileValidShapeAttrName,
-                     builder.getDenseI64ArrayAttr(tbTy.getValidShape()));
-
-      ArrayRef<int64_t> validShape = tbTy.getValidShape();
-      if (validShape.size() > 0 && validShape[0] < 0) {
-        argAttrs.set(kTileValidRowIndexAttrName,
-                     builder.getI64IntegerAttr(nextDynamicInputIndex++));
-        appendedInputTypes.push_back(builder.getIndexType());
-        appendedArgAttrs.push_back(DictionaryAttr::get(ctx));
-      }
-      if (validShape.size() > 1 && validShape[1] < 0) {
-        argAttrs.set(kTileValidColIndexAttrName,
-                     builder.getI64IntegerAttr(nextDynamicInputIndex++));
-        appendedInputTypes.push_back(builder.getIndexType());
-        appendedArgAttrs.push_back(DictionaryAttr::get(ctx));
-      }
-
       newArgAttrs.push_back(argAttrs.getDictionary(ctx));
     }
 
-    newInputs.append(appendedInputTypes);
-    newArgAttrs.append(appendedArgAttrs);
-
-    for (auto [idx, type] : llvm::enumerate(oldFnTy.getResults())) {
-      if (isa<TileBufType>(type))
-        return func.emitOpError(
-            "tile return values are unsupported; use memref/pointer outputs or "
-            "pass tiles through arguments");
-      newResults.push_back(convertPTOTypeToFunctionBoundaryMemRef(type));
-    }
-
-    if (!func.isExternal()) {
-      while (func.getNumArguments() < newInputs.size())
-        func.insertArgument(func.getNumArguments(), builder.getIndexType(),
-                            DictionaryAttr{}, func.getLoc());
+    for (Type type : oldFnTy.getResults()) {
+      newResults.push_back(convertPTOTypeToMemRef(type));
     }
 
     auto newFnTy = FunctionType::get(ctx, newInputs, newResults);
@@ -727,33 +572,6 @@ static LogicalResult rewriteCallsToMemRef(ModuleOp mod, MLIRContext *ctx) {
 
       newOperands.push_back(
           rewriter.create<memref::CastOp>(call.getLoc(), expectedType, operand));
-    }
-
-    for (auto [idx, operand] : llvm::enumerate(call.getOperands())) {
-      auto rowIndex =
-          callee.getArgAttrOfType<IntegerAttr>(idx, kTileValidRowIndexAttrName);
-      auto colIndex =
-          callee.getArgAttrOfType<IntegerAttr>(idx, kTileValidColIndexAttrName);
-      if (!rowIndex && !colIndex)
-        continue;
-
-      Value vRow;
-      Value vCol;
-      lookupValidDims(rewriter, call.getLoc(), operand, vRow, vCol);
-      if (rowIndex) {
-        if (!vRow)
-          return call.emitOpError("missing dynamic valid_row for rewritten call "
-                                  "operand #")
-                 << idx;
-        newOperands.push_back(vRow);
-      }
-      if (colIndex) {
-        if (!vCol)
-          return call.emitOpError("missing dynamic valid_col for rewritten call "
-                                  "operand #")
-                 << idx;
-        newOperands.push_back(vCol);
-      }
     }
 
     if (newOperands.size() != calleeTy.getNumInputs()) {

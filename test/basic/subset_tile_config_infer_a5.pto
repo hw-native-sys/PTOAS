@@ -1,8 +1,9 @@
 // RUN: ptoas --pto-arch=a5 %s | FileCheck %s
 
 module attributes {"pto.device-spec" = "Ascend910B1"} {
-  func.func @subset_left_infer_a5(%src: !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=64, v_row=32, v_col=64>) {
+  func.func @subset_left_infer_a5() {
     %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=64, v_row=32, v_col=64>
     %lhs = pto.subset %src[%c0, %c0] sizes [32, 32] : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=64, v_row=32, v_col=64>
     %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>

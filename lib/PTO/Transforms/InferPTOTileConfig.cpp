@@ -286,19 +286,17 @@ static Type normalizeType(Type type, PTOArch arch) {
 
 static LogicalResult validateFunctionSignature(func::FuncOp func, PTOArch arch) {
   for (Type inputType : func.getFunctionType().getInputs()) {
-    if (auto tileTy = dyn_cast<TileBufType>(inputType)) {
-      if (failed(verifyExplicitTileBufType(
-              tileTy, arch, [&]() { return func.emitOpError(); })))
-        return failure();
-    }
+    if (isa<TileBufType>(inputType))
+      return func.emitOpError(
+          "tile function parameters are unsupported; use memref/pointer "
+          "inputs and bind tiles inside the function");
   }
 
   for (Type resultType : func.getFunctionType().getResults()) {
-    if (auto tileTy = dyn_cast<TileBufType>(resultType)) {
-      if (failed(verifyExplicitTileBufType(
-              tileTy, arch, [&]() { return func.emitOpError(); })))
-        return failure();
-    }
+    if (isa<TileBufType>(resultType))
+      return func.emitOpError(
+          "tile return values are unsupported; use memref/pointer outputs "
+          "instead");
   }
 
   return success();
