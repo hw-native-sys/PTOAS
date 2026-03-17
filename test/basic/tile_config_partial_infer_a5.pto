@@ -1,6 +1,6 @@
 // RUN: ptoas --pto-arch=a5 %s | FileCheck %s
 
-module attributes {"pto.device-spec" = "Ascend910B1"} {
+module attributes {"pto.device-spec" = "Ascend950"} {
   func.func @tile_config_partial_infer_a5() {
     %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major>
     %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, pad=0>

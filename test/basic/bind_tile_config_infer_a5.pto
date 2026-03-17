@@ -1,6 +1,6 @@
 // RUN: ptoas --pto-arch=a5 %s | FileCheck %s
 
-module attributes {"pto.device-spec" = "Ascend910B1"} {
+module attributes {"pto.device-spec" = "Ascend950"} {
   func.func @bind_tile_config_infer_a5() {
     %c32 = arith.constant 32 : index
     %alloc_l = memref.alloc() : memref<32x32xf32, #pto.address_space<left>>

@@ -1,6 +1,6 @@
 // RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
 
-module attributes {"pto.device-spec" = "Ascend910B1"} {
+module attributes {"pto.device-spec" = "Ascend950"} {
   func.func @reject_explicit_left_blayout_a5() {
     %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major>
     return

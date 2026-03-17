@@ -1,6 +1,6 @@
 // RUN: ptoas --pto-arch=a5 %s 2>&1 1>/dev/null | FileCheck %s
 
-module attributes {"pto.device-spec" = "Ascend910B1"} {
+module attributes {"pto.device-spec" = "Ascend950"} {
   func.func @preserve_explicit_a5() {
     %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
     %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
