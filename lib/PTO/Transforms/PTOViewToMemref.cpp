@@ -38,6 +38,8 @@ namespace pto {
 
 static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
     "__pto.lowered_set_validshape";
+static constexpr llvm::StringLiteral kLoweredSetValidShapeConfigAttrName =
+    "__pto.lowered_set_validshape_config";
 
 namespace {
 
@@ -484,6 +486,18 @@ struct PTOViewToMemrefPass
 
       Block &entry = func.front();
       auto fnTy = func.getFunctionType();
+
+      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
+      func.walk([&](mlir::pto::SetValidShapeOp op) {
+        setValidShapes.push_back(op);
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getSource().getType());
+        if (!tbTy)
+          return;
+        auto configAttr = tbTy.getConfigAttr();
+        if (!configAttr)
+          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+        op->setAttr(kLoweredSetValidShapeConfigAttrName, configAttr);
+      });
 
       // ------------------------------------------------------------------
       // Stage 0: Rewrite Function Signature
@@ -1179,10 +1193,6 @@ struct PTOViewToMemrefPass
         rewriter.replaceOp(op, lowered);
       }
 
-      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
-      func.walk([&](mlir::pto::SetValidShapeOp op) {
-        setValidShapes.push_back(op);
-      });
       for (auto op : setValidShapes) {
         if (isa<MemRefType>(op.getSource().getType()))
           op->setAttr(kLoweredSetValidShapeAttrName, UnitAttr::get(ctx));
