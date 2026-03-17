@@ -13,6 +13,6 @@ module {
   }
 }
 
-// CHECK-LABEL: static int32_t helper(
+// CHECK-LABEL: static AICORE int32_t helper(
 // CHECK-LABEL: __global__ AICORE void kernel(
 // CHECK: helper(

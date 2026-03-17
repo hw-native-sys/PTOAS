@@ -2200,7 +2200,10 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
       emitcFunc.setSpecifiersAttr(
           rewriter.getStrArrayAttr({"__global__ AICORE"}));
     } else if (op.isPrivate()) {
-      emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({"static"}));
+      emitcFunc.setSpecifiersAttr(
+          rewriter.getStrArrayAttr({"static", "AICORE"}));
+    } else {
+      emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({"AICORE"}));
     }
 
     // Inline the original body, then convert region/block argument types to
