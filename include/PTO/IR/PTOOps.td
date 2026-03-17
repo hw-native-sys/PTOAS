@@ -328,8 +328,6 @@ def SetValidShapeOp : PTO_Op<"set_validshape", [
     Index:$valid_col
   );
 
-  let results = (outs);
-
   let hasVerifier = 1;
 
   let assemblyFormat = [{
