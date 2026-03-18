@@ -40,6 +40,13 @@ Create the new backend entry point and the minimum `a5vm` dialect surface requir
 3. `a5vm` contains the minimum load, abs, and store style operations needed for the `Abs` path.
 4. General control flow and scalar arithmetic remain handled by shared dialects rather than moving into `a5vm`.
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] `01-01-PLAN.md` — Create the Phase 1 FileCheck fixtures and committed runner for all Wave 0 checks
+- [ ] `01-02-PLAN.md` — Add the first-class `a5vm` dialect, 256-byte vector type, and minimum `load`/`abs`/`store` ops
+- [ ] `01-03-PLAN.md` — Wire explicit backend selection, A5VM text emission, and unresolved-report diagnostics at the current `emitc` boundary
+
 ### Phase 2: PTO Lowering
 
 **Goal**
