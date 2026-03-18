@@ -1,7 +1,7 @@
 # Phase 1: A5VM Foundation - Research
 
-**Researched:** 2026-03-18
-**Domain:** MLIR dialect bring-up and backend boundary replacement for PTOAS
+**Researched:** 2026-03-19
+**Domain:** Corrected A5-side A5VM primitive dialect bring-up and backend-boundary replanning for PTOAS
 **Confidence:** HIGH
 
 <user_constraints>
@@ -10,44 +10,43 @@
 ### Locked Decisions
 ## Implementation Decisions
 
-### Backend switching
-- Keep dual backend paths during Phase 1.
+### A5VM identity and namespace
+- `a5vm` remains a first-class dialect under the project directory tree, but its C++ namespace must be `mlir::a5vm`, not `mlir::pto::a5vm`.
+- `a5vm` should keep the normalized vector type spelling such as `!a5vm.vec<64xf32>`.
+- The already-landed namespace and op-surface choices from the first Phase 1 attempt should be treated as superseded by this corrected context.
+
+### Primitive-op direction
+- `a5vm` ops should stay as close as practical to CCE builtin naming rather than freezing PTO-interface-shaped pseudo-ops such as `a5vm.load` and `a5vm.store`.
+- Phase 1 should define the minimum primitive surface needed by the real PTO-library-aligned lowering shape, including vector-memory and vector-compute primitives such as `vld`, `vabs`, and `vst`, plus any loop-scope or copy-family primitives that later `TLOAD` / `TSTORE` lowering will need.
+- Phase 1 must not encode PTO interface semantics directly into A5VM ops when the real hardware-facing primitive is lower-level and differently named.
+- General control flow and scalar arithmetic should remain in shared dialects when they are not hardware-facing.
+
+### Backend switching and output seam
+- Keep dual backend paths during the correction pass.
 - Select backend through an explicit CLI flag rather than a hidden or hardwired mode switch.
 - Default CLI behavior should remain compatible with current usage, but new backend selection must be available for developers.
-
-### Output format
-- The new backend should target output that is as close as possible to final consumer-facing LLVM `.ll` style text.
-- The output should avoid retaining extra intermediate semantic noise unless needed for unresolved cases.
-- The textual HIVM emitter should be connected in `ptoas` at the current final emission point, directly replacing `emitc::translateToCpp` when the `a5vm` backend is selected.
-
-### A5VM abstraction boundary
-- `a5vm` lives in the existing PTO directory and namespace structure as a new dialect module, not as an ad hoc extension inside the old EmitC pass.
-- `a5vm` should use a simple unified vector type spelling such as `!a5vm.vec<64xf32>`.
-- `a5vm` is responsible for the hardware-facing abstraction layer, while the textual emitter is responsible for final HIVM intrinsic name synthesis.
-- Phase 1 should already connect the thinnest usable textual HIVM emitter path rather than stopping at raw `a5vm` IR.
+- The final textual HIVM emission seam still belongs at the current `emitc::translateToCpp` boundary, but Phase 1 should not over-specify final intrinsic names before the primitive A5VM surface is corrected.
 
 ### Failure and placeholder policy
 - When something can be emitted as legal textual IR, do that even if some details remain provisional.
 - When a case cannot be emitted legally, output should include explicit unresolved markers or comments instead of silently guessing.
 - Placeholder handling should preserve enough context that required intrinsic mappings can be reviewed and confirmed later.
 
-### Developer diagnostics
-- Provide explicit developer-facing debug flags for:
-  - printing backend intermediate IR
-  - printing intrinsic-selection decisions
-  - continuing through unresolved mappings and producing a summary list
-- Error messages for the new backend should be developer-oriented and include operation/type/mapping context rather than only end-user summaries.
-- Unresolved intrinsic or emission gaps should be reported both in terminal/log output and in a separate artifact or file.
+### Replanning Notes
+- The previous assumption that the `Abs` path should be represented primarily with `a5vm.load` / `a5vm.abs` / `a5vm.store` is incorrect and must not guide new planning.
+- Downstream planning must use the A5-side PTO library implementation plus CCE builtin families as the semantic source of truth, not the currently landed A5VM pseudo-load/store design.
+- Replanning does not need to preserve or mirror `a2a3` implementation details; only the A5 PTO path matters for this effort.
 
 ### Claude's Discretion
+- Exact file split for the corrected A5VM dialect implementation under the existing PTO directory tree
+- Exact choice of which primitive ops land in Phase 1 versus wait for Phase 2, as long as they align to the PTO-library-backed lowering shape
 - Exact flag names for backend selection and debug controls
-- Exact organization of the new dialect source files within the PTO directory hierarchy
-- Exact mechanics for how unresolved intrinsic summaries are accumulated and written
 
 ### Deferred Ideas (OUT OF SCOPE)
 ## Deferred Ideas
 
-None — discussion stayed within phase scope.
+- Exact PTO `TLOAD` / `TABS` / `TSTORE` lowering structure belongs to Phase 2, but Phase 1 must stop making assumptions that contradict the PTO library.
+- Exact final HIVM intrinsic names remain deferred.
 </user_constraints>
 
 <phase_requirements>
@@ -55,338 +54,333 @@ None — discussion stayed within phase scope.
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| BACK-01 | Developer can run the existing PTOAS compilation flow with a backend path that replaces the current `emitc` generation slot without requiring a pass-pipeline redesign. | Reuse `tools/ptoas/ptoas.cpp` pipeline through the current `createEmitPTOManualPass(...)` / `emitc::translateToCpp(...)` boundary; add a backend selector and parallel A5VM emission branch instead of redesigning earlier passes. |
-| BACK-02 | Developer can keep ordinary control flow and scalar arithmetic in shared dialects such as `scf` and `arith` while only hardware-facing PTO operations enter the new backend path. | Keep `func`/`scf`/`arith`/`memref` in the existing registry and pass pipeline; only lower hardware-facing PTO ops to `a5vm` and leave non-hardware code in shared dialects until textual emission. |
-| A5VM-01 | Developer can represent legal `a5vm` vector types whose total width is always exactly 256 bytes. | Implement a first-class `A5VMVecType` verifier/parser/printer using MLIR type definitions and reject element-count combinations whose total width is not 256 bytes. |
-| A5VM-02 | Developer can represent the `Abs` load path with an `a5vm` load operation whose result type is a legal `a5vm` vector type. | Add a minimal `a5vm.load` op whose result is `!a5vm.vec<...>` and whose operands/attrs carry unresolved addressing and layout metadata needed later by PTO lowering and emission. |
-| A5VM-03 | Developer can represent the `Abs` compute path with an `a5vm` absolute-value operation whose operand and result types are legal `a5vm` vector types. | Add a minimal `a5vm.abs` unary op that enforces same-typed operand/result vectors and keeps intrinsic family selection in the emitter, not in the op name. |
-| A5VM-04 | Developer can represent the `Abs` store path with an `a5vm` store operation that consumes a legal `a5vm` vector value and backend-specific addressing inputs. | Add a minimal `a5vm.store` op with a vector operand plus backend-facing address/layout metadata attributes or operands, matching later `TSTORE` codegen needs without collapsing to final intrinsic names yet. |
+| BACK-01 | Developer can run the existing PTOAS compilation flow with a backend path that replaces the current `emitc` generation slot without requiring a pass-pipeline redesign. | Keep backend selection in `tools/ptoas/ptoas.cpp` at the existing final-emission seam; replace only the obsolete A5VM branch and its fixtures, not the upstream pass pipeline. |
+| BACK-02 | Developer can keep ordinary control flow and scalar arithmetic in shared dialects such as `scf` and `arith` while only hardware-facing PTO operations enter the new backend path. | Use `a5vm` only for hardware-facing copy and vector primitives; keep loop structure, scalar arithmetic, and non-hardware control flow in shared MLIR dialects. |
+| A5VM-01 | Developer can represent legal `a5vm` vector types whose total width is always exactly 256 bytes under the corrected `mlir::a5vm` dialect namespace. | Keep `!a5vm.vec<...>` and its 256-byte verifier, but correct the dialect `cppNamespace` to `::mlir::a5vm` and remove all `mlir::pto::a5vm` references. |
+| A5VM-02 | Developer can represent the `Abs` path with hardware-facing `a5vm` primitive operations whose naming stays close to the CCE builtin layer rather than to pseudo PTO-interface-shaped ops. | Replace pseudo ops with corrected primitive families: copy-family GM/UB movement plus vector register compute ops named after the A5 builtin layer (`vlds`/`vabs`/`vsts` family, not PTO-shaped `load`/`store`). |
+| A5VM-03 | Developer can represent the `Abs` vector compute path with corrected `a5vm` vector primitives such as `vld`, `vabs`, and `vst` whose operand/result types are legal `a5vm` vector types. | Model the `Abs` compute kernel after A5 `TUnaryOp.hpp`: UB source and destination plus register-vector ops for load/store around `vabs`, with legal `!a5vm.vec<...>` values on the compute edges. |
+| A5VM-04 | Developer can represent the `Abs` memory-movement path with corrected `a5vm` primitives that are suitable for PTO-library-aligned GM/UB transfer lowering. | Add explicit GM<->UB copy-family primitives that preserve layout, valid rows/cols, burst/stride, and padding metadata instead of flattening memory movement into fake vector `load`/`store` ops. |
 </phase_requirements>
 
 ## Summary
 
-Phase 1 should be planned as a first-class MLIR dialect bring-up plus a backend switch at the existing `emitc` boundary, not as an incremental edit inside [`PTOToEmitC.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/Transforms/PTOToEmitC.cpp). The repository already follows the standard MLIR out-of-tree pattern: TableGen-backed dialects under `include/PTO/IR`, implementations under `lib/PTO/IR`, pass declarations in `include/PTO/Transforms/Passes.h`, and tool orchestration in [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp). Planning should preserve that structure.
+The old Phase 1 research is superseded. The A5 PTO headers show that `Abs` is not structured as high-level `load -> abs -> store`. `TLOAD` is a GM-to-UB copy family with layout-specific branching and explicit burst/stride/valid-region parameters. `TABS` is a UB register loop that repeatedly performs `vlds`, `vabs`, and `vsts` inside vector scope. `TSTORE` is a UB-to-GM copy family with its own layout- and tile-domain-specific branching. Phase 1 therefore needs a corrected hardware-facing primitive surface, not PTO-shaped pseudo-ops.
 
-The minimum viable `a5vm` surface for this phase is smaller than PTO lowering but larger than a pure stub. It needs one verified vector type constrained to 256 bytes total width, three hardware-facing ops (`load`, `abs`, `store`), a pass/emitter entry point reachable from `ptoas` through an explicit backend flag, and developer diagnostics that preserve unresolved mapping context. Because CONTEXT.md explicitly locks in a thin textual HIVM path during Phase 1, planning should include emitter plumbing and unresolved-reporting scaffolding now, even if complete PTO semantic lowering and final intrinsic selection land later.
+The minimum corrected Phase 1 surface for the `Abs` path is: a legal 256-byte `!a5vm.vec<...>` type under `mlir::a5vm`; one GM-to-UB copy primitive family; one UB-to-GM copy primitive family; and the vector-register compute trio for the unary body. That is enough to plan Phase 2 PTO-library-faithful lowering without locking in final intrinsic spellings or overbuilding the full lowering framework now.
 
-**Primary recommendation:** Build `a5vm` as a separate MLIR dialect and connect it through a new `ptoas` backend selector that keeps the current pass pipeline intact, emits minimal textual HIVM output for `Abs`, and records unresolved cases explicitly.
+Planning should explicitly replace, not extend, the wrong work already in tree. The existing `a5vm.load` / `a5vm.abs` / `a5vm.store` contracts, the `::mlir::pto::a5vm` namespace, and every Phase 1/2 fixture that encodes those assumptions should be treated as invalid baseline. The clean plan is to rewrite Wave 0 contracts first, then re-land the dialect and backend boundary against the corrected primitive direction.
+
+**Primary recommendation:** Plan Phase 1 around `mlir::a5vm`, `!a5vm.vec<...>`, GM/UB copy primitives, and UB vector-register primitives (`vlds`/`vabs`/`vsts` family), while keeping loops and scalar logic in shared dialects and leaving PTO semantic lowering to Phase 2.
 
 ## Standard Stack
 
 ### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| LLVM | 19.1.7 | Compiler infrastructure and support libraries | Already pinned by the workspace CMake toolchain and matched exactly by MLIR in the local install. |
-| MLIR | 19.1.7 | Dialect/type/op definitions, passes, conversion infra, asm/printer/parser | The repo already uses MLIR TableGen dialect libraries and pass infrastructure throughout PTOAS. |
-| PTOIR / PTOTransforms | workspace | Existing frontend dialect and passes | Phase 1 must integrate at the current PTOAS boundary instead of replacing the frontend architecture. |
-| Ascend CANN PTO headers | 8.5.0 | Semantic reference for `TLOAD`, `TABS`, `TSTORE` behavior | These headers define the shape/layout/valid-region constraints the new backend must preserve. |
+| LLVM | 19.1.7 | Core compiler support and build integration | Verified from the local toolchain config already used by this repo. |
+| MLIR | 19.1.7 | Dialect, type, op, parser, and pass infrastructure | The repo is already structured as an out-of-tree MLIR project and should keep using first-class dialect/TableGen patterns. |
+| Ascend CANN PTO headers | 8.5.0 | Semantic source of truth for A5 PTO instruction behavior | The corrected phase is explicitly constrained to A5 PTO semantics from the installed CANN headers. |
+| Ascend CCE vector intrinsics headers | 15.0.5 toolchain headers under CANN 8.5.0 | Primitive naming and operand-shape reference | These headers expose the builtin families that should drive corrected `a5vm` op naming. |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| MLIR TableGen (`mlir_tablegen`, `add_mlir_dialect_library`) | 19.1.7 | Generate dialect/type/op declarations and defs | Use for the new `a5vm` dialect instead of handwritten registration boilerplate. |
-| FileCheck / lit-style `RUN:` tests | LLVM 19.1.7 toolchain | Fast structural verification of MLIR/text output | Use for new phase tests because the repo already contains `RUN:` + `FileCheck` tests under `test/basic`. |
-| `ctest` | CMake 4.2.3 workspace | Existing smoke test harness for `ptobc` integration | Use only for broader smoke coverage, not as the primary Phase 1 dialect verification loop. |
+| MLIR TableGen | 19.1.7 | Generate dialect/type/op declarations and definitions | Use for the corrected dialect surface; do not hand-roll a separate registry pattern. |
+| Bash + `FileCheck` | workspace LLVM tools | Fast fixture verification for parser/printer/backend contracts | Use for corrected Wave 0 and per-task validation. |
+| CTest | CMake/CTest from the build | Broader regression pass already used by the repo | Run at wave merge or phase gate, not for every tiny dialect iteration. |
 
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| First-class `a5vm` dialect | Extend `PTOToEmitC.cpp` with more ad hoc cases | Faster short-term, but it violates the locked abstraction boundary and makes Phase 2/3 rework likely. |
-| Verified `A5VMVecType` | Reuse builtin `vector<...>` directly | Simpler mechanically, but it loses the locked textual syntax (`!a5vm.vec<64xf32>`) and weakens backend-specific verification. |
-| Backend selector in `ptoas` | Hidden environment switch or hardwired A5 path | Conflicts with locked developer-controlled dual-backend behavior. |
+| `a5vm` copy-family + vector-register primitives | Keep `a5vm.load` / `a5vm.abs` / `a5vm.store` and reinterpret them later | This preserves the wrong abstraction and makes Phase 2 lowering misleading. |
+| `vlds` / `vabs` / `vsts`-aligned naming | Generic names like `vector_load` / `vector_store` | Easier to read at first glance, but farther from the A5 builtin source of truth. |
+| Clean replacement of old fixtures and dialect ops | Compatibility aliases for obsolete op names | Aliases would keep invalid semantics alive and invite plan drift. |
 
-**Toolchain verification:**
-```bash
-sed -n '1,20p' /data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/llvm/LLVMConfigVersion.cmake
-sed -n '1,20p' /data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/mlir/MLIRConfigVersion.cmake
-sed -n '330,420p' build/CMakeCache.txt
-```
-
-**Verified local versions:**
-- LLVM `19.1.7` from `install/lib/cmake/llvm/LLVMConfigVersion.cmake`
-- MLIR `19.1.7` from `install/lib/cmake/mlir/MLIRConfigVersion.cmake`
-- CANN PTO reference tree `8.5.0` from `/usr/local/Ascend/cann-8.5.0/...`
+**Version verification:**
+- LLVM `19.1.7` verified in `/data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/llvm/LLVMConfigVersion.cmake`
+- MLIR `19.1.7` verified in `/data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/mlir/MLIRConfigVersion.cmake`
+- CANN references verified under `/usr/local/Ascend/cann-8.5.0/...`
 
 ## Architecture Patterns
 
 ### Recommended Project Structure
 ```text
-include/PTO/
-├── IR/
-│   ├── A5VM.h                # aggregate include
-│   ├── A5VMDialect.h         # dialect class
-│   ├── A5VMDialect.td        # dialect definition
-│   ├── A5VMOps.td            # load/abs/store ops
-│   └── A5VMTypeDefs.td       # !a5vm.vec<...>
-└── Transforms/
-    └── Passes.h              # new pass/emitter declarations
+include/PTO/IR/
+├── A5VM.h
+├── A5VMDialect.h
+├── A5VMDialect.td
+├── A5VMTypes.td
+└── A5VMOps.td
 
-lib/PTO/
-├── IR/
-│   ├── A5VM.cpp
-│   └── CMakeLists.txt
-└── Transforms/
-    ├── PTOToA5VM.cpp         # phase-appropriate boundary pass
-    ├── A5VMToText.cpp        # thin textual HIVM emitter path
-    └── CMakeLists.txt
+lib/PTO/IR/
+└── A5VM.cpp
+
+lib/PTO/Transforms/
+├── PTOToA5VM.cpp
+└── A5VMTextEmitter.cpp
+
+test/phase1/
+├── a5vm_vec_type.mlir
+├── a5vm_copy_gm_to_ubuf_op.mlir
+├── a5vm_vabs_kernel_shape.mlir
+├── a5vm_copy_ubuf_to_gm_op.mlir
+├── a5vm_backend_switch.mlir
+├── a5vm_shared_dialects.mlir
+└── run_phase1_checks.sh
 ```
 
-### Pattern 1: First-Class MLIR Dialect Module
-**What:** Add `a5vm` using the same TableGen and `add_mlir_dialect_library` pattern the repo already uses for PTO.
-**When to use:** Immediately; this is the canonical repo fit for new IR.
-**Example:**
-```cmake
-set(LLVM_TARGET_DEFINITIONS A5VMOps.td)
-mlir_tablegen(A5VMDialect.h.inc -gen-dialect-decls -dialect=a5vm)
-mlir_tablegen(A5VMDialect.cpp.inc -gen-dialect-defs -dialect=a5vm)
-mlir_tablegen(A5VMOps.h.inc -gen-op-decls)
-mlir_tablegen(A5VMOps.cpp.inc -gen-op-defs)
-mlir_tablegen(A5VMTypeDefs.h.inc -gen-typedef-decls -typedefs-dialect=a5vm)
-mlir_tablegen(A5VMTypeDefs.cpp.inc -gen-typedef-defs -typedefs-dialect=a5vm)
-add_mlir_dialect_library(A5VMIR ...)
-```
-Source: official MLIR dialect/TableGen docs and the repo’s existing [`include/PTO/IR/CMakeLists.txt`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/CMakeLists.txt)
-
-### Pattern 2: Backend Selection at the Tool Boundary
-**What:** Put backend selection in [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp), close to the current `createEmitPTOManualPass(...)` and `emitc::translateToCpp(...)` branch.
-**When to use:** For Phase 1 dual-backend coexistence.
-**Example:**
-```c++
-enum class PTOBackend { EmitC, A5VM };
-
-if (backend == PTOBackend::EmitC) {
-  pm.addPass(pto::createEmitPTOManualPass(targetArch));
-  pm.addPass(emitc::createFormExpressionsPass());
-  runEmitCTranslation(module, outputFile);
-} else {
-  pm.addPass(pto::createLowerPTOToA5VMPass(targetArch));
-  runA5VMTextEmission(module, outputFile, debugOptions);
-}
-```
-Source: repo integration point in [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp)
-
-### Pattern 3: Keep Shared Dialects Shared
-**What:** Lower only hardware-facing PTO ops to `a5vm`; leave `func`, `scf`, `arith`, `memref`, and ordinary control flow in the existing dialect set.
-**When to use:** Throughout Phase 1 and later phases.
-**Example:**
-```text
-PTO + func/scf/arith/memref
-        |
-        | only hardware-facing ops
-        v
- func/scf/arith/memref + a5vm
-        |
-        v
- textual HIVM emission
-```
-Source: project requirements plus MLIR dialect conversion guidance at https://mlir.llvm.org/docs/DialectConversion/
-
-### Pattern 4: Preserve Semantics as Attributes, Not Strings
-**What:** Carry unresolved layout, valid-region, addressing, and variant metadata as typed operands/attrs on `a5vm` ops, then let the emitter synthesize final intrinsic spellings.
-**When to use:** For all three Phase 1 ops.
+### Pattern 1: Model A5 `Abs` as Copy + UB Vector Register Ops
+**What:** Separate memory movement from vector computation, following the A5 PTO implementation shape.
+**When to use:** For the corrected Phase 1 primitive contract and for all future PTO-to-A5VM lowerings.
 **Example:**
 ```mlir
-%v = a5vm.load %base[%offset]
-     {layout = #pto.layout<nd>, valid_shape = [32, 32], domain = "vec"}
-     : memref<?xf32>, !a5vm.vec<64xf32>
-%r = a5vm.abs %v : !a5vm.vec<64xf32>
-a5vm.store %r, %out[%offset]
-  {layout = #pto.layout<nd>, valid_shape = [32, 32], domain = "vec"}
-  : !a5vm.vec<64xf32>, memref<?xf32>
+%src = a5vm.copy_gm_to_ubuf %gm[%base]
+  {layout = "nd", valid_rows = 32 : i64, valid_cols = 32 : i64,
+   burst_len = 128 : i64, burst_count = 1 : i64,
+   gm_stride = 32 : i64, ub_stride = 64 : i64, ub_pad = false}
+  : memref<?xf32> -> memref<64xf32, #a5vm.ub>
+
+scf.for %i = %c0 to %c1 step %c1 {
+  %r0 = a5vm.vlds %src[%c0] : memref<64xf32, #a5vm.ub> -> !a5vm.vec<64xf32>
+  %r1 = a5vm.vabs %r0 : !a5vm.vec<64xf32> -> !a5vm.vec<64xf32>
+  a5vm.vsts %r1, %dst[%c0] {dist = "norm"} : !a5vm.vec<64xf32>, memref<64xf32, #a5vm.ub>
+}
+
+a5vm.copy_ubuf_to_gm %dst[%base], %gm_out
+  {layout = "nd", valid_rows = 32 : i64, valid_cols = 32 : i64,
+   burst_len = 128 : i64, burst_count = 1 : i64,
+   gm_stride = 32 : i64, ub_stride = 64 : i64}
+  : memref<64xf32, #a5vm.ub>, memref<?xf32>
 ```
-Source: locked phase decisions and PTO semantic references in the CANN headers
+Source: A5 `TLoad.hpp`, `TUnaryOp.hpp`, `TStore.hpp`
+
+### Pattern 2: Keep Shared Dialects for Looping and Scalar Bookkeeping
+**What:** Use `scf`, `arith`, `func`, and `memref` for non-hardware control flow and scalar values.
+**When to use:** Always, unless the operation itself is a hardware-facing A5 primitive.
+**Example:**
+```text
+PTO semantic IR
+   |
+   | Phase 2 lowering
+   v
+func/scf/arith/memref + a5vm.copy_* + a5vm.vlds/vabs/vsts
+   |
+   | Phase 3 text emission
+   v
+textual HIVM at the existing final seam
+```
+Source: project requirements and current `tools/ptoas/ptoas.cpp` boundary
+
+### Pattern 3: Make Memory-Movement Primitives Explicitly Metadata-Rich
+**What:** Carry the transfer facts that A5 `TLOAD` / `TSTORE` actually branch on: layout, valid rows/cols, burst counts, burst length, strides, and padding/quantization controls where applicable.
+**When to use:** On copy-family ops only.
+**Example:**
+```c++
+template <typename TileData, typename GlobalData>
+void TLoad(..., int gShape0, int gShape1, int gShape2, int gShape3, int gShape4,
+           int gStride0, int gStride1, int gStride2, int gStride3, int gStride4,
+           int validRow, int validCol);
+```
+Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp`
+
+### Pattern 4: Keep Phase 1 Primitive, Not Semantic
+**What:** Define only the primitive surface needed so Phase 2 can lower PTO semantics faithfully later.
+**When to use:** Throughout Phase 1.
+**Example:**
+- `a5vm.copy_gm_to_ubuf`: primitive data movement
+- `a5vm.vlds`: UB-to-register load
+- `a5vm.vabs`: register unary compute
+- `a5vm.vsts`: register-to-UB store
+- `a5vm.copy_ubuf_to_gm`: primitive data movement
+
+Do not add:
+- `a5vm.tload`
+- `a5vm.tabs`
+- `a5vm.tstore`
+- PTO-layout-specific mega-ops that already encode Phase 2 semantics
 
 ### Anti-Patterns to Avoid
-- **Embedding `a5vm` logic in `PTOToEmitC.cpp`:** This violates the locked dialect boundary and guarantees Phase 2/3 churn.
-- **Hardcoding final HIVM intrinsic names in op names:** The emitter, not the IR, must own final intrinsic spelling synthesis.
-- **Encoding unresolved cases as silent defaults:** Locked policy requires explicit unresolved markers or comments.
-- **Moving `scf`/`arith` into `a5vm`:** This breaks BACK-02 and increases backend surface unnecessarily.
+- **Keeping compatibility aliases for `a5vm.load` and `a5vm.store`:** This defeats the correction.
+- **Collapsing GM/UB transfer into vector result/value ops:** A5 `TLOAD` / `TSTORE` are not single-vector load/store semantics.
+- **Adding a custom `a5vm.for` or scalar arithmetic ops in Phase 1:** BACK-02 explicitly keeps those in shared dialects.
+- **Naming ops after final HIVM spellings now:** Phase 1 should not guess final intrinsic names.
+- **Mirroring `a2a3` behavior:** The correction scope is A5 only.
 
 ## Don't Hand-Roll
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| Dialect registration and IR boilerplate | Handwritten parsers/printers for everything | MLIR TableGen dialect/type/op generation | The repo already uses it, and official MLIR docs treat it as the standard path. |
-| Backend conversion framework | Custom tree walk that rewrites ops by hand everywhere | MLIR pass + pattern/conversion infrastructure | Easier verification, easier later expansion to more PTO ops. |
-| Type legality enforcement | Ad hoc checks spread across emitters and passes | A single verified `A5VMVecType` verifier | Prevents illegal `a5vm` values from existing at all. |
-| Golden text assertions | Bespoke shell diffs | `RUN:` + `FileCheck` tests | Existing repo convention, fast, and purpose-built for compiler output. |
-| Intrinsic spelling storage | Frozen string literals on ops | Emitter-side name synthesis from op family + type + variant attrs | Matches locked abstraction boundary and avoids redesign when mappings evolve. |
+| Dialect boilerplate | Handwritten op/type registration and parser glue | MLIR TableGen plus one `A5VM.cpp` implementation file | Matches the repo structure and keeps replacement contained. |
+| PTO semantics in Phase 1 | A custom pseudo-semantic A5VM layer | Primitive copy/register ops only | Prevents Phase 1 from freezing the wrong abstraction. |
+| General control flow in `a5vm` | Custom loop/scope arithmetic ops | `scf`/`arith`/`func` | BACK-02 already requires this split. |
+| Transfer parameter inference in the emitter | Recomputing burst/stride/layout from ad hoc clues | Explicit attrs/operands on copy-family ops | A5 `TLOAD` / `TSTORE` branch on these values directly. |
+| Legacy fixture migration | Incremental edits that leave old contracts half alive | Replace obsolete fixtures in one Wave 0 rewrite | Mixed old/new contracts would make planning incoherent. |
 
-**Key insight:** In this domain, custom shortcuts usually leak semantics across layers. The plan should centralize legality in types, centralize backend selection in `ptoas`, and centralize final intrinsic spelling in the emitter.
+**Key insight:** The deceptively hard problem here is not `vabs`; it is preserving the real A5 transfer structure without prematurely lowering PTO semantics. Hand-rolled shortcuts around that boundary will force a rewrite in Phase 2.
 
 ## Common Pitfalls
 
-### Pitfall 1: Making `a5vm` Too Semantic
-**What goes wrong:** `a5vm` starts mirroring PTO template behavior instead of representing a hardware-facing abstraction boundary.
-**Why it happens:** PTO semantic detail is available first, and it is tempting to copy it directly into op names or custom types.
-**How to avoid:** Limit Phase 1 `a5vm` to vector type legality plus load/abs/store ops with metadata attrs needed for later emission.
-**Warning signs:** Op names such as `a5vm.vabs_f32_nd_rowmajor` or type families multiplying per layout.
+### Pitfall 1: Treating `TLOAD` as a Vector Load
+**What goes wrong:** Planning assumes a single vector result op is enough.
+**Why it happens:** The `Abs` sample is small, so the GM-to-UB copy work is easy to overlook.
+**How to avoid:** Model `TLOAD` as copy-family primitives that preserve layout/stride/valid-region facts.
+**Warning signs:** An op shaped like `%v = a5vm.load %gm[...] : memref -> !a5vm.vec<...>`.
 
-### Pitfall 2: Making `a5vm` Too Thin
-**What goes wrong:** The dialect becomes only a debug dump, forcing emitter-specific guesses later.
-**Why it happens:** Over-optimizing for speed in the first phase.
-**How to avoid:** Preserve unresolved-but-required codegen facts as attrs or operands on `a5vm.load` / `a5vm.store`.
-**Warning signs:** The emitter cannot explain why it picked a load/store family or has to inspect old PTO ops.
+### Pitfall 2: Treating `TABS` as a Single Primitive Operation
+**What goes wrong:** Phase 1 skips the UB register movement that the A5 implementation actually performs.
+**Why it happens:** `TABS` is conceptually simple, but A5 implements it as `vlds` + `vabs` + `vsts` inside repeated vector loops.
+**How to avoid:** Make the compute contract explicitly register-based and leave loop structure in shared dialects.
+**Warning signs:** No `vlds`/`vsts` family in the planned primitive set.
 
-### Pitfall 3: Vector Width Checks Done Too Late
-**What goes wrong:** Illegal vectors survive until emission, where failures become opaque.
-**Why it happens:** Width logic is implemented in lowering helpers instead of the type verifier.
-**How to avoid:** Reject any `!a5vm.vec<...>` whose `element_count * element_bit_width != 2048`.
-**Warning signs:** Multiple callers recalculate “256 bytes” instead of asking the type.
+### Pitfall 3: Keeping the Wrong Namespace Alive
+**What goes wrong:** New code compiles, but the dialect still lands in `mlir::pto::a5vm`.
+**Why it happens:** The current `A5VMDialect.td` and `A5VM.cpp` already hardcode the obsolete namespace.
+**How to avoid:** Treat namespace correction as a replacement task, not a follow-up cleanup.
+**Warning signs:** `using namespace mlir::pto::a5vm;` or `cppNamespace = "::mlir::pto::a5vm"`.
 
-### Pitfall 4: Reusing EmitC Output Assumptions
-**What goes wrong:** The new backend still depends on `emitc::translateToCpp` cleanup patterns or marker rewrites.
-**Why it happens:** The current tool already has post-processing helpers for EmitC C++.
-**How to avoid:** Keep A5VM text emission on a separate path that writes final textual output directly.
-**Warning signs:** New code calls EmitC form-expression or C++ rewrite helpers from the A5VM branch.
+### Pitfall 4: Freezing Old Fixtures as “Close Enough”
+**What goes wrong:** Wave 0 passes while locking the wrong op surface into plans and reviews.
+**Why it happens:** The wrong fixtures already exist and seem convenient to reuse.
+**How to avoid:** Rewrite Phase 1 and affected Phase 2 fixtures before implementation planning.
+**Warning signs:** Any Phase 1 fixture named around `a5vm_load_op`, `a5vm_abs_op`, or `a5vm_store_op` without corrected semantics.
 
-### Pitfall 5: Losing PTO Layout/Valid-Region Context
-**What goes wrong:** `TLOAD` / `TSTORE` become sample-only stubs that cannot grow past `Abs`.
-**Why it happens:** The current sample is simple, so shape/layout metadata looks optional.
-**How to avoid:** Plan Phase 1 ops with explicit fields for layout, valid rows/cols, and backend-facing address operands even if Phase 1 uses only one shape.
-**Warning signs:** `a5vm.load` and `a5vm.store` have only a base pointer and a vector result/value.
+### Pitfall 5: Overreaching into Full Phase 2 Lowering
+**What goes wrong:** Phase 1 starts encoding PTO-specific layout branching and tile-domain behavior directly in the dialect.
+**Why it happens:** The source headers expose many cases and it is tempting to land them early.
+**How to avoid:** Keep Phase 1 to the primitive surface needed by the `Abs` path only.
+**Warning signs:** A large matrix of ND/DN/NZ-specific semantic ops or `TSTORE` quantization specializations inside Phase 1.
 
-### Pitfall 6: Underplanning Diagnostics
-**What goes wrong:** Unresolved mappings fail with generic “unsupported” errors and no artifact for later review.
-**Why it happens:** Diagnostics feel secondary during bring-up.
-**How to avoid:** Include a summary collector and file emission in the initial design.
-**Warning signs:** Error paths only print the op name without type/layout/mapping detail.
+### Pitfall 6: Choosing Wrapper Names Without Checking the A5 Call Sites
+**What goes wrong:** Ops are named after generic wrappers while the real A5-side implementation uses different primitive families.
+**Why it happens:** The builtin header exposes both higher-level wrappers (`vload` / `vstore`) and lower-level register ops (`vlds` / `vsts`).
+**How to avoid:** Use the A5 PTO implementation as the deciding source. For `Abs`, the actual compute path uses `vlds` / `vabs` / `vsts`.
+**Warning signs:** The plan justifies names from intuition rather than from `TUnaryOp.hpp`.
 
 ## Code Examples
 
-Verified patterns from official sources and current repo conventions:
+Verified patterns from primary sources:
 
-### A5VM Vector Type Verifier
+### A5 `TABS` Inner Shape
 ```c++
-static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
-                            Type elementType, int64_t elementCount) {
-  auto intOrFloat = dyn_cast<IntegerType, FloatType>(elementType);
-  if (!intOrFloat)
-    return emitError() << "requires integer or float element type";
-  const unsigned bitWidth = elementType.getIntOrFloatBitWidth();
-  if (bitWidth == 0 || elementCount <= 0)
-    return emitError() << "requires positive element width/count";
-  if (static_cast<int64_t>(bitWidth) * elementCount != 2048)
-    return emitError() << "requires total width of exactly 2048 bits (256 bytes)";
-  return success();
+for (uint16_t i = 0; i < repeatTimes; ++i) {
+  pReg = CreatePredicate<T>(sReg);
+  vlds(srcReg, src, i * nRepeatElem, NORM);
+  Op::UnaryInstr(dstReg, srcReg, pReg);
+  vsts(dstReg, dst, i * nRepeatElem, distValue, pReg);
 }
 ```
-Source: MLIR attributes/types verifier pattern at https://mlir.llvm.org/docs/DefiningDialects/AttributesAndTypes/
+Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TUnaryOp.hpp`
 
-### Minimal Backend Split in `ptoas`
+### A5 `TABS` Primitive Binding
 ```c++
-if (backend == "emitc") {
-  pm.addPass(pto::createEmitPTOManualPass(selectedArch));
-  pm.addPass(emitc::createFormExpressionsPass());
-  return emitEmitC(*module, outputFile);
-}
-
-pm.addPass(pto::createLowerPTOToA5VMPass(selectedArch));
-if (failed(pm.run(*module)))
-  return fail();
-return pto::emitA5VMText(*module, outputFile.os(), debugOptions);
+template <typename T>
+struct AbsOp {
+  PTO_INTERNAL static void UnaryInstr(RegTensor<T> &dstReg, RegTensor<T> &srcReg, MaskReg &pReg) {
+    vabs(dstReg, srcReg, pReg, MODE_ZEROING);
+  }
+};
 ```
-Source: repo pattern from [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp)
+Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TUnaryOp.hpp`
 
-### Phase-Appropriate `a5vm.abs`
-```tablegen
-def A5VM_AbsOp : A5VM_Op<"abs"> {
-  let arguments = (ins A5VM_VectorType:$src);
-  let results = (outs A5VM_VectorType:$result);
-  let assemblyFormat = "$src attr-dict `:` type($src)";
-  let hasVerifier = 1;
-}
+### A5 `TLOAD` Copy Primitive Shape
+```c++
+copy_gm_to_ubuf_align_v2(reinterpret_cast<__ubuf__ uint32_t *>(dst),
+    reinterpret_cast<__gm__ uint32_t *>(src), 0, nBurst, lenBurst,
+    0, 0, enableUBPad, 0, gmStride, ubStride);
 ```
-Source: MLIR operation-definition pattern at https://mlir.llvm.org/docs/DefiningDialects/Operations/
+Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp`
+
+### CCE Builtin Wrapper Naming
+```c++
+CCE_INTRINSIC void vload(vector_f32 &dst, __ubuf__ float *base, ...);
+CCE_INTRINSIC void vstore(__ubuf__ float *base, vector_f32 src, uint32_t elementCount, ...);
+```
+Source: `/usr/local/Ascend/cann-8.5.0/tools/bisheng_compiler/lib/clang/15.0.5/include/__clang_cce_vector_intrinsics.h`
 
 ## State of the Art
 
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
-| PTO -> EmitC -> C++ marker rewrites | PTO -> A5VM -> textual HIVM emission | Project roadmap created 2026-03-18 | Phase planning must treat `emitc` as legacy compatibility, not as the new backend substrate. |
-| Backend semantics embedded in one large conversion pass | First-class dialect boundary plus dedicated emitter | Standard MLIR out-of-tree practice in current MLIR docs | Better isolation, testability, and extensibility. |
-| Output-specific naming encoded early | Final names synthesized late from op/type/variant metadata | Locked in CONTEXT.md for this phase | Keeps `a5vm` stable while intrinsic mappings evolve. |
+| PTO-shaped pseudo ops (`a5vm.load`, `a5vm.abs`, `a5vm.store`) | Primitive A5-facing copy + register ops | Corrected on 2026-03-19 planning pass | Phase 1 plans and fixtures must be rewritten before implementation resumes. |
+| `::mlir::pto::a5vm` namespace | `::mlir::a5vm` namespace | Corrected on 2026-03-19 planning pass | Existing dialect files must be replaced, not incrementally patched around. |
+| Phase 1 fixtures as stable contract | Phase 1 fixtures as obsolete baseline | Corrected on 2026-03-19 planning pass | Validation/Wave 0 must lock the new direction first. |
 
 **Deprecated/outdated:**
-- Extending only `PTOToEmitC.cpp` for the new backend: outdated for this project because it conflicts with the locked phase boundary.
-- Using `emitc::translateToCpp` for the new backend path: outdated for the A5VM branch because the output target is textual LLVM-style HIVM, not C++.
+- `include/PTO/IR/A5VMDialect.td` current `cppNamespace = "::mlir::pto::a5vm"` setting: superseded.
+- `include/PTO/IR/A5VMOps.td` current `A5VM_LoadOp` / `A5VM_AbsOp` / `A5VM_StoreOp`: superseded.
+- `test/phase1/a5vm_load_op.mlir`, `test/phase1/a5vm_abs_op.mlir`, `test/phase1/a5vm_store_op.mlir`: superseded.
+- `test/phase2/tload_contract_trace.mlir`, `test/phase2/tabs_precheck.mlir`, `test/phase2/tstore_branch_shape.mlir`, `test/phase2/unary_template_shape.mlir` as currently written: require follow-on correction because they still lock obsolete Phase 1 primitives.
 
 ## Open Questions
 
-1. **How thin can Phase 1 textual emission be without stepping on Phase 3?**
-   - What we know: CONTEXT.md explicitly requires the thinnest usable textual HIVM path in Phase 1.
-   - What's unclear: Whether the plan should include real textual emission for only manually-constructed `a5vm` test inputs or also partial PTO-to-A5VM plumbing for `Abs`.
-   - Recommendation: Plan Phase 1 to include direct `a5vm` textual emission plus backend selection and diagnostics; keep PTO semantic lowering itself in Phase 2.
+1. **Should Phase 1 use `vlds` / `vsts` exact names or `vld` / `vst` family names?**
+   - What we know: A5 `TUnaryOp.hpp` uses `vlds` / `vsts` directly, while the builtin header also exposes higher-level `vload` / `vstore` wrappers.
+   - What's unclear: Whether the project wants exact call-site names or family-normalized names in MLIR.
+   - Recommendation: Use `vlds` / `vabs` / `vsts` for the `Abs` compute path because they match the A5 PTO implementation, and document that choice explicitly in the plan.
 
-2. **What exact operands/attrs should `a5vm.load` and `a5vm.store` carry?**
-   - What we know: CANN `TLoad`/`TStore` behavior depends on layout, valid region, and address-space/domain details.
-   - What's unclear: The minimum attribute set that avoids rework while not overfitting to full PTO semantics too early.
-   - Recommendation: Plan an explicit metadata struct for layout, valid rows/cols, and source/destination domain, but defer full PTO shape decomposition to Phase 2.
+2. **Does Phase 1 need a dedicated UB memory-space type/attr in `a5vm`?**
+   - What we know: Copy-family ops need to distinguish GM and UB endpoints, and the compute ops operate on UB-backed buffers plus vector registers.
+   - What's unclear: Whether that should be represented through memref memory spaces, a small dialect attr, or by reusing existing PTO address-space attrs.
+   - Recommendation: Reuse existing memref/address-space machinery if it already models GM/UB cleanly; do not invent a new type family unless required by parser/emitter constraints.
 
-3. **How should unresolved mapping summaries be persisted?**
-   - What we know: Locked decisions require both terminal/log output and a separate artifact or file.
-   - What's unclear: Whether the artifact should always be produced or only with a debug flag.
-   - Recommendation: Always support an explicit `--a5vm-unresolved-report=<path>` flag and optionally default to a sidecar file when the backend is selected.
+3. **How much copy metadata should be first-class in Phase 1?**
+   - What we know: `TLOAD` / `TSTORE` branch on layout, valid rows/cols, burst lengths/counts, strides, and sometimes pad/quantization controls.
+   - What's unclear: The smallest attribute set that keeps Phase 2 faithful without overcommitting.
+   - Recommendation: For `Abs`, lock layout, valid rows, valid cols, burst count, burst length, GM stride, UB stride, and UB-pad flag; leave quantization and ACC/MAT variants for Phase 2.
 
 ## Validation Architecture
 
 ### Test Framework
 | Property | Value |
 |----------|-------|
-| Framework | lit/FileCheck-style source tests plus `ctest` smoke checks |
-| Config file | none committed in source tree; current lit config appears to be external or build-generated |
-| Quick run command | `./build/tools/ptoas/ptoas test/basic/empty_func.mlir | FileCheck test/basic/empty_func.mlir` |
-| Full suite command | `ctest --test-dir build --output-on-failure` |
+| Framework | Bash runner + `FileCheck` fixtures, with `ctest` as broader regression |
+| Config file | none |
+| Quick run command | `./build/tools/ptoas/ptoas test/phase1/a5vm_vec_type.mlir 2>&1 | FileCheck test/phase1/a5vm_vec_type.mlir` |
+| Full suite command | `bash test/phase1/run_phase1_checks.sh && ctest --test-dir build --output-on-failure` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| BACK-01 | Backend flag selects new A5VM path at the existing emission boundary | integration | `./build/tools/ptoas/ptoas --pto-backend=a5vm test/phase1/a5vm_backend_switch.mlir -o - | FileCheck test/phase1/a5vm_backend_switch.mlir` | ❌ Wave 0 |
-| BACK-02 | Shared `scf`/`arith` IR survives while only hardware-facing ops enter `a5vm` | integration | `./build/tools/ptoas/ptoas --pto-backend=a5vm test/phase1/a5vm_shared_dialects.mlir -o - | FileCheck test/phase1/a5vm_shared_dialects.mlir` | ❌ Wave 0 |
-| A5VM-01 | `!a5vm.vec<...>` accepts only 256-byte vectors | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_vec_type.mlir 2>&1 | FileCheck test/phase1/a5vm_vec_type.mlir` | ❌ Wave 0 |
-| A5VM-02 | `a5vm.load` returns a legal `a5vm` vector value | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_load_op.mlir -o - | FileCheck test/phase1/a5vm_load_op.mlir` | ❌ Wave 0 |
-| A5VM-03 | `a5vm.abs` preserves legal vector typing | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_abs_op.mlir -o - | FileCheck test/phase1/a5vm_abs_op.mlir` | ❌ Wave 0 |
-| A5VM-04 | `a5vm.store` consumes a legal vector plus backend-facing address metadata | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_store_op.mlir -o - | FileCheck test/phase1/a5vm_store_op.mlir` | ❌ Wave 0 |
+| BACK-01 | `--pto-backend=a5vm` selects the corrected backend branch at the current final-emission seam | integration | `./build/tools/ptoas/ptoas --pto-backend=a5vm test/phase1/a5vm_backend_switch.mlir -o - | FileCheck test/phase1/a5vm_backend_switch.mlir` | ❌ Wave 0 |
+| BACK-02 | Shared `scf` / `arith` structure stays outside `a5vm` while hardware-facing ops use corrected primitives | integration | `./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir test/phase1/a5vm_shared_dialects.mlir -o /dev/null 2>&1 | FileCheck test/phase1/a5vm_shared_dialects.mlir` | ❌ Wave 0 |
+| A5VM-01 | `!a5vm.vec<...>` stays legal only at 256 bytes and the dialect lands in `mlir::a5vm` | unit | `bash -lc 'rg -n \"cppNamespace = \\\"::mlir::a5vm\\\"\" include/PTO/IR/A5VMDialect.td && ./build/tools/ptoas/ptoas test/phase1/a5vm_vec_type.mlir 2>&1 | FileCheck test/phase1/a5vm_vec_type.mlir'` | ❌ Wave 0 |
+| A5VM-02 | Corrected `a5vm` op names stay close to A5/CCE builtin families rather than pseudo PTO names | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_vabs_kernel_shape.mlir -o - | FileCheck test/phase1/a5vm_vabs_kernel_shape.mlir` | ❌ Wave 0 |
+| A5VM-03 | `Abs` compute path uses legal vector primitives for register load/compute/store | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_vabs_kernel_shape.mlir -o - | FileCheck test/phase1/a5vm_vabs_kernel_shape.mlir` | ❌ Wave 0 |
+| A5VM-04 | `Abs` memory path uses corrected GM/UB transfer primitives with explicit metadata | unit | `./build/tools/ptoas/ptoas test/phase1/a5vm_copy_gm_to_ubuf_op.mlir -o - | FileCheck test/phase1/a5vm_copy_gm_to_ubuf_op.mlir && ./build/tools/ptoas/ptoas test/phase1/a5vm_copy_ubuf_to_gm_op.mlir -o - | FileCheck test/phase1/a5vm_copy_ubuf_to_gm_op.mlir` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** targeted `ptoas` + `FileCheck` test for the touched behavior
-- **Per wave merge:** `ctest --test-dir build --output-on-failure`
-- **Phase gate:** all new Phase 1 lit-style tests green plus no regression in existing `ctest` smoke checks
+- **Per task commit:** `bash test/phase1/run_phase1_checks.sh`
+- **Per wave merge:** `bash test/phase1/run_phase1_checks.sh && ctest --test-dir build --output-on-failure`
+- **Phase gate:** Full suite green plus direct inspection that no corrected fixture still mentions obsolete `a5vm.load` / `a5vm.store`
 
 ### Wave 0 Gaps
-- [ ] `test/phase1/a5vm_vec_type.mlir` — legal/illegal type parsing and verifier coverage for A5VM-01
-- [ ] `test/phase1/a5vm_load_op.mlir` — op assembly, printing, and verifier coverage for A5VM-02
-- [ ] `test/phase1/a5vm_abs_op.mlir` — unary op verifier and print/parse coverage for A5VM-03
-- [ ] `test/phase1/a5vm_store_op.mlir` — store op verifier and metadata coverage for A5VM-04
-- [ ] `test/phase1/a5vm_backend_switch.mlir` — backend selection and text emission path for BACK-01
-- [ ] `test/phase1/a5vm_shared_dialects.mlir` — shared-dialect preservation for BACK-02
-- [ ] A committed lit configuration or documented invocation path for source tests — current repo has `RUN:` tests but no committed `lit.cfg.py`
+- [ ] `test/phase1/a5vm_copy_gm_to_ubuf_op.mlir` — corrected copy-family contract for A5VM-04
+- [ ] `test/phase1/a5vm_vabs_kernel_shape.mlir` — corrected register-vector `Abs` contract for A5VM-02 and A5VM-03
+- [ ] `test/phase1/a5vm_copy_ubuf_to_gm_op.mlir` — corrected copy-family contract for A5VM-04
+- [ ] `test/phase1/a5vm_backend_switch.mlir` — rewrite to use corrected primitives instead of `a5vm.load` / `a5vm.abs` / `a5vm.store`
+- [ ] `test/phase1/a5vm_shared_dialects.mlir` — rewrite to keep shared loops/scalars around corrected primitives
+- [ ] `test/phase1/run_phase1_checks.sh` — replace obsolete fixture names and add a grep guard against `a5vm.load` / `a5vm.store`
+- [ ] `test/phase2/tload_contract_trace.mlir` — follow-on correction because current Phase 2 contract still assumes `a5vm.load`
+- [ ] `test/phase2/tstore_branch_shape.mlir` — follow-on correction because current Phase 2 contract still assumes `a5vm.store`
+- [ ] `test/phase2/tabs_precheck.mlir` and `test/phase2/unary_template_shape.mlir` — follow-on correction because current Phase 2 unary surface still assumes obsolete Phase 1 naming
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Local repo sources:
-  - [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp) - current registry, pass pipeline, arch selection, and `emitc` emission boundary
-  - [`include/PTO/Transforms/Passes.h`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/Transforms/Passes.h) - pass registration surface
-  - [`include/PTO/IR/CMakeLists.txt`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/CMakeLists.txt) and [`lib/PTO/IR/CMakeLists.txt`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/IR/CMakeLists.txt) - current dialect/TableGen build pattern
-  - [`include/PTO/IR/PTOOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/PTOOps.td) - current `TLoad`, `TStore`, `TAbs` op semantics and verifier patterns
-- Local toolchain metadata:
-  - `/data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/llvm/LLVMConfigVersion.cmake` - LLVM `19.1.7`
-  - `/data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/mlir/MLIRConfigVersion.cmake` - MLIR `19.1.7`
-- Official MLIR docs:
-  - https://mlir.llvm.org/docs/DefiningDialects/
-  - https://mlir.llvm.org/docs/DefiningDialects/AttributesAndTypes/
-  - https://mlir.llvm.org/docs/DefiningDialects/Operations/
-  - https://mlir.llvm.org/docs/DialectConversion/
-- Ascend semantic references:
-  - `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/common/pto_instr.hpp`
-  - `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TLoad.hpp`
-  - `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TUnaryOp.hpp`
-  - `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TStore.hpp`
-  - `/usr/local/Ascend/cann-8.5.0/tools/bisheng_compiler/lib/clang/15.0.5/include/__clang_cce_vector_intrinsics.h`
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/common/pto_instr.hpp` - public PTO API entrypoints for `TLOAD`, `TABS`, and `TSTORE`
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp` - A5 GM-to-UB transfer structure and layout/stride/valid-region parameters
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TUnaryOp.hpp` - A5 unary `Abs` inner loop shape and builtin call sequence
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TStore.hpp` - A5 UB-to-GM transfer structure and tile-domain branching
+- `/usr/local/Ascend/cann-8.5.0/tools/bisheng_compiler/lib/clang/15.0.5/include/__clang_cce_vector_intrinsics.h` - CCE builtin family names and vector wrapper signatures
+- `/data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/llvm/LLVMConfigVersion.cmake` - local LLVM version
+- `/data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/mlir/MLIRConfigVersion.cmake` - local MLIR version
+- `/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp` - current backend boundary and selector seam
+- `/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/A5VMDialect.td` - current obsolete namespace setting to replace
+- `/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/A5VMOps.td` - current obsolete op surface to replace
 
 ### Secondary (MEDIUM confidence)
-- https://llvm.org/docs/CommandGuide/FileCheck.html - testing command behavior consistent with repo `RUN:` usage
+- `https://mlir.llvm.org/docs/DefiningDialects/` - standard out-of-tree dialect structure guidance, consistent with the repo layout
+- `https://mlir.llvm.org/docs/DialectConversion/` - standard guidance for keeping shared dialects while selectively lowering hardware-facing ops
 
 ### Tertiary (LOW confidence)
 - None
@@ -394,9 +388,9 @@ Source: MLIR operation-definition pattern at https://mlir.llvm.org/docs/Defining
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH - verified from local toolchain metadata, repo build files, and official MLIR docs
-- Architecture: HIGH - based on current repo integration points and standard MLIR out-of-tree patterns
-- Pitfalls: HIGH - grounded in locked phase decisions plus current PTO/CANN semantic references
+- Standard stack: HIGH - versions and stack choice are verified from the local toolchain, repo build files, and installed CANN headers.
+- Architecture: HIGH - the corrected primitive split is directly supported by A5 `TLoad` / `TUnaryOp` / `TStore` source code and by the repo’s existing backend boundary.
+- Pitfalls: HIGH - the major failure modes are visible both in the installed A5 sources and in the currently landed wrong namespace/op surface.
 
-**Research date:** 2026-03-18
-**Valid until:** 2026-04-17
+**Research date:** 2026-03-19
+**Valid until:** 2026-04-18
