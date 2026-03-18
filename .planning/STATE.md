@@ -6,8 +6,8 @@ current_phase: 2
 current_phase_name: PTO Lowering
 current_plan: 3
 status: verifying
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-03-18T20:07:17.745Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-03-18T20:35:43.510Z"
 last_activity: 2026-03-18
 progress:
   total_phases: 4
@@ -131,6 +131,7 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 | Phase 02 P02 | 7min | 2 tasks | 3 files |
 | Phase 02-pto-lowering P03 | 24min | 2 tasks | 6 files |
 | Phase 01 P01 | 21min | 2 tasks | 10 files |
+| Phase 01-a5vm-foundation P02 | 25min | 2 tasks | 8 files |
 
 ## Decisions Made
 
@@ -142,6 +143,9 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - [Phase 02]: Extract tile layout, valid dims, and address-space metadata from bind_tile and pointer_cast SSA chains because the A5VM boundary sees memref-backed tile values.
 - [Phase 02]: Use an explicit rewrite walk instead of greedy pattern application so single-op Phase 2 fixtures retain visible a5vm.load and a5vm.abs ops in debug IR.
 - [Phase 01]: Keep the no-legacy-name regression check in the standalone runner rather than in the MLIR fixtures so file-level validation can forbid obsolete spellings entirely.
+- [Phase 01-a5vm-foundation]: Keep copy-op transfer attrs parser-optional and verifier-required so invalid fixtures fail with the planned diagnostic instead of a parser error.
+- [Phase 01-a5vm-foundation]: Derive copy transfer metadata from existing lowering contract fields instead of widening the public Phase 2 lowering structs in this plan.
+- [Phase 01-a5vm-foundation]: Add A5VMOpsIncGen as a direct ptoas build dependency because the CLI includes generated A5VM headers before linking against PTOIR.
 
 ## Blockers
 
@@ -149,8 +153,8 @@ None.
 
 ## Session
 
-**Last Date:** 2026-03-18T20:07:17.743Z
-**Stopped At:** Completed 01-01-PLAN.md
+**Last Date:** 2026-03-18T20:35:30.003Z
+**Stopped At:** Completed 01-02-PLAN.md
 **Resume File:** None
 
 ---

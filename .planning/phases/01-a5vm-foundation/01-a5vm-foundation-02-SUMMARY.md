@@ -2,107 +2,94 @@
 phase: 01-a5vm-foundation
 plan: 02
 subsystem: ir
-tags: [mlir, a5vm, dialect, tablegen, ptoas, filecheck]
+tags: [mlir, a5vm, tablegen, ptoas, dialect]
 requires:
   - phase: 01-a5vm-foundation
-    provides: "Phase 1 FileCheck fixtures and runner expectations for A5VM surface checks"
+    provides: corrected Phase 1 fixture contracts for copy and vabs primitives
 provides:
-  - "First-class A5VM dialect headers, TableGen contracts, and build hooks"
-  - "Verified !a5vm.vec<...> type with exact 256-byte width enforcement"
-  - "Minimal a5vm.load/a5vm.abs/a5vm.store parse-only CLI path for Phase 1 fixtures"
-affects: [01-03, 02-01, 02-02, a5vm, ptoas]
+  - corrected `mlir::a5vm` dialect namespace and primitive op contracts
+  - handwritten `!a5vm.vec<...>` parsing and verification for copy and register ops
+  - `ptoas` registration and build-order wiring for generated A5VM headers
+affects: [01-a5vm-foundation, 02-pto-lowering, a5vm-backend]
 tech-stack:
-  added: [MLIR TableGen dialect/types/ops, A5VM parse-only CLI flow]
-  patterns: [first-class dialect module under include/lib PTO IR, custom MLIR type parse/print for stable asm syntax]
+  added: []
+  patterns: [TableGen dialect contracts with handwritten MLIR verifiers, generated-header dependency wiring]
 key-files:
-  created: [include/PTO/IR/A5VM.h, include/PTO/IR/A5VMDialect.td, include/PTO/IR/A5VMOps.td, include/PTO/IR/A5VMTypes.td, lib/PTO/IR/A5VM.cpp]
-  modified: [include/PTO/IR/CMakeLists.txt, lib/PTO/IR/CMakeLists.txt, tools/ptoas/ptoas.cpp, test/phase1/a5vm_vec_type.mlir, test/phase1/a5vm_load_op.mlir, test/phase1/a5vm_abs_op.mlir, test/phase1/a5vm_store_op.mlir]
+  created: [.planning/phases/01-a5vm-foundation/01-a5vm-foundation-02-SUMMARY.md]
+  modified: [include/PTO/IR/A5VMDialect.td, include/PTO/IR/A5VMOps.td, lib/PTO/IR/A5VM.cpp, tools/ptoas/ptoas.cpp, tools/ptoas/CMakeLists.txt, lib/PTO/Transforms/PTOToA5VM.cpp, lib/PTO/Transforms/A5VMTextEmitter.cpp, include/PTO/Transforms/Passes.td]
 key-decisions:
-  - "Implemented VecType with handwritten parse/print so !a5vm.vec<64xf32> round-trips exactly under the local MLIR toolchain."
-  - "Short-circuited raw A5VM textual inputs in ptoas to a parse-only bundle path so Phase 1 fixtures validate the dialect surface before backend-selection work lands."
-  - "Aligned Phase 1 FileCheck expectations to MLIR's canonical printed attribute order and typed integer syntax instead of preserving handwritten source ordering."
+  - "Keep copy-op transfer attrs optional in parsing but mandatory in handwritten verification so invalid fixtures fail with the planned diagnostic instead of a parser error."
+  - "Derive copy-op burst and stride metadata from the existing lowering contract instead of widening the public Phase 2 lowering structs in this plan."
+  - "Add `A5VMOpsIncGen` as a direct `ptoas` build dependency because the CLI includes generated A5VM headers before linking against PTOIR."
 patterns-established:
-  - "New PTO dialect modules should mirror PTO.h/PTO.cpp structure: aggregate header, dialect header, TableGen defs, handwritten initialize/verify implementation."
-  - "Phase-specific IR fixtures can use parse-only tool paths when the lowering backend is intentionally deferred to a later plan."
+  - "A5VM stays in `mlir::a5vm` while preserving `a5vm` assembly spelling."
+  - "Primitive A5VM copy/register ops use verifier-enforced metadata instead of PTO-shaped pseudo-ops."
 requirements-completed: [A5VM-01, A5VM-02, A5VM-03, A5VM-04]
-duration: 1h
-completed: 2026-03-18
+duration: 25min
+completed: 2026-03-19
 ---
 
-# Phase 1 Plan 02: A5VM Foundation Summary
+# Phase 01 Plan 02: A5VM Foundation Summary
 
-**First-class A5VM dialect with verified 256-byte vector types and parseable load/abs/store IR through ptoas**
+**Corrected `mlir::a5vm` primitive IR with 256-byte vector typing, GM/UB copy ops, and `vlds`/`vabs`/`vsts` verification through `ptoas`**
 
 ## Performance
 
-- **Duration:** 1h
-- **Started:** 2026-03-18T16:24:29Z
-- **Completed:** 2026-03-18T17:24:29Z
+- **Duration:** 25 min
+- **Started:** 2026-03-18T20:09:00Z
+- **Completed:** 2026-03-18T20:34:12Z
 - **Tasks:** 2
-- **Files modified:** 13
+- **Files modified:** 8
 
 ## Accomplishments
-- Added the new `a5vm` dialect module under `include/PTO/IR` and `lib/PTO/IR` with generated dialect, type, and op declarations.
-- Implemented `!a5vm.vec<...>` verification with the exact `elementCount * bitWidth == 2048` rule and the required `expected exactly 256 bytes` diagnostic.
-- Implemented `a5vm.load`, `a5vm.abs`, and `a5vm.store` verifiers plus `ptoas` dialect registration so the Phase 1 fixtures parse and round-trip before backend selection exists.
+- Replaced the obsolete `a5vm.load` / `a5vm.abs` / `a5vm.store` TableGen surface with corrected copy and register primitives under `::mlir::a5vm`.
+- Rewrote `lib/PTO/IR/A5VM.cpp` to preserve `!a5vm.vec<...>` syntax, enforce the exact 256-byte rule, and verify copy plus register op contracts.
+- Rewired `ptoas`, pass metadata, lowering helpers, and the A5VM text emitter to compile and recognize the corrected namespace and op classes.
 
 ## Task Commits
 
 Each task was committed atomically:
 
-1. **Task 1: Define A5VM dialect contracts and build hooks** - `24b7eb7` (feat)
-2. **Task 2: Implement A5VM parsing, printing, and verifiers** - `f460c58` (feat)
+1. **Task 1: Redefine the A5VM dialect contracts around corrected primitives** - `197386f` (feat)
+2. **Task 2: Implement corrected A5VM parsing, printing, and verification** - `4194d7f` (feat)
 
 ## Files Created/Modified
-- `include/PTO/IR/A5VM.h` - Aggregate A5VM header exposing generated types and ops.
-- `include/PTO/IR/A5VMDialect.h` - Dedicated dialect declaration header matching the existing PTO layout.
-- `include/PTO/IR/A5VMDialect.td` - A5VM dialect namespace and default parser/printer configuration.
-- `include/PTO/IR/A5VMOps.td` - `a5vm.load`, `a5vm.abs`, and `a5vm.store` contracts.
-- `include/PTO/IR/A5VMTypes.td` - Public `A5VM_VecType` contract.
-- `include/PTO/IR/CMakeLists.txt` - TableGen generation for A5VM dialect, ops, and types.
-- `lib/PTO/IR/A5VM.cpp` - Dialect initialization, custom type parser/printer, memory effects, and op/type verifiers.
-- `lib/PTO/IR/CMakeLists.txt` - PTOIR build integration for `A5VM.cpp`.
-- `tools/ptoas/ptoas.cpp` - A5VM dialect registration and parse-only A5VM fixture handling.
-- `test/phase1/a5vm_vec_type.mlir` - Updated expectations for canonical printed names and width diagnostics.
-- `test/phase1/a5vm_load_op.mlir` - Updated expectations for canonical attribute order and typed integers.
-- `test/phase1/a5vm_abs_op.mlir` - Updated mismatch diagnostic expectation.
-- `test/phase1/a5vm_store_op.mlir` - Updated canonical printed store expectation.
+- `include/PTO/IR/A5VMDialect.td` - switches the dialect C++ namespace to `::mlir::a5vm`
+- `include/PTO/IR/A5VMOps.td` - defines copy and register primitive ops with verifier-owned metadata checks
+- `lib/PTO/IR/A5VM.cpp` - implements vector type parse/print, verifier logic, and memory-effect hooks
+- `tools/ptoas/ptoas.cpp` - registers and loads `mlir::a5vm::A5VMDialect`
+- `tools/ptoas/CMakeLists.txt` - ensures A5VM generated headers are built before compiling `ptoas`
+- `lib/PTO/Transforms/PTOToA5VM.cpp` - updates lowering helpers to create corrected A5VM primitive ops
+- `lib/PTO/Transforms/A5VMTextEmitter.cpp` - updates emission logic to the corrected op classes and namespace
+- `include/PTO/Transforms/Passes.td` - updates pass dependent dialect metadata to `a5vm::A5VMDialect`
 
 ## Decisions Made
 
-- Used a custom `VecType::parse` and `VecType::print` instead of ODS assembly-format generation because the local MLIR version did not round-trip `64xf32` correctly for this typedef shape.
-- Added a parse-only A5VM path in `ptoas` for textual `a5vm` IR so Phase 1 can validate the dialect contract without waiting for Plan `01-03` backend-selector work.
-- Kept the A5VM op surface minimal and verifier-driven: required attrs stay on the ops, while backend selection and lowering remain deferred to later plans.
+- Kept transfer attrs parser-optional and verifier-required so invalid copy fixtures report the plan-locked op diagnostic instead of failing earlier in assembly parsing.
+- Derived copy transfer metadata from the existing lowering contract fields to avoid an architectural change to the public lowering structs during this plan.
+- Fixed the `ptoas` build dependency on `A5VMOpsIncGen` because the corrected CLI now directly includes A5VM generated headers.
 
 ## Deviations from Plan
 
 ### Auto-fixed Issues
 
-**1. [Rule 3 - Blocking] Added parse-only A5VM handling in `ptoas`**
-- **Found during:** Task 2 (Implement A5VM parsing, printing, and verifiers)
-- **Issue:** `ptoas` always ran the existing EmitC lowering pipeline, so pure A5VM fixtures failed after parsing even though the new dialect itself was correct.
-- **Fix:** Registered A5VM in the tool and short-circuited raw A5VM textual inputs to a parse-only bundle path that prints parsed modules or verifier diagnostics directly.
-- **Files modified:** `tools/ptoas/ptoas.cpp`
-- **Verification:** Rebuilt `pto-opt` and passed the four Phase 1 A5VM fixture checks with `ptoas` plus `FileCheck`.
-- **Committed in:** `f460c58` (part of task commit)
-
-**2. [Rule 3 - Blocking] Aligned Phase 1 fixture expectations to canonical MLIR printing**
-- **Found during:** Task 2 (Implement A5VM parsing, printing, and verifiers)
-- **Issue:** The committed fixture checks assumed handwritten source ordering for attrs and untyped integer attributes, but the rebuilt parser printed canonical MLIR assembly.
-- **Fix:** Updated the four A5VM fixture expectation files to match canonical function names, attribute ordering, and typed integer syntax.
-- **Files modified:** `test/phase1/a5vm_vec_type.mlir`, `test/phase1/a5vm_load_op.mlir`, `test/phase1/a5vm_abs_op.mlir`, `test/phase1/a5vm_store_op.mlir`
-- **Verification:** Re-ran the full Phase 1 A5VM fixture command successfully with `ptoas` and `FileCheck`.
-- **Committed in:** `f460c58` (part of task commit)
+**1. [Rule 3 - Blocking] Added direct generated-header dependency for `ptoas`**
+- **Found during:** Task 2
+- **Issue:** `ptoas.cpp` includes `A5VMDialect.h.inc`, but the executable only depended on `PTOOpsIncGen`, so the generated A5VM headers were missing at compile time.
+- **Fix:** Added `A5VMOpsIncGen` to `tools/ptoas/CMakeLists.txt` and rebuilt through the configured Makefile generator.
+- **Files modified:** `tools/ptoas/CMakeLists.txt`
+- **Verification:** `make -C build pto-opt -j1` completed and the rebuilt binary passed all four Phase 1 fixture checks.
+- **Committed in:** `4194d7f`
 
 ---
 
-**Total deviations:** 2 auto-fixed (2 blocking)
-**Impact on plan:** Both fixes were required to verify the planned A5VM dialect surface against the repository's existing tool behavior. No backend-scope creep beyond parse-only fixture support.
+**Total deviations:** 1 auto-fixed (1 blocking)
+**Impact on plan:** Required for correctness of the corrected dialect wiring. No scope creep.
 
 ## Issues Encountered
 
-- The sandboxed build initially failed because `ccache` tried to write under `~/.ccache`; rebuilding with `CCACHE_DISABLE=1` resolved this without code changes.
-- The initial typedef ODS format did not parse `!a5vm.vec<64xf32>` correctly under the local MLIR version, which led to the handwritten type parser/printer decision.
+- The existing build directory is configured for `Unix Makefiles` while a stale `build.ninja` was also present, so verification had to use `make -C build` rather than `ninja -C build`.
+- `FileCheck` was not on `PATH`; verification used `/data/mouliangyu/projects/github.com/llvm/llvm-project/build/bin/FileCheck`.
 
 ## User Setup Required
 
@@ -110,11 +97,15 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- Plan `01-03` can now build on a concrete A5VM dialect and parser-stable textual IR surface.
-- Phase 2 lowering work can target `a5vm.load`, `a5vm.abs`, and `a5vm.store` directly instead of inventing temporary placeholder ops.
+- Phase 2 lowering can now target first-class `mlir::a5vm` copy and register primitives without carrying the obsolete pseudo-op model.
+- The rebuilt `ptoas` binary parses and verifies the corrected Phase 1 fixtures, so downstream lowering and emission work can rely on the new dialect boundary.
 
 ## Self-Check: PASSED
 
+- FOUND: `.planning/phases/01-a5vm-foundation/01-a5vm-foundation-02-SUMMARY.md`
+- FOUND: `197386f`
+- FOUND: `4194d7f`
+
 ---
 *Phase: 01-a5vm-foundation*
-*Completed: 2026-03-18*
+*Completed: 2026-03-19*
