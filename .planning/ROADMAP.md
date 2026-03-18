@@ -70,7 +70,7 @@ Implement PTO-to-A5VM lowering helpers that preserve existing PTO-side semantic 
 **Plans:** 3 plans
 
 Plans:
-- [ ] `02-01-PLAN.md` — Create the Phase 2 FileCheck fixtures and committed runner for PTO semantic-lowering checks
+- [x] `02-01-PLAN.md` — Create the Phase 2 FileCheck fixtures and committed runner for PTO semantic-lowering checks
 - [ ] `02-02-PLAN.md` — Define the shared PTO-to-A5VM lowering contracts, helper layer, and explicit unsupported-branch behavior
 - [ ] `02-03-PLAN.md` — Register the PTO-to-A5VM pass and wire it into the `--pto-backend=a5vm` path in `ptoas`
 
@@ -126,4 +126,4 @@ Use the `Abs` sample as the first acceptance case for the new backend and extrac
 - Phase 4 is the acceptance and inventory-extraction phase, not a separate architecture redesign.
 
 ---
-*Last updated: 2026-03-19 after completing plan 01-03*
+*Last updated: 2026-03-19 after completing plan 02-01*

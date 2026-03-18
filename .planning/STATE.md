@@ -1,7 +1,7 @@
 # Project State
 
 **Updated:** 2026-03-19
-**Status:** Phase 1 complete, Phase 2 ready
+**Status:** Phase 2 in progress
 
 ## Project Reference
 
@@ -21,7 +21,8 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - Plan `01-01` executed and summarized
 - Plan `01-02` executed and summarized
 - Plan `01-03` executed and summarized
-- Next execution target: `02-01-PLAN.md`
+- Plan `02-01` executed and summarized
+- Next execution target: `02-02-PLAN.md`
 
 ## Active Milestone
 
@@ -33,16 +34,16 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | A5VM Foundation | Complete |
-| 2 | PTO Lowering | Pending |
+| 2 | PTO Lowering | In Progress |
 | 3 | HIVM Emission | Pending |
 | 4 | Abs Validation | Pending |
 
 ## Requirements Snapshot
 
 - Total v1 requirements: 16
-- Complete: 6
+- Complete: 10
 - In Progress: 0
-- Pending: 10
+- Pending: 6
 - Blocked: 0
 
 ## Key Decisions Snapshot
@@ -57,6 +58,8 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - Keep `emitc` as the default backend while exposing `a5vm` through an explicit `--pto-backend` selector.
 - Treat raw A5VM textual fixtures as already-lowered backend IR on the A5VM path so debug IR preserves shared dialects and A5VM ops.
 - Report unresolved A5VM mappings through explicit comments, diagnostics, and optional sidecar files instead of guessing intrinsic spellings.
+- Use committed Phase 2 MLIR/FileCheck fixtures as the PTO semantic-lowering contract before implementing the lowering pass.
+- Use a standalone Bash runner for Phase 2 verification instead of relying on external lit configuration.
 
 ## Recent Progress
 
@@ -70,6 +73,9 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - Added the standalone `A5VMTextEmitter` with LLVM-like text output, intrinsic tracing, and unresolved-report support
 - Wired `ptoas --pto-backend=a5vm` to emit textual A5VM output while keeping `emitc` as the default path
 - Created `.planning/phases/01-a5vm-foundation/01-a5vm-foundation-03-SUMMARY.md`
+- Added committed Phase 2 fixtures for TLOAD, TSTORE, TABS, and unary lowering metadata contracts
+- Added executable `test/phase2/run_phase2_checks.sh` with explicit ptoas and `ctest` invocations
+- Created `.planning/phases/02-pto-lowering/02-pto-lowering-01-SUMMARY.md`
 
 ## Open Questions
 
@@ -79,8 +85,8 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 ## Session Continuity
 
 - Next recommended command: `/gsd:execute-phase 02-pto-lowering`
-- Next plan to execute: `02-01-PLAN.md`
+- Next plan to execute: `02-02-PLAN.md`
 - Current blocker status: none
 
 ---
-*Last updated: 2026-03-19 after completing plan 01-03*
+*Last updated: 2026-03-19 after completing plan 02-01*
