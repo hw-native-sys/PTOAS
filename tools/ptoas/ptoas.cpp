@@ -6,10 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/IR/A5VM.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllPasses.h"
@@ -37,6 +39,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include <string>
 
 using namespace mlir;
@@ -574,6 +577,79 @@ static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
   cpp.swap(out);
 }
 
+static bool containsA5VMIR(llvm::StringRef input) {
+  return input.contains("!a5vm.vec<") || input.contains("a5vm.");
+}
+
+static llvm::SmallVector<llvm::StringRef> splitTopLevelModules(llvm::StringRef input) {
+  llvm::SmallVector<llvm::StringRef> modules;
+  size_t searchFrom = 0;
+  while (true) {
+    size_t modulePos = input.find("module", searchFrom);
+    if (modulePos == llvm::StringRef::npos)
+      break;
+
+    size_t bracePos = input.find('{', modulePos);
+    if (bracePos == llvm::StringRef::npos)
+      break;
+
+    int depth = 0;
+    size_t endPos = bracePos;
+    for (; endPos < input.size(); ++endPos) {
+      if (input[endPos] == '{')
+        ++depth;
+      else if (input[endPos] == '}') {
+        --depth;
+        if (depth == 0) {
+          ++endPos;
+          break;
+        }
+      }
+    }
+    if (depth != 0)
+      break;
+
+    modules.push_back(input.slice(modulePos, endPos));
+    searchFrom = endPos;
+  }
+  return modules;
+}
+
+static bool emitA5VMParseBundle(llvm::StringRef inputFilename, llvm::StringRef input,
+                                MLIRContext &context, llvm::raw_ostream &os) {
+  llvm::SmallVector<llvm::StringRef> modules = splitTopLevelModules(input);
+  if (modules.empty())
+    modules.push_back(input);
+
+  bool emittedAny = false;
+  for (llvm::StringRef moduleText : modules) {
+    llvm::SourceMgr sourceMgr;
+    sourceMgr.AddNewSourceBuffer(
+        llvm::MemoryBuffer::getMemBufferCopy(moduleText, inputFilename),
+        llvm::SMLoc());
+
+    std::string diagStorage;
+    llvm::raw_string_ostream diagStream(diagStorage);
+    SourceMgrDiagnosticHandler diagHandler(sourceMgr, &context, diagStream);
+    OwningOpRef<ModuleOp> parsedModule = parseSourceFile<ModuleOp>(sourceMgr, &context);
+    diagStream.flush();
+
+    if (!parsedModule) {
+      os << diagStorage;
+      if (!diagStorage.empty() && diagStorage.back() != '\n')
+        os << "\n";
+      emittedAny = true;
+      continue;
+    }
+
+    parsedModule->print(os);
+    os << "\n";
+    emittedAny = true;
+  }
+
+  return emittedAny;
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect>();
@@ -585,6 +661,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::bufferization::BufferizationDialect>();
   registry.insert<mlir::scf::SCFDialect>();
 
+  registry.insert<mlir::pto::a5vm::A5VMDialect>();
   registry.insert<mlir::pto::PTODialect>();
   //mlir::registerAllDialects(registry);
   arith::registerBufferizableOpInterfaceExternalModels(registry);
@@ -614,6 +691,7 @@ int main(int argc, char **argv) {
   context.allowUnregisteredDialects(true);
 
   context.getOrLoadDialect<emitc::EmitCDialect>();
+  context.getOrLoadDialect<mlir::pto::a5vm::A5VMDialect>();
   context.getOrLoadDialect<mlir::pto::PTODialect>();
   context.getOrLoadDialect<func::FuncDialect>();
   context.getOrLoadDialect<arith::ArithDialect>();
@@ -643,6 +721,21 @@ int main(int argc, char **argv) {
       return 1;
     }
   } else {
+    if (containsA5VMIR(buf)) {
+      std::error_code ec;
+      llvm::ToolOutputFile outputFile(outputFilename, ec, llvm::sys::fs::OF_None);
+      if (ec) {
+        llvm::errs() << ec.message() << "\n";
+        return 1;
+      }
+      if (!emitA5VMParseBundle(inputFilename, buf, context, outputFile.os())) {
+        llvm::errs() << "Error: Failed to parse MLIR.\n";
+        return 1;
+      }
+      outputFile.keep();
+      return 0;
+    }
+
     // Parse textual MLIR (.pto).
     llvm::SourceMgr sourceMgr;
     sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());

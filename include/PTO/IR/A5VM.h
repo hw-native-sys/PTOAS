@@ -18,4 +18,10 @@
 
 #include "PTO/IR/A5VMDialect.h"
 
+#define GET_TYPEDEF_CLASSES
+#include "PTO/IR/A5VMTypes.h.inc"
+
+#define GET_OP_CLASSES
+#include "PTO/IR/A5VMOps.h.inc"
+
 #endif // MLIR_DIALECT_PTO_IR_A5VM_H_

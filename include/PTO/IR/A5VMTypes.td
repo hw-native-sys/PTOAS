@@ -22,8 +22,8 @@ def A5VM_VecType : TypeDef<A5VM_Dialect, "Vec"> {
     "Type":$elementType
   );
 
-  let assemblyFormat = "`<` $elementCount `x` type($elementType) `>`";
-  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
 }
 
 #endif // MLIR_DIALECT_PTO_IR_A5VMTYPES

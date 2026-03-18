@@ -9,7 +9,7 @@ module {
   }
 }
 
-// CHECK: error: mismatched vector types
+// CHECK: error: 'a5vm.abs' op mismatched vector types
 module {
   func.func @abs_mismatch(%arg0: !a5vm.vec<64xf32>) -> !a5vm.vec<128xi16> {
     %0 = a5vm.abs %arg0 : !a5vm.vec<64xf32> -> !a5vm.vec<128xi16>

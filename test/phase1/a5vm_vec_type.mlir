@@ -1,6 +1,6 @@
 // RUN: ./build/tools/ptoas/ptoas %s 2>&1 | FileCheck %s
 
-// CHECK-LABEL: legal-f32
+// CHECK-LABEL: @legal_f32
 // CHECK: !a5vm.vec<64xf32>
 module {
   func.func @legal_f32(%arg0: !a5vm.vec<64xf32>) -> !a5vm.vec<64xf32> {
@@ -8,7 +8,7 @@ module {
   }
 }
 
-// CHECK-LABEL: legal-i16
+// CHECK-LABEL: @legal_i16
 // CHECK: !a5vm.vec<128xi16>
 module {
   func.func @legal_i16(%arg0: !a5vm.vec<128xi16>) -> !a5vm.vec<128xi16> {
