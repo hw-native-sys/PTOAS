@@ -7973,7 +7973,7 @@ enum class PTOAutoSyncTailMode : int {
   kSetWaitMte3ToSEvent0 = 1,
 };
 
-static inline void ptoas_auto_sync_tail(
+static AICORE inline void ptoas_auto_sync_tail(
     PTOAutoSyncTailMode mode = PTOAutoSyncTailMode::kBarrierAll) {
   switch (mode) {
   case PTOAutoSyncTailMode::kSetWaitMte3ToSEvent0:
