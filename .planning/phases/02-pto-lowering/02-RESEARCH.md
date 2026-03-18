@@ -1,7 +1,7 @@
 # Phase 2: PTO Lowering - Research
 
-**Researched:** 2026-03-18
-**Domain:** PTO-to-A5VM lowering for the `Abs` path with PTO semantic preservation
+**Researched:** 2026-03-19
+**Domain:** Corrected PTO-to-A5VM lowering for the `Abs` path
 **Confidence:** HIGH
 
 <user_constraints>
@@ -11,37 +11,40 @@
 ## Implementation Decisions
 
 ### TLOAD semantic preservation
-- Phase 2 should use a template-mirroring lowering contract for `TLOAD`, not an `Abs`-only shortcut.
-- `TLOAD` lowering should carry essentially all PTO-op decision inputs that matter to template dispatch, not only the smallest subset used by the current sample.
-- `pad_mode`, `pad_value`, `left_padding_num`, `right_padding_num`, `init_out_buffer`, and `init_condition` should all be acknowledged in the lowering contract even if the `Abs` sample does not actively exercise them yet.
-- The lowering should preserve PTO view-to-tile mapping traces rather than collapsing directly to only the final codegen-facing valid region.
-- Layout rules, valid-row/valid-col information, padding/init behavior, and source/domain information are all important and should not be casually dropped.
+- The previous idea that `TLOAD` should lower into an A5VM pseudo-op analogous to `a5vm.load` is wrong and must not guide new planning.
+- `TLOAD` lowering should mirror the PTO library’s GM-to-UB transfer behavior and builtin family selection, specifically the `copy_gm_to_ub*` style operations rather than a vector-load abstraction.
+- `TLOAD` lowering should retain the real loop and transfer structure used by the PTO library instead of flattening the operation into a single fake load.
+- `pad_mode`, `pad_value`, `left_padding_num`, `right_padding_num`, `init_out_buffer`, and `init_condition` should still be preserved in the lowering contract even if the current `Abs` path does not exercise them fully.
+- Layout rules, valid-row/valid-col information, padding/init behavior, source/domain information, strides, and partition-trace information are all important and should not be casually dropped.
 
 ### TSTORE branch structure
-- The Phase 2 lowering contract and code skeleton should explicitly show `ACC`, `VEC`, and `MAT` source-tile branches, even though the current `Abs` path only needs the `VEC` branch implemented strictly.
+- `TSTORE` has the same class of issue as `TLOAD`: it should not lower to a fake single A5VM store when the real PTO library uses copy-family movement between UB and GM.
+- The lowering contract and code skeleton should still explicitly show `ACC`, `VEC`, and `MAT` source-tile branches, but the `VEC` branch must model the real PTO-library move/writeback structure rather than a pseudo-store abstraction.
 - PTO-side layout rules that influence `TSTORE` selection should be part of the lowering input rather than inferred implicitly later.
-- For the current slice, the `VEC` branch should be implemented strictly; `ACC` and `MAT` branches may lower to explicit TODO or placeholder paths, but they should exist in the entrypoint and keep their decision inputs visible.
-- Source tile domain, destination layout/shape/stride, and valid row/column are all equally important selection inputs for `TSTORE` lowering.
+- Source tile domain, destination layout/shape/stride, valid row/column, and trace metadata are all equally important selection inputs for `TSTORE` lowering.
 
 ### TABS alignment standard
 - `lowerTABS` should align as closely as practical to the PTO template and implementation decision structure, not only to the observable `abs` result.
+- For the `Abs` path, `TABS` should lower through the actual vector primitive sequence: `a5vm.vld`, `a5vm.vabs`, and `a5vm.vst`.
+- `TABS` lowering must reflect both the `__VEC_SCOPE__` hardware-loop structure and the inner software loop structure used by the PTO implementation to iterate UB data by vector granularity.
 - PTO-side restrictions such as dtype/domain/valid-shape compatibility should be enforced in lowering pre-checks before building `a5vm`.
-- `TABS` should become the standard lowering template for future unary ops such as `TNEG` and `TLOG`, not a one-off special case.
-- Type restrictions, valid-region handling, and input/output tile relationship consistency are all critical and must not drift from PTO behavior.
+- `TABS` should become the standard lowering template for future unary ops such as `TNEG` and `TLOG`, but only if that template is built from the real PTO-library control structure.
 
 ### Reusable framework boundary
-- Phase 2 should strike a balance: preserve `Abs` path precision while shaping the lowering entrypoints and contracts for future expansion.
-- The minimum acceptable extensibility target is that both a future unary op and a future load/store variant can be added without rewriting the lowering architecture.
-- Lowering should use three strong PTO entrypoints (`lowerTLOAD`, `lowerTABS`, `lowerTSTORE`) backed by shared helper utilities.
+- Phase 2 should still use three strong PTO entrypoints (`lowerTLOAD`, `lowerTABS`, `lowerTSTORE`) backed by shared helper utilities, but those entrypoints must read like PTO-library control decompositions, not like wrappers around invented `a5vm.load/store` pseudo-ops.
 - Important PTO decision logic should remain visible at each PTO entrypoint; repeated mechanics and repeated branch detail can move into shared helpers.
-- Future extensibility is prioritized over local short-term simplification, but not at the cost of making the `Abs` path inaccurate.
-- The code should make PTO template-to-lowering correspondence readable when someone inspects it later.
-- For current non-`Abs` branches such as `ACC`/`MAT`, the interface entrypoints should contain explicit TODO branches so future completion points are obvious.
+- The code should make PTO template-to-lowering correspondence readable when someone inspects it later, including where hardware-loop and software-loop structure come from.
+- For current non-`Abs` branches such as `ACC` / `MAT`, the interface entrypoints should contain explicit TODO branches so future completion points are obvious.
+
+### Replanning Notes
+- The previously executed Phase 2 implementation is seriously misaligned with the PTO library because it treated `TLOAD` / `TSTORE` as load/store-like pseudo-ops and failed to model the real `TABS` vector loop structure.
+- Downstream planning must treat the A5-side PTO library implementation as the source of truth and regard the current landed Phase 2 code as superseded.
+- Replanning does not need to preserve or mirror `a2a3` implementation details; only the A5 PTO path matters for this effort.
 
 ### Claude's Discretion
 - Exact helper names and file split for shared lowering utilities
-- Exact representation of PTO view-to-tile mapping traces inside the lowering contract
-- Exact placeholder form for non-`Abs` `ACC`/`MAT` branches so long as the branch structure and inputs remain visible
+- Exact representation of loop-scope structure and trace metadata inside the lowering contract
+- Exact placeholder form for non-`Abs` `ACC` / `MAT` branches so long as the branch structure and inputs remain visible
 
 ### Deferred Ideas (OUT OF SCOPE)
 ## Deferred Ideas
@@ -55,45 +58,47 @@
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| PTO-01 | Developer can lower PTO `TLOAD` on the `Abs` path into `a5vm` operations while preserving the PTO-side layout, shape, and valid-region decisions needed for backend code selection. | Use a `lowerTLOAD` entrypoint that extracts source layout, source shape/stride, destination tile domain/layout, valid row/col, padding/init operands, and partition-view mapping trace into an explicit lowering contract instead of emitting a sample-specific `a5vm.load`. |
-| PTO-02 | Developer can lower PTO `TABS` on the `Abs` path into `a5vm` operations in a way that matches existing PTO parameter behavior and unary-op template dispatch intent. | Model `lowerTABS` as a reusable unary lowering helper with pre-checks for vec-domain, row-major layout, supported dtype, and src/dst valid-shape equality before creating `a5vm.abs`. |
-| PTO-03 | Developer can lower PTO `TSTORE` on the `Abs` path into `a5vm` operations while preserving the PTO-side source tile domain and destination layout behavior needed for code selection. | Build `lowerTSTORE` around explicit `VEC` / `ACC` / `MAT` branches, preserving source tile domain plus destination layout, shape, stride, and valid-region data; implement `VEC` now and keep `ACC` / `MAT` as explicit placeholders. |
-| PTO-04 | Developer can add new PTO-to-A5VM lowerings through the same framework without changing the backend architecture established for `Abs`. | Keep three visible PTO entrypoints with shared extraction/validation helpers and reusable unary/load-store contracts so later ops add cases rather than replace architecture. |
+| PTO-01 | Developer can lower PTO `TLOAD` on the `Abs` path into `a5vm` operations using the real PTO-library GM-to-UB copy structure while preserving PTO-side layout, shape, valid-region, stride, and trace decisions needed for backend code selection. | Plan `lowerTLOAD` around A5 `copy_gm_to_ubuf_align_v2` family selection plus `set_loop*_outtoub` programming, not a fake vector load. |
+| PTO-02 | Developer can lower PTO `TABS` on the `Abs` path into `a5vm` operations in a way that matches the PTO library’s real vector pipeline and loop structure, including `vld`, `vabs`, `vst`, and the surrounding hardware/software loop semantics. | Plan `lowerTABS` as a unary template that materializes the `__VEC_SCOPE__` region and inner loops around `vld -> vabs -> vst`. |
+| PTO-03 | Developer can lower PTO `TSTORE` on the `Abs` path into `a5vm` operations using the real PTO-library UB-to-GM copy structure while preserving the PTO-side source tile domain and destination layout behavior needed for code selection. | Plan `lowerTSTORE` around A5 `copy_ubuf_to_gm_align_v2` family behavior plus `set_loop*_ubtoout` programming, with explicit `VEC` / `ACC` / `MAT` entry branches. |
+| PTO-04 | Developer can add new PTO-to-A5VM lowerings through the same PTO-library-aligned framework without changing the backend architecture established for `Abs`. | Keep three PTO entrypoints and a minimal helper layer for contract extraction, branch selection, loop programming, trace attachment, and common unary checks. |
 </phase_requirements>
 
 ## Summary
 
-Phase 2 should be planned as a semantic-lowering layer between PTO ops and the Phase 1 `a5vm` dialect, not as another direct codegen rewrite like [`PTOToEmitC.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/Transforms/PTOToEmitC.cpp). The current backend flattens `pto.tload`, `pto.tabs`, and `pto.tstore` to opaque `TLOAD`/`TABS`/`TSTORE` calls with almost none of the template-dispatch inputs preserved. That is precisely the behavior this phase must replace.
+The corrected Phase 2 plan should treat the A5 PTO headers as the only semantic source of truth. The current repo state is still aligned to the wrong model: [`lib/PTO/Transforms/PTOToA5VM.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/Transforms/PTOToA5VM.cpp) lowers `TLOAD`/`TSTORE` into `a5vm.load`/`a5vm.store`, and `TABS` into a single `a5vm.abs`. That shape is explicitly contradicted by the A5 headers in `TLoad.hpp`, `TStore.hpp`, and `TUnaryOp.hpp`.
 
-The authoritative behavior lives in the PTO IR surface and the CANN PTO template implementations. `TLoadOp` already carries padding/init operands in ODS, `TStoreOp` already exposes tile-domain differences via pipe behavior and source types, and `TAbsOp` already has verifier checks for compatible element types and shapes. The A2/A3 PTO headers make the hidden selection criteria explicit: `TLOAD_IMPL` depends on source layout, source shape/stride, destination tile kind/layout, and destination valid region; `TSTORE_IMPL` branches first on source tile domain (`Vec`, `Acc`, `Mat`) and then on destination layout/shape/stride and quantization variants; `TABS_IMPL` is the generic unary template shape with dtype, vec-domain, row-major, and valid-shape checks.
+For the `Abs` path, truthful planning means separating three concerns. `TLOAD` and `TSTORE` are copy-family lowerings with layout-dependent loop programming and GM/UB stride semantics. `TABS` is a vector-compute lowering with a `__VEC_SCOPE__` region and an inner software loop over vector-width chunks using `vlds`, `vabs`, and `vsts`. The lowering contract must preserve PTO-side layout, valid-region, stride, padding/init, and partition-trace information because the PTO library dispatches on exactly those values.
 
-**Primary recommendation:** Implement a dedicated PTO-to-A5VM lowering pass with three visible entrypoints, shared semantic-extraction helpers, and explicit preservation of template-dispatch inputs as typed `a5vm` metadata, while keeping non-`Abs` `ACC`/`MAT` store paths as explicit TODO branches rather than hiding them.
+The main planning consequence is that Wave 0 fixtures must stop checking for pseudo `a5vm.load/store/abs` and instead lock the PTO-library decision structure. If the corrected Phase 1 A5VM surface does not yet expose copy-family and vector-scope primitives, Wave 0 for Phase 2 must explicitly extend that surface before implementing the pass.
+
+**Primary recommendation:** Plan Phase 2 around three visible entrypoints, each mirroring the A5 PTO control structure, with fixtures that lock copy-family selection, loop programming, unary vector-loop shape, and `--pto-backend=a5vm` pass wiring before any lowering code is written.
 
 ## Standard Stack
 
 ### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| LLVM | 19.1.7 | Pass infrastructure, diagnostics, type support | Already pinned by the workspace toolchain and matched by MLIR. |
-| MLIR | 19.1.7 | Conversion pass, pattern rewriting, dialect interop | The repo already uses MLIR passes and dialect conversion for PTO transforms. |
-| PTO IR / PTO Transforms | workspace | Source PTO op surface and transform entrypoints | Phase 2 must lower from existing PTO ops instead of inventing a parallel frontend contract. |
-| Ascend CANN PTO headers | 8.5.0 | Official semantic reference for `TLOAD`, `TABS`, `TSTORE` template behavior | These headers define the real dispatch inputs and restrictions that lowering must preserve. |
+| LLVM | 19.1.7 | Pass manager, diagnostics, `FileCheck`, `ctest` | Verified local toolchain for this workspace. |
+| MLIR | 19.1.7 | Dialects, rewrites, structured control-flow lowering | Existing PTO compiler architecture is MLIR-native. |
+| Ascend CANN PTO A5 headers | 8.5.0 | Authoritative `TLOAD` / `TABS` / `TSTORE` semantics | These headers define the real branch structure and loop programming. |
+| Workspace PTO IR | workspace | Source op surface and verifier behavior | `TLoadOp`, `TAbsOp`, and `TStoreOp` already encode the PTO entry surface. |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| Phase 1 `a5vm` dialect | planned in workspace | Target IR for hardware-facing lowering | Use once Phase 1 lands; Phase 2 should depend on its op/type surface, not recreate it. |
-| MLIR `RewritePattern` / `ConversionPattern` | 19.1.7 | PTO-op lowering implementation | Use for op-by-op lowering while keeping shared dialects intact. |
-| `FileCheck` with source `RUN:` lines | LLVM 19.1.7 toolchain | Fast structural verification of lowered IR | Use for phase fixtures because the repo already relies on `RUN:` + `FileCheck` tests. |
+| Corrected Phase 1 `a5vm` dialect | workspace | Hardware-facing primitive target IR | Use for vector primitives, copy-family ops, loop-scope ops, and metadata carriers. |
+| MLIR `PatternRewriter` | 19.1.7 | PTO op replacement | Use inside the `pto-to-a5vm` pass only. |
+| Bash + `FileCheck` runner | workspace | Wave 0 structural verification | Use for fast contracts before full sample validation. |
 
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| Dedicated PTO-to-A5VM pass | Extend `PTOToEmitC.cpp` with `a5vm`-specific branches | Faster short-term, but it keeps the wrong abstraction boundary and hides PTO semantic contracts. |
-| Explicit lowering contracts per PTO family | Infer backend details inside the A5VM emitter | Simpler locally, but it delays validation and loses traceability from PTO template decisions. |
-| Shared helper library under `lib/PTO/Transforms/` | One monolithic `matchAndRewrite` body per op | Works for `Abs`, but it does not meet PTO-04 extensibility. |
+| A5 PTO headers as semantic source | Current repo `PTOToA5VM.cpp` | Reuses code, but preserves the wrong semantics. |
+| Copy-family and vector-scope A5VM primitives | Pseudo `a5vm.load/store/abs` | Easier short term, but wrong for Phase 2 and blocks truthful backend emission. |
+| Explicit lowering contracts per PTO family | Reconstruct meaning later in the emitter | Hides dispatch decisions and forces Phase 3 to reverse-engineer Phase 2 mistakes. |
 
-**Toolchain verification:**
+**Version verification:**
 ```bash
 sed -n '1,20p' /data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/llvm/LLVMConfigVersion.cmake
 sed -n '1,20p' /data/mouliangyu/projects/github.com/llvm/llvm-project/install/lib/cmake/mlir/MLIRConfigVersion.cmake
@@ -102,264 +107,313 @@ sed -n '1,20p' /data/mouliangyu/projects/github.com/llvm/llvm-project/install/li
 **Verified local versions:**
 - LLVM `19.1.7`
 - MLIR `19.1.7`
-- CANN PTO reference tree `8.5.0` at `/usr/local/Ascend/cann-8.5.0/...`
+- CANN PTO reference tree `8.5.0`
 
 ## Architecture Patterns
 
 ### Recommended Project Structure
 ```text
 include/PTO/Transforms/
-├── Passes.h                  # new pass declaration for PTO->A5VM lowering
-└── PTOToA5VM.h               # optional shared lowering contract declarations
+├── Passes.h                   # pass entrypoint
+└── A5VMLowering.h             # corrected public lowering contracts
 
 lib/PTO/Transforms/
-├── PTOToA5VM.cpp             # pass entrypoint and pattern population
-├── PTOToA5VMLowering.h       # optional internal structs/helpers
-└── PTOToA5VMLowering.cpp     # semantic extraction + per-op lowering helpers
+├── PTOToA5VM.cpp              # pass wiring and rewrite dispatch
+└── PTOToA5VMLowering.cpp      # contract extraction + lowerTLOAD/TABS/TSTORE
 ```
 
-### Pattern 1: Strong PTO Entrypoints, Shared Mechanics
-**What:** Keep `lowerTLOAD`, `lowerTABS`, and `lowerTSTORE` as visible helper entrypoints, with shared utilities only for repeated extraction and verification.
-**When to use:** For all Phase 2 lowering code.
+### Pattern 1: Strong PTO Entrypoints
+**What:** Keep `lowerTLOAD`, `lowerTABS`, and `lowerTSTORE` as the only family entrypoints.
+**When to use:** For all Phase 2 lowering work.
 **Example:**
 ```c++
-static FailureOr<LoadContract> lowerTLOAD(pto::TLoadOp op,
-                                          PatternRewriter &rewriter);
-static FailureOr<UnaryContract> lowerTABS(pto::TAbsOp op,
-                                          PatternRewriter &rewriter);
-static FailureOr<StoreContract> lowerTSTORE(pto::TStoreOp op,
-                                            PatternRewriter &rewriter);
+LogicalResult lowerTLOAD(pto::TLoadOp op, PatternRewriter &rewriter);
+LogicalResult lowerTABS(pto::TAbsOp op, PatternRewriter &rewriter);
+LogicalResult lowerTSTORE(pto::TStoreOp op, PatternRewriter &rewriter);
 ```
-Source: project context in [`02-CONTEXT.md`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/.planning/phases/02-pto-lowering/02-CONTEXT.md) plus existing transform organization in [`Passes.h`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/Transforms/Passes.h)
+Source: [`include/PTO/Transforms/A5VMLowering.h`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/Transforms/A5VMLowering.h)
 
-### Pattern 2: Extract a Lowering Contract Before Building `a5vm`
-**What:** Separate PTO semantic extraction from `a5vm` op creation. First build a small struct containing the decisions the PTO template would dispatch on, then lower that struct into `a5vm`.
-**When to use:** For `TLOAD`, `TSTORE`, and reusable unary lowering.
+### Pattern 2: Contract Extraction Before A5VM Building
+**What:** Extract a small, truthful lowering contract from PTO SSA first, then emit A5VM primitives from that contract.
+**When to use:** Always, especially for `TLOAD` and `TSTORE`.
 **Example:**
 ```c++
-struct LoadContract {
-  Value srcBase;
-  Value dstTile;
-  pto::Layout srcLayout;
-  SmallVector<Value> srcShape;
-  SmallVector<Value> srcStride;
-  Value validRow;
-  Value validCol;
-  Value padValue;
-  Value leftPadding;
-  Value rightPadding;
-  bool initOutBuffer;
+struct A5VMMoveContract {
+  Layout layout;
+  SmallVector<int64_t> shape;
+  SmallVector<int64_t> strides;
+  int64_t validRows;
+  int64_t validCols;
+  PartitionTrace trace;
+  PadInfo pad;
 };
 ```
-Source: PTO op surface in [`PTOOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/PTOOps.td) and official PTO template parameters in `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TLoad.hpp`
+Source: PTO op surface in [`include/PTO/IR/PTOOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/PTOOps.td) and A5 template parameters in `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp`
 
-### Pattern 3: Mirror PTO Template Branching at the Lowering Boundary
-**What:** The lowering helper should expose the same first-order branch points as the PTO template implementation.
-**When to use:** Especially for `TSTORE`, and secondarily for unary-family helpers.
+### Pattern 3: Mirror the First-Order PTO Branches
+**What:** The lowering boundary should expose the same first branch points the PTO library exposes.
+**When to use:** `TLOAD` layout branch, `TSTORE` domain branch, unary 1D-vs-2D branch.
 **Example:**
 ```c++
-switch (storeContract.srcDomain) {
-case TileDomain::Vec:
-  return lowerVecStore(storeContract, rewriter);
-case TileDomain::Acc:
-  return emitExplicitTodo(op, "ACC TSTORE lowering not implemented yet");
-case TileDomain::Mat:
-  return emitExplicitTodo(op, "MAT TSTORE lowering not implemented yet");
+switch (contract.srcDomain) {
+case Vec: return lowerVecStore(contract, rewriter);
+case Acc: return emitTodo(op, "TSTORE ACC lowering TODO");
+case Mat: return emitTodo(op, "TSTORE MAT lowering TODO");
 }
 ```
-Source: official branch structure in `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TStore.hpp`
+Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TStore.hpp`
 
-### Pattern 4: Reusable Unary Lowering Template
-**What:** Make `TABS` the first instance of a general unary-op lowering helper that performs common checks, then selects the `a5vm` op family.
-**When to use:** For `TABS` now, `TNEG` / `TLOG` later.
+### Pattern 4: Separate Copy Semantics From Vector Compute Semantics
+**What:** `TLOAD`/`TSTORE` use copy-family primitives and loop registers. `TABS` uses vector register load/compute/store inside `__VEC_SCOPE__`.
+**When to use:** Always. Never unify them into one pseudo vector-op abstraction.
 **Example:**
 ```c++
-template <typename PTOUnaryOp, typename BuildFn>
-static LogicalResult lowerVecUnaryOp(PTOUnaryOp op, PatternRewriter &rewriter,
-                                     BuildFn &&buildA5VMOp);
+// TLOAD/TSTORE: build copy-family op sequence.
+// TABS: build vec-scope + inner loop around vld/vabs/vst.
 ```
-Source: reusable unary pattern in `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TUnaryOp.hpp` and analogous reusable binary structure in `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TAdd.hpp`
+Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp`, `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TStore.hpp`, `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TUnaryOp.hpp`
 
 ### Anti-Patterns to Avoid
-- **Direct opaque-call replacement:** Reproducing the current `emitc::CallOpaqueOp("TLOAD")` / `("TSTORE")` / `("TABS")` behavior in a different file still loses semantics.
-- **Emitter-side semantic recovery:** If Phase 3 has to reconstruct tile domain, layout, or valid shape by inspecting old PTO values, Phase 2 failed.
-- **Abs-only contracts:** Hardcoding only the specific `32x32` vec case from `test/samples/Abs/abs.py` violates locked extensibility requirements.
-- **Hidden unsupported branches:** `ACC` and `MAT` paths must stay visible as placeholders, not disappear into a default error.
+- **Pseudo-op mirroring:** Do not plan around `a5vm.load`, `a5vm.store`, or a single `a5vm.abs` as the Phase 2 semantic contract.
+- **Emitter-side recovery:** Do not defer copy-family or loop-shape reconstruction to Phase 3.
+- **A2/A3 contamination:** Do not cite or mirror `a2a3` behavior. The user explicitly rejected that.
+- **Abs-only shortcuts:** Do not hardcode just the sample’s visible effect and drop padding, layout, stride, or trace info.
 
 ## Don't Hand-Roll
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| PTO semantic truth | A new ad hoc semantic model separate from PTO IR and CANN headers | PTO ODS/verifiers plus CANN PTO template behavior as the lowering contract source | The IR already carries much of the surface, and the headers define the missing dispatch rules. |
-| Per-op one-off logic | Three unrelated rewrite bodies with duplicated shape/layout extraction | Shared contract extractors and validators | Keeps `Abs` accurate while making future ops additive. |
-| Unary-op semantics | A one-off `TABS` helper | Generic vec-unary lowering template | `TABS`, `TNEG`, and `TLOG` share the same core restrictions and valid-shape handling pattern. |
-| Domain detection | Stringly-typed attrs guessed late in emission | Source tile type / memory-space driven domain classification in lowering | `TSTORE` pipe/domain behavior is already encoded in PTO types and verifier assumptions. |
+| Semantic truth | A custom PTO model disconnected from CANN | A5 CANN PTO headers + PTO ODS/verifiers | The A5 headers already define the real dispatch structure. |
+| Memory movement | A fake generic load/store op | Copy-family A5VM ops that mirror GM↔UB movement | Copy-family selection and loop registers are the semantics. |
+| Unary control flow | A single `abs` op with attrs | `vec_scope` + `vld` + `vabs` + `vst` + software loop shape | The PTO library does real vector-looping, not scalarized abstraction. |
+| Store branching | A hidden default branch | Explicit `VEC` / `ACC` / `MAT` entry branches | Phase 2 must preserve visible future extension points. |
 
-**Key insight:** The dangerous complexity in this phase is not IR rewriting itself; it is preserving exactly the semantic decisions that PTO template dispatch depends on. The plan should therefore spend effort on contract extraction and validation, not on clever pattern-matching shortcuts.
+**Key insight:** In corrected Phase 2, the “backend contract” is not a value-level `abs` result. It is the preserved decision structure that tells later stages which copy family, loop registers, tile-domain branch, and vector-loop pattern the PTO library would have used.
 
 ## Common Pitfalls
 
-### Pitfall 1: Treating `TLOAD` as Only “address + valid shape”
-**What goes wrong:** Lowering preserves only the final vec load shape and drops padding/init inputs and source layout/stride context.
-**Why it happens:** The `Abs` sample is simple and the current backend already ignores most operands.
-**How to avoid:** Keep all `TLoadOp` optional operands and source layout/shape/stride information in the lowering contract, even if some are not yet consumed by the current `Abs` lowering path.
-**Warning signs:** `lowerTLOAD` reads only `src`, `dst`, and maybe `valid_row`/`valid_col`.
+### Pitfall 1: Treating `TLOAD` as a vector load
+**What goes wrong:** Planning keeps only base pointer plus valid region and loses layout/stride/padding decisions.
+**Why it happens:** The current repo already implements it that way.
+**How to avoid:** Lock Wave 0 fixtures around `copy_gm_to_ubuf_align_v2`-style structure and `set_loop*_outtoub` metadata.
+**Warning signs:** Fixture still checks `a5vm.load`.
 
-### Pitfall 2: Collapsing Partition Views Too Early
-**What goes wrong:** The lowering erases PTO view-to-tile mapping trace and stores only flattened codegen metadata.
-**Why it happens:** It is tempting to normalize everything immediately once a memref base is available.
-**How to avoid:** Preserve partition offsets/sizes or an equivalent trace object in the lowering contract until `a5vm` metadata has been created.
-**Warning signs:** Planner proposes deriving only “final region” values with no record of PTO view slicing.
+### Pitfall 2: Treating `TSTORE` as the inverse of `TLOAD`
+**What goes wrong:** The plan forgets that `TSTORE` branches first on tile domain and has different UB-to-GM loop programming.
+**Why it happens:** `Abs` only exercises the `VEC` branch.
+**How to avoid:** Require visible `VEC` / `ACC` / `MAT` branches in `lowerTSTORE`.
+**Warning signs:** One generic helper with no domain switch.
 
-### Pitfall 3: Hiding `TSTORE` Domain Branching
-**What goes wrong:** `TSTORE` becomes a single generic helper with a default path, and `ACC`/`MAT` distinctions disappear.
-**Why it happens:** Only the `VEC` path is required for `Abs`, so unsupported paths are ignored.
-**How to avoid:** Make `srcDomain` an explicit lowering discriminator and keep TODO branches for unsupported domains in the entrypoint.
-**Warning signs:** No visible `ACC` or `MAT` branch in the new pass.
+### Pitfall 3: Flattening `TABS` into one op
+**What goes wrong:** The plan drops `__VEC_SCOPE__`, 1D vs 2D shape selection, and the inner software loop.
+**Why it happens:** The visible math is only absolute value.
+**How to avoid:** Lock a fixture that checks for vec-scope region plus ordered `vld`, `vabs`, `vst`.
+**Warning signs:** Fixture only checks `a5vm.vabs`.
 
-### Pitfall 4: Using `TABS` as a Special Case Instead of a Template
-**What goes wrong:** `TABS` lowering hardcodes abs-specific checks and shape logic that must later be rewritten for `TNEG` or `TLOG`.
-**Why it happens:** `Abs` is the only unary op in scope today.
-**How to avoid:** Factor common vec-unary validation now: supported dtype set, vec-domain restriction, row-major requirement, and src/dst valid-shape equality.
-**Warning signs:** Helper names and contracts mention only `Abs` rather than unary behavior.
+### Pitfall 4: Losing valid-region equality semantics
+**What goes wrong:** The plan preserves only one tile’s valid shape or invents `validRows == validCols` as a backend rule.
+**Why it happens:** The current code uses an incorrect precheck.
+**How to avoid:** Follow `TUNARY_IMPL`: require src and dst valid row/col equality, not square shape.
+**Warning signs:** Precheck still says “matching valid rows and valid cols”.
 
-### Pitfall 5: Confusing Current PTO Verifiers With Full Backend Readiness
-**What goes wrong:** Planning assumes existing PTO op verifiers are enough and skips lowering-time pre-checks.
-**Why it happens:** `TAbsOp::verify()` already checks some compatibility.
-**How to avoid:** Add lowering-time checks for backend-relevant restrictions that are explicit in the PTO templates but not fully encoded in ODS/verifiers today.
-**Warning signs:** Planner says “verifier already guarantees it” without citing the A2/A3 template constraints.
+### Pitfall 5: Ignoring padding/init operands because `Abs` does not use them
+**What goes wrong:** Future `TLOAD` variants require a redesign.
+**Why it happens:** The sample path is simple.
+**How to avoid:** Preserve pad/init fields in the `TLOAD` contract now, even if the first lowering uses only `PadNull`.
+**Warning signs:** Contract no longer contains `pad_mode`, `pad_value`, `left_padding_num`, `right_padding_num`, `init_out_buffer`, `init_condition`.
 
-### Pitfall 6: Planning Phase 2 as Executable Before Phase 1 Lands
-**What goes wrong:** Tasks assume `a5vm` ops, pass declarations, and backend flags already exist even though the repo does not yet contain them.
-**Why it happens:** Phase documents were created before implementation.
-**How to avoid:** Treat Phase 1 `a5vm` op/type/pass surfaces as prerequisites or sequence the work so Phase 2 begins only once those artifacts exist.
-**Warning signs:** Tasks reference `createLowerPTOToA5VMPass` or `--pto-backend=a5vm` as if they already compile.
+### Pitfall 6: Planning Phase 2 without checking the A5VM primitive surface
+**What goes wrong:** The lowering plan assumes `vld`, `vst`, vec-scope, and copy-family A5VM ops already exist when the current repo still exposes stale pseudo ops in [`include/PTO/IR/A5VMOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/A5VMOps.td).
+**Why it happens:** Phase 1 was corrected in planning, but the workspace still contains stale implementation artifacts.
+**How to avoid:** Make Wave 0 explicitly verify the corrected A5VM primitive inventory or extend it before Phase 2 lowering work starts.
+**Warning signs:** Planner writes tasks assuming current `A5VMOps.td` is already correct.
 
 ## Code Examples
 
-Verified patterns from official and repo-local sources:
+Verified patterns from authoritative local sources:
 
-### Current `TLOAD` Flattening That Phase 2 Must Replace
+### TLOAD Vec ND/DN Shape
 ```c++
-rewriter.create<emitc::CallOpaqueOp>(
-    op.getLoc(), TypeRange{}, "TLOAD",
-    ArrayAttr{}, ArrayAttr{},
-    ValueRange{dst, srcArg});
+// Source: /usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp
+set_loop2_stride_outtoub(...dst_stride..., ...src_stride...);
+set_loop1_stride_outtoub(...dst_stride..., ...src_stride...);
+set_loop_size_outtoub(loop2 << 21 | loop1);
+for (uint32_t i = 0; i < gShape0; ++i)
+  copy_gm_to_ubuf_align_v2(... nBurst, lenBurst, ..., gmStride, ubStride);
 ```
-Source: [`PTOToEmitC.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/Transforms/PTOToEmitC.cpp)
 
-### PTO `TLoadOp` Already Exposes The Lost Operands
-```tablegen
-let arguments = (ins
-  PTODpsType:$src,
-  PTODpsType:$dst,
-  OptionalAttr<PTO_PadModeAttr>:$pad_mode,
-  Optional<AnyType>:$pad_value,
-  Optional<Index>:$left_padding_num,
-  Optional<AnyType>:$right_padding_num,
-  DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
-  Optional<AnyType>:$init_condition
-);
-```
-Source: [`PTOOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/PTOOps.td)
-
-### Official `TABS_IMPL` Restriction Pattern
+### TABS Unary Template Shape
 ```c++
-static_assert(TileData::Loc == TileType::Vec, "TABS: TileType of src and dst tiles must be TileType::Vec.");
-static_assert(TileData::isRowMajor, "TABS: Not supported Layout type");
-PTO_ASSERT(src.GetValidCol() == dst.GetValidCol(), "TABS: Number of columns of src and dst must be the same.");
-PTO_ASSERT(src.GetValidRow() == dst.GetValidRow(), "TABS: Number of rows of src and dst must be the same.");
-```
-Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TUnaryOp.hpp`
-
-### Official `TSTORE_IMPL` Domain Split
-```c++
-if constexpr (TileData::Loc == pto::TileType::Vec) {
-  ...
-} else if constexpr (TileData::Loc == pto::TileType::Acc) {
-  ...
-} else if constexpr (TileData::Loc == pto::TileType::Mat) {
-  ...
+// Source: /usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TUnaryOp.hpp
+__VEC_SCOPE__ {
+  for (...) {
+    vlds(srcReg, src, offset, ...);
+    vabs(dstReg, srcReg, pReg, MODE_ZEROING);
+    vsts(dstReg, dst, offset, ..., pReg);
+  }
 }
 ```
-Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TStore.hpp`
+
+### TSTORE Vec ND/DN Shape
+```c++
+// Source: /usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TStore.hpp
+set_loop_size_ubtoout(...);
+set_loop1_stride_ubtoout(...src_stride..., ...dst_stride...);
+set_loop2_stride_ubtoout(...src_stride..., ...dst_stride...);
+for (uint32_t k = 0; k < gShape0; ++k)
+  copy_ubuf_to_gm_align_v2(... nBurst, lenBurst, ..., burstDstStride, burstSrcStride);
+```
 
 ## State of the Art
 
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
-| Direct lowering to opaque EmitC calls | Preserve PTO semantics through a first-class `a5vm` lowering layer | Locked by project planning on 2026-03-18 | Phase 2 should not add more opaque-call lowering; it should move semantic decisions into `a5vm` metadata/contracts. |
-| Sample-specific unary lowering | Reusable unary lowering template rooted in PTO template rules | Locked by Phase 2 context on 2026-03-18 | `TABS` should establish the standard unary shape for later ops. |
-| Implicit future store expansion | Explicit visible `VEC` / `ACC` / `MAT` lowering branches | Locked by Phase 2 context on 2026-03-18 | Planner should reserve structure for unsupported paths now rather than retrofit it later. |
+| Pseudo `a5vm.load` / `a5vm.abs` / `a5vm.store` | Copy-family plus vector primitive lowering that mirrors A5 PTO headers | Phase correction on 2026-03-19 | Phase 2 fixtures and helper contracts must be rewritten. |
+| `TABS` square-shape precheck | `TABS` src/dst valid-shape equality plus dtype/domain/layout checks from A5 unary template | Phase correction on 2026-03-19 | Existing precheck fixture is semantically wrong. |
+| A5VM backend as a semantic abstraction | A5VM backend as a hardware-facing primitive layer | Phase 1/2 correction cycle | Phase 2 depends on truthful primitives, not convenience wrappers. |
 
 **Deprecated/outdated:**
-- Continuing to use [`PTOToEmitC.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/Transforms/PTOToEmitC.cpp) as the semantic reference for `TLOAD` / `TABS` / `TSTORE`: it is useful only as the replacement boundary, not as the desired behavior.
+- Current [`test/phase2/tload_contract_trace.mlir`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/test/phase2/tload_contract_trace.mlir): outdated because it locks `a5vm.load`.
+- Current [`test/phase2/tstore_branch_shape.mlir`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/test/phase2/tstore_branch_shape.mlir): outdated because it locks `a5vm.store`.
+- Current [`test/phase2/unary_template_shape.mlir`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/test/phase2/unary_template_shape.mlir): outdated because it checks only one `a5vm.abs`.
+- Current [`test/phase2/tabs_precheck.mlir`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/test/phase2/tabs_precheck.mlir): outdated because it encodes an incorrect square-shape rule.
+
+## Wave 0 Fixtures
+
+### Corrected fixtures to create first
+
+| Fixture | What it must lock | Why |
+|---------|-------------------|-----|
+| `test/phase2/tload_copy_family_shape.mlir` | `lowerTLOAD` emits copy-family A5VM structure for the `Abs` path, preserving layout, shape, strides, valid row/col, pad/init fields, partition trace, and out-to-UB loop programming | Prevents regression back to fake load ops. |
+| `test/phase2/tabs_abs_loop_shape.mlir` | `lowerTABS` emits `vec_scope` plus inner loop with ordered `a5vm.vld`, `a5vm.vabs`, `a5vm.vst` | Locks the real unary loop shape. |
+| `test/phase2/tstore_copy_family_shape.mlir` | `lowerTSTORE` emits UB-to-GM copy-family structure with destination layout/shape/strides, valid row/col, trace, and UB-to-out loop programming | Prevents regression back to fake store ops. |
+| `test/phase2/tstore_domain_todos.mlir` | `ACC` and `MAT` branches remain explicit and produce dedicated TODO diagnostics | Preserves truthful future extension points. |
+| `test/phase2/pto_backend_a5vm_wiring.mlir` | `--pto-backend=a5vm` runs PTO-to-A5VM lowering before final backend emission and does not route through EmitC lowering | Locks the backend seam. |
+
+### Fixture details the planner should require
+
+- `TLOAD` fixture must check branch shape, not just attribute presence.
+- `TLOAD` fixture must include `pad_mode`, `pad_value`, `left_padding_num`, `right_padding_num`, `init_out_buffer`, and `init_condition` in at least one subcase, even if only one is executable in v1.
+- `TABS` fixture must check `vec_scope` and loop-carried indexing metadata or op nesting that proves the software loop exists.
+- `TABS` precheck fixture must check:
+  `tile domain == vec`, row-major compatibility per unary template, supported dtype set, and src/dst valid-shape equality.
+- `TSTORE` fixture must distinguish `VEC` from `ACC` and `MAT`.
+- All three fixtures must preserve partition trace, layout, valid-region, and stride information as explicit A5VM attrs or operands.
+
+## Minimal Truthful Helper Layer
+
+### Required contract structs
+
+| Helper | Must contain | Why |
+|--------|--------------|-----|
+| `A5VMMoveContract` | layout, shape, strides, valid row/col, partition trace, pad/init fields, tile layout/domain | Shared truth for `TLOAD`/`TSTORE`. |
+| `A5VMUnaryContract` | src/dst valid row/col, tile layout/domain, element type, loop shape kind (`1D_no_post_update`, `1D_post_update`, `2D`) | Shared truth for `TABS` and future unary ops. |
+| `A5VMLoopProgram` | loop sizes, loop1/loop2 stride configs, burst counts, burst lengths, source/destination stride values | Keeps register programming explicit and reusable. |
+
+### Required helper functions
+
+- `extractPartitionTrace(Value)`:
+  Must preserve offsets and sizes from `pto.partition_view`.
+- `extractMoveContractFromTLoad(TLoadOp)`:
+  Must keep all pad/init operands plus source layout/shape/stride.
+- `extractMoveContractFromTStore(TStoreOp)`:
+  Must keep destination layout/shape/stride and source tile domain.
+- `buildOutToUbLoopProgram(...)`:
+  For `TLOAD` `set_loop*_outtoub`.
+- `buildUbToOutLoopProgram(...)`:
+  For `TSTORE` `set_loop*_ubtoout`.
+- `buildUnaryLoopContract(...)`:
+  Must decide 1D vs 2D shape according to the A5 unary template.
+- `emitUnaryPrechecks(...)`:
+  Must validate A5 restrictions before creating A5VM ops.
+
+### What the helper layer must not contain
+
+- No generic `lowerLoadLike` / `lowerStoreLike` abstraction that erases copy direction.
+- No emitter-specific intrinsic names.
+- No a2a3-derived branch selection logic.
+
+## Exact Pass Wiring
+
+### `--pto-backend=a5vm` path
+
+Use the existing seam in [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp):
+
+1. Keep all shared pre-backend passes unchanged up to the backend split.
+2. On `PTOBackend::A5VM`, run `createLowerPTOToA5VMPass()` after shared passes and before final text emission.
+3. Do not run `createEmitPTOManualPass(...)` or EmitC expression formation on the A5VM branch.
+4. Keep the raw-A5VM parse shortcut intact for already-lowered A5VM IR.
+5. Run `CSE` after PTO-to-A5VM only if it preserves the fixture-visible loop/copy structure.
+
+### Pass contract
+
+- The pass rewrites only PTO hardware-facing ops for this phase: `TLoadOp`, `TAbsOp`, `TStoreOp`.
+- Shared dialect ops remain in `func`, `scf`, `arith`, `memref`.
+- The pass must preserve pipe/domain semantics visible from PTO:
+  `TLOAD -> PIPE_MTE2`, `TABS -> PIPE_V`, `TSTORE(vec/mat) -> PIPE_MTE3`, `TSTORE(acc) -> PIPE_FIX`.
+- The planner should assume the current stale dependent dialect names in [`include/PTO/Transforms/Passes.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/Transforms/Passes.td) need to match corrected Phase 1 `mlir::a5vm` naming before implementation.
 
 ## Open Questions
 
-1. **What exact `a5vm` op/attribute surface from Phase 1 will Phase 2 target?**
-   - What we know: Phase 1 research expects minimal `a5vm.load`, `a5vm.abs`, and `a5vm.store` ops plus typed metadata.
-   - What's unclear: The repo does not yet contain those ops, pass factories, or backend flags.
-   - Recommendation: Treat finalized Phase 1 op/attr names and pass entrypoints as a planning prerequisite for Phase 2 implementation.
+1. **Which corrected A5VM primitives already exist after Phase 1 correction?**
+   - What we know: current workspace still exposes stale pseudo ops in [`include/PTO/IR/A5VMOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/A5VMOps.td).
+   - What's unclear: whether corrected `vld`, `vabs`, `vst`, vec-scope, and copy-family ops already landed elsewhere or still need Phase 2-adjacent work.
+   - Recommendation: make this the first Wave 0 check and extend A5VM if missing.
 
-2. **How should PTO view-to-tile mapping trace be represented in `a5vm` metadata?**
-   - What we know: The user explicitly wants that trace preserved, not flattened away.
-   - What's unclear: Whether the best representation is offsets/sizes attrs, a custom trace attr, or structured helper attrs on load/store ops.
-   - Recommendation: Pick the smallest typed representation that preserves partition offsets/sizes and derived valid-region facts without embedding PTO ops directly in `a5vm`.
+2. **How should loop programming be represented in A5VM IR?**
+   - What we know: A5 PTO uses explicit loop-size and loop-stride register programming for copy families.
+   - What's unclear: whether A5VM models those as dedicated ops, structured attrs, or helper ops plus attrs.
+   - Recommendation: use dedicated ops or explicit structured attrs that survive to Phase 3 emission; do not hide them in comments.
 
-3. **Should unsupported `ACC` / `MAT` store branches fail the pass or emit placeholders?**
-   - What we know: The user wants explicit TODO branches and visible inputs.
-   - What's unclear: Whether current backend policy prefers hard failure, preserved placeholder ops, or diagnostic comments for unsupported branches.
-   - Recommendation: Plan for explicit diagnostics that fail lowering by default unless Phase 1 placeholder policy already established a sanctioned unresolved-op mechanism.
+3. **How much of pad/init behavior should be executable in v1?**
+   - What we know: the user requires those inputs preserved in the lowering contract even if `Abs` does not use them fully.
+   - What's unclear: whether v1 must only carry them or partially lower them.
+   - Recommendation: Wave 0 should at minimum lock preservation, even if full execution is deferred.
 
 ## Validation Architecture
 
 ### Test Framework
 | Property | Value |
 |----------|-------|
-| Framework | MLIR source tests with `RUN:` + `FileCheck`, plus `ctest` smoke checks |
-| Config file | none committed in source tree; current lit config appears external or build-generated |
-| Quick run command | `./build/tools/ptoas/ptoas test/phase2/<case>.mlir -o - | FileCheck test/phase2/<case>.mlir` |
-| Full suite command | `ctest --test-dir build --output-on-failure` |
+| Framework | Bash runner + `FileCheck` + `ctest` (LLVM 19.1.7 toolchain) |
+| Config file | none |
+| Quick run command | `./test/phase2/run_phase2_checks.sh` |
+| Full suite command | `./test/phase2/run_phase2_checks.sh` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| PTO-01 | `pto.tload` lowering preserves layout/shape/valid-region/padding inputs into `a5vm` metadata on the `Abs` path | integration | `./build/tools/ptoas/ptoas test/phase2/pto_tload_abs_lowering.mlir -o - | FileCheck test/phase2/pto_tload_abs_lowering.mlir` | ❌ Wave 0 |
-| PTO-02 | `pto.tabs` lowering enforces unary restrictions and emits `a5vm.abs` with matched semantics | integration | `./build/tools/ptoas/ptoas test/phase2/pto_tabs_abs_lowering.mlir -o - | FileCheck test/phase2/pto_tabs_abs_lowering.mlir` | ❌ Wave 0 |
-| PTO-03 | `pto.tstore` lowering preserves source tile domain and destination layout behavior for the `Abs` vec path | integration | `./build/tools/ptoas/ptoas test/phase2/pto_tstore_abs_lowering.mlir -o - | FileCheck test/phase2/pto_tstore_abs_lowering.mlir` | ❌ Wave 0 |
-| PTO-04 | Shared lowering framework supports a second unary or store variant without architectural rewrite | unit/integration | `./build/tools/ptoas/ptoas test/phase2/pto_lowering_framework_reuse.mlir -o - | FileCheck test/phase2/pto_lowering_framework_reuse.mlir` | ❌ Wave 0 |
+| PTO-01 | `TLOAD` preserves copy-family structure, loop programming, layout/stride/trace/pad metadata | structural | `./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir test/phase2/tload_copy_family_shape.mlir -o /dev/null 2>&1 | FileCheck test/phase2/tload_copy_family_shape.mlir` | ❌ Wave 0 |
+| PTO-02 | `TABS` emits vec-scope plus `vld -> vabs -> vst` loop shape and rejects unsupported cases | structural | `./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir test/phase2/tabs_abs_loop_shape.mlir -o /dev/null 2>&1 | FileCheck test/phase2/tabs_abs_loop_shape.mlir` | ❌ Wave 0 |
+| PTO-03 | `TSTORE` preserves UB-to-GM copy-family structure and explicit `ACC` / `MAT` TODO branches | structural | `./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir test/phase2/tstore_copy_family_shape.mlir -o /dev/null 2>&1 | FileCheck test/phase2/tstore_copy_family_shape.mlir` | ❌ Wave 0 |
+| PTO-04 | Backend wiring keeps the same architecture and only activates PTO-to-A5VM on `--pto-backend=a5vm` | structural | `./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir test/phase2/pto_backend_a5vm_wiring.mlir -o /dev/null 2>&1 | FileCheck test/phase2/pto_backend_a5vm_wiring.mlir` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `./build/tools/ptoas/ptoas test/phase2/<case>.mlir -o - | FileCheck test/phase2/<case>.mlir`
-- **Per wave merge:** `ctest --test-dir build --output-on-failure`
-- **Phase gate:** Full suite green before `/gsd:verify-work`
+- **Per task commit:** the requirement-specific `ptoas | FileCheck` command for the touched contract
+- **Per wave merge:** `./test/phase2/run_phase2_checks.sh`
+- **Phase gate:** full Phase 2 runner green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `test/phase2/pto_tload_abs_lowering.mlir` — covers PTO-01 with positive checks for preserved metadata and negative checks for missing required inputs
-- [ ] `test/phase2/pto_tabs_abs_lowering.mlir` — covers PTO-02, including illegal dtype/layout/domain cases
-- [ ] `test/phase2/pto_tstore_abs_lowering.mlir` — covers PTO-03 vec-path lowering and explicit unsupported-branch diagnostics
-- [ ] `test/phase2/pto_lowering_framework_reuse.mlir` — covers PTO-04 by exercising shared helper structure beyond a single hardcoded op body
-- [ ] A documented invocation path for `test/phase2/*.mlir` fixtures if no committed lit config is introduced during Phase 1
+- [ ] `test/phase2/tload_copy_family_shape.mlir` — corrected TLOAD contract
+- [ ] `test/phase2/tabs_abs_loop_shape.mlir` — corrected TABS loop-shape contract
+- [ ] `test/phase2/tstore_copy_family_shape.mlir` — corrected TSTORE contract
+- [ ] `test/phase2/tstore_domain_todos.mlir` — explicit ACC/MAT TODO branch checks
+- [ ] `test/phase2/pto_backend_a5vm_wiring.mlir` — backend branch contract
+- [ ] Update `test/phase2/run_phase2_checks.sh` to run the corrected fixture set
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [`include/PTO/IR/PTOOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/PTOOps.td) - PTO op surfaces for `TLoadOp`, `TStoreOp`, `TAbsOp`
-- [`lib/PTO/IR/PTO.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/IR/PTO.cpp) - current verifier behavior for `TLoadOp`, `TStoreOp`, `TAbsOp`
-- [`lib/PTO/Transforms/PTOToEmitC.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/lib/PTO/Transforms/PTOToEmitC.cpp) - current backend lowering boundary that Phase 2 replaces
-- [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp) - current pipeline/emission integration surface
-- [`test/samples/Abs/abs.py`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/test/samples/Abs/abs.py) - concrete `Abs` path exercised by v1 scope
-- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/common/pto_instr.hpp` - public PTO instruction entrypoints
-- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TLoad.hpp` - `TLOAD_IMPL` constraints and layout/shape/stride/valid-region inputs
-- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TStore.hpp` - `TSTORE_IMPL` branch structure and per-domain constraints
-- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TUnaryOp.hpp` - `TABS_IMPL` unary restriction pattern
-- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TAdd.hpp` - reusable template pattern for future op-family shaping
-- [`01-RESEARCH.md`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/.planning/phases/01-a5vm-foundation/01-RESEARCH.md) - locked Phase 1 backend boundary and toolchain context
+- [`include/PTO/IR/PTOOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/PTOOps.td) - checked `TLoadOp`, `TStoreOp`, `TAbsOp` operands, pipes, and assembly surface
+- [`tools/ptoas/ptoas.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/tools/ptoas/ptoas.cpp) - checked exact `--pto-backend=a5vm` wiring point
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/common/pto_instr.hpp` - checked public `TLOAD`, `TABS`, `TSTORE` entrypoints
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TLoad.hpp` - checked GM-to-UB copy-family structure and loop programming
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TStore.hpp` - checked UB-to-GM copy-family structure and `VEC` / `ACC` branching
+- `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a5/TUnaryOp.hpp` - checked `__VEC_SCOPE__`, unary loop shape, and `TABS_IMPL`
 
 ### Secondary (MEDIUM confidence)
-- [`01-VALIDATION.md`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/.planning/phases/01-a5vm-foundation/01-VALIDATION.md) - prior validation style and expected Wave 0 structure
-- [`ROADMAP.md`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/.planning/ROADMAP.md) - phase sequencing and success criteria
+- [`test/compile_cpp/abs_vec_core.cpp`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/test/compile_cpp/abs_vec_core.cpp) - confirms sample-level `TLOAD -> TABS -> TSTORE` shape used for `Abs`
+- [`include/PTO/IR/A5VMOps.td`](/data/mouliangyu/projects/github.com/zhangstevenunity/PTOAS/include/PTO/IR/A5VMOps.td) - used only to identify current stale pseudo-op surface that Phase 2 must not follow
 
 ### Tertiary (LOW confidence)
 - None
@@ -367,9 +421,9 @@ Source: `/usr/local/Ascend/cann-8.5.0/aarch64-linux/include/pto/npu/a2a3/TStore.
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH - derived from repo-local toolchain files, existing code, and official local PTO headers
-- Architecture: HIGH - derived from locked context decisions plus current repo transform structure and official PTO template branch patterns
-- Pitfalls: HIGH - based on direct gaps between current `EmitC` lowering and required PTO semantic preservation
+- Standard stack: HIGH - verified from local workspace toolchain and installed CANN headers
+- Architecture: HIGH - derived directly from A5 PTO implementation files and current repo backend seam
+- Pitfalls: HIGH - based on direct contradictions between current repo state and A5 PTO headers
 
-**Research date:** 2026-03-18
-**Valid until:** 2026-04-17
+**Research date:** 2026-03-19
+**Valid until:** 2026-04-18
