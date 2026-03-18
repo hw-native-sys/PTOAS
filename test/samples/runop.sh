@@ -352,6 +352,27 @@ process_one_dir() {
       fi
     fi
 
+    # Scalar disjoint-range regression: scalar accesses on the same root buffer
+    # but non-overlapping static ranges must not trigger scalar<->DMA events.
+    if [[ "$base" == "test_inject_sync_scalar_disjoint_range" ]]; then
+      if grep -Eq "set_flag\\(PIPE_MTE2,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_MTE2,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_MTE2<->PIPE_S event sync for scalar disjoint-range case"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "set_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_S<->PIPE_MTE3 event sync for scalar disjoint-range case"
+        overall=1
+        continue
+      fi
+    fi
+
     # Alias regression: dynamic local alias chains must stay conservative.
     # Unknown-range local aliases should still preserve MTE2->MTE3 dependency.
     if [[ "$base" == "test_inject_sync_unknown_alias_local_chain" ]]; then

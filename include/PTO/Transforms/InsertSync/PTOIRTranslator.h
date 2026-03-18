@@ -8,6 +8,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/raw_ostream.h"
+#include <vector>
  
 namespace mlir {
 namespace pto {
@@ -76,12 +77,19 @@ private:
  
   // 根据 Values 填充 Def/Use 列表
   void UpdateDefUseVec(ValueRange values, SmallVector<const BaseMemInfo *> &vec);
+
+  // scalar 访问切片建模：按 ptr+offset 构建访问级依赖信息。
+  void UpdateScalarDefUseVec(Value ptr, Value offset, Type scalarType,
+                             SmallVector<const BaseMemInfo *> &vec);
  
   // 调试辅助
   std::string getPipelineName(PipelineType pipe);
   void printMemInfoList(llvm::raw_ostream &os, 
                         const SmallVector<const BaseMemInfo *> &list, 
                         AsmState &state);
+
+  // 持久化 scalar 访问切片，保证 def/use 指针在分析期间有效。
+  std::vector<std::unique_ptr<BaseMemInfo>> scalarAccessMemInfoPool_;
 };
  
 } // namespace pto
