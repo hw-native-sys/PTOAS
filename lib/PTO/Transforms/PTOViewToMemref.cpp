@@ -36,11 +36,6 @@ namespace pto {
 
 #define GEN_PASS_DEF_PTOVIEWTOMEMREF
 
-static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
-    "__pto.lowered_set_validshape";
-static constexpr llvm::StringLiteral kLoweredSetValidShapeConfigAttrName =
-    "__pto.lowered_set_validshape_config";
-
 namespace {
 
 // =============================================================================
@@ -412,67 +407,6 @@ static Type convertPTOTypeToMemRef(Type t) {
   return t;
 }
 
-static void materializeFunctionTileArguments(func::FuncOp func, Block &entry,
-                                             ArrayRef<Type> originalInputs,
-                                             ArrayRef<Type> loweredInputs,
-                                             MLIRContext *ctx) {
-  IRRewriter rewriter(ctx);
-  rewriter.setInsertionPointToStart(&entry);
-
-  for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
-    auto tbTy = dyn_cast<mlir::pto::TileBufType>(originalInputs[i]);
-    if (!tbTy)
-      continue;
-
-    auto loweredTy = dyn_cast<MemRefType>(loweredInputs[i]);
-    if (!loweredTy)
-      continue;
-
-    Value arg = entry.getArgument(i);
-    Location loc = func.getLoc();
-
-    auto makeConstIndex = [&](int64_t value) -> Value {
-      return rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexType(),
-                                                rewriter.getIndexAttr(value));
-    };
-
-    Value vRow;
-    Value vCol;
-    ArrayRef<int64_t> shape = tbTy.getShape();
-    ArrayRef<int64_t> validShape = tbTy.getValidShape();
-
-    if (!tbTy.hasDynamicValid()) {
-      if (validShape.size() >= 1 && validShape[0] >= 0)
-        vRow = makeConstIndex(validShape[0]);
-      if (validShape.size() >= 2 && validShape[1] >= 0)
-        vCol = makeConstIndex(validShape[1]);
-    } else {
-      // Function arguments lose dynamic valid-shape operands at the ABI
-      // boundary. Start from the full static tile shape so a later
-      // pto.set_validshape can mutate a shared tile handle in place.
-      if (shape.size() >= 1 && shape[0] != ShapedType::kDynamic)
-        vRow = makeConstIndex(shape[0]);
-      if (shape.size() >= 2 && shape[1] != ShapedType::kDynamic)
-        vCol = makeConstIndex(shape[1]);
-    }
-
-    auto configAttr = tbTy.getConfigAttr();
-    if (!configAttr)
-      configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-    auto bindOp =
-        rewriter.create<pto::BindTileOp>(loc, loweredTy, arg, vRow, vCol, configAttr);
-
-    SmallVector<OpOperand *, 8> uses;
-    for (OpOperand &use : arg.getUses()) {
-      if (use.getOwner() != bindOp.getOperation())
-        uses.push_back(&use);
-    }
-    for (OpOperand *use : uses)
-      use->set(bindOp.getResult());
-  }
-}
-
 // Ensure scf.if result types follow the rewritten yield operand types.
 // PTOViewToMemref rewrites tile values to memref in branch bodies, but scf.if
 // result types are not auto-updated by those op-local rewrites.
@@ -547,19 +481,6 @@ struct PTOViewToMemrefPass
 
       Block &entry = func.front();
       auto fnTy = func.getFunctionType();
-      SmallVector<Type> originalInputs(fnTy.getInputs().begin(), fnTy.getInputs().end());
-
-      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
-      func.walk([&](mlir::pto::SetValidShapeOp op) {
-        setValidShapes.push_back(op);
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getSource().getType());
-        if (!tbTy)
-          return;
-        auto configAttr = tbTy.getConfigAttr();
-        if (!configAttr)
-          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-        op->setAttr(kLoweredSetValidShapeConfigAttrName, configAttr);
-      });
 
       // ------------------------------------------------------------------
       // Stage 0: Rewrite Function Signature
@@ -579,12 +500,6 @@ struct PTOViewToMemrefPass
 
       // Update function type
       func.setFunctionType(FunctionType::get(ctx, newInputs, newResults));
-
-      // Reintroduce a shared tile handle for lowered tile_buf function
-      // arguments so in-place metadata ops like pto.set_validshape remain
-      // observable by later PTO ops.
-      materializeFunctionTileArguments(func, entry, originalInputs, newInputs,
-                                       ctx);
 
       // ------------------------------------------------------------------
       // Stage 0.5: lower pto.alloc_tile -> memref.alloc + pto.bind_tile
@@ -974,7 +889,7 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
-      // Stage 2.4: lower pto.subset -> memref.subview + bind_tile
+      // Stage 2.5: lower pto.subset -> memref.subview + bind_tile
       // ------------------------------------------------------------------
       SmallVector<mlir::pto::SubsetOp, 8> subsets;
       func.walk([&](mlir::pto::SubsetOp op) { subsets.push_back(op); });
@@ -1259,11 +1174,6 @@ struct PTOViewToMemrefPass
           return;
         IRRewriter rewriter(ctx);
         rewriter.replaceOp(op, lowered);
-      }
-
-      for (auto op : setValidShapes) {
-        if (isa<MemRefType>(op.getSource().getType()))
-          op->setAttr(kLoweredSetValidShapeAttrName, UnitAttr::get(ctx));
       }
 
       // ------------------------------------------------------------------

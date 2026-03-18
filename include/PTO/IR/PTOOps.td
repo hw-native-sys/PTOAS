@@ -40,9 +40,6 @@ def PTODpsType :
 def PtrOrMemRef :
   AnyTypeOf<[PtrType, AnyMemRef], "Ptr or MemRef">;
 
-def TileBufOrMemRef :
-  AnyTypeOf<[TileBufType, AnyMemRef], "TileBuf or MemRef">;
-
 def ScalarPtrOrMemRef :
   TypeConstraint<
     CPred<"::mlir::pto::isScalarPtrOrMemRef($_self)">,
@@ -307,32 +304,6 @@ def SubsetOp : PTO_Op<"subset", [
     // ViewLikeOpInterface 可能还需要 getOffsets (如果 Variadic 不自动匹配)
     // 但通常 Variadic<Index>:$offsets 会生成 getOffsets()，这应该没问题。
     // 如果后续报 getOffsets 错，也可以在这里加。
-  }];
-}
-
-def SetValidShapeOp : PTO_Op<"set_validshape", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "Update valid row/col metadata in-place on a dynamic tile";
-  let description = [{
-    Updates the runtime valid_row/valid_col metadata on an existing dynamic
-    tile_buf handle in place.
-
-    This op does not allocate or alias a new tile handle. It is only valid for
-    tile_buf types whose valid_row and valid_col are both dynamic (`?`).
-  }];
-
-  let arguments = (ins
-    TileBufOrMemRef:$source,
-    Index:$valid_row,
-    Index:$valid_col
-  );
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `,` $valid_row `,` $valid_col attr-dict `:`
-    qualified(type($source))
   }];
 }
 

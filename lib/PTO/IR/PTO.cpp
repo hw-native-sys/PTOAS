@@ -4653,78 +4653,6 @@ static bool isTileBufOrMemref(Type ty) {
   return ty.isa<MemRefType, pto::TileBufType>();
 }
 
-static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
-    "__pto.lowered_set_validshape";
-
-static std::optional<int64_t> getConstIndexLike(Value v) {
-  if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>())
-    return cOp.value();
-  if (auto cInt = v.getDefiningOp<arith::ConstantIntOp>())
-    return cInt.value();
-  if (auto cOp = v.getDefiningOp<arith::ConstantOp>()) {
-    if (auto ia = dyn_cast<IntegerAttr>(cOp.getValue()))
-      return ia.getInt();
-  }
-  if (auto castOp = v.getDefiningOp<arith::IndexCastOp>())
-    return getConstIndexLike(castOp.getIn());
-  if (auto extOp = v.getDefiningOp<arith::ExtSIOp>())
-    return getConstIndexLike(extOp.getIn());
-  if (auto extOp = v.getDefiningOp<arith::ExtUIOp>())
-    return getConstIndexLike(extOp.getIn());
-  if (auto truncOp = v.getDefiningOp<arith::TruncIOp>())
-    return getConstIndexLike(truncOp.getIn());
-  return std::nullopt;
-}
-
-mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
-  SmallVector<int64_t> shape;
-  if (auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType())) {
-    if (srcTy.getRank() != 2)
-      return emitOpError("expects rank-2 tile_buf source");
-
-    ArrayRef<int64_t> validShape = srcTy.getValidShape();
-    if (validShape.size() != 2)
-      return emitOpError("expects source validShape to be rank-2");
-    if (!srcTy.hasDynamicValid())
-      return emitOpError("expects source tile_buf to have dynamic validShape (?, ?)");
-
-    shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
-  } else if (auto srcTy = llvm::dyn_cast<MemRefType>(getSource().getType())) {
-    if (!(*this)->hasAttr(kLoweredSetValidShapeAttrName))
-      return emitOpError(
-          "expects tile_buf source; memref source is only valid for the internal lowered form");
-    if (srcTy.getRank() != 2)
-      return emitOpError("expects rank-2 memref source after tile lowering");
-    shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
-  } else {
-    return emitOpError("expects tile_buf source (or lowered memref source)");
-  }
-
-  auto checkDim = [&](Value operand, unsigned dimIdx,
-                      StringRef dimName) -> LogicalResult {
-    int64_t maxStatic = shape[dimIdx];
-
-    auto constVal = getConstIndexLike(operand);
-    if (!constVal)
-      return success();
-
-    if (*constVal < 0)
-      return emitOpError() << "expects " << dimName << " operand to be non-negative";
-    if (maxStatic != ShapedType::kDynamic && *constVal > maxStatic)
-      return emitOpError() << "expects " << dimName << " operand <= shape dim ("
-                           << maxStatic << ")";
-    return success();
-  };
-
-  if (failed(checkDim(getValidRow(), /*dimIdx=*/0, "row")))
-    return failure();
-  if (failed(checkDim(getValidCol(), /*dimIdx=*/1, "col")))
-    return failure();
-
-  return success();
-}
-
-
 mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();
@@ -6668,12 +6596,6 @@ void TGetValOp::getEffects(
 void TSetValOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getDstMutable());
-}
-
-// SET_VALIDSHAPE: update runtime valid row/col metadata on source tile in-place.
-void SetValidShapeOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_WRITE(getSourceMutable());
 }
 
 // Elementwise + reductions: mostly PIPE_V tilebuf ops

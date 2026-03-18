@@ -130,13 +130,6 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       (void)tgetvalOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
       OpKillHandle(curOpInfo, live, op->getBlock());
-    } else if (auto setValidShapeOp = dyn_cast<pto::SetValidShapeOp>(op)) {
-      (void)setValidShapeOp;
-      // Metadata-only update on an existing tile handle. Keep the source buffer
-      // alive through this operation, but do not model it as producing a new
-      // alias/result buffer.
-      UpdateOpGenInfo(curOpInfo, ValueRange{op->getOperand(0)});
-      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
       UpdateStoreOpInfo(curOpInfo, storeOp.getMemRef(), live);
     } else if (auto ptoDpsOp = dyn_cast<pto::PTO_DpsInitOpInterface>(op)) {
