@@ -336,6 +336,53 @@ static bool isSetFFTsPointerLikeType(Type ty) {
   return false;
 }
 
+static bool tileDataReturnsIntegralAddress(pto::AddressSpace as) {
+  return as == pto::AddressSpace::BIAS;
+}
+
+static emitc::OpaqueType getTileDataResultType(MLIRContext *ctx,
+                                               pto::AddressSpace as,
+                                               StringRef elemTok) {
+  if (tileDataReturnsIntegralAddress(as))
+    return emitc::OpaqueType::get(ctx, "uint64_t");
+  return emitc::OpaqueType::get(
+      ctx, std::string(addrSpaceQualifier(as)) + " " + elemTok.str() + "*");
+}
+
+static Value materializeTileDataValue(ConversionPatternRewriter &rewriter,
+                                      Location loc, Value tile,
+                                      pto::AddressSpace as,
+                                      StringRef elemTok) {
+  auto rawTy = getTileDataResultType(rewriter.getContext(), as, elemTok);
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, rawTy, "PTOAS__TILE_DATA",
+                                   ArrayAttr{}, ArrayAttr{},
+                                   ValueRange{tile})
+      .getResult(0);
+}
+
+static Value materializeAddressAsPointer(ConversionPatternRewriter &rewriter,
+                                         Location loc, Value addr,
+                                         pto::AddressSpace as,
+                                         StringRef elemTok) {
+  auto *ctx = rewriter.getContext();
+  std::string ptrTyStr =
+      std::string(addrSpaceQualifier(as)) + " " + elemTok.str() + "*";
+  auto ptrTy = emitc::OpaqueType::get(ctx, ptrTyStr);
+  if (isSetFFTsPointerLikeType(addr.getType())) {
+    if (addr.getType() == ptrTy)
+      return addr;
+    return rewriter.create<emitc::CastOp>(loc, ptrTy, addr).getResult();
+  }
+  auto castTyAttr =
+      rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, ptrTyStr)});
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, ptrTy, "reinterpret_cast",
+                                   ArrayAttr{}, castTyAttr,
+                                   ValueRange{addr})
+      .getResult(0);
+}
+
 struct InterCoreSyncCallDesc {
   const char *callee = nullptr;
   ArrayAttr args;
@@ -2437,18 +2484,15 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       if (tyStr.find("Tile<") != std::string::npos ||
           tyStr.find("ConvTile<") != std::string::npos) {
         std::string elemTok = elemTypeToString(srcType.getElementType());
-        std::string qualifier = "__gm__";
+        pto::AddressSpace as = pto::AddressSpace::GM;
         if (auto asAttr =
                 dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace()))
-          qualifier = addrSpaceQualifier(asAttr.getAddressSpace());
-        auto rawPtrTy =
-            emitc::OpaqueType::get(ctx, qualifier + " " + elemTok + "*");
+          as = asAttr.getAddressSpace();
         sourcePtr =
-            rewriter
-                .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
-                                             "PTOAS__TILE_DATA", ArrayAttr{},
-                                             ArrayAttr{}, ValueRange{tileCandidate})
-                .getResult(0);
+            materializeTileDataValue(rewriter, loc, tileCandidate, as, elemTok);
+        if (tileDataReturnsIntegralAddress(as))
+          sourcePtr =
+              materializeAddressAsPointer(rewriter, loc, sourcePtr, as, elemTok);
       }
     }
     Value newPtr;
@@ -4509,23 +4553,21 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
       // Only Tiles have a `.data()` member. For plain address-space pointers
       // (e.g. `__ubuf__ float*`), use the pointer value directly.
       if (ot.getValue().starts_with("Tile<")) {
-        std::string rawPtrTok =
-            std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
-        auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
-        rawPtr = rewriter
-                     .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
-                                                  "PTOAS__TILE_DATA", ArrayAttr{},
-                                                  ArrayAttr{}, ValueRange{source})
-                     .getResult(0);
+        rawPtr = materializeTileDataValue(rewriter, loc, source, as, elemTok);
       }
     }
 
-    Value baseAddr = rewriter
-                         .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
-                                                      /*args=*/ArrayAttr{},
-                                                      /*templateArgs=*/rcU64,
-                                                      /*operands=*/ValueRange{rawPtr})
-                         .getResult(0);
+    Value baseAddr = rawPtr;
+    if (isSetFFTsPointerLikeType(rawPtr.getType())) {
+      baseAddr = rewriter
+                     .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                                  /*args=*/ArrayAttr{},
+                                                  /*templateArgs=*/rcU64,
+                                                  /*operands=*/ValueRange{rawPtr})
+                     .getResult(0);
+    } else if (rawPtr.getType() != u64Ty) {
+      baseAddr = rewriter.create<emitc::CastOp>(loc, u64Ty, rawPtr).getResult();
+    }
 
     Value addr = baseAddr;
     if (offsetVal) {
@@ -7096,20 +7138,12 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
           if (auto asAttr =
                   dyn_cast_or_null<pto::AddressSpaceAttr>(srcMrTy.getMemorySpace()))
             as = asAttr.getAddressSpace();
-          std::string rawPtrTok =
-              std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
-          auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
-          rawPtr = rewriter
-                       .create<emitc::CallOpaqueOp>(
-                           loc, rawPtrTy, "PTOAS__TILE_DATA", ArrayAttr{},
-                           ArrayAttr{}, ValueRange{sourceValue})
-                       .getResult(0);
+          rawPtr = materializeTileDataValue(rewriter, loc, sourceValue, as,
+                                            elemTok);
         }
       }
 
-      if (isa<emitc::PointerType>(rawPtr.getType()) ||
-          (isa<emitc::OpaqueType>(rawPtr.getType()) &&
-           cast<emitc::OpaqueType>(rawPtr.getType()).getValue().ends_with("*"))) {
+      if (isSetFFTsPointerLikeType(rawPtr.getType())) {
         return rewriter
             .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
                                          ArrayAttr{}, rcU64, ValueRange{rawPtr})
