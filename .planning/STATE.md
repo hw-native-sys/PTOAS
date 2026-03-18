@@ -1,7 +1,34 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 2
+current_phase_name: PTO Lowering
+current_plan: 3
+status: ready_to_execute
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-19T02:13:14+08:00"
+last_activity: 2026-03-19
+progress:
+  total_phases: 4
+  completed_phases: 1
+  total_plans: 10
+  completed_plans: 5
+  percent: 50
+---
+
 # Project State
 
 **Updated:** 2026-03-19
-**Status:** Phase 2 in progress
+**Status:** Ready to execute
+**Current Phase:** 2
+**Current Phase Name:** PTO Lowering
+**Total Phases:** 4
+**Current Plan:** 3
+**Total Plans in Phase:** 3
+**Progress:** [█████░░░░░] 50%
+**Last Activity:** 2026-03-19
+**Last Activity Description:** Completed 02-02-PLAN.md
 
 ## Project Reference
 
@@ -22,7 +49,8 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - Plan `01-02` executed and summarized
 - Plan `01-03` executed and summarized
 - Plan `02-01` executed and summarized
-- Next execution target: `02-02-PLAN.md`
+- Plan `02-02` executed and summarized
+- Next execution target: `02-03-PLAN.md`
 
 ## Active Milestone
 
@@ -76,6 +104,9 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - Added committed Phase 2 fixtures for TLOAD, TSTORE, TABS, and unary lowering metadata contracts
 - Added executable `test/phase2/run_phase2_checks.sh` with explicit ptoas and `ctest` invocations
 - Created `.planning/phases/02-pto-lowering/02-pto-lowering-01-SUMMARY.md`
+- Added `include/PTO/Transforms/A5VMLowering.h` with reusable TLOAD/TABS/TSTORE lowering contracts and entrypoint declarations
+- Added `lib/PTO/Transforms/PTOToA5VM.cpp` with contract extraction helpers, unary metadata attachment, and explicit TSTORE ACC/MAT TODO diagnostics
+- Created `.planning/phases/02-pto-lowering/02-pto-lowering-02-SUMMARY.md`
 
 ## Open Questions
 
@@ -85,8 +116,31 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 ## Session Continuity
 
 - Next recommended command: `/gsd:execute-phase 02-pto-lowering`
-- Next plan to execute: `02-02-PLAN.md`
+- Next plan to execute: `02-03-PLAN.md`
 - Current blocker status: none
 
+## Performance Metrics
+
+| Phase | Duration | Tasks | Files |
+|-------|----------|-------|-------|
+| Phase 02 P02 | 7min | 2 tasks | 3 files |
+
+## Decisions Made
+
+
+- [Phase 02]: Keep the lowering surface split into public contracts plus a helper implementation file before pass wiring.
+- [Phase 02]: Use explicit metadata attachment helpers so fixture-locked attribute names stay readable and reusable.
+- [Phase 02]: Preserve unsupported TSTORE ACC and MAT paths as dedicated TODO diagnostics instead of collapsing them into a generic failure.
+
+## Blockers
+
+None.
+
+## Session
+
+**Last Date:** 2026-03-18T18:13:14.230Z
+**Stopped At:** Completed 02-02-PLAN.md
+**Resume File:** None
+
 ---
-*Last updated: 2026-03-19 after completing plan 02-01*
+*Last updated: 2026-03-19 after completing plan 02-02*
