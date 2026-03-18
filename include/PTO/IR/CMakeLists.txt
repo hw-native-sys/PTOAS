@@ -37,3 +37,17 @@ endif()
 # 3. 注册聚合目标
 # ============================================================
 add_public_tablegen_target(PTOOpsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS A5VMDialect.td)
+mlir_tablegen(A5VMDialect.h.inc -gen-dialect-decls -dialect=a5vm)
+mlir_tablegen(A5VMDialect.cpp.inc -gen-dialect-defs -dialect=a5vm)
+
+set(LLVM_TARGET_DEFINITIONS A5VMOps.td)
+mlir_tablegen(A5VMOps.h.inc -gen-op-decls)
+mlir_tablegen(A5VMOps.cpp.inc -gen-op-defs)
+
+set(LLVM_TARGET_DEFINITIONS A5VMTypes.td)
+mlir_tablegen(A5VMTypes.h.inc -gen-typedef-decls -typedefs-dialect=a5vm)
+mlir_tablegen(A5VMTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=a5vm)
+
+add_public_tablegen_target(A5VMOpsIncGen)

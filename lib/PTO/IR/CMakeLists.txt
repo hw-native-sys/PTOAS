@@ -1,5 +1,6 @@
 # [关键] 库名重命名为 PTOIR，避免与 LLVM 里的 PTODialect/MLIRPTODialect 冲突
 add_mlir_dialect_library(PTOIR
+  A5VM.cpp
   PTO.cpp
   PTOAttrs.cpp
   PTOSyncUtils.cpp
@@ -10,6 +11,7 @@ add_mlir_dialect_library(PTOIR
 
   DEPENDS
   PTOOpsIncGen  # 对应 include/PTO/IR/CMakeLists.txt 里定义的那个目标
+  A5VMOpsIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR
