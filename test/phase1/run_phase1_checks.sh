@@ -29,8 +29,15 @@ echo "phase1 check: a5vm_copy_ubuf_to_gm_op.mlir"
 "${ptoas_bin}" test/phase1/a5vm_copy_ubuf_to_gm_op.mlir -o - | FileCheck test/phase1/a5vm_copy_ubuf_to_gm_op.mlir
 
 echo "phase1 check: a5vm_backend_switch.mlir"
-"${ptoas_bin}" --pto-backend=a5vm --a5vm-allow-unresolved --a5vm-unresolved-report=/tmp/phase1-a5vm.unresolved \
-  test/phase1/a5vm_backend_switch.mlir -o - | FileCheck test/phase1/a5vm_backend_switch.mlir
+backend_switch_output="$(mktemp)"
+"${ptoas_bin}" --pto-backend=a5vm test/phase1/a5vm_backend_switch.mlir -o - > "${backend_switch_output}"
+FileCheck test/phase1/a5vm_backend_switch.mlir < "${backend_switch_output}"
+if rg -n "llvm\\.hivm" "${backend_switch_output}" >/dev/null; then
+  echo "error: backend switch emitted deferred HIVM text instead of corrected A5VM text" >&2
+  rm -f "${backend_switch_output}"
+  exit 1
+fi
+rm -f "${backend_switch_output}"
 
 echo "phase1 check: a5vm_shared_dialects.mlir"
 "${ptoas_bin}" --pto-backend=a5vm --a5vm-print-ir test/phase1/a5vm_shared_dialects.mlir -o /dev/null 2>&1 | \
