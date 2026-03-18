@@ -16,6 +16,8 @@ module {
   }
 }
 
+// The corrected Phase 1 contract keeps the normalized vector spelling while
+// shifting the operation surface to copy and register primitives.
 // CHECK: error: '!a5vm.vec<32xf32>' expected exactly 256 bytes
 module {
   func.func @illegal_f32_width(%arg0: !a5vm.vec<32xf32>) -> !a5vm.vec<32xf32> {

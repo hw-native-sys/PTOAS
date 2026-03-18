@@ -4,18 +4,30 @@
 // CHECK: call {{.*}}llvm.hivm
 // CHECK: ; A5VM-UNRESOLVED:
 module {
-  func.func @abs_kernel_2d(%base: memref<1024xf32>, %out: memref<1024xf32>, %index: index) {
-    %loaded = a5vm.load %base[%index] {
+  func.func @abs_kernel_2d(%base: memref<1024xf32>, %ubuf: memref<256xf32>, %out: memref<1024xf32>, %index: index) {
+    a5vm.copy_gm_to_ubuf %base, %ubuf {
       layout = "nd",
-      valid_rows = 32,
-      valid_cols = 32,
-      domain = "gm"
-    } : memref<1024xf32> -> !a5vm.vec<64xf32>
-    %abs = a5vm.abs %loaded : !a5vm.vec<64xf32> -> !a5vm.vec<64xf32>
-    a5vm.store %abs, %out[%index] {
+      valid_rows = 32 : i64,
+      valid_cols = 32 : i64,
+      burst_count = 1 : i64,
+      burst_len = 128 : i64,
+      gm_stride = 32 : i64,
+      ub_stride = 64 : i64,
+      ub_pad = false
+    } : memref<1024xf32>, memref<256xf32>
+    %loaded = a5vm.vlds %ubuf[%index] : memref<256xf32> -> !a5vm.vec<64xf32>
+    %abs = a5vm.vabs %loaded : !a5vm.vec<64xf32> -> !a5vm.vec<64xf32>
+    a5vm.vsts %abs, %ubuf[%index] : !a5vm.vec<64xf32>, memref<256xf32>
+    a5vm.copy_ubuf_to_gm %ubuf, %out {
       layout = "nd",
-      domain = "vec"
-    } : !a5vm.vec<64xf32>, memref<1024xf32>
+      valid_rows = 32 : i64,
+      valid_cols = 32 : i64,
+      burst_count = 1 : i64,
+      burst_len = 128 : i64,
+      gm_stride = 32 : i64,
+      ub_stride = 64 : i64,
+      ub_pad = false
+    } : memref<256xf32>, memref<1024xf32>
     return
   }
 }
