@@ -43,7 +43,7 @@ Create the new backend entry point and the minimum `a5vm` dialect surface requir
 **Plans:** 3 plans
 
 Plans:
-- [ ] `01-01-PLAN.md` — Create the Phase 1 FileCheck fixtures and committed runner for all Wave 0 checks
+- [x] `01-01-PLAN.md` — Create the Phase 1 FileCheck fixtures and committed runner for all Wave 0 checks
 - [ ] `01-02-PLAN.md` — Add the first-class `a5vm` dialect, 256-byte vector type, and minimum `load`/`abs`/`store` ops
 - [ ] `01-03-PLAN.md` — Wire explicit backend selection, A5VM text emission, and unresolved-report diagnostics at the current `emitc` boundary
 
@@ -126,4 +126,4 @@ Use the `Abs` sample as the first acceptance case for the new backend and extrac
 - Phase 4 is the acceptance and inventory-extraction phase, not a separate architecture redesign.
 
 ---
-*Last updated: 2026-03-18 after initial roadmap creation*
+*Last updated: 2026-03-19 after completing plan 01-01*

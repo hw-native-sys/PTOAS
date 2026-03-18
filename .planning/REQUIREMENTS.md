@@ -7,16 +7,16 @@
 
 ### Backend Integration
 
-- [ ] **BACK-01**: Developer can run the existing PTOAS compilation flow with a backend path that replaces the current `emitc` generation slot without requiring a pass-pipeline redesign.
-- [ ] **BACK-02**: Developer can keep ordinary control flow and scalar arithmetic in shared dialects such as `scf` and `arith` while only hardware-facing PTO operations enter the new backend path.
+- [x] **BACK-01**: Developer can run the existing PTOAS compilation flow with a backend path that replaces the current `emitc` generation slot without requiring a pass-pipeline redesign.
+- [x] **BACK-02**: Developer can keep ordinary control flow and scalar arithmetic in shared dialects such as `scf` and `arith` while only hardware-facing PTO operations enter the new backend path.
 - [ ] **BACK-03**: Developer can compile the `Abs` sample through the new backend path using `./test/samples/runop.sh -t Abs`.
 
 ### A5VM Dialect
 
-- [ ] **A5VM-01**: Developer can represent legal `a5vm` vector types whose total width is always exactly 256 bytes.
-- [ ] **A5VM-02**: Developer can represent the `Abs` load path with an `a5vm` load operation whose result type is a legal `a5vm` vector type.
-- [ ] **A5VM-03**: Developer can represent the `Abs` compute path with an `a5vm` absolute-value operation whose operand and result types are legal `a5vm` vector types.
-- [ ] **A5VM-04**: Developer can represent the `Abs` store path with an `a5vm` store operation that consumes a legal `a5vm` vector value and backend-specific addressing inputs.
+- [x] **A5VM-01**: Developer can represent legal `a5vm` vector types whose total width is always exactly 256 bytes.
+- [x] **A5VM-02**: Developer can represent the `Abs` load path with an `a5vm` load operation whose result type is a legal `a5vm` vector type.
+- [x] **A5VM-03**: Developer can represent the `Abs` compute path with an `a5vm` absolute-value operation whose operand and result types are legal `a5vm` vector types.
+- [x] **A5VM-04**: Developer can represent the `Abs` store path with an `a5vm` store operation that consumes a legal `a5vm` vector value and backend-specific addressing inputs.
 
 ### PTO Lowering
 
@@ -62,13 +62,13 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BACK-01 | Phase 1 | Pending |
-| BACK-02 | Phase 1 | Pending |
+| BACK-01 | Phase 1 | Complete |
+| BACK-02 | Phase 1 | Complete |
 | BACK-03 | Phase 4 | Pending |
-| A5VM-01 | Phase 1 | Pending |
-| A5VM-02 | Phase 1 | Pending |
-| A5VM-03 | Phase 1 | Pending |
-| A5VM-04 | Phase 1 | Pending |
+| A5VM-01 | Phase 1 | Complete |
+| A5VM-02 | Phase 1 | Complete |
+| A5VM-03 | Phase 1 | Complete |
+| A5VM-04 | Phase 1 | Complete |
 | PTO-01 | Phase 2 | Pending |
 | PTO-02 | Phase 2 | Pending |
 | PTO-03 | Phase 2 | Pending |
