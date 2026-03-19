@@ -473,6 +473,16 @@ static void materializeFunctionTileArguments(func::FuncOp func, Block &entry,
   }
 }
 
+static void markLoweredSetValidShapeOps(func::FuncOp func, MLIRContext *ctx) {
+  func.walk([&](mlir::pto::SetValidShapeOp op) {
+    if (isa<MemRefType>(op.getSource().getType())) {
+      op->setAttr(kLoweredSetValidShapeAttrName, UnitAttr::get(ctx));
+      return;
+    }
+    op->removeAttr(kLoweredSetValidShapeAttrName);
+  });
+}
+
 // Ensure scf.if result types follow the rewritten yield operand types.
 // PTOViewToMemref rewrites tile values to memref in branch bodies, but scf.if
 // result types are not auto-updated by those op-local rewrites.
@@ -1259,11 +1269,6 @@ struct PTOViewToMemrefPass
           return;
         IRRewriter rewriter(ctx);
         rewriter.replaceOp(op, lowered);
-      }
-
-      for (auto op : setValidShapes) {
-        if (isa<MemRefType>(op.getSource().getType()))
-          op->setAttr(kLoweredSetValidShapeAttrName, UnitAttr::get(ctx));
       }
 
       // ------------------------------------------------------------------
@@ -2823,6 +2828,12 @@ struct PTOViewToMemrefPass
         signalPassFailure();
         return;
       }
+
+      // scf.if results can remain tile_buf until the control-flow result types
+      // are reconciled in Stage 4. Tag the internal memref form only after
+      // that point so verifier-legal lowered pto.set_validshape ops are not
+      // missed.
+      markLoweredSetValidShapeOps(func, ctx);
     }
     
     // Debug Output

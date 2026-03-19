@@ -1,0 +1,34 @@
+// RUN: ptoas --print-after=pto-view-to-memref %s 2>&1 | FileCheck %s
+
+module {
+  func.func @set_validshape_if_result_memref_attr(%cond: i1) {
+    %c32 = arith.constant 32 : index
+    %c16 = arith.constant 16 : index
+    %c24 = arith.constant 24 : index
+
+    %0 = pto.alloc_tile valid_row = %c32 valid_col = %c32
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %1 = pto.alloc_tile valid_row = %c32 valid_col = %c32
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    %2 = scf.if %cond -> (!pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                                         blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+      scf.yield %0 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                                   blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    } else {
+      scf.yield %1 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                                   blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    }
+
+    pto.set_validshape %2, %c16, %c24
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    return
+  }
+}
+
+// CHECK: scf.if %{{.*}} -> (memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>)
+// CHECK: pto.set_validshape %{{.*}}, %{{.*}}, %{{.*}} {__pto.lowered_set_validshape
+// CHECK-NOT: expects tile_buf source; memref source is only valid for the internal lowered form
