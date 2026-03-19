@@ -3021,9 +3021,9 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
       if (!hasMatExtractSourceLayoutA5(srcTb, *dstSpace))
         return emitOpError("expects A5 textract src to use a supported mat blayout/slayout combination");
       if (*dstSpace == pto::AddressSpace::LEFT) {
-        if (dstTb.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) ||
+        if (dstTb.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::ColMajor) ||
             dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::RowMajor))
-          return emitOpError("expects A5 left dst to use row_major blayout and row_major slayout");
+          return emitOpError("expects A5 left dst to use col_major blayout and row_major slayout");
       } else if (*dstSpace == pto::AddressSpace::RIGHT) {
         if (dstTb.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) ||
             dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::ColMajor))

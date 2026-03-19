@@ -757,6 +757,15 @@ int main(int argc, char **argv) {
   context.getOrLoadDialect<affine::AffineDialect>();
   context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
 
+  std::string arch = ptoTargetArch;
+  for (char &c : arch)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (arch != "a3" && arch != "a5") {
+    llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
+                 << "'. Expected 'a3' or 'a5'.\n";
+    return 1;
+  }
+
   OwningOpRef<ModuleOp> module;
   llvm::StringRef buf = (*fileOrErr)->getBuffer();
   const bool isPTOBC = (buf.size() >= 6 && std::memcmp(buf.data(), "PTOBC\0", 6) == 0);
@@ -782,6 +791,9 @@ int main(int argc, char **argv) {
     // Parse textual MLIR (.pto).
     llvm::SourceMgr sourceMgr;
     sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
+    pto::ScopedPTOParserTargetArch scopedParserArch(
+        arch == "a5" ? pto::PTOParserTargetArch::A5
+                     : pto::PTOParserTargetArch::A3);
     module = parseSourceFile<ModuleOp>(sourceMgr, &context);
     if (!module) {
       llvm::errs() << "Error: Failed to parse MLIR.\n";
@@ -880,14 +892,6 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
 
   pm.addPass(createCSEPass());
-  std::string arch = ptoTargetArch;
-  for (char &c : arch)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (arch != "a3" && arch != "a5") {
-    llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
-                 << "'. Expected 'a3' or 'a5'.\n";
-    return 1;
-  }
   module->getOperation()->setAttr("pto.target_arch",
                                   mlir::StringAttr::get(&context, arch));
   if (arch == "a3") {
