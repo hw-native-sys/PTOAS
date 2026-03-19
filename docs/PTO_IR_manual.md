@@ -496,6 +496,49 @@ result = source[offsets] with static sizes
 %sub = pto.subset %src[%i, %j] sizes [32, 32] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
+##### `pto.set_validshape` - Update Dynamic Tile Valid Row/Col In Place
+
+**Summary:** Updates runtime valid row/col metadata directly on an existing dynamic `pto.tile_buf`.
+
+**Semantics:**
+
+```
+set_validshape(source, valid_row, valid_col)
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `source` | `pto.tile_buf` | Dynamic tile buffer whose runtime valid shape will be updated |
+| `valid_row` | `Index` | Runtime valid row count |
+| `valid_col` | `Index` | Runtime valid column count |
+
+**Results:** None
+
+**Constraints & Verification:**
+
+- `source` must be a rank-2 `pto.tile_buf`
+- `source` must have dynamic valid shape:
+  - `v_row = ?`
+  - `v_col = ?`
+- User-authored PTO IR must use the `pto.tile_buf` form; any memref form seen
+  later in the pipeline is compiler-internal lowering state only
+- If `valid_row` / `valid_col` are compile-time constants, they must be non-negative and not exceed the tile's static shape bounds
+
+**Hardware Mapping:**
+
+- No hardware pipeline (metadata update op only)
+- Lowers in `PTOToEmitC` to updates of the tile's runtime valid-shape fields
+
+**Basic Example:**
+
+```mlir
+%src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+pto.set_validshape %src, %vr, %vc
+  : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+```
+
 ---
 
 ### 4.2 Buffer-ID Token Operations (A5)

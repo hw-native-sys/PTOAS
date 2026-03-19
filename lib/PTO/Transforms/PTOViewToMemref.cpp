@@ -20,6 +20,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 
 using namespace mlir;
 
@@ -36,7 +38,17 @@ namespace pto {
 
 #define GEN_PASS_DEF_PTOVIEWTOMEMREF
 
+static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
+    "__pto.lowered_set_validshape";
+static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
+    "__pto.force_dynamic_valid_shape";
+
 namespace {
+
+static void markForceDynamicValidShape(Operation *op, bool force,
+                                       MLIRContext *ctx);
+
+static Type convertPTOTypeToMemRef(Type t);
 
 // =============================================================================
 // Helper: Metadata Backtracking (核心机制)
@@ -449,6 +461,34 @@ static LogicalResult reconcileSCFIfResultTypes(func::FuncOp func) {
   return success();
 }
 
+static LogicalResult markLoweredSetValidShapeOps(func::FuncOp func,
+                                                 MLIRContext *ctx) {
+  WalkResult result = func.walk([&](mlir::pto::SetValidShapeOp op) {
+    if (isa<MemRefType>(op.getSource().getType())) {
+      if (!lookupConfig(op.getSource())) {
+        op.emitError(
+            "set_validshape requires a locally bound tile source; function "
+            "arguments/results are unsupported");
+        return WalkResult::interrupt();
+      }
+      op->setAttr(kLoweredSetValidShapeAttrName, UnitAttr::get(ctx));
+      return WalkResult::advance();
+    }
+    op->removeAttr(kLoweredSetValidShapeAttrName);
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted() ? failure() : success();
+}
+
+static void markForceDynamicValidShape(Operation *op, bool force,
+                                       MLIRContext *ctx) {
+  if (force) {
+    op->setAttr(kForceDynamicValidShapeAttrName, UnitAttr::get(ctx));
+    return;
+  }
+  op->removeAttr(kForceDynamicValidShapeAttrName);
+}
+
 // =============================================================================
 // The Pass Implementation
 // =============================================================================
@@ -582,6 +622,7 @@ struct PTOViewToMemrefPass
           auto pc = rewriter.create<pto::PointerCastOp>(
               loc, targetType, ValueRange{addr}, vRow ? vRow : Value(),
               vCol ? vCol : Value(), configAttr);
+          markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
           rewriter.replaceOp(op, pc.getResult());
           continue;
         }
@@ -596,6 +637,7 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
             configAttr);
+        markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
 
         rewriter.replaceOp(op, bindOp.getResult());
       }
@@ -889,7 +931,7 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
-      // Stage 2.5: lower pto.subset -> memref.subview + bind_tile
+      // Stage 2.4: lower pto.subset -> memref.subview + bind_tile
       // ------------------------------------------------------------------
       SmallVector<mlir::pto::SubsetOp, 8> subsets;
       func.walk([&](mlir::pto::SubsetOp op) { subsets.push_back(op); });
@@ -898,6 +940,8 @@ struct PTOViewToMemrefPass
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         Location loc = op.getLoc();
+        auto resultTileTy =
+            dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
 
         // 1. Source must be memref already
         Value src = op->getOperand(0);
@@ -1068,6 +1112,9 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, resultMemRefType, sv.getResult(),
             vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+        markForceDynamicValidShape(bindOp,
+                                   resultTileTy && resultTileTy.hasDynamicValid(),
+                                   ctx);
 
         rewriter.replaceOp(op, bindOp.getResult());
       }
@@ -1134,6 +1181,7 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, targetType, src,
             vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+        markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
         if (!viewSemantics.empty())
           bindOp->setAttr("pto.view_semantics",
                           rewriter.getStringAttr(viewSemantics));
@@ -2730,6 +2778,14 @@ struct PTOViewToMemrefPass
       // Stage 4: Reconcile control-flow result types
       // ------------------------------------------------------------------
       if (failed(reconcileSCFIfResultTypes(func))) {
+        signalPassFailure();
+        return;
+      }
+
+      // Mark memref-form set_validshape only after control-flow result-type
+      // reconciliation. Values such as scf.if results can stay tile_buf until
+      // this late stage.
+      if (failed(markLoweredSetValidShapeOps(func, ctx))) {
         signalPassFailure();
         return;
       }

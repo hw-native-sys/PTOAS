@@ -301,9 +301,10 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
 // first-class op for member-function invocation. After translation, we rewrite:
 //   PTOAS__TILE_SET_VALUE(dst, offset, val) -> dst.SetValue(offset, val)
 //   PTOAS__TILE_GET_VALUE(src, offset)      -> src.GetValue(offset)
-//   PTOAS__TILE_DATA(obj)                  -> obj.data()
-//   PTOAS__PTR_LOAD(ptr, offset)           -> ptr[offset]
-//   PTOAS__PTR_STORE(ptr, offset, val)     -> ptr[offset] = val
+//   PTOAS__TILE_DATA(obj)                   -> obj.data()
+//   PTOAS__TILE_SET_VALIDSHAPE(obj, r, c)   -> obj.SetValidShape(r, c)
+//   PTOAS__PTR_LOAD(ptr, offset)            -> ptr[offset]
+//   PTOAS__PTR_STORE(ptr, offset, val)      -> ptr[offset] = val
 // --------------------------------------------------------------------------
 static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
@@ -401,6 +402,9 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
         cpp, "PTOAS__TILE_GET_VALUE", "GetValue", /*expectedNumArgs=*/2);
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__TILE_SET_VALIDSHAPE", "SetValidShape",
+        /*expectedNumArgs=*/3);
   }
 }
 

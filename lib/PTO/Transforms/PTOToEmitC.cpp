@@ -81,6 +81,9 @@ static const char *addrSpaceQualifier(pto::AddressSpace as) {
   return "__gm__";
 }
 
+static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
+    "__pto.force_dynamic_valid_shape";
+
 static Value peelUnrealized(Value v) {
   if (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
     return castOp.getOperand(0);
@@ -329,6 +332,53 @@ static bool isSetFFTsPointerLikeType(Type ty) {
   if (auto opaqueTy = dyn_cast<emitc::OpaqueType>(ty))
     return opaqueTy.getValue().ends_with("*");
   return false;
+}
+
+static bool tileDataReturnsIntegralAddress(pto::AddressSpace as) {
+  return as == pto::AddressSpace::BIAS;
+}
+
+static emitc::OpaqueType getTileDataResultType(MLIRContext *ctx,
+                                               pto::AddressSpace as,
+                                               StringRef elemTok) {
+  if (tileDataReturnsIntegralAddress(as))
+    return emitc::OpaqueType::get(ctx, "uint64_t");
+  return emitc::OpaqueType::get(
+      ctx, std::string(addrSpaceQualifier(as)) + " " + elemTok.str() + "*");
+}
+
+static Value materializeTileDataValue(ConversionPatternRewriter &rewriter,
+                                      Location loc, Value tile,
+                                      pto::AddressSpace as,
+                                      StringRef elemTok) {
+  auto rawTy = getTileDataResultType(rewriter.getContext(), as, elemTok);
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, rawTy, "PTOAS__TILE_DATA",
+                                   ArrayAttr{}, ArrayAttr{},
+                                   ValueRange{tile})
+      .getResult(0);
+}
+
+static Value materializeAddressAsPointer(ConversionPatternRewriter &rewriter,
+                                         Location loc, Value addr,
+                                         pto::AddressSpace as,
+                                         StringRef elemTok) {
+  auto *ctx = rewriter.getContext();
+  std::string ptrTyStr =
+      std::string(addrSpaceQualifier(as)) + " " + elemTok.str() + "*";
+  auto ptrTy = emitc::OpaqueType::get(ctx, ptrTyStr);
+  if (isSetFFTsPointerLikeType(addr.getType())) {
+    if (addr.getType() == ptrTy)
+      return addr;
+    return rewriter.create<emitc::CastOp>(loc, ptrTy, addr).getResult();
+  }
+  auto castTyAttr =
+      rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, ptrTyStr)});
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, ptrTy, "reinterpret_cast",
+                                   ArrayAttr{}, castTyAttr,
+                                   ValueRange{addr})
+      .getResult(0);
 }
 
 struct InterCoreSyncCallDesc {
@@ -2432,18 +2482,15 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       if (tyStr.find("Tile<") != std::string::npos ||
           tyStr.find("ConvTile<") != std::string::npos) {
         std::string elemTok = elemTypeToString(srcType.getElementType());
-        std::string qualifier = "__gm__";
+        pto::AddressSpace as = pto::AddressSpace::GM;
         if (auto asAttr =
                 dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace()))
-          qualifier = addrSpaceQualifier(asAttr.getAddressSpace());
-        auto rawPtrTy =
-            emitc::OpaqueType::get(ctx, qualifier + " " + elemTok + "*");
+          as = asAttr.getAddressSpace();
         sourcePtr =
-            rewriter
-                .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
-                                             "PTOAS__TILE_DATA", ArrayAttr{},
-                                             ArrayAttr{}, ValueRange{tileCandidate})
-                .getResult(0);
+            materializeTileDataValue(rewriter, loc, tileCandidate, as, elemTok);
+        if (tileDataReturnsIntegralAddress(as))
+          sourcePtr =
+              materializeAddressAsPointer(rewriter, loc, sourcePtr, as, elemTok);
       }
     }
     Value newPtr;
@@ -2796,11 +2843,6 @@ static std::string getElemTypeStringForGT(Type elemTy) {
   return "float";
 }
 
-static uint64_t nextGlobalTensorNameId() {
-  static uint64_t counter = 0;
-  return counter++;
-}
-
 static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
                                          Location loc, Value basePtr,
                                          MemRefType mrTy,
@@ -2843,8 +2885,7 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
                                         offVal);
   }
 
-  (void)anchor;
-  std::string suffix = "_" + std::to_string(nextGlobalTensorNameId());
+  std::string suffix = "_" + std::to_string(reinterpret_cast<uintptr_t>(anchor));
   std::string shapeTypeName  = "GTShape"  + suffix;
   std::string strideTypeName = "GTStride" + suffix;
   std::string gtTypeName     = "GT"       + suffix;
@@ -3135,8 +3176,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     // [核心修改] Valid Dims 处理逻辑 (支持混合静态/动态)
     std::string vrowTok, vcolTok;
     bool useConstructor = false;
-    
-    // 引入标志位，明确记录哪个维度是动态的
+
     bool rowIsDynamic = false;
     bool colIsDynamic = false;
 
@@ -3144,44 +3184,56 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
 
     Value vRow = op.getValidRow();
     Value vCol = op.getValidCol();
-    Value vRowEmitC = adaptor.getValidRow(); 
+    Value vRowEmitC = adaptor.getValidRow();
     Value vColEmitC = adaptor.getValidCol();
+    bool forceDynamicValid = op->hasAttr(kForceDynamicValidShapeAttrName);
 
-    int64_t cRow, cCol;
+    int64_t cRow = 0, cCol = 0;
+    bool rowIsConst = vRow && isConstant(vRow, cRow);
+    bool colIsConst = vCol && isConstant(vCol, cCol);
 
-    // --- Row 逻辑 ---
-    if (vRow && isConstant(vRow, cRow)) {
-        // Case A: 静态常量 (e.g., 32)
+    auto makeCtorDimValue = [&](Value emitted, int64_t fallback) -> Value {
+      if (emitted)
+        return emitted;
+      return makeEmitCIntConstant(
+          rewriter, loc, emitc::OpaqueType::get(ctx, "int32_t"), fallback);
+    };
+
+    if (forceDynamicValid) {
+      vrowTok = "-1";
+      vcolTok = "-1";
+      useConstructor = true;
+      constructorArgs.push_back(
+          makeCtorDimValue(vRowEmitC, rowIsConst ? cRow : shape[0]));
+      constructorArgs.push_back(
+          makeCtorDimValue(vColEmitC, colIsConst ? cCol : shape[1]));
+    } else {
+      if (rowIsConst) {
         vrowTok = std::to_string(cRow);
-    } else if (vRow) {
-        // Case B: 动态变量 (e.g., %arg0)
+      } else if (vRow) {
         vrowTok = "-1";
-        rowIsDynamic = true; // 标记为动态
+        rowIsDynamic = true;
         useConstructor = true;
-    } else {
-        // Case C: 默认静态 (Shape)
+      } else {
         vrowTok = std::to_string(shape[0]);
-    }
+      }
 
-    // --- Col 逻辑 ---
-    if (vCol && isConstant(vCol, cCol)) {
-        // Case A: 静态常量
+      if (colIsConst) {
         vcolTok = std::to_string(cCol);
-    } else if (vCol) {
-        // Case B: 动态变量
+      } else if (vCol) {
         vcolTok = "-1";
-        colIsDynamic = true; // 标记为动态
+        colIsDynamic = true;
         useConstructor = true;
-    } else {
-        // Case C: 默认静态
+      } else {
         vcolTok = std::to_string(shape[1]);
-    }
+      }
 
-    // --- 收集构造参数 ---
-    // [修复] 只收集被标记为 Dynamic 的维度的值
-    if (useConstructor) {
-        if (rowIsDynamic && vRowEmitC) constructorArgs.push_back(vRowEmitC);
-        if (colIsDynamic && vColEmitC) constructorArgs.push_back(vColEmitC);
+      if (useConstructor) {
+        if (rowIsDynamic && vRowEmitC)
+          constructorArgs.push_back(vRowEmitC);
+        if (colIsDynamic && vColEmitC)
+          constructorArgs.push_back(vColEmitC);
+      }
     }
 
     // 5. 生成 Tile 类型字符串
@@ -4112,6 +4164,43 @@ struct PTOGetValToGETVAL : public OpConversionPattern<pto::TGetValOp> {
   }
 };
 
+struct PTOSetValidShapeToEmitC : public OpConversionPattern<pto::SetValidShapeOp> {
+  using OpConversionPattern<pto::SetValidShapeOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::SetValidShapeOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto peelAllCasts = [](Value v) {
+      while (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
+        v = castOp.getOperand(0);
+      if (auto castOp = v.getDefiningOp<emitc::CastOp>())
+        v = castOp.getOperand();
+      return v;
+    };
+    auto isTileLike = [](Value v) -> bool {
+      auto ot = dyn_cast<emitc::OpaqueType>(v.getType());
+      if (!ot)
+        return false;
+      StringRef s = ot.getValue();
+      return s.contains("Tile<") || s.contains("ConvTile<");
+    };
+
+    Value src = peelAllCasts(peelUnrealized(adaptor.getSource()));
+    Value row = peelUnrealized(adaptor.getValidRow());
+    Value col = peelUnrealized(adaptor.getValidCol());
+
+    if (!isTileLike(src))
+      return rewriter.notifyMatchFailure(
+          op, "set_validshape source must lower to a tile-like value");
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "PTOAS__TILE_SET_VALIDSHAPE", ArrayAttr{},
+        ArrayAttr{}, ValueRange{src, row, col});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // pto.load_scalar / pto.store_scalar lowering -> ptr[offset]
 //===----------------------------------------------------------------------===//
@@ -4336,23 +4425,21 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
       // Only Tiles have a `.data()` member. For plain address-space pointers
       // (e.g. `__ubuf__ float*`), use the pointer value directly.
       if (ot.getValue().starts_with("Tile<")) {
-        std::string rawPtrTok =
-            std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
-        auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
-        rawPtr = rewriter
-                     .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
-                                                  "PTOAS__TILE_DATA", ArrayAttr{},
-                                                  ArrayAttr{}, ValueRange{source})
-                     .getResult(0);
+        rawPtr = materializeTileDataValue(rewriter, loc, source, as, elemTok);
       }
     }
 
-    Value baseAddr = rewriter
-                         .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
-                                                      /*args=*/ArrayAttr{},
-                                                      /*templateArgs=*/rcU64,
-                                                      /*operands=*/ValueRange{rawPtr})
-                         .getResult(0);
+    Value baseAddr = rawPtr;
+    if (isSetFFTsPointerLikeType(rawPtr.getType())) {
+      baseAddr = rewriter
+                     .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                                  /*args=*/ArrayAttr{},
+                                                  /*templateArgs=*/rcU64,
+                                                  /*operands=*/ValueRange{rawPtr})
+                     .getResult(0);
+    } else if (rawPtr.getType() != u64Ty) {
+      baseAddr = rewriter.create<emitc::CastOp>(loc, u64Ty, rawPtr).getResult();
+    }
 
     Value addr = baseAddr;
     if (offsetVal) {
@@ -6434,22 +6521,8 @@ struct PTOStoreFPSToEmitC : public OpConversionPattern<pto::TStoreFPOp> {
     Value src = peelUnrealized(adaptor.getSrc());
     Value fp = peelUnrealized(adaptor.getFp());
     Value dst = peelUnrealized(adaptor.getDst());
-    Value dstArg = dst;
-    if (auto dstMrTy = dyn_cast<MemRefType>(op.getDst().getType())) {
-      bool isGlobal = true;
-      if (auto asAttr =
-              dyn_cast_or_null<pto::AddressSpaceAttr>(dstMrTy.getMemorySpace())) {
-        auto as = asAttr.getAddressSpace();
-        isGlobal = (as == pto::AddressSpace::GM || as == pto::AddressSpace::Zero);
-      }
-      if (isGlobal) {
-        if (Value gt = buildGlobalTensorFromMemref(rewriter, loc, dst, dstMrTy,
-                                                  op.getOperation()))
-          dstArg = gt;
-      }
-    }
 
-    SmallVector<Value, 3> operands{dstArg, src, fp};
+    SmallVector<Value, 4> operands{dst, src, fp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TSTORE_FP",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -6862,33 +6935,53 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       Value vCol = op.getValidCol();
       Value vRowEmitC = adaptor.getValidRow();
       Value vColEmitC = adaptor.getValidCol();
+      bool forceDynamicValid = op->hasAttr(kForceDynamicValidShapeAttrName);
       int64_t cRow = 0, cCol = 0;
+      bool rowIsConst = vRow && getIndexConst(vRow, cRow);
+      bool colIsConst = vCol && getIndexConst(vCol, cCol);
 
-      if (vRow && getIndexConst(vRow, cRow)) {
-        vrowTok = std::to_string(cRow);
-      } else if (vRow) {
+      auto makeCtorDimValue = [&](Value emitted, int64_t fallback) -> Value {
+        if (emitted)
+          return emitted;
+        return makeEmitCIntConstant(
+            rewriter, loc, emitc::OpaqueType::get(ctx, "int32_t"), fallback);
+      };
+
+      if (forceDynamicValid) {
         vrowTok = "-1";
-        rowIsDynamic = true;
-        useConstructor = true;
-      } else {
-        vrowTok = std::to_string(rows);
-      }
-
-      if (vCol && getIndexConst(vCol, cCol)) {
-        vcolTok = std::to_string(cCol);
-      } else if (vCol) {
         vcolTok = "-1";
-        colIsDynamic = true;
         useConstructor = true;
+        constructorArgs.push_back(
+            makeCtorDimValue(vRowEmitC, rowIsConst ? cRow : rows));
+        constructorArgs.push_back(
+            makeCtorDimValue(vColEmitC, colIsConst ? cCol : cols));
       } else {
-        vcolTok = std::to_string(cols);
-      }
+        if (rowIsConst) {
+          vrowTok = std::to_string(cRow);
+        } else if (vRow) {
+          vrowTok = "-1";
+          rowIsDynamic = true;
+          useConstructor = true;
+        } else {
+          vrowTok = std::to_string(rows);
+        }
 
-      if (useConstructor) {
-        if (rowIsDynamic && vRowEmitC)
-          constructorArgs.push_back(vRowEmitC);
-        if (colIsDynamic && vColEmitC)
-          constructorArgs.push_back(vColEmitC);
+        if (colIsConst) {
+          vcolTok = std::to_string(cCol);
+        } else if (vCol) {
+          vcolTok = "-1";
+          colIsDynamic = true;
+          useConstructor = true;
+        } else {
+          vcolTok = std::to_string(cols);
+        }
+
+        if (useConstructor) {
+          if (rowIsDynamic && vRowEmitC)
+            constructorArgs.push_back(vRowEmitC);
+          if (colIsDynamic && vColEmitC)
+            constructorArgs.push_back(vColEmitC);
+        }
       }
 
       std::string tileTypeStr = std::string("Tile<") + roleTok + ", " +
@@ -6958,20 +7051,12 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
           if (auto asAttr =
                   dyn_cast_or_null<pto::AddressSpaceAttr>(srcMrTy.getMemorySpace()))
             as = asAttr.getAddressSpace();
-          std::string rawPtrTok =
-              std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
-          auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
-          rawPtr = rewriter
-                       .create<emitc::CallOpaqueOp>(
-                           loc, rawPtrTy, "PTOAS__TILE_DATA", ArrayAttr{},
-                           ArrayAttr{}, ValueRange{sourceValue})
-                       .getResult(0);
+          rawPtr = materializeTileDataValue(rewriter, loc, sourceValue, as,
+                                            elemTok);
         }
       }
 
-      if (isa<emitc::PointerType>(rawPtr.getType()) ||
-          (isa<emitc::OpaqueType>(rawPtr.getType()) &&
-           cast<emitc::OpaqueType>(rawPtr.getType()).getValue().ends_with("*"))) {
+      if (isSetFFTsPointerLikeType(rawPtr.getType())) {
         return rewriter
             .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
                                          ArrayAttr{}, rcU64, ValueRange{rawPtr})
@@ -7013,6 +7098,23 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       return success();
     }
 
+    // Generic tile-to-tile rebind path: preserve the same backing storage and
+    // rebuild a sibling tile with updated metadata/valid dims.
+    if (isTileLike(tileCandidate)) {
+      FailureOr<Value> dstTile = buildTileValue();
+      if (failed(dstTile))
+        return failure();
+      FailureOr<Value> addr = buildIntegralAddress(tileCandidate);
+      if (failed(addr))
+        return failure();
+
+      rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                           ArrayAttr{}, ArrayAttr{},
+                                           ValueRange{*dstTile, *addr});
+      rewriter.replaceOp(op, *dstTile);
+      return success();
+    }
+
     SmallVector<Value> physAddrs;
     Value source = op.getSource();
 
@@ -7029,9 +7131,13 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     Value vRow = op.getValidRow();
     Value vCol = op.getValidCol();
 
-    rewriter.replaceOpWithNewOp<pto::PointerCastOp>(
-        op, op.getType(), physAddrs, vRow ? vRow : Value(),
+    auto newCast = rewriter.create<pto::PointerCastOp>(
+        loc, op.getType(), physAddrs, vRow ? vRow : Value(),
         vCol ? vCol : Value(), configAttr);
+    if (op->hasAttr(kForceDynamicValidShapeAttrName))
+      newCast->setAttr(kForceDynamicValidShapeAttrName,
+                       op->getAttr(kForceDynamicValidShapeAttrName));
+    rewriter.replaceOp(op, newCast.getResult());
 
     return success();
   }
@@ -7668,7 +7774,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMrgSortToEmitC>(typeConverter, ctx);
   patterns.add<SubviewToEmitCPattern>(typeConverter, ctx);
   patterns.add<PointerCastConversion>(typeConverter, ctx);
-  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL,
+  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL, PTOSetValidShapeToEmitC,
                PTOLoadScalarToEmitC, PTOStoreScalarToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAndToEmitC>(typeConverter, ctx);
   patterns.add<PTOMulToEmitC>(typeConverter, ctx);

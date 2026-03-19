@@ -1,0 +1,24 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @set_validshape_local_lowering() {
+    %c16 = arith.constant 16 : index
+    %c24 = arith.constant 24 : index
+    %c32 = arith.constant 32 : index
+    %0 = pto.alloc_tile valid_row = %c32 valid_col = %c32
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.set_validshape %0, %c16, %c24
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    return
+  }
+}
+
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> [[BASE:v[0-9]+]];
+// CHECK: TASSIGN([[BASE]], [[ADDR:v[0-9]+]]);
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> [[TILE:v[0-9]+]] = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>({{.*}})
+// CHECK: __ubuf__ float* [[DATA:v[0-9]+]] = [[BASE]].data();
+// CHECK: uint64_t [[TILE_ADDR:v[0-9]+]] = reinterpret_cast<uint64_t>([[DATA]]);
+// CHECK: TASSIGN([[TILE]], [[TILE_ADDR]]);
+// CHECK: [[TILE]].SetValidShape([[ROW:v[0-9]+]], [[COL:v[0-9]+]])
