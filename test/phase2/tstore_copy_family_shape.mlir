@@ -1,27 +1,25 @@
 // RUN: ./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir %s -o /dev/null 2>&1 | FileCheck %s
 
 // CHECK-LABEL: func.func @tstore_copy_family_shape
-// CHECK: a5vm.set_loop_size_ubtoout
-// CHECK-SAME: 2097153
-// CHECK: a5vm.set_loop1_stride_ubtoout
-// CHECK-SAME: 4503599627374592
-// CHECK: a5vm.set_loop2_stride_ubtoout
-// CHECK-SAME: 4503599627374592
-// CHECK: a5vm.copy_ubuf_to_gm
+// CHECK: %[[ZERO_I64:.*]] = arith.constant 0 : i64
+// CHECK: %[[C32:.*]] = arith.constant 32 : index
+// CHECK: %[[VALID:.*]] = arith.index_castui %[[C32]] : index to i64
+// CHECK: %[[C1_I64:.*]] = arith.constant 1 : i64
+// CHECK: %[[NBURST:.*]] = arith.constant 32 : i64
+// CHECK: %[[ELEM_BYTES:.*]] = arith.constant 4 : i64
+// CHECK: %[[LOOP_STRIDE:.*]] = arith.constant 4096 : i64
+// CHECK: %[[LEN_BURST:.*]] = arith.muli %[[VALID]], %[[ELEM_BYTES]] : i64
+// CHECK: %[[STRIDE_BYTES:.*]] = arith.constant 128 : i64
+// CHECK: a5vm.set_loop_size_ubtoout %[[C1_I64]], %[[C1_I64]]
+// CHECK: a5vm.set_loop1_stride_ubtoout %[[LOOP_STRIDE]], %[[LOOP_STRIDE]]
+// CHECK: a5vm.set_loop2_stride_ubtoout %[[LOOP_STRIDE]], %[[LOOP_STRIDE]]
+// CHECK: a5vm.copy_ubuf_to_gm %{{.*}}, %{{.*}}, %[[VALID]], %[[VALID]], %[[ZERO_I64]], %[[NBURST]], %[[LEN_BURST]], %[[ZERO_I64]], %[[STRIDE_BYTES]], %[[STRIDE_BYTES]]
 // CHECK-SAME: layout = "nd"
-// CHECK-SAME: valid_rows = 32
-// CHECK-SAME: valid_cols = 32
-// CHECK-SAME: sid = 0
-// CHECK-SAME: n_burst = 32
-// CHECK-SAME: len_burst = 128
-// CHECK-SAME: reserved = 0
-// CHECK-SAME: burst_dst_stride = 128
-// CHECK-SAME: burst_src_stride = 128
-// CHECK-SAME: g_shape = [1, 1, 1, 32, 32]
-// CHECK-SAME: g_strides = [1024, 1024, 1024, 32, 1]
-// CHECK-SAME: dst_strides = [32, 1]
-// CHECK-SAME: trace_offsets = [0, 0]
-// CHECK-SAME: trace_sizes = [32, 32]
+// CHECK-NOT: g_shape =
+// CHECK-NOT: g_strides =
+// CHECK-NOT: dst_strides =
+// CHECK-NOT: trace_offsets =
+// CHECK-NOT: trace_sizes =
 
 module {
   func.func @tstore_copy_family_shape(%dst: !pto.ptr<f32>) {

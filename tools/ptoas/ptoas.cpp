@@ -144,6 +144,17 @@ static llvm::cl::opt<bool> a5vmPrintIR(
     llvm::cl::desc("Print post-pass A5VM backend IR to stderr"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> ptoPrintSeamIR(
+    "pto-print-seam-ir",
+    llvm::cl::desc("Print shared pre-backend seam IR to stderr"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> ptoSeamIRFile(
+    "pto-seam-ir-file",
+    llvm::cl::desc("Write shared pre-backend seam IR to a file"),
+    llvm::cl::value_desc("path"),
+    llvm::cl::init(""));
+
 static llvm::cl::opt<bool> a5vmPrintIntrinsics(
     "a5vm-print-intrinsics",
     llvm::cl::desc("Print A5VM intrinsic selection decisions to stderr"),
@@ -210,7 +221,6 @@ static bool parseBackend(llvm::StringRef backendStr, PTOBackend &out) {
 }
 
 static void addSharedPreBackendPasses(OpPassManager &pm,
-                                      PTOBackend effectiveBackend,
                                       PTOBuildLevel effectiveLevel) {
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
 
@@ -236,7 +246,10 @@ static void addSharedPreBackendPasses(OpPassManager &pm,
   }
 
   pm.addPass(createCSEPass());
+}
 
+static void addBackendLoweringPasses(OpPassManager &pm,
+                                     PTOBackend effectiveBackend) {
   if (effectiveBackend == PTOBackend::A5VM) {
     pm.addPass(pto::createLowerPTOToA5VMPass());
     pm.addPass(mlir::createCSEPass());
@@ -267,6 +280,32 @@ static void printA5VMIROpSummary(ModuleOp module, llvm::raw_ostream &os) {
       }
     }
   }
+}
+
+static LogicalResult emitSharedPreBackendSeamIR(ModuleOp module,
+                                                llvm::StringRef outputPath) {
+  if (outputPath.empty())
+    return success();
+
+  if (outputPath == "-") {
+    module->print(llvm::outs());
+    llvm::outs() << "\n";
+    llvm::outs().flush();
+    return success();
+  }
+
+  std::error_code ec;
+  llvm::ToolOutputFile outputFile(outputPath, ec, llvm::sys::fs::OF_None);
+  if (ec) {
+    llvm::errs() << "Error: failed to open seam IR file '" << outputPath
+                 << "': " << ec.message() << "\n";
+    return failure();
+  }
+
+  module->print(outputFile.os());
+  outputFile.os() << "\n";
+  outputFile.keep();
+  return success();
 }
 
 // --------------------------------------------------------------------------
@@ -911,7 +950,7 @@ int main(int argc, char **argv) {
 
   // Main PassManager
   PassManager pm(&context);
-  
+
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertCVMovPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
@@ -923,7 +962,7 @@ int main(int argc, char **argv) {
     // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveRedundantBarrierPass());
     // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
     // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
-    addSharedPreBackendPasses(pm, effectiveBackend, effectiveLevel);
+    addSharedPreBackendPasses(pm, effectiveLevel);
   }
   std::string arch = ptoTargetArch;
   for (char &c : arch)
@@ -937,7 +976,30 @@ int main(int argc, char **argv) {
                                   mlir::StringAttr::get(&context, arch));
   if (!skipPreBackendPasses) {
     if (failed(pm.run(*module))) {
-      llvm::errs() << "Error: Pass execution failed.\n";
+      llvm::errs() << "Error: shared pre-backend pass execution failed.\n";
+      return 1;
+    }
+  }
+
+  if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
+    if (skipPreBackendPasses) {
+      llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
+                      "the input is already A5VM IR.\n";
+      return 1;
+    }
+    if (ptoPrintSeamIR) {
+      module->print(llvm::errs());
+      llvm::errs() << "\n";
+    }
+    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile)))
+      return 1;
+  }
+
+  if (!skipPreBackendPasses) {
+    PassManager backendPM(&context);
+    addBackendLoweringPasses(backendPM, effectiveBackend);
+    if (failed(backendPM.run(*module))) {
+      llvm::errs() << "Error: backend lowering pass execution failed.\n";
       return 1;
     }
   }

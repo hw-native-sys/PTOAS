@@ -1,36 +1,27 @@
 // RUN: ./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir %s -o /dev/null 2>&1 | FileCheck %s
 
 // CHECK-LABEL: func.func @tload_copy_family_shape
-// CHECK: a5vm.set_loop2_stride_outtoub
-// CHECK-SAME: 4503599627374592
-// CHECK: a5vm.set_loop1_stride_outtoub
-// CHECK-SAME: 4503599627374592
-// CHECK: a5vm.set_loop_size_outtoub
-// CHECK-SAME: 2097153
-// CHECK: a5vm.copy_gm_to_ubuf
+// CHECK: %[[ZERO_I64:.*]] = arith.constant 0 : i64
+// CHECK: %[[C32:.*]] = arith.constant 32 : index
+// CHECK: %[[VALID:.*]] = arith.index_castui %[[C32]] : index to i64
+// CHECK: %[[C1_I64:.*]] = arith.constant 1 : i64
+// CHECK: %[[NBURST:.*]] = arith.constant 32 : i64
+// CHECK: %[[ELEM_BYTES:.*]] = arith.constant 4 : i64
+// CHECK: %[[LOOP_STRIDE:.*]] = arith.constant 4096 : i64
+// CHECK: %[[LEN_BURST:.*]] = arith.muli %[[VALID]], %[[ELEM_BYTES]] : i64
+// CHECK: %[[STRIDE_BYTES:.*]] = arith.constant 128 : i64
+// CHECK: a5vm.set_loop2_stride_outtoub %[[LOOP_STRIDE]], %[[LOOP_STRIDE]]
+// CHECK: a5vm.set_loop1_stride_outtoub %[[LOOP_STRIDE]], %[[LOOP_STRIDE]]
+// CHECK: a5vm.set_loop_size_outtoub %[[C1_I64]], %[[C1_I64]]
+// CHECK: a5vm.copy_gm_to_ubuf %{{.*}}, %{{.*}}, %[[VALID]], %[[VALID]], %[[ZERO_I64]], %[[NBURST]], %[[LEN_BURST]], %[[ZERO_I64]], %[[ZERO_I64]], %[[ZERO_I64]], %[[STRIDE_BYTES]], %[[STRIDE_BYTES]]
 // CHECK-SAME: layout = "nd"
-// CHECK-SAME: valid_rows = 32
-// CHECK-SAME: valid_cols = 32
-// CHECK-SAME: sid = 0
-// CHECK-SAME: n_burst = 32
-// CHECK-SAME: len_burst = 128
-// CHECK-SAME: gm_stride = 128
-// CHECK-SAME: ub_stride = 128
-// CHECK-SAME: left_padding_count = 0
-// CHECK-SAME: right_padding_count = 0
 // CHECK-SAME: data_select_bit = false
-// CHECK-SAME: l2_cache_ctl = 0
-// CHECK-SAME: pad_mode = "none"
-// CHECK-SAME: has_pad_value = false
-// CHECK-SAME: left_padding_num = 0
-// CHECK-SAME: right_padding_num = 0
-// CHECK-SAME: init_out_buffer = false
-// CHECK-SAME: has_init_condition = false
-// CHECK-SAME: g_shape = [1, 1, 1, 32, 32]
-// CHECK-SAME: g_strides = [1024, 1024, 1024, 32, 1]
-// CHECK-SAME: src_strides = [32, 1]
-// CHECK-SAME: trace_offsets = [0, 0]
-// CHECK-SAME: trace_sizes = [32, 32]
+// CHECK-SAME: ub_pad = false
+// CHECK-NOT: g_shape =
+// CHECK-NOT: g_strides =
+// CHECK-NOT: src_strides =
+// CHECK-NOT: trace_offsets =
+// CHECK-NOT: trace_sizes =
 
 module {
   func.func @tload_copy_family_shape(%src: !pto.ptr<f32>) {

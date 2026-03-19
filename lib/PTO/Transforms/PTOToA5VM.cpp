@@ -37,6 +37,46 @@ LogicalResult lowerTABSOp(TAbsOp op, PatternRewriter &rewriter) {
   return lowerTABS(op, rewriter);
 }
 
+LogicalResult lowerTADDOp(TAddOp op, PatternRewriter &rewriter) {
+  return lowerTADD(op, rewriter);
+}
+
+LogicalResult lowerTSUBOp(TSubOp op, PatternRewriter &rewriter) {
+  return lowerTSUB(op, rewriter);
+}
+
+LogicalResult lowerTMULOp(TMulOp op, PatternRewriter &rewriter) {
+  return lowerTMUL(op, rewriter);
+}
+
+LogicalResult lowerTDIVOp(TDivOp op, PatternRewriter &rewriter) {
+  return lowerTDIV(op, rewriter);
+}
+
+LogicalResult lowerTEXPOp(TExpOp op, PatternRewriter &rewriter) {
+  return lowerTEXP(op, rewriter);
+}
+
+LogicalResult lowerTLOGOp(TLogOp op, PatternRewriter &rewriter) {
+  return lowerTLOG(op, rewriter);
+}
+
+LogicalResult lowerTSQRTOp(TSqrtOp op, PatternRewriter &rewriter) {
+  return lowerTSQRT(op, rewriter);
+}
+
+LogicalResult lowerTRECIPOp(TRecipOp op, PatternRewriter &rewriter) {
+  return lowerTRECIP(op, rewriter);
+}
+
+LogicalResult lowerTRELUOp(TReluOp op, PatternRewriter &rewriter) {
+  return lowerTRELU(op, rewriter);
+}
+
+LogicalResult lowerTNOTOp(TNotOp op, PatternRewriter &rewriter) {
+  return lowerTNOT(op, rewriter);
+}
+
 LogicalResult lowerTSTOREOp(TStoreOp op, PatternRewriter &rewriter) {
   return lowerTSTORE(op, rewriter);
 }
@@ -61,6 +101,26 @@ LogicalResult lowerTensorPipelineOp(Operation *op, PatternRewriter &rewriter) {
     lowered = lowerTLOADOp(tload, rewriter);
   else if (auto tabs = dyn_cast<TAbsOp>(op))
     lowered = lowerTABSOp(tabs, rewriter);
+  else if (auto tadd = dyn_cast<TAddOp>(op))
+    lowered = lowerTADDOp(tadd, rewriter);
+  else if (auto tsub = dyn_cast<TSubOp>(op))
+    lowered = lowerTSUBOp(tsub, rewriter);
+  else if (auto tmul = dyn_cast<TMulOp>(op))
+    lowered = lowerTMULOp(tmul, rewriter);
+  else if (auto tdiv = dyn_cast<TDivOp>(op))
+    lowered = lowerTDIVOp(tdiv, rewriter);
+  else if (auto texp = dyn_cast<TExpOp>(op))
+    lowered = lowerTEXPOp(texp, rewriter);
+  else if (auto tlog = dyn_cast<TLogOp>(op))
+    lowered = lowerTLOGOp(tlog, rewriter);
+  else if (auto tsqrt = dyn_cast<TSqrtOp>(op))
+    lowered = lowerTSQRTOp(tsqrt, rewriter);
+  else if (auto trecip = dyn_cast<TRecipOp>(op))
+    lowered = lowerTRECIPOp(trecip, rewriter);
+  else if (auto trelu = dyn_cast<TReluOp>(op))
+    lowered = lowerTRELUOp(trelu, rewriter);
+  else if (auto tnot = dyn_cast<TNotOp>(op))
+    lowered = lowerTNOTOp(tnot, rewriter);
   else if (auto tstore = dyn_cast<TStoreOp>(op))
     lowered = lowerTSTOREOp(tstore, rewriter);
   else
@@ -103,7 +163,8 @@ struct PTOToA5VMPass : public impl::PTOToA5VMBase<PTOToA5VMPass> {
     SmallVector<Operation *> tensorPipelineOps;
     SmallVector<Operation *> residualPTOOps;
     module.walk([&](Operation *op) {
-      if (isa<TLoadOp, TAbsOp, TStoreOp>(op))
+      if (isa<TLoadOp, TAbsOp, TAddOp, TSubOp, TMulOp, TDivOp, TExpOp, TLogOp,
+              TSqrtOp, TRecipOp, TReluOp, TNotOp, TStoreOp>(op))
         tensorPipelineOps.push_back(op);
       else if (isa<PointerCastOp, BindTileOp, SetFlagOp, WaitFlagOp, BarrierOp>(op))
         residualPTOOps.push_back(op);

@@ -66,24 +66,44 @@ def A5VM_PipeBarrierOp : A5VM_Op<"pipe_barrier"> {
   let assemblyFormat = "$pipe attr-dict";
 }
 
+class A5VM_BinaryI64ConfigOp<string mnemonic> : A5VM_Op<mnemonic> {
+  let arguments = (ins
+    I64:$first,
+    I64:$second
+  );
+
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $first `,` $second attr-dict `:` type($first) `,` type($second)
+  }];
+}
+
+def A5VM_SetLoop2StrideOutToUbOp : A5VM_BinaryI64ConfigOp<"set_loop2_stride_outtoub">;
+def A5VM_SetLoop1StrideOutToUbOp : A5VM_BinaryI64ConfigOp<"set_loop1_stride_outtoub">;
+def A5VM_SetLoopSizeOutToUbOp : A5VM_BinaryI64ConfigOp<"set_loop_size_outtoub">;
+def A5VM_SetLoop2StrideUbToOutOp : A5VM_BinaryI64ConfigOp<"set_loop2_stride_ubtoout">;
+def A5VM_SetLoop1StrideUbToOutOp : A5VM_BinaryI64ConfigOp<"set_loop1_stride_ubtoout">;
+def A5VM_SetLoopSizeUbToOutOp : A5VM_BinaryI64ConfigOp<"set_loop_size_ubtoout">;
+
 def A5VM_CopyGmToUbufOp : A5VM_Op<"copy_gm_to_ubuf", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
     A5VM_BufferType:$source,
     A5VM_BufferType:$destination,
+    I64:$valid_rows,
+    I64:$valid_cols,
+    I64:$sid,
+    I64:$n_burst,
+    I64:$len_burst,
+    I64:$left_padding_count,
+    I64:$right_padding_count,
+    I64:$l2_cache_ctl,
+    I64:$gm_stride,
+    I64:$ub_stride,
     OptionalAttr<StrAttr>:$layout,
-    OptionalAttr<I64Attr>:$valid_rows,
-    OptionalAttr<I64Attr>:$valid_cols,
-    OptionalAttr<I64Attr>:$sid,
-    OptionalAttr<I64Attr>:$n_burst,
-    OptionalAttr<I64Attr>:$len_burst,
-    OptionalAttr<I64Attr>:$left_padding_count,
-    OptionalAttr<I64Attr>:$right_padding_count,
     OptionalAttr<BoolAttr>:$data_select_bit,
-    OptionalAttr<I64Attr>:$l2_cache_ctl,
-    OptionalAttr<I64Attr>:$gm_stride,
-    OptionalAttr<I64Attr>:$ub_stride,
     OptionalAttr<BoolAttr>:$ub_pad
   );
 
@@ -92,7 +112,11 @@ def A5VM_CopyGmToUbufOp : A5VM_Op<"copy_gm_to_ubuf", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $source `,` $destination attr-dict `:` type($source) `,` type($destination)
+    $source `,` $destination `,` $valid_rows `,` $valid_cols `,` $sid `,` $n_burst `,` $len_burst `,`
+    $left_padding_count `,` $right_padding_count `,` $l2_cache_ctl `,` $gm_stride `,` $ub_stride
+    attr-dict `:` type($source) `,` type($destination) `,` type($valid_rows) `,` type($valid_cols) `,`
+    type($sid) `,` type($n_burst) `,` type($len_burst) `,` type($left_padding_count) `,`
+    type($right_padding_count) `,` type($l2_cache_ctl) `,` type($gm_stride) `,` type($ub_stride)
   }];
 }
 
@@ -124,6 +148,43 @@ def A5VM_VabsOp : A5VM_Op<"vabs", [Pure]> {
   }];
 }
 
+class A5VM_UnaryVecOp<string mnemonic> : A5VM_Op<mnemonic, [Pure]> {
+  let arguments = (ins A5VM_VectorType:$input);
+  let results = (outs A5VM_VectorType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+}
+
+def A5VM_VexpOp : A5VM_UnaryVecOp<"vexp">;
+def A5VM_VlnOp : A5VM_UnaryVecOp<"vln">;
+def A5VM_VsqrtOp : A5VM_UnaryVecOp<"vsqrt">;
+def A5VM_VrecOp : A5VM_UnaryVecOp<"vrec">;
+def A5VM_VreluOp : A5VM_UnaryVecOp<"vrelu">;
+def A5VM_VnotOp : A5VM_UnaryVecOp<"vnot">;
+
+class A5VM_BinaryVecOp<string mnemonic> : A5VM_Op<mnemonic, [Pure]> {
+  let arguments = (ins
+    A5VM_VectorType:$lhs,
+    A5VM_VectorType:$rhs
+  );
+  let results = (outs A5VM_VectorType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)
+  }];
+}
+
+def A5VM_VaddOp : A5VM_BinaryVecOp<"vadd">;
+def A5VM_VsubOp : A5VM_BinaryVecOp<"vsub">;
+def A5VM_VmulOp : A5VM_BinaryVecOp<"vmul">;
+def A5VM_VdivOp : A5VM_BinaryVecOp<"vdiv">;
+
 def A5VM_VstsOp : A5VM_Op<"vsts", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -149,15 +210,15 @@ def A5VM_CopyUbufToGmOp : A5VM_Op<"copy_ubuf_to_gm", [
   let arguments = (ins
     A5VM_BufferType:$source,
     A5VM_BufferType:$destination,
-    OptionalAttr<StrAttr>:$layout,
-    OptionalAttr<I64Attr>:$valid_rows,
-    OptionalAttr<I64Attr>:$valid_cols,
-    OptionalAttr<I64Attr>:$sid,
-    OptionalAttr<I64Attr>:$n_burst,
-    OptionalAttr<I64Attr>:$len_burst,
-    OptionalAttr<I64Attr>:$reserved,
-    OptionalAttr<I64Attr>:$burst_dst_stride,
-    OptionalAttr<I64Attr>:$burst_src_stride
+    I64:$valid_rows,
+    I64:$valid_cols,
+    I64:$sid,
+    I64:$n_burst,
+    I64:$len_burst,
+    I64:$reserved,
+    I64:$burst_dst_stride,
+    I64:$burst_src_stride,
+    OptionalAttr<StrAttr>:$layout
   );
 
   let results = (outs);
@@ -165,7 +226,11 @@ def A5VM_CopyUbufToGmOp : A5VM_Op<"copy_ubuf_to_gm", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $source `,` $destination attr-dict `:` type($source) `,` type($destination)
+    $source `,` $destination `,` $valid_rows `,` $valid_cols `,` $sid `,` $n_burst `,` $len_burst `,`
+    $reserved `,` $burst_dst_stride `,` $burst_src_stride
+    attr-dict `:` type($source) `,` type($destination) `,` type($valid_rows) `,` type($valid_cols) `,`
+    type($sid) `,` type($n_burst) `,` type($len_burst) `,` type($reserved) `,`
+    type($burst_dst_stride) `,` type($burst_src_stride)
   }];
 }
 

@@ -57,6 +57,8 @@ struct A5VMLoadContract {
   StringRef tileLayout;
   A5VMTileDomain tileDomain = A5VMTileDomain::Vec;
   Type elementType;
+  Value validRowsValue;
+  Value validColsValue;
   int64_t validRows = ShapedType::kDynamic;
   int64_t validCols = ShapedType::kDynamic;
   StringRef padMode;
@@ -72,6 +74,20 @@ struct A5VMUnaryContract {
   StringRef family;
   A5VMTileDomain tileDomain = A5VMTileDomain::Vec;
   StringRef tileLayout;
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  Type elementType;
+  A5VMLoopScopeContract loopScope;
+};
+
+struct A5VMBinaryContract {
+  StringRef family;
+  A5VMTileDomain tileDomain = A5VMTileDomain::Vec;
+  StringRef tileLayout;
+  Value validRowsValue;
+  Value validColsValue;
   int64_t validRows = ShapedType::kDynamic;
   int64_t validCols = ShapedType::kDynamic;
   Type elementType;
@@ -84,6 +100,8 @@ struct A5VMStoreContract {
   SmallVector<int64_t> destinationShape;
   SmallVector<int64_t> destinationStrides;
   Type elementType;
+  Value validRowsValue;
+  Value validColsValue;
   int64_t validRows = ShapedType::kDynamic;
   int64_t validCols = ShapedType::kDynamic;
   A5VMPartitionTrace trace;
@@ -115,9 +133,23 @@ LogicalResult buildUnaryVecScope(StringRef family,
                                  const A5VMUnaryContract &contract, Value src,
                                  Value dst, PatternRewriter &rewriter,
                                  Location loc);
+LogicalResult buildBinaryVecScope(StringRef family,
+                                  const A5VMBinaryContract &contract,
+                                  Value src0, Value src1, Value dst,
+                                  PatternRewriter &rewriter, Location loc);
 
 LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter);
 LogicalResult lowerTABS(TAbsOp op, PatternRewriter &rewriter);
+LogicalResult lowerTADD(TAddOp op, PatternRewriter &rewriter);
+LogicalResult lowerTSUB(TSubOp op, PatternRewriter &rewriter);
+LogicalResult lowerTMUL(TMulOp op, PatternRewriter &rewriter);
+LogicalResult lowerTDIV(TDivOp op, PatternRewriter &rewriter);
+LogicalResult lowerTEXP(TExpOp op, PatternRewriter &rewriter);
+LogicalResult lowerTLOG(TLogOp op, PatternRewriter &rewriter);
+LogicalResult lowerTSQRT(TSqrtOp op, PatternRewriter &rewriter);
+LogicalResult lowerTRECIP(TRecipOp op, PatternRewriter &rewriter);
+LogicalResult lowerTRELU(TReluOp op, PatternRewriter &rewriter);
+LogicalResult lowerTNOT(TNotOp op, PatternRewriter &rewriter);
 LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter);
 LogicalResult lowerSetFlag(SetFlagOp op, PatternRewriter &rewriter);
 LogicalResult lowerWaitFlag(WaitFlagOp op, PatternRewriter &rewriter);

@@ -118,14 +118,8 @@ static LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
       !isBufferLike(op.getDestination().getType()))
     return op.emitOpError("requires pointer-like source and destination");
 
-  bool hasAllMetadata = op.getLayoutAttr() && op.getValidRowsAttr() &&
-                        op.getValidColsAttr() && op.getSidAttr() &&
-                        op.getNBurstAttr() && op.getLenBurstAttr() &&
-                        op.getLeftPaddingCountAttr() &&
-                        op.getRightPaddingCountAttr() &&
-                        op.getDataSelectBitAttr() && op.getL2CacheCtlAttr() &&
-                        op.getGmStrideAttr() && op.getUbStrideAttr() &&
-                        op.getUbPadAttr();
+  bool hasAllMetadata =
+      op.getLayoutAttr() && op.getDataSelectBitAttr() && op.getUbPadAttr();
 
   MemoryRole sourceRole = classifyMemoryRole(op.getSource().getType());
   MemoryRole destinationRole = classifyMemoryRole(op.getDestination().getType());
@@ -155,11 +149,7 @@ static LogicalResult verifyCopyUbufToGmOp(CopyOp op, bool expectSourceGM) {
       !isBufferLike(op.getDestination().getType()))
     return op.emitOpError("requires pointer-like source and destination");
 
-  bool hasAllMetadata =
-      op.getLayoutAttr() && op.getValidRowsAttr() && op.getValidColsAttr() &&
-      op.getSidAttr() && op.getNBurstAttr() && op.getLenBurstAttr() &&
-      op.getReservedAttr() && op.getBurstDstStrideAttr() &&
-      op.getBurstSrcStrideAttr();
+  bool hasAllMetadata = op.getLayoutAttr();
 
   MemoryRole sourceRole = classifyMemoryRole(op.getSource().getType());
   MemoryRole destinationRole = classifyMemoryRole(op.getDestination().getType());
@@ -313,6 +303,43 @@ LogicalResult VabsOp::verify() {
     return emitOpError("requires matching register vector shape");
   return success();
 }
+
+template <typename UnaryOp>
+static LogicalResult verifyUnaryVecOp(UnaryOp op) {
+  if (failed(verifyVecTypeLike(op, op.getInput().getType(), "operand type")))
+    return failure();
+  if (failed(verifyVecTypeLike(op, op.getResult().getType(), "result type")))
+    return failure();
+  if (op.getInput().getType() != op.getResult().getType())
+    return op.emitOpError("requires matching register vector shape");
+  return success();
+}
+
+LogicalResult VexpOp::verify() { return verifyUnaryVecOp(*this); }
+LogicalResult VlnOp::verify() { return verifyUnaryVecOp(*this); }
+LogicalResult VsqrtOp::verify() { return verifyUnaryVecOp(*this); }
+LogicalResult VrecOp::verify() { return verifyUnaryVecOp(*this); }
+LogicalResult VreluOp::verify() { return verifyUnaryVecOp(*this); }
+LogicalResult VnotOp::verify() { return verifyUnaryVecOp(*this); }
+
+template <typename BinaryOp>
+static LogicalResult verifyBinaryVecOp(BinaryOp op) {
+  if (failed(verifyVecTypeLike(op, op.getLhs().getType(), "lhs type")))
+    return failure();
+  if (failed(verifyVecTypeLike(op, op.getRhs().getType(), "rhs type")))
+    return failure();
+  if (failed(verifyVecTypeLike(op, op.getResult().getType(), "result type")))
+    return failure();
+  if (op.getLhs().getType() != op.getRhs().getType() ||
+      op.getLhs().getType() != op.getResult().getType())
+    return op.emitOpError("requires matching register vector shapes");
+  return success();
+}
+
+LogicalResult VaddOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VsubOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VmulOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VdivOp::verify() { return verifyBinaryVecOp(*this); }
 
 void VstsOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>

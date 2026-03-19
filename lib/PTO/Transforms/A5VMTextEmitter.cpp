@@ -40,15 +40,30 @@ static LogicalResult writeReportFile(const A5VMEmissionOptions &options,
 }
 
 static constexpr llvm::StringLiteral kSupportedA5VMPrimitives[] = {
-    "a5vm.set_flag",        "a5vm.wait_flag",     "a5vm.pipe_barrier",
-    "a5vm.copy_gm_to_ubuf", "a5vm.vlds",          "a5vm.vabs",
-    "a5vm.vsts",
-    "a5vm.copy_ubuf_to_gm"};
+    "a5vm.set_flag",              "a5vm.wait_flag",
+    "a5vm.pipe_barrier",          "a5vm.set_loop2_stride_outtoub",
+    "a5vm.set_loop1_stride_outtoub",
+    "a5vm.set_loop_size_outtoub", "a5vm.set_loop2_stride_ubtoout",
+    "a5vm.set_loop1_stride_ubtoout",
+    "a5vm.set_loop_size_ubtoout", "a5vm.copy_gm_to_ubuf",
+    "a5vm.vlds",                  "a5vm.vabs",
+    "a5vm.vexp",                  "a5vm.vln",
+    "a5vm.vsqrt",                 "a5vm.vrec",
+    "a5vm.vrelu",                 "a5vm.vnot",
+    "a5vm.vadd",                  "a5vm.vsub",
+    "a5vm.vmul",                  "a5vm.vdiv",
+    "a5vm.vsts",                  "a5vm.copy_ubuf_to_gm"};
 
 static bool isSupportedA5VMPrimitive(Operation *op) {
   if (!isa<a5vm::SetFlagOp, a5vm::WaitFlagOp, a5vm::PipeBarrierOp,
+           a5vm::SetLoop2StrideOutToUbOp, a5vm::SetLoop1StrideOutToUbOp,
+           a5vm::SetLoopSizeOutToUbOp, a5vm::SetLoop2StrideUbToOutOp,
+           a5vm::SetLoop1StrideUbToOutOp, a5vm::SetLoopSizeUbToOutOp,
            a5vm::CopyGmToUbufOp,
-           a5vm::VldsOp, a5vm::VabsOp, a5vm::VstsOp, a5vm::CopyUbufToGmOp>(op))
+           a5vm::VldsOp, a5vm::VabsOp, a5vm::VexpOp, a5vm::VlnOp,
+           a5vm::VsqrtOp, a5vm::VrecOp, a5vm::VreluOp, a5vm::VnotOp,
+           a5vm::VaddOp, a5vm::VsubOp, a5vm::VmulOp, a5vm::VdivOp,
+           a5vm::VstsOp, a5vm::CopyUbufToGmOp>(op))
     return false;
 
   return llvm::is_contained(kSupportedA5VMPrimitives,
