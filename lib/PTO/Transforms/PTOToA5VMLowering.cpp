@@ -21,6 +21,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/ADT/APFloat.h"
 
 #include <optional>
 #include <utility>
@@ -55,6 +56,90 @@ struct VecNdTransferPlan {
   Value firstStrideBytes;
   Value secondStrideBytes;
 };
+
+struct A5VMRowReduceContract {
+  StringRef family;
+  A5VMTileDomain srcDomain = A5VMTileDomain::Vec;
+  A5VMTileDomain dstDomain = A5VMTileDomain::Vec;
+  StringRef srcLayout;
+  StringRef dstLayout;
+  Type elementType;
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  int64_t dstValidCols = ShapedType::kDynamic;
+  A5VMLoopScopeContract loopScope;
+};
+
+struct A5VMColReduceContract {
+  StringRef family;
+  A5VMTileDomain srcDomain = A5VMTileDomain::Vec;
+  A5VMTileDomain dstDomain = A5VMTileDomain::Vec;
+  StringRef srcLayout;
+  StringRef dstLayout;
+  Type elementType;
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  int64_t dstValidRows = ShapedType::kDynamic;
+  int64_t dstValidCols = ShapedType::kDynamic;
+  bool isBinary = false;
+  Value tmp;
+  A5VMLoopScopeContract loopScope;
+};
+
+struct A5VMPartContract {
+  StringRef family;
+  A5VMTileDomain src0Domain = A5VMTileDomain::Vec;
+  A5VMTileDomain src1Domain = A5VMTileDomain::Vec;
+  A5VMTileDomain dstDomain = A5VMTileDomain::Vec;
+  StringRef src0Layout;
+  StringRef src1Layout;
+  StringRef dstLayout;
+  Type elementType;
+  Value src0ValidRowsValue;
+  Value src0ValidColsValue;
+  Value src1ValidRowsValue;
+  Value src1ValidColsValue;
+  Value dstValidRowsValue;
+  Value dstValidColsValue;
+  int64_t src0ValidRows = ShapedType::kDynamic;
+  int64_t src0ValidCols = ShapedType::kDynamic;
+  int64_t src1ValidRows = ShapedType::kDynamic;
+  int64_t src1ValidCols = ShapedType::kDynamic;
+  int64_t dstValidRows = ShapedType::kDynamic;
+  int64_t dstValidCols = ShapedType::kDynamic;
+  A5VMLoopScopeContract loopScope;
+};
+
+struct A5VMExpandContract {
+  StringRef family;
+  A5VMTileDomain srcDomain = A5VMTileDomain::Vec;
+  A5VMTileDomain dstDomain = A5VMTileDomain::Vec;
+  StringRef srcLayout;
+  StringRef dstLayout;
+  Type elementType;
+  Value srcValidRowsValue;
+  Value srcValidColsValue;
+  Value dstValidRowsValue;
+  Value dstValidColsValue;
+  int64_t srcValidRows = ShapedType::kDynamic;
+  int64_t srcValidCols = ShapedType::kDynamic;
+  int64_t dstValidRows = ShapedType::kDynamic;
+  int64_t dstValidCols = ShapedType::kDynamic;
+  A5VMLoopScopeContract loopScope;
+};
+
+StringRef inferVecTransferLayoutFromTile(StringRef explicitLayout,
+                                         StringRef tileLayout) {
+  if (explicitLayout != "nd")
+    return explicitLayout;
+  if (tileLayout == "col_major")
+    return "dn";
+  return "nd";
+}
 
 int64_t getElementByteSize(Type type);
 Value materializeIndexValue(Value maybeValue, int64_t fallback,
@@ -449,6 +534,58 @@ LogicalResult buildVecNdLoadPlan(ArrayRef<OpFoldResult> shape,
   return success();
 }
 
+LogicalResult buildVecDnLoadPlan(ArrayRef<OpFoldResult> shape,
+                                 ArrayRef<OpFoldResult> strides, int64_t tileRows,
+                                 Value validRowsValue, int64_t validRows,
+                                 Type elementType, PatternRewriter &rewriter,
+                                 Location loc, VecNdTransferPlan &plan) {
+  if (tileRows == ShapedType::kDynamic)
+    return failure();
+  int64_t elemBytes = getElementByteSize(elementType);
+  if (elemBytes <= 0)
+    return failure();
+
+  SmallVector<OpFoldResult> globalShape;
+  SmallVector<OpFoldResult> globalStride;
+  normalizeMixedGlobalShapeAndStride(shape, strides, globalShape, globalStride,
+                                     rewriter, loc);
+
+  auto toI64 = [&](OpFoldResult ofr) { return materializeI64Ofr(ofr, rewriter, loc); };
+  Value gShape0 = toI64(globalShape[0]);
+  Value gShape1 = toI64(globalShape[1]);
+  Value gShape2 = toI64(globalShape[2]);
+  Value gShape4 = toI64(globalShape[4]);
+  Value gStride0 = toI64(globalStride[0]);
+  Value gStride1 = toI64(globalStride[1]);
+  Value gStride2 = toI64(globalStride[2]);
+  Value gStride4 = toI64(globalStride[4]);
+  Value validRowsI64 = materializeI64Value(validRowsValue, validRows, rewriter, loc);
+  if (!gShape0 || !gShape1 || !gShape2 || !gShape4 || !gStride0 || !gStride1 ||
+      !gStride2 || !gStride4 || !validRowsI64)
+    return failure();
+
+  Value tileRowsI64 = rewriter.create<arith::ConstantIntOp>(loc, tileRows, 64);
+  Value elemBytesI64 = rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
+  Value dstStride2 = createI64Mul(gShape4, tileRowsI64, rewriter, loc);
+  Value dstStride1 = createI64Mul(gShape2, dstStride2, rewriter, loc);
+  Value dstStride0 = createI64Mul(gShape1, dstStride1, rewriter, loc);
+
+  plan.outerCount = gShape0;
+  plan.outerSrcStrideElems = gStride0;
+  plan.outerDstStrideElems = dstStride0;
+  plan.loop2Size = gShape1;
+  plan.loop1Size = gShape2;
+  plan.loop2FirstStrideBytes = createI64Mul(dstStride1, elemBytesI64, rewriter, loc);
+  plan.loop2SecondStrideBytes = createI64Mul(gStride1, elemBytesI64, rewriter, loc);
+  plan.loop1FirstStrideBytes = createI64Mul(dstStride2, elemBytesI64, rewriter, loc);
+  plan.loop1SecondStrideBytes = createI64Mul(gStride2, elemBytesI64, rewriter, loc);
+  plan.nBurst = gShape4;
+  plan.lenBurst = createI64Mul(validRowsI64, elemBytesI64, rewriter, loc);
+  plan.firstStrideBytes = createI64Mul(gStride4, elemBytesI64, rewriter, loc);
+  plan.secondStrideBytes = createI64Mul(tileRowsI64, elemBytesI64, rewriter, loc);
+  return success();
+}
+
 LogicalResult buildVecNdStorePlan(ArrayRef<OpFoldResult> shape,
                                   ArrayRef<OpFoldResult> strides, int64_t tileCols,
                                   Value validColsValue, int64_t validCols,
@@ -460,6 +597,66 @@ LogicalResult buildVecNdStorePlan(ArrayRef<OpFoldResult> shape,
   std::swap(plan.outerSrcStrideElems, plan.outerDstStrideElems);
   std::swap(plan.loop2FirstStrideBytes, plan.loop2SecondStrideBytes);
   std::swap(plan.loop1FirstStrideBytes, plan.loop1SecondStrideBytes);
+  return success();
+}
+
+LogicalResult buildVecDnStorePlan(ArrayRef<OpFoldResult> shape,
+                                  ArrayRef<OpFoldResult> strides, int64_t tileRows,
+                                  Value validRowsValue, int64_t validRows,
+                                  Type elementType, PatternRewriter &rewriter,
+                                  Location loc, VecNdTransferPlan &plan) {
+  if (tileRows == ShapedType::kDynamic)
+    return failure();
+  int64_t elemBytes = getElementByteSize(elementType);
+  if (elemBytes <= 0)
+    return failure();
+
+  SmallVector<OpFoldResult> globalShape;
+  SmallVector<OpFoldResult> globalStride;
+  normalizeMixedGlobalShapeAndStride(shape, strides, globalShape, globalStride,
+                                     rewriter, loc);
+
+  auto toI64 = [&](OpFoldResult ofr) { return materializeI64Ofr(ofr, rewriter, loc); };
+  Value gShape0 = toI64(globalShape[0]);
+  Value gShape1 = toI64(globalShape[1]);
+  Value gShape2 = toI64(globalShape[2]);
+  Value gShape4 = toI64(globalShape[4]);
+  Value gStride0 = toI64(globalStride[0]);
+  Value gStride1 = toI64(globalStride[1]);
+  Value gStride2 = toI64(globalStride[2]);
+  Value gStride4 = toI64(globalStride[4]);
+  Value validRowsI64 = materializeI64Value(validRowsValue, validRows, rewriter, loc);
+  if (!gShape0 || !gShape1 || !gShape2 || !gShape4 || !gStride0 || !gStride1 ||
+      !gStride2 || !gStride4 || !validRowsI64)
+    return failure();
+
+  Value tileRowsI64 = rewriter.create<arith::ConstantIntOp>(loc, tileRows, 64);
+  Value elemBytesI64 = rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
+  Value outerSrcStride =
+      createI64Mul(createI64Mul(createI64Mul(gShape1, gShape2, rewriter, loc),
+                                gShape4, rewriter, loc),
+                   tileRowsI64, rewriter, loc);
+  Value loop1SrcStride =
+      createI64Mul(createI64Mul(tileRowsI64, gShape4, rewriter, loc), elemBytesI64,
+                   rewriter, loc);
+  Value loop2SrcStride =
+      createI64Mul(createI64Mul(createI64Mul(gShape2, tileRowsI64, rewriter, loc),
+                                gShape4, rewriter, loc),
+                   elemBytesI64, rewriter, loc);
+
+  plan.outerCount = gShape0;
+  plan.outerSrcStrideElems = outerSrcStride;
+  plan.outerDstStrideElems = gStride0;
+  plan.loop2Size = gShape1;
+  plan.loop1Size = gShape2;
+  plan.loop2FirstStrideBytes = loop2SrcStride;
+  plan.loop2SecondStrideBytes = createI64Mul(gStride1, elemBytesI64, rewriter, loc);
+  plan.loop1FirstStrideBytes = loop1SrcStride;
+  plan.loop1SecondStrideBytes = createI64Mul(gStride2, elemBytesI64, rewriter, loc);
+  plan.nBurst = gShape4;
+  plan.lenBurst = createI64Mul(validRowsI64, elemBytesI64, rewriter, loc);
+  plan.firstStrideBytes = createI64Mul(gStride4, elemBytesI64, rewriter, loc);
+  plan.secondStrideBytes = createI64Mul(tileRowsI64, elemBytesI64, rewriter, loc);
   return success();
 }
 
@@ -518,6 +715,26 @@ StringAttr stringifyEventAttr(EventAttr event, PatternRewriter &rewriter) {
   return rewriter.getStringAttr(stringifyEVENT(event.getEvent()));
 }
 
+StringRef stringifyCmpModeAttr(CmpModeAttr cmpMode) {
+  if (!cmpMode)
+    return "eq";
+  switch (cmpMode.getValue()) {
+  case CmpMode::EQ:
+    return "eq";
+  case CmpMode::NE:
+    return "ne";
+  case CmpMode::LT:
+    return "lt";
+  case CmpMode::LE:
+    return "le";
+  case CmpMode::GT:
+    return "gt";
+  case CmpMode::GE:
+    return "ge";
+  }
+  return "eq";
+}
+
 A5VMTileDomain deriveTileDomain(Attribute memorySpace) {
   if (auto addrSpace = dyn_cast_or_null<AddressSpaceAttr>(memorySpace)) {
     switch (addrSpace.getAddressSpace()) {
@@ -563,6 +780,22 @@ TileBufConfigAttr lookupTileConfig(Value value) {
   if (auto cast = value.getDefiningOp<memref::CastOp>())
     return lookupTileConfig(cast.getSource());
   return {};
+}
+
+bool hasStructuredTileDriver(Value value) {
+  if (!value)
+    return false;
+  if (isa<TileBufType>(value.getType()))
+    return true;
+  if (value.getDefiningOp<BindTileOp>())
+    return true;
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
+    return hasStructuredTileDriver(subview.getSource());
+  if (auto reinterpret = value.getDefiningOp<memref::ReinterpretCastOp>())
+    return hasStructuredTileDriver(reinterpret.getSource());
+  if (auto cast = value.getDefiningOp<memref::CastOp>())
+    return hasStructuredTileDriver(cast.getSource());
+  return false;
 }
 
 void lookupValidDims(Value value, Value &validRow, Value &validCol) {
@@ -634,6 +867,44 @@ void deriveValidShape(Value value, int64_t &rows, int64_t &cols) {
   lookupValidDims(value, validRow, validCol);
   rows = getConstInt(validRow).value_or(ShapedType::kDynamic);
   cols = getConstInt(validCol).value_or(ShapedType::kDynamic);
+  if (rows != ShapedType::kDynamic && cols != ShapedType::kDynamic)
+    return;
+  if (!hasStructuredTileDriver(value))
+    return;
+
+  auto shapedType = dyn_cast<ShapedType>(value.getType());
+  if (!shapedType || !shapedType.hasRank())
+    return;
+
+  ArrayRef<int64_t> shape = shapedType.getShape();
+  if (shape.empty()) {
+    if (rows == ShapedType::kDynamic)
+      rows = 1;
+    if (cols == ShapedType::kDynamic)
+      cols = 1;
+    return;
+  }
+  if (shape.size() == 1) {
+    if (rows == ShapedType::kDynamic)
+      rows = 1;
+    if (cols == ShapedType::kDynamic)
+      cols = shape.front();
+    return;
+  }
+
+  if (cols == ShapedType::kDynamic)
+    cols = shape.back();
+  if (rows == ShapedType::kDynamic) {
+    int64_t flatRows = 1;
+    for (int64_t dim : shape.drop_back()) {
+      if (dim == ShapedType::kDynamic) {
+        flatRows = ShapedType::kDynamic;
+        break;
+      }
+      flatRows *= dim;
+    }
+    rows = flatRows;
+  }
 }
 
 void deriveValidShapeValues(Value value, Value &rows, Value &cols) {
@@ -926,6 +1197,75 @@ std::pair<int64_t, int64_t> getStaticTileRowsCols(Value value) {
   return {ShapedType::kDynamic, ShapedType::kDynamic};
 }
 
+Value materializeStaticOrDynamicDimAsIndex(Value value, int64_t dim,
+                                           unsigned dimPos,
+                                           PatternRewriter &rewriter,
+                                           Location loc) {
+  if (dim != ShapedType::kDynamic)
+    return rewriter.create<arith::ConstantIndexOp>(loc, dim);
+  if (isa<MemRefType>(value.getType()))
+    return rewriter.create<memref::DimOp>(loc, value, dimPos);
+  return {};
+}
+
+LogicalResult materializeShapeBackedValidShapeValues(Value value, Value &rows,
+                                                     Value &cols,
+                                                     PatternRewriter &rewriter,
+                                                     Location loc) {
+  rows = {};
+  cols = {};
+
+  auto shapedType = dyn_cast<ShapedType>(value.getType());
+  if (!shapedType || !shapedType.hasRank() || !hasStructuredTileDriver(value))
+    return failure();
+
+  ArrayRef<int64_t> shape = shapedType.getShape();
+  if (shape.empty()) {
+    rows = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    cols = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    return success();
+  }
+  if (shape.size() == 1) {
+    rows = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    cols = materializeStaticOrDynamicDimAsIndex(value, shape.front(), 0, rewriter, loc);
+    return success(cols != nullptr);
+  }
+
+  cols = materializeStaticOrDynamicDimAsIndex(value, shape.back(), shape.size() - 1,
+                                              rewriter, loc);
+  if (!cols)
+    return failure();
+
+  Value flatRows = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  for (auto [idx, dim] : llvm::enumerate(shape.drop_back())) {
+    Value dimValue =
+        materializeStaticOrDynamicDimAsIndex(value, dim, idx, rewriter, loc);
+    if (!dimValue)
+      return failure();
+    flatRows = rewriter.create<arith::MulIOp>(loc, flatRows, dimValue);
+  }
+  rows = flatRows;
+  return success();
+}
+
+LogicalResult resolveExecutionValidShape(Value carrier, Value &rowsValue,
+                                         Value &colsValue, int64_t &rows,
+                                         int64_t &cols,
+                                         PatternRewriter &rewriter,
+                                         Location loc) {
+  rowsValue = materializeIndexValue(rowsValue, rows, rewriter, loc);
+  colsValue = materializeIndexValue(colsValue, cols, rewriter, loc);
+  if (rowsValue && colsValue)
+    return success();
+
+  if (succeeded(materializeShapeBackedValidShapeValues(carrier, rowsValue, colsValue,
+                                                       rewriter, loc))) {
+    deriveValidShape(carrier, rows, cols);
+    return success(rowsValue && colsValue);
+  }
+  return failure();
+}
+
 Attribute getGmMemorySpace(MLIRContext *context) {
   return AddressSpaceAttr::get(context, AddressSpace::GM);
 }
@@ -995,6 +1335,50 @@ Value materializeBufferPointer(Value value, Type elementType,
       LLVM::LLVMPointerType::get(rewriter.getContext(),
                                  getLLVMAddressSpace(memorySpace));
   return rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, ptrAsI64);
+}
+
+Value offsetBufferPointer(Value basePtr, Type elementType, Value elementOffset,
+                          PatternRewriter &rewriter, Location loc) {
+  int64_t elemBytes = getElementByteSize(elementType);
+  if (!basePtr || elemBytes <= 0)
+    return {};
+
+  Value baseI64 =
+      rewriter.create<LLVM::PtrToIntOp>(loc, rewriter.getI64Type(), basePtr);
+  Value offsetI64 = elementOffset.getType().isIndex()
+                        ? rewriter.create<arith::IndexCastUIOp>(
+                              loc, rewriter.getI64Type(), elementOffset)
+                        : elementOffset;
+  Value elemBytesI64 = rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
+  Value byteOffset = rewriter.create<arith::MulIOp>(loc, offsetI64, elemBytesI64);
+  Value shifted = rewriter.create<arith::AddIOp>(loc, baseI64, byteOffset);
+  auto ptrType = cast<LLVM::LLVMPointerType>(basePtr.getType());
+  return rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, shifted);
+}
+
+Value buildPackedCountI64(PatternRewriter &rewriter, Location loc,
+                          ArrayRef<Value> counts) {
+  Value packed = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+  for (auto [idx, count] : llvm::enumerate(counts)) {
+    Value countI64 = count.getType().isIndex()
+                         ? rewriter.create<arith::IndexCastUIOp>(
+                               loc, rewriter.getI64Type(), count)
+                         : count;
+    if (idx != 0) {
+      Value shift = rewriter.create<arith::ConstantIntOp>(loc, idx * 16, 64);
+      countI64 = rewriter.create<arith::ShLIOp>(loc, countI64, shift);
+    }
+    packed = rewriter.create<arith::OrIOp>(loc, packed, countI64);
+  }
+  return packed;
+}
+
+Value buildCeilDivPositiveI64(PatternRewriter &rewriter, Location loc, Value lhs,
+                              int64_t rhs) {
+  Value rhsValue = rewriter.create<arith::ConstantIntOp>(loc, rhs, 64);
+  Value rhsMinusOne = rewriter.create<arith::ConstantIntOp>(loc, rhs - 1, 64);
+  Value biased = rewriter.create<arith::AddIOp>(loc, lhs, rhsMinusOne);
+  return rewriter.create<arith::DivUIOp>(loc, biased, rhsValue);
 }
 
 A5VMPartitionTrace extractPartitionTrace(Value value) {
@@ -1130,6 +1514,199 @@ A5VMUnaryContract extractTReluContract(TReluOp op) {
 
 A5VMUnaryContract extractTNotContract(TNotOp op) {
   return buildUnaryContract("not", op.getSrc());
+}
+
+static FailureOr<StringAttr> stringifyA5RoundMode(TCvtOp op,
+                                                  PatternRewriter &rewriter) {
+  switch (op.getRmode()) {
+  case RoundMode::NONE:
+  case RoundMode::RINT:
+  case RoundMode::CAST_RINT:
+    return rewriter.getStringAttr("ROUND_R");
+  case RoundMode::ROUND:
+    return rewriter.getStringAttr("ROUND_A");
+  case RoundMode::FLOOR:
+    return rewriter.getStringAttr("ROUND_F");
+  case RoundMode::CEIL:
+    return rewriter.getStringAttr("ROUND_C");
+  case RoundMode::TRUNC:
+    return rewriter.getStringAttr("ROUND_Z");
+  case RoundMode::ODD:
+    return rewriter.getStringAttr("ROUND_O");
+  }
+  return failure();
+}
+
+enum class A5VMCvtLoweringKind {
+  Vtrc,
+  F32ToBF16,
+  BF16ToF32,
+};
+
+static FailureOr<A5VMCvtLoweringKind> classifyA5CvtLowering(Type srcElemType,
+                                                            Type dstElemType) {
+  if (srcElemType.isF32() && dstElemType.isF32())
+    return A5VMCvtLoweringKind::Vtrc;
+  if (srcElemType.isF32() && dstElemType.isBF16())
+    return A5VMCvtLoweringKind::F32ToBF16;
+  if (srcElemType.isBF16() && dstElemType.isF32())
+    return A5VMCvtLoweringKind::BF16ToF32;
+  return failure();
+}
+
+A5VMUnaryContract extractTExpandSContract(TExpandsOp op) {
+  A5VMUnaryContract contract;
+  contract.family = "expands";
+  contract.tileDomain = deriveTileDomain(getMemorySpace(op.getDst()));
+  contract.tileLayout = deriveTileLayout(op.getDst());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue,
+                         contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  contract.elementType = getElementType(op.getDst());
+  contract.loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  contract.loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  contract.loopScope.loopDepth = 0;
+  return contract;
+}
+
+A5VMExpandContract extractTRowExpandContract(TRowExpandOp op) {
+  A5VMExpandContract contract;
+  contract.family = "rowexpand";
+  contract.srcDomain = deriveTileDomain(getMemorySpace(op.getSrc()));
+  contract.dstDomain = deriveTileDomain(getMemorySpace(op.getDst()));
+  contract.srcLayout = deriveTileLayout(op.getSrc());
+  contract.dstLayout = deriveTileLayout(op.getDst());
+  contract.elementType = getElementType(op.getSrc());
+  deriveValidShapeValues(op.getSrc(), contract.srcValidRowsValue,
+                         contract.srcValidColsValue);
+  deriveValidShape(op.getSrc(), contract.srcValidRows, contract.srcValidCols);
+  deriveValidShapeValues(op.getDst(), contract.dstValidRowsValue,
+                         contract.dstValidColsValue);
+  deriveValidShape(op.getDst(), contract.dstValidRows, contract.dstValidCols);
+  contract.loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  contract.loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  contract.loopScope.loopDepth = 0;
+  return contract;
+}
+
+A5VMExpandContract extractTColExpandContract(TColExpandOp op) {
+  A5VMExpandContract contract;
+  contract.family = "colexpand";
+  contract.srcDomain = deriveTileDomain(getMemorySpace(op.getSrc()));
+  contract.dstDomain = deriveTileDomain(getMemorySpace(op.getDst()));
+  contract.srcLayout = deriveTileLayout(op.getSrc());
+  contract.dstLayout = deriveTileLayout(op.getDst());
+  contract.elementType = getElementType(op.getSrc());
+  deriveValidShapeValues(op.getSrc(), contract.srcValidRowsValue,
+                         contract.srcValidColsValue);
+  deriveValidShape(op.getSrc(), contract.srcValidRows, contract.srcValidCols);
+  deriveValidShapeValues(op.getDst(), contract.dstValidRowsValue,
+                         contract.dstValidColsValue);
+  deriveValidShape(op.getDst(), contract.dstValidRows, contract.dstValidCols);
+  contract.loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  contract.loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  contract.loopScope.loopDepth = 0;
+  return contract;
+}
+
+A5VMRowReduceContract extractTRowReduceContract(Value src, Value dst,
+                                                StringRef family) {
+  A5VMRowReduceContract contract;
+  contract.family = family;
+  contract.srcDomain = deriveTileDomain(getMemorySpace(src));
+  contract.dstDomain = deriveTileDomain(getMemorySpace(dst));
+  contract.srcLayout = deriveTileLayout(src);
+  contract.dstLayout = deriveTileLayout(dst);
+  contract.elementType = getElementType(src);
+  deriveValidShapeValues(src, contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(src, contract.validRows, contract.validCols);
+  int64_t dstRows = ShapedType::kDynamic;
+  deriveValidShape(dst, dstRows, contract.dstValidCols);
+  contract.loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  contract.loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  contract.loopScope.loopDepth = 0;
+  return contract;
+}
+
+A5VMRowReduceContract extractTRowMaxContract(TRowMaxOp op) {
+  return extractTRowReduceContract(op.getSrc(), op.getDst(), "rowmax");
+}
+
+A5VMRowReduceContract extractTRowMinContract(TRowMinOp op) {
+  return extractTRowReduceContract(op.getSrc(), op.getDst(), "rowmin");
+}
+
+A5VMRowReduceContract extractTRowSumContract(TRowSumOp op) {
+  return extractTRowReduceContract(op.getSrc(), op.getDst(), "rowsum");
+}
+
+A5VMColReduceContract extractTColReduceContract(Value src, Value dst,
+                                                StringRef family) {
+  A5VMColReduceContract contract;
+  contract.family = family;
+  contract.srcDomain = deriveTileDomain(getMemorySpace(src));
+  contract.dstDomain = deriveTileDomain(getMemorySpace(dst));
+  contract.srcLayout = deriveTileLayout(src);
+  contract.dstLayout = deriveTileLayout(dst);
+  contract.elementType = getElementType(src);
+  deriveValidShapeValues(src, contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(src, contract.validRows, contract.validCols);
+  deriveValidShape(dst, contract.dstValidRows, contract.dstValidCols);
+  contract.loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  contract.loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  contract.loopScope.loopDepth = 0;
+  return contract;
+}
+
+A5VMColReduceContract extractTColMaxContract(TColMaxOp op) {
+  return extractTColReduceContract(op.getSrc(), op.getDst(), "colmax");
+}
+
+A5VMColReduceContract extractTColMinContract(TColMinOp op) {
+  return extractTColReduceContract(op.getSrc(), op.getDst(), "colmin");
+}
+
+A5VMColReduceContract extractTColSumContract(TColSumOp op) {
+  A5VMColReduceContract contract =
+      extractTColReduceContract(op.getSrc(), op.getDst(), "colsum");
+  contract.isBinary = op.getIsBinary();
+  contract.tmp = op.getTmp();
+  return contract;
+}
+
+A5VMPartContract extractTPartContract(Value src0, Value src1, Value dst,
+                                      StringRef family) {
+  A5VMPartContract contract;
+  contract.family = family;
+  contract.src0Domain = deriveTileDomain(getMemorySpace(src0));
+  contract.src1Domain = deriveTileDomain(getMemorySpace(src1));
+  contract.dstDomain = deriveTileDomain(getMemorySpace(dst));
+  contract.src0Layout = deriveTileLayout(src0);
+  contract.src1Layout = deriveTileLayout(src1);
+  contract.dstLayout = deriveTileLayout(dst);
+  contract.elementType = getElementType(dst);
+  deriveValidShapeValues(src0, contract.src0ValidRowsValue, contract.src0ValidColsValue);
+  deriveValidShapeValues(src1, contract.src1ValidRowsValue, contract.src1ValidColsValue);
+  deriveValidShapeValues(dst, contract.dstValidRowsValue, contract.dstValidColsValue);
+  deriveValidShape(src0, contract.src0ValidRows, contract.src0ValidCols);
+  deriveValidShape(src1, contract.src1ValidRows, contract.src1ValidCols);
+  deriveValidShape(dst, contract.dstValidRows, contract.dstValidCols);
+  contract.loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  contract.loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  contract.loopScope.loopDepth = 0;
+  return contract;
+}
+
+A5VMPartContract extractTPartAddContract(TPartAddOp op) {
+  return extractTPartContract(op.getSrc0(), op.getSrc1(), op.getDst(), "partadd");
+}
+
+A5VMPartContract extractTPartMaxContract(TPartMaxOp op) {
+  return extractTPartContract(op.getSrc0(), op.getSrc1(), op.getDst(), "partmax");
+}
+
+A5VMPartContract extractTPartMinContract(TPartMinOp op) {
+  return extractTPartContract(op.getSrc0(), op.getSrc1(), op.getDst(), "partmin");
 }
 
 A5VMStoreContract extractTStoreContract(TStoreOp op) {
@@ -1289,6 +1866,669 @@ LogicalResult programCopyUbToGmLoops(Operation *copyOp,
   return success();
 }
 
+int64_t deriveStaticRowStride(Value value) {
+  StringRef layout = deriveTileLayout(value);
+  if (layout == "col_major")
+    return 1;
+
+  if (auto tileType = dyn_cast<TileBufType>(value.getType())) {
+    ArrayRef<int64_t> shape = tileType.getShape();
+    if (shape.size() >= 2)
+      return shape[shape.size() - 1];
+  }
+  if (auto shapedType = dyn_cast<ShapedType>(value.getType())) {
+    ArrayRef<int64_t> shape = shapedType.getShape();
+    if (shape.size() >= 2)
+      return shape[shape.size() - 1];
+  }
+  return ShapedType::kDynamic;
+}
+
+int64_t deriveStaticShapeDim(Value value, unsigned dim) {
+  if (auto tileType = dyn_cast<TileBufType>(value.getType())) {
+    ArrayRef<int64_t> shape = tileType.getShape();
+    if (dim < shape.size())
+      return shape[dim];
+  }
+  if (auto shapedType = dyn_cast<ShapedType>(value.getType())) {
+    ArrayRef<int64_t> shape = shapedType.getShape();
+    if (dim < shape.size())
+      return shape[dim];
+  }
+  return ShapedType::kDynamic;
+}
+
+Value buildMinIndexValue(PatternRewriter &rewriter, Location loc, Value lhs,
+                         Value rhs) {
+  auto lhsLtRhs = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                 lhs, rhs);
+  return rewriter.create<arith::SelectOp>(loc, lhsLtRhs, lhs, rhs);
+}
+
+LogicalResult buildMaskedVectorStore(PatternRewriter &rewriter, Location loc,
+                                     Value value, Value dstBuffer,
+                                     Value dstOffset, Value activeLanes,
+                                     int64_t vectorWidth) {
+  Value vectorWidthValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  auto needsTail = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                  activeLanes, vectorWidthValue);
+  auto storeIf = rewriter.create<scf::IfOp>(loc, needsTail, true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.thenBlock());
+    rewriter.create<a5vm::VstsPredOp>(loc, value, dstBuffer, dstOffset, activeLanes,
+                                      StringAttr());
+  }
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.elseBlock());
+    rewriter.create<a5vm::VstsOp>(loc, value, dstBuffer, dstOffset, StringAttr());
+  }
+  return success();
+}
+
+Attribute buildRowReduceInitValue(Type elementType, StringRef family,
+                                  Builder &builder) {
+  if (!isa<FloatType>(elementType))
+    return {};
+
+  if (family == "rowsum")
+    return builder.getFloatAttr(elementType, 0.0);
+
+  const llvm::fltSemantics &semantics = [&]() -> const llvm::fltSemantics & {
+    if (elementType.isF16())
+      return llvm::APFloat::IEEEhalf();
+    if (elementType.isBF16())
+      return llvm::APFloat::BFloat();
+    return llvm::APFloat::IEEEsingle();
+  }();
+  bool negative = family == "rowmax";
+  return builder.getFloatAttr(elementType, llvm::APFloat::getInf(semantics, negative));
+}
+
+Attribute buildPartPadValue(Type elementType, StringRef family, Builder &builder) {
+  if (family == "partadd")
+    return builder.getZeroAttr(elementType);
+  if (isa<FloatType>(elementType)) {
+    const llvm::fltSemantics &semantics = [&]() -> const llvm::fltSemantics & {
+      if (elementType.isF16())
+        return llvm::APFloat::IEEEhalf();
+      if (elementType.isBF16())
+        return llvm::APFloat::BFloat();
+      return llvm::APFloat::IEEEsingle();
+    }();
+    bool negative = family == "partmax";
+    return builder.getFloatAttr(elementType, llvm::APFloat::getInf(semantics, negative));
+  }
+  if (auto intType = dyn_cast<IntegerType>(elementType)) {
+    unsigned width = intType.getWidth();
+    if (intType.isUnsigned()) {
+      if (family == "partmax")
+        return builder.getIntegerAttr(elementType, 0);
+      return builder.getIntegerAttr(elementType, llvm::APInt::getAllOnes(width));
+    }
+    if (family == "partmax")
+      return builder.getIntegerAttr(elementType, llvm::APInt::getSignedMinValue(width));
+    return builder.getIntegerAttr(elementType, llvm::APInt::getSignedMaxValue(width));
+  }
+  return {};
+}
+
+Attribute buildFillPadValue(Type elementType, PadValueAttr padAttr, Builder &builder) {
+  if (!padAttr)
+    return {};
+
+  switch (padAttr.getValue()) {
+  case PadValue::Null:
+    return {};
+  case PadValue::Zero:
+    return builder.getZeroAttr(elementType);
+  case PadValue::Max:
+    if (isa<FloatType>(elementType)) {
+      const llvm::fltSemantics &semantics = [&]() -> const llvm::fltSemantics & {
+        if (elementType.isF16())
+          return llvm::APFloat::IEEEhalf();
+        if (elementType.isBF16())
+          return llvm::APFloat::BFloat();
+        return llvm::APFloat::IEEEsingle();
+      }();
+      return builder.getFloatAttr(elementType,
+                                  llvm::APFloat::getLargest(semantics));
+    }
+    if (auto intType = dyn_cast<IntegerType>(elementType)) {
+      unsigned width = intType.getWidth();
+      return intType.isUnsigned()
+                 ? builder.getIntegerAttr(elementType,
+                                          llvm::APInt::getMaxValue(width))
+                 : builder.getIntegerAttr(elementType,
+                                          llvm::APInt::getSignedMaxValue(width));
+    }
+    return {};
+  case PadValue::Min:
+    if (isa<FloatType>(elementType)) {
+      const llvm::fltSemantics &semantics = [&]() -> const llvm::fltSemantics & {
+        if (elementType.isF16())
+          return llvm::APFloat::IEEEhalf();
+        if (elementType.isBF16())
+          return llvm::APFloat::BFloat();
+        return llvm::APFloat::IEEEsingle();
+      }();
+      auto value = llvm::APFloat::getLargest(semantics);
+      value.changeSign();
+      return builder.getFloatAttr(elementType, value);
+    }
+    if (auto intType = dyn_cast<IntegerType>(elementType)) {
+      unsigned width = intType.getWidth();
+      return intType.isUnsigned()
+                 ? builder.getIntegerAttr(elementType, llvm::APInt(width, 0))
+                 : builder.getIntegerAttr(elementType,
+                                          llvm::APInt::getSignedMinValue(width));
+    }
+    return {};
+  }
+  return {};
+}
+
+LogicalResult buildRowReduceVecScope(StringRef family,
+                                     const A5VMRowReduceContract &contract,
+                                     Value src, Value dst,
+                                     PatternRewriter &rewriter, Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM row-reduce element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc) << "requires pointer-backed tile buffers for row-reduce lowering";
+
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic)
+    return emitError(loc) << family << " lowering currently requires static valid rows and cols";
+
+  int64_t srcRowStride = deriveStaticRowStride(src);
+  int64_t dstRowStride = deriveStaticRowStride(dst);
+  if (srcRowStride == ShapedType::kDynamic || dstRowStride == ShapedType::kDynamic)
+    return emitError(loc) << family << " lowering requires static row strides";
+
+  Attribute initValue = buildRowReduceInitValue(contract.elementType, family, rewriter);
+  if (!initValue)
+    return emitError(loc) << family << " lowering supports only f16 and f32 element types";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  int64_t repeatTimes = llvm::divideCeil(contract.validCols, vectorWidth);
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value rowsUpper = rewriter.create<arith::ConstantIndexOp>(loc, contract.validRows);
+  Value repeatUpper = rewriter.create<arith::ConstantIndexOp>(loc, repeatTimes);
+  Value srcRowStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, srcRowStride);
+  Value dstRowStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstRowStride);
+  Value vectorWidthValue = rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value initScalar = rewriter.create<arith::ConstantOp>(loc, cast<TypedAttr>(initValue));
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, c0, rowsUpper, c1);
+
+  OpBuilder::InsertionGuard rowGuard(rewriter);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value initVec = rewriter.create<a5vm::VbrOp>(loc, vecType, initScalar);
+  auto repeatLoop = rewriter.create<scf::ForOp>(loc, c0, repeatUpper, c1,
+                                                ValueRange{initVec});
+
+  OpBuilder::InsertionGuard repeatGuard(rewriter);
+  rewriter.setInsertionPointToStart(repeatLoop.getBody());
+  Value repeat = repeatLoop.getInductionVar();
+  Value acc = repeatLoop.getRegionIterArgs().front();
+  Value rowBase = rewriter.create<arith::MulIOp>(loc, row, srcRowStrideValue);
+  Value repeatBase = rewriter.create<arith::MulIOp>(loc, repeat, vectorWidthValue);
+  Value srcOffset = rewriter.create<arith::AddIOp>(loc, rowBase, repeatBase);
+  Value srcVec =
+      rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, srcOffset, StringAttr()).getResult();
+
+  Value reduced;
+  if (family == "rowsum")
+    reduced = rewriter.create<a5vm::VcaddOp>(loc, vecType, srcVec);
+  else if (family == "rowmax")
+    reduced = rewriter.create<a5vm::VcmaxOp>(loc, vecType, srcVec);
+  else if (family == "rowmin")
+    reduced = rewriter.create<a5vm::VcminOp>(loc, vecType, srcVec);
+  else
+    return emitError(loc) << "unsupported A5VM row-reduce family: " << family;
+
+  Value nextAcc;
+  if (family == "rowsum")
+    nextAcc = rewriter.create<a5vm::VaddOp>(loc, vecType, acc, reduced);
+  else if (family == "rowmax")
+    nextAcc = rewriter.create<a5vm::VmaxOp>(loc, vecType, acc, reduced);
+  else
+    nextAcc = rewriter.create<a5vm::VminOp>(loc, vecType, acc, reduced);
+  rewriter.create<scf::YieldOp>(loc, nextAcc);
+
+  rewriter.setInsertionPointAfter(repeatLoop);
+  Value dstOffset = rewriter.create<arith::MulIOp>(loc, row, dstRowStrideValue);
+  rewriter.create<a5vm::VstsOp>(loc, repeatLoop.getResult(0), dstBuffer, dstOffset,
+                                StringAttr());
+  return success();
+}
+
+LogicalResult buildColReduceVecScope(StringRef family,
+                                     const A5VMColReduceContract &contract,
+                                     Value src, Value dst, Value tmp,
+                                     PatternRewriter &rewriter, Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM col-reduce element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc) << "requires pointer-backed tile buffers for col-reduce lowering";
+
+  Value tmpBuffer;
+  if (contract.isBinary) {
+    tmpBuffer = materializeBufferPointer(tmp, contract.elementType, getMemorySpace(tmp),
+                                         rewriter, loc);
+    if (!tmpBuffer)
+      return emitError(loc) << "binary colsum lowering requires pointer-backed tmp tile";
+  }
+
+  int64_t srcRowStride = deriveStaticRowStride(src);
+  int64_t dstRowStride = deriveStaticRowStride(dst);
+  int64_t tmpRowStride =
+      contract.isBinary ? deriveStaticRowStride(tmp) : ShapedType::kDynamic;
+  if (srcRowStride == ShapedType::kDynamic || dstRowStride == ShapedType::kDynamic ||
+      (contract.isBinary && tmpRowStride == ShapedType::kDynamic))
+    return emitError(loc) << family << " lowering requires static row strides";
+
+  Attribute initValue = buildRowReduceInitValue(contract.elementType, family, rewriter);
+  if (!initValue)
+    return emitError(loc) << family << " lowering supports only f16 and f32 element types";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  int64_t repeatTimes = llvm::divideCeil(contract.validCols, vectorWidth);
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value repeatUpper = rewriter.create<arith::ConstantIndexOp>(loc, repeatTimes);
+  Value rowUpper = rewriter.create<arith::ConstantIndexOp>(loc, contract.validRows);
+  Value srcRowStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, srcRowStride);
+  Value dstRowStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstRowStride);
+  Value vectorWidthValue = rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value initScalar = rewriter.create<arith::ConstantOp>(loc, cast<TypedAttr>(initValue));
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto chunkLoop = rewriter.create<scf::ForOp>(loc, c0, repeatUpper, c1);
+
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value chunk = chunkLoop.getInductionVar();
+  Value chunkOffset = rewriter.create<arith::MulIOp>(loc, chunk, vectorWidthValue);
+
+  if (!contract.isBinary) {
+    Value firstRowOffset = chunkOffset;
+    Value acc0 =
+        rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, firstRowOffset, StringAttr()).getResult();
+    auto rowLoop = rewriter.create<scf::ForOp>(loc, c1, rowUpper, c1, ValueRange{acc0});
+    OpBuilder::InsertionGuard rowGuard(rewriter);
+    rewriter.setInsertionPointToStart(rowLoop.getBody());
+    Value row = rowLoop.getInductionVar();
+    Value acc = rowLoop.getRegionIterArgs().front();
+    Value rowBase = rewriter.create<arith::MulIOp>(loc, row, srcRowStrideValue);
+    Value srcOffset = rewriter.create<arith::AddIOp>(loc, rowBase, chunkOffset);
+    Value srcVec =
+        rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, srcOffset, StringAttr()).getResult();
+    Value nextAcc;
+    if (family == "colmax")
+      nextAcc = rewriter.create<a5vm::VmaxOp>(loc, vecType, acc, srcVec);
+    else if (family == "colmin")
+      nextAcc = rewriter.create<a5vm::VminOp>(loc, vecType, acc, srcVec);
+    else
+      nextAcc = rewriter.create<a5vm::VaddOp>(loc, vecType, acc, srcVec);
+    rewriter.create<scf::YieldOp>(loc, nextAcc);
+
+    rewriter.setInsertionPointAfter(rowLoop);
+    Value dstOffset = chunkOffset;
+    rewriter.create<a5vm::VstsOp>(loc, rowLoop.getResult(0), dstBuffer, dstOffset,
+                                  StringAttr());
+    return success();
+  }
+
+  Value tmpRowStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, tmpRowStride);
+  auto reducePair = [&](Value lhs, Value rhs) -> Value {
+    return rewriter.create<a5vm::VaddOp>(loc, vecType, lhs, rhs).getResult();
+  };
+
+  int64_t nLoopStatic = contract.validRows / 2;
+  bool remainStatic = (contract.validRows % 2) != 0;
+  Value pairUpper = rewriter.create<arith::ConstantIndexOp>(loc, nLoopStatic);
+  auto pairLoop = rewriter.create<scf::ForOp>(loc, c0, pairUpper, c1);
+  {
+    OpBuilder::InsertionGuard pairGuard(rewriter);
+    rewriter.setInsertionPointToStart(pairLoop.getBody());
+    Value pair = pairLoop.getInductionVar();
+    Value row0 = rewriter.create<arith::MulIOp>(
+        loc, rewriter.create<arith::MulIOp>(loc, pair, rewriter.create<arith::ConstantIndexOp>(loc, 2)),
+        srcRowStrideValue);
+    Value row1 = rewriter.create<arith::MulIOp>(
+        loc, rewriter.create<arith::AddIOp>(loc,
+                                            rewriter.create<arith::MulIOp>(loc, pair, rewriter.create<arith::ConstantIndexOp>(loc, 2)),
+                                            c1),
+        srcRowStrideValue);
+    Value src0Offset = rewriter.create<arith::AddIOp>(loc, row0, chunkOffset);
+    Value src1Offset = rewriter.create<arith::AddIOp>(loc, row1, chunkOffset);
+    Value lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, src0Offset, StringAttr()).getResult();
+    Value rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, src1Offset, StringAttr()).getResult();
+    Value sum = reducePair(lhs, rhs);
+    Value tmpOffset = rewriter.create<arith::MulIOp>(loc, pair, tmpRowStrideValue);
+    rewriter.create<a5vm::VstsOp>(loc, sum, tmpBuffer, tmpOffset, StringAttr());
+  }
+
+  if (remainStatic && nLoopStatic > 0) {
+    Value lastRowOffset = rewriter.create<arith::AddIOp>(
+        loc,
+        rewriter.create<arith::MulIOp>(
+            loc, rewriter.create<arith::ConstantIndexOp>(loc, contract.validRows - 1),
+            srcRowStrideValue),
+        chunkOffset);
+    Value tmpOffset = rewriter.create<arith::MulIOp>(
+        loc, rewriter.create<arith::ConstantIndexOp>(loc, nLoopStatic - 1), tmpRowStrideValue);
+    Value lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, lastRowOffset, StringAttr()).getResult();
+    Value rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, tmpBuffer, tmpOffset, StringAttr()).getResult();
+    Value sum = reducePair(lhs, rhs);
+    rewriter.create<a5vm::VstsOp>(loc, sum, tmpBuffer, tmpOffset, StringAttr());
+  }
+
+  int64_t currentRows = nLoopStatic;
+  while (currentRows > 1) {
+    int64_t nextRows = currentRows / 2;
+    bool remain = (currentRows % 2) != 0;
+    Value nextUpper = rewriter.create<arith::ConstantIndexOp>(loc, nextRows);
+    auto foldLoop = rewriter.create<scf::ForOp>(loc, c0, nextUpper, c1);
+    OpBuilder::InsertionGuard foldGuard(rewriter);
+    rewriter.setInsertionPointToStart(foldLoop.getBody());
+    Value pair = foldLoop.getInductionVar();
+    Value idx2 = rewriter.create<arith::MulIOp>(
+        loc, pair, rewriter.create<arith::ConstantIndexOp>(loc, 2));
+    Value idx2p1 = rewriter.create<arith::AddIOp>(loc, idx2, c1);
+    Value lhsOff = rewriter.create<arith::MulIOp>(loc, idx2, tmpRowStrideValue);
+    Value rhsOff = rewriter.create<arith::MulIOp>(loc, idx2p1, tmpRowStrideValue);
+    Value lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, tmpBuffer, lhsOff, StringAttr()).getResult();
+    Value rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, tmpBuffer, rhsOff, StringAttr()).getResult();
+    Value sum = reducePair(lhs, rhs);
+    Value outOff = rewriter.create<arith::MulIOp>(loc, pair, tmpRowStrideValue);
+    rewriter.create<a5vm::VstsOp>(loc, sum, tmpBuffer, outOff, StringAttr());
+
+    rewriter.setInsertionPointAfter(foldLoop);
+    if (remain && nextRows > 0) {
+      Value lhsOff = rewriter.create<arith::MulIOp>(
+          loc, rewriter.create<arith::ConstantIndexOp>(loc, nextRows - 1), tmpRowStrideValue);
+      Value rhsOff = rewriter.create<arith::MulIOp>(
+          loc, rewriter.create<arith::ConstantIndexOp>(loc, 2 * nextRows), tmpRowStrideValue);
+      Value lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, tmpBuffer, lhsOff, StringAttr()).getResult();
+      Value rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, tmpBuffer, rhsOff, StringAttr()).getResult();
+      Value sum = reducePair(lhs, rhs);
+      rewriter.create<a5vm::VstsOp>(loc, sum, tmpBuffer, lhsOff, StringAttr());
+    }
+    currentRows = nextRows;
+  }
+
+  Value finalVec;
+  if (currentRows == 0) {
+    finalVec = rewriter.create<a5vm::VbrOp>(loc, vecType, initScalar).getResult();
+  } else {
+    finalVec = rewriter.create<a5vm::VldsOp>(loc, vecType, tmpBuffer, c0, StringAttr()).getResult();
+  }
+  Value dstOffset = chunkOffset;
+  rewriter.create<a5vm::VstsOp>(loc, finalVec, dstBuffer, dstOffset, StringAttr());
+  return success();
+}
+
+LogicalResult buildPartFill(StringRef family, const A5VMPartContract &contract,
+                            Value dstBuffer, a5vm::VecType vecType,
+                            int64_t dstStride, PatternRewriter &rewriter,
+                            Location loc) {
+  Attribute initValue = buildPartPadValue(contract.elementType, family, rewriter);
+  if (!initValue)
+    return emitError(loc) << "unsupported pad value for " << family;
+  int64_t vectorWidth = vecType.getElementCount();
+  int64_t repeatTimes = llvm::divideCeil(contract.dstValidCols, vectorWidth);
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value rowsUpper = rewriter.create<arith::ConstantIndexOp>(loc, contract.dstValidRows);
+  Value repeatUpper = rewriter.create<arith::ConstantIndexOp>(loc, repeatTimes);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstStride);
+  Value vectorWidthValue = rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value initScalar = rewriter.create<arith::ConstantOp>(loc, cast<TypedAttr>(initValue));
+  Value initVec = rewriter.create<a5vm::VbrOp>(loc, vecType, initScalar);
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, c0, rowsUpper, c1);
+  OpBuilder::InsertionGuard rowGuard(rewriter);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop = rewriter.create<scf::ForOp>(loc, c0, repeatUpper, c1);
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value chunk = chunkLoop.getInductionVar();
+  Value rowBase = rewriter.create<arith::MulIOp>(loc, row, dstStrideValue);
+  Value chunkBase = rewriter.create<arith::MulIOp>(loc, chunk, vectorWidthValue);
+  Value dstOffset = rewriter.create<arith::AddIOp>(loc, rowBase, chunkBase);
+  rewriter.create<a5vm::VstsOp>(loc, initVec, dstBuffer, dstOffset, StringAttr());
+  rewriter.setInsertionPointAfter(chunkLoop);
+  return success();
+}
+
+LogicalResult buildPartCopyRegion(Value srcBuffer, Value dstBuffer, a5vm::VecType vecType,
+                                  int64_t srcStride, int64_t dstStride,
+                                  int64_t startRow, int64_t validRows,
+                                  int64_t validCols, PatternRewriter &rewriter,
+                                  Location loc) {
+  int64_t vectorWidth = vecType.getElementCount();
+  int64_t repeatTimes = llvm::divideCeil(validCols, vectorWidth);
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value rowsUpper = rewriter.create<arith::ConstantIndexOp>(loc, validRows);
+  Value repeatUpper = rewriter.create<arith::ConstantIndexOp>(loc, repeatTimes);
+  Value srcStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, srcStride);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstStride);
+  Value vectorWidthValue = rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value startRowValue = rewriter.create<arith::ConstantIndexOp>(loc, startRow);
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, startRowValue, rowsUpper, c1);
+  OpBuilder::InsertionGuard rowGuard(rewriter);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop = rewriter.create<scf::ForOp>(loc, c0, repeatUpper, c1);
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value chunk = chunkLoop.getInductionVar();
+  Value rowSrc = rewriter.create<arith::MulIOp>(loc, row, srcStrideValue);
+  Value rowDst = rewriter.create<arith::MulIOp>(loc, row, dstStrideValue);
+  Value chunkBase = rewriter.create<arith::MulIOp>(loc, chunk, vectorWidthValue);
+  Value srcOffset = rewriter.create<arith::AddIOp>(loc, rowSrc, chunkBase);
+  Value dstOffset = rewriter.create<arith::AddIOp>(loc, rowDst, chunkBase);
+  Value vec = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, srcOffset, StringAttr()).getResult();
+  rewriter.create<a5vm::VstsOp>(loc, vec, dstBuffer, dstOffset, StringAttr());
+  rewriter.setInsertionPointAfter(chunkLoop);
+  return success();
+}
+
+LogicalResult buildPartBinaryRegion(StringRef family, Value src0Buffer, Value src1Buffer,
+                                    Value dstBuffer, a5vm::VecType vecType,
+                                    int64_t src0Stride, int64_t src1Stride,
+                                    int64_t dstStride, int64_t validRows,
+                                    int64_t validCols, PatternRewriter &rewriter,
+                                    Location loc) {
+  int64_t vectorWidth = vecType.getElementCount();
+  int64_t repeatTimes = llvm::divideCeil(validCols, vectorWidth);
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value rowsUpper = rewriter.create<arith::ConstantIndexOp>(loc, validRows);
+  Value repeatUpper = rewriter.create<arith::ConstantIndexOp>(loc, repeatTimes);
+  Value src0StrideValue = rewriter.create<arith::ConstantIndexOp>(loc, src0Stride);
+  Value src1StrideValue = rewriter.create<arith::ConstantIndexOp>(loc, src1Stride);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstStride);
+  Value vectorWidthValue = rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, c0, rowsUpper, c1);
+  OpBuilder::InsertionGuard rowGuard(rewriter);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop = rewriter.create<scf::ForOp>(loc, c0, repeatUpper, c1);
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value chunk = chunkLoop.getInductionVar();
+  Value chunkBase = rewriter.create<arith::MulIOp>(loc, chunk, vectorWidthValue);
+  Value rowSrc0 = rewriter.create<arith::MulIOp>(loc, row, src0StrideValue);
+  Value rowSrc1 = rewriter.create<arith::MulIOp>(loc, row, src1StrideValue);
+  Value rowDst = rewriter.create<arith::MulIOp>(loc, row, dstStrideValue);
+  Value src0Offset = rewriter.create<arith::AddIOp>(loc, rowSrc0, chunkBase);
+  Value src1Offset = rewriter.create<arith::AddIOp>(loc, rowSrc1, chunkBase);
+  Value dstOffset = rewriter.create<arith::AddIOp>(loc, rowDst, chunkBase);
+  Value lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, src0Buffer, src0Offset, StringAttr()).getResult();
+  Value rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, src1Buffer, src1Offset, StringAttr()).getResult();
+  Value out;
+  if (family == "partadd")
+    out = rewriter.create<a5vm::VaddOp>(loc, vecType, lhs, rhs);
+  else if (family == "partmax")
+    out = rewriter.create<a5vm::VmaxOp>(loc, vecType, lhs, rhs);
+  else if (family == "partmin")
+    out = rewriter.create<a5vm::VminOp>(loc, vecType, lhs, rhs);
+  else
+    return emitError(loc) << "unsupported part family: " << family;
+  rewriter.create<a5vm::VstsOp>(loc, out, dstBuffer, dstOffset, StringAttr());
+  rewriter.setInsertionPointAfter(chunkLoop);
+  return success();
+}
+
+LogicalResult buildPartVecScope(StringRef family, const A5VMPartContract &contract,
+                                Value src0, Value src1, Value dst,
+                                PatternRewriter &rewriter, Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM part element type";
+  Value src0Buffer = materializeBufferPointer(src0, contract.elementType, getMemorySpace(src0),
+                                              rewriter, loc);
+  Value src1Buffer = materializeBufferPointer(src1, contract.elementType, getMemorySpace(src1),
+                                              rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType, getMemorySpace(dst),
+                                             rewriter, loc);
+  if (!src0Buffer || !src1Buffer || !dstBuffer)
+    return emitError(loc) << "requires pointer-backed tile buffers for part lowering";
+  int64_t src0Stride = deriveStaticRowStride(src0);
+  int64_t src1Stride = deriveStaticRowStride(src1);
+  int64_t dstStride = deriveStaticRowStride(dst);
+  if (src0Stride == ShapedType::kDynamic || src1Stride == ShapedType::kDynamic ||
+      dstStride == ShapedType::kDynamic)
+    return emitError(loc) << family << " lowering requires static row strides";
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+
+  auto condSrc0EqDst = contract.src0ValidRows == contract.dstValidRows &&
+                       contract.src0ValidCols == contract.dstValidCols;
+  auto condSrc0RowLtDst = contract.src0ValidRows < contract.dstValidRows &&
+                          contract.src0ValidCols == contract.dstValidCols;
+  auto condSrc0ColLtDst = contract.src0ValidRows <= contract.dstValidRows &&
+                          contract.src0ValidCols < contract.dstValidCols;
+  auto condSrc1EqDst = contract.src1ValidRows == contract.dstValidRows &&
+                       contract.src1ValidCols == contract.dstValidCols;
+  auto condSrc1RowLtDst = contract.src1ValidRows < contract.dstValidRows &&
+                          contract.src1ValidCols == contract.dstValidCols;
+  auto condSrc1ColLtDst = contract.src1ValidRows <= contract.dstValidRows &&
+                          contract.src1ValidCols < contract.dstValidCols;
+
+  if (family == "partadd") {
+    if (condSrc0EqDst && condSrc1EqDst)
+      return buildPartBinaryRegion(family, src0Buffer, src1Buffer, dstBuffer, vecType,
+                                   src0Stride, src1Stride, dstStride,
+                                   contract.dstValidRows, contract.dstValidCols,
+                                   rewriter, loc);
+    if (condSrc0ColLtDst && condSrc1EqDst) {
+      if (failed(buildPartCopyRegion(src1Buffer, dstBuffer, vecType, src1Stride, dstStride,
+                                     0, contract.src1ValidRows, contract.dstValidCols,
+                                     rewriter, loc)))
+        return failure();
+      if (contract.src0ValidCols != 0)
+        return buildPartBinaryRegion(family, src0Buffer, dstBuffer, dstBuffer, vecType,
+                                     src0Stride, dstStride, dstStride,
+                                     contract.src0ValidRows, contract.src0ValidCols,
+                                     rewriter, loc);
+      return success();
+    }
+    if (condSrc0RowLtDst && condSrc1EqDst) {
+      if (contract.src0ValidRows != 0 &&
+          failed(buildPartBinaryRegion(family, src0Buffer, src1Buffer, dstBuffer, vecType,
+                                       src0Stride, src1Stride, dstStride,
+                                       contract.src0ValidRows, contract.src0ValidCols,
+                                       rewriter, loc)))
+        return failure();
+      return buildPartCopyRegion(src1Buffer, dstBuffer, vecType, src1Stride, dstStride,
+                                 contract.src0ValidRows, contract.src1ValidRows,
+                                 contract.dstValidCols, rewriter, loc);
+    }
+    if (condSrc1ColLtDst && condSrc0EqDst) {
+      if (failed(buildPartCopyRegion(src0Buffer, dstBuffer, vecType, src0Stride, dstStride,
+                                     0, contract.src0ValidRows, contract.dstValidCols,
+                                     rewriter, loc)))
+        return failure();
+      if (contract.src1ValidCols != 0)
+        return buildPartBinaryRegion(family, src1Buffer, dstBuffer, dstBuffer, vecType,
+                                     src1Stride, dstStride, dstStride,
+                                     contract.src1ValidRows, contract.src1ValidCols,
+                                     rewriter, loc);
+      return success();
+    }
+    if (condSrc1RowLtDst && condSrc0EqDst) {
+      if (contract.src1ValidRows != 0 &&
+          failed(buildPartBinaryRegion(family, src0Buffer, src1Buffer, dstBuffer, vecType,
+                                       src0Stride, src1Stride, dstStride,
+                                       contract.src1ValidRows, contract.src1ValidCols,
+                                       rewriter, loc)))
+        return failure();
+      return buildPartCopyRegion(src0Buffer, dstBuffer, vecType, src0Stride, dstStride,
+                                 contract.src1ValidRows, contract.src0ValidRows,
+                                 contract.dstValidCols, rewriter, loc);
+    }
+    return emitError(loc) << "partadd lowering only supports PTO-covered destination-equality/extension cases";
+  }
+
+  bool condDstGeSrc = contract.src0ValidRows <= contract.dstValidRows &&
+                      contract.src0ValidCols <= contract.dstValidCols &&
+                      contract.src1ValidRows <= contract.dstValidRows &&
+                      contract.src1ValidCols <= contract.dstValidCols;
+  if (!condDstGeSrc)
+    return emitError(loc) << family << " lowering only supports dst >= src0/src1 shape relation";
+  if (failed(buildPartFill(family, contract, dstBuffer, vecType, dstStride, rewriter, loc)))
+    return failure();
+  if (failed(buildPartCopyRegion(src0Buffer, dstBuffer, vecType, src0Stride, dstStride,
+                                 0, contract.src0ValidRows, contract.src0ValidCols,
+                                 rewriter, loc)))
+    return failure();
+  return buildPartBinaryRegion(family, dstBuffer, src1Buffer, dstBuffer, vecType,
+                               dstStride, src1Stride, dstStride,
+                               contract.src1ValidRows, contract.src1ValidCols,
+                               rewriter, loc);
+}
+
 LogicalResult buildUnaryVecScope(StringRef family,
                                  const A5VMUnaryContract &contract, Value src,
                                  Value dst, PatternRewriter &rewriter,
@@ -1305,26 +2545,23 @@ LogicalResult buildUnaryVecScope(StringRef family,
     return emitError(loc) << "requires pointer-backed tile buffers for unary lowering";
 
   int64_t vectorWidth = vecType.getElementCount();
-  Value validRowsValue =
-      materializeIndexValue(contract.validRowsValue, contract.validRows, rewriter, loc);
-  Value validColsValue =
-      materializeIndexValue(contract.validColsValue, contract.validCols, rewriter, loc);
-  if (!validRowsValue || !validColsValue)
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  deriveValidShapeValues(dst, validRowsValue, validColsValue);
+  deriveValidShape(dst, validRows, validCols);
+  if (failed(resolveExecutionValidShape(dst, validRowsValue, validColsValue, validRows,
+                                        validCols, rewriter, loc)))
     return emitError(loc) << "unary lowering requires valid rows and cols";
-
-  if (contract.validRows != ShapedType::kDynamic &&
-      contract.validCols != ShapedType::kDynamic) {
-    int64_t totalElements = contract.validRows * contract.validCols;
-    if (totalElements % vectorWidth != 0)
-      return emitError(loc)
-             << "unary lowering requires total valid elements divisible by vector width";
-  }
 
   Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
   Value totalElementsValue =
       rewriter.create<arith::MulIOp>(loc, validRowsValue, validColsValue);
   Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value vectorWidthValue =
       rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
 
   auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
@@ -1339,7 +2576,10 @@ LogicalResult buildUnaryVecScope(StringRef family,
   OpBuilder::InsertionGuard chunkGuard(rewriter);
   rewriter.setInsertionPointToStart(chunkLoop.getBody());
   Value offset = chunkLoop.getInductionVar();
-  auto vlds = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, offset);
+  Value remaining = rewriter.create<arith::SubIOp>(loc, totalElementsValue, offset);
+  Value needsTail = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::slt, remaining, vectorWidthValue);
+  auto vlds = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, offset, StringAttr());
   Value computed;
   if (family == "abs")
     computed = rewriter.create<a5vm::VabsOp>(loc, vecType, vlds.getResult());
@@ -1357,7 +2597,18 @@ LogicalResult buildUnaryVecScope(StringRef family,
     computed = rewriter.create<a5vm::VnotOp>(loc, vecType, vlds.getResult());
   else
     return emitError(loc) << "unsupported A5VM unary family: " << family;
-  rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  auto storeIf = rewriter.create<scf::IfOp>(loc, needsTail, true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.thenBlock());
+    rewriter.create<a5vm::VstsPredOp>(loc, computed, dstBuffer, offset, remaining,
+                                      StringAttr());
+  }
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.elseBlock());
+    rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  }
 
   return success();
 }
@@ -1380,19 +2631,104 @@ LogicalResult buildBinaryVecScope(StringRef family,
     return emitError(loc) << "requires pointer-backed tile buffers for binary lowering";
 
   int64_t vectorWidth = vecType.getElementCount();
-  Value validRowsValue =
-      materializeIndexValue(contract.validRowsValue, contract.validRows, rewriter, loc);
-  Value validColsValue =
-      materializeIndexValue(contract.validColsValue, contract.validCols, rewriter, loc);
-  if (!validRowsValue || !validColsValue)
+  Value validRowsValue = contract.validRowsValue;
+  Value validColsValue = contract.validColsValue;
+  int64_t validRows = contract.validRows;
+  int64_t validCols = contract.validCols;
+  if (failed(resolveExecutionValidShape(dst, validRowsValue, validColsValue, validRows,
+                                        validCols, rewriter, loc)))
     return emitError(loc) << "binary lowering requires valid rows and cols";
 
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value totalElementsValue =
+      rewriter.create<arith::MulIOp>(loc, validRowsValue, validColsValue);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value vectorWidthValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(loc, c0, totalElementsValue, vectorStepValue);
+
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value offset = chunkLoop.getInductionVar();
+  Value remaining = rewriter.create<arith::SubIOp>(loc, totalElementsValue, offset);
+  Value needsTail = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::slt, remaining, vectorWidthValue);
+  auto lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, src0Buffer, offset, StringAttr());
+  auto rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, src1Buffer, offset, StringAttr());
+
+  Value computed;
+  if (family == "add")
+    computed = rewriter.create<a5vm::VaddOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "sub")
+    computed = rewriter.create<a5vm::VsubOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "mul")
+    computed = rewriter.create<a5vm::VmulOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "div")
+    computed = rewriter.create<a5vm::VdivOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "max")
+    computed = rewriter.create<a5vm::VmaxOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "min")
+    computed = rewriter.create<a5vm::VminOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "and")
+    computed = rewriter.create<a5vm::VandOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "or")
+    computed = rewriter.create<a5vm::VorOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else if (family == "xor")
+    computed = rewriter.create<a5vm::VxorOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  else
+    return emitError(loc) << "unsupported A5VM binary family: " << family;
+  auto storeIf = rewriter.create<scf::IfOp>(loc, needsTail, true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.thenBlock());
+    rewriter.create<a5vm::VstsPredOp>(loc, computed, dstBuffer, offset, remaining,
+                                      StringAttr());
+  }
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.elseBlock());
+    rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  }
+  return success();
+}
+
+LogicalResult buildExpandScalarVecScope(const A5VMUnaryContract &contract,
+                                        Value scalar, Value dst,
+                                        PatternRewriter &rewriter,
+                                        Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM expands element type";
+
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!dstBuffer)
+    return emitError(loc) << "requires pointer-backed tile buffer for expands lowering";
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter, loc);
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter, loc);
+  if (!validRowsValue || !validColsValue)
+    return emitError(loc) << "expands lowering requires valid rows and cols";
+
+  int64_t vectorWidth = vecType.getElementCount();
   if (contract.validRows != ShapedType::kDynamic &&
       contract.validCols != ShapedType::kDynamic) {
     int64_t totalElements = contract.validRows * contract.validCols;
     if (totalElements % vectorWidth != 0)
       return emitError(loc)
-             << "binary lowering requires total valid elements divisible by vector width";
+             << "expands lowering requires total valid elements divisible by vector width";
   }
 
   Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
@@ -1414,22 +2750,402 @@ LogicalResult buildBinaryVecScope(StringRef family,
   OpBuilder::InsertionGuard chunkGuard(rewriter);
   rewriter.setInsertionPointToStart(chunkLoop.getBody());
   Value offset = chunkLoop.getInductionVar();
-  auto lhs = rewriter.create<a5vm::VldsOp>(loc, vecType, src0Buffer, offset);
-  auto rhs = rewriter.create<a5vm::VldsOp>(loc, vecType, src1Buffer, offset);
+  Value computed = rewriter.create<a5vm::VdupOp>(
+      loc, vecType, scalar,
+      rewriter.getStringAttr("POS_LOWEST"),
+      rewriter.getStringAttr("MODE_ZEROING"));
+  rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  return success();
+}
+
+LogicalResult buildScalarUnaryVecScope(StringRef family,
+                                       const A5VMUnaryContract &contract,
+                                       Value src, Value scalar, Value dst,
+                                       PatternRewriter &rewriter,
+                                       Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM scalar-unary element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc)
+           << "requires pointer-backed tile buffers for scalar-unary lowering";
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter, loc);
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter, loc);
+  if (!validRowsValue || !validColsValue)
+    return emitError(loc) << family << " lowering requires valid rows and cols";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  if (contract.validRows != ShapedType::kDynamic &&
+      contract.validCols != ShapedType::kDynamic) {
+    int64_t totalElements = contract.validRows * contract.validCols;
+    if (totalElements % vectorWidth != 0)
+      return emitError(loc)
+             << family
+             << " lowering requires total valid elements divisible by vector width";
+  }
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value totalElementsValue =
+      rewriter.create<arith::MulIOp>(loc, validRowsValue, validColsValue);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(loc, c0, totalElementsValue, vectorStepValue);
+
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value offset = chunkLoop.getInductionVar();
+  auto loaded = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, offset, StringAttr());
+  Value computed;
+  if (family == "adds")
+    computed = rewriter.create<a5vm::VaddsOp>(loc, vecType, loaded.getResult(), scalar);
+  else if (family == "maxs")
+    computed = rewriter.create<a5vm::VmaxsOp>(loc, vecType, loaded.getResult(), scalar);
+  else if (family == "mins")
+    computed = rewriter.create<a5vm::VminsOp>(loc, vecType, loaded.getResult(), scalar);
+  else if (family == "muls")
+    computed = rewriter.create<a5vm::VmulsOp>(loc, vecType, loaded.getResult(), scalar);
+  else if (family == "lrelu")
+    computed = rewriter.create<a5vm::VlreluOp>(loc, vecType, loaded.getResult(), scalar);
+  else
+    return emitError(loc) << "unsupported A5VM scalar-unary family: " << family;
+  rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  return success();
+}
+
+LogicalResult buildScalarBitwiseVecScope(StringRef family,
+                                         const A5VMUnaryContract &contract,
+                                         Value src, Value scalar, Value dst,
+                                         PatternRewriter &rewriter,
+                                         Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM scalar-bitwise element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc)
+           << "requires pointer-backed tile buffers for scalar-bitwise lowering";
+
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  deriveValidShapeValues(dst, validRowsValue, validColsValue);
+  deriveValidShape(dst, validRows, validCols);
+  if (failed(resolveExecutionValidShape(dst, validRowsValue, validColsValue, validRows,
+                                        validCols, rewriter, loc)))
+    return emitError(loc) << family << " lowering requires valid rows and cols";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value totalElementsValue =
+      rewriter.create<arith::MulIOp>(loc, validRowsValue, validColsValue);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  Value vectorWidthValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(loc, c0, totalElementsValue, vectorStepValue);
+
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value offset = chunkLoop.getInductionVar();
+  Value remaining = rewriter.create<arith::SubIOp>(loc, totalElementsValue, offset);
+  Value needsTail = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::slt, remaining, vectorWidthValue);
+  Value scalarVec = rewriter.create<a5vm::VdupOp>(
+      loc, vecType, scalar, rewriter.getStringAttr("POS_LOWEST"),
+      rewriter.getStringAttr("MODE_ZEROING"));
+  auto loaded = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, offset,
+                                              StringAttr());
 
   Value computed;
-  if (family == "add")
-    computed = rewriter.create<a5vm::VaddOp>(loc, vecType, lhs.getResult(), rhs.getResult());
-  else if (family == "sub")
-    computed = rewriter.create<a5vm::VsubOp>(loc, vecType, lhs.getResult(), rhs.getResult());
-  else if (family == "mul")
-    computed = rewriter.create<a5vm::VmulOp>(loc, vecType, lhs.getResult(), rhs.getResult());
-  else if (family == "div")
-    computed = rewriter.create<a5vm::VdivOp>(loc, vecType, lhs.getResult(), rhs.getResult());
+  if (family == "ands")
+    computed = rewriter.create<a5vm::VandOp>(loc, vecType, loaded.getResult(), scalarVec);
+  else if (family == "ors")
+    computed = rewriter.create<a5vm::VorOp>(loc, vecType, loaded.getResult(), scalarVec);
+  else if (family == "xors")
+    computed = rewriter.create<a5vm::VxorOp>(loc, vecType, loaded.getResult(), scalarVec);
   else
-    return emitError(loc) << "unsupported A5VM binary family: " << family;
+    return emitError(loc) << "unsupported A5VM scalar-bitwise family: " << family;
+
+  auto storeIf = rewriter.create<scf::IfOp>(loc, needsTail, true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.thenBlock());
+    rewriter.create<a5vm::VstsPredOp>(loc, computed, dstBuffer, offset, remaining,
+                                      StringAttr());
+  }
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(storeIf.elseBlock());
+    rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  }
+  return success();
+}
+
+static bool isA5VMShapedLikeValue(Value value) {
+  Type type = value.getType();
+  return isa<BaseMemRefType, RankedTensorType, pto::PartitionTensorViewType,
+             pto::TileBufType>(type);
+}
+
+LogicalResult buildScalarDivVecScope(const A5VMUnaryContract &contract,
+                                     Value src, Value scalar, Value dst,
+                                     bool scalarFirst,
+                                     PatternRewriter &rewriter, Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM divs element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc)
+           << "requires pointer-backed tile buffers for divs lowering";
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter, loc);
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter, loc);
+  if (!validRowsValue || !validColsValue)
+    return emitError(loc) << "divs lowering requires valid rows and cols";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  if (contract.validRows != ShapedType::kDynamic &&
+      contract.validCols != ShapedType::kDynamic) {
+    int64_t totalElements = contract.validRows * contract.validCols;
+    if (totalElements % vectorWidth != 0)
+      return emitError(loc)
+             << "divs lowering requires total valid elements divisible by vector width";
+  }
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value totalElementsValue =
+      rewriter.create<arith::MulIOp>(loc, validRowsValue, validColsValue);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(loc, c0, totalElementsValue, vectorStepValue);
+
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value offset = chunkLoop.getInductionVar();
+  Value loaded = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, offset, StringAttr());
+
+  Value computed;
+  if (contract.elementType.isF32()) {
+    if (scalarFirst) {
+      Value scalarVec = rewriter.create<a5vm::VdupOp>(
+          loc, vecType, scalar, rewriter.getStringAttr("POS_LOWEST"),
+          rewriter.getStringAttr("MODE_ZEROING"));
+      computed =
+          rewriter.create<a5vm::VdivOp>(loc, vecType, scalarVec, loaded);
+    } else {
+      Value one = rewriter.create<arith::ConstantOp>(
+          loc, contract.elementType, rewriter.getFloatAttr(contract.elementType, 1.0));
+      Value reciprocal = rewriter.create<arith::DivFOp>(loc, one, scalar);
+      computed =
+          rewriter.create<a5vm::VmulsOp>(loc, vecType, loaded, reciprocal);
+    }
+  } else if (contract.elementType.isF16()) {
+    Value scalarVec = rewriter.create<a5vm::VdupOp>(
+        loc, vecType, scalar, rewriter.getStringAttr("POS_LOWEST"),
+        rewriter.getStringAttr("MODE_ZEROING"));
+    computed = scalarFirst
+                   ? rewriter.create<a5vm::VdivOp>(loc, vecType, scalarVec, loaded)
+                   : rewriter.create<a5vm::VdivOp>(loc, vecType, loaded, scalarVec);
+  } else {
+    return emitError(loc)
+           << "divs lowering currently supports only f16 and f32 element types";
+  }
 
   rewriter.create<a5vm::VstsOp>(loc, computed, dstBuffer, offset, StringAttr());
+  return success();
+}
+
+LogicalResult checkExpandContract(Operation *op,
+                                  const A5VMExpandContract &contract) {
+  bool hasPrecheckFailure = false;
+  if (contract.srcDomain != A5VMTileDomain::Vec ||
+      contract.dstDomain != A5VMTileDomain::Vec) {
+    op->emitOpError() << contract.family
+                      << " lowering requires vec source and destination";
+    hasPrecheckFailure = true;
+  }
+  if (contract.srcLayout != "row_major" || contract.dstLayout != "row_major") {
+    op->emitOpError() << contract.family
+                      << " lowering requires row-major source and destination tile layout";
+    hasPrecheckFailure = true;
+  }
+  if (!contract.elementType ||
+      (!contract.elementType.isF16() && !contract.elementType.isF32())) {
+    op->emitOpError() << contract.family
+                      << " lowering currently supports only f16 and f32 element types";
+    hasPrecheckFailure = true;
+  }
+  auto isStatic = [](int64_t value) { return value != ShapedType::kDynamic; };
+  if (!isStatic(contract.srcValidRows) || !isStatic(contract.srcValidCols) ||
+      !isStatic(contract.dstValidRows) || !isStatic(contract.dstValidCols)) {
+    op->emitOpError() << contract.family
+                      << " lowering currently requires static source and destination valid shapes";
+    hasPrecheckFailure = true;
+  }
+  return failure(hasPrecheckFailure);
+}
+
+LogicalResult buildRowExpandVecScope(const A5VMExpandContract &contract,
+                                     Value src, Value dst,
+                                     PatternRewriter &rewriter, Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM rowexpand element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc)
+           << "requires pointer-backed tile buffers for rowexpand lowering";
+
+  auto [srcRows, srcCols] = getStaticTileRowsCols(src);
+  auto [dstRows, dstCols] = getStaticTileRowsCols(dst);
+  if (srcCols == ShapedType::kDynamic || dstCols == ShapedType::kDynamic ||
+      srcRows == ShapedType::kDynamic || dstRows == ShapedType::kDynamic)
+    return emitError(loc) << "rowexpand lowering requires static physical tile shape";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  Value validRowsValue = materializeIndexValue(
+      contract.dstValidRowsValue, contract.dstValidRows, rewriter, loc);
+  Value validColsValue = materializeIndexValue(
+      contract.dstValidColsValue, contract.dstValidCols, rewriter, loc);
+  if (!validRowsValue || !validColsValue)
+    return emitError(loc) << "rowexpand lowering requires valid rows and cols";
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value srcStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, srcCols);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstCols);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(loc, c0, validColsValue, vectorStepValue);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+  Value srcOffset =
+      rewriter.create<arith::MulIOp>(loc, rowLoop.getInductionVar(), srcStrideValue);
+  Value dstBase =
+      rewriter.create<arith::MulIOp>(loc, rowLoop.getInductionVar(), dstStrideValue);
+  Value dstOffset =
+      rewriter.create<arith::AddIOp>(loc, dstBase, chunkLoop.getInductionVar());
+  auto loaded = rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, srcOffset, StringAttr());
+  Value expanded = rewriter.create<a5vm::VdupOp>(
+      loc, vecType, loaded.getResult(), rewriter.getStringAttr("POS_LOWEST"),
+      rewriter.getStringAttr("MODE_ZEROING"));
+  rewriter.create<a5vm::VstsOp>(loc, expanded, dstBuffer, dstOffset, StringAttr());
+  return success();
+}
+
+LogicalResult buildColExpandVecScope(const A5VMExpandContract &contract,
+                                     Value src, Value dst,
+                                     PatternRewriter &rewriter, Location loc) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << "unsupported A5VM colexpand element type";
+
+  Value srcBuffer = materializeBufferPointer(src, contract.elementType,
+                                             getMemorySpace(src), rewriter, loc);
+  Value dstBuffer = materializeBufferPointer(dst, contract.elementType,
+                                             getMemorySpace(dst), rewriter, loc);
+  if (!srcBuffer || !dstBuffer)
+    return emitError(loc)
+           << "requires pointer-backed tile buffers for colexpand lowering";
+
+  auto [dstRows, dstCols] = getStaticTileRowsCols(dst);
+  if (dstRows == ShapedType::kDynamic || dstCols == ShapedType::kDynamic)
+    return emitError(loc)
+           << "colexpand lowering requires static physical destination tile shape";
+
+  int64_t vectorWidth = vecType.getElementCount();
+  Value validRowsValue = materializeIndexValue(
+      contract.dstValidRowsValue, contract.dstValidRows, rewriter, loc);
+  Value validColsValue = materializeIndexValue(
+      contract.dstValidColsValue, contract.dstValidCols, rewriter, loc);
+  if (!validRowsValue || !validColsValue)
+    return emitError(loc) << "colexpand lowering requires valid rows and cols";
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstCols);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(loc, c0, validColsValue, vectorStepValue);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+  Value dstBase =
+      rewriter.create<arith::MulIOp>(loc, rowLoop.getInductionVar(), dstStrideValue);
+  Value dstOffset =
+      rewriter.create<arith::AddIOp>(loc, dstBase, chunkLoop.getInductionVar());
+  auto loaded = rewriter.create<a5vm::VldsOp>(
+      loc, vecType, srcBuffer, chunkLoop.getInductionVar(), StringAttr());
+  rewriter.create<a5vm::VstsOp>(loc, loaded.getResult(), dstBuffer, dstOffset,
+                                StringAttr());
   return success();
 }
 
@@ -1453,10 +3169,16 @@ LogicalResult checkGenericUnaryContract(Operation *op,
     op->emitOpError() << contract.family << " lowering requires row-major tile layout";
     hasPrecheckFailure = true;
   }
-  if (contract.validRows != dstRows || contract.validCols != dstCols) {
-    op->emitOpError()
-        << contract.family
-        << " lowering requires matching source and destination valid region";
+  if (contract.validRows != ShapedType::kDynamic &&
+      dstRows != ShapedType::kDynamic && dstRows > contract.validRows) {
+    op->emitOpError() << contract.family
+                      << " lowering requires destination valid rows not to exceed source";
+    hasPrecheckFailure = true;
+  }
+  if (contract.validCols != ShapedType::kDynamic &&
+      dstCols != ShapedType::kDynamic && dstCols > contract.validCols) {
+    op->emitOpError() << contract.family
+                      << " lowering requires destination valid cols not to exceed source";
     hasPrecheckFailure = true;
   }
   if (!contract.elementType || !typePredicate(contract.elementType)) {
@@ -1494,16 +3216,174 @@ LogicalResult checkGenericBinaryContract(
   return failure(hasPrecheckFailure);
 }
 
+LogicalResult checkRowReduceContract(Operation *op,
+                                     const A5VMRowReduceContract &contract,
+                                     Value dst) {
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShape(dst, dstRows, dstCols);
+
+  bool hasPrecheckFailure = false;
+  if (contract.srcDomain != A5VMTileDomain::Vec ||
+      contract.dstDomain != A5VMTileDomain::Vec) {
+    op->emitOpError() << contract.family << " lowering requires vec source and destination";
+    hasPrecheckFailure = true;
+  }
+  if (contract.srcLayout != "row_major") {
+    op->emitOpError() << contract.family << " lowering requires row-major source tile layout";
+    hasPrecheckFailure = true;
+  }
+  if (contract.dstLayout != "row_major" && contract.dstLayout != "col_major") {
+    op->emitOpError() << contract.family
+                      << " lowering requires row-major or col-major destination tile layout";
+    hasPrecheckFailure = true;
+  }
+  if (!contract.elementType || (!contract.elementType.isF16() && !contract.elementType.isF32())) {
+    op->emitOpError() << contract.family << " lowering supports only f16 and f32 element types";
+    hasPrecheckFailure = true;
+  }
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic) {
+    op->emitOpError() << contract.family
+                      << " lowering currently requires static source valid rows and cols";
+    hasPrecheckFailure = true;
+  }
+  if (contract.validRows != dstRows) {
+    op->emitOpError() << contract.family
+                      << " lowering requires destination valid rows to match source valid rows";
+    hasPrecheckFailure = true;
+  }
+  if (dstCols != 1) {
+    op->emitOpError() << contract.family
+                      << " lowering requires destination valid cols to equal 1";
+    hasPrecheckFailure = true;
+  }
+  if (contract.dstLayout == "col_major") {
+    auto [dstRowsPhysical, dstColsPhysical] = getStaticTileRowsCols(dst);
+    (void)dstRowsPhysical;
+    if (dstColsPhysical != 1) {
+      op->emitOpError() << contract.family
+                        << " lowering requires col-major destinations to use physical cols == 1";
+      hasPrecheckFailure = true;
+    }
+  }
+  return failure(hasPrecheckFailure);
+}
+
+LogicalResult checkColReduceContract(Operation *op,
+                                     const A5VMColReduceContract &contract,
+                                     Value dst) {
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShape(dst, dstRows, dstCols);
+
+  bool hasPrecheckFailure = false;
+  if (contract.srcDomain != A5VMTileDomain::Vec ||
+      contract.dstDomain != A5VMTileDomain::Vec) {
+    op->emitOpError() << contract.family << " lowering requires vec source and destination";
+    hasPrecheckFailure = true;
+  }
+  if (contract.srcLayout != "row_major" || contract.dstLayout != "row_major") {
+    op->emitOpError() << contract.family
+                      << " lowering requires row-major source and destination tile layout";
+    hasPrecheckFailure = true;
+  }
+  if (!contract.elementType ||
+      (!contract.elementType.isF16() && !contract.elementType.isF32())) {
+    op->emitOpError() << contract.family << " lowering supports only f16 and f32 element types";
+    hasPrecheckFailure = true;
+  }
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic) {
+    op->emitOpError() << contract.family
+                      << " lowering currently requires static source valid rows and cols";
+    hasPrecheckFailure = true;
+  }
+  if (dstRows != 1) {
+    op->emitOpError() << contract.family
+                      << " lowering requires destination valid rows to equal 1";
+    hasPrecheckFailure = true;
+  }
+  if (dstCols != contract.validCols) {
+    op->emitOpError() << contract.family
+                      << " lowering requires destination valid cols to match source valid cols";
+    hasPrecheckFailure = true;
+  }
+  if (contract.isBinary && !contract.tmp) {
+    op->emitOpError() << contract.family << " lowering requires tmp for binary path";
+    hasPrecheckFailure = true;
+  }
+  return failure(hasPrecheckFailure);
+}
+
+LogicalResult checkPartContract(Operation *op, const A5VMPartContract &contract) {
+  bool hasPrecheckFailure = false;
+  if (contract.src0Domain != A5VMTileDomain::Vec ||
+      contract.src1Domain != A5VMTileDomain::Vec ||
+      contract.dstDomain != A5VMTileDomain::Vec) {
+    op->emitOpError() << contract.family << " lowering requires vec source and destination";
+    hasPrecheckFailure = true;
+  }
+  if (contract.src0Layout != "row_major" || contract.src1Layout != "row_major" ||
+      contract.dstLayout != "row_major") {
+    op->emitOpError() << contract.family
+                      << " lowering requires row-major source and destination tile layout";
+    hasPrecheckFailure = true;
+  }
+  if (!contract.elementType)
+    hasPrecheckFailure = true;
+  else if (contract.family == "partadd") {
+    bool ok = contract.elementType.isF16() || contract.elementType.isF32() ||
+              contract.elementType.isBF16();
+    if (auto intType = dyn_cast<IntegerType>(contract.elementType))
+      ok = intType.getWidth() == 8 || intType.getWidth() == 16 ||
+           intType.getWidth() == 32;
+    if (!ok) {
+      op->emitOpError() << contract.family
+                        << " lowering supports f16, f32, bf16, and 8/16/32-bit integers";
+      hasPrecheckFailure = true;
+    }
+  } else {
+    bool ok = contract.elementType.isF16() || contract.elementType.isF32() ||
+              contract.elementType.isBF16();
+    if (auto intType = dyn_cast<IntegerType>(contract.elementType))
+      ok = intType.getWidth() == 8 || intType.getWidth() == 16 ||
+           intType.getWidth() == 32;
+    if (!ok) {
+      op->emitOpError() << contract.family
+                        << " lowering supports f16, f32, bf16, and 8/16/32-bit integers";
+      hasPrecheckFailure = true;
+    }
+  }
+  auto allStatic = [&](int64_t a, int64_t b) {
+    return a != ShapedType::kDynamic && b != ShapedType::kDynamic;
+  };
+  if (!allStatic(contract.src0ValidRows, contract.src0ValidCols) ||
+      !allStatic(contract.src1ValidRows, contract.src1ValidCols) ||
+      !allStatic(contract.dstValidRows, contract.dstValidCols)) {
+    op->emitOpError() << contract.family
+                      << " lowering currently requires static source and destination valid shapes";
+    hasPrecheckFailure = true;
+  }
+  return failure(hasPrecheckFailure);
+}
+
 LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter) {
   A5VMLoadContract contract = extractTLoadContract(op);
   if (contract.tileDomain != A5VMTileDomain::Vec)
     return op.emitOpError("currently supports only VEC TLOAD lowering");
-  if (contract.tileLayout != "row_major" || contract.sourceLayout != "nd")
-    return op.emitOpError("currently supports only row_major ND vec TLOAD lowering");
 
   ResolvedTensorView sourceView;
   if (!resolveTensorView(op.getSrc(), sourceView, rewriter, op.getLoc()))
     return op.emitOpError("requires a recoverable source tensor view for A5VM lowering");
+
+  StringRef sourceLayout =
+      inferVecTransferLayoutFromTile(stringifyLayoutAttr(sourceView.layoutAttr),
+                                     contract.tileLayout);
+  bool isNdLoad = contract.tileLayout == "row_major" && sourceLayout == "nd";
+  bool isDnLoad = contract.tileLayout == "col_major" && sourceLayout == "dn";
+  if (!isNdLoad && !isDnLoad)
+    return op.emitOpError("currently supports only ND row_major or DN col_major vec TLOAD lowering");
 
   Value sourceBuffer =
       materializeBufferPointer(sourceView.root, getElementType(sourceView.root),
@@ -1527,13 +3407,19 @@ LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter) {
                           op.getLoc());
   Value sidValue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
   int64_t elemBytes = getElementByteSize(contract.elementType);
-  if (tileCols == ShapedType::kDynamic || elemBytes <= 0)
-    return op.emitOpError("requires static tile columns for A5-compatible transfer arguments");
+  if ((isNdLoad && tileCols == ShapedType::kDynamic) ||
+      (isDnLoad && tileRows == ShapedType::kDynamic) || elemBytes <= 0)
+    return op.emitOpError("requires static tile shape for A5-compatible transfer arguments");
   VecNdTransferPlan plan;
-  if (failed(buildVecNdLoadPlan(sourceView.shape, sourceView.strides, tileCols,
-                                contract.validColsValue, contract.validCols,
-                                contract.elementType, rewriter, op.getLoc(), plan)))
-    return op.emitOpError("requires PTO-compatible vec ND2ND copy_gm_to_ubuf arguments");
+  LogicalResult planResult =
+      isNdLoad ? buildVecNdLoadPlan(sourceView.shape, sourceView.strides, tileCols,
+                                    contract.validColsValue, contract.validCols,
+                                    contract.elementType, rewriter, op.getLoc(), plan)
+               : buildVecDnLoadPlan(sourceView.shape, sourceView.strides, tileRows,
+                                    contract.validRowsValue, contract.validRows,
+                                    contract.elementType, rewriter, op.getLoc(), plan);
+  if (failed(planResult))
+    return op.emitOpError("requires PTO-compatible vec copy_gm_to_ubuf arguments");
   Value leftPaddingValue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
   Value rightPaddingValue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
   Value cacheCtlValue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
@@ -1560,7 +3446,7 @@ LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter) {
         op.getLoc(), srcPtr, dstPtr, validRowsValue, validColsValue, sidValue,
         plan.nBurst, plan.lenBurst, leftPaddingValue, rightPaddingValue,
         cacheCtlValue, plan.firstStrideBytes, plan.secondStrideBytes,
-        rewriter.getStringAttr(contract.sourceLayout), rewriter.getBoolAttr(ubPad),
+        rewriter.getStringAttr(sourceLayout), rewriter.getBoolAttr(ubPad),
         rewriter.getBoolAttr(ubPad));
   };
 
@@ -1678,6 +3564,157 @@ LogicalResult lowerTDIV(TDivOp op, PatternRewriter &rewriter) {
                              op.getDst(), rewriter, op.getLoc());
 }
 
+LogicalResult lowerTMAX(TMaxOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("max", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, contract, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("max", contract, op.getSrc0(), op.getSrc1(),
+                             op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTMIN(TMinOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("min", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, contract, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("min", contract, op.getSrc0(), op.getSrc1(),
+                             op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTAND(TAndOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("and", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, contract, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("and", contract, op.getSrc0(), op.getSrc1(),
+                             op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTANDS(TAndSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("ands", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "8/16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tands lowering requires scalar type to match source element type");
+  return buildScalarBitwiseVecScope("ands", contract, op.getSrc(),
+                                    op.getScalar(), op.getDst(), rewriter,
+                                    op.getLoc());
+}
+
+LogicalResult lowerTOR(TOrOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("or", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, contract, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("or", contract, op.getSrc0(), op.getSrc1(),
+                             op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTORS(TOrSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("ors", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "8/16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tors lowering requires scalar type to match source element type");
+  return buildScalarBitwiseVecScope("ors", contract, op.getSrc(),
+                                    op.getScalar(), op.getDst(), rewriter,
+                                    op.getLoc());
+}
+
+LogicalResult lowerTXOR(TXorOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("xor", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, contract, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("xor", contract, op.getSrc0(), op.getSrc1(),
+                             op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTXORS(TXorSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("xors", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "8/16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("txors lowering requires scalar type to match source element type");
+  return buildScalarBitwiseVecScope("xors", contract, op.getSrc(),
+                                    op.getScalar(), op.getDst(), rewriter,
+                                    op.getLoc());
+}
+
 LogicalResult lowerTEXP(TExpOp op, PatternRewriter &rewriter) {
   A5VMUnaryContract contract = extractTExpContract(op);
   if (failed(checkGenericUnaryContract(
@@ -1708,6 +3745,66 @@ LogicalResult lowerTSQRT(TSqrtOp op, PatternRewriter &rewriter) {
                             op.getLoc());
 }
 
+LogicalResult lowerTRSQRT(TRsqrtOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("rsqrt", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) { return type.isF16() || type.isF32(); }, "f16 and f32 element types")))
+    return failure();
+
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return op.emitOpError("trsqrt lowering requires a supported A5VM vector element type");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), contract.elementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), contract.elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer)
+    return op.emitOpError("trsqrt lowering requires pointer-backed tile buffers");
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter, op.getLoc());
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter, op.getLoc());
+  if (!validRowsValue || !validColsValue)
+    return op.emitOpError("trsqrt lowering requires valid rows and cols");
+
+  int64_t vectorWidth = vecType.getElementCount();
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value rowStride = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), contract.validCols);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), vectorWidth);
+  TypedAttr oneAttr = FloatAttr::get(contract.elementType, 1.0);
+  Value one = rewriter.create<arith::ConstantOp>(op.getLoc(), oneAttr);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(op.getLoc(), c0, validColsValue, vectorStepValue);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value rowBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), rowLoop.getInductionVar(), rowStride);
+  Value offset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), rowBase, chunkLoop.getInductionVar());
+  auto loaded = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, srcBuffer,
+                                              offset, StringAttr());
+  auto ones = rewriter.create<a5vm::VdupOp>(op.getLoc(), vecType, one, StringAttr(), StringAttr());
+  auto sqrt = rewriter.create<a5vm::VsqrtOp>(op.getLoc(), vecType, loaded.getResult());
+  auto result = rewriter.create<a5vm::VdivOp>(op.getLoc(), vecType, ones.getResult(), sqrt.getResult());
+  rewriter.create<a5vm::VstsOp>(op.getLoc(), result.getResult(), dstBuffer, offset, StringAttr());
+  return success();
+}
+
 LogicalResult lowerTRECIP(TRecipOp op, PatternRewriter &rewriter) {
   A5VMUnaryContract contract = extractTRecipContract(op);
   if (failed(checkGenericUnaryContract(
@@ -1716,6 +3813,395 @@ LogicalResult lowerTRECIP(TRecipOp op, PatternRewriter &rewriter) {
     return failure();
   return buildUnaryVecScope("recip", contract, op.getSrc(), op.getDst(), rewriter,
                             op.getLoc());
+}
+
+LogicalResult lowerTNEG(TNegOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("muls", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 16 || intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, and 16/32-bit integer element types")))
+    return failure();
+
+  TypedAttr negOneAttr;
+  if (contract.elementType.isF16())
+    negOneAttr = FloatAttr::get(contract.elementType, -1.0);
+  else if (contract.elementType.isF32())
+    negOneAttr = FloatAttr::get(contract.elementType, -1.0);
+  else if (auto intType = dyn_cast<IntegerType>(contract.elementType))
+    negOneAttr = IntegerAttr::get(intType, -1);
+  else
+    return op.emitOpError("tneg lowering requires scalar element type");
+
+  Value negOne = rewriter.create<arith::ConstantOp>(op.getLoc(), negOneAttr);
+  return buildScalarUnaryVecScope("muls", contract, op.getSrc(), negOne,
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTLRELU(TLReluOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("lrelu", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) { return type.isF16() || type.isF32(); },
+          "f16 and f32 element types")))
+    return failure();
+  if (op.getSlope().getType() != contract.elementType)
+    return op.emitOpError("tlrelu lowering requires slope type to match source element type");
+  return buildScalarUnaryVecScope("lrelu", contract, op.getSrc(), op.getSlope(),
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTCVT(TCvtOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("cvt", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) { return type.isF32() || type.isBF16(); },
+          "f32 or bf16 element type")))
+    return failure();
+
+  Type dstElementType = getElementType(op.getDst());
+  FailureOr<A5VMCvtLoweringKind> loweringKind =
+      classifyA5CvtLowering(contract.elementType, dstElementType);
+  if (failed(loweringKind))
+    return op.emitOpError(
+        "current tcvt lowering supports only f32->f32, f32->bf16, and bf16->f32");
+
+  FailureOr<StringAttr> roundMode = stringifyA5RoundMode(op, rewriter);
+  if (failed(roundMode))
+    return op.emitOpError("tcvt lowering does not recognize the requested round mode");
+
+  auto srcVecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  auto dstVecType = getA5VMVecType(rewriter.getContext(), dstElementType);
+  if (!srcVecType || !dstVecType)
+    return op.emitOpError("tcvt lowering requires legal A5VM vector types");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), contract.elementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), dstElementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer)
+    return op.emitOpError("tcvt lowering requires pointer-backed tile buffers");
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter,
+                                               op.getLoc());
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter,
+                                               op.getLoc());
+  if (!validRowsValue || !validColsValue)
+    return op.emitOpError("tcvt lowering requires valid rows and cols");
+
+  int64_t vectorWidth = dstVecType.getElementCount();
+  if (contract.validRows != ShapedType::kDynamic &&
+      contract.validCols != ShapedType::kDynamic) {
+    int64_t totalElements = contract.validRows * contract.validCols;
+    if (totalElements % vectorWidth != 0)
+      return op.emitOpError(
+          "tcvt lowering requires total valid elements divisible by vector width");
+  }
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value totalElementsValue =
+      rewriter.create<arith::MulIOp>(op.getLoc(), validRowsValue, validColsValue);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), vectorWidth);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(op.getLoc(), c0, totalElementsValue, vectorStepValue);
+  OpBuilder::InsertionGuard chunkGuard(rewriter);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value offset = chunkLoop.getInductionVar();
+  switch (*loweringKind) {
+  case A5VMCvtLoweringKind::Vtrc: {
+    auto loaded =
+        rewriter.create<a5vm::VldsOp>(op.getLoc(), srcVecType, srcBuffer, offset, StringAttr());
+    Value converted = rewriter.create<a5vm::VtrcOp>(op.getLoc(), dstVecType,
+                                                    loaded.getResult(), *roundMode);
+    rewriter.create<a5vm::VstsOp>(op.getLoc(), converted, dstBuffer, offset, StringAttr());
+    break;
+  }
+  case A5VMCvtLoweringKind::F32ToBF16: {
+    Value halfStep = rewriter.create<arith::ConstantIndexOp>(
+        op.getLoc(), srcVecType.getElementCount());
+    Value upperOffset =
+        rewriter.create<arith::AddIOp>(op.getLoc(), offset, halfStep);
+    auto lower =
+        rewriter.create<a5vm::VldsOp>(op.getLoc(), srcVecType, srcBuffer, offset, StringAttr());
+    auto upper = rewriter.create<a5vm::VldsOp>(op.getLoc(), srcVecType, srcBuffer,
+                                               upperOffset, StringAttr());
+    Value odd = rewriter.create<a5vm::VcvtOp>(
+        op.getLoc(), dstVecType, upper.getResult(), *roundMode,
+        rewriter.getStringAttr("RS_ENABLE"), rewriter.getStringAttr("PART_ODD"));
+    Value even = rewriter.create<a5vm::VcvtOp>(
+        op.getLoc(), dstVecType, lower.getResult(), *roundMode,
+        rewriter.getStringAttr("RS_ENABLE"), rewriter.getStringAttr("PART_EVEN"));
+    Value merged =
+        rewriter.create<a5vm::VorOp>(op.getLoc(), dstVecType, even, odd);
+    rewriter.create<a5vm::VstsOp>(op.getLoc(), merged, dstBuffer, offset, StringAttr());
+    break;
+  }
+  case A5VMCvtLoweringKind::BF16ToF32: {
+    auto loaded = rewriter.create<a5vm::VldsOp>(
+        op.getLoc(), srcVecType, srcBuffer, offset, rewriter.getStringAttr("UNPK_B16"));
+    Value converted = rewriter.create<a5vm::VcvtOp>(
+        op.getLoc(), dstVecType, loaded.getResult(), StringAttr(),
+        StringAttr(), rewriter.getStringAttr("PART_EVEN"));
+    rewriter.create<a5vm::VstsOp>(op.getLoc(), converted, dstBuffer, offset, StringAttr());
+    break;
+  }
+  }
+  return success();
+}
+
+template <typename CompareEmitter>
+LogicalResult buildPackedCmp32VecScope(StringRef family,
+                                       const A5VMBinaryContract &contract,
+                                       Value dst, Value dstBuffer,
+                                       PatternRewriter &rewriter, Location loc,
+                                       CompareEmitter emitCompare) {
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return emitError(loc) << family << " lowering requires a supported vector element type";
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter, loc);
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter, loc);
+  if (!validRowsValue || !validColsValue)
+    return emitError(loc) << family << " lowering requires valid rows and cols";
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic)
+    return emitError(loc) << family << " lowering currently requires static valid rows and cols";
+
+  int64_t totalElements = contract.validRows * contract.validCols;
+  constexpr int64_t repeatElem = 64;
+  int64_t repeatTimes = (totalElements + repeatElem - 1) / repeatElem;
+  int64_t pairedRepeats = repeatTimes / 2;
+  int64_t remainRepeats = repeatTimes % 2;
+
+  auto maskType = a5vm::MaskType::get(rewriter.getContext());
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value pairUpper = rewriter.create<arith::ConstantIndexOp>(loc, pairedRepeats);
+  Value repeatStep = rewriter.create<arith::ConstantIndexOp>(loc, repeatElem);
+  Value pairSrcStride = rewriter.create<arith::ConstantIndexOp>(loc, repeatElem * 2);
+  Value pairDstStride = rewriter.create<arith::ConstantIndexOp>(loc, 4);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return emitError(loc) << "failed to attach AIV loop scope metadata";
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto pairLoop = rewriter.create<scf::ForOp>(loc, c0, pairUpper, c1);
+  rewriter.setInsertionPointToStart(pairLoop.getBody());
+  Value pairBase = rewriter.create<arith::MulIOp>(loc, pairLoop.getInductionVar(),
+                                                  pairSrcStride);
+  Value pairNext = rewriter.create<arith::AddIOp>(loc, pairBase, repeatStep);
+  Value dstOffset = rewriter.create<arith::MulIOp>(loc, pairLoop.getInductionVar(),
+                                                   pairDstStride);
+  auto pairMask = rewriter.create<a5vm::PsetB8Op>(loc, maskType,
+                                                  rewriter.getStringAttr("PAT_ALL"));
+  Value cmp0 = emitCompare(rewriter, loc, pairBase, pairMask.getResult());
+  Value cmp1 = emitCompare(rewriter, loc, pairNext, pairMask.getResult());
+  auto interleaved = rewriter.create<a5vm::PdintlvB8Op>(loc, maskType, maskType,
+                                                        cmp0, cmp1);
+  rewriter.create<a5vm::PstsOp>(loc, interleaved.getLow(), dstBuffer, dstOffset);
+
+  if (remainRepeats == 0)
+    return success();
+
+  rewriter.setInsertionPointAfter(pairLoop);
+  Value tailBase = rewriter.create<arith::ConstantIndexOp>(loc, pairedRepeats * repeatElem * 2);
+  Value tailDst = rewriter.create<arith::ConstantIndexOp>(loc, pairedRepeats * 4);
+  auto tailMask = rewriter.create<a5vm::PsetB8Op>(loc, maskType,
+                                                  rewriter.getStringAttr("PAT_ALL"));
+  Value tailCmp = emitCompare(rewriter, loc, tailBase, tailMask.getResult());
+  Value packedTail = rewriter
+                         .create<a5vm::PpackOp>(loc, maskType, tailCmp,
+                                                rewriter.getStringAttr("LOWER"))
+                         .getResult();
+  rewriter.create<a5vm::PstsOp>(loc, packedTail, dstBuffer, tailDst);
+  return success();
+}
+
+LogicalResult lowerTCmpS(TCmpSOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("cmps", op.getSrc());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+
+  if (contract.tileDomain != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec)
+    return op.emitOpError("tcmps lowering requires tile domain vec");
+  if (contract.tileLayout != "row_major" || deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError("tcmps lowering requires row-major tile layout");
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic)
+    return op.emitOpError("tcmps lowering requires static valid shape");
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShape(op.getDst(), dstRows, dstCols);
+  if (contract.validRows != dstRows || contract.validCols != dstCols)
+    return op.emitOpError("tcmps lowering requires matching source and destination valid region");
+  if (!contract.elementType || !contract.elementType.isF32())
+    return op.emitOpError("tcmps lowering currently supports only f32 source tiles");
+  auto dstElemType = dyn_cast_or_null<IntegerType>(getElementType(op.getDst()));
+  if (!dstElemType || !dstElemType.isUnsignedInteger(8))
+    return op.emitOpError("tcmps lowering currently requires ui8 destination tiles");
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tcmps lowering requires scalar type to match source element type");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), contract.elementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), getElementType(op.getDst()),
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer)
+    return op.emitOpError("tcmps lowering requires pointer-backed tile buffers");
+
+  StringAttr cmpMode = rewriter.getStringAttr(stringifyCmpModeAttr(op.getCmpModeAttr()));
+  return buildPackedCmp32VecScope(
+      "tcmps", contract, op.getDst(), dstBuffer, rewriter, op.getLoc(),
+      [&](PatternRewriter &nestedRewriter, Location nestedLoc, Value offset,
+          Value mask) -> Value {
+        auto vecType =
+            getA5VMVecType(nestedRewriter.getContext(), contract.elementType);
+        auto loaded =
+            nestedRewriter.create<a5vm::VldsOp>(nestedLoc, vecType, srcBuffer, offset, StringAttr());
+        return nestedRewriter
+            .create<a5vm::VcmpsOp>(nestedLoc,
+                                   a5vm::MaskType::get(nestedRewriter.getContext()),
+                                   loaded.getResult(), op.getScalar(), mask, cmpMode)
+            .getResult();
+      });
+}
+
+LogicalResult lowerTCmp(TCmpOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("cmp", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+
+  if (contract.tileDomain != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getSrc1())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec)
+    return op.emitOpError("tcmp lowering requires tile domain vec");
+  if (contract.tileLayout != "row_major" || deriveTileLayout(op.getSrc1()) != "row_major" ||
+      deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError("tcmp lowering requires row-major tile layout");
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic)
+    return op.emitOpError("tcmp lowering requires static valid shape");
+  int64_t src1Rows = ShapedType::kDynamic;
+  int64_t src1Cols = ShapedType::kDynamic;
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShape(op.getSrc1(), src1Rows, src1Cols);
+  deriveValidShape(op.getDst(), dstRows, dstCols);
+  if (contract.validRows != src1Rows || contract.validCols != src1Cols ||
+      contract.validRows != dstRows || contract.validCols != dstCols)
+    return op.emitOpError("tcmp lowering requires matching source and destination valid region");
+  if (!contract.elementType || !contract.elementType.isF32())
+    return op.emitOpError("tcmp lowering currently supports only f32 source tiles");
+  if (getElementType(op.getSrc1()) != contract.elementType)
+    return op.emitOpError("tcmp lowering requires src1 element type to match src0");
+  auto dstElemType = dyn_cast_or_null<IntegerType>(getElementType(op.getDst()));
+  if (!dstElemType || !dstElemType.isUnsignedInteger(8))
+    return op.emitOpError("tcmp lowering currently requires ui8 destination tiles");
+
+  Value src0Buffer = materializeBufferPointer(op.getSrc0(), contract.elementType,
+                                              getMemorySpace(op.getSrc0()), rewriter,
+                                              op.getLoc());
+  Value src1Buffer = materializeBufferPointer(op.getSrc1(), contract.elementType,
+                                              getMemorySpace(op.getSrc1()), rewriter,
+                                              op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), getElementType(op.getDst()),
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!src0Buffer || !src1Buffer || !dstBuffer)
+    return op.emitOpError("tcmp lowering requires pointer-backed tile buffers");
+
+  StringAttr cmpMode = rewriter.getStringAttr(stringifyCmpModeAttr(op.getCmpModeAttr()));
+  return buildPackedCmp32VecScope(
+      "tcmp", contract, op.getDst(), dstBuffer, rewriter, op.getLoc(),
+      [&](PatternRewriter &nestedRewriter, Location nestedLoc, Value offset,
+          Value mask) -> Value {
+        auto vecType =
+            getA5VMVecType(nestedRewriter.getContext(), contract.elementType);
+        auto lhs =
+            nestedRewriter.create<a5vm::VldsOp>(nestedLoc, vecType, src0Buffer, offset, StringAttr());
+        auto rhs =
+            nestedRewriter.create<a5vm::VldsOp>(nestedLoc, vecType, src1Buffer, offset, StringAttr());
+        return nestedRewriter
+            .create<a5vm::VcmpOp>(nestedLoc,
+                                  a5vm::MaskType::get(nestedRewriter.getContext()),
+                                  lhs.getResult(), rhs.getResult(), mask, cmpMode)
+            .getResult();
+      });
+}
+
+LogicalResult lowerTCI(TCIOp op, PatternRewriter &rewriter) {
+  Type elementType = getElementType(op.getDst());
+  auto intType = dyn_cast_or_null<IntegerType>(elementType);
+  if (!intType || (intType.getWidth() != 16 && intType.getWidth() != 32))
+    return op.emitOpError("tci lowering requires i16 or i32 destination element type");
+  if (deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec)
+    return op.emitOpError("tci lowering requires tile domain vec");
+  if (deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError("tci lowering requires row-major tile layout");
+
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  Value validRowsValue;
+  Value validColsValue;
+  deriveValidShapeValues(op.getDst(), validRowsValue, validColsValue);
+  deriveValidShape(op.getDst(), validRows, validCols);
+  if (validRows != 1)
+    return op.emitOpError("tci lowering currently requires valid rows == 1");
+
+  Value dstBuffer = materializeBufferPointer(op.getDst(), elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!dstBuffer)
+    return op.emitOpError("tci lowering requires pointer-backed destination tile buffer");
+
+  Value upperBound = materializeIndexValue(validColsValue, validCols, rewriter, op.getLoc());
+  if (!upperBound)
+    return op.emitOpError("tci lowering requires valid cols");
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  auto loop = rewriter.create<scf::ForOp>(op.getLoc(), c0, upperBound, c1);
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(loop.getBody());
+  Value iv = loop.getInductionVar();
+  Value ivAsElem = rewriter.create<arith::IndexCastOp>(op.getLoc(), intType, iv);
+  Value stored =
+      op.getDescending()
+          ? rewriter.create<arith::SubIOp>(op.getLoc(), op.getS(), ivAsElem).getResult()
+          : rewriter.create<arith::AddIOp>(op.getLoc(), op.getS(), ivAsElem).getResult();
+  Value ivI64 = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), iv);
+  Value elemPtr =
+      adjustPointerByElemOffset(dstBuffer, ivI64, getElementByteSize(elementType),
+                                rewriter, op.getLoc());
+  rewriter.create<LLVM::StoreOp>(op.getLoc(), stored, elemPtr);
+  return success();
 }
 
 LogicalResult lowerTRELU(TReluOp op, PatternRewriter &rewriter) {
@@ -1750,6 +4236,1954 @@ LogicalResult lowerTNOT(TNotOp op, PatternRewriter &rewriter) {
                             op.getLoc());
 }
 
+LogicalResult lowerTTRANS(TTransOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("trans", op.getSrc());
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShape(op.getDst(), dstRows, dstCols);
+
+  if (contract.tileDomain != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec)
+    return op.emitOpError("ttrans lowering requires tile domain vec");
+  if (contract.tileLayout != "row_major" || deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError("ttrans lowering requires row-major tile layout");
+  if (contract.validRows == ShapedType::kDynamic || contract.validCols == ShapedType::kDynamic ||
+      dstRows == ShapedType::kDynamic || dstCols == ShapedType::kDynamic)
+    return op.emitOpError("ttrans lowering requires static valid shape");
+  if (contract.validRows != dstCols || contract.validCols != dstRows)
+    return op.emitOpError("ttrans lowering requires transposed source/destination valid shape");
+  if (contract.elementType != getElementType(op.getDst()))
+    return op.emitOpError("ttrans lowering requires matching source/destination element type");
+
+  int64_t elemBytes = getElementByteSize(contract.elementType);
+  int64_t srcStride = deriveStaticRowStride(op.getSrc());
+  int64_t dstStride = deriveStaticRowStride(op.getDst());
+  if (elemBytes != 4)
+    return op.emitOpError("ttrans lowering currently supports only b32 element types");
+  if (srcStride == ShapedType::kDynamic || dstStride == ShapedType::kDynamic)
+    return op.emitOpError("ttrans lowering requires static source/destination row stride");
+
+  auto dataVecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  auto indexElemType = rewriter.getIntegerType(32);
+  auto indexVecType = getA5VMVecType(rewriter.getContext(), indexElemType);
+  if (!dataVecType || !indexVecType)
+    return op.emitOpError("ttrans lowering requires supported A5VM vector types");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), contract.elementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), contract.elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer)
+    return op.emitOpError("ttrans lowering requires pointer-backed tile buffers");
+
+  constexpr int64_t repeatBytes = 256;
+  constexpr int64_t blockBytes = 32;
+  int64_t elementsPerRepeat = repeatBytes / elemBytes;
+  int64_t blockSizeElem = blockBytes / elemBytes;
+  int64_t alignedRows =
+      llvm::divideCeil(contract.validRows, blockSizeElem) * blockSizeElem;
+  int64_t repeatTimes = llvm::divideCeil(alignedRows, elementsPerRepeat);
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value colsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), contract.validCols);
+  Value chunkUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), repeatTimes);
+  Value elementsPerRepeatValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), elementsPerRepeat);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstStride);
+  Value srcStrideI32 = rewriter.create<arith::ConstantIntOp>(op.getLoc(), srcStride, 32);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto colLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, colsUpper, c1);
+  rewriter.setInsertionPointToStart(colLoop.getBody());
+  auto chunkLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, chunkUpper, c1);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+  Value chunkBase = rewriter.create<arith::MulIOp>(op.getLoc(), chunkLoop.getInductionVar(),
+                                                   elementsPerRepeatValue);
+  Value colI32 = rewriter.create<arith::IndexCastOp>(op.getLoc(), indexElemType,
+                                                     colLoop.getInductionVar());
+  Value chunkBaseI32 =
+      rewriter.create<arith::IndexCastOp>(op.getLoc(), indexElemType, chunkBase);
+  auto indices =
+      rewriter.create<a5vm::VciOp>(op.getLoc(), indexVecType, chunkBaseI32,
+                                   rewriter.getStringAttr("INC_ORDER"));
+  auto scaled = rewriter.create<a5vm::VmulsOp>(op.getLoc(), indexVecType,
+                                               indices.getResult(), srcStrideI32);
+  auto offsets = rewriter.create<a5vm::VaddsOp>(op.getLoc(), indexVecType,
+                                                scaled.getResult(), colI32);
+  Value fullActiveLanes =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(),
+                                              dataVecType.getElementCount());
+  auto gathered =
+      rewriter.create<a5vm::Vgather2Op>(op.getLoc(), dataVecType, srcBuffer,
+                                        offsets.getResult(), fullActiveLanes);
+  Value dstBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), colLoop.getInductionVar(), dstStrideValue);
+  Value dstOffset = rewriter.create<arith::AddIOp>(op.getLoc(), dstBase, chunkBase);
+  rewriter.create<a5vm::VstsOp>(op.getLoc(), gathered.getResult(), dstBuffer,
+                                dstOffset, StringAttr());
+  return success();
+}
+
+template <typename FillPadOpTy>
+LogicalResult lowerTFillPadCommon(FillPadOpTy op, PatternRewriter &rewriter,
+                                  bool allowDstExpand) {
+  A5VMUnaryContract contract = buildUnaryContract("fillpad", op.getSrc());
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShape(op.getDst(), dstRows, dstCols);
+
+  if (contract.tileDomain != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec)
+    return op.emitOpError("fillpad lowering requires tile domain vec");
+  if (contract.tileLayout != "row_major" || deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError("fillpad lowering requires row-major tile layout");
+  if (contract.validRows == ShapedType::kDynamic || contract.validCols == ShapedType::kDynamic ||
+      dstRows == ShapedType::kDynamic || dstCols == ShapedType::kDynamic)
+    return op.emitOpError("fillpad lowering requires static valid shape");
+  if (!allowDstExpand && (contract.validRows != dstRows || contract.validCols != dstCols))
+    return op.emitOpError("tfillpad lowering requires matching source/destination valid shape");
+  if (allowDstExpand && (dstRows < contract.validRows || dstCols < contract.validCols))
+    return op.emitOpError("tfillpad_expand lowering requires dst shape >= src shape");
+  if (contract.elementType != getElementType(op.getDst()))
+    return op.emitOpError("fillpad lowering requires matching source/destination element type");
+
+  int64_t srcStride = deriveStaticRowStride(op.getSrc());
+  int64_t dstStride = deriveStaticRowStride(op.getDst());
+  if (srcStride == ShapedType::kDynamic || dstStride == ShapedType::kDynamic)
+    return op.emitOpError("fillpad lowering requires static source/destination row stride");
+
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return op.emitOpError("fillpad lowering requires supported A5VM vector element type");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), contract.elementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), contract.elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer)
+    return op.emitOpError("fillpad lowering requires pointer-backed tile buffers");
+
+  auto config = lookupTileConfig(op.getDst());
+  PadValueAttr padAttr = config ? dyn_cast<PadValueAttr>(config.getPad()) : PadValueAttr{};
+  Attribute padValueAttr = buildFillPadValue(contract.elementType, padAttr, rewriter);
+  if (!padValueAttr)
+    return op.emitOpError("fillpad lowering requires a concrete non-null dst pad value");
+  Value padScalar = rewriter.create<arith::ConstantOp>(op.getLoc(), cast<TypedAttr>(padValueAttr));
+  auto padVec = rewriter.create<a5vm::VdupOp>(op.getLoc(), vecType, padScalar, StringAttr(),
+                                              StringAttr());
+
+  int64_t vectorWidth = vecType.getElementCount();
+  int64_t padCols = dstCols - contract.validCols;
+  int64_t padRows = dstRows - contract.validRows;
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value srcRowsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), contract.validRows);
+  Value srcColsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), contract.validCols);
+  Value dstRowsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstRows);
+  Value vectorStep = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), vectorWidth);
+  Value srcStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), srcStride);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstStride);
+  Value validColsValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), contract.validCols);
+  Value dstColsValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstCols);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, srcRowsUpper, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value srcRowBase = rewriter.create<arith::MulIOp>(op.getLoc(), rowLoop.getInductionVar(),
+                                                    srcStrideValue);
+  Value dstRowBase = rewriter.create<arith::MulIOp>(op.getLoc(), rowLoop.getInductionVar(),
+                                                    dstStrideValue);
+
+  auto copyChunkLoop =
+      rewriter.create<scf::ForOp>(op.getLoc(), c0, srcColsUpper, vectorStep);
+  rewriter.setInsertionPointToStart(copyChunkLoop.getBody());
+  Value copyOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), srcRowBase, copyChunkLoop.getInductionVar());
+  auto loaded = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, srcBuffer,
+                                              copyOffset, StringAttr());
+  Value copyDstOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), dstRowBase, copyChunkLoop.getInductionVar());
+  Value copyRemaining =
+      rewriter.create<arith::SubIOp>(op.getLoc(), validColsValue, copyChunkLoop.getInductionVar());
+  auto copyNeedsClamp = rewriter.create<arith::CmpIOp>(op.getLoc(), arith::CmpIPredicate::slt,
+                                                       copyRemaining, vectorStep);
+  Value copyActiveLanes =
+      rewriter.create<arith::SelectOp>(op.getLoc(), copyNeedsClamp, copyRemaining, vectorStep);
+  rewriter.create<a5vm::VstsPredOp>(op.getLoc(), loaded.getResult(), dstBuffer,
+                                    copyDstOffset, copyActiveLanes, StringAttr());
+
+  rewriter.setInsertionPointAfter(copyChunkLoop);
+  if (padCols > 0) {
+    Value padColsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), padCols);
+    auto padColLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, padColsUpper, vectorStep);
+    rewriter.setInsertionPointToStart(padColLoop.getBody());
+    Value padDstStart = rewriter.create<arith::AddIOp>(op.getLoc(), dstRowBase, validColsValue);
+    Value padDstOffset = rewriter.create<arith::AddIOp>(op.getLoc(), padDstStart,
+                                                        padColLoop.getInductionVar());
+    Value padRemaining =
+        rewriter.create<arith::SubIOp>(op.getLoc(), padColsUpper, padColLoop.getInductionVar());
+    auto padNeedsClamp = rewriter.create<arith::CmpIOp>(op.getLoc(), arith::CmpIPredicate::slt,
+                                                        padRemaining, vectorStep);
+    Value padActiveLanes =
+        rewriter.create<arith::SelectOp>(op.getLoc(), padNeedsClamp, padRemaining, vectorStep);
+    rewriter.create<a5vm::VstsPredOp>(op.getLoc(), padVec.getResult(), dstBuffer, padDstOffset,
+                                      padActiveLanes, StringAttr());
+  }
+
+  rewriter.setInsertionPointAfter(rowLoop);
+  if (padRows > 0) {
+    Value bottomStart = rewriter.create<arith::MulIOp>(op.getLoc(), srcRowsUpper, dstStrideValue);
+    Value bottomElements =
+        rewriter.create<arith::SubIOp>(op.getLoc(),
+                                       rewriter.create<arith::MulIOp>(op.getLoc(), dstRowsUpper,
+                                                                      dstColsValue),
+                                       bottomStart);
+    auto bottomLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, bottomElements, vectorStep);
+    rewriter.setInsertionPointToStart(bottomLoop.getBody());
+    Value bottomDstOffset =
+        rewriter.create<arith::AddIOp>(op.getLoc(), bottomStart, bottomLoop.getInductionVar());
+    Value bottomRemaining =
+        rewriter.create<arith::SubIOp>(op.getLoc(), bottomElements, bottomLoop.getInductionVar());
+    auto bottomNeedsClamp = rewriter.create<arith::CmpIOp>(
+        op.getLoc(), arith::CmpIPredicate::slt, bottomRemaining, vectorStep);
+    Value bottomActiveLanes = rewriter.create<arith::SelectOp>(
+        op.getLoc(), bottomNeedsClamp, bottomRemaining, vectorStep);
+    rewriter.create<a5vm::VstsPredOp>(op.getLoc(), padVec.getResult(), dstBuffer, bottomDstOffset,
+                                      bottomActiveLanes, StringAttr());
+  }
+
+  return success();
+}
+
+LogicalResult lowerTFILLPAD(TFillPadOp op, PatternRewriter &rewriter) {
+  return lowerTFillPadCommon(op, rewriter, /*allowDstExpand=*/false);
+}
+
+LogicalResult lowerTFILLPADExpand(TFillPadExpandOp op, PatternRewriter &rewriter) {
+  return lowerTFillPadCommon(op, rewriter, /*allowDstExpand=*/true);
+}
+
+LogicalResult lowerTExpandS(TExpandsOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = extractTExpandSContract(op);
+  if (contract.tileDomain != A5VMTileDomain::Vec)
+    return op.emitOpError("expands lowering requires tile domain vec");
+  if (contract.tileLayout != "row_major")
+    return op.emitOpError("expands lowering requires row-major tile layout");
+  if (!contract.elementType)
+    return op.emitOpError("expands lowering requires a concrete element type");
+
+  Type scalarType = op.getScalar().getType();
+  if (scalarType != contract.elementType)
+    return op.emitOpError("expands lowering requires scalar type to match destination element type");
+
+  if (!(contract.elementType.isF16() || contract.elementType.isF32() ||
+        contract.elementType.isBF16())) {
+    if (auto intType = dyn_cast<IntegerType>(contract.elementType)) {
+      unsigned width = intType.getWidth();
+      if (width != 8 && width != 16 && width != 32)
+        return op.emitOpError("expands lowering supports only f16, f32, bf16, and 8/16/32-bit integer element types");
+    } else {
+      return op.emitOpError("expands lowering supports only scalar integer or floating-point element types");
+    }
+  }
+
+  return buildExpandScalarVecScope(contract, op.getScalar(), op.getDst(),
+                                   rewriter, op.getLoc());
+}
+
+LogicalResult lowerTGather(TGatherOp op, PatternRewriter &rewriter) {
+  auto requireVecRowMajor = [&](Value value, StringRef role) -> LogicalResult {
+    if (deriveTileDomain(getMemorySpace(value)) != A5VMTileDomain::Vec)
+      return op.emitOpError() << "tgather lowering requires vec tile domain for "
+                              << role;
+    if (deriveTileLayout(value) != "row_major")
+      return op.emitOpError() << "tgather lowering requires row-major layout for "
+                              << role;
+    return success();
+  };
+
+  if (failed(requireVecRowMajor(op.getSrc(), "src")) ||
+      failed(requireVecRowMajor(op.getDst(), "dst")))
+    return failure();
+
+  Type dataElementType = getElementType(op.getSrc());
+  if (dataElementType != getElementType(op.getDst()))
+    return op.emitOpError("tgather lowering requires matching src/dst element type");
+
+  auto dataVecType = getA5VMVecType(rewriter.getContext(), dataElementType);
+  if (!dataVecType)
+    return op.emitOpError("tgather lowering requires supported A5VM data type");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), dataElementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), dataElementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer)
+    return op.emitOpError("tgather lowering requires pointer-backed tile buffers");
+
+  int64_t srcStride = deriveStaticRowStride(op.getSrc());
+  int64_t dstStride = deriveStaticRowStride(op.getDst());
+  if (srcStride == ShapedType::kDynamic || dstStride == ShapedType::kDynamic)
+    return op.emitOpError("tgather lowering requires static row stride");
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  A5VMLoopScopeContract loopScope;
+  loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  loopScope.loopDepth = 0;
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+
+  if (Value indices = op.getIndices()) {
+    if (failed(requireVecRowMajor(indices, "indices")))
+      return failure();
+
+    Type indexElementType = getElementType(indices);
+    auto indexIntegerType = dyn_cast<IntegerType>(indexElementType);
+    auto indexVecType = getA5VMVecType(rewriter.getContext(), indexElementType);
+    if (!indexIntegerType || !indexVecType)
+      return op.emitOpError("tgather index lowering requires integer indices with supported A5VM vector type");
+    if (indexVecType.getElementCount() != dataVecType.getElementCount())
+      return op.emitOpError("tgather index lowering currently requires matching data/index vector widths");
+
+    Value indexBuffer = materializeBufferPointer(indices, indexElementType,
+                                                getMemorySpace(indices), rewriter,
+                                                op.getLoc());
+    if (!indexBuffer)
+      return op.emitOpError("tgather index lowering requires pointer-backed indices tile");
+
+    int64_t indexStride = deriveStaticRowStride(indices);
+    if (indexStride == ShapedType::kDynamic)
+      return op.emitOpError("tgather index lowering requires static index row stride");
+
+    Value validRowsValue;
+    Value validColsValue;
+    int64_t validRows = ShapedType::kDynamic;
+    int64_t validCols = ShapedType::kDynamic;
+    deriveValidShapeValues(op.getDst(), validRowsValue, validColsValue);
+    deriveValidShape(op.getDst(), validRows, validCols);
+    if (failed(resolveExecutionValidShape(op.getDst(), validRowsValue, validColsValue,
+                                          validRows, validCols, rewriter, op.getLoc())))
+      return op.emitOpError("tgather index lowering requires valid dst shape");
+
+    int64_t chunkWidth = indexVecType.getElementCount();
+    Value chunkStep = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), chunkWidth);
+    Value dstStrideValue =
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstStride);
+    Value indexStrideValue =
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), indexStride);
+
+    auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+    rewriter.setInsertionPointToStart(rowLoop.getBody());
+    auto chunkLoop =
+        rewriter.create<scf::ForOp>(op.getLoc(), c0, validColsValue, chunkStep);
+    rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+    Value row = rowLoop.getInductionVar();
+    Value chunkBase = chunkLoop.getInductionVar();
+    Value remaining =
+        rewriter.create<arith::SubIOp>(op.getLoc(), validColsValue, chunkBase);
+    Value activeLanes =
+        buildMinIndexValue(rewriter, op.getLoc(), remaining, chunkStep);
+
+    Value dstRowBase =
+        rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+    Value indexRowBase =
+        rewriter.create<arith::MulIOp>(op.getLoc(), row, indexStrideValue);
+    Value indexOffset =
+        rewriter.create<arith::AddIOp>(op.getLoc(), indexRowBase, chunkBase);
+    auto offsetVector = rewriter.create<a5vm::VldsOp>(op.getLoc(), indexVecType,
+                                                      indexBuffer, indexOffset,
+                                                      StringAttr());
+    auto gathered = rewriter.create<a5vm::Vgather2Op>(
+        op.getLoc(), dataVecType, srcBuffer, offsetVector.getResult(), activeLanes);
+    Value dstOffset =
+        rewriter.create<arith::AddIOp>(op.getLoc(), dstRowBase, chunkBase);
+    return buildMaskedVectorStore(rewriter, op.getLoc(), gathered.getResult(),
+                                  dstBuffer, dstOffset, activeLanes, chunkWidth);
+  }
+
+  auto maskPattern = op.getMaskPatternAttr();
+  if (!maskPattern)
+    return op.emitOpError("tgather lowering requires indices or maskPattern");
+  if (maskPattern.getValue() != MaskPattern::P1111)
+    return op.emitOpError("tgather mask lowering currently supports only maskPattern=P1111");
+
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  deriveValidShapeValues(op.getSrc(), validRowsValue, validColsValue);
+  deriveValidShape(op.getSrc(), validRows, validCols);
+  if (failed(resolveExecutionValidShape(op.getSrc(), validRowsValue, validColsValue,
+                                        validRows, validCols, rewriter, op.getLoc())))
+    return op.emitOpError("tgather mask lowering requires valid src shape");
+
+  int64_t chunkWidth = dataVecType.getElementCount();
+  Value chunkStep = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), chunkWidth);
+  Value srcStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), srcStride);
+  Value dstStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstStride);
+
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(op.getLoc(), c0, validColsValue, chunkStep);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+  Value row = rowLoop.getInductionVar();
+  Value chunkBase = chunkLoop.getInductionVar();
+  Value remaining =
+      rewriter.create<arith::SubIOp>(op.getLoc(), validColsValue, chunkBase);
+  Value activeLanes = buildMinIndexValue(rewriter, op.getLoc(), remaining, chunkStep);
+
+  Value srcRowBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), row, srcStrideValue);
+  Value dstRowBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+  Value srcOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), srcRowBase, chunkBase);
+  auto loaded = rewriter.create<a5vm::VldsOp>(op.getLoc(), dataVecType, srcBuffer,
+                                              srcOffset, StringAttr());
+  Value dstOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), dstRowBase, chunkBase);
+  return buildMaskedVectorStore(rewriter, op.getLoc(), loaded.getResult(), dstBuffer,
+                                dstOffset, activeLanes, chunkWidth);
+}
+
+LogicalResult lowerTGatherB(TGatherBOp op, PatternRewriter &rewriter) {
+  auto requireVecRowMajor = [&](Value value, StringRef role) -> LogicalResult {
+    if (deriveTileDomain(getMemorySpace(value)) != A5VMTileDomain::Vec)
+      return op.emitOpError() << "tgatherb lowering requires vec tile domain for "
+                              << role;
+    if (deriveTileLayout(value) != "row_major")
+      return op.emitOpError() << "tgatherb lowering requires row-major layout for "
+                              << role;
+    return success();
+  };
+
+  if (failed(requireVecRowMajor(op.getSrc(), "src")) ||
+      failed(requireVecRowMajor(op.getOffsets(), "offsets")) ||
+      failed(requireVecRowMajor(op.getDst(), "dst")))
+    return failure();
+
+  Type dataElementType = getElementType(op.getDst());
+  if (getElementType(op.getSrc()) != dataElementType)
+    return op.emitOpError("tgatherb lowering requires matching src/dst element type");
+
+  auto offsetIntegerType = dyn_cast<IntegerType>(getElementType(op.getOffsets()));
+  if (!offsetIntegerType || offsetIntegerType.getWidth() != 32 ||
+      !offsetIntegerType.isUnsigned())
+    return op.emitOpError("tgatherb lowering currently requires unsigned 32-bit offsets");
+
+  auto dataVecType = getA5VMVecType(rewriter.getContext(), dataElementType);
+  auto offsetVecType =
+      getA5VMVecType(rewriter.getContext(), getElementType(op.getOffsets()));
+  if (!dataVecType || !offsetVecType)
+    return op.emitOpError("tgatherb lowering requires supported A5VM vector types");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), dataElementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), dataElementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  Value offsetBuffer =
+      materializeBufferPointer(op.getOffsets(), getElementType(op.getOffsets()),
+                               getMemorySpace(op.getOffsets()), rewriter, op.getLoc());
+  if (!srcBuffer || !dstBuffer || !offsetBuffer)
+    return op.emitOpError("tgatherb lowering requires pointer-backed tile buffers");
+
+  int64_t dstStride = deriveStaticRowStride(op.getDst());
+  int64_t offsetStride = deriveStaticRowStride(op.getOffsets());
+  int64_t staticRows = deriveStaticShapeDim(op.getDst(), 0);
+  int64_t staticCols = deriveStaticShapeDim(op.getDst(), 1);
+  if (dstStride == ShapedType::kDynamic || offsetStride == ShapedType::kDynamic ||
+      staticRows == ShapedType::kDynamic || staticCols == ShapedType::kDynamic)
+    return op.emitOpError("tgatherb lowering requires static tile shape and row stride");
+
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  deriveValidShapeValues(op.getDst(), validRowsValue, validColsValue);
+  deriveValidShape(op.getDst(), validRows, validCols);
+  if (failed(resolveExecutionValidShape(op.getDst(), validRowsValue, validColsValue,
+                                        validRows, validCols, rewriter, op.getLoc())))
+    return op.emitOpError("tgatherb lowering requires valid dst shape");
+
+  unsigned elemBytes = dataElementType.getIntOrFloatBitWidth() / 8;
+  int64_t elementsPerRepeat = 256 / elemBytes;
+  int64_t blockSizeElem = 32 / elemBytes;
+  int64_t staticRepeatTimes = llvm::divideCeil(staticCols, elementsPerRepeat);
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value elementsPerRepeatValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), elementsPerRepeat);
+  Value blockSizeElemValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), blockSizeElem);
+  Value dstStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstStride);
+  Value offsetStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), offsetStride);
+
+  A5VMLoopScopeContract loopScope;
+  loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  loopScope.loopDepth = 0;
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+
+  if (staticRepeatTimes > staticRows) {
+    auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+    rewriter.setInsertionPointToStart(rowLoop.getBody());
+    auto chunkLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validColsValue,
+                                                 elementsPerRepeatValue);
+    rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+    Value row = rowLoop.getInductionVar();
+    Value chunkBase = chunkLoop.getInductionVar();
+    Value remaining =
+        rewriter.create<arith::SubIOp>(op.getLoc(), validColsValue, chunkBase);
+    Value activeLanes = buildMinIndexValue(rewriter, op.getLoc(), remaining,
+                                           elementsPerRepeatValue);
+    Value rowOffsetBase =
+        rewriter.create<arith::MulIOp>(op.getLoc(), row, offsetStrideValue);
+    Value rowDstBase =
+        rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+    Value offsetChunkBase =
+        rewriter.create<arith::FloorDivSIOp>(op.getLoc(), chunkBase,
+                                             blockSizeElemValue);
+    Value offsetLoadOffset =
+        rewriter.create<arith::AddIOp>(op.getLoc(), rowOffsetBase, offsetChunkBase);
+    auto offsets = rewriter.create<a5vm::VldsOp>(op.getLoc(), offsetVecType,
+                                                 offsetBuffer, offsetLoadOffset,
+                                                 StringAttr());
+    auto gathered = rewriter.create<a5vm::VgatherbOp>(
+        op.getLoc(), dataVecType, srcBuffer, offsets.getResult(), activeLanes);
+    Value dstOffset =
+        rewriter.create<arith::AddIOp>(op.getLoc(), rowDstBase, chunkBase);
+    return buildMaskedVectorStore(rewriter, op.getLoc(), gathered.getResult(),
+                                  dstBuffer, dstOffset, activeLanes,
+                                  dataVecType.getElementCount());
+  }
+
+  auto chunkLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validColsValue,
+                                               elementsPerRepeatValue);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+
+  Value chunkBase = chunkLoop.getInductionVar();
+  Value row = rowLoop.getInductionVar();
+  Value remaining =
+      rewriter.create<arith::SubIOp>(op.getLoc(), validColsValue, chunkBase);
+  Value activeLanes = buildMinIndexValue(rewriter, op.getLoc(), remaining,
+                                         elementsPerRepeatValue);
+  Value rowOffsetBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), row, offsetStrideValue);
+  Value rowDstBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+  Value offsetChunkBase =
+      rewriter.create<arith::FloorDivSIOp>(op.getLoc(), chunkBase,
+                                           blockSizeElemValue);
+  Value offsetLoadOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), rowOffsetBase, offsetChunkBase);
+  auto offsets = rewriter.create<a5vm::VldsOp>(op.getLoc(), offsetVecType, offsetBuffer,
+                                               offsetLoadOffset, StringAttr());
+  auto gathered = rewriter.create<a5vm::VgatherbOp>(
+      op.getLoc(), dataVecType, srcBuffer, offsets.getResult(), activeLanes);
+  Value dstOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), chunkBase, rowDstBase);
+  return buildMaskedVectorStore(rewriter, op.getLoc(), gathered.getResult(),
+                                dstBuffer, dstOffset, activeLanes,
+                                dataVecType.getElementCount());
+}
+
+LogicalResult lowerTScatter(TScatterOp op, PatternRewriter &rewriter) {
+  auto requireVecRowMajor = [&](Value value, StringRef role) -> LogicalResult {
+    if (deriveTileDomain(getMemorySpace(value)) != A5VMTileDomain::Vec)
+      return op.emitOpError() << "tscatter lowering requires vec tile domain for "
+                              << role;
+    if (deriveTileLayout(value) != "row_major")
+      return op.emitOpError() << "tscatter lowering requires row-major layout for "
+                              << role;
+    return success();
+  };
+
+  if (failed(requireVecRowMajor(op.getSrc(), "src")) ||
+      failed(requireVecRowMajor(op.getIndexes(), "indexes")) ||
+      failed(requireVecRowMajor(op.getDst(), "dst")))
+    return failure();
+
+  Type dataElementType = getElementType(op.getSrc());
+  if (dataElementType != getElementType(op.getDst()))
+    return op.emitOpError("tscatter lowering requires matching src/dst element type");
+
+  Type indexElementType = getElementType(op.getIndexes());
+  auto indexIntegerType = dyn_cast<IntegerType>(indexElementType);
+  if (!indexIntegerType || indexIntegerType.getWidth() != 32)
+    return op.emitOpError("tscatter lowering currently requires 32-bit integer indexes");
+
+  auto dataVecType = getA5VMVecType(rewriter.getContext(), dataElementType);
+  auto indexVecType = getA5VMVecType(rewriter.getContext(), indexElementType);
+  if (!dataVecType || !indexVecType ||
+      dataVecType.getElementCount() != indexVecType.getElementCount())
+    return op.emitOpError("tscatter lowering currently requires matching data/index vector widths");
+
+  Value srcBuffer = materializeBufferPointer(op.getSrc(), dataElementType,
+                                             getMemorySpace(op.getSrc()), rewriter,
+                                             op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), dataElementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  Value indexBuffer = materializeBufferPointer(op.getIndexes(), indexElementType,
+                                               getMemorySpace(op.getIndexes()), rewriter,
+                                               op.getLoc());
+  if (!srcBuffer || !dstBuffer || !indexBuffer)
+    return op.emitOpError("tscatter lowering requires pointer-backed tile buffers");
+
+  int64_t srcStride = deriveStaticRowStride(op.getSrc());
+  int64_t indexStride = deriveStaticRowStride(op.getIndexes());
+  if (srcStride == ShapedType::kDynamic || indexStride == ShapedType::kDynamic)
+    return op.emitOpError("tscatter lowering requires static src/index row stride");
+
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  deriveValidShapeValues(op.getIndexes(), validRowsValue, validColsValue);
+  deriveValidShape(op.getIndexes(), validRows, validCols);
+  if (failed(resolveExecutionValidShape(op.getIndexes(), validRowsValue, validColsValue,
+                                        validRows, validCols, rewriter, op.getLoc())))
+    return op.emitOpError("tscatter lowering requires valid index shape");
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value chunkStep = rewriter.create<arith::ConstantIndexOp>(
+      op.getLoc(), indexVecType.getElementCount());
+  Value srcStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), srcStride);
+  Value indexStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), indexStride);
+
+  A5VMLoopScopeContract loopScope;
+  loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  loopScope.loopDepth = 0;
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(op.getLoc(), c0, validColsValue, chunkStep);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+
+  Value row = rowLoop.getInductionVar();
+  Value chunkBase = chunkLoop.getInductionVar();
+  Value remaining =
+      rewriter.create<arith::SubIOp>(op.getLoc(), validColsValue, chunkBase);
+  Value activeLanes =
+      buildMinIndexValue(rewriter, op.getLoc(), remaining, chunkStep);
+
+  Value srcRowBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), row, srcStrideValue);
+  Value indexRowBase =
+      rewriter.create<arith::MulIOp>(op.getLoc(), row, indexStrideValue);
+  Value srcOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), srcRowBase, chunkBase);
+  Value indexOffset =
+      rewriter.create<arith::AddIOp>(op.getLoc(), indexRowBase, chunkBase);
+  auto srcVector = rewriter.create<a5vm::VldsOp>(op.getLoc(), dataVecType, srcBuffer,
+                                                 srcOffset, StringAttr());
+  auto indexVector = rewriter.create<a5vm::VldsOp>(op.getLoc(), indexVecType, indexBuffer,
+                                                   indexOffset, StringAttr());
+  rewriter.create<a5vm::VscatterOp>(op.getLoc(), srcVector.getResult(), dstBuffer,
+                                    indexVector.getResult(), activeLanes);
+  return success();
+}
+
+LogicalResult lowerTMrgSort(TMrgSortOp op, PatternRewriter &rewriter) {
+  auto requireVecRowMajor = [&](Value value, StringRef role) -> LogicalResult {
+    if (deriveTileDomain(getMemorySpace(value)) != A5VMTileDomain::Vec)
+      return op.emitOpError() << "tmrgsort lowering requires vec tile domain for "
+                              << role;
+    if (deriveTileLayout(value) != "row_major")
+      return op.emitOpError() << "tmrgsort lowering requires row-major layout for "
+                              << role;
+    return success();
+  };
+  auto requireOneRow = [&](Value value, StringRef role) -> LogicalResult {
+    if (deriveStaticShapeDim(value, 0) != 1)
+      return op.emitOpError() << "tmrgsort lowering requires rows==1 for " << role;
+    return success();
+  };
+
+  Location loc = op.getLoc();
+  if (op.isFormat1()) {
+    Value src = op.getSrcs().front();
+    Value dst = op.getDsts().front();
+    if (failed(requireVecRowMajor(src, "src")) || failed(requireVecRowMajor(dst, "dst")) ||
+        failed(requireOneRow(src, "src")) || failed(requireOneRow(dst, "dst")))
+      return failure();
+
+    Type elementType = getElementType(src);
+    if (elementType != getElementType(dst))
+      return op.emitOpError("tmrgsort format1 requires matching src/dst element type");
+    if (!(elementType.isF16() || elementType.isF32()))
+      return op.emitOpError("tmrgsort format1 currently supports only f16/f32");
+
+    Value srcBuffer = materializeBufferPointer(src, elementType, getMemorySpace(src),
+                                              rewriter, loc);
+    Value dstBuffer = materializeBufferPointer(dst, elementType, getMemorySpace(dst),
+                                              rewriter, loc);
+    if (!srcBuffer || !dstBuffer)
+      return op.emitOpError("tmrgsort format1 requires pointer-backed tile buffers");
+
+    Value blockLen = op.getBlockLen();
+    if (!blockLen)
+      return op.emitOpError("tmrgsort format1 requires blockLen");
+    Value blockLenI64;
+    if (blockLen.getType().isIndex())
+      blockLenI64 =
+          rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(), blockLen);
+    else
+      blockLenI64 =
+          rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), blockLen);
+    Value blockLenIndex =
+        rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getIndexType(), blockLenI64);
+
+    Value validRowsValue;
+    Value validColsValue;
+    int64_t validRows = ShapedType::kDynamic;
+    int64_t validCols = ShapedType::kDynamic;
+    deriveValidShapeValues(src, validRowsValue, validColsValue);
+    deriveValidShape(src, validRows, validCols);
+    Value validColsI64 = materializeI64Value(validColsValue, validCols, rewriter, loc);
+
+    int64_t elemBytes = getElementByteSize(elementType);
+    Value numStructures = rewriter.create<arith::ShRSIOp>(
+        loc, rewriter.getI64Type(),
+        rewriter.create<arith::MulIOp>(
+            loc, blockLenI64, rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64)),
+        rewriter.create<arith::ConstantIntOp>(loc, 3, 64));
+    Value count = buildPackedCountI64(rewriter, loc,
+                                      {numStructures, numStructures, numStructures, numStructures});
+    Value repeatTimes = rewriter.create<arith::DivUIOp>(
+        loc, validColsI64,
+        rewriter.create<arith::MulIOp>(
+            loc, blockLenI64, rewriter.create<arith::ConstantIntOp>(loc, 4, 64)));
+    Value config = rewriter.create<arith::OrIOp>(
+        loc, repeatTimes, rewriter.create<arith::ConstantIntOp>(loc, 0b1111 << 8, 64));
+
+    Value src0 = srcBuffer;
+    Value src1 = offsetBufferPointer(srcBuffer, elementType, blockLenIndex, rewriter, loc);
+    Value src2 = offsetBufferPointer(
+        srcBuffer, elementType,
+        rewriter.create<arith::MulIOp>(loc, blockLenIndex,
+                                       rewriter.create<arith::ConstantIndexOp>(loc, 2)),
+        rewriter, loc);
+    Value src3 = offsetBufferPointer(
+        srcBuffer, elementType,
+        rewriter.create<arith::MulIOp>(loc, blockLenIndex,
+                                       rewriter.create<arith::ConstantIndexOp>(loc, 3)),
+        rewriter, loc);
+    rewriter.create<a5vm::Vmrgsort4Op>(loc, dstBuffer, src0, src1, src2, src3, count,
+                                       config);
+    return success();
+  }
+
+  if (!op.isFormat2())
+    return op.emitOpError("unsupported tmrgsort format for current a5vm backend");
+  if (op.getExhausted())
+    return op.emitOpError("tmrgsort format2 exhausted=true is not yet supported");
+  if (op.getSrcs().size() != 4 || op.getDsts().size() != 2)
+    return op.emitOpError("tmrgsort format2 currently requires exactly 4 srcs and 2 dsts");
+
+  Type elementType = getElementType(op.getSrcs().front());
+  if (!(elementType.isF16() || elementType.isF32()))
+    return op.emitOpError("tmrgsort format2 currently supports only f16/f32");
+
+  SmallVector<Value> srcBuffers;
+  SmallVector<Value> srcCounts;
+  srcBuffers.reserve(4);
+  srcCounts.reserve(4);
+  for (Value src : op.getSrcs()) {
+    if (failed(requireVecRowMajor(src, "src")) || failed(requireOneRow(src, "src")))
+      return failure();
+    if (getElementType(src) != elementType)
+      return op.emitOpError("tmrgsort format2 requires matching source element types");
+
+    Value srcBuffer =
+        materializeBufferPointer(src, elementType, getMemorySpace(src), rewriter, loc);
+    if (!srcBuffer)
+      return op.emitOpError("tmrgsort format2 requires pointer-backed source tiles");
+    srcBuffers.push_back(srcBuffer);
+
+    Value rowsValue;
+    Value colsValue;
+    int64_t rows = ShapedType::kDynamic;
+    int64_t cols = ShapedType::kDynamic;
+    deriveValidShapeValues(src, rowsValue, colsValue);
+    deriveValidShape(src, rows, cols);
+    Value colsI64 = materializeI64Value(colsValue, cols, rewriter, loc);
+    srcCounts.push_back(rewriter.create<arith::ShRSIOp>(
+        loc, rewriter.getI64Type(), colsI64,
+        rewriter.create<arith::ConstantIntOp>(loc, elementType.isF32() ? 1 : 2, 64)));
+  }
+
+  Value dst = op.getDsts()[0];
+  Value tmp = op.getDsts()[1];
+  if (failed(requireVecRowMajor(dst, "dst")) || failed(requireVecRowMajor(tmp, "tmp")) ||
+      failed(requireOneRow(dst, "dst")) || failed(requireOneRow(tmp, "tmp")))
+    return failure();
+  if (getElementType(dst) != elementType || getElementType(tmp) != elementType)
+    return op.emitOpError("tmrgsort format2 requires matching dst/tmp element types");
+
+  Value dstBuffer =
+      materializeBufferPointer(dst, elementType, getMemorySpace(dst), rewriter, loc);
+  Value tmpBuffer =
+      materializeBufferPointer(tmp, elementType, getMemorySpace(tmp), rewriter, loc);
+  if (!dstBuffer || !tmpBuffer)
+    return op.emitOpError("tmrgsort format2 requires pointer-backed dst/tmp tiles");
+
+  Value count = buildPackedCountI64(rewriter, loc, srcCounts);
+  Value config =
+      rewriter.create<arith::ConstantIntOp>(loc, 1 | (0b1111 << 8), 64);
+  rewriter.create<a5vm::Vmrgsort4Op>(loc, tmpBuffer, srcBuffers[0], srcBuffers[1],
+                                     srcBuffers[2], srcBuffers[3], count, config);
+
+  Value dstRowsValue;
+  Value dstColsValue;
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  deriveValidShapeValues(dst, dstRowsValue, dstColsValue);
+  deriveValidShape(dst, dstRows, dstCols);
+  Value dstColsI64 = materializeI64Value(dstColsValue, dstCols, rewriter, loc);
+  int64_t elemBytes = getElementByteSize(elementType);
+  Value lenBurst = buildCeilDivPositiveI64(
+      rewriter, loc,
+      rewriter.create<arith::MulIOp>(
+          loc, dstColsI64, rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64)),
+      32);
+  Value zeroI64 = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+  Value oneI64 = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
+  rewriter.create<a5vm::CopyUbufToUbufOp>(loc, tmpBuffer, dstBuffer, zeroI64, oneI64,
+                                          lenBurst, zeroI64, zeroI64);
+  return success();
+}
+
+LogicalResult lowerTSort32(TSort32Op op, PatternRewriter &rewriter) {
+  auto requireVecRowMajor = [&](Value value, StringRef role) -> LogicalResult {
+    if (deriveTileDomain(getMemorySpace(value)) != A5VMTileDomain::Vec)
+      return op.emitOpError() << "tsort32 lowering requires vec tile domain for "
+                              << role;
+    if (deriveTileLayout(value) != "row_major")
+      return op.emitOpError() << "tsort32 lowering requires row-major layout for "
+                              << role;
+    return success();
+  };
+
+  if (failed(requireVecRowMajor(op.getSrc(), "src")) ||
+      failed(requireVecRowMajor(op.getDst(), "dst")) ||
+      failed(requireVecRowMajor(op.getIdx(), "idx")))
+    return failure();
+
+  Type dataType = getElementType(op.getSrc());
+  if (dataType != getElementType(op.getDst()))
+    return op.emitOpError("tsort32 lowering requires matching src/dst element type");
+  if (!(dataType.isF16() || dataType.isF32()))
+    return op.emitOpError("tsort32 lowering currently supports only f16/f32 data");
+  auto idxType = dyn_cast<IntegerType>(getElementType(op.getIdx()));
+  if (!idxType || idxType.getWidth() != 32 || !idxType.isUnsigned())
+    return op.emitOpError("tsort32 lowering currently requires u32 index tile");
+
+  Value srcBuffer =
+      materializeBufferPointer(op.getSrc(), dataType, getMemorySpace(op.getSrc()),
+                               rewriter, op.getLoc());
+  Value dstBuffer =
+      materializeBufferPointer(op.getDst(), dataType, getMemorySpace(op.getDst()),
+                               rewriter, op.getLoc());
+  Value idxBuffer = materializeBufferPointer(op.getIdx(), getElementType(op.getIdx()),
+                                             getMemorySpace(op.getIdx()), rewriter,
+                                             op.getLoc());
+  if (!srcBuffer || !dstBuffer || !idxBuffer)
+    return op.emitOpError("tsort32 lowering requires pointer-backed tiles");
+
+  int64_t srcStride = deriveStaticRowStride(op.getSrc());
+  int64_t dstStride = deriveStaticRowStride(op.getDst());
+  int64_t idxStride = deriveStaticRowStride(op.getIdx());
+  if (srcStride == ShapedType::kDynamic || dstStride == ShapedType::kDynamic ||
+      idxStride == ShapedType::kDynamic)
+    return op.emitOpError("tsort32 lowering requires static row stride");
+
+  Value validRowsValue;
+  Value validColsValue;
+  int64_t validRows = ShapedType::kDynamic;
+  int64_t validCols = ShapedType::kDynamic;
+  deriveValidShapeValues(op.getSrc(), validRowsValue, validColsValue);
+  deriveValidShape(op.getSrc(), validRows, validCols);
+  if (validCols == ShapedType::kDynamic || (validCols % 32) != 0)
+    return op.emitOpError("tsort32 lowering currently requires static validCol divisible by 32");
+
+  int64_t idxValidRows = ShapedType::kDynamic;
+  int64_t idxValidCols = ShapedType::kDynamic;
+  deriveValidShape(op.getIdx(), idxValidRows, idxValidCols);
+  bool idxBroadcast = idxValidRows == 1;
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value repeatNumPerRow =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), validCols / 32);
+  Value srcStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), srcStride);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstStride);
+  Value idxStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), idxBroadcast ? 0 : idxStride);
+
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value srcOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, srcStrideValue);
+  Value dstOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+  Value idxOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, idxStrideValue);
+  Value rowSrcPtr =
+      offsetBufferPointer(srcBuffer, dataType, srcOffset, rewriter, op.getLoc());
+  Value rowDstPtr =
+      offsetBufferPointer(dstBuffer, dataType, dstOffset, rewriter, op.getLoc());
+  Value rowIdxPtr = offsetBufferPointer(idxBuffer, getElementType(op.getIdx()), idxOffset,
+                                        rewriter, op.getLoc());
+  rewriter.create<a5vm::VbitsortOp>(op.getLoc(), rowDstPtr, rowSrcPtr, rowIdxPtr,
+                                    repeatNumPerRow);
+  return success();
+}
+
+LogicalResult lowerTMulS(TMulSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("muls", op.getSrc0());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 16 || intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, and 16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tmuls lowering requires scalar type to match source element type");
+  return buildScalarUnaryVecScope("muls", contract, op.getSrc0(), op.getScalar(),
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTSelS(TSelSOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("sels", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, contract, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+
+  auto selectModeType = dyn_cast<IntegerType>(op.getSelectMode().getType());
+  if (!selectModeType)
+    return op.emitOpError("tsels lowering requires integer selectMode");
+
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return op.emitOpError("tsels lowering requires a supported A5VM vector element type");
+
+  Value src0Buffer = materializeBufferPointer(op.getSrc0(), contract.elementType,
+                                              getMemorySpace(op.getSrc0()), rewriter,
+                                              op.getLoc());
+  Value src1Buffer = materializeBufferPointer(op.getSrc1(), contract.elementType,
+                                              getMemorySpace(op.getSrc1()), rewriter,
+                                              op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), contract.elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!src0Buffer || !src1Buffer || !dstBuffer)
+    return op.emitOpError("tsels lowering requires pointer-backed tile buffers");
+
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue,
+                                               contract.validRows, rewriter, op.getLoc());
+  Value validColsValue = materializeIndexValue(contract.validColsValue,
+                                               contract.validCols, rewriter, op.getLoc());
+  if (!validRowsValue || !validColsValue)
+    return op.emitOpError("tsels lowering requires valid rows and cols");
+
+  int64_t vectorWidth = vecType.getElementCount();
+  if (contract.validRows != ShapedType::kDynamic &&
+      contract.validCols != ShapedType::kDynamic) {
+    int64_t totalElements = contract.validRows * contract.validCols;
+    if (totalElements % vectorWidth != 0)
+      return op.emitOpError(
+          "tsels lowering currently requires total valid elements divisible by vector width");
+  }
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value totalElementsValue =
+      rewriter.create<arith::MulIOp>(op.getLoc(), validRowsValue, validColsValue);
+  Value vectorStepValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), vectorWidth);
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+
+  Value selectOne = rewriter.create<arith::ConstantOp>(
+      op.getLoc(), IntegerAttr::get(selectModeType, 1));
+  Value isAll = rewriter.create<arith::CmpIOp>(op.getLoc(), arith::CmpIPredicate::eq,
+                                               op.getSelectMode(), selectOne);
+  auto ifOp = rewriter.create<scf::IfOp>(
+      op.getLoc(), TypeRange{a5vm::MaskType::get(rewriter.getContext())}, isAll,
+      /*withElseRegion=*/true);
+  rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  Value allMask = rewriter
+                      .create<a5vm::PsetB8Op>(op.getLoc(),
+                                              a5vm::MaskType::get(rewriter.getContext()),
+                                              rewriter.getStringAttr("PAT_ALL"))
+                      .getResult();
+  rewriter.create<scf::YieldOp>(op.getLoc(), allMask);
+  rewriter.setInsertionPointToStart(&ifOp.getElseRegion().front());
+  Value allfMask = rewriter
+                       .create<a5vm::PsetB8Op>(op.getLoc(),
+                                               a5vm::MaskType::get(rewriter.getContext()),
+                                               rewriter.getStringAttr("PAT_ALLF"))
+                       .getResult();
+  rewriter.create<scf::YieldOp>(op.getLoc(), allfMask);
+
+  rewriter.setInsertionPointAfter(ifOp);
+  auto chunkLoop =
+      rewriter.create<scf::ForOp>(op.getLoc(), c0, totalElementsValue, vectorStepValue);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value offset = chunkLoop.getInductionVar();
+  Value mask = ifOp.getResult(0);
+  auto src0Vec = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src0Buffer,
+                                               offset, StringAttr());
+  auto src1Vec = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src1Buffer,
+                                               offset, StringAttr());
+  Value selected = rewriter
+                       .create<a5vm::VselOp>(op.getLoc(), vecType, src0Vec.getResult(),
+                                             src1Vec.getResult(), mask)
+                       .getResult();
+  rewriter.create<a5vm::VstsOp>(op.getLoc(), selected, dstBuffer, offset, StringAttr());
+  return success();
+}
+
+LogicalResult lowerTSel(TSelOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract contract = buildBinaryContract("tsel", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), contract.validRowsValue, contract.validColsValue);
+  deriveValidShape(op.getDst(), contract.validRows, contract.validCols);
+
+  int64_t src1Rows = ShapedType::kDynamic;
+  int64_t src1Cols = ShapedType::kDynamic;
+  int64_t dstRows = ShapedType::kDynamic;
+  int64_t dstCols = ShapedType::kDynamic;
+  int64_t maskRows = ShapedType::kDynamic;
+  int64_t maskCols = ShapedType::kDynamic;
+  deriveValidShape(op.getSrc1(), src1Rows, src1Cols);
+  deriveValidShape(op.getDst(), dstRows, dstCols);
+  deriveValidShape(op.getMask(), maskRows, maskCols);
+
+  if (contract.tileDomain != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getSrc1())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getMask())) != A5VMTileDomain::Vec)
+    return op.emitOpError("tsel lowering requires tile domain vec");
+  if (contract.tileLayout != "row_major" || deriveTileLayout(op.getSrc1()) != "row_major" ||
+      deriveTileLayout(op.getDst()) != "row_major" || deriveTileLayout(op.getMask()) != "row_major")
+    return op.emitOpError("tsel lowering requires row-major tile layout");
+  if (contract.validRows == ShapedType::kDynamic ||
+      contract.validCols == ShapedType::kDynamic)
+    return op.emitOpError("tsel lowering requires static valid shape");
+  if (contract.validRows != src1Rows || contract.validCols != src1Cols ||
+      contract.validRows != dstRows || contract.validCols != dstCols ||
+      contract.validRows != maskRows || contract.validCols != maskCols)
+    return op.emitOpError("tsel lowering requires matching source, mask, and destination valid region");
+  if (!contract.elementType || !contract.elementType.isF32())
+    return op.emitOpError("tsel lowering currently supports only f32 data tiles");
+  auto maskElemType = dyn_cast_or_null<IntegerType>(getElementType(op.getMask()));
+  if (!maskElemType || maskElemType.getWidth() != 8)
+    return op.emitOpError("tsel lowering currently requires i8 mask tiles");
+
+  auto [tileRows, tileCols] = getStaticTileRowsCols(op.getDst());
+  auto [maskTileRows, maskTileCols] = getStaticTileRowsCols(op.getMask());
+  if (tileRows == ShapedType::kDynamic || tileCols == ShapedType::kDynamic ||
+      maskTileRows == ShapedType::kDynamic || maskTileCols == ShapedType::kDynamic)
+    return op.emitOpError("tsel lowering requires static tile rows and cols");
+  Value maskBuffer = materializeBufferPointer(op.getMask(), getElementType(op.getMask()),
+                                              getMemorySpace(op.getMask()), rewriter,
+                                              op.getLoc());
+  Value src0Buffer = materializeBufferPointer(op.getSrc0(), contract.elementType,
+                                              getMemorySpace(op.getSrc0()), rewriter,
+                                              op.getLoc());
+  Value src1Buffer = materializeBufferPointer(op.getSrc1(), contract.elementType,
+                                              getMemorySpace(op.getSrc1()), rewriter,
+                                              op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), contract.elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!maskBuffer || !src0Buffer || !src1Buffer || !dstBuffer)
+    return op.emitOpError("tsel lowering requires pointer-backed tile buffers");
+
+  auto vecType = getA5VMVecType(rewriter.getContext(), contract.elementType);
+  if (!vecType)
+    return op.emitOpError("tsel lowering requires a supported A5VM vector element type");
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value validRowsValue = materializeIndexValue(contract.validRowsValue, contract.validRows,
+                                               rewriter, op.getLoc());
+  if (!validRowsValue)
+    return op.emitOpError("tsel lowering requires valid rows");
+  Value rowStride = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), tileCols);
+  Value maskStride = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), maskTileCols);
+  constexpr int64_t elementsPerRepeat = 64;
+  constexpr int64_t unrollConstant = 2;
+  int64_t repeatTimes = (contract.validCols + elementsPerRepeat - 1) / elementsPerRepeat;
+  int64_t pairedRepeatTimes = repeatTimes / unrollConstant;
+  int64_t remainRepeat = repeatTimes % unrollConstant;
+  int64_t repeatIdxBase = pairedRepeatTimes * unrollConstant;
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  Value fullMask = rewriter
+                       .create<a5vm::PsetB16Op>(op.getLoc(),
+                                                a5vm::MaskType::get(rewriter.getContext()),
+                                                rewriter.getStringAttr("PAT_ALL"))
+                       .getResult();
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, validRowsValue, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value rowBase = rewriter.create<arith::MulIOp>(op.getLoc(), rowLoop.getInductionVar(), rowStride);
+  Value maskBase = rewriter.create<arith::MulIOp>(op.getLoc(), rowLoop.getInductionVar(), maskStride);
+
+  for (int64_t j = 0; j < pairedRepeatTimes; ++j) {
+    int64_t repeatIdx = j * unrollConstant;
+    int64_t colOffset0 = repeatIdx * elementsPerRepeat;
+    int64_t colOffset1 = colOffset0 + elementsPerRepeat;
+    int64_t maskOffsetImm = repeatIdx * 8;
+    int64_t count0 = std::min<int64_t>(elementsPerRepeat, contract.validCols - colOffset0);
+    int64_t count1 = std::min<int64_t>(elementsPerRepeat, contract.validCols - colOffset1);
+
+    Value maskOffset = rewriter.create<arith::AddIOp>(
+        op.getLoc(), maskBase,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), maskOffsetImm));
+    Value rawMask = rewriter
+                        .create<a5vm::PldsOp>(op.getLoc(),
+                                              a5vm::MaskType::get(rewriter.getContext()),
+                                              maskBuffer, maskOffset,
+                                              rewriter.getStringAttr("US"))
+                        .getResult();
+    auto splitMask = rewriter.create<a5vm::PintlvB16Op>(
+        op.getLoc(), a5vm::MaskType::get(rewriter.getContext()),
+        a5vm::MaskType::get(rewriter.getContext()), rawMask, fullMask);
+
+    Value dataOffset0 = rewriter.create<arith::AddIOp>(
+        op.getLoc(), rowBase,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), colOffset0));
+    auto lhs0 = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src0Buffer,
+                                              dataOffset0, StringAttr());
+    auto rhs0 = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src1Buffer,
+                                              dataOffset0, StringAttr());
+    Value selected0 = rewriter
+                          .create<a5vm::VselOp>(op.getLoc(), vecType, lhs0.getResult(),
+                                                rhs0.getResult(), splitMask.getLow())
+                          .getResult();
+    rewriter.create<a5vm::VstsPredOp>(
+        op.getLoc(), selected0, dstBuffer, dataOffset0,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), count0), StringAttr());
+
+    Value dataOffset1 = rewriter.create<arith::AddIOp>(
+        op.getLoc(), rowBase,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), colOffset1));
+    auto lhs1 = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src0Buffer,
+                                              dataOffset1, StringAttr());
+    auto rhs1 = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src1Buffer,
+                                              dataOffset1, StringAttr());
+    Value selected1 = rewriter
+                          .create<a5vm::VselOp>(op.getLoc(), vecType, lhs1.getResult(),
+                                                rhs1.getResult(), splitMask.getHigh())
+                          .getResult();
+    rewriter.create<a5vm::VstsPredOp>(
+        op.getLoc(), selected1, dstBuffer, dataOffset1,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), count1), StringAttr());
+  }
+
+  for (int64_t j = 0; j < remainRepeat; ++j) {
+    int64_t repeatIdx = repeatIdxBase + j;
+    int64_t colOffset = repeatIdx * elementsPerRepeat;
+    int64_t count = std::max<int64_t>(0, contract.validCols - colOffset);
+    int64_t maskOffsetImm = repeatIdx * 8;
+
+    Value maskOffset = rewriter.create<arith::AddIOp>(
+        op.getLoc(), maskBase,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), maskOffsetImm));
+    Value rawMask = rewriter
+                        .create<a5vm::PldsOp>(op.getLoc(),
+                                              a5vm::MaskType::get(rewriter.getContext()),
+                                              maskBuffer, maskOffset,
+                                              rewriter.getStringAttr("US"))
+                        .getResult();
+    Value unpackedMask = rewriter
+                             .create<a5vm::PunpackOp>(
+                                 op.getLoc(), a5vm::MaskType::get(rewriter.getContext()),
+                                 rawMask, rewriter.getStringAttr("LOWER"))
+                             .getResult();
+    Value dataOffset = rewriter.create<arith::AddIOp>(
+        op.getLoc(), rowBase,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), colOffset));
+    auto lhs = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src0Buffer,
+                                             dataOffset, StringAttr());
+    auto rhs = rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, src1Buffer,
+                                             dataOffset, StringAttr());
+    Value selected = rewriter
+                         .create<a5vm::VselOp>(op.getLoc(), vecType, lhs.getResult(),
+                                               rhs.getResult(), unpackedMask)
+                         .getResult();
+    rewriter.create<a5vm::VstsPredOp>(
+        op.getLoc(), selected, dstBuffer, dataOffset,
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), count), StringAttr());
+  }
+  return success();
+}
+
+LogicalResult lowerTDivS(TDivSOp op, PatternRewriter &rewriter) {
+  Value tileOperand;
+  Value scalarOperand;
+  bool scalarFirst = false;
+  if (isA5VMShapedLikeValue(op.getSrc()) && !isA5VMShapedLikeValue(op.getScalar())) {
+    tileOperand = op.getSrc();
+    scalarOperand = op.getScalar();
+  } else if (!isA5VMShapedLikeValue(op.getSrc()) &&
+             isA5VMShapedLikeValue(op.getScalar())) {
+    tileOperand = op.getScalar();
+    scalarOperand = op.getSrc();
+    scalarFirst = true;
+  } else {
+    return op.emitOpError(
+        "divs lowering requires exactly one shaped operand and one scalar operand");
+  }
+
+  A5VMUnaryContract contract = buildUnaryContract("divs", tileOperand);
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) { return type.isF16() || type.isF32(); },
+          "f16 and f32 element types")))
+    return failure();
+  if (scalarOperand.getType() != contract.elementType)
+    return op.emitOpError(
+        "divs lowering requires scalar type to match source element type");
+  return buildScalarDivVecScope(contract, tileOperand, scalarOperand, op.getDst(),
+                                scalarFirst, rewriter, op.getLoc());
+}
+
+LogicalResult lowerTAddS(TAddSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("adds", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 16 || intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tadds lowering requires scalar type to match source element type");
+  return buildScalarUnaryVecScope("adds", contract, op.getSrc(), op.getScalar(),
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTAddC(TAddCOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract first = buildBinaryContract("add", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), first.validRowsValue, first.validColsValue);
+  deriveValidShape(op.getDst(), first.validRows, first.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, first, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  if (failed(buildBinaryVecScope("add", first, op.getSrc0(), op.getSrc1(),
+                                 op.getDst(), rewriter, op.getLoc())))
+    return failure();
+
+  A5VMBinaryContract second = buildBinaryContract("add", op.getDst());
+  deriveValidShapeValues(op.getDst(), second.validRowsValue, second.validColsValue);
+  deriveValidShape(op.getDst(), second.validRows, second.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, second, op.getSrc2(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("add", second, op.getDst(), op.getSrc2(), op.getDst(),
+                             rewriter, op.getLoc());
+}
+
+LogicalResult lowerTAddSC(TAddSCOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract first = buildUnaryContract("adds", op.getSrc0());
+  if (failed(checkGenericUnaryContract(
+          op, first, op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 16 || intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != first.elementType)
+    return op.emitOpError(
+        "taddsc lowering requires scalar type to match source element type");
+  if (failed(buildScalarUnaryVecScope("adds", first, op.getSrc0(), op.getScalar(),
+                                      op.getDst(), rewriter, op.getLoc())))
+    return failure();
+
+  A5VMBinaryContract second = buildBinaryContract("add", op.getDst());
+  deriveValidShapeValues(op.getDst(), second.validRowsValue, second.validColsValue);
+  deriveValidShape(op.getDst(), second.validRows, second.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, second, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("add", second, op.getDst(), op.getSrc1(), op.getDst(),
+                             rewriter, op.getLoc());
+}
+
+LogicalResult lowerTSubC(TSubCOp op, PatternRewriter &rewriter) {
+  A5VMBinaryContract first = buildBinaryContract("sub", op.getSrc0());
+  deriveValidShapeValues(op.getDst(), first.validRowsValue, first.validColsValue);
+  deriveValidShape(op.getDst(), first.validRows, first.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, first, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  if (failed(buildBinaryVecScope("sub", first, op.getSrc0(), op.getSrc1(),
+                                 op.getDst(), rewriter, op.getLoc())))
+    return failure();
+
+  A5VMBinaryContract second = buildBinaryContract("add", op.getDst());
+  deriveValidShapeValues(op.getDst(), second.validRowsValue, second.validColsValue);
+  deriveValidShape(op.getDst(), second.validRows, second.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, second, op.getSrc2(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("add", second, op.getDst(), op.getSrc2(), op.getDst(),
+                             rewriter, op.getLoc());
+}
+
+LogicalResult lowerTSubS(TSubSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("subs", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 16 || intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tsubs lowering requires scalar type to match source element type");
+
+  Value negScalar;
+  if (contract.elementType.isF16() || contract.elementType.isF32() ||
+      contract.elementType.isBF16()) {
+    Value zero = rewriter.create<arith::ConstantOp>(op.getLoc(),
+                                                    rewriter.getZeroAttr(contract.elementType));
+    negScalar = rewriter.create<arith::SubFOp>(op.getLoc(), zero, op.getScalar());
+  } else if (isa<IntegerType>(contract.elementType)) {
+    Value zero = rewriter.create<arith::ConstantOp>(op.getLoc(),
+                                                    rewriter.getZeroAttr(contract.elementType));
+    negScalar = rewriter.create<arith::SubIOp>(op.getLoc(), zero, op.getScalar());
+  } else {
+    return op.emitOpError("tsubs lowering requires supported scalar element type");
+  }
+  return buildScalarUnaryVecScope("adds", contract, op.getSrc(), negScalar,
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTSubSC(TSubSCOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract first = buildUnaryContract("subs", op.getSrc0());
+  if (failed(checkGenericUnaryContract(
+          op, first, op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 16 || intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 16/32-bit integer element types")))
+    return failure();
+  if (op.getScalar().getType() != first.elementType)
+    return op.emitOpError(
+        "tsubsc lowering requires scalar type to match source element type");
+
+  Value negScalar;
+  if (first.elementType.isF16() || first.elementType.isF32() ||
+      first.elementType.isBF16()) {
+    Value zero = rewriter.create<arith::ConstantOp>(op.getLoc(),
+                                                    rewriter.getZeroAttr(first.elementType));
+    negScalar = rewriter.create<arith::SubFOp>(op.getLoc(), zero, op.getScalar());
+  } else if (isa<IntegerType>(first.elementType)) {
+    Value zero = rewriter.create<arith::ConstantOp>(op.getLoc(),
+                                                    rewriter.getZeroAttr(first.elementType));
+    negScalar = rewriter.create<arith::SubIOp>(op.getLoc(), zero, op.getScalar());
+  } else {
+    return op.emitOpError("tsubsc lowering requires supported scalar element type");
+  }
+  if (failed(buildScalarUnaryVecScope("adds", first, op.getSrc0(), negScalar,
+                                      op.getDst(), rewriter, op.getLoc())))
+    return failure();
+
+  A5VMBinaryContract second = buildBinaryContract("add", op.getDst());
+  deriveValidShapeValues(op.getDst(), second.validRowsValue, second.validColsValue);
+  deriveValidShape(op.getDst(), second.validRows, second.validCols);
+  if (failed(checkGenericBinaryContract(
+          op, second, op.getSrc1(), op.getDst(),
+          [](Type type) {
+            if (type.isF16() || type.isF32() || type.isBF16())
+              return true;
+            if (auto intType = dyn_cast<IntegerType>(type))
+              return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+                     intType.getWidth() == 32;
+            return false;
+          },
+          "f16, f32, bf16, and 8/16/32-bit integer element types")))
+    return failure();
+  return buildBinaryVecScope("add", second, op.getDst(), op.getSrc1(), op.getDst(),
+                             rewriter, op.getLoc());
+}
+
+LogicalResult lowerTMaxS(TMaxSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("maxs", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) { return type.isF32(); }, "f32 element type")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tmaxs lowering requires scalar type to match source element type");
+  return buildScalarUnaryVecScope("maxs", contract, op.getSrc(), op.getScalar(),
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTMinS(TMinSOp op, PatternRewriter &rewriter) {
+  A5VMUnaryContract contract = buildUnaryContract("mins", op.getSrc());
+  if (failed(checkGenericUnaryContract(
+          op, contract, op.getDst(),
+          [](Type type) { return type.isF32(); }, "f32 element type")))
+    return failure();
+  if (op.getScalar().getType() != contract.elementType)
+    return op.emitOpError("tmins lowering requires scalar type to match source element type");
+  return buildScalarUnaryVecScope("mins", contract, op.getSrc(), op.getScalar(),
+                                  op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTRowMax(TRowMaxOp op, PatternRewriter &rewriter) {
+  A5VMRowReduceContract contract = extractTRowMaxContract(op);
+  if (failed(checkRowReduceContract(op, contract, op.getDst())))
+    return failure();
+  return buildRowReduceVecScope("rowmax", contract, op.getSrc(), op.getDst(),
+                                rewriter, op.getLoc());
+}
+
+LogicalResult lowerTRowMin(TRowMinOp op, PatternRewriter &rewriter) {
+  A5VMRowReduceContract contract = extractTRowMinContract(op);
+  if (failed(checkRowReduceContract(op, contract, op.getDst())))
+    return failure();
+  return buildRowReduceVecScope("rowmin", contract, op.getSrc(), op.getDst(),
+                                rewriter, op.getLoc());
+}
+
+LogicalResult lowerTRowSum(TRowSumOp op, PatternRewriter &rewriter) {
+  A5VMRowReduceContract contract = extractTRowSumContract(op);
+  if (failed(checkRowReduceContract(op, contract, op.getDst())))
+    return failure();
+  return buildRowReduceVecScope("rowsum", contract, op.getSrc(), op.getDst(),
+                                rewriter, op.getLoc());
+}
+
+LogicalResult lowerTColMax(TColMaxOp op, PatternRewriter &rewriter) {
+  A5VMColReduceContract contract = extractTColMaxContract(op);
+  if (failed(checkColReduceContract(op, contract, op.getDst())))
+    return failure();
+  return buildColReduceVecScope("colmax", contract, op.getSrc(), op.getDst(),
+                                Value(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTColMin(TColMinOp op, PatternRewriter &rewriter) {
+  A5VMColReduceContract contract = extractTColMinContract(op);
+  if (failed(checkColReduceContract(op, contract, op.getDst())))
+    return failure();
+  return buildColReduceVecScope("colmin", contract, op.getSrc(), op.getDst(),
+                                Value(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTColSum(TColSumOp op, PatternRewriter &rewriter) {
+  A5VMColReduceContract contract = extractTColSumContract(op);
+  if (failed(checkColReduceContract(op, contract, op.getDst())))
+    return failure();
+  return buildColReduceVecScope("colsum", contract, op.getSrc(), op.getDst(),
+                                op.getTmp(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTRowExpand(TRowExpandOp op, PatternRewriter &rewriter) {
+  A5VMExpandContract contract = extractTRowExpandContract(op);
+  if (failed(checkExpandContract(op, contract)))
+    return failure();
+  if (contract.srcValidRows != contract.dstValidRows)
+    return op.emitOpError()
+           << "rowexpand lowering requires source and destination valid rows to match";
+  return buildRowExpandVecScope(contract, op.getSrc(), op.getDst(), rewriter,
+                                op.getLoc());
+}
+
+LogicalResult lowerTColExpand(TColExpandOp op, PatternRewriter &rewriter) {
+  A5VMExpandContract contract = extractTColExpandContract(op);
+  if (failed(checkExpandContract(op, contract)))
+    return failure();
+  if (contract.srcValidCols != contract.dstValidCols)
+    return op.emitOpError()
+           << "colexpand lowering requires source and destination valid cols to match";
+  return buildColExpandVecScope(contract, op.getSrc(), op.getDst(), rewriter,
+                                op.getLoc());
+}
+
+template <typename OpTy>
+LogicalResult lowerTRowExpandBinaryLike(OpTy op, PatternRewriter &rewriter,
+                                        StringRef family) {
+  Type elementType = getElementType(op.getDst());
+  if (!elementType || (!elementType.isF16() && !elementType.isF32()))
+    return op.emitOpError() << family
+                            << " lowering currently supports only f16 and f32 element types";
+
+  if (deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getSrc0())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getSrc1())) != A5VMTileDomain::Vec)
+    return op.emitOpError() << family << " lowering requires vec tile domain";
+  if (deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError() << family << " lowering requires row-major dst layout";
+
+  int64_t dstValidRows = ShapedType::kDynamic;
+  int64_t dstValidCols = ShapedType::kDynamic;
+  int64_t src0ValidRows = ShapedType::kDynamic;
+  int64_t src0ValidCols = ShapedType::kDynamic;
+  int64_t src1ValidRows = ShapedType::kDynamic;
+  int64_t src1ValidCols = ShapedType::kDynamic;
+  deriveValidShape(op.getDst(), dstValidRows, dstValidCols);
+  deriveValidShape(op.getSrc0(), src0ValidRows, src0ValidCols);
+  deriveValidShape(op.getSrc1(), src1ValidRows, src1ValidCols);
+  if (dstValidRows == ShapedType::kDynamic || dstValidCols == ShapedType::kDynamic ||
+      src0ValidRows == ShapedType::kDynamic || src0ValidCols == ShapedType::kDynamic ||
+      src1ValidRows == ShapedType::kDynamic || src1ValidCols == ShapedType::kDynamic)
+    return op.emitOpError() << family
+                            << " lowering currently requires static valid shapes";
+
+  bool src0EqDst = op.getSrc0().getType() == op.getDst().getType();
+  bool src1EqDst = op.getSrc1().getType() == op.getDst().getType();
+  if (!src0EqDst && !src1EqDst)
+    return op.emitOpError() << family
+                            << " lowering requires src0 or src1 to match dst tile type";
+
+  Value baseSrc = src0EqDst ? op.getSrc0() : op.getSrc1();
+  Value expandSrc = src0EqDst ? op.getSrc1() : op.getSrc0();
+  StringRef expandLayout = deriveTileLayout(expandSrc);
+  int64_t expandValidRows = src0EqDst ? src1ValidRows : src0ValidRows;
+  int64_t expandValidCols = src0EqDst ? src1ValidCols : src0ValidCols;
+  if (expandValidRows != dstValidRows)
+    return op.emitOpError() << family
+                            << " lowering requires expand operand valid rows to match dst";
+
+  int64_t elemBytes = getElementByteSize(elementType);
+  bool expandIsRowMajor = expandLayout == "row_major" && expandValidCols == 32 / elemBytes;
+  bool expandIsColMajor = expandLayout == "col_major" && expandValidCols == 1;
+  if (!expandIsRowMajor && !expandIsColMajor)
+    return op.emitOpError() << family
+                            << " lowering requires PTO A5-compatible expand operand shape";
+
+  auto vecType = getA5VMVecType(rewriter.getContext(), elementType);
+  if (!vecType)
+    return op.emitOpError() << family
+                            << " lowering requires a legal A5VM vector type";
+  if (dstValidCols % vecType.getElementCount() != 0)
+    return op.emitOpError() << family
+                            << " lowering requires valid cols divisible by vector width";
+
+  Value baseBuffer = materializeBufferPointer(baseSrc, elementType,
+                                              getMemorySpace(baseSrc), rewriter,
+                                              op.getLoc());
+  Value expandBuffer = materializeBufferPointer(expandSrc, elementType,
+                                                getMemorySpace(expandSrc), rewriter,
+                                                op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!baseBuffer || !expandBuffer || !dstBuffer)
+    return op.emitOpError() << family
+                            << " lowering requires pointer-backed tile buffers";
+
+  int64_t dstRowStride = deriveStaticRowStride(op.getDst());
+  int64_t baseRowStride = deriveStaticRowStride(baseSrc);
+  int64_t expandRowStride = deriveStaticRowStride(expandSrc);
+  if (dstRowStride == ShapedType::kDynamic || baseRowStride == ShapedType::kDynamic ||
+      expandRowStride == ShapedType::kDynamic)
+    return op.emitOpError() << family << " lowering requires static row strides";
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value rowsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstValidRows);
+  Value colsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstValidCols);
+  Value vectorStep =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), vecType.getElementCount());
+  Value baseStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), baseRowStride);
+  Value expandStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), expandRowStride);
+  Value dstStrideValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstRowStride);
+  Value blockSizeValue =
+      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 32 / elemBytes);
+
+  A5VMLoopScopeContract loopScope;
+  loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  loopScope.loopDepth = 0;
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, rowsUpper, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value baseRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, baseStrideValue);
+  Value dstRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+  Value expandRowOffset = expandIsRowMajor
+                              ? rewriter.create<arith::MulIOp>(op.getLoc(), row, blockSizeValue)
+                              : rewriter.create<arith::MulIOp>(op.getLoc(), row, expandStrideValue);
+
+  Value expandVec;
+  if (expandIsColMajor) {
+    Value align = rewriter
+                      .create<a5vm::VldasOp>(op.getLoc(),
+                                             a5vm::AlignType::get(rewriter.getContext()),
+                                             expandBuffer, expandRowOffset)
+                      .getResult();
+    Value scalarVec = rewriter
+                          .create<a5vm::VldusOp>(op.getLoc(), vecType, align, expandBuffer,
+                                                 expandRowOffset)
+                          .getResult();
+    expandVec = rewriter
+                    .create<a5vm::VdupOp>(op.getLoc(), vecType, scalarVec,
+                                          rewriter.getStringAttr("POS_LOWEST"),
+                                          rewriter.getStringAttr("MODE_ZEROING"))
+                    .getResult();
+  } else {
+    expandVec = rewriter
+                    .create<a5vm::VldsOp>(op.getLoc(), vecType, expandBuffer, expandRowOffset,
+                                          rewriter.getStringAttr("BLK"))
+                    .getResult();
+  }
+
+  auto colLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, colsUpper, vectorStep);
+  rewriter.setInsertionPointToStart(colLoop.getBody());
+  Value col = colLoop.getInductionVar();
+  Value baseOffset = rewriter.create<arith::AddIOp>(op.getLoc(), baseRowOffset, col);
+  Value dstOffset = rewriter.create<arith::AddIOp>(op.getLoc(), dstRowOffset, col);
+  Value baseVec =
+      rewriter.create<a5vm::VldsOp>(op.getLoc(), vecType, baseBuffer, baseOffset, StringAttr());
+
+  Value computed;
+  if (family == "trowexpandmul") {
+    computed =
+        rewriter.create<a5vm::VmulOp>(op.getLoc(), vecType, baseVec, expandVec);
+  } else if (family == "trowexpanddiv") {
+    if (src0EqDst)
+      computed =
+          rewriter.create<a5vm::VdivOp>(op.getLoc(), vecType, baseVec, expandVec);
+    else
+      computed =
+          rewriter.create<a5vm::VdivOp>(op.getLoc(), vecType, expandVec, baseVec);
+  } else {
+    return op.emitOpError() << "unsupported rowexpand binary family";
+  }
+  rewriter.create<a5vm::VstsOp>(op.getLoc(), computed, dstBuffer, dstOffset, StringAttr());
+  return success();
+}
+
+LogicalResult lowerTRowExpandMul(TRowExpandMulOp op, PatternRewriter &rewriter) {
+  return lowerTRowExpandBinaryLike(op, rewriter, "trowexpandmul");
+}
+
+LogicalResult lowerTRowExpandDiv(TRowExpandDivOp op, PatternRewriter &rewriter) {
+  return lowerTRowExpandBinaryLike(op, rewriter, "trowexpanddiv");
+}
+
+LogicalResult lowerTRowExpandSub(TRowExpandSubOp op, PatternRewriter &rewriter) {
+  Type elementType = getElementType(op.getDst());
+  if (!elementType || (!elementType.isF16() && !elementType.isF32()))
+    return op.emitOpError("trowexpandsub lowering currently supports only f16 and f32 element types");
+
+  if (deriveTileDomain(getMemorySpace(op.getDst())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getSrc0())) != A5VMTileDomain::Vec ||
+      deriveTileDomain(getMemorySpace(op.getSrc1())) != A5VMTileDomain::Vec)
+    return op.emitOpError("trowexpandsub lowering requires vec tile domain");
+  if (deriveTileLayout(op.getDst()) != "row_major")
+    return op.emitOpError("trowexpandsub lowering requires row-major dst layout");
+
+  int64_t dstValidRows = ShapedType::kDynamic;
+  int64_t dstValidCols = ShapedType::kDynamic;
+  int64_t src0ValidRows = ShapedType::kDynamic;
+  int64_t src0ValidCols = ShapedType::kDynamic;
+  int64_t src1ValidRows = ShapedType::kDynamic;
+  int64_t src1ValidCols = ShapedType::kDynamic;
+  deriveValidShape(op.getDst(), dstValidRows, dstValidCols);
+  deriveValidShape(op.getSrc0(), src0ValidRows, src0ValidCols);
+  deriveValidShape(op.getSrc1(), src1ValidRows, src1ValidCols);
+  if (dstValidRows == ShapedType::kDynamic || dstValidCols == ShapedType::kDynamic ||
+      src0ValidRows == ShapedType::kDynamic || src0ValidCols == ShapedType::kDynamic ||
+      src1ValidRows == ShapedType::kDynamic || src1ValidCols == ShapedType::kDynamic)
+    return op.emitOpError("trowexpandsub lowering currently requires static valid shapes");
+
+  bool src0EqDst = op.getSrc0().getType() == op.getDst().getType();
+  bool src1EqDst = op.getSrc1().getType() == op.getDst().getType();
+  if (!src0EqDst && !src1EqDst)
+    return op.emitOpError("trowexpandsub lowering requires src0 or src1 to match dst tile type");
+
+  Value baseSrc = src0EqDst ? op.getSrc0() : op.getSrc1();
+  Value expandSrc = src0EqDst ? op.getSrc1() : op.getSrc0();
+  StringRef expandLayout = deriveTileLayout(expandSrc);
+  int64_t expandValidRows = src0EqDst ? src1ValidRows : src0ValidRows;
+  int64_t expandValidCols = src0EqDst ? src1ValidCols : src0ValidCols;
+  if (expandValidRows != dstValidRows)
+    return op.emitOpError("trowexpandsub lowering requires expand operand valid rows to match dst");
+
+  int64_t elemBytes = getElementByteSize(elementType);
+  bool expandIsRowMajor = expandLayout == "row_major" && expandValidCols == 32 / elemBytes;
+  bool expandIsColMajor = expandLayout == "col_major" && expandValidCols == 1;
+  if (!expandIsRowMajor && !expandIsColMajor)
+    return op.emitOpError("trowexpandsub lowering requires PTO A5-compatible expand operand shape");
+
+  auto vecType = getA5VMVecType(rewriter.getContext(), elementType);
+  if (!vecType)
+    return op.emitOpError("trowexpandsub lowering requires a legal A5VM vector type");
+  if (dstValidCols % vecType.getElementCount() != 0)
+    return op.emitOpError("trowexpandsub lowering requires valid cols divisible by vector width");
+
+  Value baseBuffer = materializeBufferPointer(baseSrc, elementType,
+                                              getMemorySpace(baseSrc), rewriter,
+                                              op.getLoc());
+  Value expandBuffer = materializeBufferPointer(expandSrc, elementType,
+                                                getMemorySpace(expandSrc), rewriter,
+                                                op.getLoc());
+  Value dstBuffer = materializeBufferPointer(op.getDst(), elementType,
+                                             getMemorySpace(op.getDst()), rewriter,
+                                             op.getLoc());
+  if (!baseBuffer || !expandBuffer || !dstBuffer)
+    return op.emitOpError("trowexpandsub lowering requires pointer-backed tile buffers");
+
+  int64_t dstRowStride = deriveStaticRowStride(op.getDst());
+  int64_t baseRowStride = deriveStaticRowStride(baseSrc);
+  int64_t expandRowStride = deriveStaticRowStride(expandSrc);
+  if (dstRowStride == ShapedType::kDynamic || baseRowStride == ShapedType::kDynamic ||
+      expandRowStride == ShapedType::kDynamic)
+    return op.emitOpError("trowexpandsub lowering requires static row strides");
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  Value rowsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstValidRows);
+  Value colsUpper = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstValidCols);
+  Value vectorStep = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), vecType.getElementCount());
+  Value baseStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), baseRowStride);
+  Value expandStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), expandRowStride);
+  Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstRowStride);
+  Value blockSizeValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 32 / elemBytes);
+
+  A5VMLoopScopeContract loopScope;
+  loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
+  loopScope.loweredAttr = kLoweredLoopScopeAttrName;
+  loopScope.loopDepth = 0;
+
+  auto aivScopeLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, c1, c1);
+  if (failed(attachLoopScopeMetadata(aivScopeLoop, loopScope, rewriter)))
+    return op.emitOpError("failed to attach AIV loop scope metadata");
+
+  OpBuilder::InsertionGuard aivGuard(rewriter);
+  rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
+  auto rowLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, rowsUpper, c1);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value baseRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, baseStrideValue);
+  Value dstRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+
+  Value expandedVec;
+  if (expandIsRowMajor) {
+    Value expandOffset =
+        rewriter.create<arith::MulIOp>(op.getLoc(), row, blockSizeValue);
+    expandedVec = rewriter
+                      .create<a5vm::VldsOp>(op.getLoc(), vecType, expandBuffer, expandOffset,
+                                            rewriter.getStringAttr("BLK"))
+                      .getResult();
+  } else {
+    Value expandOffset =
+        rewriter.create<arith::MulIOp>(op.getLoc(), row, expandStrideValue);
+    Value align = rewriter
+                      .create<a5vm::VldasOp>(op.getLoc(),
+                                             a5vm::AlignType::get(rewriter.getContext()),
+                                             expandBuffer, expandOffset)
+                      .getResult();
+    Value loaded = rewriter
+                       .create<a5vm::VldusOp>(op.getLoc(), vecType, align, expandBuffer,
+                                              expandOffset)
+                       .getResult();
+    expandedVec = rewriter
+                      .create<a5vm::VdupOp>(op.getLoc(), vecType, loaded,
+                                            rewriter.getStringAttr("POS_LOWEST"),
+                                            rewriter.getStringAttr("MODE_ZEROING"))
+                      .getResult();
+  }
+
+  auto chunkLoop = rewriter.create<scf::ForOp>(op.getLoc(), c0, colsUpper, vectorStep);
+  rewriter.setInsertionPointToStart(chunkLoop.getBody());
+  Value chunk = chunkLoop.getInductionVar();
+  Value srcOffset = rewriter.create<arith::AddIOp>(op.getLoc(), baseRowOffset, chunk);
+  Value outOffset = rewriter.create<arith::AddIOp>(op.getLoc(), dstRowOffset, chunk);
+  Value lhs = rewriter
+                  .create<a5vm::VldsOp>(op.getLoc(), vecType, baseBuffer, srcOffset,
+                                        StringAttr())
+                  .getResult();
+  Value sub = src0EqDst
+                  ? rewriter.create<a5vm::VsubOp>(op.getLoc(), vecType, lhs, expandedVec).getResult()
+                  : rewriter.create<a5vm::VsubOp>(op.getLoc(), vecType, expandedVec, lhs).getResult();
+  rewriter.create<a5vm::VstsOp>(op.getLoc(), sub, dstBuffer, outOffset, StringAttr());
+  return success();
+}
+
+LogicalResult lowerTPartAdd(TPartAddOp op, PatternRewriter &rewriter) {
+  A5VMPartContract contract = extractTPartAddContract(op);
+  if (failed(checkPartContract(op, contract)))
+    return failure();
+  return buildPartVecScope("partadd", contract, op.getSrc0(), op.getSrc1(),
+                           op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTPartMax(TPartMaxOp op, PatternRewriter &rewriter) {
+  A5VMPartContract contract = extractTPartMaxContract(op);
+  if (failed(checkPartContract(op, contract)))
+    return failure();
+  return buildPartVecScope("partmax", contract, op.getSrc0(), op.getSrc1(),
+                           op.getDst(), rewriter, op.getLoc());
+}
+
+LogicalResult lowerTPartMin(TPartMinOp op, PatternRewriter &rewriter) {
+  A5VMPartContract contract = extractTPartMinContract(op);
+  if (failed(checkPartContract(op, contract)))
+    return failure();
+  return buildPartVecScope("partmin", contract, op.getSrc0(), op.getSrc1(),
+                           op.getDst(), rewriter, op.getLoc());
+}
+
 LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
   A5VMStoreContract contract = extractTStoreContract(op);
 
@@ -1761,12 +6195,19 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
   case A5VMTileDomain::Vec:
     break;
   }
-  if (contract.destinationLayout != "nd")
-    return op.emitOpError("currently supports only ND destination TSTORE lowering");
 
   ResolvedTensorView destinationView;
   if (!resolveTensorView(op.getDst(), destinationView, rewriter, op.getLoc()))
     return op.emitOpError("requires a recoverable destination tensor view for A5VM lowering");
+
+  StringRef sourceTileLayout = deriveTileLayout(op.getSrc());
+  StringRef destinationLayout =
+      inferVecTransferLayoutFromTile(stringifyLayoutAttr(destinationView.layoutAttr),
+                                     sourceTileLayout);
+  bool isNdStore = sourceTileLayout == "row_major" && destinationLayout == "nd";
+  bool isDnStore = sourceTileLayout == "col_major" && destinationLayout == "dn";
+  if (!isNdStore && !isDnStore)
+    return op.emitOpError("currently supports only ND row_major or DN col_major vec TSTORE lowering");
 
   Value sourceBuffer =
       materializeBufferPointer(op.getSrc(), contract.elementType,
@@ -1779,7 +6220,6 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
     return op.emitOpError("requires A5-compatible source and destination buffers");
 
   auto [tileRows, tileCols] = getStaticTileRowsCols(op.getSrc());
-  (void)tileRows;
   Value validRowsValue =
       materializeI64Value(contract.validRowsValue, contract.validRows, rewriter,
                           op.getLoc());
@@ -1788,13 +6228,21 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
                           op.getLoc());
   Value sidValue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
   int64_t elemBytes = getElementByteSize(contract.elementType);
-  if (tileCols == ShapedType::kDynamic || elemBytes <= 0)
-    return op.emitOpError("requires static tile columns for A5-compatible transfer arguments");
+  if ((isNdStore && tileCols == ShapedType::kDynamic) ||
+      (isDnStore && tileRows == ShapedType::kDynamic) || elemBytes <= 0)
+    return op.emitOpError("requires static tile shape for A5-compatible transfer arguments");
   VecNdTransferPlan plan;
-  if (failed(buildVecNdStorePlan(destinationView.shape, destinationView.strides, tileCols,
-                                 contract.validColsValue, contract.validCols,
-                                 contract.elementType, rewriter, op.getLoc(), plan)))
-    return op.emitOpError("requires PTO-compatible vec ND2ND copy_ubuf_to_gm arguments");
+  LogicalResult planResult =
+      isNdStore ? buildVecNdStorePlan(destinationView.shape, destinationView.strides,
+                                      tileCols, contract.validColsValue,
+                                      contract.validCols, contract.elementType,
+                                      rewriter, op.getLoc(), plan)
+                : buildVecDnStorePlan(destinationView.shape, destinationView.strides,
+                                      tileRows, contract.validRowsValue,
+                                      contract.validRows, contract.elementType,
+                                      rewriter, op.getLoc(), plan);
+  if (failed(planResult))
+    return op.emitOpError("requires PTO-compatible vec copy_ubuf_to_gm arguments");
   Value reservedValue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
   if (!validRowsValue || !validColsValue)
     return op.emitOpError("requires valid rows and cols for A5-compatible transfer arguments");
@@ -1819,7 +6267,7 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
     rewriter.create<a5vm::CopyUbufToGmOp>(
         op.getLoc(), srcPtr, dstPtr, validRowsValue, validColsValue, sidValue,
         plan.nBurst, plan.lenBurst, reservedValue, plan.firstStrideBytes,
-        plan.secondStrideBytes, rewriter.getStringAttr(contract.destinationLayout));
+        plan.secondStrideBytes, rewriter.getStringAttr(destinationLayout));
   };
 
   if (std::optional<int64_t> outerConst = getConstInt(plan.outerCount); outerConst && *outerConst == 1) {

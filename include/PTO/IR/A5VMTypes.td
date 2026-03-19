@@ -26,4 +26,14 @@ def A5VM_VecType : TypeDef<A5VM_Dialect, "Vec"> {
   let genVerifyDecl = 1;
 }
 
+def A5VM_MaskType : TypeDef<A5VM_Dialect, "Mask"> {
+  let mnemonic = "mask";
+  let summary = "An A5VM predicate/mask register";
+}
+
+def A5VM_AlignType : TypeDef<A5VM_Dialect, "Align"> {
+  let mnemonic = "align";
+  let summary = "An A5VM vector_align carrier";
+}
+
 #endif // MLIR_DIALECT_PTO_IR_A5VMTYPES

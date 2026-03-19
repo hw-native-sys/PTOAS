@@ -139,12 +139,17 @@ process_one_dir() {
   fi
 
   local target_arch="a3"
+  local target_backend="emitc"
   if ((${#ptoas_flags[@]})); then
     for ((idx=0; idx<${#ptoas_flags[@]}; ++idx)); do
       if [[ "${ptoas_flags[idx]}" == "--pto-arch" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
         target_arch="${ptoas_flags[idx + 1]}"
       elif [[ "${ptoas_flags[idx]}" == --pto-arch=* ]]; then
         target_arch="${ptoas_flags[idx]#--pto-arch=}"
+      elif [[ "${ptoas_flags[idx]}" == "--pto-backend" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
+        target_backend="${ptoas_flags[idx + 1]}"
+      elif [[ "${ptoas_flags[idx]}" == --pto-backend=* ]]; then
+        target_backend="${ptoas_flags[idx]#--pto-backend=}"
       fi
     done
   fi
@@ -384,10 +389,18 @@ process_one_dir() {
     # Explicit layout on make_tensor_view must be preserved and reflected in the
     # emitted GlobalTensor layout parameter.
     if [[ "$base" == "tensor_view_layout_dn" ]]; then
-      if ! grep -Fq "pto::Layout::DN" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing pto::Layout::DN in emitted GlobalTensor"
-        overall=1
-        continue
+      if [[ "$target_backend" == "a5vm" ]]; then
+        if ! grep -Fq 'layout = "dn"' "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing DN layout in A5VM copy-family lowering"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Fq "pto::Layout::DN" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing pto::Layout::DN in emitted GlobalTensor"
+          overall=1
+          continue
+        fi
       fi
     fi
 
@@ -395,10 +408,23 @@ process_one_dir() {
     # SSA `pto.treshape` (lowered into `pto.bind_tile`) must lower to a single
     # `TRESHAPE(dst, src)` instead of an invalid Tile-to-pointer cast sequence.
     if [[ "$base" == "reshape" ]]; then
-      if ! grep -Fq "TRESHAPE(" "$cpp"; then
-        echo -e "${A}(${base}.py)	FAIL	missing TRESHAPE() lowering for SSA treshape"
-        overall=1
-        continue
+      if [[ "$target_backend" == "a5vm" ]]; then
+        if grep -Fq "pto.treshape" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tpto.treshape should not remain at A5VM backend output"
+          overall=1
+          continue
+        fi
+        if ! grep -Eq 'a5vm\.copy_ubuf_to_gm.*"dn"' "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing DN TSTORE lowering for SSA treshape result"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Fq "TRESHAPE(" "$cpp"; then
+          echo -e "${A}(${base}.py)	FAIL	missing TRESHAPE() lowering for SSA treshape"
+          overall=1
+          continue
+        fi
       fi
       if grep -Eq "= \(__ubuf__ [^)]+\*\) v[0-9]+;" "$cpp"; then
         echo -e "${A}(${base}.py)	FAIL	found invalid Tile-to-__ubuf__ pointer cast (issue #207)"
@@ -464,54 +490,101 @@ PY
     fi
 
     if [[ "$base" == "fillpad" ]]; then
-      if ! grep -Fq "TFILLPAD(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD() lowering for pto.tfillpad"
-        overall=1
-        continue
-      fi
-      if grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad should not lower via TFILLPAD_EXPAND()"
-        overall=1
-        continue
+      if [[ "$target_backend" == "a5vm" ]]; then
+        if grep -Eq "pto\\.tfillpad(_expand)?" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tresidual pto.tfillpad op remained in A5VM output"
+          overall=1
+          continue
+        fi
+        if ! grep -Fq "a5vm.vsts_pred" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing A5VM fillpad predicated store lowering"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Fq "TFILLPAD(" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD() lowering for pto.tfillpad"
+          overall=1
+          continue
+        fi
+        if grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad should not lower via TFILLPAD_EXPAND()"
+          overall=1
+          continue
+        fi
       fi
     fi
 
     if [[ "$base" == "fillpad_expand" ]]; then
-      if ! grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_EXPAND() lowering for pto.tfillpad_expand"
-        overall=1
-        continue
-      fi
-      if grep -Fq "TFILLPAD(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad_expand should not lower via TFILLPAD()"
-        overall=1
-        continue
+      if [[ "$target_backend" == "a5vm" ]]; then
+        if grep -Eq "pto\\.tfillpad(_expand)?" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tresidual pto.tfillpad_expand op remained in A5VM output"
+          overall=1
+          continue
+        fi
+        if ! grep -Fq "a5vm.vdup" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing A5VM fillpad pad-vector materialization"
+          overall=1
+          continue
+        fi
+        if ! grep -Fq "a5vm.vsts_pred" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing A5VM fillpad predicated store lowering"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_EXPAND() lowering for pto.tfillpad_expand"
+          overall=1
+          continue
+        fi
+        if grep -Fq "TFILLPAD(" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad_expand should not lower via TFILLPAD()"
+          overall=1
+          continue
+        fi
       fi
     fi
 
 	    # Regression guard for Issue #190:
 	    # Infer layout for a 2D column-vector view (16 x 1) should prefer DN.
 	    if [[ "$base" == "tensor_view_infer_layout_dn" ]]; then
-	      if ! grep -Eq "pto::Shape<1, 1, 1, 16, 1>.*pto::Layout::DN" "$cpp"; then
-	        echo -e "${A}(${base}.py)\tFAIL\texpected pto::Layout::DN for shape (16 x 1) GlobalTensor"
-	        overall=1
-	        continue
-	      fi
+        if [[ "$target_backend" == "a5vm" ]]; then
+          if ! grep -Fq 'layout = "dn"' "$cpp"; then
+            echo -e "${A}(${base}.py)\tFAIL\texpected DN layout in A5VM copy-family lowering for shape (16 x 1)"
+            overall=1
+            continue
+          fi
+        else
+	        if ! grep -Eq "pto::Shape<1, 1, 1, 16, 1>.*pto::Layout::DN" "$cpp"; then
+	          echo -e "${A}(${base}.py)\tFAIL\texpected pto::Layout::DN for shape (16 x 1) GlobalTensor"
+	          overall=1
+	          continue
+	        fi
+        fi
 	    fi
 
     # Regression guard for row-reduction kernels:
     # (32 x 1) row-major outputs are minor-2D ambiguous; layout must align with
     # row-major tiles (ND), otherwise pto-isa can hit layout/tile static_assert.
     if [[ "$base" == "rowmin" || "$base" == "rowsum" || "$base" == "rowmax" ]]; then
-      if ! grep -Eq "pto::Shape<1, 1, 1, 32, 1>.*pto::Layout::ND" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\texpected pto::Layout::ND for shape (32 x 1) GlobalTensor"
-        overall=1
-        continue
-      fi
-      if grep -Eq "pto::Shape<1, 1, 1, 32, 1>.*pto::Layout::DN" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tunexpected pto::Layout::DN for shape (32 x 1) GlobalTensor"
-        overall=1
-        continue
+      if [[ "$target_backend" == "a5vm" ]]; then
+        if ! grep -Fq "a5vm.vbr" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing A5VM row-reduce lowering"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Eq "pto::Shape<1, 1, 1, 32, 1>.*pto::Layout::ND" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\texpected pto::Layout::ND for shape (32 x 1) GlobalTensor"
+          overall=1
+          continue
+        fi
+        if grep -Eq "pto::Shape<1, 1, 1, 32, 1>.*pto::Layout::DN" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tunexpected pto::Layout::DN for shape (32 x 1) GlobalTensor"
+          overall=1
+          continue
+        fi
       fi
     fi
 
@@ -589,10 +662,18 @@ PY
       # If `valid_col` is dynamic, PTOToEmitC must construct the Tile with a
       # runtime argument (i.e. emit `= Tile<...>(...)` instead of `Tile<...>;`).
       if [[ "$base" == "test_dynamic_valid_shape" ]]; then
-        if ! grep -Fq "= Tile<TileType::Vec, float" "$cpp"; then
-          echo -e "${A}(${base}.pto)\tFAIL\tmissing dynamic Tile constructor (valid_col likely dropped)"
-          overall=1
-          continue
+        if [[ "$target_backend" == "a5vm" ]]; then
+          if ! grep -Fq "a5vm.vrelu" "$cpp"; then
+            echo -e "${A}(${base}.pto)\tFAIL\tmissing a5vm.vrelu lowering for dynamic valid_shape case"
+            overall=1
+            continue
+          fi
+        else
+          if ! grep -Fq "= Tile<TileType::Vec, float" "$cpp"; then
+            echo -e "${A}(${base}.pto)\tFAIL\tmissing dynamic Tile constructor (valid_col likely dropped)"
+            overall=1
+            continue
+          fi
         fi
       fi
 

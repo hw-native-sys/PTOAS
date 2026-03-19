@@ -16,6 +16,7 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -44,6 +45,20 @@ static LogicalResult verifyVecTypeLike(Operation *op, Type type,
   return VecType::verify(
       [&]() { return op->emitOpError() << roleDescription << " "; },
       vecType.getElementCount(), vecType.getElementType());
+}
+
+static LogicalResult verifyMaskTypeLike(Operation *op, Type type,
+                                        StringRef roleDescription) {
+  if (!isa<MaskType>(type))
+    return op->emitOpError() << roleDescription << " must be !a5vm.mask";
+  return success();
+}
+
+static LogicalResult verifyAlignTypeLike(Operation *op, Type type,
+                                         StringRef roleDescription) {
+  if (!isa<AlignType>(type))
+    return op->emitOpError() << roleDescription << " must be !a5vm.align";
+  return success();
 }
 
 enum class MemoryRole {
@@ -254,6 +269,173 @@ LogicalResult CopyGmToUbufOp::verify() {
   return verifyCopyGmToUbufOp(*this, true);
 }
 
+LogicalResult VbrOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getResult().getType(), "result")))
+    return failure();
+
+  auto resultVecType = cast<VecType>(getResult().getType());
+  Type elementType = getValue().getType();
+  if (isa<ShapedType, VectorType>(elementType))
+    return emitOpError("value must be a scalar matching the result element type");
+  if (elementType != resultVecType.getElementType())
+    return emitOpError("value type must match result element type");
+  return success();
+}
+
+LogicalResult VcaddOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getInput().getType(), "input")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result")))
+    return failure();
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("input and result must have the same vector type");
+  return success();
+}
+
+LogicalResult VcmaxOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getInput().getType(), "input")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result")))
+    return failure();
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("input and result must have the same vector type");
+  return success();
+}
+
+LogicalResult VcminOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getInput().getType(), "input")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result")))
+    return failure();
+  if (getInput().getType() != getResult().getType())
+    return emitOpError("input and result must have the same vector type");
+  return success();
+}
+
+LogicalResult VciOp::verify() {
+  auto resultType = dyn_cast<VecType>(getResult().getType());
+  if (!resultType)
+    return emitOpError("result must be !a5vm.vec<...>");
+  if (!isa<IntegerType>(resultType.getElementType()))
+    return emitOpError("result element type must be integer");
+  auto indexType = dyn_cast<IntegerType>(getIndex().getType());
+  if (!indexType)
+    return emitOpError("index must be an integer scalar");
+  if (indexType != resultType.getElementType())
+    return emitOpError("index type must match result element type");
+  return success();
+}
+
+void Vgather2Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult Vgather2Op::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  MemoryRole sourceRole = classifyMemoryRole(getSource().getType());
+  if (sourceRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+
+  auto offsetsType = dyn_cast<VecType>(getOffsets().getType());
+  auto resultType = dyn_cast<VecType>(getResult().getType());
+  if (!offsetsType || !resultType)
+    return emitOpError("offsets and result must be !a5vm.vec<...>");
+  if (!isa<IntegerType>(offsetsType.getElementType()))
+    return emitOpError("offset vector must use integer element type");
+  if (offsetsType.getElementCount() != resultType.getElementCount())
+    return emitOpError("offset and result vectors must have the same element count");
+  if (!getActiveLanes().getType().isIndex())
+    return emitOpError("active_lanes must be index");
+  return success();
+}
+
+LogicalResult CopyUbufToUbufOp::verify() {
+  if (!isBufferLike(getSource().getType()) || !isBufferLike(getDestination().getType()))
+    return emitOpError("requires pointer-like source and destination");
+  if (classifyMemoryRole(getSource().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getDestination().getType()) != MemoryRole::UB)
+    return emitOpError("requires UB-backed source and destination");
+  return success();
+}
+
+void VgatherbOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult VgatherbOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  MemoryRole sourceRole = classifyMemoryRole(getSource().getType());
+  if (sourceRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+
+  auto offsetsType = dyn_cast<VecType>(getOffsets().getType());
+  auto resultType = dyn_cast<VecType>(getResult().getType());
+  if (!offsetsType || !resultType)
+    return emitOpError("offsets and result must be !a5vm.vec<...>");
+  auto offsetsElemType = dyn_cast<IntegerType>(offsetsType.getElementType());
+  if (!offsetsElemType)
+    return emitOpError("offset vector must use integer element type");
+  if (offsetsElemType.getWidth() != 32)
+    return emitOpError("currently requires 32-bit offset vector elements");
+  if (offsetsType.getElementCount() != resultType.getElementCount())
+    return emitOpError("offset and result vectors must have the same element count");
+  if (!getActiveLanes().getType().isIndex())
+    return emitOpError("active_lanes must be index");
+  return success();
+}
+
+LogicalResult VbitsortOp::verify() {
+  if (!isBufferLike(getDestination().getType()) || !isBufferLike(getSource().getType()) ||
+      !isBufferLike(getIndices().getType()))
+    return emitOpError("requires pointer-like destination/source/indices");
+  if (classifyMemoryRole(getDestination().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getSource().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getIndices().getType()) != MemoryRole::UB)
+    return emitOpError("requires UB-backed destination/source/indices");
+  if (!getRepeatTimes().getType().isIndex())
+    return emitOpError("repeat_times must be index");
+  return success();
+}
+
+LogicalResult Vmrgsort4Op::verify() {
+  if (!isBufferLike(getDestination().getType()) || !isBufferLike(getSource0().getType()) ||
+      !isBufferLike(getSource1().getType()) || !isBufferLike(getSource2().getType()) ||
+      !isBufferLike(getSource3().getType()))
+    return emitOpError("requires pointer-like destination and sources");
+  if (classifyMemoryRole(getDestination().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getSource0().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getSource1().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getSource2().getType()) != MemoryRole::UB ||
+      classifyMemoryRole(getSource3().getType()) != MemoryRole::UB)
+    return emitOpError("requires UB-backed destination and sources");
+  return success();
+}
+
+LogicalResult VmaxOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getLhs().getType(), "lhs")) ||
+      failed(verifyVecTypeLike(*this, getRhs().getType(), "rhs")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result")))
+    return failure();
+  if (getLhs().getType() != getRhs().getType() ||
+      getLhs().getType() != getResult().getType())
+    return emitOpError("lhs, rhs, and result must have the same vector type");
+  return success();
+}
+
+LogicalResult VminOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getLhs().getType(), "lhs")) ||
+      failed(verifyVecTypeLike(*this, getRhs().getType(), "rhs")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result")))
+    return failure();
+  if (getLhs().getType() != getRhs().getType() ||
+      getLhs().getType() != getResult().getType())
+    return emitOpError("lhs, rhs, and result must have the same vector type");
+  return success();
+}
+
 LogicalResult SetFlagOp::verify() {
   if (failed(verifySyncToken(*this, getSrcPipeAttr(), "src_pipe")) ||
       failed(verifySyncToken(*this, getDstPipeAttr(), "dst_pipe")) ||
@@ -303,8 +485,141 @@ LogicalResult VldsOp::verify() {
   if (sourceRole == MemoryRole::GM)
     return emitOpError("requires a UB-backed source");
 
+  if (getDistAttr()) {
+    StringRef dist = *getDist();
+    if (dist != "NORM" && dist != "BLK" && dist != "DINTLV_B32" &&
+        dist != "UNPK_B16")
+      return emitOpError(
+          "supports only NORM, BLK, DINTLV_B32, and UNPK_B16 distributions");
+  }
+
   return success();
 }
+
+void VldasOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult VldasOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (failed(verifyAlignTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+  return success();
+}
+
+void VldusOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult VldusOp::verify() {
+  if (failed(verifyAlignTypeLike(*this, getAlign().getType(), "align type")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+  return success();
+}
+
+LogicalResult VdupOp::verify() {
+  auto resultType = dyn_cast<VecType>(getResult().getType());
+  if (!resultType)
+    return emitOpError("result must be !a5vm.vec<...>");
+
+  Type inputType = getInput().getType();
+  if (auto inputVecType = dyn_cast<VecType>(inputType)) {
+    if (inputVecType != resultType)
+      return emitOpError("vector input must match result vector type");
+    return success();
+  }
+
+  if (inputType != resultType.getElementType())
+    return emitOpError("scalar input must match result element type");
+
+  return success();
+}
+
+LogicalResult PsetB8Op::verify() {
+  if (failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+
+  StringRef pattern = getPattern();
+  if (pattern != "PAT_ALL" && pattern != "PAT_ALLF")
+    return emitOpError("supports only PAT_ALL and PAT_ALLF patterns");
+  return success();
+}
+
+LogicalResult PsetB16Op::verify() {
+  if (failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+
+  StringRef pattern = getPattern();
+  if (pattern != "PAT_ALL" && pattern != "PAT_ALLF")
+    return emitOpError("supports only PAT_ALL and PAT_ALLF patterns");
+  return success();
+}
+
+LogicalResult PpackOp::verify() {
+  if (failed(verifyMaskTypeLike(*this, getInput().getType(), "input type")) ||
+      failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (getPart() != "LOWER")
+    return emitOpError("currently supports only LOWER part");
+  return success();
+}
+
+LogicalResult PunpackOp::verify() {
+  if (failed(verifyMaskTypeLike(*this, getInput().getType(), "input type")) ||
+      failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (getPart() != "LOWER")
+    return emitOpError("currently supports only LOWER part");
+  return success();
+}
+
+void PldsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult PldsOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  MemoryRole sourceRole = classifyMemoryRole(getSource().getType());
+  if (sourceRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+  return success();
+}
+
+template <typename OpTy>
+static LogicalResult verifyVecScalarOpLike(OpTy op) {
+  auto inputType = dyn_cast<VecType>(op.getInput().getType());
+  auto resultType = dyn_cast<VecType>(op.getResult().getType());
+  if (!inputType || !resultType)
+    return op.emitOpError("input and result must be !a5vm.vec<...>");
+  if (inputType != resultType)
+    return op.emitOpError("input and result vector types must match");
+  if (op.getScalar().getType() != inputType.getElementType())
+    return op.emitOpError("scalar type must match vector element type");
+  return success();
+}
+
+LogicalResult VmulsOp::verify() { return verifyVecScalarOpLike(*this); }
+LogicalResult VaddsOp::verify() { return verifyVecScalarOpLike(*this); }
+LogicalResult VmaxsOp::verify() { return verifyVecScalarOpLike(*this); }
+LogicalResult VminsOp::verify() { return verifyVecScalarOpLike(*this); }
+LogicalResult VlreluOp::verify() { return verifyVecScalarOpLike(*this); }
 
 LogicalResult VabsOp::verify() {
   if (failed(verifyVecTypeLike(*this, getInput().getType(), "operand type")))
@@ -352,6 +667,107 @@ LogicalResult VaddOp::verify() { return verifyBinaryVecOp(*this); }
 LogicalResult VsubOp::verify() { return verifyBinaryVecOp(*this); }
 LogicalResult VmulOp::verify() { return verifyBinaryVecOp(*this); }
 LogicalResult VdivOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VandOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VorOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VxorOp::verify() { return verifyBinaryVecOp(*this); }
+
+LogicalResult VselOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getSrc0().getType(), "src0 type")) ||
+      failed(verifyVecTypeLike(*this, getSrc1().getType(), "src1 type")) ||
+      failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")) ||
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (getSrc0().getType() != getSrc1().getType() ||
+      getSrc0().getType() != getResult().getType())
+    return emitOpError("requires src0, src1, and result to have identical vector types");
+  return success();
+}
+
+static bool isSupportedCmpMode(StringRef mode) {
+  return mode == "eq" || mode == "ne" || mode == "lt" || mode == "le" ||
+         mode == "gt" || mode == "ge";
+}
+
+LogicalResult VcmpOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getSrc0().getType(), "src0 type")) ||
+      failed(verifyVecTypeLike(*this, getSrc1().getType(), "src1 type")) ||
+      failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")) ||
+      failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (getSrc0().getType() != getSrc1().getType())
+    return emitOpError("requires src0 and src1 to have identical vector types");
+  if (!isSupportedCmpMode(getCmpMode()))
+    return emitOpError("requires cmp_mode to be one of eq/ne/lt/le/gt/ge");
+  return success();
+}
+
+LogicalResult VcmpsOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getSrc().getType(), "src type")) ||
+      failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")) ||
+      failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  auto srcType = cast<VecType>(getSrc().getType());
+  if (getScalar().getType() != srcType.getElementType())
+    return emitOpError("requires scalar type to match source element type");
+  if (!isSupportedCmpMode(getCmpMode()))
+    return emitOpError("requires cmp_mode to be one of eq/ne/lt/le/gt/ge");
+  return success();
+}
+
+LogicalResult VcvtOp::verify() {
+  auto inputType = dyn_cast<VecType>(getInput().getType());
+  auto resultType = dyn_cast<VecType>(getResult().getType());
+  if (!inputType || !resultType)
+    return emitOpError("input and result must be !a5vm.vec<...>");
+
+  auto inputElemType = inputType.getElementType();
+  auto resultElemType = resultType.getElementType();
+  auto isSupportedElemType = [](Type type) {
+    return type.isF16() || type.isBF16() || type.isF32();
+  };
+  if (!isSupportedElemType(inputElemType) || !isSupportedElemType(resultElemType))
+    return emitOpError("currently supports only f16/bf16/f32 vector element types");
+
+  if (getRoundModeAttr()) {
+    StringRef roundMode = *getRoundMode();
+    if (roundMode != "ROUND_R" && roundMode != "ROUND_A" &&
+        roundMode != "ROUND_F" && roundMode != "ROUND_C" &&
+        roundMode != "ROUND_Z" && roundMode != "ROUND_O")
+      return emitOpError("round_mode must be one of ROUND_R/ROUND_A/ROUND_F/ROUND_C/ROUND_Z/ROUND_O");
+  }
+
+  if (getSatAttr()) {
+    StringRef sat = *getSat();
+    if (sat != "RS_ENABLE" && sat != "RS_DISABLE")
+      return emitOpError("sat must be RS_ENABLE or RS_DISABLE");
+  }
+
+  if (getPartAttr()) {
+    StringRef part = *getPart();
+    if (part != "PART_EVEN" && part != "PART_ODD")
+      return emitOpError("part must be PART_EVEN or PART_ODD");
+  }
+
+  return success();
+}
+
+LogicalResult PdintlvB8Op::verify() {
+  if (failed(verifyMaskTypeLike(*this, getLhs().getType(), "lhs type")) ||
+      failed(verifyMaskTypeLike(*this, getRhs().getType(), "rhs type")) ||
+      failed(verifyMaskTypeLike(*this, getLow().getType(), "low type")) ||
+      failed(verifyMaskTypeLike(*this, getHigh().getType(), "high type")))
+    return failure();
+  return success();
+}
+
+LogicalResult PintlvB16Op::verify() {
+  if (failed(verifyMaskTypeLike(*this, getLhs().getType(), "lhs type")) ||
+      failed(verifyMaskTypeLike(*this, getRhs().getType(), "rhs type")) ||
+      failed(verifyMaskTypeLike(*this, getLow().getType(), "low type")) ||
+      failed(verifyMaskTypeLike(*this, getHigh().getType(), "high type")))
+    return failure();
+  return success();
+}
 
 void VstsOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
@@ -371,6 +787,75 @@ LogicalResult VstsOp::verify() {
   if (destinationRole == MemoryRole::GM)
     return emitOpError("requires a UB-backed destination");
 
+  return success();
+}
+
+void VscatterOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult VscatterOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getValue().getType(), "value type")))
+    return failure();
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  auto offsetsType = dyn_cast<VecType>(getOffsets().getType());
+  auto valueType = dyn_cast<VecType>(getValue().getType());
+  if (!offsetsType || !valueType)
+    return emitOpError("value and offsets must be !a5vm.vec<...>");
+  auto offsetsElemType = dyn_cast<IntegerType>(offsetsType.getElementType());
+  if (!offsetsElemType)
+    return emitOpError("offset vector must use integer element type");
+  if (offsetsElemType.getWidth() != 32)
+    return emitOpError("currently requires 32-bit offset vector elements");
+  if (offsetsType.getElementCount() != valueType.getElementCount())
+    return emitOpError("offset and value vectors must have the same element count");
+  MemoryRole destinationRole = classifyMemoryRole(getDestination().getType());
+  if (destinationRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
+  if (!getActiveLanes().getType().isIndex())
+    return emitOpError("active_lanes must be index");
+  return success();
+}
+
+void VstsPredOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult VstsPredOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getValue().getType(), "value type")))
+    return failure();
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  if (!getActiveLanes().getType().isIndex())
+    return emitOpError("requires index active_lanes");
+  MemoryRole destinationRole = classifyMemoryRole(getDestination().getType());
+  if (destinationRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
+  return success();
+}
+
+void PstsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult PstsOp::verify() {
+  if (failed(verifyMaskTypeLike(*this, getValue().getType(), "value type")))
+    return failure();
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  MemoryRole destinationRole = classifyMemoryRole(getDestination().getType());
+  if (destinationRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
   return success();
 }
 
