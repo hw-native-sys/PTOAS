@@ -77,6 +77,24 @@ AddressSpaceAttr getPTOAddressSpaceAttr(Type type);
 /// Return true if type is a ptr/memref in GM address space (or default).
 bool isScalarPtrOrMemRef(Type type);
 
+enum class PTOParserTargetArch {
+  Unspecified,
+  A3,
+  A5,
+};
+
+void setPTOParserTargetArch(PTOParserTargetArch arch);
+PTOParserTargetArch getPTOParserTargetArch();
+
+class ScopedPTOParserTargetArch {
+public:
+  explicit ScopedPTOParserTargetArch(PTOParserTargetArch arch);
+  ~ScopedPTOParserTargetArch();
+
+private:
+  PTOParserTargetArch previousArch;
+};
+
 
 /// Function attribute that marks an explicit PTO kernel entry.
 inline constexpr llvm::StringLiteral kPTOEntryAttrName = "pto.entry";

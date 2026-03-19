@@ -1,0 +1,13 @@
+// RUN: ptoas --pto-arch a5 %s | FileCheck %s
+
+module {
+  func.func @left_blayout_parser_a5() {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}
+
+// CHECK: left_blayout_parser_a5

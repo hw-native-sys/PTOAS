@@ -5,6 +5,29 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+namespace {
+thread_local PTOParserTargetArch currentParserTargetArch =
+    PTOParserTargetArch::Unspecified;
+}
+
+void mlir::pto::setPTOParserTargetArch(PTOParserTargetArch arch) {
+  currentParserTargetArch = arch;
+}
+
+PTOParserTargetArch mlir::pto::getPTOParserTargetArch() {
+  return currentParserTargetArch;
+}
+
+mlir::pto::ScopedPTOParserTargetArch::ScopedPTOParserTargetArch(
+    PTOParserTargetArch arch)
+    : previousArch(getPTOParserTargetArch()) {
+  setPTOParserTargetArch(arch);
+}
+
+mlir::pto::ScopedPTOParserTargetArch::~ScopedPTOParserTargetArch() {
+  setPTOParserTargetArch(previousArch);
+}
+
 static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
   SmallVector<int64_t, 4> canonical;
   canonical.reserve(validShape.size());
@@ -211,7 +234,21 @@ Type TileBufType::parse(AsmParser &parser) {
     return Type();
   }
 
-  auto blAttr = BLayoutAttr::get(ctx, bl.value());
+  BLayout effectiveBLayout = bl.value();
+  if (memorySpace.value() == AddressSpace::LEFT) {
+    switch (getPTOParserTargetArch()) {
+    case PTOParserTargetArch::A3:
+      effectiveBLayout = BLayout::RowMajor;
+      break;
+    case PTOParserTargetArch::A5:
+      effectiveBLayout = BLayout::ColMajor;
+      break;
+    case PTOParserTargetArch::Unspecified:
+      break;
+    }
+  }
+
+  auto blAttr = BLayoutAttr::get(ctx, effectiveBLayout);
   auto slAttr = SLayoutAttr::get(ctx, sl.value());
   auto fractalAttr =
       IntegerAttr::get(IntegerType::get(ctx, 32), fractal);
