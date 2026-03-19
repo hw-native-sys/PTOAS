@@ -24,6 +24,7 @@
 // CHECK-SAME: right_padding_num = 0
 // CHECK-SAME: init_out_buffer = false
 // CHECK-SAME: has_init_condition = false
+// CHECK-SAME: src_strides = [32, 1]
 // CHECK-SAME: trace_offsets = [0, 0]
 // CHECK-SAME: trace_sizes = [32, 32]
 

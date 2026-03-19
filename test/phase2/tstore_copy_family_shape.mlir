@@ -18,6 +18,7 @@
 // CHECK-SAME: burst_len = 32
 // CHECK-SAME: gm_stride = 32
 // CHECK-SAME: ub_stride = 32
+// CHECK-SAME: dst_strides = [32, 1]
 // CHECK-SAME: trace_offsets = [0, 0]
 // CHECK-SAME: trace_sizes = [32, 32]
 
