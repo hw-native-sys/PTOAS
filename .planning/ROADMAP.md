@@ -70,9 +70,9 @@ Implement PTO-to-A5VM lowering that preserves the real PTO-library control struc
 **Plans:** 3 plans
 
 Plans:
-- [x] `02-01-PLAN.md` — Replace the obsolete Phase 2 fixture suite with corrected copy-family and structural vec-scope contracts
-- [x] `02-02-PLAN.md` — Create the corrected PTO-to-A5VM contract/helper layer around explicit A5 semantics and structural unary lowering
-- [x] `02-03-PLAN.md` — Register the corrected PTO-to-A5VM pass and wire `ptoas --pto-backend=a5vm` through the shared helper layer
+- [ ] `02-01-PLAN.md` — Rewrite the Phase 2 public contracts, fixtures, and runner around explicit AIV loop-scope carriage for `TABS`
+- [ ] `02-02-PLAN.md` — Implement truthful PTO-to-A5VM helper lowering for copy families and explicit AIV-scoped unary lowering
+- [ ] `02-03-PLAN.md` — Register and wire the corrected PTO-to-A5VM execution path through `ptoas --pto-backend=a5vm`
 
 ### Phase 3: HIVM Emission
 
