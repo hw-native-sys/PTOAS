@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 2
 current_phase_name: PTO Lowering
-current_plan: 5
+current_plan: 6
 status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-03-19T04:05:00.776Z"
+stopped_at: Completed 02-06-PLAN.md
+last_updated: "2026-03-19T04:11:20.719Z"
 last_activity: 2026-03-19
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 13
-  completed_plans: 8
-  percent: 62
+  completed_plans: 9
+  percent: 69
 ---
 
 # Project State
@@ -24,11 +24,11 @@ progress:
 **Current Phase:** 2
 **Current Phase Name:** PTO Lowering
 **Total Phases:** 4
-**Current Plan:** 5
+**Current Plan:** 6
 **Total Plans in Phase:** 6
-**Progress:** [██████░░░░] 62%
+**Progress:** [███████░░░] 69%
 **Last Activity:** 2026-03-19
-**Last Activity Description:** Executed plan 02-04 to recover exact copy-family stride and partition-trace metadata in observable lowered IR
+**Last Activity Description:** Executed plan 02-06 to make the Phase 2 runner use deterministic FileCheck discovery and align validation docs
 
 ## Project Reference
 
@@ -52,7 +52,9 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - Plan `02-02` executed and summarized
 - Plan `02-03` executed and summarized
 - Plan `02-04` executed and summarized
-- Next execution target: execute `02-05-PLAN.md`
+- Plan `02-05` executed and summarized
+- Plan `02-06` executed and summarized
+- Next execution target: execute `03-01-PLAN.md`
 
 ## Active Milestone
 
@@ -113,8 +115,8 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 ## Session Continuity
 
 - Next recommended command: `/gsd:execute-phase`
-- Next plan to execute: `02-05-PLAN.md`
-- Current blocker status: the checked-in `build/` directory still has pre-existing regeneration/header issues, but a fresh throwaway build verified the `02-04` copy-family metadata fix
+- Next plan to execute: `03-01-PLAN.md`
+- Current blocker status: Phase 2 planning is complete, but end-to-end runner verification still needs a runnable `./build/tools/ptoas/ptoas` build tree and one of the documented FileCheck binaries.
 
 ## Performance Metrics
 
@@ -132,6 +134,7 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 | Phase 02-pto-lowering P02 | 14min | 2 tasks | 1 files |
 | Phase 02-pto-lowering P04 | 75min | 2 tasks | 4 files |
 | Phase 02-pto-lowering P05 | 12min | 2 tasks | 5 files |
+| Phase 02-pto-lowering P06 | 12min | 2 tasks | 3 files |
 
 ## Decisions Made
 
@@ -165,17 +168,19 @@ See: `.planning/PROJECT.md` (updated 2026-03-18)
 - [Phase 02]: Keep Task 2 focused on fixture contracts by locking only the exact stride and trace attrs the emitted IR now proves.
 - [Phase 02-pto-lowering]: Keep __VEC_SCOPE__ as a one-trip scf.for carrier with its printed attr-dict locking cce_aiv_loop_hint and llvm.loop.aivector_scope.
 - [Phase 02-pto-lowering]: Replace fail-fast partial conversion with a full PTO-op lowering walk so dedicated diagnostics accumulate before signaling pass failure.
+- [Phase 02]: Resolve FileCheck in the Phase 2 runner through FileCheck, FileCheck-19, then /usr/lib/llvm-19/bin/FileCheck before executing fixtures.
+- [Phase 02]: Document bash test/phase2/run_phase2_checks.sh as the canonical quick-run and full-suite validation entrypoint for Phase 2.
 
 ## Blockers
 
 - Fresh `CCACHE_DISABLE=1 ninja -C build PTOTransforms ptoas` verification is blocked by pre-existing A5VM generated-header and build-regeneration issues; see `.planning/phases/02-pto-lowering/deferred-items.md`.
-- `bash test/phase2/run_phase2_checks.sh` currently fails on a pre-existing fixture/runner mismatch in `test/phase2/tabs_abs_loop_shape.mlir`; see `.planning/phases/02-pto-lowering/deferred-items.md`.
+- `bash test/phase2/run_phase2_checks.sh` now has deterministic FileCheck discovery, but this workspace still lacks both a `FileCheck` candidate and an executable `./build/tools/ptoas/ptoas`.
 
 ## Session
 
-**Last Date:** 2026-03-19T04:05:00.773Z
-**Stopped At:** Completed 02-05-PLAN.md
+**Last Date:** 2026-03-19T04:11:20.717Z
+**Stopped At:** Completed 02-06-PLAN.md
 **Resume File:** None
 
 ---
-*Last updated: 2026-03-19 after completing plan 02-04*
+*Last updated: 2026-03-19 after completing plan 02-06*

@@ -74,8 +74,8 @@ Plans:
 - [x] `02-02-PLAN.md` — Implement truthful PTO-to-A5VM helper lowering for copy families and explicit AIV-scoped unary lowering
 - [x] `02-03-PLAN.md` — Register and wire the corrected PTO-to-A5VM execution path through `ptoas --pto-backend=a5vm`
 - [x] `02-04-PLAN.md` — Recover exact TLOAD and TSTORE stride plus partition-trace metadata in observable lowered IR
-- [ ] `02-05-PLAN.md` — Preserve the explicit `__VEC_SCOPE__` dummy-loop carrier and restore full locked diagnostics
-- [ ] `02-06-PLAN.md` — Make the committed Phase 2 verification runner runnable with a workspace-safe FileCheck strategy
+- [x] `02-05-PLAN.md` — Preserve the explicit `__VEC_SCOPE__` dummy-loop carrier and restore full locked diagnostics
+- [x] `02-06-PLAN.md` — Make the committed Phase 2 verification runner runnable with a workspace-safe FileCheck strategy
 
 ### Phase 3: HIVM Emission
 
@@ -129,4 +129,4 @@ Use the `Abs` sample as the first acceptance case for the new backend and extrac
 - Phase 4 is the acceptance and inventory-extraction phase, not a separate architecture redesign.
 
 ---
-*Last updated: 2026-03-19 after completing plan 02-04 execution*
+*Last updated: 2026-03-19 after completing plan 02-06 execution*
