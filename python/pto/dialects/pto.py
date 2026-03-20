@@ -79,6 +79,8 @@ __all__ = [
     "TileConfig",
     # High-level sync helpers
     "record_event", "wait_event", "barrier",
+    # Low-level sync helpers (static/dynamic event id unified API)
+    "set_flag", "wait_flag", "set_flag_dyn", "wait_flag_dyn",
     # Inter-core sync helpers
     "sync_set", "sync_wait", "set_ffts",
     # A5 buffer-id sync helpers
@@ -114,6 +116,15 @@ def _ensure_sync_attr(val, ctx):
 def _ensure_event_attr(val, ctx):
     if isinstance(val, EVENT):
         return EventAttr.get(val, ctx)
+    if isinstance(val, int):
+        if val < 0 or val > 7:
+            raise ValueError(f"event id out of range [0,7]: {val}")
+        enum_name = f"EVENT_ID{val}"
+        try:
+            enum_val = getattr(EVENT, enum_name)
+        except AttributeError:
+            raise ValueError(f"Unknown EVENT integer id: {val}")
+        return EventAttr.get(enum_val, ctx)
     if isinstance(val, str):
         name = val.upper()
         try:
@@ -169,6 +180,82 @@ def barrier(op, *, loc=None, ip=None):
         return _pto_ops_gen.barrier_sync(op_attr, loc=loc, ip=ip)
     # Otherwise fall back to low-level barrier expecting PipeAttr
     return _pto_ops_gen.barrier(op, loc=loc, ip=ip)
+
+
+def _is_static_event_id(event_id):
+    if isinstance(event_id, (EVENT, EventAttr, str, int)):
+        return True
+    return isinstance(event_id, _ods_ir.Attribute)
+
+
+def set_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
+    """Low-level dynamic event-id set_flag helper."""
+    ctx = loc.context if loc else _ods_ir.Context.current
+    src_attr = _ensure_pipe_attr(src_pipe, ctx)
+    dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
+    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
+    if hasattr(_pto_ops_gen, "set_flag_dyn"):
+        return _pto_ops_gen.set_flag_dyn(
+            src_attr, dst_attr, event_val, loc=loc, ip=ip
+        )
+    return _ods_ir.Operation.create(
+        "pto.set_flag_dyn",
+        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
+        operands=[event_val],
+        loc=loc,
+        ip=ip,
+    )
+
+
+def wait_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
+    """Low-level dynamic event-id wait_flag helper."""
+    ctx = loc.context if loc else _ods_ir.Context.current
+    src_attr = _ensure_pipe_attr(src_pipe, ctx)
+    dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
+    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
+    if hasattr(_pto_ops_gen, "wait_flag_dyn"):
+        return _pto_ops_gen.wait_flag_dyn(
+            src_attr, dst_attr, event_val, loc=loc, ip=ip
+        )
+    return _ods_ir.Operation.create(
+        "pto.wait_flag_dyn",
+        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
+        operands=[event_val],
+        loc=loc,
+        ip=ip,
+    )
+
+
+def set_flag(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
+    """Unified low-level set_flag API.
+
+    - Static path: EVENT/EventAttr/str/int -> pto.set_flag
+    - Dynamic path: SSA value -> pto.set_flag_dyn
+    """
+    ctx = loc.context if loc else _ods_ir.Context.current
+    src_attr = _ensure_pipe_attr(src_pipe, ctx)
+    dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
+    if _is_static_event_id(event_id):
+        return _pto_ops_gen.set_flag(
+            src_attr, dst_attr, _ensure_event_attr(event_id, ctx), loc=loc, ip=ip
+        )
+    return set_flag_dyn(src_attr, dst_attr, event_id, loc=loc, ip=ip)
+
+
+def wait_flag(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
+    """Unified low-level wait_flag API.
+
+    - Static path: EVENT/EventAttr/str/int -> pto.wait_flag
+    - Dynamic path: SSA value -> pto.wait_flag_dyn
+    """
+    ctx = loc.context if loc else _ods_ir.Context.current
+    src_attr = _ensure_pipe_attr(src_pipe, ctx)
+    dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
+    if _is_static_event_id(event_id):
+        return _pto_ops_gen.wait_flag(
+            src_attr, dst_attr, _ensure_event_attr(event_id, ctx), loc=loc, ip=ip
+        )
+    return wait_flag_dyn(src_attr, dst_attr, event_id, loc=loc, ip=ip)
 
 # -----------------------------------------------------------------------------
 # Inter-core sync helpers (pto.sync.set / pto.sync.wait / pto.set_ffts)

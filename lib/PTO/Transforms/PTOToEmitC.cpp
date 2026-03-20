@@ -4109,6 +4109,48 @@ struct PTOWaitFlagToEmitC : public OpConversionPattern<mlir::pto::WaitFlagOp> {
   }
 };
 
+struct PTOSyncFlagDynToEmitC : public ConversionPattern {
+  PTOSyncFlagDynToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                        StringRef opName, StringRef callee)
+      : ConversionPattern(typeConverter, opName, /*benefit=*/1, ctx),
+        callee(callee.str()) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                                ConversionPatternRewriter &rewriter) const override {
+    if (operands.size() != 1)
+      return rewriter.notifyMatchFailure(op, "expected exactly one dynamic event-id operand");
+
+    auto srcAttr = op->getAttrOfType<mlir::pto::PipeAttr>("src_pipe");
+    auto dstAttr = op->getAttrOfType<mlir::pto::PipeAttr>("dst_pipe");
+    if (!srcAttr || !dstAttr)
+      return rewriter.notifyMatchFailure(op, "missing PipeAttr src_pipe/dst_pipe attrs");
+
+    auto *ctx = rewriter.getContext();
+    std::string srcTok = pipeTokFromPipeAttr(srcAttr);
+    std::string dstTok = pipeTokFromPipeAttr(dstAttr);
+
+    Value eventVal = operands.front();
+    eventVal =
+        emitCCast(rewriter, op->getLoc(), emitc::OpaqueType::get(ctx, "event_t"), eventVal);
+
+    auto argsAttr = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, srcTok),
+        emitc::OpaqueAttr::get(ctx, dstTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, callee,
+        /*args=*/argsAttr,
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{eventVal});
+    return success();
+  }
+
+private:
+  std::string callee;
+};
+
 struct PTOGetBufToEmitC : public OpConversionPattern<mlir::pto::GetBufOp> {
   using OpConversionPattern<mlir::pto::GetBufOp>::OpConversionPattern;
 
@@ -8217,6 +8259,15 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<ArithCmpIToEmitC>(typeConverter, ctx);
   patterns.add<PTOBindTileToEmitC>(typeConverter, ctx);
   patterns.add<PTOSetFlagToEmitC>(typeConverter, ctx);
+  patterns.add<PTOSyncFlagDynToEmitC>(typeConverter, ctx, "pto.set_flag_dyn",
+                                      "set_flag");
+  patterns.add<PTOSyncFlagDynToEmitC>(typeConverter, ctx, "pto.wait_flag_dyn",
+                                      "wait_flag");
+  // Backward-compatible aliases used in some downstream branches.
+  patterns.add<PTOSyncFlagDynToEmitC>(typeConverter, ctx, "pto.set_flag_d",
+                                      "set_flag");
+  patterns.add<PTOSyncFlagDynToEmitC>(typeConverter, ctx, "pto.wait_flag_d",
+                                      "wait_flag");
   patterns.add<PTOSubSCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubCSToEmitC>(typeConverter, ctx);
   patterns.add<PTOWaitFlagToEmitC>(typeConverter, ctx);

@@ -345,6 +345,36 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard: Python unified low-level sync API should dispatch to
+    # both static and dynamic event-id forms.
+    if [[ "$base" == "test_set_wait_unified_api" ]]; then
+      if ! grep -Eq "set_flag\\(PIPE_MTE2,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID2\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing static set_flag(..., EVENT_ID2) from unified API"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag\\(PIPE_MTE2,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID2\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing static wait_flag(..., EVENT_ID2) from unified API"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "static_cast<event_t>" "$cpp" && ! grep -Fq "(event_t)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic event-id cast from unified API"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "set_flag\\(PIPE_MTE2,[[:space:]]*PIPE_MTE3,[[:space:]]*v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic set_flag(..., <var>) from unified API"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag\\(PIPE_MTE2,[[:space:]]*PIPE_MTE3,[[:space:]]*v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic wait_flag(..., <var>) from unified API"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard: intra-pipe dependencies must be serialized by a
     # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
     if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then
