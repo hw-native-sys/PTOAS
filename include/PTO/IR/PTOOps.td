@@ -244,7 +244,7 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
 // BindTileOp: 将 Config 和 Valid Dims 绑定到 MemRef 上
 // ============================================================================
 def BindTileOp : PTO_Op<"bind_tile", [
-    Pure,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     AttrSizedOperandSegments
     // 允许输入 offset:0 -> 输出 offset:?
   ]> {
@@ -3443,7 +3443,7 @@ def TRemSOp: PTO_TOp<"trems", [
 
 def TReshapeOp: PTO_TOp<"treshape", [
   OpPipeInterface,
-  Pure,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   ViewLikeOpInterface
 ]> {
   let summary = "TRESHAPE: Reinterpret a tile buffer view (SSA; aliases src storage)";
