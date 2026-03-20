@@ -497,10 +497,10 @@ Architectural exceptions:
 - UB access overflow raises an exception for UB reads or writes that exceed the permitted UB address range.
 - Load and store families raise an exception when ISA-required alignment constraints are violated.
 - Memory-to-memory sorter and filter families require their ISA alignment and non-overlap constraints; violating those constraints raises an exception.
-- `INF` and `NaN` in source operands raise an exception for the Chapter 11 arithmetic families, Chapter 12 extended-arithmetic families, and the sort families documented in this spec.
+- `INF` and `NaN` in source operands raise an exception for the arithmetic, conversion, and sort families in this spec wherever the ISA defines those inputs as exceptional.
 - Division by `+0` or `-0` raises an exception for `pto.vdiv` and `pto.vrec`; the same ISA rule also applies to reciprocal-square-root families not currently exposed here.
 - Negative input raises an exception for `pto.vln` and `pto.vsqrt`; the same ISA rule also applies to reciprocal-square-root families not currently exposed here.
-- Certain conversion cases from negative floating-point input to unsigned integer destination, such as the ISA forms behind `f16 -> u8` and `s32 -> u16/u8`, are architecturally exceptional rather than silently wrapping.
+- Certain conversions from negative source values to unsigned integer destinations, including forms such as `f16 -> u8` and `s32 -> u16/u8`, raise an exception rather than silently wrapping.
 
 ## __VEC_SCOPE__
 
@@ -858,7 +858,7 @@ ISA assertions for this family:
 - ISA family:
   `Dual-result aligned-load distributions for VLD variants`
 - semantics:
-  One UB access produces low and high result vectors according to `DIST`.
+  Reads one UB vector stream at `source + offset` and splits the result into `%low` and `%high` according to the x2 distribution selected by `DIST`. The distribution token defines how lanes are deinterleaved between the two returned vectors.
 - CCE correspondence:
   `vld(...)`
   `__builtin_cce_vldx2_*`
@@ -872,7 +872,7 @@ ISA assertions for this family:
 - ISA family:
   `VGATHER2`
 - semantics:
-  Gathers lanes from UB using vector offsets and an explicit active-lane count.
+  For each active lane `i` with `i < active_lanes`, reads the element at UB address `source + offsets[i]` and writes it to result lane `i`.
 - CCE correspondence:
   `vgather2(...)`
   `__builtin_cce_vgather2_*`, `__builtin_cce_vgather2_v300_*`
@@ -886,7 +886,7 @@ ISA assertions for this family:
 - ISA family:
   `VGATHERB`
 - semantics:
-  Gathers byte-granular lanes from UB using vector offsets and an explicit active-lane count.
+  For each active lane `i` with `i < active_lanes`, reads the byte-granular element at UB address `source + offsets[i]` and writes it to result lane `i`.
 - CCE correspondence:
   `vgatherb(...)`
   `__builtin_cce_vgatherb_*`, `__builtin_cce_vgatherb_v300_*`, `__builtin_cce_vgatherb_v310_*`
@@ -900,7 +900,7 @@ ISA assertions for this family:
 - ISA family:
   `VGATHER2_BC`
 - semantics:
-  Gathers lanes from UB under an explicit predicate mask.
+  For each lane enabled by `%mask`, reads the element at UB address `source + offsets[i]` and writes it to result lane `i`.
 - CCE correspondence:
   `vgather2_bc(...)`
   `__builtin_cce_vgather2_bc_*`
@@ -914,7 +914,7 @@ ISA assertions for this family:
 - ISA family:
   `VSLD`
 - semantics:
-  Performs a strided or packed vector load from UB according to the selected stride token.
+  Reads `%result` from UB using the address progression encoded by `STRIDE`. The stride token determines the spacing between consecutive source elements or packed groups.
 - CCE correspondence:
   `vsld(...)`
   `__builtin_cce_vsld_*`
@@ -928,7 +928,7 @@ ISA assertions for this family:
 - ISA family:
   `VSLDB`
 - semantics:
-  Performs a masked strided vector load using a scalar offset and predicate mask.
+  Reads a strided vector from UB using the scalar displacement `%offset` and writes only the lanes enabled by `%mask`.
 - CCE correspondence:
   `vsldb(...)`
   `__builtin_cce_vsldb_*`, `__builtin_cce_vsldb_post_*`
@@ -1055,7 +1055,7 @@ ISA assertions for this family:
 - ISA family:
   `PPACK`
 - semantics:
-  Packs predicate lanes according to `PART` into a denser predicate representation.
+  Compresses the predicate lanes selected by `PART` into the packed predicate representation returned in `%result`.
 - CCE correspondence:
   `ppack(...)`
 
@@ -1068,7 +1068,7 @@ ISA assertions for this family:
 - ISA family:
   `PUNPACK`
 - semantics:
-  Expands a packed predicate representation according to `PART`.
+  Expands the packed predicate lanes selected by `PART` into the unpacked predicate representation returned in `%result`.
 - CCE correspondence:
   `punpack(...)`
 
@@ -1516,7 +1516,7 @@ ISA assertions for this family:
 - ISA family:
   `VADDC`
 - semantics:
-  Performs lane-wise add under `%mask` and returns both the sum vector and the carry-out predicate.
+  For each lane enabled by `%mask`, adds `%lhs` and `%rhs`, writes the arithmetic result to `%result`, and writes the lane carry-out bit to `%carry`.
 - CCE correspondence:
   `vaddc(...)`
   `__builtin_cce_vaddc_*`
@@ -1530,7 +1530,7 @@ ISA assertions for this family:
 - ISA family:
   `VSUBC`
 - semantics:
-  Performs lane-wise subtract under `%mask` and returns both the difference vector and the carry-or-borrow predicate.
+  For each lane enabled by `%mask`, subtracts `%rhs` from `%lhs`, writes the arithmetic result to `%result`, and writes the lane carry-or-borrow bit to `%carry`.
 - CCE correspondence:
   `vsubc(...)`
   `__builtin_cce_vsubc_*`
@@ -1544,7 +1544,7 @@ ISA assertions for this family:
 - ISA family:
   `VADDCS`
 - semantics:
-  Performs lane-wise add with carry-in and returns both the sum vector and the updated carry predicate.
+  For each lane enabled by `%mask`, adds `%lhs`, `%rhs`, and the carry-in bit from `%carry_in`, writes the arithmetic result to `%result`, and writes the successor carry bit to `%carry`.
 - CCE correspondence:
   `vaddcs(...)`
   `__builtin_cce_vaddcs_*`
@@ -1558,7 +1558,7 @@ ISA assertions for this family:
 - ISA family:
   `VSUBCS`
 - semantics:
-  Performs lane-wise subtract with carry-in and returns both the difference vector and the updated carry-or-borrow predicate.
+  For each lane enabled by `%mask`, subtracts `%rhs` and the carry-or-borrow bit from `%carry_in` from `%lhs`, writes the arithmetic result to `%result`, and writes the successor carry-or-borrow bit to `%carry`.
 - CCE correspondence:
   `vsubcs(...)`
   `__builtin_cce_vsubcs_*`
@@ -1642,7 +1642,7 @@ ISA assertions for this family:
 - ISA family:
   `PNOT`
 - semantics:
-  Inverts predicate bits under the supplied mask.
+  For each lane enabled by `%mask`, inverts the corresponding bit of `%input` and writes the result bit to `%result`.
 - CCE correspondence:
   `pnot(...)`
 
@@ -1655,7 +1655,7 @@ ISA assertions for this family:
 - ISA family:
   `PSEL`
 - semantics:
-  Selects predicate bits from `%src0` and `%src1` under a predicate control mask.
+  Selects each result predicate bit from `%src0` or `%src1` under the control of `%mask`.
 - CCE correspondence:
   `psel(...)`
 
@@ -1696,7 +1696,7 @@ ISA assertions for this family:
 - ISA family:
   `VINTLV`
 - semantics:
-  Interleaves vector lanes from `%lhs` and `%rhs` into low and high result vectors.
+  Interleaves lanes from `%lhs` and `%rhs` into one combined lane stream and returns the low half in `%low` and the high half in `%high`.
 - CCE correspondence:
   `vintlv(...)`
   `__builtin_cce_vintlv_*`
@@ -1710,7 +1710,7 @@ ISA assertions for this family:
 - ISA family:
   `VDINTLV`
 - semantics:
-  Deinterleaves vector lanes from `%lhs` and `%rhs` into low and high result vectors.
+  Deinterleaves the combined lane streams in `%lhs` and `%rhs` and returns the low deinterleaved half in `%low` and the high deinterleaved half in `%high`.
 - CCE correspondence:
   `vdintlv(...)`
   `__builtin_cce_vdintlv_*`
@@ -1724,7 +1724,7 @@ ISA assertions for this family:
 - ISA family:
   `VINTLV v2`
 - semantics:
-  Returns the selected `PART` of the interleaved lane stream.
+  Interleaves `%lhs` and `%rhs` into one combined lane stream and returns only the half selected by `PART`.
 - CCE correspondence:
   `vintlvv2(...)`
   `__builtin_cce_vintlvv2_*`
@@ -1738,7 +1738,7 @@ ISA assertions for this family:
 - ISA family:
   `VDINTLV v2`
 - semantics:
-  Returns the selected `PART` of the deinterleaved lane stream.
+  Deinterleaves `%lhs` and `%rhs` into one logical lane stream and returns only the half selected by `PART`.
 - CCE correspondence:
   `vdintlvv2(...)`
   `__builtin_cce_vdintlvv2_*`
