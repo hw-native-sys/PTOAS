@@ -99,15 +99,26 @@ capabilities of the Ascend 950 architecture.
 
 ## Getting Started
 
-This section is a scaffold for a future newcomer-oriented walkthrough.
+The Vector PTO (VPTO) IR is architected as a performance-critical layer within the compiler stack, specifically designed to exploit the **Decoupled Access-Execute** (DAE) nature of the Ascend 950 hardware.
 
-1. Start from buffer-like LLVM pointers and identify the relevant address spaces for GM, UB, and any other storage involved.
-2. Use copy-programming and copy-transfer ops to stage data into UB when the workflow requires it.
-3. Enter `__VEC_SCOPE__` for vector execution.
-4. Use load / compute / store ops inside the vector-scope body.
-5. Use sync ops and copy-back ops to publish results.
+### Hardware Pipeline Modeling
+The IR is structured to mirror the three primary hardware pipelines of the Ascend 950 architecture. Correct VPTO authoring requires managing the interaction between these asynchronous units:
 
-- `TODO(user): add a fuller end-to-end walkthrough for first-time external developers.`
+**MTE2** (Memory Transfer Engine - Inbound): Responsible for moving data from Global Memory (GM) to the Unified Buffer (UB).
+
+**Vector Core** (Computation): The primary engine for executing SIMD operations on data stored in UB.
+
+**MTE3** (Memory Transfer Engine - Outbound): Responsible for moving processed data from UB back to GM.
+
+### Memory and Synchronization Model
+VPTO enforces a strict memory hierarchy. The Unified Buffer (UB) is the only valid operand source for vector compute instructions. Consequently, the architecture of a VPTO program is defined by the explicit management of data movement:
+
+**Address Space Isolation**: The IR uses LLVM pointer address spaces to distinguish between GM (!llvm.ptr<1>) and UB (!llvm.ptr<6>). The verifier ensures that no compute operation attempts to access GM directly.
+
+**Event-Based Synchronization**: Because the MTE and Vector pipelines operate asynchronously, VPTO utilizes a Flag/Event mechanism. Developers must explicitly insert set_flag and wait_flag operations to resolve Read-After-Write (RAW) and Write-After-Read (WAR) hazards between memory staging and computation.
+
+### Execution Scopes
+The IR introduces the concept of the **Vector Function** ({llvm.loop.aivector_scope}). This architectural boundary identifies regions of code where the Vector Core's SIMD capabilities are fully engaged. Inside this scope, the IR provides high-granularity control over vector registers (vreg), predicates (mask), and alignment states (align).
 
 ## Example: Abs
 
