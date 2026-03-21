@@ -5946,23 +5946,42 @@ dst = merge_sort(src, blockLen)
 
 | Name | Type | Description |
 |------|------|-------------|
-| `src` | `pto.tile_buf` | Input tile |
-| `dst` | `pto.tile_buf` | Output tile |
-| `blockLen` | `I32Attr` | Block length for merge |
+| `src` / `src0..src3` | PTO shaped-like type | Input tile(s) |
+| `blockLen` | `AnyInteger` operand | Block length for format1 |
+| `dst` | PTO shaped-like type | Output tile |
+| `tmp` | PTO shaped-like type | Temporary output tile for format2 |
+| `excuted` | `vector<4xi16>` | Output vector written by format2 |
 
 **Results:** None. Writes into `dst` via DPS pattern.
+
+**Assembly Format:**
+
+```
+  - `pto.tmrgsort` has two accepted forms:
+    - format1: `ins(src, blockLen : src_type, blockLen_type) outs(dst : dst_type)`
+    - format2: `ins(src0, src1, src2, src3 {exhausted = <bool>} : src0_type, src1_type, src2_type, src3_type) outs(dst, tmp, excuted : dst_type, tmp_type, vector<4xi16>)`
+```
+
 
 **Constraints & Verification:**
 
 - **A2/A3 and Implementation checks (A5)**
-  - Element type must be `f16` or `f32` and must match across `dst/tmp/src*` tiles.
-  - All tiles must use `loc=vec`, `blayout=row_major`, and `rows == 1` (the list is stored in a single row).
-- **Single-list variant (`TMRGSORT(dst, src, blockLen)`)**:
+
+- **Single-list variant (format1)**:
+  - `src` and `dst` must be PTO shaped-like values.
+  - `src` and `dst` must have the same element type.
+  - Element type must be `f16` or `f32`.
+  - `src` and `dst` must both be rank-2.
+  - If statically known, `src rows == 1` and `dst rows == 1`.
+  - If statically known, `src` and `dst` must have the same column count.
   - `blockLen` must be a multiple of 64 (as checked by the implementation).
-  - `src valid column` must be an integer multiple of `blockLen * 4`.
-  - `repeatTimes = src valid column / (blockLen * 4)` must be in `[1, 255]`.
-- **Multi-list variants**:
-  - `tmp` is required and `executedNumList` is written by the implementation; supported list counts and exact semantics are target-defined.
+- **Multi-list variant (format2)**:
+  - All four `src*` operands must be PTO shaped-like values.
+  - `dst` and `tmp` must be PTO shaped-like values.
+  - `dst` and `tmp` must have the same element type.
+  - `excuted` must be `vector<4xi16>`.
+  - The `outs(...)` list must be exactly `(dst, tmp, excuted)`.
+  - `exhausted` is an optional boolean attribute printed in the `ins(...)` list.
 
 **Hardware Mapping:**
 
@@ -5971,7 +5990,16 @@ dst = merge_sort(src, blockLen)
 **Basic Example:**
 
 ```mlir
-pto.tmrgsort ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>) blockLen = 32
+// format1
+pto.tmrgsort ins(%src, %blockLen : !pto.tile_buf<...>, i32)
+             outs(%dst : !pto.tile_buf<...>)
+
+// format2
+pto.tmrgsort ins(%src0, %src1, %src2, %src3 {exhausted = false} :
+                 !pto.tile_buf<...>, !pto.tile_buf<...>,
+                 !pto.tile_buf<...>, !pto.tile_buf<...>)
+             outs(%dst, %tmp, %excuted :
+                 !pto.tile_buf<...>, !pto.tile_buf<...>, vector<4xi16>)
 ```
 
 ---
