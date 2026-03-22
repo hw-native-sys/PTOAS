@@ -1,0 +1,18 @@
+module {
+  func.func @dynamic_tabs_wrapper_abi(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %argN: i32) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %n = arith.index_cast %argN : i32 to index
+    %tv0 = pto.make_tensor_view %arg0, shape = [%n], strides = [%c1] : !pto.tensor_view<?xf32>
+    %tv1 = pto.make_tensor_view %arg1, shape = [%n], strides = [%c1] : !pto.tensor_view<?xf32>
+    %ptv0 = pto.partition_view %tv0, offsets = [%c0], sizes = [%c32] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
+    %ptv1 = pto.partition_view %tv1, offsets = [%c0], sizes = [%c32] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
+    %tb0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tb1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%ptv0 : !pto.partition_tensor_view<32xf32>) outs(%tb0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tabs ins(%tb0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tb1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%tb1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%ptv1 : !pto.partition_tensor_view<32xf32>)
+    return
+  }
+}

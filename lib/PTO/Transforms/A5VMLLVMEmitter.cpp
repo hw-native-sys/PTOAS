@@ -9,6 +9,7 @@
 #include "PTO/Transforms/A5VMLLVMEmitter.h"
 
 #include "PTO/IR/A5VM.h"
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/HIVMIntrinsicNaming.h"
 
 #include "mlir/Conversion/Passes.h"
@@ -32,12 +33,16 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Process.h"
@@ -58,7 +63,178 @@ struct QueriedTargetAttrs {
   std::string targetFeatures;
 };
 
+struct ABIExpr {
+  enum class Kind { Constant, FuncArg, Mul };
+
+  Kind kind = Kind::Constant;
+  uint64_t constant = 0;
+  unsigned argIndex = 0;
+  std::unique_ptr<ABIExpr> lhs;
+  std::unique_ptr<ABIExpr> rhs;
+
+  static ABIExpr constantExpr(uint64_t value) {
+    ABIExpr expr;
+    expr.kind = Kind::Constant;
+    expr.constant = value;
+    return expr;
+  }
+
+  static ABIExpr argExpr(unsigned argIndex) {
+    ABIExpr expr;
+    expr.kind = Kind::FuncArg;
+    expr.argIndex = argIndex;
+    return expr;
+  }
+
+  static ABIExpr mulExpr(ABIExpr lhs, ABIExpr rhs) {
+    ABIExpr expr;
+    expr.kind = Kind::Mul;
+    expr.lhs = std::make_unique<ABIExpr>(std::move(lhs));
+    expr.rhs = std::make_unique<ABIExpr>(std::move(rhs));
+    return expr;
+  }
+};
+
+struct ExternalMemRefABISpec {
+  unsigned addressSpace = 1;
+  int64_t rank = 0;
+  ABIExpr offset = ABIExpr::constantExpr(0);
+  ABIExpr totalSize = ABIExpr::constantExpr(1);
+  ABIExpr stride = ABIExpr::constantExpr(1);
+};
+
+struct ExternalArgABISpec {
+  bool isMemRef = false;
+  ExternalMemRefABISpec memrefSpec;
+};
+
+struct FunctionABISpec {
+  SmallVector<ExternalArgABISpec> args;
+};
+
 static Type getElementTypeFromVectorLike(Type type);
+
+static std::optional<ABIExpr> buildABIExprFromValue(Value value);
+
+static std::optional<ABIExpr> buildABIExprFromFoldResult(OpFoldResult ofr) {
+  if (auto attr = ofr.dyn_cast<Attribute>()) {
+    if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+      return ABIExpr::constantExpr(intAttr.getValue().getZExtValue());
+    return std::nullopt;
+  }
+  return buildABIExprFromValue(ofr.get<Value>());
+}
+
+static std::optional<ABIExpr> buildABIExprFromValue(Value value) {
+  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+    auto func = dyn_cast<func::FuncOp>(blockArg.getOwner()->getParentOp());
+    if (!func || blockArg.getOwner() != &func.getBody().front())
+      return std::nullopt;
+    return ABIExpr::argExpr(blockArg.getArgNumber());
+  }
+
+  if (auto constIndex = value.getDefiningOp<arith::ConstantIndexOp>())
+    return ABIExpr::constantExpr(constIndex.value());
+  if (auto constOp = value.getDefiningOp<arith::ConstantOp>()) {
+    if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue()))
+      return ABIExpr::constantExpr(intAttr.getValue().getZExtValue());
+  }
+  if (auto castOp = value.getDefiningOp<arith::IndexCastOp>())
+    return buildABIExprFromValue(castOp.getIn());
+  if (auto castOp = value.getDefiningOp<arith::IndexCastUIOp>())
+    return buildABIExprFromValue(castOp.getIn());
+  if (auto extOp = value.getDefiningOp<arith::ExtUIOp>())
+    return buildABIExprFromValue(extOp.getIn());
+  if (auto extOp = value.getDefiningOp<arith::ExtSIOp>())
+    return buildABIExprFromValue(extOp.getIn());
+  if (auto truncOp = value.getDefiningOp<arith::TruncIOp>())
+    return buildABIExprFromValue(truncOp.getIn());
+  if (auto mulOp = value.getDefiningOp<arith::MulIOp>()) {
+    auto lhs = buildABIExprFromValue(mulOp.getLhs());
+    auto rhs = buildABIExprFromValue(mulOp.getRhs());
+    if (!lhs || !rhs)
+      return std::nullopt;
+    return ABIExpr::mulExpr(std::move(*lhs), std::move(*rhs));
+  }
+
+  return std::nullopt;
+}
+
+static unsigned getExternalPointerAddressSpace(MemRefType type) {
+  if (auto addrAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(type.getMemorySpace())) {
+    switch (addrAttr.getAddressSpace()) {
+    case pto::AddressSpace::GM:
+    case pto::AddressSpace::Zero:
+      return 1;
+    case pto::AddressSpace::VEC:
+      return 6;
+    default:
+      break;
+    }
+  }
+  return 1;
+}
+
+static std::optional<ABIExpr> deriveMemRefTotalSize(BlockArgument arg,
+                                                    MemRefType type) {
+  if (type.getRank() != 1)
+    return std::nullopt;
+
+  if (!type.isDynamicDim(0))
+    return ABIExpr::constantExpr(type.getDimSize(0));
+
+  for (Operation *user : arg.getUsers()) {
+    auto reinterpret = dyn_cast<memref::ReinterpretCastOp>(user);
+    if (!reinterpret || reinterpret.getSource() != arg)
+      continue;
+
+    std::optional<ABIExpr> accum;
+    for (OpFoldResult size : reinterpret.getMixedSizes()) {
+      auto sizeExpr = buildABIExprFromFoldResult(size);
+      if (!sizeExpr)
+        return std::nullopt;
+      accum = accum ? ABIExpr::mulExpr(std::move(*accum), std::move(*sizeExpr))
+                    : std::move(*sizeExpr);
+    }
+    if (accum)
+      return accum;
+  }
+
+  return std::nullopt;
+}
+
+static llvm::StringMap<FunctionABISpec> collectFunctionABISpecs(ModuleOp module) {
+  llvm::StringMap<FunctionABISpec> specs;
+  module.walk([&](func::FuncOp funcOp) {
+    if (funcOp.isExternal())
+      return;
+
+    FunctionABISpec funcSpec;
+    funcSpec.args.reserve(funcOp.getNumArguments());
+
+    for (BlockArgument arg : funcOp.getArguments()) {
+      ExternalArgABISpec argSpec;
+      if (auto memrefType = dyn_cast<MemRefType>(arg.getType())) {
+        if (memrefType.getRank() == 1) {
+          auto totalSize = deriveMemRefTotalSize(arg, memrefType);
+          if (totalSize) {
+            argSpec.isMemRef = true;
+            argSpec.memrefSpec.addressSpace =
+                getExternalPointerAddressSpace(memrefType);
+            argSpec.memrefSpec.rank = 1;
+            argSpec.memrefSpec.offset = ABIExpr::constantExpr(0);
+            argSpec.memrefSpec.totalSize = std::move(*totalSize);
+            argSpec.memrefSpec.stride = ABIExpr::constantExpr(1);
+          }
+        }
+      }
+      funcSpec.args.push_back(std::move(argSpec));
+    }
+
+    specs[funcOp.getName().str()] = std::move(funcSpec);
+  });
+  return specs;
+}
 
 static std::optional<uint64_t> parsePipeImmediate(llvm::StringRef pipe) {
   if (pipe == "PIPE_S")
@@ -786,6 +962,284 @@ applyQueriedTargetAttrs(ModuleOp module, const A5VMEmissionOptions &options,
   return success();
 }
 
+static llvm::Value *castABIValue(llvm::IRBuilder<> &builder, llvm::Value *value,
+                                 llvm::Type *targetType) {
+  if (value->getType() == targetType)
+    return value;
+
+  if (auto *targetPtr = dyn_cast<llvm::PointerType>(targetType)) {
+    auto *sourcePtr = dyn_cast<llvm::PointerType>(value->getType());
+    if (!sourcePtr)
+      return nullptr;
+    if (sourcePtr->getAddressSpace() == targetPtr->getAddressSpace())
+      return builder.CreateBitCast(value, targetType);
+    return builder.CreateAddrSpaceCast(value, targetType);
+  }
+
+  if (targetType->isIntegerTy()) {
+    if (value->getType()->isIntegerTy()) {
+      unsigned srcWidth = value->getType()->getIntegerBitWidth();
+      unsigned dstWidth = targetType->getIntegerBitWidth();
+      if (srcWidth == dstWidth)
+        return value;
+      if (srcWidth < dstWidth)
+        return builder.CreateZExt(value, targetType);
+      return builder.CreateTrunc(value, targetType);
+    }
+  }
+
+  return nullptr;
+}
+
+static llvm::Value *materializeABIExpr(llvm::IRBuilder<> &builder,
+                                       const ABIExpr &expr,
+                                       llvm::Function *wrapper,
+                                       llvm::Type *targetType) {
+  switch (expr.kind) {
+  case ABIExpr::Kind::Constant:
+    return llvm::ConstantInt::get(targetType, expr.constant);
+  case ABIExpr::Kind::FuncArg: {
+    if (expr.argIndex >= wrapper->arg_size())
+      return nullptr;
+    return castABIValue(builder, wrapper->getArg(expr.argIndex), targetType);
+  }
+  case ABIExpr::Kind::Mul: {
+    llvm::Value *lhs =
+        materializeABIExpr(builder, *expr.lhs, wrapper, targetType);
+    llvm::Value *rhs =
+        materializeABIExpr(builder, *expr.rhs, wrapper, targetType);
+    if (!lhs || !rhs)
+      return nullptr;
+    return builder.CreateMul(lhs, rhs);
+  }
+  }
+  return nullptr;
+}
+
+static unsigned getMemRefExpandedArgCount(int64_t rank) {
+  return 2u + 1u + static_cast<unsigned>(rank) + static_cast<unsigned>(rank);
+}
+
+static llvm::Value *resolveInsertedAggregateValue(llvm::Value *value,
+                                                  llvm::ArrayRef<unsigned> idxs) {
+  auto *insert = dyn_cast<llvm::InsertValueInst>(value);
+  if (!insert)
+    return nullptr;
+
+  if (insert->getIndices() == idxs)
+    return insert->getInsertedValueOperand();
+
+  return resolveInsertedAggregateValue(insert->getAggregateOperand(), idxs);
+}
+
+static llvm::Value *resolveAddrSpaceRoundTrip(llvm::Value *value) {
+  auto *outerCast = dyn_cast<llvm::AddrSpaceCastInst>(value);
+  if (!outerCast)
+    return nullptr;
+
+  auto *innerCast = dyn_cast<llvm::AddrSpaceCastInst>(outerCast->getPointerOperand());
+  if (!innerCast)
+    return nullptr;
+
+  llvm::Value *original = innerCast->getPointerOperand();
+  if (original->getType() != outerCast->getType())
+    return nullptr;
+
+  auto *innerDstPtr = dyn_cast<llvm::PointerType>(innerCast->getType());
+  auto *outerDstPtr = dyn_cast<llvm::PointerType>(outerCast->getType());
+  auto *origPtr = dyn_cast<llvm::PointerType>(original->getType());
+  if (!innerDstPtr || !outerDstPtr || !origPtr)
+    return nullptr;
+
+  if (innerDstPtr->getAddressSpace() == origPtr->getAddressSpace())
+    return nullptr;
+  if (outerDstPtr->getAddressSpace() != origPtr->getAddressSpace())
+    return nullptr;
+
+  return original;
+}
+
+static void simplifyAggregateCarrierOps(llvm::Function &function) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+
+    SmallVector<llvm::Instruction *> toErase;
+    for (llvm::BasicBlock &block : function) {
+      for (llvm::Instruction &inst : block) {
+        if (auto *cast = dyn_cast<llvm::AddrSpaceCastInst>(&inst)) {
+          if (llvm::Value *resolved = resolveAddrSpaceRoundTrip(cast)) {
+            cast->replaceAllUsesWith(resolved);
+            toErase.push_back(cast);
+            changed = true;
+            continue;
+          }
+        }
+
+        if (auto *extract = dyn_cast<llvm::ExtractValueInst>(&inst)) {
+          if (llvm::Value *resolved =
+                  resolveInsertedAggregateValue(extract->getAggregateOperand(),
+                                               extract->getIndices())) {
+            extract->replaceAllUsesWith(resolved);
+            toErase.push_back(extract);
+            changed = true;
+            continue;
+          }
+        }
+
+        if (llvm::isInstructionTriviallyDead(&inst)) {
+          toErase.push_back(&inst);
+          changed = true;
+        }
+      }
+    }
+
+    for (llvm::Instruction *inst : toErase)
+      if (!inst->isTerminator())
+        inst->eraseFromParent();
+  }
+}
+
+static LogicalResult rewriteFunctionsToEmitCStyleABI(
+    llvm::Module &llvmModule, const llvm::StringMap<FunctionABISpec> &specs,
+    llvm::raw_ostream &diagOS) {
+  SmallVector<llvm::Function *> funcs;
+  for (llvm::Function &function : llvmModule)
+    if (!function.isDeclaration())
+      funcs.push_back(&function);
+
+  for (llvm::Function *function : funcs) {
+    auto it = specs.find(function->getName());
+    if (it == specs.end())
+      continue;
+
+    const FunctionABISpec &spec = it->second;
+    if (spec.args.empty())
+      continue;
+
+    bool needsRewrite =
+        llvm::any_of(spec.args, [](const ExternalArgABISpec &arg) {
+          return arg.isMemRef;
+        });
+    if (!needsRewrite)
+      continue;
+
+    SmallVector<llvm::Type *> publicArgTypes;
+    SmallVector<unsigned> oldArgBaseIndex(spec.args.size(), 0);
+    unsigned oldArgCursor = 0;
+    bool supported = true;
+    for (auto [idx, argSpec] : llvm::enumerate(spec.args)) {
+      oldArgBaseIndex[idx] = oldArgCursor;
+      if (argSpec.isMemRef) {
+        if (argSpec.memrefSpec.rank != 1) {
+          supported = false;
+          break;
+        }
+        publicArgTypes.push_back(llvm::PointerType::get(
+            llvmModule.getContext(), argSpec.memrefSpec.addressSpace));
+        oldArgCursor += getMemRefExpandedArgCount(argSpec.memrefSpec.rank);
+      } else {
+        if (oldArgCursor >= function->arg_size()) {
+          supported = false;
+          break;
+        }
+        publicArgTypes.push_back(function->getArg(oldArgCursor)->getType());
+        ++oldArgCursor;
+      }
+    }
+
+    if (!supported || oldArgCursor != function->arg_size()) {
+      diagOS << "A5VM LLVM emission warning: skipping ABI rewrite for "
+             << function->getName()
+             << " because the lowered signature does not match the seam spec\n";
+      continue;
+    }
+
+    std::string originalName = function->getName().str();
+    std::string tempName = "__ptoas_old_" + originalName;
+    function->setName(tempName);
+    function->setLinkage(llvm::GlobalValue::InternalLinkage);
+
+    auto *publicType = llvm::FunctionType::get(function->getReturnType(),
+                                               publicArgTypes,
+                                               function->isVarArg());
+    llvm::Function *replacement = llvm::Function::Create(
+        publicType, llvm::GlobalValue::ExternalLinkage, originalName, &llvmModule);
+    replacement->copyAttributesFrom(function);
+    replacement->setLinkage(llvm::GlobalValue::ExternalLinkage);
+
+    unsigned publicArgIndex = 0;
+    for (llvm::Argument &arg : replacement->args())
+      arg.setName("arg" + std::to_string(publicArgIndex++));
+
+    llvm::BasicBlock *bridgeEntry = llvm::BasicBlock::Create(
+        llvmModule.getContext(), "entry", replacement);
+    llvm::IRBuilder<> builder(bridgeEntry);
+
+    llvm::ValueToValueMapTy vmap;
+    for (auto [idx, argSpec] : llvm::enumerate(spec.args)) {
+      llvm::Value *publicArg = replacement->getArg(idx);
+      unsigned oldBase = oldArgBaseIndex[idx];
+      if (!argSpec.isMemRef) {
+        llvm::Value *casted = castABIValue(
+            builder, publicArg, function->getArg(oldBase)->getType());
+        if (!casted) {
+          diagOS << "A5VM LLVM emission failed: cannot cast scalar arg for "
+                 << originalName << "\n";
+          return failure();
+        }
+        vmap[function->getArg(oldBase)] = casted;
+        continue;
+      }
+
+      llvm::Type *oldPtrTy = function->getArg(oldBase)->getType();
+      llvm::Type *oldAlignedPtrTy = function->getArg(oldBase + 1)->getType();
+      llvm::Type *oldOffsetTy = function->getArg(oldBase + 2)->getType();
+      llvm::Type *oldSizeTy = function->getArg(oldBase + 3)->getType();
+      llvm::Type *oldStrideTy = function->getArg(oldBase + 4)->getType();
+
+      llvm::Value *allocated = castABIValue(builder, publicArg, oldPtrTy);
+      llvm::Value *aligned = castABIValue(builder, publicArg, oldAlignedPtrTy);
+      llvm::Value *offset = materializeABIExpr(
+          builder, argSpec.memrefSpec.offset, replacement, oldOffsetTy);
+      llvm::Value *size = materializeABIExpr(
+          builder, argSpec.memrefSpec.totalSize, replacement, oldSizeTy);
+      llvm::Value *stride = materializeABIExpr(
+          builder, argSpec.memrefSpec.stride, replacement, oldStrideTy);
+      if (!allocated || !aligned || !offset || !size || !stride) {
+        diagOS << "A5VM LLVM emission failed: cannot materialize direct ABI for "
+               << originalName << "\n";
+        return failure();
+      }
+
+      vmap[function->getArg(oldBase)] = allocated;
+      vmap[function->getArg(oldBase + 1)] = aligned;
+      vmap[function->getArg(oldBase + 2)] = offset;
+      vmap[function->getArg(oldBase + 3)] = size;
+      vmap[function->getArg(oldBase + 4)] = stride;
+    }
+
+    llvm::SmallVector<llvm::ReturnInst *, 4> returns;
+    llvm::CloneFunctionInto(replacement, function, vmap,
+                            llvm::CloneFunctionChangeType::LocalChangesOnly,
+                            returns);
+
+    llvm::BasicBlock *oldEntry = &replacement->getEntryBlock();
+    llvm::BasicBlock *clonedEntry = oldEntry->getNextNode();
+    if (!clonedEntry) {
+      diagOS << "A5VM LLVM emission failed: cloned function body is empty for "
+             << originalName << "\n";
+      return failure();
+    }
+    builder.CreateBr(clonedEntry);
+
+    function->eraseFromParent();
+    simplifyAggregateCarrierOps(*replacement);
+  }
+
+  return success();
+}
+
 } // namespace
 
 LogicalResult
@@ -794,6 +1248,7 @@ translateA5VMModuleToLLVMText(ModuleOp module, llvm::raw_ostream &os,
                               llvm::raw_ostream &diagOS) {
   OwningOpRef<ModuleOp> cloned(cast<ModuleOp>(module->clone()));
   auto vecScopeCounts = collectVecScopeLoopCounts(*cloned);
+  auto abiSpecs = collectFunctionABISpecs(*cloned);
 
   if (failed(rewriteA5VMOps(*cloned, diagOS))) {
     diagOS << "A5VM LLVM emission failed: A5VM-to-call rewriting failed\n";
@@ -827,6 +1282,8 @@ translateA5VMModuleToLLVMText(ModuleOp module, llvm::raw_ostream &os,
   }
 
   attachAIVectorScopeMetadata(*llvmModule, vecScopeCounts);
+  if (failed(rewriteFunctionsToEmitCStyleABI(*llvmModule, abiSpecs, diagOS)))
+    return failure();
   llvmModule->setModuleIdentifier("ptoas.hivm.official");
   llvmModule->setSourceFileName("ptoas.hivm.official");
   llvmModule->print(os, nullptr);
