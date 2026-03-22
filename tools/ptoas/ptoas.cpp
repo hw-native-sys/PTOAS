@@ -1050,6 +1050,11 @@ int main(int argc, char **argv) {
       options.targetTriple = "hiipu64-hisilicon-cce";
       options.march = "dav-c310-vec";
       options.aicoreArch = "dav-c310-vec";
+      options.defaultTargetCPU = "dav-c310-vec";
+      options.defaultTargetFeatures =
+          "+ATOMIC,+ArchV130,+AregRedefinable,+ArithmeticBf16,+AtomicForB8 ,"
+          "+F8e4m3,+F8e5m2,+F8e8m0,+FFTSBlk,+Fp4e1m2x2,+Fp4e2m1x2,+LDExtRefine,"
+          "+MOVX8,+SPR7bits,+SyncV,+dav-c310-vec";
     }
 
     LogicalResult emissionStatus =

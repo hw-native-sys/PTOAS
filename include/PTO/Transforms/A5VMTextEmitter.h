@@ -16,6 +16,8 @@ struct A5VMEmissionOptions {
   std::string targetTriple;
   std::string march;
   std::string aicoreArch;
+  std::string defaultTargetCPU;
+  std::string defaultTargetFeatures;
 };
 
 LogicalResult translateA5VMModuleToText(ModuleOp module, llvm::raw_ostream &os,

@@ -55,9 +55,6 @@ using namespace mlir;
 namespace mlir::pto {
 namespace {
 
-constexpr llvm::StringLiteral kDefaultBishengPath =
-    "/usr/local/Ascend/cann-8.5.0/tools/bisheng_compiler/bin/bisheng";
-
 struct QueriedTargetAttrs {
   std::string targetCPU;
   std::string targetFeatures;
@@ -835,6 +832,13 @@ queryDefaultTargetAttrs(const A5VMEmissionOptions &options,
   if (auto it = cache.find(cacheKey); it != cache.end())
     return it->second;
 
+  auto bisheng = llvm::sys::findProgramByName("bisheng");
+  if (!bisheng) {
+    diagOS << "A5VM LLVM emission failed: unable to find 'bisheng' in PATH\n";
+    return failure();
+  }
+  const std::string &bishengPath = *bisheng;
+
   llvm::SmallString<64> inputPath;
   llvm::SmallString<64> outputPath;
   int inputFD = -1;
@@ -881,7 +885,7 @@ queryDefaultTargetAttrs(const A5VMEmissionOptions &options,
   llvm::sys::Process::SafelyCloseFileDescriptor(stderrFD);
 
   llvm::SmallVector<std::string> argStorage = {
-      kDefaultBishengPath.str(),
+      bishengPath,
       ("--target=" + options.targetTriple),
       ("-march=" + options.march),
       ("--cce-aicore-arch=" + options.aicoreArch),
@@ -902,7 +906,7 @@ queryDefaultTargetAttrs(const A5VMEmissionOptions &options,
   std::string execErr;
   bool execFailed = false;
   int rc = llvm::sys::ExecuteAndWait(
-      kDefaultBishengPath, args, std::nullopt,
+      bishengPath, args, std::nullopt,
       {std::nullopt, std::nullopt, llvm::StringRef(stderrPath)}, 0, 0,
       &execErr, &execFailed);
 
@@ -948,8 +952,14 @@ static LogicalResult
 applyQueriedTargetAttrs(ModuleOp module, const A5VMEmissionOptions &options,
                         llvm::raw_ostream &diagOS) {
   FailureOr<QueriedTargetAttrs> attrs = queryDefaultTargetAttrs(options, diagOS);
-  if (failed(attrs))
-    return failure();
+  if (failed(attrs)) {
+    if (options.defaultTargetCPU.empty() ||
+        options.defaultTargetFeatures.empty())
+      return failure();
+    diagOS << "A5VM LLVM emission: falling back to configured default target attributes\n";
+    attrs = QueriedTargetAttrs{options.defaultTargetCPU,
+                               options.defaultTargetFeatures};
+  }
 
   MLIRContext *ctx = module.getContext();
   StringAttr cpuAttr = StringAttr::get(ctx, attrs->targetCPU);
