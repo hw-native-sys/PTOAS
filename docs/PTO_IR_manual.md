@@ -6466,6 +6466,11 @@ pto.sync.wait #pto.pipe<PIPE_V>, 0
 
 ### 4.17 CV-Related Operations
 
+**Arch Selection Note:** PTO target architecture is selected via the compiler
+option `ptoas --pto-arch=<arch>`. The module-level `pto.target_arch` attribute
+is an internal attribute populated by `ptoas` during compilation and should not
+be written manually in user-authored PTO IR.
+
 ##### `#pto.kernel_kind<cube>` - Cube Kernel Function Attribute
 
 **Summary:** Marks a `func.func` as a Cube-side kernel function.
