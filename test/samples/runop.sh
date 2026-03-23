@@ -293,7 +293,7 @@ process_one_dir() {
           fi
         fi
         if [[ "$base" == "test_intercore_sync_a5_invalid" ]]; then
-          if ! grep -Fq "A5 inter-core sync requires pipe in {PIPE_S, PIPE_V, PIPE_MTE2, PIPE_MTE3}" "${ptoas_log}"; then
+          if ! grep -Fq "expects A5 pipe in {PIPE_S, PIPE_V, PIPE_MTE2, PIPE_MTE3}" "${ptoas_log}"; then
             echo -e "${A}(${base}.py)\tFAIL\texpected illegal-pipe diagnostic not found"
             overall=1
             continue

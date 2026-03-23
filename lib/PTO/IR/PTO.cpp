@@ -230,6 +230,18 @@ static std::optional<StringRef> getVerifierArchName(Operation *op) {
   return std::nullopt;
 }
 
+static bool isLegalA5InterCoreSyncPipe(pto::PIPE pipe) {
+  switch (pipe) {
+  case pto::PIPE::PIPE_S:
+  case pto::PIPE::PIPE_V:
+  case pto::PIPE::PIPE_MTE2:
+  case pto::PIPE::PIPE_MTE3:
+    return true;
+  default:
+    return false;
+  }
+}
+
 static bool shouldBypassDecodedMemrefVerifier(Operation *op) {
   if (!op)
     return false;
@@ -1337,6 +1349,30 @@ LogicalResult mlir::pto::SetFFTsOp::verify() {
     return emitOpError("expects element type i64 (or i8)");
 
   return mlir::success();
+}
+
+LogicalResult mlir::pto::SyncSetOp::verify() {
+  if (getVerifierTargetArch(getOperation()) != VerifierTargetArch::A5)
+    return success();
+
+  if (isLegalA5InterCoreSyncPipe(getPipe().getPipe()))
+    return success();
+
+  return emitOpError()
+         << "expects A5 pipe in {PIPE_S, PIPE_V, PIPE_MTE2, PIPE_MTE3}, but got "
+         << stringifyPIPE(getPipe().getPipe());
+}
+
+LogicalResult mlir::pto::SyncWaitOp::verify() {
+  if (getVerifierTargetArch(getOperation()) != VerifierTargetArch::A5)
+    return success();
+
+  if (isLegalA5InterCoreSyncPipe(getPipe().getPipe()))
+    return success();
+
+  return emitOpError()
+         << "expects A5 pipe in {PIPE_S, PIPE_V, PIPE_MTE2, PIPE_MTE3}, but got "
+         << stringifyPIPE(getPipe().getPipe());
 }
 
 LogicalResult TStoreOp::verify() {
