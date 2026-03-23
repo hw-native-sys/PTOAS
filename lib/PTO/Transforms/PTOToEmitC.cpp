@@ -8457,6 +8457,53 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   populateBranchOpInterfaceTypeConversionPattern(patterns, typeConverter);
 }
 
+static void lowerSectionOpsBeforeSCFPreLowering(ModuleOp module) {
+  IRRewriter rewriter(module.getContext());
+  SmallVector<Operation *> sectionOps;
+
+  module.walk([&](Operation *op) {
+    if (isa<pto::SectionCubeOp, pto::SectionVectorOp>(op))
+      sectionOps.push_back(op);
+  });
+
+  for (Operation *op : sectionOps) {
+    std::string macroName;
+    Block *innerBlock = nullptr;
+    bool isVectorSection = false;
+    if (auto section = dyn_cast<pto::SectionCubeOp>(op)) {
+      macroName = "__DAV_CUBE__";
+      innerBlock = &section.getBody().front();
+    } else if (auto section = dyn_cast<pto::SectionVectorOp>(op)) {
+      macroName = "__DAV_VEC__";
+      innerBlock = &section.getBody().front();
+      isVectorSection = true;
+    } else {
+      continue;
+    }
+
+    rewriter.setInsertionPoint(op);
+    rewriter.create<emitc::VerbatimOp>(
+        op->getLoc(),
+        rewriter.getStringAttr("\n#if defined(" + macroName + ")"));
+
+    if (isVectorSection) {
+      // Vector mask is global HW state; reset it before emitting the section.
+      rewriter.create<emitc::VerbatimOp>(op->getLoc(),
+                                         rewriter.getStringAttr("set_mask_norm();"));
+      rewriter.create<emitc::VerbatimOp>(
+          op->getLoc(), rewriter.getStringAttr("set_vector_mask(-1, -1);"));
+    }
+
+    if (innerBlock && !innerBlock->empty())
+      rewriter.inlineBlockBefore(innerBlock, op, ValueRange{});
+
+    rewriter.create<emitc::VerbatimOp>(
+        op->getLoc(),
+        rewriter.getStringAttr("#endif // " + macroName + "\n"));
+    rewriter.eraseOp(op);
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Pass
 //===----------------------------------------------------------------------===//
@@ -8544,21 +8591,26 @@ static AICORE inline void ptoas_auto_sync_tail(
 	      }
 	      return WalkResult::advance();
 	    });
-	    if (needsBitcastHelper) {
-	      builder.create<emitc::VerbatimOp>(
-	          loc, builder.getStringAttr(R"cpp(
-		template <typename To, typename From>
+		    if (needsBitcastHelper) {
+		      builder.create<emitc::VerbatimOp>(
+		          loc, builder.getStringAttr(R"cpp(
+	template <typename To, typename From>
 		static inline To ptoas_bitcast(From from) {
 		  static_assert(sizeof(To) == sizeof(From), "ptoas_bitcast: size mismatch");
 		  To to;
 		  __builtin_memcpy(&to, &from, sizeof(To));
 		  return to;
 		}
-		)cpp"));
-	    }
+	)cpp"));
+		    }
 
-	    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
-	    {
+        // Lower section wrappers into EmitC verbatim guards before SCF
+        // pre-lowering so CFG-based rewrites do not have to operate inside
+        // single-block `pto.section.*` regions.
+        lowerSectionOpsBeforeSCFPreLowering(mop);
+
+		    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
+		    {
 	      // scf.while / scf.index_switch are lowered via CFG blocks. This is not
       // possible inside ops that require single-block regions (e.g. scf.for /
       // scf.if). If we see such nesting, lower the entire function to the
@@ -8576,10 +8628,15 @@ static AICORE inline void ptoas_auto_sync_tail(
         FrozenRewritePatternSet frozenSCFToCF(std::move(scfToCfPatterns));
 
         ConversionTarget scfToCfTarget(*ctx);
-        // Only eliminate the single-block SCF constructs; we'll pre-lower
-        // scf.while/index_switch/execute_region ourselves afterwards.
+        // `scf.while` nested under remaining single-block parents such as
+        // `scf.for` / `scf.if` cannot be handled by the later local CFG
+        // pre-lowering, so force SCFToCF to eliminate it here together with
+        // the other single-block SCF ops. `pto.section.*` wrappers have
+        // already been lowered out of the way above.
+        // `scf.index_switch` / `scf.execute_region` remain on the custom
+        // pre-lowering path below.
         scfToCfTarget.addIllegalOp<scf::ForallOp, scf::ForOp, scf::IfOp,
-                                   scf::ParallelOp>();
+                                   scf::ParallelOp, scf::WhileOp>();
         scfToCfTarget.markUnknownOpDynamicallyLegal(
             [](Operation *) { return true; });
 

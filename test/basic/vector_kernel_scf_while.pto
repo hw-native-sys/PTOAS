@@ -1,0 +1,70 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @vector_while_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %true = arith.constant true
+    %false = arith.constant false
+    %one = arith.constant 1.0 : f32
+    %ten = arith.constant 10.0 : f32
+
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    %final:2 = scf.while (%i = %c0, %alive = %true)
+        : (index, i1) -> (index, i1) {
+      %lt = arith.cmpi slt, %i, %c4 : index
+      %go = arith.andi %lt, %alive : i1
+      scf.condition(%go) %i, %alive : index, i1
+    } do {
+    ^bb0(%iter: index, %alive_iter: i1):
+      pto.tadds ins(%tile, %one
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          f32)
+        outs(%tile
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      %break_now = arith.cmpi eq, %iter, %c2 : index
+      %next = arith.addi %iter, %c1 : index
+      %yield:2 = scf.if %break_now -> (index, i1) {
+        scf.yield %next, %false : index, i1
+      } else {
+        pto.tadds ins(%tile, %ten
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+            f32)
+          outs(%tile
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        scf.yield %next, %true : index, i1
+      }
+      scf.yield %yield#0, %yield#1 : index, i1
+    }
+
+    %stopped = arith.xori %final#1, %true : i1
+    scf.if %stopped {
+      pto.tadds ins(%tile, %one
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          f32)
+        outs(%tile
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+// CHECK: #if defined(__DAV_VEC__)
+// CHECK: goto [[HEADER:label[0-9]+]];
+// CHECK: [[HEADER]]:
+// CHECK: if (
+// CHECK: goto [[BODY:label[0-9]+]];
+// CHECK: [[BODY]]:
+// CHECK: goto [[HEADER]];
+// CHECK: #endif // __DAV_VEC__
