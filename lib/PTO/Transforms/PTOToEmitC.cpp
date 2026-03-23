@@ -617,6 +617,29 @@ struct InterCoreSyncCallDesc {
   SmallVector<Value, 2> operands;
 };
 
+static bool isLegalA5InterCoreSyncPipe(pto::PIPE pipe) {
+  switch (pipe) {
+    case pto::PIPE::PIPE_S:
+    case pto::PIPE::PIPE_V:
+    case pto::PIPE::PIPE_MTE2:
+    case pto::PIPE::PIPE_MTE3:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static LogicalResult validateA5InterCoreSyncPipe(Operation *op,
+                                                 pto::PipeAttr pipeAttr) {
+  if (isLegalA5InterCoreSyncPipe(pipeAttr.getPipe()))
+    return success();
+  op->emitOpError()
+      << "A5 inter-core sync requires pipe in {PIPE_S, PIPE_V, PIPE_MTE2, "
+         "PIPE_MTE3}, but got "
+      << pipeTokFromPipeAttr(pipeAttr);
+  return failure();
+}
+
 static InterCoreSyncCallDesc buildInterCoreSyncSetCall(
     ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
     pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
@@ -4292,6 +4315,10 @@ struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
   matchAndRewrite(mlir::pto::SyncSetOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
+    if (targetArch == PTOArch::A5)
+      if (failed(validateA5InterCoreSyncPipe(op.getOperation(), op.getPipe())))
+        return failure();
+
     auto loc = op->getLoc();
     auto desc = buildInterCoreSyncSetCall(rewriter, loc, targetArch, op.getPipe(),
                                           op.getEventIdAttr());
@@ -4317,6 +4344,10 @@ struct PTOSyncWaitToEmitC : public OpConversionPattern<mlir::pto::SyncWaitOp> {
   matchAndRewrite(mlir::pto::SyncWaitOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
+    if (targetArch == PTOArch::A5)
+      if (failed(validateA5InterCoreSyncPipe(op.getOperation(), op.getPipe())))
+        return failure();
+
     auto loc = op->getLoc();
     auto desc = buildInterCoreSyncWaitCall(rewriter, targetArch, op.getPipe(),
                                            op.getEventIdAttr());

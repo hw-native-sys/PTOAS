@@ -203,6 +203,10 @@ process_one_dir() {
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
       continue
     fi
+    if [[ "$base" == "test_intercore_sync_a5_invalid" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
+      echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
+      continue
+    fi
     if [[ "$base" == "test_intercore_sync_a3" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a3" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a3"
       continue
@@ -284,6 +288,13 @@ process_one_dir() {
         if [[ "$base" == "test_intercore_sync_a3_missing_setffts" ]]; then
           if ! grep -Eq "A3 inter-core sync requires explicit .*pto.set_ffts" "${ptoas_log}"; then
             echo -e "${A}(${base}.py)\tFAIL\texpected missing-set_ffts diagnostic not found"
+            overall=1
+            continue
+          fi
+        fi
+        if [[ "$base" == "test_intercore_sync_a5_invalid" ]]; then
+          if ! grep -Fq "A5 inter-core sync requires pipe in {PIPE_S, PIPE_V, PIPE_MTE2, PIPE_MTE3}" "${ptoas_log}"; then
+            echo -e "${A}(${base}.py)\tFAIL\texpected illegal-pipe diagnostic not found"
             overall=1
             continue
           fi
@@ -423,7 +434,7 @@ process_one_dir() {
       fi
     fi
     if [[ "$base" == "test_intercore_sync_a5" ]]; then
-      if ! grep -Fq "set_intra_block(PIPE_FIX, 5)" "$cpp"; then
+      if ! grep -Fq "set_intra_block(PIPE_MTE3, 5)" "$cpp"; then
         echo -e "${A}(${base}.py)\tFAIL\tmissing A5 sync.set lowering to set_intra_block"
         overall=1
         continue
