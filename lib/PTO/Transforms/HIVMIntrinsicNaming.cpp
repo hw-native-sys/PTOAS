@@ -139,7 +139,8 @@ static FailureOr<IntrinsicSelection> selectConfigLike(Operation *op) {
     return makeResolved(op, "llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB", usedFields,
                         "");
   if (isa<a5vm::SetLoop1StrideOutToUbOp>(op))
-    return makeResolved(op, "llvm.hivm.SET.LOOP1.STRIDE", usedFields, "");
+    return makeResolved(op, "llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB",
+                        usedFields, "");
   if (isa<a5vm::SetLoopSizeOutToUbOp>(op))
     return makeResolved(op, "llvm.hivm.SET.LOOP.SIZE.OUTTOUB", usedFields, "");
   if (isa<a5vm::SetLoop2StrideUbToOutOp>(op))
@@ -262,7 +263,7 @@ FailureOr<IntrinsicSelection> selectStoreIntrinsic(Operation *op) {
     if (copy.getLayoutAttr())
       usedFields.push_back("layout=" + (*copy.getLayout()).str());
     if (elemFragment == "f32")
-      return makeResolved(op, "llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.f32.DV",
+      return makeResolved(op, "llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV",
                           usedFields, "");
     std::string candidate = "llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2";
     if (!elemFragment.empty())

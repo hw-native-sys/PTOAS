@@ -1,4 +1,5 @@
 // RUN: ./build/tools/ptoas/ptoas --pto-backend=a5vm --a5vm-print-ir %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ./build/tools/ptoas/ptoas --pto-arch a5 --pto-backend=a5vm --a5vm-emit-hivm-llvm %s -o - 2>/dev/null | FileCheck --check-prefix=CHECK-HIVM %s
 
 // CHECK-LABEL: func.func @copy_dynamic_transfer_operands
 // CHECK: %[[ZERO_I64:.*]] = arith.constant 0 : i64
@@ -24,6 +25,16 @@
 // CHECK-SAME: layout = "nd"
 // CHECK-NOT: valid_rows =
 // CHECK-NOT: valid_cols =
+// CHECK-HIVM-LABEL: define dso_local void @copy_dynamic_transfer_operands
+// CHECK-HIVM: call void @llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB
+// CHECK-HIVM: call void @llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB
+// CHECK-HIVM: call void @llvm.hivm.SET.LOOP.SIZE.OUTTOUB
+// CHECK-HIVM: call void @llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.f32.DV
+// CHECK-HIVM: call void @llvm.hivm.SET.LOOP.SIZE.UBTOOUT
+// CHECK-HIVM: call void @llvm.hivm.SET.LOOP1.STRIDE.UBTOOUT
+// CHECK-HIVM: call void @llvm.hivm.SET.LOOP2.STRIDE.UBTOOUT
+// CHECK-HIVM: call void @llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV
+// CHECK-HIVM-NOT: call void @llvm.hivm.SET.LOOP1.STRIDE(i64)
 
 module {
   func.func @copy_dynamic_transfer_operands(%src: !pto.ptr<f32>, %dst: !pto.ptr<f32>, %valid_row: index, %valid_col: index) {

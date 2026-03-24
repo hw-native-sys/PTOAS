@@ -561,7 +561,7 @@ static FailureOr<StringRef> getConfirmedAbsPathCallee(Operation *op) {
   if (isa<a5vm::SetLoop2StrideOutToUbOp>(op))
     return StringRef("llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB");
   if (isa<a5vm::SetLoop1StrideOutToUbOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP1.STRIDE");
+    return StringRef("llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB");
   if (isa<a5vm::SetLoopSizeOutToUbOp>(op))
     return StringRef("llvm.hivm.SET.LOOP.SIZE.OUTTOUB");
   if (isa<a5vm::SetLoop2StrideUbToOutOp>(op))
@@ -573,7 +573,7 @@ static FailureOr<StringRef> getConfirmedAbsPathCallee(Operation *op) {
   if (isa<a5vm::CopyGmToUbufOp>(op))
     return StringRef("llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.f32.DV");
   if (isa<a5vm::CopyUbufToGmOp>(op))
-    return StringRef("llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.f32.DV");
+    return StringRef("llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV");
   if (isa<a5vm::SetFlagOp>(op))
     return StringRef("llvm.hivm.SET.FLAG.IMM");
   if (isa<a5vm::WaitFlagOp>(op))

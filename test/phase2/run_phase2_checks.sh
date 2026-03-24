@@ -71,6 +71,10 @@ echo "phase2 check: copy_dynamic_transfer_operands.mlir"
 "${ptoas_bin}" --pto-backend=a5vm --a5vm-print-ir test/phase2/copy_dynamic_transfer_operands.mlir -o /dev/null 2>&1 | \
   "${filecheck_bin}" test/phase2/copy_dynamic_transfer_operands.mlir
 
+echo "phase2 check: copy_dynamic_transfer_operands.mlir HIVM names"
+"${ptoas_bin}" --pto-arch=a5 --pto-backend=a5vm --a5vm-emit-hivm-llvm test/phase2/copy_dynamic_transfer_operands.mlir -o - 2>/dev/null | \
+  "${filecheck_bin}" --check-prefix=CHECK-HIVM test/phase2/copy_dynamic_transfer_operands.mlir
+
 echo "phase2 check: tstore_domain_todos.mlir"
 "${ptoas_bin}" --pto-backend=a5vm --a5vm-print-ir test/phase2/tstore_domain_todos.mlir -o /dev/null 2>&1 | \
   "${filecheck_bin}" test/phase2/tstore_domain_todos.mlir
