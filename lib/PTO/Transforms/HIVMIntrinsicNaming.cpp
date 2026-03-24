@@ -244,9 +244,13 @@ FailureOr<IntrinsicSelection> selectStoreIntrinsic(Operation *op) {
     if (copy.getUbPadAttr())
       usedFields.push_back(std::string("ub_pad=") +
                            (*copy.getUbPad() ? "true" : "false"));
-    if (elemFragment == "f32")
-      return makeResolved(op, "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.f32.DV",
-                          usedFields, "");
+    if (elemFragment == "u8" || elemFragment == "u16" ||
+        elemFragment == "u32" || elemFragment == "f32") {
+      std::string callee = "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.";
+      callee += elemFragment;
+      callee += ".DV";
+      return makeResolved(op, callee, usedFields, "");
+    }
     std::string candidate = "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2";
     if (!elemFragment.empty())
       candidate += "." + elemFragment + ".DV";
