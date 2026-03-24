@@ -128,15 +128,15 @@ Example file:
 Representative excerpt:
 
 ```mlir
-pto.vset_loop2_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
-pto.vset_loop1_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
-pto.vset_loop_size_outtoub %c1_i64, %c1_i64 : i64, i64
-pto.vcopy_gm_to_ubuf %7, %2, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c0_i64, %c0_i64, %c128_i64, %c128_i64
+pto.set_loop2_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
+pto.set_loop1_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
+pto.set_loop_size_outtoub %c1_i64, %c1_i64 : i64, i64
+pto.copy_gm_to_ubuf %7, %2, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c0_i64, %c0_i64, %c128_i64, %c128_i64
     {data_select_bit = false, layout = "nd", ub_pad = false}
     : !llvm.ptr<1>, !llvm.ptr<6>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64
 
-pto.vset_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
-pto.vwait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
 scf.for %dummy = %c0 to %c1 step %c1 {
   scf.for %lane = %c0 to %9 step %c64 {
@@ -146,12 +146,12 @@ scf.for %dummy = %c0 to %c1 step %c1 {
   }
 } {llvm.loop.aivector_scope}
 
-pto.vset_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-pto.vwait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-pto.vset_loop_size_ubtoout %c1_i64, %c1_i64 : i64, i64
-pto.vset_loop1_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
-pto.vset_loop2_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
-pto.vcopy_ubuf_to_gm %8, %14, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c128_i64, %c128_i64
+pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+pto.set_loop_size_ubtoout %c1_i64, %c1_i64 : i64, i64
+pto.set_loop1_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
+pto.set_loop2_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
+pto.copy_ubuf_to_gm %8, %14, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c128_i64, %c128_i64
     {layout = "nd"}
     : !llvm.ptr<6>, !llvm.ptr<1>, i64, i64, i64, i64, i64, i64, i64, i64
 ```
@@ -541,10 +541,10 @@ Builtin naming policy in this document:
 
 ## 1. Sync And Buffer Control
 
-### `pto.vset_flag`
+### `pto.set_flag`
 
 - syntax:
-  `pto.vset_flag["SRC_PIPE", "DST_PIPE", "EVENT_ID"]`
+  `pto.set_flag["SRC_PIPE", "DST_PIPE", "EVENT_ID"]`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
@@ -554,10 +554,10 @@ Builtin naming policy in this document:
   `__pto_set_flag`
   `__builtin_cce_tile_set_flag`
 
-### `pto.vwait_flag`
+### `pto.wait_flag`
 
 - syntax:
-  `pto.vwait_flag["SRC_PIPE", "DST_PIPE", "EVENT_ID"]`
+  `pto.wait_flag["SRC_PIPE", "DST_PIPE", "EVENT_ID"]`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
@@ -567,30 +567,30 @@ Builtin naming policy in this document:
   `__pto_wait_flag`
   `__builtin_cce_tile_wait_flag`
 
-### `pto.vpipe_barrier`
+### `pto.pipe_barrier`
 
 - syntax:
-  `pto.vpipe_barrier "PIPE_*"`
+  `pto.pipe_barrier "PIPE_*"`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `pipe_barrier(pipe_t)`
   `__builtin_cce_pipe_barrier`
 
-### `pto.vget_buf`
+### `pto.get_buf`
 
 - syntax:
-  `pto.vget_buf "PIPE_*", %buf_id, %mode : i64, i64`
+  `pto.get_buf "PIPE_*", %buf_id, %mode : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `get_buf(pipe_t, uint8_t|uint64_t, bool)`
   `__builtin_cce_get_buf`
 
-### `pto.vrls_buf`
+### `pto.rls_buf`
 
 - syntax:
-  `pto.vrls_buf "PIPE_*", %buf_id, %mode : i64, i64`
+  `pto.rls_buf "PIPE_*", %buf_id, %mode : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
@@ -599,60 +599,60 @@ Builtin naming policy in this document:
 
 ## 2. Copy Programming
 
-### `pto.vset_loop2_stride_outtoub`
+### `pto.set_loop2_stride_outtoub`
 
 - syntax:
-  `pto.vset_loop2_stride_outtoub %first, %second : i64, i64`
+  `pto.set_loop2_stride_outtoub %first, %second : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `set_loop2_stride_outtoub(uint64_t)`
   `__builtin_cce_set_loop2_stride_outtoub`
 
-### `pto.vset_loop1_stride_outtoub`
+### `pto.set_loop1_stride_outtoub`
 
 - syntax:
-  `pto.vset_loop1_stride_outtoub %first, %second : i64, i64`
+  `pto.set_loop1_stride_outtoub %first, %second : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `set_loop1_stride_outtoub(uint64_t)`
   `__builtin_cce_set_loop1_stride_outtoub`
 
-### `pto.vset_loop_size_outtoub`
+### `pto.set_loop_size_outtoub`
 
 - syntax:
-  `pto.vset_loop_size_outtoub %first, %second : i64, i64`
+  `pto.set_loop_size_outtoub %first, %second : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `set_loop_size_outtoub(uint64_t)`
   `__builtin_cce_set_loop_size_outtoub`
 
-### `pto.vset_loop2_stride_ubtoout`
+### `pto.set_loop2_stride_ubtoout`
 
 - syntax:
-  `pto.vset_loop2_stride_ubtoout %first, %second : i64, i64`
+  `pto.set_loop2_stride_ubtoout %first, %second : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `set_loop2_stride_ubtoout(uint64_t)`
   `__builtin_cce_set_loop2_stride_ubtoout`
 
-### `pto.vset_loop1_stride_ubtoout`
+### `pto.set_loop1_stride_ubtoout`
 
 - syntax:
-  `pto.vset_loop1_stride_ubtoout %first, %second : i64, i64`
+  `pto.set_loop1_stride_ubtoout %first, %second : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `set_loop1_stride_ubtoout(uint64_t)`
   `__builtin_cce_set_loop1_stride_ubtoout`
 
-### `pto.vset_loop_size_ubtoout`
+### `pto.set_loop_size_ubtoout`
 
 - syntax:
-  `pto.vset_loop_size_ubtoout %first, %second : i64, i64`
+  `pto.set_loop_size_ubtoout %first, %second : i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
@@ -661,10 +661,10 @@ Builtin naming policy in this document:
 
 ## 3. Copy Transfers
 
-### `pto.vcopy_gm_to_ubuf`
+### `pto.copy_gm_to_ubuf`
 
 - syntax:
-  `pto.vcopy_gm_to_ubuf %source, %destination, %valid_rows, %valid_cols, %sid, %n_burst, %len_burst, %left_padding_count, %right_padding_count, %l2_cache_ctl, %gm_stride, %ub_stride {layout = "LAYOUT", data_select_bit = true|false, ub_pad = true|false} : !llvm.ptr<AS>, !llvm.ptr<AS>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64`
+  `pto.copy_gm_to_ubuf %source, %destination, %valid_rows, %valid_cols, %sid, %n_burst, %len_burst, %left_padding_count, %right_padding_count, %l2_cache_ctl, %gm_stride, %ub_stride {layout = "LAYOUT", data_select_bit = true|false, ub_pad = true|false} : !llvm.ptr<AS>, !llvm.ptr<AS>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
@@ -676,20 +676,20 @@ Builtin naming policy in this document:
   `__builtin_cce_set_loop1_stride_outtoub`
   `__builtin_cce_set_loop_size_outtoub`
 
-### `pto.vcopy_ubuf_to_ubuf`
+### `pto.copy_ubuf_to_ubuf`
 
 - syntax:
-  `pto.vcopy_ubuf_to_ubuf %source, %destination, %sid, %n_burst, %len_burst, %src_stride, %dst_stride : !llvm.ptr<AS>, !llvm.ptr<AS>, i64, i64, i64, i64, i64`
+  `pto.copy_ubuf_to_ubuf %source, %destination, %sid, %n_burst, %len_burst, %src_stride, %dst_stride : !llvm.ptr<AS>, !llvm.ptr<AS>, i64, i64, i64, i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
   `copy_ubuf_to_ubuf(...)`
   `__builtin_cce_copy_ubuf_to_ubuf`
 
-### `pto.vcopy_ubuf_to_gm`
+### `pto.copy_ubuf_to_gm`
 
 - syntax:
-  `pto.vcopy_ubuf_to_gm %source, %destination, %valid_rows, %valid_cols, %sid, %n_burst, %len_burst, %reserved, %burst_dst_stride, %burst_src_stride {layout = "LAYOUT"} : !llvm.ptr<AS>, !llvm.ptr<AS>, i64, i64, i64, i64, i64, i64, i64, i64`
+  `pto.copy_ubuf_to_gm %source, %destination, %valid_rows, %valid_cols, %sid, %n_burst, %len_burst, %reserved, %burst_dst_stride, %burst_src_stride {layout = "LAYOUT"} : !llvm.ptr<AS>, !llvm.ptr<AS>, i64, i64, i64, i64, i64, i64, i64, i64`
 - semantics:
   TODO(user): add one-line semantics for external developers.
 - CCE correspondence:
