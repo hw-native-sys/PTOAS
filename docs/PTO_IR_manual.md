@@ -469,12 +469,14 @@ result = alloc_tile(base_addr, valid_row, valid_col)   // operands are optional
 
 ##### `pto.subview` - Tile SubView
 
-**Summary:** Create a strided view from a parent tile. The result tile buffer is a logical subview of the input tile buffer.
+**Summary:** Create a logical subview from a parent tile. The subview window is expressed by `offsets + sizes`, while the result tile type keeps the parent tile shape.
 
 **Semantics:**
 
 ```
 result = source[offsets] with static sizes
+result.shape = source.shape
+result.valid = clip(explicit_valid_or_sizes, sizes)
 ```
 
 **Arguments:**
@@ -508,10 +510,11 @@ result = source[offsets] with static sizes
   - constant values must be positive and `<= sizes` in each dimension
   - non-constant values are represented as dynamic valid dims in the result type
 - The inferred result type uses:
-  - `shape = sizes`
+  - `shape = source.shape` (parent shape is preserved)
   - the same element type and address space as `source`
   - the same tile config as `source`
-  - `valid_shape = [valid_row, valid_col]` when provided, otherwise `sizes`
+  - `valid_shape` defaults to `sizes`
+  - if explicit `valid_row/valid_col` are provided, `valid_shape` is clipped by `sizes`
 
 **Hardware Mapping:**
 
