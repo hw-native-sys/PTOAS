@@ -112,6 +112,8 @@ struct FunctionABISpec {
 
 static Type getElementTypeFromVectorLike(Type type);
 static std::optional<int64_t> getElementCountFromVectorLike(Type type);
+static func::FuncOp getOrCreateExternalFunc(ModuleOp module, StringRef name,
+                                            FunctionType type);
 
 static std::string getElementTypeFragment(Type type) {
   if (type.isF16())
@@ -456,12 +458,38 @@ static Value buildAllTrueMask(OpBuilder &builder, Location loc) {
   return builder.create<arith::ConstantOp>(loc, maskType, attr).getResult();
 }
 
+static FailureOr<Value> buildPltB32Mask(IRRewriter &builder, ModuleOp module,
+                                        Location loc, uint64_t laneCount,
+                                        llvm::raw_ostream &diagOS) {
+  // Keep this helper narrowly scoped to the verified HIVM form we have observed
+  // in emitc-generated device IR. For Expands/TExpandS, installed PTO source
+  // calls pset_b32(PAT_ALL), but save-temps from the working emitc path show
+  // that the compiler frontend does not preserve a pset-shaped HIVM intrinsic
+  // here. Instead, the full-lane mask is materialized in the final device IR as
+  // llvm.hivm.plt.b32.v300(i32 64), i.e. a canonical "all 64 b32 lanes active"
+  // form that the backend accepts. Reproduce that observed lowering here; do
+  // not treat it as evidence that pset_b32 and plt_b32 are generally
+  // interchangeable at the source or VPTO level.
+  Value laneCountValue = getI32Constant(builder, loc, laneCount);
+  auto maskType = VectorType::get({256}, builder.getI1Type());
+  auto funcType =
+      builder.getFunctionType({builder.getI32Type()}, {maskType, builder.getI32Type()});
+  auto callee =
+      getOrCreateExternalFunc(module, "llvm.hivm.plt.b32.v300", funcType);
+  auto call = builder.create<func::CallOp>(loc, callee, ValueRange{laneCountValue});
+  return call.getResult(0);
+}
+
 static FailureOr<Value> buildPsetB32Mask(IRRewriter &builder, Location loc,
-                                         a5vm::PsetB32Op pset,
+                                         ModuleOp module, a5vm::PsetB32Op pset,
                                          llvm::raw_ostream &diagOS) {
   StringRef pattern = pset.getPattern();
   if (pattern == "PAT_ALL")
-    return buildAllTrueMask(builder, loc);
+    // For PAT_ALL specifically, the verified emitc LLVM/HIVM path canonicalizes
+    // full-mask construction to plt_b32(64) before instruction selection,
+    // even though the source-level PTO mapping is still
+    // pset_b32(PAT_ALL) -> __builtin_cce_pset_b32.
+    return buildPltB32Mask(builder, module, loc, /*laneCount=*/64, diagOS);
 
   diagOS << "A5VM LLVM emission failed: unsupported pset_b32 pattern "
          << pattern << "\n";
@@ -749,7 +777,7 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
   Location loc = op->getLoc();
 
   if (auto pset = dyn_cast<a5vm::PsetB32Op>(op)) {
-    auto mask = buildPsetB32Mask(builder, loc, pset, diagOS);
+    auto mask = buildPsetB32Mask(builder, loc, module, pset, diagOS);
     if (failed(mask))
       return failure();
     builder.replaceOp(op, *mask);
@@ -870,8 +898,11 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
       diagOS << "A5VM LLVM emission failed: unexpected vdup operand types\n";
       return failure();
     }
+    auto mask = buildPltB32Mask(builder, module, loc, /*laneCount=*/64, diagOS);
+    if (failed(mask))
+      return failure();
     callArgs.push_back(vdup.getInput());
-    callArgs.push_back(buildAllTrueMask(builder, loc));
+    callArgs.push_back(*mask);
     callArgs.push_back(getI32Constant(builder, loc, 1));
   } else if (isa<a5vm::VaddOp, a5vm::VsubOp, a5vm::VmulOp, a5vm::VmaxOp>(op)) {
     callArgs.append(op->operand_begin(), op->operand_end());
