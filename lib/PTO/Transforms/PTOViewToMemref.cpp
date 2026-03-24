@@ -44,22 +44,11 @@ static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
     "__pto.lowered_set_validshape";
 static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
     "__pto.force_dynamic_valid_shape";
-static constexpr llvm::StringLiteral kSubViewNonCompactAttrName =
-    "pto.subview_non_compact";
-static constexpr llvm::StringLiteral kSubViewParentRowsAttrName =
-    "pto.subview_parent_rows";
-static constexpr llvm::StringLiteral kSubViewParentColsAttrName =
-    "pto.subview_parent_cols";
 
 namespace {
 
 static void markForceDynamicValidShape(Operation *op, bool force,
                                        MLIRContext *ctx);
-static void markSubViewNonCompact(Operation *op, bool isNonCompact,
-                                  int64_t parentRows, int64_t parentCols,
-                                  MLIRContext *ctx);
-static std::optional<std::pair<int64_t, int64_t>>
-lookupSubViewParentPhysicalShape(Value v);
 
 static Type convertPTOTypeToMemRef(Type t);
 
@@ -273,38 +262,6 @@ static bool computeTileLayoutInfo(mlir::pto::TileBufConfigAttr cfg, Type elemTy,
   return true;
 }
 
-// Return true when a rank-2 strided view is physically dense/compact.
-// This is layout-agnostic (covers row-major and col-major) by checking whether
-// non-unit dimensions form a contiguous chain after ordering by stride.
-static bool isCompactDense2D(ArrayRef<int64_t> shape, ArrayRef<int64_t> strides) {
-  if (shape.size() != 2 || strides.size() < 2)
-    return false;
-  for (int i = 0; i < 2; ++i) {
-    if (shape[i] == ShapedType::kDynamic || strides[i] == ShapedType::kDynamic)
-      return false;
-    if (shape[i] <= 0 || strides[i] <= 0)
-      return false;
-  }
-
-  SmallVector<int, 2> dims;
-  for (int i = 0; i < 2; ++i) {
-    if (shape[i] > 1)
-      dims.push_back(i);
-  }
-  if (dims.empty())
-    return true;
-
-  llvm::sort(dims, [&](int a, int b) { return strides[a] < strides[b]; });
-
-  int64_t expectedStride = 1;
-  for (int d : dims) {
-    if (strides[d] != expectedStride)
-      return false;
-    expectedStride *= shape[d];
-  }
-  return true;
-}
-
 // Helper: 递归拆解 AffineExpr
 static void flattenAddExpr(AffineExpr expr, SmallVectorImpl<AffineExpr> &terms) {
   if (auto add = expr.dyn_cast<AffineBinaryOpExpr>()) {
@@ -354,6 +311,23 @@ static Value ensureIndex(IRRewriter &rewriter, Location loc, Value v,
   if (anchorOp)
     anchorOp->emitError() << "expected index or integer, but got " << v.getType();
   return Value();
+}
+
+static Value clampSubViewValidDim(IRRewriter &rewriter, Location loc,
+                                  Value explicitValid, int64_t size,
+                                  Operation *anchorOp) {
+  Value sizeVal = rewriter.create<arith::ConstantIndexOp>(loc, size);
+  if (!explicitValid)
+    return sizeVal;
+
+  int64_t cst = 0;
+  if (getConstIndexValue(explicitValid, cst))
+    return rewriter.create<arith::ConstantIndexOp>(loc, std::min(cst, size));
+
+  Value v = ensureIndex(rewriter, loc, explicitValid, anchorOp);
+  Value lt = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, v,
+                                            sizeVal);
+  return rewriter.create<arith::SelectOp>(loc, lt, v, sizeVal);
 }
 
 static void dumpPretty(Operation *op, llvm::raw_ostream &os) {
@@ -490,66 +464,6 @@ static void markForceDynamicValidShape(Operation *op, bool force,
     return;
   }
   op->removeAttr(kForceDynamicValidShapeAttrName);
-}
-
-static void markSubViewNonCompact(Operation *op, bool isNonCompact,
-                                  int64_t parentRows, int64_t parentCols,
-                                  MLIRContext *ctx) {
-  if (!isNonCompact || parentRows <= 0 || parentCols <= 0) {
-    op->removeAttr(kSubViewNonCompactAttrName);
-    op->removeAttr(kSubViewParentRowsAttrName);
-    op->removeAttr(kSubViewParentColsAttrName);
-    return;
-  }
-
-  op->setAttr(kSubViewNonCompactAttrName, UnitAttr::get(ctx));
-  op->setAttr(kSubViewParentRowsAttrName, IntegerAttr::get(
-                                            IntegerType::get(ctx, 64),
-                                            APInt(64, parentRows, true)));
-  op->setAttr(kSubViewParentColsAttrName, IntegerAttr::get(
-                                            IntegerType::get(ctx, 64),
-                                            APInt(64, parentCols, true)));
-}
-
-static std::optional<std::pair<int64_t, int64_t>>
-lookupSubViewParentPhysicalShape(Value v) {
-  if (!v)
-    return std::nullopt;
-
-  if (auto bind = v.getDefiningOp<mlir::pto::BindTileOp>()) {
-    auto rowsAttr = bind->getAttrOfType<IntegerAttr>(kSubViewParentRowsAttrName);
-    auto colsAttr = bind->getAttrOfType<IntegerAttr>(kSubViewParentColsAttrName);
-    if (rowsAttr && colsAttr) {
-      int64_t rows = rowsAttr.getInt();
-      int64_t cols = colsAttr.getInt();
-      if (rows > 0 && cols > 0)
-        return std::make_pair(rows, cols);
-    }
-    return lookupSubViewParentPhysicalShape(bind.getSource());
-  }
-
-  if (auto pc = v.getDefiningOp<mlir::pto::PointerCastOp>()) {
-    auto rowsAttr = pc->getAttrOfType<IntegerAttr>(kSubViewParentRowsAttrName);
-    auto colsAttr = pc->getAttrOfType<IntegerAttr>(kSubViewParentColsAttrName);
-    if (rowsAttr && colsAttr) {
-      int64_t rows = rowsAttr.getInt();
-      int64_t cols = colsAttr.getInt();
-      if (rows > 0 && cols > 0)
-        return std::make_pair(rows, cols);
-    }
-    return std::nullopt;
-  }
-
-  if (auto subview = v.getDefiningOp<memref::SubViewOp>())
-    return lookupSubViewParentPhysicalShape(subview.getSource());
-  if (auto cast = v.getDefiningOp<memref::ReinterpretCastOp>())
-    return lookupSubViewParentPhysicalShape(cast.getSource());
-  if (auto cast = v.getDefiningOp<memref::CastOp>())
-    return lookupSubViewParentPhysicalShape(cast.getSource());
-  if (auto cast = v.getDefiningOp<UnrealizedConversionCastOp>())
-    return lookupSubViewParentPhysicalShape(cast.getOperand(0));
-
-  return std::nullopt;
 }
 
 // =============================================================================
@@ -1129,7 +1043,13 @@ struct PTOViewToMemrefPass
           }
         }
 
-        // 4. Result layout inherits source strides (offset is dynamic)
+        // 4. Result layout inherits source strides (offset is dynamic).
+        //
+        // Design choice:
+        // - Keep lowering for compact/non-compact subview unified.
+        // - Lowered subview tile uses the *parent tile shape*.
+        // - Sub-tile size is represented through valid_row/valid_col.
+        // This avoids bifurcating codegen paths based on address compactness.
         SmallVector<int64_t> srcStrides;
         int64_t srcOffset = ShapedType::kDynamic;
         if (failed(getStridesAndOffset(srcMrTy, srcStrides, srcOffset))) {
@@ -1145,56 +1065,91 @@ struct PTOViewToMemrefPass
         (void)srcOffset;
 
         auto resultLayout = StridedLayoutAttr::get(ctx, ShapedType::kDynamic, srcStrides);
+        auto parentShape = srcMrTy.getShape();
         auto resultMemRefType =
+            MemRefType::get(parentShape, srcMrTy.getElementType(), resultLayout,
+                            srcMrTy.getMemorySpace());
+
+        // 5. Build subview first (base address shifted by offsets).
+        // The intermediate subview keeps static subview sizes.
+        auto subViewMemRefType =
             MemRefType::get(staticSizes, srcMrTy.getElementType(), resultLayout,
                             srcMrTy.getMemorySpace());
 
-        bool subViewNonCompact = false;
-        int64_t parentRows = -1;
-        int64_t parentCols = -1;
-        if (!layoutInfo.boxed && staticSizes.size() == 2 && srcStrides.size() >= 2 &&
-            !isCompactDense2D(staticSizes, srcStrides)) {
-          subViewNonCompact = true;
-          if (auto parentShape = lookupSubViewParentPhysicalShape(src)) {
-            parentRows = parentShape->first;
-            parentCols = parentShape->second;
-          } else {
-            if (srcMrTy.getRank() >= 2) {
-              parentRows = srcMrTy.getDimSize(0);
-              parentCols = srcMrTy.getDimSize(1);
-            }
-          }
-          if (parentRows <= 0 || parentCols <= 0)
-            subViewNonCompact = false;
-        }
-
-        // 5. Strides for subview: keep same stride (use 1)
+        // Strides for subview: element-wise stepping on each dim.
         SmallVector<OpFoldResult> mixedStrides;
         mixedStrides.reserve(staticSizes.size());
         for (size_t i = 0; i < staticSizes.size(); ++i)
           mixedStrides.push_back(rewriter.getIndexAttr(1));
 
         auto sv = rewriter.create<memref::SubViewOp>(
-            loc, resultMemRefType, src, mixedOffsets, mixedSizes, mixedStrides);
+            loc, subViewMemRefType, src, mixedOffsets, mixedSizes, mixedStrides);
+
+        // Reinterpret the subview base as a parent-shaped tile view.
+        // valid_row/valid_col (below) carries the actual sub-tile extent.
+        SmallVector<OpFoldResult> parentMixedSizes;
+        SmallVector<OpFoldResult> parentMixedStrides;
+        parentMixedSizes.reserve(parentShape.size());
+        parentMixedStrides.reserve(srcStrides.size());
+
+        memref::ExtractStridedMetadataOp srcMd;
+        bool needDynamicMeta = false;
+        for (size_t i = 0; i < parentShape.size(); ++i)
+          needDynamicMeta |= (parentShape[i] == ShapedType::kDynamic);
+        for (int64_t s : srcStrides)
+          needDynamicMeta |= (s == ShapedType::kDynamic);
+        if (needDynamicMeta)
+          srcMd = rewriter.create<memref::ExtractStridedMetadataOp>(loc, src);
+
+        for (size_t i = 0; i < parentShape.size(); ++i) {
+          if (parentShape[i] == ShapedType::kDynamic) {
+            if (!srcMd) {
+              op.emitError("failed to materialize dynamic parent size for subview");
+              signalPassFailure();
+              return;
+            }
+            parentMixedSizes.push_back(srcMd.getSizes()[i]);
+          } else {
+            parentMixedSizes.push_back(rewriter.getIndexAttr(parentShape[i]));
+          }
+        }
+
+        for (size_t i = 0; i < srcStrides.size(); ++i) {
+          if (srcStrides[i] == ShapedType::kDynamic) {
+            if (!srcMd) {
+              op.emitError("failed to materialize dynamic parent stride for subview");
+              signalPassFailure();
+              return;
+            }
+            parentMixedStrides.push_back(srcMd.getStrides()[i]);
+          } else {
+            parentMixedStrides.push_back(rewriter.getIndexAttr(srcStrides[i]));
+          }
+        }
+
+        auto subAsParent = rewriter.create<memref::ReinterpretCastOp>(
+            loc, resultMemRefType, sv.getResult(), rewriter.getIndexAttr(0),
+            parentMixedSizes, parentMixedStrides);
 
         // 6. Re-bind tile metadata (config + valid dims).
         // subview defaults valid dims to subview shape unless user explicitly
         // provides valid_row/valid_col.
-        Value vRow = op.getValidRow();
-        Value vCol = op.getValidCol();
-        if (!vRow && !staticSizes.empty())
-          vRow = rewriter.create<arith::ConstantIndexOp>(loc, staticSizes[0]);
-        if (!vCol && staticSizes.size() > 1)
-          vCol = rewriter.create<arith::ConstantIndexOp>(loc, staticSizes[1]);
+        Value vRow;
+        Value vCol;
+        if (!staticSizes.empty())
+          vRow = clampSubViewValidDim(rewriter, loc, op.getValidRow(),
+                                      staticSizes[0], op);
+        if (staticSizes.size() > 1)
+          vCol = clampSubViewValidDim(rewriter, loc, op.getValidCol(),
+                                      staticSizes[1], op);
 
         auto bindOp = rewriter.create<pto::BindTileOp>(
-            loc, resultMemRefType, sv.getResult(),
+            loc, resultMemRefType, subAsParent.getResult(),
             vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
         markForceDynamicValidShape(bindOp,
                                    resultTileTy && resultTileTy.hasDynamicValid(),
                                    ctx);
-        markSubViewNonCompact(bindOp, subViewNonCompact, parentRows, parentCols,
-                              ctx);
+        bindOp->setAttr("pto.view_semantics", rewriter.getStringAttr("subview"));
 
         rewriter.replaceOp(op, bindOp.getResult());
       }

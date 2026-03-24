@@ -277,10 +277,13 @@ def SubViewOp : PTO_Op<"subview", [
     DeclareOpInterfaceMethods<InferTypeOpInterface> // 启用 C++ 推导
   ]> {
   
-  let summary = "Create a strided tile subview from a parent tile.";
+  let summary = "Create a tile subview from a parent tile (parent-shape + valid dims).";
   let description = [{
     Creates a view into the source tile.
-    - Result Shape: Defined by static `sizes`.
+    - Logical subview window: defined by `offsets` + static `sizes`.
+    - Result tile type shape: inherited from parent `source`.
+    - Effective subview extent: represented by inferred `valid_row/valid_col`
+      (i.e. `valid_shape`), clipped by subview `sizes`.
     - Result Strides: Inherited from `source`.
     - Result Offset: Represented as multi-dimensional symbols (s0, s1...) in the layout map.
   }];

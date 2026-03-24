@@ -6911,7 +6911,7 @@ LogicalResult SubViewOp::inferReturnTypes(
   auto sourceType = llvm::dyn_cast<TileBufType>(operands[0].getType());
   if (!sourceType) return failure();
 
-  // 2. 获取 Result Shape (Sizes)
+  // 2. 获取 subview 逻辑窗口（sizes）
   ArrayAttr sizeAttr;
   if (properties) {
     const auto *prop = properties.as<SubViewOp::Properties *>();
@@ -6922,17 +6922,23 @@ LogicalResult SubViewOp::inferReturnTypes(
   }
   if (!sizeAttr) return failure();
 
-  SmallVector<int64_t> resultShape;
+  SmallVector<int64_t> subviewShape;
   for (auto attr : sizeAttr) {
     int64_t dim = llvm::cast<IntegerAttr>(attr).getInt();
-    resultShape.push_back(dim);
+    subviewShape.push_back(dim);
   }
+
+  // Design: subview 的结果 tile 类型继承父 tile 的 shape；subview 的逻辑大小
+  // 通过 valid_row/valid_col（valid_shape）表达，而不是改写 type-level shape。
+  ArrayRef<int64_t> parentShape = sourceType.getShape();
+  if (subviewShape.size() != parentShape.size())
+    return failure();
 
   // Derive valid shape from explicit valid_row/valid_col when provided.
   // Otherwise default to subview shape (no parent valid-shape inheritance).
   SmallVector<int64_t> validShape;
   constexpr int64_t kDynamicValidDim = -1;
-  int64_t rank = static_cast<int64_t>(resultShape.size());
+  int64_t rank = static_cast<int64_t>(subviewShape.size());
   size_t expectedWithoutValid = static_cast<size_t>(1 + rank);
   Value explicitVRow;
   Value explicitVCol;
@@ -6941,12 +6947,12 @@ LogicalResult SubViewOp::inferReturnTypes(
     explicitVCol = operands[expectedWithoutValid + 1];
   }
 
-  for (size_t i = 0, e = resultShape.size(); i < e; ++i) {
-    int64_t vdim = resultShape[i];
+  for (size_t i = 0, e = subviewShape.size(); i < e; ++i) {
+    int64_t vdim = subviewShape[i];
     Value explicitV = (i == 0) ? explicitVRow : (i == 1 ? explicitVCol : Value());
     if (explicitV) {
       auto cst = getConstIndexValue(explicitV);
-      vdim = cst ? *cst : kDynamicValidDim;
+      vdim = cst ? std::min<int64_t>(*cst, subviewShape[i]) : kDynamicValidDim;
     }
     validShape.push_back(vdim);
   }
@@ -6958,7 +6964,7 @@ LogicalResult SubViewOp::inferReturnTypes(
   // 4. 构建 Result Type
   auto canonicalValidShape = canonicalizeTileBufValidShape(validShape);
   auto resultType = TileBufType::get(
-      context, resultShape, sourceType.getElementType(),
+      context, parentShape, sourceType.getElementType(),
       sourceType.getMemorySpace(), canonicalValidShape, cfg);
 
   inferredReturnTypes.push_back(resultType);
@@ -7122,17 +7128,18 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   auto dstShape = dstTy.getShape();
   if (dstShape.size() != 2)
     return emitOpError("expects result to be rank-2");
-  if (dstShape[0] != ShapedType::kDynamic && dstShape[0] != sizeR)
-    return emitOpError("expects result rows to match subview sizes[0]");
-  if (dstShape[1] != ShapedType::kDynamic && dstShape[1] != sizeC)
-    return emitOpError("expects result cols to match subview sizes[1]");
+  auto srcShape = srcTy.getShape();
+  if (srcShape.size() != 2)
+    return emitOpError("expects source to be rank-2");
+  if (dstShape[0] != srcShape[0] || dstShape[1] != srcShape[1])
+    return emitOpError("expects result shape to match source shape");
 
   auto expectedValidDim = [&](Value explicitValid, int64_t defaultSize) {
     if (!explicitValid)
       return defaultSize;
     int64_t c = 0;
     if (getConstIndex(explicitValid, c))
-      return c;
+      return std::min<int64_t>(c, defaultSize);
     return ShapedType::kDynamic;
   };
   int64_t expectedVRow = expectedValidDim(getValidRow(), sizeR);
@@ -7172,7 +7179,6 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
       return emitOpError("boxed layout subview offsets must be multiples of inner shape");
   }
 
-  auto srcShape = srcTy.getShape();
   if (srcShape.size() == 2 &&
       srcShape[0] != ShapedType::kDynamic &&
       srcShape[1] != ShapedType::kDynamic) {

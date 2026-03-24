@@ -219,28 +219,6 @@ static constexpr llvm::StringLiteral kLoweredSetValidShapeConfigAttrName =
     "__pto.lowered_set_validshape_config";
 static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
     "__pto.force_dynamic_valid_shape";
-static constexpr llvm::StringLiteral kSubViewNonCompactAttrName =
-    "pto.subview_non_compact";
-static constexpr llvm::StringLiteral kSubViewParentRowsAttrName =
-    "pto.subview_parent_rows";
-static constexpr llvm::StringLiteral kSubViewParentColsAttrName =
-    "pto.subview_parent_cols";
-
-static std::optional<std::pair<int64_t, int64_t>>
-getSubViewParentPhysicalShape(Operation *op) {
-  if (!op || !op->hasAttr(kSubViewNonCompactAttrName))
-    return std::nullopt;
-  auto rowsAttr = op->getAttrOfType<IntegerAttr>(kSubViewParentRowsAttrName);
-  auto colsAttr = op->getAttrOfType<IntegerAttr>(kSubViewParentColsAttrName);
-  if (!rowsAttr || !colsAttr)
-    return std::nullopt;
-
-  int64_t rows = rowsAttr.getInt();
-  int64_t cols = colsAttr.getInt();
-  if (rows <= 0 || cols <= 0)
-    return std::nullopt;
-  return std::make_pair(rows, cols);
-}
 
 static Value peelUnrealized(Value v) {
   if (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
@@ -3390,10 +3368,6 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     ArrayRef<int64_t> shape = selfType.getShape();
     int64_t physRows = shape.size() > 0 ? shape[0] : ShapedType::kDynamic;
     int64_t physCols = shape.size() > 1 ? shape[1] : ShapedType::kDynamic;
-    if (auto parentShape = getSubViewParentPhysicalShape(op.getOperation())) {
-      physRows = parentShape->first;
-      physCols = parentShape->second;
-    }
     Type elemType = selfType.getElementType();
     
     // 1. 推导 Tile Role
@@ -7503,6 +7477,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     auto *ctx = rewriter.getContext();
     auto configAttr = op.getConfigAttr();
     auto viewSemantics = op->getAttrOfType<StringAttr>("pto.view_semantics");
+    bool isSubView = viewSemantics && viewSemantics.getValue() == "subview";
 
     auto peelAllCasts = [](Value v) {
       while (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
@@ -7568,10 +7543,6 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         return failure();
       int64_t rows = resMrTy.getDimSize(0);
       int64_t cols = resMrTy.getDimSize(1);
-      if (auto parentShape = getSubViewParentPhysicalShape(op.getOperation())) {
-        rows = parentShape->first;
-        cols = parentShape->second;
-      }
       if (rows == ShapedType::kDynamic || cols == ShapedType::kDynamic)
         return failure();
 
@@ -7790,6 +7761,25 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       return success();
     }
 
+    // Subview origins are kept distinct from generic tile rebinding:
+    // even when source/destination C++ tile types match, subview may carry
+    // shifted base address semantics and should materialize a fresh handle.
+    if (isSubView) {
+      FailureOr<TileBuildSpec> tileSpec = buildTileSpec();
+      if (failed(tileSpec))
+        return failure();
+      Value dstTile = buildTileValue(*tileSpec);
+      FailureOr<Value> addr = buildIntegralAddress(tileCandidate);
+      if (failed(addr))
+        return failure();
+
+      rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                           ArrayAttr{}, ArrayAttr{},
+                                           ValueRange{dstTile, *addr});
+      rewriter.replaceOp(op, dstTile);
+      return success();
+    }
+
     // Generic tile-to-tile rebind path: preserve the same backing storage and
     // rebuild a sibling tile with updated metadata/valid dims.
     if (isTileLike(tileCandidate)) {
@@ -7837,18 +7827,11 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     auto newCast = rewriter.create<pto::PointerCastOp>(
         loc, op.getType(), physAddrs, vRow ? vRow : Value(),
         vCol ? vCol : Value(), configAttr);
+    if (viewSemantics)
+      newCast->setAttr("pto.view_semantics", viewSemantics);
     if (op->hasAttr(kForceDynamicValidShapeAttrName))
       newCast->setAttr(kForceDynamicValidShapeAttrName,
                        op->getAttr(kForceDynamicValidShapeAttrName));
-    if (op->hasAttr(kSubViewNonCompactAttrName))
-      newCast->setAttr(kSubViewNonCompactAttrName,
-                       op->getAttr(kSubViewNonCompactAttrName));
-    if (op->hasAttr(kSubViewParentRowsAttrName))
-      newCast->setAttr(kSubViewParentRowsAttrName,
-                       op->getAttr(kSubViewParentRowsAttrName));
-    if (op->hasAttr(kSubViewParentColsAttrName))
-      newCast->setAttr(kSubViewParentColsAttrName,
-                       op->getAttr(kSubViewParentColsAttrName));
     rewriter.replaceOp(op, newCast.getResult());
 
     return success();
