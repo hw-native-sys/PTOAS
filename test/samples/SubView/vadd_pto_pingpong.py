@@ -61,11 +61,11 @@ def build_pingpong():
                 sv_dst = pto.PartitionViewOp(pto.PartitionTensorViewType.get([32,32], f32, ctx),
                                              tv_dst, offsets=[c0, c0], sizes=[c32, c32]).result
                 
-                # Subset: Ping [0,0], Pong [0,32]
+                # SubView: Ping [0,0], Pong [0,32]
                 # 这里不需要指定 Result 类型，C++ 会自动推导
-                # Subset sizes must be static (I64ArrayAttr); offsets must be SSA.
-                ping = pto.SubsetOp(workspace, [c0, c0], sizes=[32, 32]).result
-                pong = pto.SubsetOp(workspace, [c0, c32], sizes=[32, 32]).result
+                # SubView sizes must be static (I64ArrayAttr); offsets must be SSA.
+                ping = pto.SubViewOp(workspace, [c0, c0], sizes=[32, 32]).result
+                pong = pto.SubViewOp(workspace, [c0, c32], sizes=[32, 32]).result
 
                 # DPS: Compute, Prefetch, WriteBack
                 pto.TLoadOp(None, sv_src, pong)

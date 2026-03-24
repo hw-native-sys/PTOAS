@@ -273,13 +273,14 @@ def BindTileOp : PTO_Op<"bind_tile", [
   }];
 }
 
-def SubsetOp : PTO_Op<"subset", [
+def SubViewOp : PTO_Op<"subview", [
     Pure,
     ViewLikeOpInterface,
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<InferTypeOpInterface> // 启用 C++ 推导
   ]> {
   
-  let summary = "Create a strided view (subset) from a parent tile.";
+  let summary = "Create a strided tile subview from a parent tile.";
   let description = [{
     Creates a view into the source tile.
     - Result Shape: Defined by static `sizes`.
@@ -290,16 +291,20 @@ def SubsetOp : PTO_Op<"subset", [
   let arguments = (ins
     TileBufType:$source,
     Variadic<Index>:$offsets, // 运行时动态偏移 [i, j]
-    I64ArrayAttr:$sizes       // 静态形状 [32, 32]
+    I64ArrayAttr:$sizes,      // 静态形状 [32, 32]
+    Optional<Index>:$valid_row,
+    Optional<Index>:$valid_col
   );
 
   let results = (outs TileBufType:$result);
   let hasVerifier = 1;
 
-  // 语法示例: %sub = pto.subset %src[%i, %j] sizes [32, 32] : !type
+  // 语法示例: %sub = pto.subview %src[%i, %j] sizes [32, 32] : !type
   // 注意：没有 -> qualified(type($result))
   let assemblyFormat = [{
-    $source `[` $offsets `]` `sizes` $sizes attr-dict `:` qualified(type($source))
+    $source `[` $offsets `]` `sizes` $sizes
+    (`valid` `[` $valid_row^ `,` $valid_col `]`)?
+    attr-dict `:` qualified(type($source))
   }];
 
   // [新增] 显式实现 ViewLikeOpInterface 缺失的方法
