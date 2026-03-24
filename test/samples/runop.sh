@@ -302,11 +302,11 @@ process_one_dir() {
       continue
     fi
 
-    # Regression guard: SubsetOp valid-shape inference must not produce 0.
+    # Regression guard: SubViewOp valid-shape inference must not produce 0.
     # This breaks downstream NPU compilation (e.g. vadd_pto_pingpong workspace ping/pong).
     if [[ "$base" == "vadd_pto_pingpong" ]]; then
       if grep -Fq ", 0, SLayout" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tgenerated tile has valid dim 0 (subset valid-shape bug)"
+        echo -e "${A}(${base}.py)\tFAIL\tgenerated tile has valid dim 0 (subview valid-shape bug)"
         overall=1
         continue
       fi

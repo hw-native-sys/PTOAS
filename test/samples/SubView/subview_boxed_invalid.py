@@ -20,28 +20,30 @@ def build():
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
 
-            # Boxed layout: innerRows=16, innerCols=16 (f16).
-            # Dynamic row offset aligned to innerRows; col offset must be 0.
+            # Boxed layout: innerRows=16, innerCols=32/2=16 (f16).
+            # Invalid subview: column offset not aligned (offC=8).
             tile_ty = pto.TileBufType.get([32, 32], f16, vec, [32, 32], cfg, ctx)
 
-            fn_ty = func.FunctionType.get([idx], [])
+            fn_ty = func.FunctionType.get([], [])
             with InsertionPoint(m.body):
-                fn = func.FuncOp("subset_boxed_dynamic", fn_ty)
+                fn = func.FuncOp("subview_invalid_boxed", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
-                i0 = entry.arguments[0]
                 c0 = arith.ConstantOp(idx, 0).result
-                c16 = arith.ConstantOp(idx, 16).result
-                row_off = arith.MulIOp(i0, c16).result
+                c8 = arith.ConstantOp(idx, 8).result
 
                 t0 = pto.AllocTileOp(tile_ty).result
-                _sub = pto.SubsetOp(t0, [row_off, c0], sizes=[16, 32]).result
+                # Expect verifier failure: offC=8 not multiple of innerCols=16.
+                _bad = pto.SubViewOp(t0, [c0, c8], sizes=[16, 16]).result
 
                 func.ReturnOp([])
 
-            m.operation.verify()
-            return m
+            ok = m.operation.verify()
+            if ok:
+                return m
+            # Expected failure for invalid subview; make python exit non-zero.
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

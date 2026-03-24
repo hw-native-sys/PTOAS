@@ -219,6 +219,28 @@ static constexpr llvm::StringLiteral kLoweredSetValidShapeConfigAttrName =
     "__pto.lowered_set_validshape_config";
 static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
     "__pto.force_dynamic_valid_shape";
+static constexpr llvm::StringLiteral kSubViewNonCompactAttrName =
+    "pto.subview_non_compact";
+static constexpr llvm::StringLiteral kSubViewParentRowsAttrName =
+    "pto.subview_parent_rows";
+static constexpr llvm::StringLiteral kSubViewParentColsAttrName =
+    "pto.subview_parent_cols";
+
+static std::optional<std::pair<int64_t, int64_t>>
+getSubViewParentPhysicalShape(Operation *op) {
+  if (!op || !op->hasAttr(kSubViewNonCompactAttrName))
+    return std::nullopt;
+  auto rowsAttr = op->getAttrOfType<IntegerAttr>(kSubViewParentRowsAttrName);
+  auto colsAttr = op->getAttrOfType<IntegerAttr>(kSubViewParentColsAttrName);
+  if (!rowsAttr || !colsAttr)
+    return std::nullopt;
+
+  int64_t rows = rowsAttr.getInt();
+  int64_t cols = colsAttr.getInt();
+  if (rows <= 0 || cols <= 0)
+    return std::nullopt;
+  return std::make_pair(rows, cols);
+}
 
 static Value peelUnrealized(Value v) {
   if (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
@@ -3366,6 +3388,12 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     auto *ctx = rewriter.getContext();
     auto selfType = mlir::cast<MemRefType>(op.getType());
     ArrayRef<int64_t> shape = selfType.getShape();
+    int64_t physRows = shape.size() > 0 ? shape[0] : ShapedType::kDynamic;
+    int64_t physCols = shape.size() > 1 ? shape[1] : ShapedType::kDynamic;
+    if (auto parentShape = getSubViewParentPhysicalShape(op.getOperation())) {
+      physRows = parentShape->first;
+      physCols = parentShape->second;
+    }
     Type elemType = selfType.getElementType();
     
     // 1. 推导 Tile Role
@@ -3386,10 +3414,10 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         return (dim == ShapedType::kDynamic) ? std::string(symbol) : std::to_string(dim);
     };
 
-    if (role == TileRole::Left) dimStr = dimToString(shape[0], "M") + ", " + dimToString(shape[1], "K");
-    else if (role == TileRole::Right) dimStr = dimToString(shape[0], "K") + ", " + dimToString(shape[1], "N");
-    else if (role == TileRole::Bias) dimStr = "1, " + dimToString(shape[1], "N");
-    else dimStr = dimToString(shape[0], "M") + ", " + dimToString(shape[1], "N");
+    if (role == TileRole::Left) dimStr = dimToString(physRows, "M") + ", " + dimToString(physCols, "K");
+    else if (role == TileRole::Right) dimStr = dimToString(physRows, "K") + ", " + dimToString(physCols, "N");
+    else if (role == TileRole::Bias) dimStr = "1, " + dimToString(physCols, "N");
+    else dimStr = dimToString(physRows, "M") + ", " + dimToString(physCols, "N");
 
     // 3. Role Token
     const char *roleTok = "TileType::Vec";
@@ -3470,9 +3498,9 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
       vcolTok = "-1";
       useConstructor = true;
       constructorArgs.push_back(
-          makeCtorDimValue(vRowEmitC, rowIsConst ? cRow : shape[0]));
+          makeCtorDimValue(vRowEmitC, rowIsConst ? cRow : physRows));
       constructorArgs.push_back(
-          makeCtorDimValue(vColEmitC, colIsConst ? cCol : shape[1]));
+          makeCtorDimValue(vColEmitC, colIsConst ? cCol : physCols));
     } else {
       if (rowIsConst) {
         vrowTok = std::to_string(cRow);
@@ -3481,7 +3509,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         rowIsDynamic = true;
         useConstructor = true;
       } else {
-        vrowTok = std::to_string(shape[0]);
+        vrowTok = std::to_string(physRows);
       }
 
       if (colIsConst) {
@@ -3491,7 +3519,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         colIsDynamic = true;
         useConstructor = true;
       } else {
-        vcolTok = std::to_string(shape[1]);
+        vcolTok = std::to_string(physCols);
       }
 
       if (useConstructor) {
@@ -7540,6 +7568,10 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         return failure();
       int64_t rows = resMrTy.getDimSize(0);
       int64_t cols = resMrTy.getDimSize(1);
+      if (auto parentShape = getSubViewParentPhysicalShape(op.getOperation())) {
+        rows = parentShape->first;
+        cols = parentShape->second;
+      }
       if (rows == ShapedType::kDynamic || cols == ShapedType::kDynamic)
         return failure();
 
@@ -7808,6 +7840,15 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     if (op->hasAttr(kForceDynamicValidShapeAttrName))
       newCast->setAttr(kForceDynamicValidShapeAttrName,
                        op->getAttr(kForceDynamicValidShapeAttrName));
+    if (op->hasAttr(kSubViewNonCompactAttrName))
+      newCast->setAttr(kSubViewNonCompactAttrName,
+                       op->getAttr(kSubViewNonCompactAttrName));
+    if (op->hasAttr(kSubViewParentRowsAttrName))
+      newCast->setAttr(kSubViewParentRowsAttrName,
+                       op->getAttr(kSubViewParentRowsAttrName));
+    if (op->hasAttr(kSubViewParentColsAttrName))
+      newCast->setAttr(kSubViewParentColsAttrName,
+                       op->getAttr(kSubViewParentColsAttrName));
     rewriter.replaceOp(op, newCast.getResult());
 
     return success();

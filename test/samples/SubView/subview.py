@@ -25,7 +25,7 @@ def build():
 
             fn_ty = func.FunctionType.get([], [])
             with InsertionPoint(m.body):
-                fn = func.FuncOp("subset_pingpong_demo", fn_ty)
+                fn = func.FuncOp("subview_pingpong_demo", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
@@ -33,8 +33,8 @@ def build():
                 c32 = arith.ConstantOp(idx, 32).result
 
                 workspace = pto.AllocTileOp(ws_type).result
-                ping = pto.SubsetOp(workspace, [c0, c0], sizes=[32, 32]).result
-                pong = pto.SubsetOp(workspace, [c0, c32], sizes=[32, 32]).result
+                ping = pto.SubViewOp(workspace, [c0, c0], sizes=[32, 32]).result
+                pong = pto.SubViewOp(workspace, [c0, c32], sizes=[32, 32]).result
 
                 pto.TAddOp(ping, ping, ping)
                 pto.TAddOp(pong, pong, pong)

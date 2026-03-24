@@ -27,7 +27,7 @@ def build():
 
             # A real kernel that manually inserts set_flag/wait_flag.
             #
-            # NOTE(A5): `set_flag/wait_flag` only accept a subset of PIPE enums on A5.
+            # NOTE(A5): `set_flag/wait_flag` only accept a limited set of PIPE enums on A5.
             # Keep this sample in the supported set by using MTE2/V/MTE3 only.
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):

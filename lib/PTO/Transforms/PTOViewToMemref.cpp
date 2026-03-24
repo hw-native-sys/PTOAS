@@ -30,6 +30,8 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <optional>
+#include <utility>
 
 using namespace mlir;
 
@@ -42,11 +44,22 @@ static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
     "__pto.lowered_set_validshape";
 static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
     "__pto.force_dynamic_valid_shape";
+static constexpr llvm::StringLiteral kSubViewNonCompactAttrName =
+    "pto.subview_non_compact";
+static constexpr llvm::StringLiteral kSubViewParentRowsAttrName =
+    "pto.subview_parent_rows";
+static constexpr llvm::StringLiteral kSubViewParentColsAttrName =
+    "pto.subview_parent_cols";
 
 namespace {
 
 static void markForceDynamicValidShape(Operation *op, bool force,
                                        MLIRContext *ctx);
+static void markSubViewNonCompact(Operation *op, bool isNonCompact,
+                                  int64_t parentRows, int64_t parentCols,
+                                  MLIRContext *ctx);
+static std::optional<std::pair<int64_t, int64_t>>
+lookupSubViewParentPhysicalShape(Value v);
 
 static Type convertPTOTypeToMemRef(Type t);
 
@@ -260,6 +273,38 @@ static bool computeTileLayoutInfo(mlir::pto::TileBufConfigAttr cfg, Type elemTy,
   return true;
 }
 
+// Return true when a rank-2 strided view is physically dense/compact.
+// This is layout-agnostic (covers row-major and col-major) by checking whether
+// non-unit dimensions form a contiguous chain after ordering by stride.
+static bool isCompactDense2D(ArrayRef<int64_t> shape, ArrayRef<int64_t> strides) {
+  if (shape.size() != 2 || strides.size() < 2)
+    return false;
+  for (int i = 0; i < 2; ++i) {
+    if (shape[i] == ShapedType::kDynamic || strides[i] == ShapedType::kDynamic)
+      return false;
+    if (shape[i] <= 0 || strides[i] <= 0)
+      return false;
+  }
+
+  SmallVector<int, 2> dims;
+  for (int i = 0; i < 2; ++i) {
+    if (shape[i] > 1)
+      dims.push_back(i);
+  }
+  if (dims.empty())
+    return true;
+
+  llvm::sort(dims, [&](int a, int b) { return strides[a] < strides[b]; });
+
+  int64_t expectedStride = 1;
+  for (int d : dims) {
+    if (strides[d] != expectedStride)
+      return false;
+    expectedStride *= shape[d];
+  }
+  return true;
+}
+
 // Helper: 递归拆解 AffineExpr
 static void flattenAddExpr(AffineExpr expr, SmallVectorImpl<AffineExpr> &terms) {
   if (auto add = expr.dyn_cast<AffineBinaryOpExpr>()) {
@@ -309,48 +354,6 @@ static Value ensureIndex(IRRewriter &rewriter, Location loc, Value v,
   if (anchorOp)
     anchorOp->emitError() << "expected index or integer, but got " << v.getType();
   return Value();
-}
-
-static Value computeSubsetValidDim(IRRewriter &rewriter, Location loc,
-                                   Value parentValid, Value offset,
-                                   int64_t size, Operation *anchorOp) {
-  Value sizeVal = rewriter.create<arith::ConstantIndexOp>(loc, size);
-  if (!parentValid)
-    return sizeVal;
-
-  int64_t pvConst = 0, offConst = 0;
-  if (getConstIndexValue(parentValid, pvConst) &&
-      getConstIndexValue(offset, offConst)) {
-    int64_t diff = 0;
-    if (pvConst > 0) {
-      int64_t offMod = offConst % pvConst;
-      if (offMod < 0)
-        offMod += pvConst;
-      diff = pvConst - offMod; // in [1, pvConst] when pvConst>0
-    }
-    if (diff < 0)
-      diff = 0;
-    int64_t clipped = std::min<int64_t>(size, diff);
-    return rewriter.create<arith::ConstantIndexOp>(loc, clipped);
-  }
-
-  Value pv = ensureIndex(rewriter, loc, parentValid, anchorOp);
-  Value off = ensureIndex(rewriter, loc, offset, anchorOp);
-
-  // Use the same "periodic valid dims" rule as SubsetOp::inferReturnTypes:
-  // diff = pv - (off % pv), so offsets that land on the next tile (off == pv)
-  // still produce a full valid dim (diff == pv), instead of 0.
-  Type i64Ty = rewriter.getI64Type();
-  Value pvI64 = rewriter.create<arith::IndexCastOp>(loc, i64Ty, pv);
-  Value offI64 = rewriter.create<arith::IndexCastOp>(loc, i64Ty, off);
-  Value remI64 = rewriter.create<arith::RemUIOp>(loc, offI64, pvI64);
-  Value diffI64 = rewriter.create<arith::SubIOp>(loc, pvI64, remI64);
-  Value diff = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
-                                                   diffI64);
-
-  Value lt = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, diff,
-                                            sizeVal);
-  return rewriter.create<arith::SelectOp>(loc, lt, diff, sizeVal);
 }
 
 static void dumpPretty(Operation *op, llvm::raw_ostream &os) {
@@ -487,6 +490,66 @@ static void markForceDynamicValidShape(Operation *op, bool force,
     return;
   }
   op->removeAttr(kForceDynamicValidShapeAttrName);
+}
+
+static void markSubViewNonCompact(Operation *op, bool isNonCompact,
+                                  int64_t parentRows, int64_t parentCols,
+                                  MLIRContext *ctx) {
+  if (!isNonCompact || parentRows <= 0 || parentCols <= 0) {
+    op->removeAttr(kSubViewNonCompactAttrName);
+    op->removeAttr(kSubViewParentRowsAttrName);
+    op->removeAttr(kSubViewParentColsAttrName);
+    return;
+  }
+
+  op->setAttr(kSubViewNonCompactAttrName, UnitAttr::get(ctx));
+  op->setAttr(kSubViewParentRowsAttrName, IntegerAttr::get(
+                                            IntegerType::get(ctx, 64),
+                                            APInt(64, parentRows, true)));
+  op->setAttr(kSubViewParentColsAttrName, IntegerAttr::get(
+                                            IntegerType::get(ctx, 64),
+                                            APInt(64, parentCols, true)));
+}
+
+static std::optional<std::pair<int64_t, int64_t>>
+lookupSubViewParentPhysicalShape(Value v) {
+  if (!v)
+    return std::nullopt;
+
+  if (auto bind = v.getDefiningOp<mlir::pto::BindTileOp>()) {
+    auto rowsAttr = bind->getAttrOfType<IntegerAttr>(kSubViewParentRowsAttrName);
+    auto colsAttr = bind->getAttrOfType<IntegerAttr>(kSubViewParentColsAttrName);
+    if (rowsAttr && colsAttr) {
+      int64_t rows = rowsAttr.getInt();
+      int64_t cols = colsAttr.getInt();
+      if (rows > 0 && cols > 0)
+        return std::make_pair(rows, cols);
+    }
+    return lookupSubViewParentPhysicalShape(bind.getSource());
+  }
+
+  if (auto pc = v.getDefiningOp<mlir::pto::PointerCastOp>()) {
+    auto rowsAttr = pc->getAttrOfType<IntegerAttr>(kSubViewParentRowsAttrName);
+    auto colsAttr = pc->getAttrOfType<IntegerAttr>(kSubViewParentColsAttrName);
+    if (rowsAttr && colsAttr) {
+      int64_t rows = rowsAttr.getInt();
+      int64_t cols = colsAttr.getInt();
+      if (rows > 0 && cols > 0)
+        return std::make_pair(rows, cols);
+    }
+    return std::nullopt;
+  }
+
+  if (auto subview = v.getDefiningOp<memref::SubViewOp>())
+    return lookupSubViewParentPhysicalShape(subview.getSource());
+  if (auto cast = v.getDefiningOp<memref::ReinterpretCastOp>())
+    return lookupSubViewParentPhysicalShape(cast.getSource());
+  if (auto cast = v.getDefiningOp<memref::CastOp>())
+    return lookupSubViewParentPhysicalShape(cast.getSource());
+  if (auto cast = v.getDefiningOp<UnrealizedConversionCastOp>())
+    return lookupSubViewParentPhysicalShape(cast.getOperand(0));
+
+  return std::nullopt;
 }
 
 // =============================================================================
@@ -931,12 +994,12 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
-      // Stage 2.4: lower pto.subset -> memref.subview + bind_tile
+      // Stage 2.4: lower pto.subview -> memref.subview + bind_tile
       // ------------------------------------------------------------------
-      SmallVector<mlir::pto::SubsetOp, 8> subsets;
-      func.walk([&](mlir::pto::SubsetOp op) { subsets.push_back(op); });
+      SmallVector<mlir::pto::SubViewOp, 8> subViews;
+      func.walk([&](mlir::pto::SubViewOp op) { subViews.push_back(op); });
 
-      for (auto op : subsets) {
+      for (auto op : subViews) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         Location loc = op.getLoc();
@@ -947,7 +1010,7 @@ struct PTOViewToMemrefPass
         Value src = op->getOperand(0);
         auto srcMrTy = dyn_cast<MemRefType>(src.getType());
         if (!srcMrTy) {
-          op.emitError("pto.subset source must be lowered to memref first");
+          op.emitError("pto.subview source must be lowered to memref first");
           signalPassFailure();
           return;
         }
@@ -991,14 +1054,14 @@ struct PTOViewToMemrefPass
             computeTileLayoutInfo(configAttr, srcMrTy.getElementType(),
                                   srcMrTy.getShape(), layoutInfo);
         if (!hasLayout) {
-          op.emitError("unsupported tile layout for pto.subset");
+          op.emitError("unsupported tile layout for pto.subview");
           signalPassFailure();
           return;
         }
 
         if (layoutInfo.boxed) {
           if (staticSizes.size() != 2 || op.getOffsets().size() != 2) {
-            op.emitError("boxed layout subset expects 2D sizes/offsets");
+            op.emitError("boxed layout subview expects 2D sizes/offsets");
             signalPassFailure();
             return;
           }
@@ -1042,23 +1105,23 @@ struct PTOViewToMemrefPass
           if (srcShape.size() == 2) {
             if (bl == 0) {
               if (staticSizes[1] != srcShape[1]) {
-                op.emitError("boxed RowMajor subset must keep full cols");
+                op.emitError("boxed RowMajor subview must keep full cols");
                 signalPassFailure();
                 return;
               }
               if (!off1Const || off1 != 0) {
-                op.emitError("boxed RowMajor subset requires static col offset = 0");
+                op.emitError("boxed RowMajor subview requires static col offset = 0");
                 signalPassFailure();
                 return;
               }
             } else {
               if (staticSizes[0] != srcShape[0]) {
-                op.emitError("boxed ColMajor subset must keep full rows");
+                op.emitError("boxed ColMajor subview must keep full rows");
                 signalPassFailure();
                 return;
               }
               if (!off0Const || off0 != 0) {
-                op.emitError("boxed ColMajor subset requires static row offset = 0");
+                op.emitError("boxed ColMajor subview requires static row offset = 0");
                 signalPassFailure();
                 return;
               }
@@ -1086,6 +1149,25 @@ struct PTOViewToMemrefPass
             MemRefType::get(staticSizes, srcMrTy.getElementType(), resultLayout,
                             srcMrTy.getMemorySpace());
 
+        bool subViewNonCompact = false;
+        int64_t parentRows = -1;
+        int64_t parentCols = -1;
+        if (!layoutInfo.boxed && staticSizes.size() == 2 && srcStrides.size() >= 2 &&
+            !isCompactDense2D(staticSizes, srcStrides)) {
+          subViewNonCompact = true;
+          if (auto parentShape = lookupSubViewParentPhysicalShape(src)) {
+            parentRows = parentShape->first;
+            parentCols = parentShape->second;
+          } else {
+            if (srcMrTy.getRank() >= 2) {
+              parentRows = srcMrTy.getDimSize(0);
+              parentCols = srcMrTy.getDimSize(1);
+            }
+          }
+          if (parentRows <= 0 || parentCols <= 0)
+            subViewNonCompact = false;
+        }
+
         // 5. Strides for subview: keep same stride (use 1)
         SmallVector<OpFoldResult> mixedStrides;
         mixedStrides.reserve(staticSizes.size());
@@ -1095,19 +1177,15 @@ struct PTOViewToMemrefPass
         auto sv = rewriter.create<memref::SubViewOp>(
             loc, resultMemRefType, src, mixedOffsets, mixedSizes, mixedStrides);
 
-        // 6. Re-bind tile metadata (config + valid dims)
-        Value parentVRow;
-        Value parentVCol;
-        lookupValidDims(src, parentVRow, parentVCol);
-
-        Value vRow;
-        Value vCol;
-        if (!staticSizes.empty())
-          vRow = computeSubsetValidDim(rewriter, loc, parentVRow,
-                                       op.getOffsets()[0], staticSizes[0], op);
-        if (staticSizes.size() > 1)
-          vCol = computeSubsetValidDim(rewriter, loc, parentVCol,
-                                       op.getOffsets()[1], staticSizes[1], op);
+        // 6. Re-bind tile metadata (config + valid dims).
+        // subview defaults valid dims to subview shape unless user explicitly
+        // provides valid_row/valid_col.
+        Value vRow = op.getValidRow();
+        Value vCol = op.getValidCol();
+        if (!vRow && !staticSizes.empty())
+          vRow = rewriter.create<arith::ConstantIndexOp>(loc, staticSizes[0]);
+        if (!vCol && staticSizes.size() > 1)
+          vCol = rewriter.create<arith::ConstantIndexOp>(loc, staticSizes[1]);
 
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, resultMemRefType, sv.getResult(),
@@ -1115,6 +1193,8 @@ struct PTOViewToMemrefPass
         markForceDynamicValidShape(bindOp,
                                    resultTileTy && resultTileTy.hasDynamicValid(),
                                    ctx);
+        markSubViewNonCompact(bindOp, subViewNonCompact, parentRows, parentCols,
+                              ctx);
 
         rewriter.replaceOp(op, bindOp.getResult());
       }
