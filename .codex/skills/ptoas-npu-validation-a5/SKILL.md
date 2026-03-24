@@ -1,15 +1,27 @@
 ---
 name: ptoas-npu-validation-a5
-description: Build and validate PTOAS-generated A5 kernels with test/npu_validation, especially the Abs sample. Use when the user wants to generate npu_validation testcases, compile Abs for A5 with bisheng, or run/check the A5 NPU or simulator validation flow with PTO_ISA_ROOT.
+description: Generate and run PTOAS-based A5 test/npu_validation testcases, build the testcase binaries, and validate runtime output on NPU or simulator. Use when the user wants NPU run validation, golden/compare checks, or runtime troubleshooting for A5.
 ---
 
 # PTOAS NPU Validation A5
 
 Use this skill when the task is specifically about:
 - generating `test/npu_validation` projects from PTOAS output
-- compiling the `Abs` sample through the `npu_validation` flow
-- validating A5 targets such as `dav-c310-vec`
-- using an external `pto-isa` checkout via `PTO_ISA_ROOT`
+- building testcase binaries for A5
+- running NPU or simulator validation
+- generating golden inputs and checking results with `compare.py`
+- diagnosing runtime blockers such as missing device access or `aclrtSetDevice`
+
+This skill is the main entry point for runtime validation.
+
+Do not use this skill as the primary entry point when the task is only about:
+- exporting LLVM IR or LLVM bitcode
+- validating the `bisheng` handoff
+- assembling a fat object or replacement kernel library from the LLVM path
+
+When this validation flow needs a custom LLVM IR or LLVM BC artifact, use
+`ptoas-a5vm-llvm-artifacts` first to build that artifact, then return here to
+run the testcase.
 
 ## Preconditions
 
@@ -49,7 +61,7 @@ Interpretation:
 - `aclrtGetDeviceCount` should report at least one device if the runtime can enumerate hardware
 - if `aclrtSetDevice(0)` fails with `507033` (`ACL_ERROR_RT_DEV_SETUP_ERROR`), the user context can see a device but cannot open a usable runtime context
 
-## Canonical Flow For Abs On A5
+## Canonical Flow
 
 ### 1. Generate the PTOAS kernel
 
@@ -66,8 +78,6 @@ Expected output:
 - `/tmp/ptoas-abs-emitc/Abs/abs-pto.cpp`
 
 ### 2. Generate the `npu_validation` testcase
-
-For A5 `Abs`, use `dav-c310-vec`.
 
 ```bash
 python3 test/npu_validation/scripts/generate_testcase.py \
@@ -99,6 +109,11 @@ Typical build expectations:
 - `abs` builds
 - `abs_sim` may also build if the simulator runtime is available
 
+If you need to replace the default `libabs_kernel.so` with one assembled from
+an LLVM IR or LLVM BC path, build that artifact with
+`ptoas-a5vm-llvm-artifacts` and place it first in `LD_LIBRARY_PATH` when
+running `./build/abs`.
+
 ### 4. Generate golden inputs
 
 ```bash
@@ -110,9 +125,8 @@ Expected files:
 - `v1.bin`
 - `v2.bin`
 
-Important: for the generated `Abs` testcase, `golden.py` does **not** emit
-`golden_v2.bin`, but `compare.py` expects it. Build the oracle explicitly from
-the input:
+For the generated `Abs` testcase, `golden.py` does not emit `golden_v2.bin`,
+but `compare.py` expects it. Build the oracle explicitly from the input:
 
 ```bash
 cd /tmp/ptoas-npu-validation-run/Abs/abs
@@ -152,6 +166,11 @@ sudo bash -lc '
 '
 ```
 
+Observed runtime result on this machine for the `Abs` testcase:
+- normal user run failed at `aclrtSetDevice(0)` with `507033`
+- `sudo` run of the existing `./build/abs` binary succeeded
+- `python3 ./compare.py` then reported `[INFO] compare passed`
+
 ### Simulator run
 
 If `abs_sim` links successfully, run it with simulator libraries in `LD_LIBRARY_PATH`.
@@ -182,31 +201,19 @@ Expected success output:
 
 ## Known Failure Modes
 
-- If `generate_testcase.py` fails, the input is usually not a PTOAS EmitC `*-pto.cpp` kernel.
-- If configure fails, `PTO_ISA_ROOT` is usually unset or points to the wrong checkout.
-- If `abs_sim` fails to link, common missing symbols are:
-  - `rtDevBinaryRegister`
-  - `rtDevBinaryUnRegister`
-  - `rtLaunch`
-  - `rtKernelLaunch`
-  - `rtKernelLaunchWithFlagV2`
-  - `rtFunctionRegister`
-- If `./build/abs` fails at `aclInit(nullptr)`, the shell likely does not have usable Ascend device access.
-- If non-`sudo` `./build/abs` fails at `aclrtSetDevice(0)` with `507033`, the
-  current user context can enumerate the device but cannot open it. Depending
-  on local policy, retrying with `sudo` may be necessary.
-- If `compare.py` reports `golden_v2.bin` missing, that is a testcase
-  generation gap, not a kernel execution result. Construct `golden_v2.bin`
-  explicitly from `abs(v1)`.
-- In sandboxed agent environments, `/dev/davinci*` may be invisible even if the host shell can see them.
+- `generate_testcase.py` fails because the input is not a PTOAS EmitC `*-pto.cpp` kernel
+- configure fails because `PTO_ISA_ROOT` is unset or points to the wrong checkout
+- `abs_sim` fails to link because simulator runtime symbols are missing
+- `./build/abs` fails at `aclInit(nullptr)` because the shell does not have usable Ascend runtime access
+- non-`sudo` `./build/abs` fails at `aclrtSetDevice(0)` with `507033`, meaning the user context sees the device but cannot open a usable runtime context
+- `compare.py` reports `golden_v2.bin` missing because the testcase generation did not create it automatically
 
 ## Reporting Back
 
 When you use this skill, report:
 - the generated testcase directory
 - whether `libabs_kernel.so`, `abs`, and `abs_sim` built
-- whether `golden.py` generated input bins and whether `golden_v2.bin` had to
-  be created explicitly
+- whether `golden.py` generated input bins and whether `golden_v2.bin` had to be created explicitly
 - whether NPU execution worked directly or required elevated privileges
 - whether `compare.py` passed
 - the first concrete blocker for NPU or simulator execution
