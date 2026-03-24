@@ -1,10 +1,10 @@
-//===- ptoas.cpp -------------------------------------------------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
@@ -369,6 +369,17 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_SET_VALIDSHAPE", "SetValidShape",
         /*expectedNumArgs=*/3);
+  }
+}
+
+static void rewriteAsyncEventMarkers(std::string &cpp) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__ASYNC_EVENT_WAIT", "Wait", /*expectedNumArgs=*/2);
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__ASYNC_EVENT_TEST", "Test", /*expectedNumArgs=*/2);
   }
 }
 
@@ -1148,6 +1159,7 @@ int main(int argc, char **argv) {
   }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
+  rewriteAsyncEventMarkers(cppOutput);
   rewritePtrScalarMarkers(cppOutput);
   rewriteEventIdArrayMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
