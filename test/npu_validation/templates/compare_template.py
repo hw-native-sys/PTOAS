@@ -6,6 +6,31 @@ import sys
 import numpy as np
 
 
+REPEAT_BYTES = 256
+
+
+def _ceil_div(x, y):
+    return (x + y - 1) // y
+
+
+def _packed_pred_storage_bytes(logical_elems, src_elem_bytes):
+    logical_elems = int(logical_elems)
+    src_elem_bytes = int(src_elem_bytes)
+    if logical_elems <= 0:
+        raise ValueError(f"logical_elems must be > 0, got {logical_elems}")
+    if src_elem_bytes not in (1, 2, 4):
+        raise ValueError(f"unsupported packed predicate source size: {src_elem_bytes}")
+
+    repeat_elems = REPEAT_BYTES // src_elem_bytes
+    if src_elem_bytes == 4:
+        repeat_times = _ceil_div(logical_elems, repeat_elems) + 1
+        loop_count = repeat_times // 2
+        return loop_count * 16
+
+    repeat_times = _ceil_div(logical_elems, repeat_elems)
+    return repeat_times * (repeat_elems // 8)
+
+
 def compare_bin(golden_path, output_path, dtype, eps):
     if not os.path.exists(output_path):
         print(f"[ERROR] Output missing: {output_path}")
@@ -94,14 +119,13 @@ def compare_bin_prefix(golden_path, output_path, dtype, eps, count):
     return True
 
 
-def compare_packed_pred_mask(golden_path, output_path, rows, cols):
+def compare_packed_pred_mask(golden_path, output_path, logical_elems, src_elem_bytes):
     """
     Compare outputs of pto.tcmp / pto.tcmps.
 
-    These ops produce a *packed predicate mask* and do not define every byte in
-    the logical u8 tile buffer. In practice, only the first N bytes of each row
-    are meaningful (packed as 64-bit chunks). Ignore the rest to avoid flaky
-    compares caused by undefined bytes.
+    PTO-ISA stores packed predicate results as a linear PK byte stream via
+    `psts`, with the exact written prefix length determined by the typed
+    TCMP/TCMPS repeat schedule. Compare only that semantic prefix.
     """
     if not os.path.exists(output_path):
         print(f"[ERROR] Output missing: {output_path}")
@@ -110,43 +134,46 @@ def compare_packed_pred_mask(golden_path, output_path, rows, cols):
         print(f"[ERROR] Golden missing: {golden_path}")
         return False
     try:
-        rows = int(rows)
-        cols = int(cols)
+        logical_elems = int(logical_elems)
+        src_elem_bytes = int(src_elem_bytes)
     except Exception:
-        print(f"[ERROR] Invalid rows/cols for packed mask compare: rows={rows} cols={cols}")
+        print(
+            "[ERROR] Invalid packed mask compare arguments: "
+            f"logical_elems={logical_elems} src_elem_bytes={src_elem_bytes}"
+        )
         return False
-    if rows <= 0 or cols <= 0:
-        print(f"[ERROR] Invalid rows/cols for packed mask compare: rows={rows} cols={cols}")
+    if logical_elems <= 0 or src_elem_bytes <= 0:
+        print(
+            "[ERROR] Invalid packed mask compare arguments: "
+            f"logical_elems={logical_elems} src_elem_bytes={src_elem_bytes}"
+        )
         return False
 
     golden = np.fromfile(golden_path, dtype=np.uint8)
     output = np.fromfile(output_path, dtype=np.uint8)
+    try:
+        prefix_bytes = _packed_pred_storage_bytes(logical_elems, src_elem_bytes)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        return False
 
-    need = rows * cols
-    if golden.size < need or output.size < need:
+    if golden.size < prefix_bytes or output.size < prefix_bytes:
         print(
-            f"[ERROR] Packed mask buffer too small: need={need} bytes, "
+            f"[ERROR] Packed mask buffer too small: need={prefix_bytes} bytes, "
             f"golden={golden.size}, out={output.size}"
         )
         return False
 
-    golden = golden[:need].reshape(rows, cols)
-    output = output[:need].reshape(rows, cols)
-
-    # Packed mask layout: 1 predicate bit per element, packed into 64-bit words
-    # per row (so 8 bytes per 64 columns). For cols <= 64 we still use one word.
-    row_bytes = ((cols + 63) // 64) * 8
-    row_bytes = min(row_bytes, cols)
-
-    golden_sel = golden[:, :row_bytes].reshape(-1)
-    output_sel = output[:, :row_bytes].reshape(-1)
+    golden_sel = golden[:prefix_bytes]
+    output_sel = output[:prefix_bytes]
 
     if not np.array_equal(golden_sel, output_sel):
         diff = np.nonzero(golden_sel != output_sel)[0]
         idx = int(diff[0]) if diff.size else 0
         print(
             f"[ERROR] Mismatch (packed mask): {golden_path} vs {output_path}, first diff at idx={idx} "
-            f"(golden={int(golden_sel[idx])}, out={int(output_sel[idx])}, rows={rows}, cols={cols}, row_bytes={row_bytes})"
+            f"(golden={int(golden_sel[idx])}, out={int(output_sel[idx])}, "
+            f"logical_elems={logical_elems}, src_elem_bytes={src_elem_bytes}, prefix_bytes={prefix_bytes})"
         )
         return False
     return True

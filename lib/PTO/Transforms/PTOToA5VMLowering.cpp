@@ -780,6 +780,29 @@ StringRef stringifyElementTypeFragment(Type type) {
   return "unknown";
 }
 
+StringRef stringifyCopyTransferTypeFragment(Type type) {
+  switch (getElementByteSize(type)) {
+  case 1:
+    return "u8";
+  case 2:
+    return "u16";
+  case 4:
+  case 8:
+    return "u32";
+  default:
+    return stringifyElementTypeFragment(type);
+  }
+}
+
+static bool isSupportedPackedCmp32ElementType(Type type) {
+  if (!type)
+    return false;
+  if (type.isF32())
+    return true;
+  auto intType = dyn_cast<IntegerType>(type);
+  return intType && intType.getWidth() == 32;
+}
+
 A5VMTileDomain deriveTileDomain(Attribute memorySpace) {
   if (auto addrSpace = dyn_cast_or_null<AddressSpaceAttr>(memorySpace)) {
     switch (addrSpace.getAddressSpace()) {
@@ -3645,7 +3668,8 @@ LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter) {
         rewriter.getStringAttr(sourceLayout), rewriter.getBoolAttr(ubPad),
         rewriter.getBoolAttr(ubPad));
     copy->setAttr("a5vm.element_type",
-                  rewriter.getStringAttr(stringifyElementTypeFragment(contract.elementType)));
+                  rewriter.getStringAttr(
+                      stringifyCopyTransferTypeFragment(contract.elementType)));
   };
 
   if (std::optional<int64_t> outerConst = getConstInt(plan.outerCount); outerConst && *outerConst == 1) {
@@ -4237,6 +4261,8 @@ LogicalResult buildPackedCmp32VecScope(StringRef family,
   Value repeatStep = rewriter.create<arith::ConstantIndexOp>(loc, repeatElem);
   Value pairSrcStride = rewriter.create<arith::ConstantIndexOp>(loc, repeatElem * 2);
   Value pairDstStride = rewriter.create<arith::ConstantIndexOp>(loc, 4);
+  Value laneCount = rewriter.create<arith::ConstantIntOp>(loc, repeatElem, 32);
+  Value totalRemaining = rewriter.create<arith::ConstantIntOp>(loc, totalElements, 32);
 
   auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
   if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
@@ -4244,20 +4270,29 @@ LogicalResult buildPackedCmp32VecScope(StringRef family,
 
   OpBuilder::InsertionGuard aivGuard(rewriter);
   rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
-  auto pairLoop = rewriter.create<scf::ForOp>(loc, c0, pairUpper, c1);
+  auto pairLoop =
+      rewriter.create<scf::ForOp>(loc, c0, pairUpper, c1, ValueRange{totalRemaining});
   rewriter.setInsertionPointToStart(pairLoop.getBody());
+  Value remaining = pairLoop.getRegionIterArgs().front();
   Value pairBase = rewriter.create<arith::MulIOp>(loc, pairLoop.getInductionVar(),
                                                   pairSrcStride);
   Value pairNext = rewriter.create<arith::AddIOp>(loc, pairBase, repeatStep);
   Value dstOffset = rewriter.create<arith::MulIOp>(loc, pairLoop.getInductionVar(),
                                                    pairDstStride);
-  auto pairMask = rewriter.create<a5vm::PsetB8Op>(loc, maskType,
-                                                  rewriter.getStringAttr("PAT_ALL"));
-  Value cmp0 = emitCompare(rewriter, loc, pairBase, pairMask.getResult());
-  Value cmp1 = emitCompare(rewriter, loc, pairNext, pairMask.getResult());
+  Value dstBase = adjustPointerByElemOffset(dstBuffer, dstOffset, 4, rewriter, loc);
+  Value dstZero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  auto pairMask0 = rewriter.create<a5vm::PltB32Op>(loc, maskType,
+                                                   rewriter.getI32Type(),
+                                                   remaining);
+  auto pairMask1 = rewriter.create<a5vm::PltB32Op>(loc, maskType,
+                                                   rewriter.getI32Type(),
+                                                   pairMask0.getScalarOut());
+  Value cmp0 = emitCompare(rewriter, loc, pairBase, pairMask0.getMask());
+  Value cmp1 = emitCompare(rewriter, loc, pairNext, pairMask1.getMask());
   auto interleaved = rewriter.create<a5vm::PdintlvB8Op>(loc, maskType, maskType,
                                                         cmp0, cmp1);
-  rewriter.create<a5vm::PstsOp>(loc, interleaved.getLow(), dstBuffer, dstOffset);
+  rewriter.create<a5vm::PstsOp>(loc, interleaved.getLow(), dstBase, dstZero);
+  rewriter.create<scf::YieldOp>(loc, pairMask1.getScalarOut());
 
   if (remainRepeats == 0)
     return success();
@@ -4265,14 +4300,17 @@ LogicalResult buildPackedCmp32VecScope(StringRef family,
   rewriter.setInsertionPointAfter(pairLoop);
   Value tailBase = rewriter.create<arith::ConstantIndexOp>(loc, pairedRepeats * repeatElem * 2);
   Value tailDst = rewriter.create<arith::ConstantIndexOp>(loc, pairedRepeats * 4);
-  auto tailMask = rewriter.create<a5vm::PsetB8Op>(loc, maskType,
-                                                  rewriter.getStringAttr("PAT_ALL"));
-  Value tailCmp = emitCompare(rewriter, loc, tailBase, tailMask.getResult());
+  Value tailDstBase = adjustPointerByElemOffset(dstBuffer, tailDst, 4, rewriter, loc);
+  Value tailDstZero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  auto tailMask = rewriter.create<a5vm::PltB32Op>(loc, maskType,
+                                                  rewriter.getI32Type(),
+                                                  pairLoop.getResult(0));
+  Value tailCmp = emitCompare(rewriter, loc, tailBase, tailMask.getMask());
   Value packedTail = rewriter
                          .create<a5vm::PpackOp>(loc, maskType, tailCmp,
                                                 rewriter.getStringAttr("LOWER"))
                          .getResult();
-  rewriter.create<a5vm::PstsOp>(loc, packedTail, dstBuffer, tailDst);
+  rewriter.create<a5vm::PstsOp>(loc, packedTail, tailDstBase, tailDstZero);
   return success();
 }
 
@@ -4294,8 +4332,8 @@ LogicalResult lowerTCmpS(TCmpSOp op, PatternRewriter &rewriter) {
   deriveValidShape(op.getDst(), dstRows, dstCols);
   if (contract.validRows != dstRows || contract.validCols != dstCols)
     return op.emitOpError("tcmps lowering requires matching source and destination valid region");
-  if (!contract.elementType || !contract.elementType.isF32())
-    return op.emitOpError("tcmps lowering currently supports only f32 source tiles");
+  if (!isSupportedPackedCmp32ElementType(contract.elementType))
+    return op.emitOpError("tcmps lowering currently supports only 32-bit source tiles");
   auto dstElemType = dyn_cast_or_null<IntegerType>(getElementType(op.getDst()));
   if (!dstElemType || !dstElemType.isUnsignedInteger(8))
     return op.emitOpError("tcmps lowering currently requires ui8 destination tiles");
@@ -4352,8 +4390,8 @@ LogicalResult lowerTCmp(TCmpOp op, PatternRewriter &rewriter) {
   if (contract.validRows != src1Rows || contract.validCols != src1Cols ||
       contract.validRows != dstRows || contract.validCols != dstCols)
     return op.emitOpError("tcmp lowering requires matching source and destination valid region");
-  if (!contract.elementType || !contract.elementType.isF32())
-    return op.emitOpError("tcmp lowering currently supports only f32 source tiles");
+  if (!isSupportedPackedCmp32ElementType(contract.elementType))
+    return op.emitOpError("tcmp lowering currently supports only 32-bit source tiles");
   if (getElementType(op.getSrc1()) != contract.elementType)
     return op.emitOpError("tcmp lowering requires src1 element type to match src0");
   auto dstElemType = dyn_cast_or_null<IntegerType>(getElementType(op.getDst()));
@@ -6524,7 +6562,8 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
         plan.nBurst, plan.lenBurst, reservedValue, plan.firstStrideBytes,
         plan.secondStrideBytes, rewriter.getStringAttr(destinationLayout));
     copy->setAttr("a5vm.element_type",
-                  rewriter.getStringAttr(stringifyElementTypeFragment(contract.elementType)));
+                  rewriter.getStringAttr(
+                      stringifyCopyTransferTypeFragment(contract.elementType)));
   };
 
   if (std::optional<int64_t> outerConst = getConstInt(plan.outerCount); outerConst && *outerConst == 1) {

@@ -112,6 +112,24 @@ struct FunctionABISpec {
 
 static Type getElementTypeFromVectorLike(Type type);
 
+static std::string getElementTypeFragment(Type type) {
+  if (type.isF16())
+    return "f16";
+  if (type.isBF16())
+    return "bf16";
+  if (type.isF32())
+    return "f32";
+  if (auto intType = dyn_cast<IntegerType>(type))
+    return (intType.isUnsigned() ? "u" : "s") + std::to_string(intType.getWidth());
+  return {};
+}
+
+static std::string getCopyElementFragment(Operation *op) {
+  if (auto attr = dyn_cast_or_null<StringAttr>(op->getAttr("a5vm.element_type")))
+    return attr.getValue().str();
+  return {};
+}
+
 static std::optional<ABIExpr> buildABIExprFromValue(Value value);
 
 static std::optional<ABIExpr> buildABIExprFromFoldResult(OpFoldResult ofr) {
@@ -557,45 +575,77 @@ static func::FuncOp getOrCreateExternalFunc(ModuleOp module, StringRef name,
   return func;
 }
 
-static FailureOr<StringRef> getConfirmedAbsPathCallee(Operation *op) {
+static FailureOr<std::string> getConfirmedCallee(Operation *op) {
   if (isa<a5vm::SetLoop2StrideOutToUbOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB");
+    return std::string("llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB");
   if (isa<a5vm::SetLoop1StrideOutToUbOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB");
+    return std::string("llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB");
   if (isa<a5vm::SetLoopSizeOutToUbOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP.SIZE.OUTTOUB");
+    return std::string("llvm.hivm.SET.LOOP.SIZE.OUTTOUB");
   if (isa<a5vm::SetLoop2StrideUbToOutOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP2.STRIDE.UBTOOUT");
+    return std::string("llvm.hivm.SET.LOOP2.STRIDE.UBTOOUT");
   if (isa<a5vm::SetLoop1StrideUbToOutOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP1.STRIDE.UBTOOUT");
+    return std::string("llvm.hivm.SET.LOOP1.STRIDE.UBTOOUT");
   if (isa<a5vm::SetLoopSizeUbToOutOp>(op))
-    return StringRef("llvm.hivm.SET.LOOP.SIZE.UBTOOUT");
-  if (isa<a5vm::CopyGmToUbufOp>(op))
-    return StringRef("llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.f32.DV");
+    return std::string("llvm.hivm.SET.LOOP.SIZE.UBTOOUT");
+  if (isa<a5vm::CopyGmToUbufOp>(op)) {
+    std::string elem = getCopyElementFragment(op);
+    if (elem.empty())
+      elem = "f32";
+    return "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2." + elem + ".DV";
+  }
   if (isa<a5vm::CopyUbufToGmOp>(op))
-    return StringRef("llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV");
+    return std::string("llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV");
   if (isa<a5vm::SetFlagOp>(op))
-    return StringRef("llvm.hivm.SET.FLAG.IMM");
+    return std::string("llvm.hivm.SET.FLAG.IMM");
   if (isa<a5vm::WaitFlagOp>(op))
-    return StringRef("llvm.hivm.WAIT.FLAG.IMM");
+    return std::string("llvm.hivm.WAIT.FLAG.IMM");
   if (isa<a5vm::PipeBarrierOp>(op))
-    return StringRef("llvm.hivm.BARRIER");
+    return std::string("llvm.hivm.BARRIER");
   if (isa<a5vm::PltB32Op>(op))
-    return StringRef("llvm.hivm.plt.b32.v300");
-  if (isa<a5vm::VldsOp>(op))
-    return StringRef("llvm.hivm.vldsx1");
+    return std::string("llvm.hivm.plt.b32.v300");
+  if (auto vlds = dyn_cast<a5vm::VldsOp>(op)) {
+    std::string vec = getElementTypeFragment(getElementTypeFromVectorLike(vlds.getResult().getType()));
+    auto vecType = dyn_cast<a5vm::VecType>(vlds.getResult().getType());
+    if (vec.empty() || !vecType)
+      return failure();
+    return "llvm.hivm.vldsx1.v" + std::to_string(vecType.getElementCount()) +
+           vec;
+  }
   if (isa<a5vm::VabsOp>(op))
-    return StringRef("llvm.hivm.vabs.v64f32.x");
-  if (isa<a5vm::VstsOp>(op))
-    return StringRef("llvm.hivm.vstsx1");
+    return std::string("llvm.hivm.vabs.v64f32.x");
+  if (auto vsts = dyn_cast<a5vm::VstsOp>(op)) {
+    std::string vec = getElementTypeFragment(getElementTypeFromVectorLike(vsts.getValue().getType()));
+    auto vecType = dyn_cast<a5vm::VecType>(vsts.getValue().getType());
+    if (vec.empty() || !vecType)
+      return failure();
+    return "llvm.hivm.vstsx1.v" + std::to_string(vecType.getElementCount()) +
+           vec;
+  }
+  if (auto vcmp = dyn_cast<a5vm::VcmpOp>(op)) {
+    std::string elem = getElementTypeFragment(getElementTypeFromVectorLike(vcmp.getSrc0().getType()));
+    if (elem.empty())
+      return failure();
+    return "llvm.hivm.vcmp." + vcmp.getCmpMode().str() + "." + elem + ".z";
+  }
+  if (auto vcmps = dyn_cast<a5vm::VcmpsOp>(op)) {
+    std::string elem = getElementTypeFragment(getElementTypeFromVectorLike(vcmps.getSrc().getType()));
+    if (elem.empty())
+      return failure();
+    return "llvm.hivm.vcmps." + vcmps.getCmpMode().str() + "." + elem + ".z";
+  }
+  if (isa<a5vm::PdintlvB8Op>(op))
+    return std::string("llvm.hivm.pdintlv.b8");
+  if (isa<a5vm::PstsOp>(op))
+    return std::string("llvm.hivm.psts.b8");
   return failure();
 }
 
 static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
                                    llvm::raw_ostream &diagOS) {
-  auto calleeName = getConfirmedAbsPathCallee(op);
+  auto calleeName = getConfirmedCallee(op);
   if (failed(calleeName)) {
-    diagOS << "A5VM LLVM emission failed: unsupported Abs-path op "
+    diagOS << "A5VM LLVM emission failed: unsupported op "
            << op->getName().getStringRef() << "\n";
     return failure();
   }
@@ -703,8 +753,19 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     callArgs.push_back(getI32Constant(builder, loc, *dist));
     callArgs.push_back(getI32Constant(builder, loc, 0));
     callArgs.push_back(op->getOperand(3));
+  } else if (isa<a5vm::VcmpOp, a5vm::VcmpsOp, a5vm::PdintlvB8Op>(op)) {
+    callArgs.append(op->operand_begin(), op->operand_end());
+  } else if (auto psts = dyn_cast<a5vm::PstsOp>(op)) {
+    Value offset = castIntegerLikeTo(op, psts.getOffset(), builder.getI32Type());
+    if (!offset)
+      return failure();
+    callArgs.push_back(psts.getValue());
+    callArgs.push_back(psts.getDestination());
+    callArgs.push_back(offset);
+    callArgs.push_back(getI32Constant(builder, loc, 1));
+    callArgs.push_back(getI32Constant(builder, loc, 0));
   } else {
-    diagOS << "A5VM LLVM emission failed: Abs path does not yet support "
+    diagOS << "A5VM LLVM emission failed: op lowering is not implemented for "
            << op->getName().getStringRef() << "\n";
     return failure();
   }
@@ -819,6 +880,36 @@ static void attachAIVectorScopeMetadata(llvm::Module &llvmModule,
     auto *loopID = llvm::MDNode::getDistinct(ctx, ops);
     loopID->replaceOperandWith(0, loopID);
     terminator->setMetadata(llvm::LLVMContext::MD_loop, loopID);
+  }
+}
+
+static void attachHIVMKernelAnnotations(llvm::Module &llvmModule) {
+  llvm::NamedMDNode *annotations = llvmModule.getOrInsertNamedMetadata(
+      "hivm.annotations");
+  llvm::LLVMContext &ctx = llvmModule.getContext();
+  llvm::Type *i32Ty = llvm::Type::getInt32Ty(ctx);
+  llvm::Constant *one = llvm::ConstantInt::get(i32Ty, 1);
+
+  auto addAnnotation = [&](llvm::Function &function, llvm::StringRef kind) {
+    llvm::Metadata *ops[] = {
+        llvm::ValueAsMetadata::get(&function),
+        llvm::MDString::get(ctx, kind),
+        llvm::ConstantAsMetadata::get(one)};
+    annotations->addOperand(llvm::MDNode::get(ctx, ops));
+  };
+
+  for (llvm::Function &function : llvmModule) {
+    if (function.isDeclaration())
+      continue;
+    if (function.getLinkage() != llvm::GlobalValue::ExternalLinkage)
+      continue;
+
+    llvm::StringRef name = function.getName();
+    if (name.contains(".extracted") || name.contains(".vector.thread"))
+      continue;
+
+    addAnnotation(function, "kernel");
+    addAnnotation(function, "kernel_with_simd");
   }
 }
 
@@ -1312,6 +1403,7 @@ buildLLVMModuleFromA5VM(ModuleOp module, llvm::LLVMContext &llvmContext,
   attachAIVectorScopeMetadata(*llvmModule, vecScopeCounts);
   if (failed(rewriteFunctionsToEmitCStyleABI(*llvmModule, abiSpecs, diagOS)))
     return nullptr;
+  attachHIVMKernelAnnotations(*llvmModule);
   llvmModule->setModuleIdentifier("ptoas.hivm.official");
   llvmModule->setSourceFileName("ptoas.hivm.official");
   return llvmModule;
