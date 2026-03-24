@@ -13,6 +13,20 @@ Use this skill when the task is specifically about:
 - resolving conflicts between generated repo IR and installed PTO headers
 - tracing `Cmp`, `Cmps`, predicate, pack, store, or typed vector behavior
 
+## Strong Rule
+
+If you are about to change repo code for an A5 op, stop and inspect the
+installed PTO implementation first. Treat the installed PTO library under
+`ASCEND_HOME_PATH` as the semantic source of truth.
+
+Only make a repo-local substitution after you have confirmed one of:
+- the installed PTO headers already express that replacement relationship
+- the frontend/compiler intrinsic contract proves two forms are equivalent at
+  the intrinsic layer
+
+Do not guess behavior from repo-local lowering, emitter code, or from what
+"seems plausible" for an intrinsic sequence.
+
 Do not start from repo-local lowering when the question is about real A5
 behavior. The installed PTO implementation under `ASCEND_HOME_PATH` is the
 first source of truth.

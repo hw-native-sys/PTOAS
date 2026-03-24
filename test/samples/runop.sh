@@ -217,10 +217,6 @@ process_one_dir() {
           echo -e "${A}(${base}.py)\tSKIP\tmatrix-multiply family is out of current A5VM scope"
           continue
           ;;
-        rowexpanddiv|rowexpandmul|rowexpandsub)
-          echo -e "${A}(${base}.py)\tSKIP\trequires PTO A5-compatible expand operand shape"
-          continue
-          ;;
       esac
     fi
 
@@ -733,10 +729,6 @@ PY
         case "$base" in
           matmul|tmatmulk_autosync|tmatmulk_autosync_a5|matMul|tmatmulk|Matmul_transpose|gemv|gemvacc|gemvbias|paged_attention_example_kernel_pv_matmul|paged_attention_example_kernel_qk_matmul)
             echo -e "${A}(${base}.pto)\tSKIP\tmatrix-multiply family is out of current A5VM scope"
-            continue
-            ;;
-          rowexpanddiv|rowexpandmul|rowexpandsub)
-            echo -e "${A}(${base}.pto)\tSKIP\trequires PTO A5-compatible expand operand shape"
             continue
             ;;
         esac

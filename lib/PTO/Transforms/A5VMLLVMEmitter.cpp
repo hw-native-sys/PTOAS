@@ -127,6 +127,40 @@ static std::string getElementTypeFragment(Type type) {
   return {};
 }
 
+static std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
+  if (roundMode == "ROUND_R")
+    return 1; // CAST_RINT
+  if (roundMode == "ROUND_A")
+    return 2; // CAST_ROUND
+  if (roundMode == "ROUND_F")
+    return 3; // CAST_FLOOR
+  if (roundMode == "ROUND_C")
+    return 4; // CAST_CEIL
+  if (roundMode == "ROUND_Z")
+    return 5; // CAST_TRUNC
+  if (roundMode == "ROUND_O")
+    return 6; // CAST_ODD
+  return std::nullopt;
+}
+
+static Type getSignlessIntegerTypeWithSameWidth(Type type, Builder &builder) {
+  if (auto intType = dyn_cast<IntegerType>(type))
+    return builder.getIntegerType(intType.getWidth());
+  if (auto floatType = dyn_cast<FloatType>(type))
+    return builder.getIntegerType(floatType.getWidth());
+  return {};
+}
+
+static std::string getVbrScalarFragment(Type type) {
+  if (type.isF16() || type.isBF16())
+    return "u16";
+  if (type.isF32())
+    return "u32";
+  if (auto intType = dyn_cast<IntegerType>(type))
+    return (intType.isUnsigned() ? "u" : "s") + std::to_string(intType.getWidth());
+  return {};
+}
+
 static std::string getCopyElementFragment(Operation *op) {
   if (auto attr = dyn_cast_or_null<StringAttr>(op->getAttr("a5vm.element_type")))
     return attr.getValue().str();
@@ -371,7 +405,7 @@ static Type convertA5VMType(Type type, Builder &builder) {
   if (isa<a5vm::MaskType>(type))
     return VectorType::get({256}, builder.getI1Type());
   if (isa<a5vm::AlignType>(type))
-    return builder.getI64Type();
+    return VectorType::get({32}, builder.getIntegerType(8));
   return type;
 }
 
@@ -683,6 +717,10 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
     return std::string("llvm.hivm.BARRIER");
   if (isa<a5vm::PltB32Op>(op))
     return std::string("llvm.hivm.plt.b32.v300");
+  if (isa<a5vm::VldasOp>(op))
+    return std::string("llvm.hivm.vldas");
+  if (isa<a5vm::VldusOp>(op))
+    return std::string("llvm.hivm.vldus");
   if (auto vlds = dyn_cast<a5vm::VldsOp>(op)) {
     std::string vec = getElementTypeFragment(getElementTypeFromVectorLike(vlds.getResult().getType()));
     auto lanes = getElementCountFromVectorLike(vlds.getResult().getType());
@@ -702,14 +740,21 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
     return "llvm.hivm.vexp.v" + std::to_string(*lanes) + vec + ".x";
   }
   if (auto vdup = dyn_cast<a5vm::VdupOp>(op)) {
-    if (isa<VectorType, a5vm::VecType>(vdup.getInput().getType()))
-      return failure();
+    Type inputType = vdup.getInput().getType();
     std::string vec =
         getElementTypeFragment(getElementTypeFromVectorLike(vdup.getResult().getType()));
     auto lanes = getElementCountFromVectorLike(vdup.getResult().getType());
     if (vec.empty() || !lanes)
       return failure();
+    if (isa<VectorType, a5vm::VecType>(inputType))
+      return "llvm.hivm.vdup.v" + std::to_string(*lanes) + vec + ".z";
     return "llvm.hivm.vdups.v" + std::to_string(*lanes) + vec + ".z";
+  }
+  if (auto vbr = dyn_cast<a5vm::VbrOp>(op)) {
+    std::string scalar = getVbrScalarFragment(vbr.getValue().getType());
+    if (scalar.empty())
+      return failure();
+    return "llvm.hivm.vbr." + scalar + ".v300";
   }
   if (auto binary = dyn_cast<a5vm::VaddOp>(op)) {
     std::string vec =
@@ -735,6 +780,22 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
       return failure();
     return "llvm.hivm.vmul.v" + std::to_string(*lanes) + vec + ".x";
   }
+  if (auto binary = dyn_cast<a5vm::VmulsOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(binary.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(binary.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vmuls.v" + std::to_string(*lanes) + vec + ".x";
+  }
+  if (auto binary = dyn_cast<a5vm::VdivOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(binary.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(binary.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vdiv.v" + std::to_string(*lanes) + vec + ".x";
+  }
   if (auto binary = dyn_cast<a5vm::VmaxOp>(op)) {
     std::string vec =
         getElementTypeFragment(getElementTypeFromVectorLike(binary.getResult().getType()));
@@ -742,6 +803,38 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
     if (vec.empty() || !lanes)
       return failure();
     return "llvm.hivm.vmax.v" + std::to_string(*lanes) + vec + ".x";
+  }
+  if (auto unary = dyn_cast<a5vm::VcaddOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(unary.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(unary.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vcadd.v" + std::to_string(*lanes) + vec + ".x";
+  }
+  if (auto unary = dyn_cast<a5vm::VcmaxOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(unary.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(unary.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vcmax.v" + std::to_string(*lanes) + vec + ".x";
+  }
+  if (auto unary = dyn_cast<a5vm::VcminOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(unary.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(unary.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vcmin.v" + std::to_string(*lanes) + vec + ".x";
+  }
+  if (auto vtrc = dyn_cast<a5vm::VtrcOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(vtrc.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(vtrc.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vtrc." + vec + ".x";
   }
   if (auto vsts = dyn_cast<a5vm::VstsOp>(op)) {
     std::string vec = getElementTypeFragment(getElementTypeFromVectorLike(vsts.getValue().getType()));
@@ -781,6 +874,40 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     if (failed(mask))
       return failure();
     builder.replaceOp(op, *mask);
+    return success();
+  }
+
+  if (auto vbr = dyn_cast<a5vm::VbrOp>(op)) {
+    auto calleeName = getConfirmedCallee(op);
+    if (failed(calleeName)) {
+      diagOS << "A5VM LLVM emission failed: unsupported op "
+             << op->getName().getStringRef() << "\n";
+      return failure();
+    }
+
+    Type resultType = convertA5VMType(vbr.getResult().getType(), builder);
+    Type scalarType = vbr.getValue().getType();
+    Type intScalarType = getSignlessIntegerTypeWithSameWidth(scalarType, builder);
+    Type elementType = getElementTypeFromVectorLike(resultType);
+    auto laneCount = getElementCountFromVectorLike(resultType);
+    Type intElementType = getSignlessIntegerTypeWithSameWidth(elementType, builder);
+    if (!intScalarType || !intElementType || !laneCount) {
+      diagOS << "A5VM LLVM emission failed: could not materialize vbr integer carrier types\n";
+      return failure();
+    }
+
+    auto intVecType = VectorType::get({*laneCount}, cast<IntegerType>(intElementType));
+    Value scalar = vbr.getValue();
+    if (scalar.getType() != intScalarType)
+      scalar = builder.create<arith::BitcastOp>(loc, intScalarType, scalar);
+
+    auto funcType = builder.getFunctionType({intScalarType}, {intVecType});
+    auto callee = getOrCreateExternalFunc(module, *calleeName, funcType);
+    auto call = builder.create<func::CallOp>(loc, callee, ValueRange{scalar});
+    Value broadcast = call.getResult(0);
+    if (broadcast.getType() != resultType)
+      broadcast = builder.create<arith::BitcastOp>(loc, resultType, broadcast);
+    builder.replaceOp(op, broadcast);
     return success();
   }
 
@@ -854,6 +981,21 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     if (!laneCount)
       return failure();
     callArgs.push_back(laneCount);
+  } else if (auto vldas = dyn_cast<a5vm::VldasOp>(op)) {
+    Value offsetBytes = castIntegerLikeTo(op, vldas.getOffset(), builder.getI64Type());
+    if (!offsetBytes)
+      return failure();
+    callArgs.push_back(vldas.getSource());
+    callArgs.push_back(offsetBytes);
+  } else if (auto vldus = dyn_cast<a5vm::VldusOp>(op)) {
+    Type elementType = getElementTypeFromVectorLike(vldus.getResult().getType());
+    auto offsetBytes =
+        convertElementOffsetToBytes(op, vldus.getOffset(), elementType);
+    if (!elementType || failed(offsetBytes))
+      return failure();
+    callArgs.push_back(vldus.getAlign());
+    callArgs.push_back(vldus.getSource());
+    callArgs.push_back(*offsetBytes);
   } else if (auto vlds = dyn_cast<a5vm::VldsOp>(op)) {
     Type elementType = getElementTypeFromVectorLike(vlds.getResult().getType());
     auto offsetBytes = convertElementOffsetToBytes(
@@ -888,14 +1030,14 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     callArgs.push_back(input);
     callArgs.push_back(mask);
   } else if (auto vdup = dyn_cast<a5vm::VdupOp>(op)) {
-    if (isa<VectorType, a5vm::VecType>(vdup.getInput().getType())) {
-      diagOS << "A5VM LLVM emission failed: vector-input vdup lowering is not implemented for "
-             << op->getName().getStringRef() << "\n";
+    Type scalarType = getElementTypeFromVectorLike(vdup.getResult().getType());
+    bool vectorInput = isa<VectorType, a5vm::VecType>(vdup.getInput().getType());
+    if (!vectorInput && (!scalarType || vdup.getInput().getType() != scalarType)) {
+      diagOS << "A5VM LLVM emission failed: unexpected vdup operand types\n";
       return failure();
     }
-    Type scalarType = getElementTypeFromVectorLike(vdup.getResult().getType());
-    if (!scalarType || vdup.getInput().getType() != scalarType) {
-      diagOS << "A5VM LLVM emission failed: unexpected vdup operand types\n";
+    if (vectorInput && vdup.getInput().getType() != resultTypes.front()) {
+      diagOS << "A5VM LLVM emission failed: vector-input vdup requires matching result type\n";
       return failure();
     }
     auto mask = buildPltB32Mask(builder, module, loc, /*laneCount=*/64, diagOS);
@@ -904,7 +1046,7 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     callArgs.push_back(vdup.getInput());
     callArgs.push_back(*mask);
     callArgs.push_back(getI32Constant(builder, loc, 1));
-  } else if (isa<a5vm::VaddOp, a5vm::VsubOp, a5vm::VmulOp, a5vm::VmaxOp>(op)) {
+  } else if (isa<a5vm::VaddOp, a5vm::VsubOp, a5vm::VmulOp, a5vm::VdivOp, a5vm::VmaxOp>(op)) {
     callArgs.append(op->operand_begin(), op->operand_end());
     auto mask = inferBinaryOpMask(op, builder, loc);
     if (failed(mask)) {
@@ -912,6 +1054,41 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
              << op->getName().getStringRef() << "\n";
       return failure();
     }
+    callArgs.push_back(*mask);
+  } else if (auto vmuls = dyn_cast<a5vm::VmulsOp>(op)) {
+    callArgs.push_back(vmuls.getInput());
+    callArgs.push_back(vmuls.getScalar());
+    auto laneCount = getElementCountFromVectorLike(vmuls.getResult().getType());
+    if (!laneCount) {
+      diagOS << "A5VM LLVM emission failed: could not determine lane count for "
+             << op->getName().getStringRef() << "\n";
+      return failure();
+    }
+    auto mask = buildPltB32Mask(builder, module, loc, *laneCount, diagOS);
+    if (failed(mask))
+      return failure();
+    callArgs.push_back(*mask);
+  } else if (isa<a5vm::VcaddOp, a5vm::VcmaxOp, a5vm::VcminOp>(op)) {
+    callArgs.push_back(op->getOperand(0));
+    callArgs.push_back(op->getOperand(1));
+  } else if (auto vtrc = dyn_cast<a5vm::VtrcOp>(op)) {
+    auto roundMode = parseRoundModeImmediate(vtrc.getRoundMode());
+    if (!roundMode) {
+      diagOS << "A5VM LLVM emission failed: unsupported round mode "
+             << vtrc.getRoundMode() << "\n";
+      return failure();
+    }
+    auto laneCount = getElementCountFromVectorLike(vtrc.getResult().getType());
+    if (!laneCount) {
+      diagOS << "A5VM LLVM emission failed: could not determine lane count for "
+             << op->getName().getStringRef() << "\n";
+      return failure();
+    }
+    auto mask = buildPltB32Mask(builder, module, loc, *laneCount, diagOS);
+    if (failed(mask))
+      return failure();
+    callArgs.push_back(vtrc.getInput());
+    callArgs.push_back(getI32Constant(builder, loc, *roundMode));
     callArgs.push_back(*mask);
   } else if (auto vsts = dyn_cast<a5vm::VstsOp>(op)) {
     Type elementType = getElementTypeFromVectorLike(vsts.getValue().getType());

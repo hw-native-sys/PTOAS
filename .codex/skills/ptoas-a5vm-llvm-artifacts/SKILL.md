@@ -13,6 +13,16 @@ Use this skill when the task is specifically about:
 - assembling a device object, fat relocatable object, or shared kernel library from the LLVM path
 - helping with an "LLVM IR path build", "LLVM IR path compile", or "A5VM MLIR" request
 
+## Strong Rule
+
+If an LLVM-path code change is needed for an A5 op, first inspect the installed
+PTO implementation under `ASCEND_HOME_PATH` and treat it as the semantic
+baseline. Repo-local lowering and emitter code are not authoritative.
+
+Only accept an intrinsic-level replacement after confirming it from installed
+PTO headers or from real frontend-generated compiler artifacts such as
+`-save-temps` outputs. Do not invent intrinsic mappings from memory.
+
 This is not the primary entry point for:
 - generating `test/npu_validation` testcases
 - running on hardware, handling `aclrtSetDevice`, or deciding whether `sudo` is needed

@@ -25,6 +25,20 @@ Use C++17 and follow nearby MLIR/LLVM conventions. Match existing indentation: 2
 ## Testing Guidelines
 Start with the smallest relevant test, then expand coverage. For backend work, prefer `--pto-backend=a5vm --a5vm-print-ir` so you can inspect raw A5VM IR before textual emission. Keep sample expectations aligned with the active backend output. Mark intentionally unsupported cases as `SKIP` or `XFAIL` with a concrete reason.
 
+## A5 Semantic Source Of Truth
+When changing A5 lowering, LLVM emission, sample semantics, or validation
+oracles, inspect the installed PTO implementation under `ASCEND_HOME_PATH`
+first and treat it as the semantic baseline.
+
+Do not infer A5 behavior from repo-local lowering or emitter code when the
+installed PTO headers can answer it. Only allow a repo-local intrinsic
+replacement after confirming that the replacement relationship exists at the
+intrinsic/compiler-contract layer as well.
+
+If the installed PTO headers are not enough, trace the real frontend-produced
+artifacts with the current Bisheng toolchain, for example via testcase build
+flags plus `-v` and `-save-temps`, before changing behavior.
+
 ## Commit & Pull Request Guidelines
 Use short, imperative commit subjects, for example `Fix explicit StringAttr bool conversion`. Keep each commit scoped to one coherent change. PRs should describe the affected lowering path, list the exact validation commands run, call out samples newly passing or intentionally deferred, and include relevant IR or output snippets for backend-facing changes.
 
