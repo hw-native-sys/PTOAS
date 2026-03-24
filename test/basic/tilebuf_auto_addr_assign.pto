@@ -1,0 +1,23 @@
+// RUN: ptoas %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PM
+// RUN: ptoas %s | FileCheck %s --check-prefix=EMITC
+
+module {
+  func.func @tilebuf_auto_addr_assign() attributes {pto.entry} {
+    %buf = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%buf : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
+                                      v_row=32, v_col=32, blayout=row_major,
+                                      slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// PM: end PTO plan Mem!
+// PM: func.func @tilebuf_auto_addr_assign
+// PM-NOT: memref.alloc
+// PM: pto.pointer_cast(
+
+// EMITC-LABEL: tilebuf_auto_addr_assign
+// EMITC: TASSIGN(
+// EMITC: TPRINT(

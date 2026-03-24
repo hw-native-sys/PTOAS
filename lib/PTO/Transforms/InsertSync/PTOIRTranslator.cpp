@@ -252,8 +252,9 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
  
 LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op) {
   Value res = op.getResult();
-  auto memRefType = dyn_cast<MemRefType>(res.getType());
-  if (!memRefType) return failure();
+  auto tileType = dyn_cast<pto::TileBufType>(res.getType());
+  if (!tileType)
+    return failure();
  
   if (op.getAddrs().empty()) {
     return op.emitError("PointerCast must have at least one address operand");
@@ -261,15 +262,23 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
   Value rootSrc = op.getAddrs().front(); 
  
   uint64_t sizeInBytes = 0;
-  if (memRefType.hasStaticShape()) {
-    int64_t elemSize = memRefType.getElementType().getIntOrFloatBitWidth() / 8;
+  bool isStatic = true;
+  for (auto dim : tileType.getShape()) {
+    if (dim == ShapedType::kDynamic) {
+      isStatic = false;
+      break;
+    }
+  }
+  if (isStatic) {
+    int64_t elemSize = tileType.getElementType().getIntOrFloatBitWidth() / 8;
     int64_t numElements = 1;
-    for (auto dim : memRefType.getShape()) numElements *= dim;
+    for (auto dim : tileType.getShape())
+      numElements *= dim;
     sizeInBytes = numElements * elemSize;
   }
  
   pto::AddressSpace space = pto::AddressSpace::GM; 
-  if (auto attr = memRefType.getMemorySpace()) {
+  if (auto attr = tileType.getMemorySpace()) {
     if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(attr)) {
       space = ptoAttr.getAddressSpace();
     }

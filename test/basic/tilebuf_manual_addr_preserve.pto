@@ -1,0 +1,19 @@
+// RUN: ptoas --pto-level=level3 --pto-arch a5 %s | FileCheck %s
+
+module {
+  func.func @tilebuf_manual_addr_preserve() attributes {pto.entry} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %buf = pto.alloc_tile addr = %c4096_i64
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%buf : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
+                                      v_row=32, v_col=32, blayout=row_major,
+                                      slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: tilebuf_manual_addr_preserve
+// CHECK: 4096
+// CHECK: TASSIGN(
+// CHECK: TPRINT(

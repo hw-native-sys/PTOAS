@@ -271,6 +271,7 @@ static LogicalResult verifyManualReserveBufferMode(func::FuncOp funcOp) {
 
 } // namespace
 
+// Entry point that builds linear op order, alias map and lifetime intervals.
 void MemLivenessAnalysis::build() {
   Region &funcRegion = func_.getBody();
   Liveness live(func_);
@@ -281,15 +282,21 @@ void MemLivenessAnalysis::build() {
   //InitializeInplacePairList();
 }
 
+// True when planning mode is local on-chip memory allocation.
 bool MemLivenessAnalysis::isLocalMemPlan() const {
   return planMode == MemPlanMode::LOCAL_MEM_PLAN;
 }
 
+// True when planning mode is global-workspace allocation.
 bool MemLivenessAnalysis::isGlobalWorkSpaceMemPlan() const {
   return planMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN;
 }
 
 void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
+  // Traverse region operations and collect:
+  // 1) alias relation,
+  // 2) local-buffer definitions,
+  // 3) gen/kill events used by memory planning.
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
     // recursive control flow
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
@@ -302,17 +309,15 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
 
     // process operation
     auto curOpInfo = UpdateLinearOperation(op);
-    auto mayAliasOp = getOperationAliasInfo(op);
+    auto mayAliasOp = getBufferAliasInfo(op);
     if (mayAliasOp.has_value()) {
       auto aliasPair = mayAliasOp.value();
       UpdateBufferAlias(aliasPair.first, aliasPair.second);
-    } else if (auto bindOp = dyn_cast<pto::BindTileOp>(op)) {
-      // BindTile result is only an alias of the source buffer. Treat every use
-      // of the result as a use of the source in liveness analysis.
-      UpdateBufferAlias(bindOp.getResult(), bindOp.getSource());
-      return WalkResult::advance();
-    } else if (isLocalMemPlan() && dyn_cast<memref::AllocOp>(op)) {
-      if (failed(CheckLocalBufferAllocOp(op))) {
+    // Local-memory planning now accepts both legacy memref.alloc and
+    // tile-native pto.alloc_tile as defining points.
+    } else if (isLocalMemPlan() &&
+               (isa<memref::AllocOp, pto::AllocTileOp>(op))) {
+      if (failed(CheckLocalBufferDefOp(op))) {
         return WalkResult::interrupt();
       }
       UpdateOpBufferInfo(op, op->getResults());
@@ -532,15 +537,25 @@ SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(scf::ForOp forOp,
 //   buffer2MultiNum[markOp.getSrc()] = static_cast<uint64_t>(valAttr.getInt());
 // }
 
-LogicalResult
-MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
-  auto allocOp = dyn_cast<memref::AllocOp>(op);
-  assert(allocOp && "must be alloc op");
-  auto memorySpaceAttr = GetBufferSpaceAttr(allocOp.getResult());
+// Validates local buffer defining ops and rejects non-local address-space.
+LogicalResult MemLivenessAnalysis::CheckLocalBufferDefOp(Operation *op) const {
+  // Validate the defining op shape: this helper is intentionally limited to
+  // ops that create local buffers participating in PlanMemory.
+  Value defBuffer;
+  if (auto allocOp = dyn_cast<memref::AllocOp>(op)) {
+    defBuffer = allocOp.getResult();
+  } else if (auto allocTileOp = dyn_cast<pto::AllocTileOp>(op)) {
+    defBuffer = allocTileOp.getResult();
+  } else {
+    op->emitError("expects local buffer defining op");
+    return failure();
+  }
+
+  auto memorySpaceAttr = getPlanningBufferSpaceAttr(defBuffer);
   if (isLocalBuffer(memorySpaceAttr)) {
     return success();
   }
-  allocOp.getOperation()->emitError("Alloc buffer not at UB space! ");
+  op->emitError("Alloc buffer not at local memory space!");
   return failure();
 }
 
@@ -557,7 +572,7 @@ MemLivenessAnalysis::CheckIfUnknownOpTouchBuffer(Operation *op) const {
     // This scene can be ignored.
     return success();
   }
-  if (isOpTouchLocalBuffer(op)) {
+  if (isOpTouchPlannableLocalBuffer(op)) {
     op->emitError("PlanMemory Fail : Unrecognized type of Operation touches "
                   "local buffer!");
     return failure();
@@ -722,9 +737,10 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
   return true;
 }
 
+// Dispatches to local/global buffer-info builders based on memory scope.
 BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
                                                    Value operand) {
-  auto memorySpaceAttr = GetBufferSpaceAttr(operand);
+  auto memorySpaceAttr = getPlanningBufferSpaceAttr(operand);
   if (isLocalMemPlan() && isLocalBuffer(memorySpaceAttr)) {
     assert(memorySpaceAttr.has_value() && "buffer must has space!");
     return GetBufferInfo(op, operand,
@@ -740,21 +756,72 @@ BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
 
 BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
                                               pto::AddressSpace bufferScope) {
+  // Build normalized buffer metadata consumed by PlanMemory without coupling
+  // to a memref-only representation.
   BufferInfo bufferInfo;
   bufferInfo.operation = op;
   bufferInfo.bufferScope = bufferScope;
-  // get buffer size, now for static shape
+
+  // Prefer tile-native semantic extraction. This keeps PlanMemory input
+  // independent from a specific memref-only view chain.
+  TileBufferSemantics semantics;
+  if (succeeded(inferTileBufferSemantics(operand, semantics)) &&
+      semantics.constBits > 0) {
+    bufferInfo.rootBuffer = semantics.root;
+    bufferInfo.bufferScope = semantics.scope;
+    bufferInfo.bufferType = semantics.elementType;
+    bufferInfo.bufferShape = semantics.shape;
+    bufferInfo.bufferValidShape = semantics.validShape;
+    bufferInfo.tileConfig = semantics.config;
+    bufferInfo.viewKind = semantics.viewKind;
+    bufferInfo.constBits = semantics.constBits;
+    return bufferInfo;
+  }
+
+  // Fallback path: keep legacy sizing behavior for boundary cases where
+  // tile semantics are not fully recoverable in this phase.
   Value traceValue = tracebackMemRef(operand);
-  auto memRefType = cast<MemRefType>(traceValue.getType());
-  bufferInfo.bufferType = memRefType.getElementType();
-  std::optional<int64_t> totalStaticSize =
-      getStaticTotalSize(memRefType.getShape());
-  assert(totalStaticSize.has_value() &&
-         "Failed to obtain op buffer shape size!");
-  bufferInfo.constBits =
-      totalStaticSize.value() *
-      static_cast<int64_t>(memRefType.getElementTypeBitWidth());
-  return bufferInfo;
+  if (auto memRefType = dyn_cast<MemRefType>(traceValue.getType())) {
+    bufferInfo.rootBuffer = traceValue;
+    bufferInfo.bufferType = memRefType.getElementType();
+    bufferInfo.bufferShape.assign(memRefType.getShape().begin(),
+                                  memRefType.getShape().end());
+    bufferInfo.bufferValidShape = bufferInfo.bufferShape;
+    std::optional<int64_t> totalStaticSize =
+        getStaticTotalSize(memRefType.getShape());
+    assert(totalStaticSize.has_value() &&
+           "Failed to obtain op buffer shape size!");
+    bufferInfo.constBits =
+        totalStaticSize.value() *
+        static_cast<int64_t>(memRefType.getElementTypeBitWidth());
+    return bufferInfo;
+  }
+
+  if (auto tileType = dyn_cast<pto::TileBufType>(traceValue.getType())) {
+    bufferInfo.rootBuffer = traceValue;
+    bufferInfo.bufferType = tileType.getElementType();
+    bufferInfo.bufferShape.assign(tileType.getShape().begin(),
+                                  tileType.getShape().end());
+    bufferInfo.bufferValidShape.assign(tileType.getValidShape().begin(),
+                                       tileType.getValidShape().end());
+    bufferInfo.tileConfig = tileType.getConfigAttr();
+    std::optional<int64_t> totalStaticSize =
+        getStaticTotalSize(tileType.getShape());
+    assert(totalStaticSize.has_value() &&
+           "Failed to obtain tile buffer shape size!");
+    int64_t elemBits = 0;
+    if (auto intTy = dyn_cast<IntegerType>(bufferInfo.bufferType))
+      elemBits = intTy.getWidth();
+    else if (auto floatTy = dyn_cast<FloatType>(bufferInfo.bufferType))
+      elemBits = floatTy.getWidth();
+    else if (isa<IndexType>(bufferInfo.bufferType))
+      elemBits = 64;
+    assert(elemBits > 0 && "Unsupported element type for tile buffer sizing");
+    bufferInfo.constBits = totalStaticSize.value() * elemBits;
+    return bufferInfo;
+  }
+
+  llvm_unreachable("Failed to infer buffer info");
 }
 
 // void MemLivenessAnalysis::InitializeInplacePairList() {
@@ -2148,8 +2215,8 @@ private:
       RewritePatternSet &patterns,
       DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets) {
     if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
-      patterns.add<MemrefAllocaOpToPointerCastOpPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
+      patterns.add<AllocTileOpToPointerCastOpPattern>(patterns.getContext(),
+                                                      buffer2Offsets);
     }
     // } else {
     //   assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);

@@ -1,4 +1,4 @@
-//===- AllocToPointerCast.cpp - convert memref.AllocOp to pto.pointercastOp.//
+//===- AllocToPointerCast.cpp - convert alloc_tile to pto.pointer_cast. -------//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,7 +8,7 @@
 
 #include "AllocToPointerCast.h"
 #include "PTO/Transforms/Passes.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
@@ -22,29 +22,21 @@ using namespace mlir::pto;
 
 namespace {} // namespace
 
-LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
-    memref::AllocOp op, PatternRewriter &rewriter) const {
-  const auto &currentMemRefType = cast<BaseMemRefType>(op.getType());
+LogicalResult
+AllocTileOpToPointerCastOpPattern::matchAndRewrite(pto::AllocTileOp op,
+                                                   PatternRewriter &rewriter) const {
+  // Manual-address alloc_tile is already fully bound and must not be remapped.
+  if (op.getAddr())
+    return failure();
 
-  // Preserve tile config carried by the downstream bind_tile user. Losing this
-  // metadata here makes PointerCast lowering fall back to RowMajor defaults,
-  // which can generate illegal intermediate TRESHAPE sequences.
-  TileBufConfigAttr configAttr;
-  for (Operation *user : op.getResult().getUsers()) {
-    auto bind = dyn_cast<pto::BindTileOp>(user);
-    if (!bind || bind.getSource() != op.getResult())
-      continue;
-    if (!configAttr) {
-      configAttr = bind.getConfigAttr();
-      continue;
-    }
-    if (configAttr != bind.getConfigAttr()) {
-      op.emitWarning("alloc has multiple bind_tile users with different configs; "
-                     "using the first one");
-      break;
-    }
-  }
-  
+  auto tileType = dyn_cast<pto::TileBufType>(op.getResult().getType());
+  if (!tileType)
+    return failure();
+
+  // Keep config from the tile descriptor so lowering can generate the exact
+  // Tile<...> type token (layout/fractal/pad) without memref-side recovery.
+  TileBufConfigAttr configAttr = tileType.getConfigAttr();
+
   constexpr uint64_t kAlign = 4096;
   auto iter = buffer2Offsets.find(op.getResult());
 
@@ -55,30 +47,31 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
     offsets = iter->second;
 
   if (offsets.empty()) {
-    // Estimate buffer size (best-effort). Most PTO tile buffers are 32x32 and
-    // naturally align to 4096 bytes.
+    // Estimate tile size in bytes using the static tile descriptor.
     uint64_t bytes = kAlign;
-    if (auto memrefTy = dyn_cast<MemRefType>(currentMemRefType)) {
-      uint64_t elemBytes = 0;
-      Type elemTy = memrefTy.getElementType();
-      if (elemTy.isF16()) elemBytes = 2;
-      else if (elemTy.isF32()) elemBytes = 4;
-      else if (auto it = dyn_cast<IntegerType>(elemTy)) elemBytes = it.getWidth() / 8;
+    uint64_t elemBytes = 0;
+    Type elemTy = tileType.getElementType();
+    if (elemTy.isF16() || elemTy.isBF16())
+      elemBytes = 2;
+    else if (elemTy.isF32())
+      elemBytes = 4;
+    else if (auto it = dyn_cast<IntegerType>(elemTy))
+      elemBytes = it.getWidth() / 8;
 
-      if (elemBytes != 0) {
-        uint64_t numel = 1;
-        bool allStatic = true;
-        for (int64_t d : memrefTy.getShape()) {
-          if (d == ShapedType::kDynamic) {
-            allStatic = false;
-            break;
-          }
-          numel *= static_cast<uint64_t>(d);
+    if (elemBytes != 0) {
+      uint64_t numel = 1;
+      bool allStatic = true;
+      for (int64_t d : tileType.getShape()) {
+        if (d == ShapedType::kDynamic) {
+          allStatic = false;
+          break;
         }
-        if (allStatic && numel != 0)
-          bytes = numel * elemBytes;
+        numel *= static_cast<uint64_t>(d);
       }
+      if (allStatic && numel != 0)
+        bytes = numel * elemBytes;
     }
+
     uint64_t stride = ((bytes + kAlign - 1) / kAlign) * kAlign;
     uint64_t off = fallbackNextOffset;
     fallbackNextOffset += std::max<uint64_t>(stride, kAlign);
@@ -93,34 +86,34 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
     addrs.push_back(constantIntOffsetOp);
   }
 
-  // [修改 1] 从 ValueRange 中拆解出 row 和 col
-  // memref.alloc 的 getDynamicSizes() 返回的是变长列表。
-  // 既然我们只支持 2D Tile，且如果是动态 shape 通常两个维度都是动态的 (?x?)，
-  // 我们直接按顺序提取。
+  // Preserve valid-shape contract:
+  // - dynamic valid dims: forward alloc_tile operands
+  // - static valid dims: materialize constants from TileBufType
+  // This keeps semantics identical to alloc_tile across PlanMemory rewrite.
   Value vRow, vCol;
-  auto dynSizes = op.getDynamicSizes();
-  
-  if (dynSizes.size() >= 2) {
-      vRow = dynSizes[0];
-      vCol = dynSizes[1];
-  } else if (dynSizes.size() == 1) {
-      // 极其罕见的混合情况 (例如 32x?)，视具体需求处理，这里默认取第一个
-      // 或者根据维度索引判断是 row 还是 col，这里暂时从简
-      vCol = dynSizes[0]; 
+  vRow = op.getValidRow();
+  vCol = op.getValidCol();
+  auto validShape = tileType.getValidShape();
+  if (validShape.size() >= 2) {
+    auto indexType = rewriter.getIndexType();
+    Location loc = op.getLoc();
+    if (!vRow && validShape[0] >= 0) {
+      vRow = rewriter.create<arith::ConstantOp>(
+          loc, indexType, rewriter.getIndexAttr(validShape[0]));
+    }
+    if (!vCol && validShape[1] >= 0) {
+      vCol = rewriter.create<arith::ConstantOp>(
+          loc, indexType, rewriter.getIndexAttr(validShape[1]));
+    }
   }
 
-  // [修改 2] 调用新的 Builder 签名
-  // 1. ValueRange(addrs) -> 传递物理地址列表
-  // 2. vRow ? vRow : Value() -> 传递 Value 对象（如果为空则传空 Value）
-  // 3. TileBufConfigAttr() -> 传递空 Attribute 对象 (不能传 nullptr)
-  
+  // Build tile-native pointer_cast with assigned physical address.
   auto ptoPointerCastOp = rewriter.create<pto::PointerCastOp>(
-      op.getLoc(), 
-      currentMemRefType, 
+      op.getLoc(), tileType,
       ValueRange(addrs),      // addrs
       vRow ? vRow : Value(),  // valid_row
       vCol ? vCol : Value(),  // valid_col
-      configAttr              // preserve bind_tile config when available
+      configAttr              // config from tile descriptor
   );
 
   rewriter.replaceOp(op, ptoPointerCastOp->getResults());

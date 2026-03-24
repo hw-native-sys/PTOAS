@@ -13,6 +13,7 @@
 namespace mlir {
 namespace pto {
 
+// Returns the unique return op of a function when it exists.
 func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   func::ReturnOp returnOp;
   for (Block &b : funcOp.getBody()) {
@@ -25,7 +26,7 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   return returnOp;
 }
 
-// New helper function to get the updated BaseMemRefType
+// Returns a memref type identical to `type` except for memory-space.
 BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope) {
   if (auto memRefType = dyn_cast<MemRefType>(type)) {
@@ -38,6 +39,8 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
   return type;
 }
 
+// Updates an SSA memref value type with a target memory-space, keeping shape
+// and element type unchanged.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
   Type type = val.getType();
   if (!isa<BaseMemRefType>(type)) {
@@ -56,22 +59,21 @@ void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
   val.setType(newMemRefType);
 }
 
-
+// Resolve local memory space from memref SSA values.
 std::optional<AddressSpaceAttr> GetBufferSpaceAttr(Value operand) {
-  if (!llvm::isa<MemRefType>(operand.getType())) {
+  if (auto memRefType = dyn_cast<MemRefType>(operand.getType())) {
+    auto memorySpace = memRefType.getMemorySpace();
+    if (!memorySpace)
+      return std::nullopt;
+    if (auto memorySpaceAttr = dyn_cast<AddressSpaceAttr>(memorySpace))
+      return memorySpaceAttr;
     return std::nullopt;
   }
-  auto memRefType = cast<MemRefType>(operand.getType());
-  auto memorySpace = memRefType.getMemorySpace();
-  if (!memorySpace)
-    return std::nullopt;
-  auto memorySpaceAttr = dyn_cast<AddressSpaceAttr>(memorySpace);
-  if (!memorySpaceAttr) {
-    return std::nullopt;
-  }
-  return memorySpaceAttr;
+
+  return std::nullopt;
 }
 
+// Return (alias_result, source) for generic view/alias ops.
 std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
   if (auto subViewOp = dyn_cast<memref::SubViewOp>(op)) {
     return std::make_pair(subViewOp.getResult(), subViewOp.getViewSource());
@@ -100,16 +102,12 @@ std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
     return std::make_pair(toMemrefOp.getResult(), toMemrefOp.getOperand());
   } else if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(op)) {
     return std::make_pair(toTensorOp.getResult(), toTensorOp.getOperand());
-  } else if (auto toMemrefOp = dyn_cast<bufferization::ToMemrefOp>(op)) {
-    return std::make_pair(toMemrefOp.getResult(), toMemrefOp.getOperand());
   }
-//   } else if (auto bitCastOp = dyn_cast<pto::BitcastOp>(op)) {
-//     return std::make_pair(bitCastOp.getResult(), bitCastOp.getSrc());
-//   }
   return std::nullopt;
 }
 
-Value tracebackImpl(Value memrefVal) {
+// Single-step traceback through alias/view-like constructs.
+static Value tracebackImpl(Value memrefVal) {
   // case 1: v is the iter_arg of a scf.for
   if (auto arg = dyn_cast<BlockArgument>(memrefVal)) {
     if (auto forOp =
@@ -126,6 +124,13 @@ Value tracebackImpl(Value memrefVal) {
   if (!def) {
     // failed to trace back
     return result;
+  }
+
+  if (auto aliasPair = getOperationAliasInfo(def)) {
+    auto [aliasValue, sourceValue] = *aliasPair;
+    if (aliasValue == memrefVal) {
+      return sourceValue;
+    }
   }
 
   // case 2: v is the result of cast-like ops
@@ -155,8 +160,6 @@ Value tracebackImpl(Value memrefVal) {
   } else if (auto op = dyn_cast<scf::ForOp>(def)) {
     // trace back memref.alloc support scf.for
     result = op.getInitArgs()[cast<OpResult>(memrefVal).getResultNumber()];
-  } else if (auto op = dyn_cast<pto::BindTileOp>(def)) {
-    result = op.getSource();
   }
 
   if (result) {
@@ -175,16 +178,19 @@ Value tracebackImpl(Value memrefVal) {
   return result;
 }
 
+// Checks whether an operation is a heap/stack memref allocation.
 bool isAllocLikeOp(Operation *op) {
   if (!op)
     return false;
   return isa<memref::AllocOp>(op) || isa<memref::AllocaOp>(op);
 }
 
+// Convenience overload for value-based alloc-like checks.
 bool isAllocLikeOp(Value val) {
   return isAllocLikeOp(val.getDefiningOp());
 }
 
+// Computes total static element count for a ranked shape.
 std::optional<int64_t> getStaticTotalSize(const ArrayRef<int64_t> &shapes) {
   int64_t totalSize = 1;
   for (const auto &shape : shapes) {
@@ -196,6 +202,7 @@ std::optional<int64_t> getStaticTotalSize(const ArrayRef<int64_t> &shapes) {
   return totalSize;
 }
 
+// Aligns `lhs` upward to the nearest multiple of `rhs`.
 uint64_t AlignUp(uint64_t lhs, uint64_t rhs) {
   assert(rhs != 0);
   if (lhs % rhs != 0) {
@@ -204,6 +211,7 @@ uint64_t AlignUp(uint64_t lhs, uint64_t rhs) {
   return lhs;
 }
 
+// Traces memref values through view/cast/for chains until alloc-like root.
 Value tracebackMemRef(Value memrefVal) {
   int loopBound = 256;
   while (memrefVal && !isAllocLikeOp(memrefVal)) {
@@ -225,6 +233,7 @@ Value tracebackMemRef(Value memrefVal) {
   return memrefVal;
 }
 
+// Traces a memref to `memref.alloc` when the root is alloc-like.
 std::optional<memref::AllocOp> tracebackMemRefToAlloc(Value memrefVal) {
   auto tracedValue = tracebackMemRef(memrefVal);
   return isAllocLikeOp(tracedValue)
@@ -237,6 +246,7 @@ bool isFromFunctionArg(mlir::Value v) {
   return tracebackMemRef(v).getDefiningOp() == nullptr;
 }
 
+// Returns true when an address-space belongs to local on-chip memories.
 bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (!memorySpaceAttr.has_value()) {
     return false;
@@ -251,6 +261,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");
 }
 
+// Collects all SSA buffers that an op reads/writes/produces.
 SmallVector<Value> getOpTouchBuffer(Operation *op) {
   SmallVector<Value> touchBuffer;
   touchBuffer.insert(touchBuffer.end(), op->getResults().begin(),
@@ -261,6 +272,7 @@ SmallVector<Value> getOpTouchBuffer(Operation *op) {
   return touchBuffer;
 }
 
+// True when any touched SSA value resolves to local memory space.
 bool isOpTouchLocalBuffer(Operation *op) {
   auto touchBuffer = getOpTouchBuffer(op);
   for (Value buffer : touchBuffer) {
@@ -272,6 +284,7 @@ bool isOpTouchLocalBuffer(Operation *op) {
   return false;
 }
 
+// Returns the outermost module op that contains `op`.
 ModuleOp getTopLevelModuleOp(Operation *op) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   while (moduleOp && moduleOp->getParentOp()) {
@@ -290,6 +303,7 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
   return std::nullopt;
 }
 
+// Finds the nearest loop owner for a value, accounting for yielded results.
 LoopLikeOpInterface getParentLoop(Value val) {
   assert(val.getDefiningOp() && "val should have defining op.");
 

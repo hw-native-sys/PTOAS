@@ -1007,7 +1007,7 @@ def TMovOp  : PTO_TOp<"tmov", [
 //===----------------------------------------------------------------------===//
 
 def PointerCastOp : PTO_Op<"pointer_cast", [AttrSizedOperandSegments, Pure]> {
-  let summary = "Casts an integer address to a MemRef with optional valid dims";
+  let summary = "Binds an integer address to a tile buffer descriptor";
   
   // 参数定义 (保持 Optional)
   let arguments = (ins 
@@ -1017,7 +1017,7 @@ def PointerCastOp : PTO_Op<"pointer_cast", [AttrSizedOperandSegments, Pure]> {
     OptionalAttr<TileBufConfigAttr>:$config
   );
   
-  let results = (outs Res<AnyMemRef, "", [MemAlloc]>:$result);
+  let results = (outs TileBufType:$result);
 
   // Assembly Format (去掉了 [])
   let assemblyFormat = [{

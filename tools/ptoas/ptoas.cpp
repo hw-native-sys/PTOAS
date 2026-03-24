@@ -880,7 +880,8 @@ int main(int argc, char **argv) {
   
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
-  pm.addPass(pto::createPTOViewToMemrefPass());
+  // Tile-native pipeline: keep tile_buf descriptors through PlanMemory/EmitC.
+  // The legacy memref bridge pass is intentionally disabled here.
   // bufferizationPipeline(pm);
   //pm.addPass(createInferPTOMemScopePass());
 

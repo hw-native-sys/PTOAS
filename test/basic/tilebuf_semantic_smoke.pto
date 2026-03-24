@@ -1,0 +1,27 @@
+// RUN: ptoas %s 2>&1 1>/dev/null | FileCheck %s
+
+module {
+  func.func @tilebuf_semantic_smoke(%arg0: memref<32x32xf16, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+
+    %buf = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %sub = pto.subset %buf[%c0, %c0] sizes [16, 32]
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%arg0 : memref<32x32xf16, #pto.address_space<gm>>)
+             outs(%buf : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                                       blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tprint ins(%sub : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32,
+                                     blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: end PTO plan Mem!
+// CHECK: func.func @tilebuf_semantic_smoke
+// CHECK-NOT: PlanMemory Fail : Unrecognized type of Operation touches local buffer!
+// CHECK-NOT: memref.alloc
+// CHECK: pto.pointer_cast(

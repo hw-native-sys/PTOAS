@@ -10,6 +10,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "OptMemPlanForPipeline.h"
+#include "TileBufferSemantics.h"
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Analysis/Liveness.h"
@@ -65,12 +66,22 @@ constexpr const int SPEC_LEVEL_2 = 2;
 struct BufferInfo {
   /// Alloc operation of buffer.
   Operation *operation{nullptr};
+  /// Root storage value traced from alias/view chains.
+  Value rootBuffer;
   /// Space corresponding to buffer.
   pto::AddressSpace bufferScope;
   /// The size required for the buffer.
   int64_t constBits{0};
   /// The type of element in the buffer.
   Type bufferType;
+  /// Logical shape used for memory planning/debug.
+  SmallVector<int64_t, 4> bufferShape;
+  /// Logical valid shape if tile metadata is available.
+  SmallVector<int64_t, 4> bufferValidShape;
+  /// Tile config when the buffer comes from tile semantics.
+  TileBufConfigAttr tileConfig;
+  /// View-like kind of the queried buffer.
+  TileViewKind viewKind{TileViewKind::Unknown};
   /// Alias buffer does not participate in inplace.
   /// e.g :
   ///  alloc A
@@ -355,8 +366,9 @@ private:
   /// Update store op information.
   void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
 
-  /// Check if it is local buffer with memory space
-  LogicalResult CheckLocalBufferAllocOp(Operation *op) const;
+  /// Check whether a local-buffer defining op (memref.alloc / pto.alloc_tile)
+  /// is placed in a supported local address space.
+  LogicalResult CheckLocalBufferDefOp(Operation *op) const;
 
   /// kill buffer handle.
   void OpKillHandle(OpInfo *opInfo, Liveness live, Block *block);

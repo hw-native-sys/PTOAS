@@ -7,6 +7,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOViewToMemref.cpp
   PTOToEmitC.cpp
   Utils.cpp
+  TileBufferSemantics.cpp
   OptMemPlanForPipeline.cpp
   AllocToPointerCast.cpp
   InferPTOMemScope.cpp

@@ -515,16 +515,25 @@ process_one_dir() {
     fi
 
     # Regression guard for Issue #207:
-    # SSA `pto.treshape` (lowered into `pto.bind_tile`) must lower to a single
-    # `TRESHAPE(dst, src)` instead of an invalid Tile-to-pointer cast sequence.
+    # SSA view-like ops must preserve tile alias semantics in EmitC. Depending on
+    # the lowering path, this may appear as `TRESHAPE(dst, src)` or as
+    # pointer-cast-style sibling tile rebinding (`TASSIGN`).
     if [[ "$base" == "reshape" ]]; then
-      if ! grep -Fq "TRESHAPE(" "$cpp"; then
-        echo -e "${A}(${base}.py)	FAIL	missing TRESHAPE() lowering for SSA treshape"
+      if ! grep -Fq "TRESHAPE(" "$cpp" && ! grep -Fq "TASSIGN(" "$cpp"; then
+        echo -e "${A}(${base}.py)	FAIL	missing alias-preserving lowering (TRESHAPE/TASSIGN) for SSA treshape"
         overall=1
         continue
       fi
       if grep -Eq "= \(__ubuf__ [^)]+\*\) v[0-9]+;" "$cpp"; then
         echo -e "${A}(${base}.py)	FAIL	found invalid Tile-to-__ubuf__ pointer cast (issue #207)"
+        overall=1
+        continue
+      fi
+    fi
+
+    if [[ "$base" == "tilebuf_alias_chain" ]]; then
+      if ! grep -Fq "TASSIGN(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TASSIGN() lowering in alias chain"
         overall=1
         continue
       fi
@@ -548,6 +557,19 @@ process_one_dir() {
       fi
       if ! grep -Eq "(PTOAS__TILE_DATA|\.data\(\))" "$cpp"; then
         echo -e "${A}(${base}.py)	FAIL	missing tile-address alias lowering for pto.bitcast"
+        overall=1
+        continue
+      fi
+    fi
+
+    if [[ "$base" == "tilebuf_planmemory_auto_addr" ]]; then
+      if ! grep -Fq "TASSIGN(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TASSIGN() lowering for auto-address tilebuf"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "TPRINT(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TPRINT() lowering for auto-address tilebuf"
         overall=1
         continue
       fi

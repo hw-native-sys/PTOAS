@@ -1,4 +1,4 @@
-//===- AllocToPointerCast.h --Convert memref.AllocOp to pto.pointercastOp-===//
+//===- AllocToPointerCast.h --Convert pto.alloc_tile to pto.pointer_cast ----===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,15 +8,14 @@
 #define LLVM_PROJECT_ALLOCTOPOINTERCAST_H
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/SmallSet.h"
 
 namespace mlir {
 namespace pto {
-class MemrefAllocaOpToPointerCastOpPattern
-    : public OpRewritePattern<memref::AllocOp> {
+class AllocTileOpToPointerCastOpPattern
+    : public OpRewritePattern<pto::AllocTileOp> {
 public:
-  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
+  using OpRewritePattern<pto::AllocTileOp>::OpRewritePattern;
 
   /// map from buffer to its allocated addresses
   /// note: the buffer which does multibuffer n optimization will be allocated n
@@ -24,10 +23,10 @@ public:
   DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
   mutable uint64_t fallbackNextOffset = 0;
 
-  explicit MemrefAllocaOpToPointerCastOpPattern(
+  explicit AllocTileOpToPointerCastOpPattern(
       MLIRContext *context,
       DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets)
-      : OpRewritePattern<memref::AllocOp>(context),
+      : OpRewritePattern<pto::AllocTileOp>(context),
         buffer2Offsets(std::move(buffer2Offsets)) {
     // Seed fallback offsets above any known planned offsets to reduce collisions.
     constexpr uint64_t kAlign = 4096;
@@ -38,7 +37,7 @@ public:
     }
     fallbackNextOffset = ((maxOff + kAlign - 1) / kAlign) * kAlign;
   }
-  LogicalResult matchAndRewrite(memref::AllocOp op,
+  LogicalResult matchAndRewrite(pto::AllocTileOp op,
                                 PatternRewriter &rewriter) const final;
 };
 
