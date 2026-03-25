@@ -143,10 +143,10 @@ set_loop1_stride_ubtoout(gm_dst_stride << 21 | ub_src_stride);
 
 - **syntax:**
 ```mlir
-pto.copy_gm_to_ubuf %source, %dest, %valid_rows, %valid_cols, %sid, %n_burst, %len_burst,
-    %left_padding, %right_padding, %l2_cache_ctl, %gm_stride, %ub_stride
+pto.copy_gm_to_ubuf %gm_src, %ub_dst, %sid, %n_burst, %len_burst,
+    %left_padding, %right_padding, %l2_cache_ctl, %gm_src_stride, %ub_dst_stride
     {layout = "LAYOUT", data_select_bit = true|false, ub_pad = true|false}
-    : !llvm.ptr<1>, !llvm.ptr<6>, i64 x10
+    : !llvm.ptr<1>, !llvm.ptr<6>, i64 x8
 ```
 - **CCE:** `__builtin_cce_copy_gm_to_ubuf_align_v2`
 - **semantics:** DMA transfer from Global Memory (AS=1) to Unified Buffer (AS=6).
@@ -155,18 +155,16 @@ pto.copy_gm_to_ubuf %source, %dest, %valid_rows, %valid_cols, %sid, %n_burst, %l
 
 | Parameter | Description |
 |-----------|-------------|
-| `%source` | GM source pointer (`!llvm.ptr<1>`) |
-| `%dest` | UB destination pointer (`!llvm.ptr<6>`) |
-| `%valid_rows` | Number of valid rows |
-| `%valid_cols` | Number of valid columns (bytes) |
+| `%gm_src` | GM source pointer (`!llvm.ptr<1>`) |
+| `%ub_dst` | UB destination pointer (`!llvm.ptr<6>`, 32B-aligned) |
 | `%sid` | Stream ID (usually 0) |
 | `%n_burst` | Number of burst rows (innermost loop count) |
 | `%len_burst` | Contiguous bytes transferred per burst row |
 | `%left_padding` | Left padding count (bytes) |
 | `%right_padding` | Right padding count (bytes) |
-| `%l2_cache_ctl` | L2 cache control (usually 0) |
-| `%gm_stride` | GM stride between consecutive burst rows (bytes) |
-| `%ub_stride` | UB stride between consecutive burst rows (bytes) |
+| `%l2_cache_ctl` | L2 cache allocate control (TBD — controls whether DMA allocates in L2 cache) |
+| `%gm_src_stride` | GM source stride: start-to-start distance between consecutive burst rows (bytes) |
+| `%ub_dst_stride` | UB destination stride: start-to-start distance between consecutive burst rows (bytes, 32B-aligned) |
 
 **Attributes:**
 
@@ -182,28 +180,26 @@ pto.copy_gm_to_ubuf %source, %dest, %valid_rows, %valid_cols, %sid, %n_burst, %l
 
 - **syntax:**
 ```mlir
-pto.copy_ubuf_to_gm %source, %dest, %valid_rows, %valid_cols, %sid, %n_burst, %len_burst,
-    %reserved, %burst_dst_stride, %burst_src_stride
+pto.copy_ubuf_to_gm %ub_src, %gm_dst, %sid, %n_burst, %len_burst,
+    %reserved, %gm_dst_stride, %ub_src_stride
     {layout = "LAYOUT"}
-    : !llvm.ptr<6>, !llvm.ptr<1>, i64 x8
+    : !llvm.ptr<6>, !llvm.ptr<1>, i64 x6
 ```
 - **CCE:** `__builtin_cce_copy_ubuf_to_gm_align_v2`
-- **semantics:** DMA transfer from Unified Buffer (AS=6) to Global Memory (AS=1).
+- **semantics:** DMA transfer from Unified Buffer (AS=6) to Global Memory (AS=1). MTE3 reads only `len_burst` bytes from each UB row (de-padding).
 
 **Parameters:**
 
 | Parameter | Description |
 |-----------|-------------|
-| `%source` | UB source pointer (`!llvm.ptr<6>`) |
-| `%dest` | GM destination pointer (`!llvm.ptr<1>`) |
-| `%valid_rows` | Number of valid rows |
-| `%valid_cols` | Number of valid columns (bytes) |
+| `%ub_src` | UB source pointer (`!llvm.ptr<6>`, 32B-aligned) |
+| `%gm_dst` | GM destination pointer (`!llvm.ptr<1>`) |
 | `%sid` | Stream ID (usually 0) |
 | `%n_burst` | Number of burst rows |
 | `%len_burst` | Contiguous bytes transferred per burst row |
 | `%reserved` | Reserved field (set to 0) |
-| `%burst_dst_stride` | GM stride between consecutive burst rows (bytes) |
-| `%burst_src_stride` | UB stride between consecutive burst rows (bytes) |
+| `%gm_dst_stride` | GM destination stride: start-to-start distance between consecutive burst rows (bytes) |
+| `%ub_src_stride` | UB source stride: start-to-start distance between consecutive burst rows (bytes, 32B-aligned) |
 
 ---
 
@@ -333,12 +329,12 @@ for (int j = 0; j < loop2; j++) {                      // HW outer loop
         uint8_t *ub2 = ub1 + k * loop1_ub_stride;
 
         for (int r = 0; r < n_burst; r++) {             // burst engine
-            memcpy(ub2 + r * ub_stride,                 //   UB dest row
-                   gm2 + r * gm_stride,                 //   GM src row
+            memcpy(ub2 + r * ub_dst_stride,             //   UB dest row
+                   gm2 + r * gm_src_stride,             //   GM src row
                    len_burst);                           //   contiguous bytes
             if (data_select_bit)
-                memset(ub2 + r * ub_stride + len_burst, //   pad fill
-                       pad_val, ub_stride - len_burst);
+                memset(ub2 + r * ub_dst_stride + len_burst,
+                       pad_val, ub_dst_stride - len_burst);
         }
     }
 }
@@ -364,8 +360,8 @@ for (int j = 0; j < loop2; j++) {
         uint8_t *gm2 = gm1 + k * loop1_gm_stride;
 
         for (int r = 0; r < n_burst; r++) {
-            memcpy(gm2 + r * dst_stride,                //   GM dest row
-                   ub2 + r * src_stride,                 //   UB src row
+            memcpy(gm2 + r * gm_dst_stride,             //   GM dest row
+                   ub2 + r * ub_src_stride,              //   UB src row
                    len_burst);                           //   contiguous bytes
         }
     }
@@ -388,11 +384,11 @@ GM layout (1024 × 512 f16):
     ...
     +--[###TILE###]+.....................+  row R+63
 
-    |<----------- gm_stride = 1024B ----------->|
+    |<--------- gm_src_stride = 1024B --------->|
     |<-lenBurst=256B->|
 
-    lenBurst  = 128 × 2 = 256 bytes (128 f16 elements)
-    gm_stride = 512 × 2 = 1024 bytes (start-to-start, full GM row)
+    lenBurst       = 128 × 2 = 256 bytes (128 f16 elements)
+    gm_src_stride  = 512 × 2 = 1024 bytes (start-to-start, full GM row)
 
 UB layout (64 × 128 f16, 32B-aligned, contiguous):
 
@@ -401,7 +397,7 @@ UB layout (64 × 128 f16, 32B-aligned, contiguous):
     ...
     +--[###TILE###]--+  row 63
 
-    ub_stride = 256 bytes (= lenBurst, already 32B-aligned, no padding)
+    ub_dst_stride = 256 bytes (= lenBurst, already 32B-aligned, no padding)
 ```
 
 ```mlir
@@ -411,19 +407,17 @@ pto.set_loop1_stride_outtoub %c0_i64, %c0_i64 : i64, i64
 pto.set_loop2_stride_outtoub %c0_i64, %c0_i64 : i64, i64
 
 pto.copy_gm_to_ubuf %gm_ptr, %ub_ptr,
-    %c64_i64,      // valid_rows = 64
-    %c256_i64,     // valid_cols = 256 bytes
     %c0_i64,       // sid = 0
     %c64_i64,      // n_burst = 64 (64 rows)
     %c256_i64,     // len_burst = 256 bytes per row
     %c0_i64,       // left_padding = 0
     %c0_i64,       // right_padding = 0
     %c0_i64,       // l2_cache_ctl = 0
-    %c1024_i64,    // gm_stride = 1024 bytes (full matrix row)
-    %c256_i64      // ub_stride = 256 bytes (tile row)
+    %c1024_i64,    // gm_src_stride = 1024 bytes (full matrix row)
+    %c256_i64      // ub_dst_stride = 256 bytes (tile row)
     {layout = "nd", data_select_bit = false, ub_pad = false}
     : !llvm.ptr<1>, !llvm.ptr<6>, i64, i64, i64, i64, i64,
-      i64, i64, i64, i64, i64
+      i64, i64, i64
 ```
 
 ---
@@ -436,7 +430,7 @@ Load 100 valid columns from GM into a 128-wide UB tile (f16). The remaining 28 c
 GM (100 cols valid, contiguous):
 
     |<-lenBurst=200B->|
-    |<- gm_stride=200B (start-to-start) ->|
+    |<- gm_src_stride=200B (start-to-start) ->|
     +--[####DATA####]-+  row 0
     +--[####DATA####]-+  row 1
     ...
@@ -444,17 +438,17 @@ GM (100 cols valid, contiguous):
 
 UB (128 cols wide, 32B-aligned, padded):
 
-    |<----------- ub_stride = 256B (32B-aligned) ---------->|
+    |<--------- ub_dst_stride = 256B (32B-aligned) --------->|
     |<-lenBurst=200B->|<---- pad = 56B to 32B boundary ---->|
     +--[####DATA####]-+[0000000 PAD 000000000000000000000000]+  row 0
     +--[####DATA####]-+[0000000 PAD 000000000000000000000000]+  row 1
     ...
     +--[####DATA####]-+[0000000 PAD 000000000000000000000000]+  row 63
 
-    lenBurst  = 100 × 2 = 200 bytes
-    gm_stride = 200 bytes (start-to-start, contiguous in GM)
-    ub_stride = 128 × 2 = 256 bytes (32B-aligned tile width in UB)
-    pad       = 256 - 200 = 56 bytes (padded to 32B boundary with pad_val)
+    lenBurst       = 100 × 2 = 200 bytes
+    gm_src_stride  = 200 bytes (start-to-start, contiguous in GM)
+    ub_dst_stride  = 128 × 2 = 256 bytes (32B-aligned tile width in UB)
+    pad            = 256 - 200 = 56 bytes (padded to 32B boundary with pad_val)
 ```
 
 ```mlir
@@ -463,19 +457,17 @@ pto.set_loop1_stride_outtoub %c0_i64, %c0_i64 : i64, i64
 pto.set_loop2_stride_outtoub %c0_i64, %c0_i64 : i64, i64
 
 pto.copy_gm_to_ubuf %gm_ptr, %ub_ptr,
-    %c64_i64,      // valid_rows = 64
-    %c200_i64,     // valid_cols = 200 bytes
     %c0_i64,       // sid = 0
     %c64_i64,      // n_burst = 64
     %c200_i64,     // len_burst = 200 bytes
     %c0_i64,       // left_padding = 0
     %c0_i64,       // right_padding = 0
     %c0_i64,       // l2_cache_ctl = 0
-    %c200_i64,     // gm_stride = 200 bytes
-    %c256_i64      // ub_stride = 256 bytes
+    %c200_i64,     // gm_src_stride = 200 bytes
+    %c256_i64      // ub_dst_stride = 256 bytes (32B-aligned)
     {layout = "nd", data_select_bit = true, ub_pad = true}
     : !llvm.ptr<1>, !llvm.ptr<6>, i64, i64, i64, i64, i64,
-      i64, i64, i64, i64, i64
+      i64, i64, i64
 ```
 
 ---
@@ -487,24 +479,24 @@ Store a 64×128 tile (f16) from UB back to a 1024×512 GM matrix at an offset.
 ```
 UB (source, 32B-aligned, 64 × 128 f16):
 
-    |<- src_stride = 256B (32B-aligned) ->|
+    |<- ub_src_stride = 256B (32B-aligned) ->|
     |<- lenBurst = 256B ->|
     +--[#####TILE#####]---+  row 0
     +--[#####TILE#####]---+  row 1
     ...
     +--[#####TILE#####]---+  row 63
 
-    (no padding here — lenBurst == src_stride)
+    (no padding here — lenBurst == ub_src_stride)
 
 GM (dest, into 1024 × 512 matrix):
 
-    |<----------- dst_stride = 1024B (start-to-start) ----------->|
-    |<- lenBurst = 256B ->|                                       |
-    col 0          col 128                                col 512
-    +--[#####TILE#####]---+..............................+  row R
-    +--[#####TILE#####]---+..............................+  row R+1
+    |<----------- gm_dst_stride = 1024B (start-to-start) --------->|
+    |<- lenBurst = 256B ->|                                        |
+    col 0          col 128                                 col 512
+    +--[#####TILE#####]---+...............................+  row R
+    +--[#####TILE#####]---+...............................+  row R+1
     ...
-    +--[#####TILE#####]---+..............................+  row R+63
+    +--[#####TILE#####]---+...............................+  row R+63
 
     MTE3 reads lenBurst bytes from each 32B-aligned UB row,
     writes only lenBurst bytes per GM row (stride controls row spacing).
@@ -517,17 +509,14 @@ pto.set_loop1_stride_ubtoout %c0_i64, %c0_i64 : i64, i64
 pto.set_loop2_stride_ubtoout %c0_i64, %c0_i64 : i64, i64
 
 pto.copy_ubuf_to_gm %ub_ptr, %gm_ptr,
-    %c64_i64,      // valid_rows = 64
-    %c256_i64,     // valid_cols = 256 bytes
     %c0_i64,       // sid = 0
     %c64_i64,      // n_burst = 64
     %c256_i64,     // len_burst = 256 bytes
     %c0_i64,       // reserved = 0
-    %c1024_i64,    // burst_dst_stride = 1024 bytes (GM row)
-    %c256_i64      // burst_src_stride = 256 bytes (UB row)
+    %c1024_i64,    // gm_dst_stride = 1024 bytes (GM row)
+    %c256_i64      // ub_src_stride = 256 bytes (UB row)
     {layout = "nd"}
-    : !llvm.ptr<6>, !llvm.ptr<1>, i64, i64, i64, i64, i64,
-      i64, i64, i64
+    : !llvm.ptr<6>, !llvm.ptr<1>, i64, i64, i64, i64, i64, i64
 ```
 
 ---
@@ -556,17 +545,15 @@ pto.set_loop1_stride_outtoub %c2048_i64, %c2048_i64 : i64, i64
 pto.set_loop2_stride_outtoub %c0_i64, %c0_i64 : i64, i64
 
 pto.copy_gm_to_ubuf %gm_ptr, %ub_ptr,
-    %c8_i64,       // valid_rows = 8
-    %c256_i64,     // valid_cols = 256 bytes (128 × 2)
     %c0_i64,       // sid = 0
     %c8_i64,       // n_burst = 8 rows per batch
     %c256_i64,     // len_burst = 256 bytes per row
     %c0_i64, %c0_i64, %c0_i64,
-    %c256_i64,     // gm_stride = 256 (contiguous rows)
-    %c256_i64      // ub_stride = 256 (contiguous rows)
+    %c256_i64,     // gm_src_stride = 256 (contiguous rows)
+    %c256_i64      // ub_dst_stride = 256 (contiguous rows)
     {layout = "nd", data_select_bit = false, ub_pad = false}
     : !llvm.ptr<1>, !llvm.ptr<6>, i64, i64, i64, i64, i64,
-      i64, i64, i64, i64, i64
+      i64, i64, i64
 ```
 
 Execution trace:
