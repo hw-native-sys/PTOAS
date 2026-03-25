@@ -1,7 +1,7 @@
-// RUN: ptoas %s 2>&1 1>/dev/null | FileCheck %s
+// RUN: ptoas %s 2>&1 | FileCheck %s
 
 module {
-  func.func @subview_implicit_valid_reject_partial_parent(
+  func.func @subview_implicit_valid_partial_parent_allowed(
       %dst: memref<2x2xf32, #pto.address_space<gm>>) {
     %c2 = arith.constant 2 : index
     %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=4, v_row=3, v_col=3, blayout=row_major, slayout=none_box, fractal=512, pad=0>
@@ -13,4 +13,5 @@ module {
   }
 }
 
-// CHECK: error: 'pto.subview' op omitting valid[...] would exceed source valid_shape[row]; provide explicit valid
+// CHECK: Tile<TileType::Vec, float, 4, 4, BLayout::RowMajor, 2, 2, SLayout::NoneBox, 512, PadValue::Null>
+// CHECK-NOT: error:

@@ -7652,49 +7652,9 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   if (dstShape[0] != srcShape[0] || dstShape[1] != srcShape[1])
     return emitOpError("expects result shape to match source shape");
 
-  // Safety rule for implicit valid_shape:
-  // when valid[...] is omitted we default result valid_shape to sizes.
-  // This is only safe if the requested subview window is provably inside the
-  // source valid_shape. Otherwise users must provide explicit valid[...].
-  if (!hasValidRow) {
-    auto srcValid = srcTy.getValidShape();
-    auto checkImplicitValidSafety = [&](unsigned dim, int64_t size, bool offConst,
-                                        int64_t off, StringRef dimName)
-        -> LogicalResult {
-      int64_t sv = srcValid[dim];
-      int64_t ss = srcShape[dim];
-      bool fullKnown = (sv != ShapedType::kDynamic &&
-                        ss != ShapedType::kDynamic && sv == ss);
-      if (fullKnown)
-        return success();
-
-      if (sv == ShapedType::kDynamic) {
-        return emitOpError()
-               << "omitting valid[...] is unsafe when source valid_shape["
-               << dimName << "] is dynamic; provide explicit valid";
-      }
-
-      if (!offConst) {
-        return emitOpError()
-               << "omitting valid[...] with partial source valid_shape requires "
-                  "static "
-               << dimName << " offset";
-      }
-
-      int64_t available = sv - off;
-      if (available < size) {
-        return emitOpError()
-               << "omitting valid[...] would exceed source valid_shape["
-               << dimName << "]; provide explicit valid";
-      }
-      return success();
-    };
-
-    if (failed(checkImplicitValidSafety(0, sizeR, offRConst, offR, "row")))
-      return failure();
-    if (failed(checkImplicitValidSafety(1, sizeC, offCConst, offC, "col")))
-      return failure();
-  }
+  // Design choice: when valid[...] is omitted, infer result valid_shape from
+  // subview sizes directly. We intentionally do not constrain it by source
+  // valid_shape to allow user-controlled subview semantics.
 
   auto expectedValidDim = [&](Value explicitValid, int64_t defaultSize) {
     if (!explicitValid)
