@@ -2278,8 +2278,6 @@ LogicalResult buildRowReduceVecScope(StringRef family,
   Value dstRowStrideValue = rewriter.create<arith::ConstantIndexOp>(loc, dstRowStride);
   Value vectorWidthValue = rewriter.create<arith::ConstantIndexOp>(loc, vectorWidth);
   Value initScalar = rewriter.create<arith::ConstantOp>(loc, cast<TypedAttr>(initValue));
-  Value dstPredicate =
-      buildPredicateMaskForLaneCount(rewriter, loc, contract.elementType, c1);
 
   auto aivScopeLoop = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
   if (failed(attachLoopScopeMetadata(aivScopeLoop, contract.loopScope, rewriter)))
@@ -2287,29 +2285,30 @@ LogicalResult buildRowReduceVecScope(StringRef family,
 
   OpBuilder::InsertionGuard aivGuard(rewriter);
   rewriter.setInsertionPointToStart(aivScopeLoop.getBody());
-  auto rowLoop = rewriter.create<scf::ForOp>(loc, c0, rowsUpper, c1);
+  Value dstPredicate =
+      buildPredicateMaskForLaneCount(rewriter, loc, contract.elementType, c1);
+  auto rowLoop =
+      rewriter.create<scf::ForOp>(loc, c0, rowsUpper, c1, ValueRange{dstBuffer});
 
   OpBuilder::InsertionGuard rowGuard(rewriter);
   rewriter.setInsertionPointToStart(rowLoop.getBody());
   Value row = rowLoop.getInductionVar();
+  Value dstPtr = rowLoop.getRegionIterArgs().front();
   Value rowBase = rewriter.create<arith::MulIOp>(loc, row, srcRowStrideValue);
+  Value rowPtr = offsetBufferPointer(srcBuffer, contract.elementType, rowBase,
+                                     rewriter, loc);
   Value acc = rewriter.create<a5vm::VbrOp>(loc, vecType, initScalar);
-  Value validColsValue = rewriter.create<arith::ConstantIndexOp>(loc, contract.validCols);
+  Value remainingCols = rewriter.create<arith::ConstantIntOp>(
+      loc, contract.validCols, 32);
   for (int64_t repeatIndex = 0; repeatIndex < repeatTimes; ++repeatIndex) {
-    Value repeat =
-        rewriter.create<arith::ConstantIndexOp>(loc, repeatIndex);
-    Value repeatBase =
-        rewriter.create<arith::MulIOp>(loc, repeat, vectorWidthValue);
-    Value srcOffset =
-        rewriter.create<arith::AddIOp>(loc, rowBase, repeatBase);
-    Value remainingCols =
-        rewriter.create<arith::SubIOp>(loc, validColsValue, repeatBase);
-    Value srcPredicate = buildPredicateMaskForLaneCount(
-        rewriter, loc, contract.elementType, remainingCols);
-    Value srcVec =
-        rewriter.create<a5vm::VldsOp>(loc, vecType, srcBuffer, srcOffset,
-                                      StringAttr())
-            .getResult();
+    auto predicateState =
+        buildPredicateForLaneCount(rewriter, loc, contract.elementType, remainingCols);
+    Value srcPredicate = predicateState.mask;
+    auto srcLoad = rewriter.create<a5vm::VldsPostOp>(
+        loc, TypeRange{vecType, rowPtr.getType()}, rowPtr, vectorWidthValue,
+        rewriter.getStringAttr("NORM"));
+    Value srcVec = srcLoad.getResult();
+    rowPtr = srcLoad.getNextSource();
 
     Value reduced;
     if (family == "rowsum")
@@ -2333,11 +2332,13 @@ LogicalResult buildRowReduceVecScope(StringRef family,
       acc = rewriter.create<a5vm::VmaxOp>(loc, vecType, acc, reduced);
     else
       acc = rewriter.create<a5vm::VminOp>(loc, vecType, acc, reduced);
+    remainingCols = predicateState.nextScalar;
   }
 
-  Value dstOffset = rewriter.create<arith::MulIOp>(loc, row, dstRowStrideValue);
-  rewriter.create<a5vm::VstsOp>(loc, acc, dstBuffer, dstOffset, storeDist,
-                                dstPredicate);
+  auto store = rewriter.create<a5vm::VstsPostOp>(
+      loc, dstPtr.getType(), acc, dstPtr, dstRowStrideValue, storeDist,
+      dstPredicate);
+  rewriter.create<scf::YieldOp>(loc, store.getNextDestination());
   return success();
 }
 

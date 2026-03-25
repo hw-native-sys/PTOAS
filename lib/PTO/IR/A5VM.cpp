@@ -592,6 +592,37 @@ LogicalResult VldsOp::verify() {
   return success();
 }
 
+void VldsPostOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult VldsPostOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+
+  if (getNextSource().getType() != getSource().getType())
+    return emitOpError("requires next_source to match source type");
+
+  if (failed(verifyVecTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+
+  MemoryRole sourceRole = classifyMemoryRole(getSource().getType());
+  if (sourceRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+
+  if (getDistAttr()) {
+    StringRef dist = *getDist();
+    if (dist != "NORM" && dist != "BLK" && dist != "DINTLV_B32" &&
+        dist != "UNPK_B16")
+      return emitOpError(
+          "supports only NORM, BLK, DINTLV_B32, and UNPK_B16 distributions");
+  }
+
+  return success();
+}
+
 void VldasOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -1202,6 +1233,31 @@ LogicalResult VstsOp::verify() {
 
   if (!isBufferLike(getDestination().getType()))
     return emitOpError("requires a pointer-like destination");
+
+  MemoryRole destinationRole = classifyMemoryRole(getDestination().getType());
+  if (destinationRole == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
+
+  return success();
+}
+
+void VstsPostOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult VstsPostOp::verify() {
+  if (failed(verifyVecTypeLike(*this, getValue().getType(), "value type")))
+    return failure();
+  if (failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")))
+    return failure();
+
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  if (getNextDestination().getType() != getDestination().getType())
+    return emitOpError("requires next_destination to match destination type");
 
   MemoryRole destinationRole = classifyMemoryRole(getDestination().getType());
   if (destinationRole == MemoryRole::GM)

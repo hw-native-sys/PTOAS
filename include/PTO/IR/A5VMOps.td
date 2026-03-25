@@ -183,6 +183,27 @@ def A5VM_VldsOp : A5VM_Op<"vlds", [
   }];
 }
 
+def A5VM_VldsPostOp : A5VM_Op<"vlds_post", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    A5VM_BufferType:$source,
+    Index:$offset,
+    OptionalAttr<StrAttr>:$dist
+  );
+
+  let results = (outs
+    A5VM_VectorType:$result,
+    A5VM_BufferType:$next_source
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $offset `]` attr-dict `:` type($source) `->` type($result) `,` type($next_source)
+  }];
+}
+
 def A5VM_VldasOp : A5VM_Op<"vldas", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -871,6 +892,26 @@ def A5VM_VstsOp : A5VM_Op<"vsts", [
 
   let assemblyFormat = [{
     $value `,` $destination `[` $offset `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask)
+  }];
+}
+
+def A5VM_VstsPostOp : A5VM_Op<"vsts_post", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    A5VM_VectorType:$value,
+    A5VM_BufferType:$destination,
+    Index:$offset,
+    OptionalAttr<StrAttr>:$dist,
+    A5VM_MaskTypeConstraint:$mask
+  );
+
+  let results = (outs A5VM_BufferType:$next_destination);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask) `->` type($next_destination)
   }];
 }
 

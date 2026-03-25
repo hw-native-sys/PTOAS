@@ -152,10 +152,12 @@ static Type getSignlessIntegerTypeWithSameWidth(Type type, Builder &builder) {
 }
 
 static std::string getVbrScalarFragment(Type type) {
-  if (type.isF16() || type.isBF16())
-    return "u16";
+  if (type.isF16())
+    return "f16";
+  if (type.isBF16())
+    return "bf16";
   if (type.isF32())
-    return "u32";
+    return "f32";
   if (auto intType = dyn_cast<IntegerType>(type))
     return (intType.isUnsigned() ? "u" : "s") + std::to_string(intType.getWidth());
   return {};
@@ -534,10 +536,13 @@ static FailureOr<Value> inferBinaryOpMask(Operation *op, IRRewriter &builder,
                                           Location loc) {
   Value inferredMask;
   for (Operation *user : op->getResult(0).getUsers()) {
-    auto vsts = dyn_cast<a5vm::VstsOp>(user);
-    if (!vsts)
+    Value mask;
+    if (auto vsts = dyn_cast<a5vm::VstsOp>(user))
+      mask = vsts.getMask();
+    else if (auto vstsPost = dyn_cast<a5vm::VstsPostOp>(user))
+      mask = vstsPost.getMask();
+    else
       continue;
-    Value mask = vsts.getMask();
     if (!inferredMask) {
       inferredMask = mask;
       continue;
@@ -729,6 +734,14 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
     return "llvm.hivm.vldsx1.v" + std::to_string(*lanes) +
            vec;
   }
+  if (auto vldsPost = dyn_cast<a5vm::VldsPostOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(vldsPost.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(vldsPost.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vldsx1.post.v" + std::to_string(*lanes) + vec;
+  }
   if (isa<a5vm::VabsOp>(op))
     return std::string("llvm.hivm.vabs.v64f32.x");
   if (auto vexp = dyn_cast<a5vm::VexpOp>(op)) {
@@ -844,6 +857,14 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
     return "llvm.hivm.vstsx1.v" + std::to_string(*lanes) +
            vec;
   }
+  if (auto vstsPost = dyn_cast<a5vm::VstsPostOp>(op)) {
+    std::string vec =
+        getElementTypeFragment(getElementTypeFromVectorLike(vstsPost.getValue().getType()));
+    auto lanes = getElementCountFromVectorLike(vstsPost.getValue().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vstsx1.post.v" + std::to_string(*lanes) + vec;
+  }
   if (auto vcmp = dyn_cast<a5vm::VcmpOp>(op)) {
     std::string elem = getElementTypeFragment(getElementTypeFromVectorLike(vcmp.getSrc0().getType()));
     if (elem.empty())
@@ -887,27 +908,16 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
 
     Type resultType = convertA5VMType(vbr.getResult().getType(), builder);
     Type scalarType = vbr.getValue().getType();
-    Type intScalarType = getSignlessIntegerTypeWithSameWidth(scalarType, builder);
-    Type elementType = getElementTypeFromVectorLike(resultType);
-    auto laneCount = getElementCountFromVectorLike(resultType);
-    Type intElementType = getSignlessIntegerTypeWithSameWidth(elementType, builder);
-    if (!intScalarType || !intElementType || !laneCount) {
-      diagOS << "A5VM LLVM emission failed: could not materialize vbr integer carrier types\n";
+    if (!resultType || !scalarType) {
+      diagOS << "A5VM LLVM emission failed: could not materialize vbr types\n";
       return failure();
     }
 
-    auto intVecType = VectorType::get({*laneCount}, cast<IntegerType>(intElementType));
-    Value scalar = vbr.getValue();
-    if (scalar.getType() != intScalarType)
-      scalar = builder.create<arith::BitcastOp>(loc, intScalarType, scalar);
-
-    auto funcType = builder.getFunctionType({intScalarType}, {intVecType});
+    auto funcType = builder.getFunctionType({scalarType}, {resultType});
     auto callee = getOrCreateExternalFunc(module, *calleeName, funcType);
-    auto call = builder.create<func::CallOp>(loc, callee, ValueRange{scalar});
-    Value broadcast = call.getResult(0);
-    if (broadcast.getType() != resultType)
-      broadcast = builder.create<arith::BitcastOp>(loc, resultType, broadcast);
-    builder.replaceOp(op, broadcast);
+    auto call =
+        builder.create<func::CallOp>(loc, callee, ValueRange{vbr.getValue()});
+    builder.replaceOp(op, call.getResults());
     return success();
   }
 
@@ -1007,6 +1017,17 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     callArgs.push_back(*offsetBytes);
     callArgs.push_back(getI32Constant(builder, loc, *dist));
     callArgs.push_back(getI32Constant(builder, loc, 0));
+  } else if (auto vldsPost = dyn_cast<a5vm::VldsPostOp>(op)) {
+    Type elementType = getElementTypeFromVectorLike(vldsPost.getResult().getType());
+    auto offsetBytes = convertElementOffsetToBytes(
+        op, vldsPost.getOffset(), elementType);
+    auto dist = parseLoadDistImmediate(vldsPost.getDist().value_or("NORM"));
+    if (!elementType || failed(offsetBytes) || !dist)
+      return failure();
+    callArgs.push_back(vldsPost.getSource());
+    callArgs.push_back(*offsetBytes);
+    callArgs.push_back(getI32Constant(builder, loc, *dist));
+    callArgs.push_back(getI32Constant(builder, loc, 1));
   } else if (auto vabs = dyn_cast<a5vm::VabsOp>(op)) {
     Value input = op->getOperand(0);
     Value mask = op->getOperand(1);
@@ -1104,6 +1125,19 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
     callArgs.push_back(getI32Constant(builder, loc, *dist));
     callArgs.push_back(getI32Constant(builder, loc, 0));
     callArgs.push_back(op->getOperand(3));
+  } else if (auto vstsPost = dyn_cast<a5vm::VstsPostOp>(op)) {
+    Type elementType = getElementTypeFromVectorLike(vstsPost.getValue().getType());
+    auto offsetBytes = convertElementOffsetToBytes(op, vstsPost.getOffset(), elementType);
+    auto dist = parseStoreDistImmediate(vstsPost.getValue().getType(),
+                                        vstsPost.getDist().value_or(""));
+    if (!elementType || failed(offsetBytes) || !dist)
+      return failure();
+    callArgs.push_back(vstsPost.getValue());
+    callArgs.push_back(vstsPost.getDestination());
+    callArgs.push_back(*offsetBytes);
+    callArgs.push_back(getI32Constant(builder, loc, *dist));
+    callArgs.push_back(getI32Constant(builder, loc, 1));
+    callArgs.push_back(vstsPost.getMask());
   } else if (isa<a5vm::VcmpOp, a5vm::VcmpsOp, a5vm::PdintlvB8Op>(op)) {
     callArgs.append(op->operand_begin(), op->operand_end());
   } else if (auto psts = dyn_cast<a5vm::PstsOp>(op)) {
