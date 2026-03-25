@@ -13,6 +13,7 @@ module {
 
     %s = pto.subview %tile[%c8, %c0] sizes [8, 8] :
       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=8, blayout=col_major, slayout=none_box, fractal=512, pad=0>
 
     pto.tstore ins(%s : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=8, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
               outs(%dst : memref<8x8xf32, #pto.address_space<gm>>)
