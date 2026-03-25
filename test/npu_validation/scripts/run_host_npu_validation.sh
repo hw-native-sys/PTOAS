@@ -113,6 +113,18 @@ configure_case() {
       SAMPLE_GOLDEN_PY="${ROOT_DIR}/test/samples/Mul/npu_validation/golden.py"
       GOLDEN_EXTRA_ARGS=()
       ;;
+    Muls)
+      SAMPLE_NAME="Muls"
+      TESTCASE_NAME="muls"
+      SAMPLE_GOLDEN_PY="${ROOT_DIR}/test/samples/Muls/npu_validation/golden.py"
+      GOLDEN_EXTRA_ARGS=()
+      ;;
+    Cvt)
+      SAMPLE_NAME="Cvt"
+      TESTCASE_NAME="cvt"
+      SAMPLE_GOLDEN_PY="${ROOT_DIR}/test/samples/Cvt/npu_validation/golden.py"
+      GOLDEN_EXTRA_ARGS=()
+      ;;
     Expands)
       SAMPLE_NAME="Expands"
       TESTCASE_NAME="expand"
@@ -135,6 +147,12 @@ configure_case() {
       SAMPLE_NAME="Rowexpandmul"
       TESTCASE_NAME="rowexpandmul"
       SAMPLE_GOLDEN_PY="${ROOT_DIR}/test/samples/Rowexpandmul/npu_validation/golden.py"
+      GOLDEN_EXTRA_ARGS=()
+      ;;
+    Rowexpandsub)
+      SAMPLE_NAME="Rowexpandsub"
+      TESTCASE_NAME="rowexpandsub"
+      SAMPLE_GOLDEN_PY="${ROOT_DIR}/test/samples/Rowexpandsub/npu_validation/golden.py"
       GOLDEN_EXTRA_ARGS=()
       ;;
     Rowmax)
@@ -197,11 +215,11 @@ command -v bisheng >/dev/null 2>&1 || die "bisheng not found in PATH"
 RUN_ONLY_CASES_NORM="$(normalize_list "${RUN_ONLY_CASES}")"
 SKIP_CASES_NORM="$(normalize_list "${SKIP_CASES}")"
 
-SUPPORTED_CASES=(Cmp Abs VectorAddition Max Sub Exp Mul Expands Reshape Rowexpanddiv Rowexpandmul Rowmax Rowsum)
+SUPPORTED_CASES=(Cmp Abs VectorAddition Max Sub Exp Mul Muls Cvt Expands Reshape Rowexpanddiv Rowexpandmul Rowexpandsub Rowmax Rowsum)
 if [[ -n "${RUN_ONLY_CASES_NORM}" ]]; then
   for item in ${RUN_ONLY_CASES_NORM//,/ }; do
     case "${item}" in
-      Cmp|Abs|VectorAddition|Max|Sub|Exp|Mul|Expands|Reshape|Rowexpanddiv|Rowexpandmul|Rowmax|Rowsum) ;;
+      Cmp|Abs|VectorAddition|Max|Sub|Exp|Mul|Muls|Cvt|Expands|Reshape|Rowexpanddiv|Rowexpandmul|Rowexpandsub|Rowmax|Rowsum) ;;
       *) die "Unsupported testcase: ${item}." ;;
     esac
   done

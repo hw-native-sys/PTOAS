@@ -129,17 +129,17 @@ static std::string getElementTypeFragment(Type type) {
 
 static std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
   if (roundMode == "ROUND_R")
-    return 1; // CAST_RINT
+    return 0; // __cce_simd::ROUND::R
   if (roundMode == "ROUND_A")
-    return 2; // CAST_ROUND
+    return 1; // __cce_simd::ROUND::A
   if (roundMode == "ROUND_F")
-    return 3; // CAST_FLOOR
+    return 2; // __cce_simd::ROUND::F
   if (roundMode == "ROUND_C")
-    return 4; // CAST_CEIL
+    return 3; // __cce_simd::ROUND::C
   if (roundMode == "ROUND_Z")
-    return 5; // CAST_TRUNC
+    return 4; // __cce_simd::ROUND::Z
   if (roundMode == "ROUND_O")
-    return 6; // CAST_ODD
+    return 5; // __cce_simd::ROUND::O
   return std::nullopt;
 }
 
