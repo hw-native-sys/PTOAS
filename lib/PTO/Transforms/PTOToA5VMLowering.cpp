@@ -2257,6 +2257,17 @@ LogicalResult buildRowReduceVecScope(StringRef family,
   if (!initValue)
     return emitError(loc) << family << " lowering supports only f16 and f32 element types";
 
+  auto getRowReduceStoreDist = [&]() -> StringAttr {
+    if (contract.elementType.isF16() || contract.elementType.isBF16())
+      return rewriter.getStringAttr("ONEPT_B16");
+    if (contract.elementType.isF32())
+      return rewriter.getStringAttr("ONEPT_B32");
+    return {};
+  };
+  StringAttr storeDist = getRowReduceStoreDist();
+  if (!storeDist)
+    return emitError(loc) << family << " lowering supports only f16 and f32 row-reduce stores";
+
   int64_t vectorWidth = vecType.getElementCount();
   int64_t repeatTimes = llvm::divideCeil(contract.validCols, vectorWidth);
 
@@ -2325,7 +2336,7 @@ LogicalResult buildRowReduceVecScope(StringRef family,
   }
 
   Value dstOffset = rewriter.create<arith::MulIOp>(loc, row, dstRowStrideValue);
-  rewriter.create<a5vm::VstsOp>(loc, acc, dstBuffer, dstOffset, StringAttr(),
+  rewriter.create<a5vm::VstsOp>(loc, acc, dstBuffer, dstOffset, storeDist,
                                 dstPredicate);
   return success();
 }

@@ -653,7 +653,7 @@ PY
     # row-major tiles (ND), otherwise pto-isa can hit layout/tile static_assert.
     if [[ "$base" == "rowmin" || "$base" == "rowsum" || "$base" == "rowmax" ]]; then
       if [[ "$target_backend" == "a5vm" ]]; then
-        if ! grep -Fq "a5vm.vbr" "$cpp"; then
+        if ! grep -Fq "a5vm.vbr" "$cpp" && ! grep -Fq "llvm.hivm.vbr" "$cpp"; then
           echo -e "${A}(${base}.py)\tFAIL\tmissing A5VM row-reduce lowering"
           overall=1
           continue
