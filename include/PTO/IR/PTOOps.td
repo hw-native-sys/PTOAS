@@ -301,14 +301,7 @@ def SubViewOp : PTO_Op<"subview", [
 
   let results = (outs TileBufType:$result);
   let hasVerifier = 1;
-
-  // 语法示例: %sub = pto.subview %src[%i, %j] sizes [32, 32] : !type
-  // 注意：没有 -> qualified(type($result))
-  let assemblyFormat = [{
-    $source `[` $offsets `]` `sizes` $sizes
-    (`valid` `[` $valid_row^ `,` $valid_col `]`)?
-    attr-dict `:` qualified(type($source))
-  }];
+  let hasCustomAssemblyFormat = 1;
 
   // [新增] 显式实现 ViewLikeOpInterface 缺失的方法
   let extraClassDeclaration = [{

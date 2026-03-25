@@ -7419,6 +7419,89 @@ static void printLayout(AsmPrinter &printer, Attribute layoutAttr) {
 // Op Interface Implementation: SubViewOp
 // =============================================================================
 
+ParseResult mlir::pto::SubViewOp::parse(OpAsmParser &parser,
+                                        OperationState &result) {
+  OpAsmParser::UnresolvedOperand source;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
+  SmallVector<OpAsmParser::UnresolvedOperand, 2> valids;
+  Type sourceTy;
+  Type resultTy;
+  bool hasExplicitResultTy = false;
+
+  if (parser.parseOperand(source) || parser.parseLSquare() ||
+      parser.parseOperandList(offsets) || parser.parseRSquare() ||
+      parser.parseKeyword("sizes"))
+    return failure();
+
+  ArrayAttr sizesAttr;
+  if (parser.parseAttribute(sizesAttr, "sizes", result.attributes))
+    return failure();
+
+  if (succeeded(parser.parseOptionalKeyword("valid"))) {
+    OpAsmParser::UnresolvedOperand vrow, vcol;
+    if (parser.parseLSquare() || parser.parseOperand(vrow) || parser.parseComma() ||
+        parser.parseOperand(vcol) || parser.parseRSquare())
+      return failure();
+    valids.push_back(vrow);
+    valids.push_back(vcol);
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColonType(sourceTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseType(resultTy))
+      return failure();
+    hasExplicitResultTy = true;
+  }
+
+  if (parser.resolveOperand(source, sourceTy, result.operands))
+    return failure();
+
+  Type indexTy = parser.getBuilder().getIndexType();
+  if (parser.resolveOperands(offsets, indexTy, result.operands))
+    return failure();
+  if (!valids.empty() &&
+      parser.resolveOperands(valids, indexTy, result.operands))
+    return failure();
+
+  int32_t hasValid = valids.empty() ? 0 : 1;
+  result.addAttribute(
+      "operandSegmentSizes",
+      parser.getBuilder().getDenseI32ArrayAttr(
+          {1, static_cast<int32_t>(offsets.size()), hasValid, hasValid}));
+
+  if (hasExplicitResultTy) {
+    result.addTypes(resultTy);
+    return success();
+  }
+
+  SmallVector<Type> inferredReturnTypes;
+  DictionaryAttr attrs = result.attributes.getDictionary(parser.getContext());
+  if (failed(SubViewOp::inferReturnTypes(
+          parser.getContext(), std::nullopt, result.operands, attrs, nullptr,
+          RegionRange(), inferredReturnTypes))) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "failed to infer pto.subview result type");
+  }
+  result.addTypes(inferredReturnTypes);
+  return success();
+}
+
+void mlir::pto::SubViewOp::print(OpAsmPrinter &printer) {
+  printer << " " << getSource() << "[";
+  printer.printOperands(getOffsets());
+  printer << "] sizes " << getSizes();
+  if (getValidRow()) {
+    printer << " valid [" << getValidRow() << ", " << getValidCol() << "]";
+  }
+  printer.printOptionalAttrDict((*this)->getAttrs(),
+                                /*elidedAttrs=*/{"operandSegmentSizes",
+                                                 "sizes"});
+  printer << " : " << getSource().getType() << " -> " << getResult().getType();
+}
+
 LogicalResult SubViewOp::inferReturnTypes(
     MLIRContext *context, std::optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
