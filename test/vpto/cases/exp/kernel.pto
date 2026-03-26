@@ -1,0 +1,73 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @vec_exponential_kernel_2d(%arg0: memref<?xf32>, %arg1: memref<?xf32>) {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [%c32, %c32], strides: [%c32, %c1] {layout = #pto.layout<nd>} : memref<?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [%c32, %c32], strides: [%c32, %c1] {layout = #pto.layout<nd>} : memref<?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+    %memspacecast = memref.memory_space_cast %arg0 : memref<?xf32> to memref<?xf32, 1>
+    %0 = builtin.unrealized_conversion_cast %memspacecast : memref<?xf32, 1> to !llvm.struct<(ptr<1>, ptr<1>, i64, array<1 x i64>, array<1 x i64>)>
+    %1 = llvm.extractvalue %0[1] : !llvm.struct<(ptr<1>, ptr<1>, i64, array<1 x i64>, array<1 x i64>)> 
+    %2 = llvm.inttoptr %c0_i64 : i64 to !llvm.ptr<6>
+    %3 = arith.index_castui %c32 : index to i64
+    %c1_i64 = arith.constant 1 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c4_i64 = arith.constant 4 : i64
+    %4 = arith.muli %3, %c4_i64 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %5 = llvm.getelementptr %1[%c0_i64] : (!llvm.ptr<1>, i64) -> !llvm.ptr<1>, i8
+    a5vm.set_loop2_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
+    a5vm.set_loop1_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
+    a5vm.set_loop_size_outtoub %c1_i64, %c1_i64 : i64, i64
+    a5vm.copy_gm_to_ubuf %5, %2, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c0_i64, %c0_i64, %c128_i64, %c128_i64 {a5vm.element_type = "u32", data_select_bit = false, layout = "nd", ub_pad = false} : !llvm.ptr<1>, !llvm.ptr<6>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64
+    a5vm.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    a5vm.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    %6 = llvm.inttoptr %c4096_i64 : i64 to !llvm.ptr<6>
+    %c0 = arith.constant 0 : index
+    %7 = arith.muli %c32, %c32 : index
+    %c64 = arith.constant 64 : index
+    %8 = arith.index_castui %7 : index to i32
+    %9 = arith.index_castui %c32 : index to i32
+    %10 = arith.cmpi eq, %c32, %c32 : index
+    %11 = arith.andi %10, %10 : i1
+    scf.for %arg2 = %c0 to %c1 step %c1 {
+      scf.if %11 {
+        %15:3 = scf.for %arg3 = %c0 to %7 step %c64 iter_args(%arg4 = %2, %arg5 = %6, %arg6 = %8) -> (!llvm.ptr<6>, !llvm.ptr<6>, i32) {
+          %mask, %scalar_out = a5vm.plt_b32 %arg6 : i32 -> !a5vm.mask, i32
+          %result, %updated_source = a5vm.vlds_post %arg4[%c64] : !llvm.ptr<6> -> !a5vm.vec<64xf32>, !llvm.ptr<6>
+          %16 = a5vm.vexp %result, %mask {mode = "MODE_ZEROING"} : !a5vm.vec<64xf32>, !a5vm.mask -> !a5vm.vec<64xf32>
+          %17 = a5vm.vsts_post %16, %arg5[%c64], %mask : !a5vm.vec<64xf32>, !llvm.ptr<6>, !a5vm.mask -> !llvm.ptr<6>
+          scf.yield %updated_source, %17, %scalar_out : !llvm.ptr<6>, !llvm.ptr<6>, i32
+        }
+      } else {
+        %15 = arith.ceildivui %c32, %c64 : index
+        scf.for %arg3 = %c0 to %c32 step %c1 {
+          %16 = arith.muli %arg3, %c32 : index
+          %17 = scf.for %arg4 = %c0 to %15 step %c1 iter_args(%arg5 = %9) -> (i32) {
+            %mask, %scalar_out = a5vm.plt_b32 %arg5 : i32 -> !a5vm.mask, i32
+            %18 = arith.muli %arg4, %c64 : index
+            %19 = arith.addi %16, %18 : index
+            %20 = a5vm.vlds %2[%19] : !llvm.ptr<6> -> !a5vm.vec<64xf32>
+            %21 = a5vm.vexp %20, %mask {mode = "MODE_ZEROING"} : !a5vm.vec<64xf32>, !a5vm.mask -> !a5vm.vec<64xf32>
+            a5vm.vsts %21, %6[%19], %mask : !a5vm.vec<64xf32>, !llvm.ptr<6>, !a5vm.mask
+            scf.yield %scalar_out : i32
+          }
+        }
+      }
+    } {llvm.loop.aivector_scope}
+    a5vm.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    a5vm.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    %memspacecast_1 = memref.memory_space_cast %arg1 : memref<?xf32> to memref<?xf32, 1>
+    %12 = builtin.unrealized_conversion_cast %memspacecast_1 : memref<?xf32, 1> to !llvm.struct<(ptr<1>, ptr<1>, i64, array<1 x i64>, array<1 x i64>)>
+    %13 = llvm.extractvalue %12[1] : !llvm.struct<(ptr<1>, ptr<1>, i64, array<1 x i64>, array<1 x i64>)> 
+    %14 = llvm.getelementptr %13[%c0_i64] : (!llvm.ptr<1>, i64) -> !llvm.ptr<1>, i8
+    a5vm.set_loop_size_ubtoout %c1_i64, %c1_i64 : i64, i64
+    a5vm.set_loop1_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
+    a5vm.set_loop2_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
+    a5vm.copy_ubuf_to_gm %6, %14, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c128_i64, %c128_i64 {a5vm.element_type = "u32", layout = "nd"} : !llvm.ptr<6>, !llvm.ptr<1>, i64, i64, i64, i64, i64, i64, i64, i64
+    a5vm.pipe_barrier "PIPE_ALL"
+    return
+  }
+}
+

@@ -68,6 +68,7 @@ std::unique_ptr<Pass> createPTOViewToMemrefPass();
 std::unique_ptr<mlir::Pass> createPTOInsertLoadStoreForMixCVPass();
 std::unique_ptr<Pass> createInferPTOLayoutPass();
 std::unique_ptr<Pass> createLowerPTOToA5VMPass();
+std::unique_ptr<Pass> createLowerPTOToA5VMPass(StringRef loweringStrategy);
 // Declare register function
 void registerPTOPasses();
 

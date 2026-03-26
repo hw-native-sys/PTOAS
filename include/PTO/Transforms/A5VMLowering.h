@@ -23,6 +23,11 @@ enum class A5VMTileDomain {
   Mat,
 };
 
+enum class A5VMLoweringStrategy {
+  PostUpdate,
+  NoPostUpdate,
+};
+
 struct A5VMPartitionTrace {
   SmallVector<int64_t> offsets;
   SmallVector<int64_t> sizes;
@@ -130,63 +135,93 @@ LogicalResult programCopyUbToGmLoops(Operation *copyOp,
                                      const A5VMStoreContract &contract,
                                      Builder &builder);
 LogicalResult buildUnaryVecScope(StringRef family,
-                                 const A5VMUnaryContract &contract, Value src,
+                                 const A5VMUnaryContract &contract,
+                                 A5VMLoweringStrategy strategy, Value src,
                                  Value dst, PatternRewriter &rewriter,
                                  Location loc);
 LogicalResult buildBinaryVecScope(StringRef family,
                                   const A5VMBinaryContract &contract,
-                                  Value src0, Value src1, Value dst,
+                                  A5VMLoweringStrategy strategy, Value src0,
+                                  Value src1, Value dst,
                                   PatternRewriter &rewriter, Location loc);
 
 LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter);
-LogicalResult lowerTABS(TAbsOp op, PatternRewriter &rewriter);
-LogicalResult lowerTADD(TAddOp op, PatternRewriter &rewriter);
-LogicalResult lowerTSUB(TSubOp op, PatternRewriter &rewriter);
-LogicalResult lowerTMUL(TMulOp op, PatternRewriter &rewriter);
-LogicalResult lowerTDIV(TDivOp op, PatternRewriter &rewriter);
-LogicalResult lowerTMAX(TMaxOp op, PatternRewriter &rewriter);
-LogicalResult lowerTMIN(TMinOp op, PatternRewriter &rewriter);
-LogicalResult lowerTAND(TAndOp op, PatternRewriter &rewriter);
+LogicalResult lowerTABS(TAbsOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTADD(TAddOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTSUB(TSubOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTMUL(TMulOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTDIV(TDivOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTMAX(TMaxOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTMIN(TMinOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTAND(TAndOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
 LogicalResult lowerTANDS(TAndSOp op, PatternRewriter &rewriter);
-LogicalResult lowerTOR(TOrOp op, PatternRewriter &rewriter);
+LogicalResult lowerTOR(TOrOp op, PatternRewriter &rewriter,
+                       A5VMLoweringStrategy strategy);
 LogicalResult lowerTORS(TOrSOp op, PatternRewriter &rewriter);
-LogicalResult lowerTXOR(TXorOp op, PatternRewriter &rewriter);
+LogicalResult lowerTXOR(TXorOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
 LogicalResult lowerTXORS(TXorSOp op, PatternRewriter &rewriter);
-LogicalResult lowerTEXP(TExpOp op, PatternRewriter &rewriter);
-LogicalResult lowerTLOG(TLogOp op, PatternRewriter &rewriter);
-LogicalResult lowerTSQRT(TSqrtOp op, PatternRewriter &rewriter);
+LogicalResult lowerTEXP(TExpOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTLOG(TLogOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTSQRT(TSqrtOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
 LogicalResult lowerTRSQRT(TRsqrtOp op, PatternRewriter &rewriter);
-LogicalResult lowerTRECIP(TRecipOp op, PatternRewriter &rewriter);
-LogicalResult lowerTNEG(TNegOp op, PatternRewriter &rewriter);
-LogicalResult lowerTLRELU(TLReluOp op, PatternRewriter &rewriter);
+LogicalResult lowerTRECIP(TRecipOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy);
+LogicalResult lowerTNEG(TNegOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
+LogicalResult lowerTLRELU(TLReluOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy);
 LogicalResult lowerTCI(TCIOp op, PatternRewriter &rewriter);
 LogicalResult lowerTCVT(TCvtOp op, PatternRewriter &rewriter);
 LogicalResult lowerTCmp(TCmpOp op, PatternRewriter &rewriter);
 LogicalResult lowerTCmpS(TCmpSOp op, PatternRewriter &rewriter);
 LogicalResult lowerTSel(TSelOp op, PatternRewriter &rewriter);
 LogicalResult lowerTAddC(TAddCOp op, PatternRewriter &rewriter);
-LogicalResult lowerTAddS(TAddSOp op, PatternRewriter &rewriter);
+LogicalResult lowerTAddS(TAddSOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
 LogicalResult lowerTAddSC(TAddSCOp op, PatternRewriter &rewriter);
-LogicalResult lowerTMinS(TMinSOp op, PatternRewriter &rewriter);
-LogicalResult lowerTDivS(TDivSOp op, PatternRewriter &rewriter);
-LogicalResult lowerTMulS(TMulSOp op, PatternRewriter &rewriter);
+LogicalResult lowerTMinS(TMinSOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
+LogicalResult lowerTDivS(TDivSOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
+LogicalResult lowerTMulS(TMulSOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
 LogicalResult lowerTSubC(TSubCOp op, PatternRewriter &rewriter);
-LogicalResult lowerTSubS(TSubSOp op, PatternRewriter &rewriter);
+LogicalResult lowerTSubS(TSubSOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
 LogicalResult lowerTSubSC(TSubSCOp op, PatternRewriter &rewriter);
-LogicalResult lowerTMaxS(TMaxSOp op, PatternRewriter &rewriter);
+LogicalResult lowerTMaxS(TMaxSOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
 LogicalResult lowerTSelS(TSelSOp op, PatternRewriter &rewriter);
-LogicalResult lowerTRELU(TReluOp op, PatternRewriter &rewriter);
-LogicalResult lowerTNOT(TNotOp op, PatternRewriter &rewriter);
+LogicalResult lowerTRELU(TReluOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy);
+LogicalResult lowerTNOT(TNotOp op, PatternRewriter &rewriter,
+                        A5VMLoweringStrategy strategy);
 LogicalResult lowerTTRANS(TTransOp op, PatternRewriter &rewriter);
 LogicalResult lowerTFILLPAD(TFillPadOp op, PatternRewriter &rewriter);
 LogicalResult lowerTFILLPADExpand(TFillPadExpandOp op, PatternRewriter &rewriter);
-LogicalResult lowerTRowMax(TRowMaxOp op, PatternRewriter &rewriter);
-LogicalResult lowerTRowMin(TRowMinOp op, PatternRewriter &rewriter);
-LogicalResult lowerTRowSum(TRowSumOp op, PatternRewriter &rewriter);
+LogicalResult lowerTRowMax(TRowMaxOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy);
+LogicalResult lowerTRowMin(TRowMinOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy);
+LogicalResult lowerTRowSum(TRowSumOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy);
 LogicalResult lowerTColMax(TColMaxOp op, PatternRewriter &rewriter);
 LogicalResult lowerTColMin(TColMinOp op, PatternRewriter &rewriter);
 LogicalResult lowerTColSum(TColSumOp op, PatternRewriter &rewriter);
-LogicalResult lowerTRowExpand(TRowExpandOp op, PatternRewriter &rewriter);
+LogicalResult lowerTRowExpand(TRowExpandOp op, PatternRewriter &rewriter,
+                              A5VMLoweringStrategy strategy);
 LogicalResult lowerTColExpand(TColExpandOp op, PatternRewriter &rewriter);
 LogicalResult lowerTRowExpandMul(TRowExpandMulOp op, PatternRewriter &rewriter);
 LogicalResult lowerTRowExpandDiv(TRowExpandDivOp op, PatternRewriter &rewriter);

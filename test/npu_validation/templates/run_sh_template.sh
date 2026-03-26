@@ -15,7 +15,7 @@ python3 "${ROOT_DIR}/golden.py"
 if [[ -z "${PTO_ISA_ROOT:-}" ]]; then
   search_dir="${ROOT_DIR}"
   for _ in {1..8}; do
-    if [[ -d "${search_dir}/pto-isa/include" && -d "${search_dir}/pto-isa/tests/common" ]]; then
+    if [[ -d "${search_dir}/pto-isa/include" ]]; then
       PTO_ISA_ROOT="${search_dir}/pto-isa"
       break
     fi

@@ -29,88 +29,113 @@ namespace pto {
 
 namespace {
 
+FailureOr<A5VMLoweringStrategy>
+parseA5VMLoweringStrategy(StringRef strategyName) {
+  if (strategyName == "post-update")
+    return A5VMLoweringStrategy::PostUpdate;
+  if (strategyName == "no-post-update")
+    return A5VMLoweringStrategy::NoPostUpdate;
+  return failure();
+}
+
 LogicalResult lowerTLOADOp(TLoadOp op, PatternRewriter &rewriter) {
   return lowerTLOAD(op, rewriter);
 }
 
-LogicalResult lowerTABSOp(TAbsOp op, PatternRewriter &rewriter) {
-  return lowerTABS(op, rewriter);
+LogicalResult lowerTABSOp(TAbsOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTABS(op, rewriter, strategy);
 }
 
-LogicalResult lowerTADDOp(TAddOp op, PatternRewriter &rewriter) {
-  return lowerTADD(op, rewriter);
+LogicalResult lowerTADDOp(TAddOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTADD(op, rewriter, strategy);
 }
 
-LogicalResult lowerTSUBOp(TSubOp op, PatternRewriter &rewriter) {
-  return lowerTSUB(op, rewriter);
+LogicalResult lowerTSUBOp(TSubOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTSUB(op, rewriter, strategy);
 }
 
-LogicalResult lowerTMULOp(TMulOp op, PatternRewriter &rewriter) {
-  return lowerTMUL(op, rewriter);
+LogicalResult lowerTMULOp(TMulOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTMUL(op, rewriter, strategy);
 }
 
-LogicalResult lowerTDIVOp(TDivOp op, PatternRewriter &rewriter) {
-  return lowerTDIV(op, rewriter);
+LogicalResult lowerTDIVOp(TDivOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTDIV(op, rewriter, strategy);
 }
 
-LogicalResult lowerTMAXOp(TMaxOp op, PatternRewriter &rewriter) {
-  return lowerTMAX(op, rewriter);
+LogicalResult lowerTMAXOp(TMaxOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTMAX(op, rewriter, strategy);
 }
 
-LogicalResult lowerTMINOp(TMinOp op, PatternRewriter &rewriter) {
-  return lowerTMIN(op, rewriter);
+LogicalResult lowerTMINOp(TMinOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTMIN(op, rewriter, strategy);
 }
 
-LogicalResult lowerTANDOp(TAndOp op, PatternRewriter &rewriter) {
-  return lowerTAND(op, rewriter);
+LogicalResult lowerTANDOp(TAndOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTAND(op, rewriter, strategy);
 }
 
 LogicalResult lowerTANDSOp(TAndSOp op, PatternRewriter &rewriter) {
   return lowerTANDS(op, rewriter);
 }
 
-LogicalResult lowerTOROp(TOrOp op, PatternRewriter &rewriter) {
-  return lowerTOR(op, rewriter);
+LogicalResult lowerTOROp(TOrOp op, PatternRewriter &rewriter,
+                         A5VMLoweringStrategy strategy) {
+  return lowerTOR(op, rewriter, strategy);
 }
 
 LogicalResult lowerTORSOp(TOrSOp op, PatternRewriter &rewriter) {
   return lowerTORS(op, rewriter);
 }
 
-LogicalResult lowerTXOROp(TXorOp op, PatternRewriter &rewriter) {
-  return lowerTXOR(op, rewriter);
+LogicalResult lowerTXOROp(TXorOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTXOR(op, rewriter, strategy);
 }
 
 LogicalResult lowerTXORSOp(TXorSOp op, PatternRewriter &rewriter) {
   return lowerTXORS(op, rewriter);
 }
 
-LogicalResult lowerTEXPOp(TExpOp op, PatternRewriter &rewriter) {
-  return lowerTEXP(op, rewriter);
+LogicalResult lowerTEXPOp(TExpOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTEXP(op, rewriter, strategy);
 }
 
-LogicalResult lowerTLOGOp(TLogOp op, PatternRewriter &rewriter) {
-  return lowerTLOG(op, rewriter);
+LogicalResult lowerTLOGOp(TLogOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTLOG(op, rewriter, strategy);
 }
 
-LogicalResult lowerTSQRTOp(TSqrtOp op, PatternRewriter &rewriter) {
-  return lowerTSQRT(op, rewriter);
+LogicalResult lowerTSQRTOp(TSqrtOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTSQRT(op, rewriter, strategy);
 }
 
 LogicalResult lowerTRSQRTOp(TRsqrtOp op, PatternRewriter &rewriter) {
   return lowerTRSQRT(op, rewriter);
 }
 
-LogicalResult lowerTRECIPOp(TRecipOp op, PatternRewriter &rewriter) {
-  return lowerTRECIP(op, rewriter);
+LogicalResult lowerTRECIPOp(TRecipOp op, PatternRewriter &rewriter,
+                            A5VMLoweringStrategy strategy) {
+  return lowerTRECIP(op, rewriter, strategy);
 }
 
-LogicalResult lowerTNEGOp(TNegOp op, PatternRewriter &rewriter) {
-  return lowerTNEG(op, rewriter);
+LogicalResult lowerTNEGOp(TNegOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTNEG(op, rewriter, strategy);
 }
 
-LogicalResult lowerTLRELUOp(TLReluOp op, PatternRewriter &rewriter) {
-  return lowerTLRELU(op, rewriter);
+LogicalResult lowerTLRELUOp(TLReluOp op, PatternRewriter &rewriter,
+                            A5VMLoweringStrategy strategy) {
+  return lowerTLRELU(op, rewriter, strategy);
 }
 
 LogicalResult lowerTCIOp(TCIOp op, PatternRewriter &rewriter) {
@@ -137,52 +162,60 @@ LogicalResult lowerTAddCOp(TAddCOp op, PatternRewriter &rewriter) {
   return lowerTAddC(op, rewriter);
 }
 
-LogicalResult lowerTAddSOp(TAddSOp op, PatternRewriter &rewriter) {
-  return lowerTAddS(op, rewriter);
+LogicalResult lowerTAddSOp(TAddSOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTAddS(op, rewriter, strategy);
 }
 
 LogicalResult lowerTAddSCOp(TAddSCOp op, PatternRewriter &rewriter) {
   return lowerTAddSC(op, rewriter);
 }
 
-LogicalResult lowerTMinSOp(TMinSOp op, PatternRewriter &rewriter) {
-  return lowerTMinS(op, rewriter);
+LogicalResult lowerTMinSOp(TMinSOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTMinS(op, rewriter, strategy);
 }
 
 LogicalResult lowerTSubCOp(TSubCOp op, PatternRewriter &rewriter) {
   return lowerTSubC(op, rewriter);
 }
 
-LogicalResult lowerTSubSOp(TSubSOp op, PatternRewriter &rewriter) {
-  return lowerTSubS(op, rewriter);
+LogicalResult lowerTSubSOp(TSubSOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTSubS(op, rewriter, strategy);
 }
 
 LogicalResult lowerTSubSCOp(TSubSCOp op, PatternRewriter &rewriter) {
   return lowerTSubSC(op, rewriter);
 }
 
-LogicalResult lowerTMaxSOp(TMaxSOp op, PatternRewriter &rewriter) {
-  return lowerTMaxS(op, rewriter);
+LogicalResult lowerTMaxSOp(TMaxSOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTMaxS(op, rewriter, strategy);
 }
 
-LogicalResult lowerTDivSOp(TDivSOp op, PatternRewriter &rewriter) {
-  return lowerTDivS(op, rewriter);
+LogicalResult lowerTDivSOp(TDivSOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTDivS(op, rewriter, strategy);
 }
 
-LogicalResult lowerTMulSOp(TMulSOp op, PatternRewriter &rewriter) {
-  return lowerTMulS(op, rewriter);
+LogicalResult lowerTMulSOp(TMulSOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTMulS(op, rewriter, strategy);
 }
 
 LogicalResult lowerTSelSOp(TSelSOp op, PatternRewriter &rewriter) {
   return lowerTSelS(op, rewriter);
 }
 
-LogicalResult lowerTRELUOp(TReluOp op, PatternRewriter &rewriter) {
-  return lowerTRELU(op, rewriter);
+LogicalResult lowerTRELUOp(TReluOp op, PatternRewriter &rewriter,
+                           A5VMLoweringStrategy strategy) {
+  return lowerTRELU(op, rewriter, strategy);
 }
 
-LogicalResult lowerTNOTOp(TNotOp op, PatternRewriter &rewriter) {
-  return lowerTNOT(op, rewriter);
+LogicalResult lowerTNOTOp(TNotOp op, PatternRewriter &rewriter,
+                          A5VMLoweringStrategy strategy) {
+  return lowerTNOT(op, rewriter, strategy);
 }
 
 LogicalResult lowerTTRANSOp(TTransOp op, PatternRewriter &rewriter) {
@@ -197,16 +230,19 @@ LogicalResult lowerTFILLPADExpandOp(TFillPadExpandOp op, PatternRewriter &rewrit
   return lowerTFILLPADExpand(op, rewriter);
 }
 
-LogicalResult lowerTRowMaxOp(TRowMaxOp op, PatternRewriter &rewriter) {
-  return lowerTRowMax(op, rewriter);
+LogicalResult lowerTRowMaxOp(TRowMaxOp op, PatternRewriter &rewriter,
+                             A5VMLoweringStrategy strategy) {
+  return lowerTRowMax(op, rewriter, strategy);
 }
 
-LogicalResult lowerTRowMinOp(TRowMinOp op, PatternRewriter &rewriter) {
-  return lowerTRowMin(op, rewriter);
+LogicalResult lowerTRowMinOp(TRowMinOp op, PatternRewriter &rewriter,
+                             A5VMLoweringStrategy strategy) {
+  return lowerTRowMin(op, rewriter, strategy);
 }
 
-LogicalResult lowerTRowSumOp(TRowSumOp op, PatternRewriter &rewriter) {
-  return lowerTRowSum(op, rewriter);
+LogicalResult lowerTRowSumOp(TRowSumOp op, PatternRewriter &rewriter,
+                             A5VMLoweringStrategy strategy) {
+  return lowerTRowSum(op, rewriter, strategy);
 }
 
 LogicalResult lowerTColMaxOp(TColMaxOp op, PatternRewriter &rewriter) {
@@ -221,8 +257,9 @@ LogicalResult lowerTColSumOp(TColSumOp op, PatternRewriter &rewriter) {
   return lowerTColSum(op, rewriter);
 }
 
-LogicalResult lowerTRowExpandOp(TRowExpandOp op, PatternRewriter &rewriter) {
-  return lowerTRowExpand(op, rewriter);
+LogicalResult lowerTRowExpandOp(TRowExpandOp op, PatternRewriter &rewriter,
+                                A5VMLoweringStrategy strategy) {
+  return lowerTRowExpand(op, rewriter, strategy);
 }
 
 LogicalResult lowerTColExpandOp(TColExpandOp op, PatternRewriter &rewriter) {
@@ -301,52 +338,53 @@ LogicalResult lowerRlsBufOp(RlsBufOp op, PatternRewriter &rewriter) {
   return lowerRlsBuf(op, rewriter);
 }
 
-LogicalResult lowerTensorPipelineOp(Operation *op, PatternRewriter &rewriter) {
+LogicalResult lowerTensorPipelineOp(Operation *op, PatternRewriter &rewriter,
+                                    A5VMLoweringStrategy strategy) {
   rewriter.setInsertionPoint(op);
 
   LogicalResult lowered = success();
   if (auto tload = dyn_cast<TLoadOp>(op))
     lowered = lowerTLOADOp(tload, rewriter);
   else if (auto tabs = dyn_cast<TAbsOp>(op))
-    lowered = lowerTABSOp(tabs, rewriter);
+    lowered = lowerTABSOp(tabs, rewriter, strategy);
   else if (auto tadd = dyn_cast<TAddOp>(op))
-    lowered = lowerTADDOp(tadd, rewriter);
+    lowered = lowerTADDOp(tadd, rewriter, strategy);
   else if (auto tsub = dyn_cast<TSubOp>(op))
-    lowered = lowerTSUBOp(tsub, rewriter);
+    lowered = lowerTSUBOp(tsub, rewriter, strategy);
   else if (auto tmul = dyn_cast<TMulOp>(op))
-    lowered = lowerTMULOp(tmul, rewriter);
+    lowered = lowerTMULOp(tmul, rewriter, strategy);
   else if (auto tdiv = dyn_cast<TDivOp>(op))
-    lowered = lowerTDIVOp(tdiv, rewriter);
+    lowered = lowerTDIVOp(tdiv, rewriter, strategy);
   else if (auto tmax = dyn_cast<TMaxOp>(op))
-    lowered = lowerTMAXOp(tmax, rewriter);
+    lowered = lowerTMAXOp(tmax, rewriter, strategy);
   else if (auto tmin = dyn_cast<TMinOp>(op))
-    lowered = lowerTMINOp(tmin, rewriter);
+    lowered = lowerTMINOp(tmin, rewriter, strategy);
   else if (auto tand = dyn_cast<TAndOp>(op))
-    lowered = lowerTANDOp(tand, rewriter);
+    lowered = lowerTANDOp(tand, rewriter, strategy);
   else if (auto tands = dyn_cast<TAndSOp>(op))
     lowered = lowerTANDSOp(tands, rewriter);
   else if (auto tor = dyn_cast<TOrOp>(op))
-    lowered = lowerTOROp(tor, rewriter);
+    lowered = lowerTOROp(tor, rewriter, strategy);
   else if (auto tors = dyn_cast<TOrSOp>(op))
     lowered = lowerTORSOp(tors, rewriter);
   else if (auto txor = dyn_cast<TXorOp>(op))
-    lowered = lowerTXOROp(txor, rewriter);
+    lowered = lowerTXOROp(txor, rewriter, strategy);
   else if (auto txors = dyn_cast<TXorSOp>(op))
     lowered = lowerTXORSOp(txors, rewriter);
   else if (auto texp = dyn_cast<TExpOp>(op))
-    lowered = lowerTEXPOp(texp, rewriter);
+    lowered = lowerTEXPOp(texp, rewriter, strategy);
   else if (auto tlog = dyn_cast<TLogOp>(op))
-    lowered = lowerTLOGOp(tlog, rewriter);
+    lowered = lowerTLOGOp(tlog, rewriter, strategy);
   else if (auto tsqrt = dyn_cast<TSqrtOp>(op))
-    lowered = lowerTSQRTOp(tsqrt, rewriter);
+    lowered = lowerTSQRTOp(tsqrt, rewriter, strategy);
   else if (auto trsqr = dyn_cast<TRsqrtOp>(op))
     lowered = lowerTRSQRTOp(trsqr, rewriter);
   else if (auto trecip = dyn_cast<TRecipOp>(op))
-    lowered = lowerTRECIPOp(trecip, rewriter);
+    lowered = lowerTRECIPOp(trecip, rewriter, strategy);
   else if (auto tneg = dyn_cast<TNegOp>(op))
-    lowered = lowerTNEGOp(tneg, rewriter);
+    lowered = lowerTNEGOp(tneg, rewriter, strategy);
   else if (auto tlrelu = dyn_cast<TLReluOp>(op))
-    lowered = lowerTLRELUOp(tlrelu, rewriter);
+    lowered = lowerTLRELUOp(tlrelu, rewriter, strategy);
   else if (auto tci = dyn_cast<TCIOp>(op))
     lowered = lowerTCIOp(tci, rewriter);
   else if (auto tcvt = dyn_cast<TCvtOp>(op))
@@ -360,29 +398,29 @@ LogicalResult lowerTensorPipelineOp(Operation *op, PatternRewriter &rewriter) {
   else if (auto taddc = dyn_cast<TAddCOp>(op))
     lowered = lowerTAddCOp(taddc, rewriter);
   else if (auto tadds = dyn_cast<TAddSOp>(op))
-    lowered = lowerTAddSOp(tadds, rewriter);
+    lowered = lowerTAddSOp(tadds, rewriter, strategy);
   else if (auto taddsc = dyn_cast<TAddSCOp>(op))
     lowered = lowerTAddSCOp(taddsc, rewriter);
   else if (auto tmins = dyn_cast<TMinSOp>(op))
-    lowered = lowerTMinSOp(tmins, rewriter);
+    lowered = lowerTMinSOp(tmins, rewriter, strategy);
   else if (auto tsubc = dyn_cast<TSubCOp>(op))
     lowered = lowerTSubCOp(tsubc, rewriter);
   else if (auto tsubs = dyn_cast<TSubSOp>(op))
-    lowered = lowerTSubSOp(tsubs, rewriter);
+    lowered = lowerTSubSOp(tsubs, rewriter, strategy);
   else if (auto tsubsc = dyn_cast<TSubSCOp>(op))
     lowered = lowerTSubSCOp(tsubsc, rewriter);
   else if (auto tmaxs = dyn_cast<TMaxSOp>(op))
-    lowered = lowerTMaxSOp(tmaxs, rewriter);
+    lowered = lowerTMaxSOp(tmaxs, rewriter, strategy);
   else if (auto tdivs = dyn_cast<TDivSOp>(op))
-    lowered = lowerTDivSOp(tdivs, rewriter);
+    lowered = lowerTDivSOp(tdivs, rewriter, strategy);
   else if (auto tmuls = dyn_cast<TMulSOp>(op))
-    lowered = lowerTMulSOp(tmuls, rewriter);
+    lowered = lowerTMulSOp(tmuls, rewriter, strategy);
   else if (auto tsels = dyn_cast<TSelSOp>(op))
     lowered = lowerTSelSOp(tsels, rewriter);
   else if (auto trelu = dyn_cast<TReluOp>(op))
-    lowered = lowerTRELUOp(trelu, rewriter);
+    lowered = lowerTRELUOp(trelu, rewriter, strategy);
   else if (auto tnot = dyn_cast<TNotOp>(op))
-    lowered = lowerTNOTOp(tnot, rewriter);
+    lowered = lowerTNOTOp(tnot, rewriter, strategy);
   else if (auto ttrans = dyn_cast<TTransOp>(op))
     lowered = lowerTTRANSOp(ttrans, rewriter);
   else if (auto tfillpad = dyn_cast<TFillPadOp>(op))
@@ -390,11 +428,11 @@ LogicalResult lowerTensorPipelineOp(Operation *op, PatternRewriter &rewriter) {
   else if (auto tfillpadExpand = dyn_cast<TFillPadExpandOp>(op))
     lowered = lowerTFILLPADExpandOp(tfillpadExpand, rewriter);
   else if (auto trowmax = dyn_cast<TRowMaxOp>(op))
-    lowered = lowerTRowMaxOp(trowmax, rewriter);
+    lowered = lowerTRowMaxOp(trowmax, rewriter, strategy);
   else if (auto trowmin = dyn_cast<TRowMinOp>(op))
-    lowered = lowerTRowMinOp(trowmin, rewriter);
+    lowered = lowerTRowMinOp(trowmin, rewriter, strategy);
   else if (auto trowsum = dyn_cast<TRowSumOp>(op))
-    lowered = lowerTRowSumOp(trowsum, rewriter);
+    lowered = lowerTRowSumOp(trowsum, rewriter, strategy);
   else if (auto tcolmax = dyn_cast<TColMaxOp>(op))
     lowered = lowerTColMaxOp(tcolmax, rewriter);
   else if (auto tcolmin = dyn_cast<TColMinOp>(op))
@@ -402,7 +440,7 @@ LogicalResult lowerTensorPipelineOp(Operation *op, PatternRewriter &rewriter) {
   else if (auto tcolsum = dyn_cast<TColSumOp>(op))
     lowered = lowerTColSumOp(tcolsum, rewriter);
   else if (auto trowexpand = dyn_cast<TRowExpandOp>(op))
-    lowered = lowerTRowExpandOp(trowexpand, rewriter);
+    lowered = lowerTRowExpandOp(trowexpand, rewriter, strategy);
   else if (auto tcolexpand = dyn_cast<TColExpandOp>(op))
     lowered = lowerTColExpandOp(tcolexpand, rewriter);
   else if (auto trowexpandmul = dyn_cast<TRowExpandMulOp>(op))
@@ -470,8 +508,23 @@ LogicalResult lowerResidualPTOOp(Operation *op, PatternRewriter &rewriter) {
 struct PTOToA5VMPass : public impl::PTOToA5VMBase<PTOToA5VMPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOToA5VMPass)
 
+  PTOToA5VMPass() = default;
+
+  explicit PTOToA5VMPass(StringRef loweringStrategy) {
+    this->a5vmLoweringStrategy = loweringStrategy.str();
+  }
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    FailureOr<A5VMLoweringStrategy> loweringStrategy =
+        parseA5VMLoweringStrategy(a5vmLoweringStrategy);
+    if (failed(loweringStrategy)) {
+      module.emitError()
+          << "unsupported a5vm-lowering-strategy: " << a5vmLoweringStrategy
+          << " (expected post-update or no-post-update)";
+      signalPassFailure();
+      return;
+    }
     SmallVector<Operation *> tensorPipelineOps;
     SmallVector<Operation *> residualPTOOps;
     module.walk([&](Operation *op) {
@@ -496,7 +549,7 @@ struct PTOToA5VMPass : public impl::PTOToA5VMBase<PTOToA5VMPass> {
     for (Operation *op : tensorPipelineOps) {
       if (!op->getBlock())
         continue;
-      if (failed(lowerTensorPipelineOp(op, rewriter)))
+      if (failed(lowerTensorPipelineOp(op, rewriter, *loweringStrategy)))
         sawFailure = true;
     }
     for (Operation *op : residualPTOOps) {
@@ -532,6 +585,10 @@ struct PTOToA5VMPass : public impl::PTOToA5VMBase<PTOToA5VMPass> {
 
 std::unique_ptr<Pass> createLowerPTOToA5VMPass() {
   return std::make_unique<PTOToA5VMPass>();
+}
+
+std::unique_ptr<Pass> createLowerPTOToA5VMPass(StringRef loweringStrategy) {
+  return std::make_unique<PTOToA5VMPass>(loweringStrategy);
 }
 
 } // namespace pto

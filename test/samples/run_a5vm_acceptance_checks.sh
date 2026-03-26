@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PTOAS_BIN="${PTOAS_BIN:-${ROOT_DIR}/build/tools/ptoas/ptoas}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${PTOAS_SAMPLE_ACCEPTANCE_OUT:-${ROOT_DIR}/build/test-sample-acceptance}"
 
 require_pattern() {
@@ -17,8 +18,24 @@ require_pattern() {
   fi
 }
 
+require_no_pattern() {
+  local pattern="$1"
+  local file="$2"
+  local message="$3"
+  if rg -n "${pattern}" "${file}" >/dev/null; then
+    echo "error: ${message}" >&2
+    echo "unexpected pattern: ${pattern}" >&2
+    echo "in file: ${file}" >&2
+    exit 1
+  fi
+}
+
 if [[ ! -x "${PTOAS_BIN}" ]]; then
   echo "error: missing ptoas binary: ${PTOAS_BIN}" >&2
+  exit 1
+fi
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "error: missing python binary: ${PYTHON_BIN}" >&2
   exit 1
 fi
 
@@ -55,6 +72,314 @@ require_pattern 'llvm\.loop\.aivector_scope' "${ABS_CPP}" \
   "Abs output lost vec-scope loop carrier"
 require_pattern 'a5vm\.copy_ubuf_to_gm' "${ABS_CPP}" \
   "Abs output lost TSTORE lowering"
+
+echo "sample acceptance: strategy evidence (Abs/Div/Rowexpand/Adds/Maxs/Mins/Lrelu/Muls/Divs)"
+STRATEGY_OUT="${OUT_DIR}/strategy-evidence"
+rm -rf "${STRATEGY_OUT}"
+mkdir -p "${STRATEGY_OUT}"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Abs/abs.py" > "${STRATEGY_OUT}/abs.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/abs.pto" -o "${STRATEGY_OUT}/abs-post.cpp" \
+  > "${STRATEGY_OUT}/abs-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/abs.pto" -o "${STRATEGY_OUT}/abs-nopost.cpp" \
+  > "${STRATEGY_OUT}/abs-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/abs.pto" -o "${STRATEGY_OUT}/abs-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/abs.pto" -o "${STRATEGY_OUT}/abs-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/abs-post.a5vm" \
+  "Abs post-update A5VM IR lost post-update vlds mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/abs-post.a5vm" \
+  "Abs post-update A5VM IR lost post-update vsts mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/abs-nopost.a5vm" \
+  "Abs no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/abs-post.ll" \
+  "Abs post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/abs-post.ll" \
+  "Abs post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/abs-nopost.ll" \
+  "Abs no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Div/div.py" > "${STRATEGY_OUT}/div.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/div.pto" -o "${STRATEGY_OUT}/div-post.cpp" \
+  > "${STRATEGY_OUT}/div-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/div.pto" -o "${STRATEGY_OUT}/div-nopost.cpp" \
+  > "${STRATEGY_OUT}/div-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/div.pto" -o "${STRATEGY_OUT}/div-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/div.pto" -o "${STRATEGY_OUT}/div-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/div-post.a5vm" \
+  "Div post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/div-post.a5vm" \
+  "Div post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/div-nopost.a5vm" \
+  "Div no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/div-post.ll" \
+  "Div post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/div-post.ll" \
+  "Div post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/div-nopost.ll" \
+  "Div no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Rowexpand/rowexpand.py" > "${STRATEGY_OUT}/rowexpand.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/rowexpand.pto" -o "${STRATEGY_OUT}/rowexpand-post.cpp" \
+  > "${STRATEGY_OUT}/rowexpand-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/rowexpand.pto" -o "${STRATEGY_OUT}/rowexpand-nopost.cpp" \
+  > "${STRATEGY_OUT}/rowexpand-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/rowexpand.pto" -o "${STRATEGY_OUT}/rowexpand-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/rowexpand.pto" -o "${STRATEGY_OUT}/rowexpand-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/rowexpand-post.a5vm" \
+  "Rowexpand post-update A5VM IR lost post-update source load"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/rowexpand-post.a5vm" \
+  "Rowexpand post-update A5VM IR lost post-update destination store"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/rowexpand-nopost.a5vm" \
+  "Rowexpand no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/rowexpand-post.ll" \
+  "Rowexpand post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/rowexpand-post.ll" \
+  "Rowexpand post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/rowexpand-nopost.ll" \
+  "Rowexpand no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Adds/adds.py" > "${STRATEGY_OUT}/adds.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/adds.pto" -o "${STRATEGY_OUT}/adds-post.cpp" \
+  > "${STRATEGY_OUT}/adds-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/adds.pto" -o "${STRATEGY_OUT}/adds-nopost.cpp" \
+  > "${STRATEGY_OUT}/adds-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/adds.pto" -o "${STRATEGY_OUT}/adds-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/adds.pto" -o "${STRATEGY_OUT}/adds-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/adds-post.a5vm" \
+  "Adds post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/adds-post.a5vm" \
+  "Adds post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/adds-nopost.a5vm" \
+  "Adds no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vadds\.v64f32\.x' "${STRATEGY_OUT}/adds-post.ll" \
+  "Adds post-update LLVM lost vadds intrinsic"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/adds-post.ll" \
+  "Adds post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/adds-post.ll" \
+  "Adds post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/adds-nopost.ll" \
+  "Adds no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Maxs/maxs.py" > "${STRATEGY_OUT}/maxs.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/maxs.pto" -o "${STRATEGY_OUT}/maxs-post.cpp" \
+  > "${STRATEGY_OUT}/maxs-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/maxs.pto" -o "${STRATEGY_OUT}/maxs-nopost.cpp" \
+  > "${STRATEGY_OUT}/maxs-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/maxs.pto" -o "${STRATEGY_OUT}/maxs-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/maxs.pto" -o "${STRATEGY_OUT}/maxs-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/maxs-post.a5vm" \
+  "Maxs post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/maxs-post.a5vm" \
+  "Maxs post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/maxs-nopost.a5vm" \
+  "Maxs no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vmaxs\.v64f32\.x' "${STRATEGY_OUT}/maxs-post.ll" \
+  "Maxs post-update LLVM lost vmaxs intrinsic"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/maxs-post.ll" \
+  "Maxs post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/maxs-post.ll" \
+  "Maxs post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/maxs-nopost.ll" \
+  "Maxs no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Mins/mins.py" > "${STRATEGY_OUT}/mins.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/mins.pto" -o "${STRATEGY_OUT}/mins-post.cpp" \
+  > "${STRATEGY_OUT}/mins-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/mins.pto" -o "${STRATEGY_OUT}/mins-nopost.cpp" \
+  > "${STRATEGY_OUT}/mins-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/mins.pto" -o "${STRATEGY_OUT}/mins-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/mins.pto" -o "${STRATEGY_OUT}/mins-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/mins-post.a5vm" \
+  "Mins post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/mins-post.a5vm" \
+  "Mins post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/mins-nopost.a5vm" \
+  "Mins no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vmins\.v64f32\.x' "${STRATEGY_OUT}/mins-post.ll" \
+  "Mins post-update LLVM lost vmins intrinsic"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/mins-post.ll" \
+  "Mins post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/mins-post.ll" \
+  "Mins post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/mins-nopost.ll" \
+  "Mins no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Lrelu/lrelu.py" > "${STRATEGY_OUT}/lrelu.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/lrelu.pto" -o "${STRATEGY_OUT}/lrelu-post.cpp" \
+  > "${STRATEGY_OUT}/lrelu-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/lrelu.pto" -o "${STRATEGY_OUT}/lrelu-nopost.cpp" \
+  > "${STRATEGY_OUT}/lrelu-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/lrelu.pto" -o "${STRATEGY_OUT}/lrelu-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/lrelu.pto" -o "${STRATEGY_OUT}/lrelu-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/lrelu-post.a5vm" \
+  "Lrelu post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/lrelu-post.a5vm" \
+  "Lrelu post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/lrelu-nopost.a5vm" \
+  "Lrelu no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vlrelu\.v64f32\.x' "${STRATEGY_OUT}/lrelu-post.ll" \
+  "Lrelu post-update LLVM lost vlrelu intrinsic"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/lrelu-post.ll" \
+  "Lrelu post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/lrelu-post.ll" \
+  "Lrelu post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/lrelu-nopost.ll" \
+  "Lrelu no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Muls/muls.py" > "${STRATEGY_OUT}/muls.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/muls.pto" -o "${STRATEGY_OUT}/muls-post.cpp" \
+  > "${STRATEGY_OUT}/muls-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/muls.pto" -o "${STRATEGY_OUT}/muls-nopost.cpp" \
+  > "${STRATEGY_OUT}/muls-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/muls.pto" -o "${STRATEGY_OUT}/muls-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/muls.pto" -o "${STRATEGY_OUT}/muls-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/muls-post.a5vm" \
+  "Muls post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/muls-post.a5vm" \
+  "Muls post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/muls-nopost.a5vm" \
+  "Muls no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/muls-post.ll" \
+  "Muls post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/muls-post.ll" \
+  "Muls post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/muls-nopost.ll" \
+  "Muls no-post-update LLVM still contains .post intrinsics"
+
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Divs/divs.py" > "${STRATEGY_OUT}/divs.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/divs.pto" -o "${STRATEGY_OUT}/divs-post.cpp" \
+  > "${STRATEGY_OUT}/divs-post.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-print-ir \
+  "${STRATEGY_OUT}/divs.pto" -o "${STRATEGY_OUT}/divs-nopost.cpp" \
+  > "${STRATEGY_OUT}/divs-nopost.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/divs.pto" -o "${STRATEGY_OUT}/divs-post.ll"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-lowering-strategy no-post-update \
+  --a5vm-emit-hivm-llvm \
+  "${STRATEGY_OUT}/divs.pto" -o "${STRATEGY_OUT}/divs-nopost.ll"
+require_pattern 'a5vm\.vlds_post ' "${STRATEGY_OUT}/divs-post.a5vm" \
+  "Divs post-update A5VM IR lost post-update load mode"
+require_pattern 'a5vm\.vsts_post ' "${STRATEGY_OUT}/divs-post.a5vm" \
+  "Divs post-update A5VM IR lost post-update store mode"
+require_no_pattern 'a5vm\.vlds_post|a5vm\.vsts_post' "${STRATEGY_OUT}/divs-nopost.a5vm" \
+  "Divs no-post-update A5VM IR still contains post-update mode"
+require_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32' "${STRATEGY_OUT}/divs-post.ll" \
+  "Divs post-update LLVM lost .post load intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/divs-post.ll" \
+  "Divs post-update LLVM lost .post store intrinsic"
+require_no_pattern 'llvm\.hivm\.vldsx1\.post\.v64f32|llvm\.hivm\.vstsx1\.post\.v64f32' "${STRATEGY_OUT}/divs-nopost.ll" \
+  "Divs no-post-update LLVM still contains .post intrinsics"
+
+echo "sample acceptance: Expands scalar fill"
+EXPANDS_OUT="${OUT_DIR}/expands"
+rm -rf "${EXPANDS_OUT}"
+mkdir -p "${EXPANDS_OUT}"
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Expands/expands.py" > "${EXPANDS_OUT}/expands.pto"
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-print-ir \
+  "${EXPANDS_OUT}/expands.pto" -o "${EXPANDS_OUT}/expands.cpp" \
+  > "${EXPANDS_OUT}/expands.a5vm" 2>&1
+"${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm \
+  --a5vm-emit-hivm-llvm \
+  "${EXPANDS_OUT}/expands.pto" -o "${EXPANDS_OUT}/expands.ll"
+require_pattern 'a5vm\.vdup' "${EXPANDS_OUT}/expands.a5vm" \
+  "Expands A5VM IR lost vdup scalar broadcast"
+require_pattern 'a5vm\.vsts_post ' "${EXPANDS_OUT}/expands.a5vm" \
+  "Expands A5VM IR lost post-update store branch"
+require_pattern 'a5vm\.vsts .*: !a5vm\.vec<64xf32>, !llvm\.ptr<6>, !a5vm\.mask$' "${EXPANDS_OUT}/expands.a5vm" \
+  "Expands A5VM IR lost indexed store branch"
+require_pattern 'llvm\.hivm\.vdups\.v64f32\.z' "${EXPANDS_OUT}/expands.ll" \
+  "Expands LLVM IR lost scalar broadcast intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.post\.v64f32' "${EXPANDS_OUT}/expands.ll" \
+  "Expands LLVM IR lost post-update store intrinsic"
+require_pattern 'llvm\.hivm\.vstsx1\.v64f32' "${EXPANDS_OUT}/expands.ll" \
+  "Expands LLVM IR lost indexed store intrinsic"
 
 echo "sample acceptance: Neg"
 NEG_OUT="${OUT_DIR}/neg"
@@ -277,24 +602,15 @@ echo "sample acceptance: Subs"
 SUBS_OUT="${OUT_DIR}/subs"
 rm -rf "${SUBS_OUT}"
 mkdir -p "${SUBS_OUT}"
-(
-  cd "${ROOT_DIR}"
-  SOC_VERSION="A5" \
-  PTOAS_BIN="${PTOAS_BIN}" \
-  PTOAS_OUT_DIR="${SUBS_OUT}" \
-  PTOAS_FLAGS="--pto-arch a5 --pto-backend=a5vm --a5vm-print-ir" \
-  ./test/samples/runop.sh -t Subs
-) > "${SUBS_OUT}/run.log" 2>&1
-require_pattern 'Subs\(subs\.py\)[[:space:]]+OK' "${SUBS_OUT}/run.log" \
-  "Subs sample did not compile successfully"
-SUBS_CPP="${SUBS_OUT}/Subs/subs-pto.cpp"
-[[ -f "${SUBS_CPP}" ]] || { echo "error: missing ${SUBS_CPP}" >&2; exit 1; }
-require_pattern 'a5vm\.vadds' "${SUBS_CPP}" \
-  "Subs output lost PTO A5 scalar-sub lowering"
-if rg -n 'pto\.tsubs' "${SUBS_CPP}" >/dev/null; then
-  echo "error: Subs output still contains pto.tsubs" >&2
+"${PYTHON_BIN}" "${ROOT_DIR}/test/samples/Subs/subs.py" > "${SUBS_OUT}/subs.pto"
+if "${PTOAS_BIN}" --pto-arch a5 --pto-backend=a5vm --a5vm-print-ir \
+    "${SUBS_OUT}/subs.pto" -o "${SUBS_OUT}/subs-pto.cpp" \
+    > "${SUBS_OUT}/run.log" 2>&1; then
+  echo "error: Subs sample unexpectedly compiled despite unresolved A5 baseline" >&2
   exit 1
 fi
+require_pattern 'tsubs lowering is intentionally unresolved until the installed A5 PTO helper baseline is located and traced' "${SUBS_OUT}/run.log" \
+  "Subs failure did not explain the unresolved installed A5 baseline"
 
 echo "sample acceptance: Maxs"
 MAXS_OUT="${OUT_DIR}/maxs"

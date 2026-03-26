@@ -6,6 +6,7 @@ import ast
 import re
 from pathlib import Path
 from typing import Optional
+import shutil
 
 INCLUDE_REPLACEMENT = (
     "// ---------------------------------------------------------------------------\n"
@@ -1167,6 +1168,7 @@ def generate_testcase(
 
     golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
     (output_dir / "golden.py").write_text(golden_py, encoding="utf-8")
+    shutil.copyfile(templates_root.parent / "common" / "test_common.h", output_dir / "test_common.h")
 
     # Emit the kernel source, optionally injecting a packed-predicate preload to
     # make TCMP/TCMPS outputs deterministic for byte-wise compares.
@@ -1274,7 +1276,7 @@ if(NOT PTO_ISA_ROOT)
         "${{CMAKE_CURRENT_LIST_DIR}}/../../../../../../pto-isa"
     )
     foreach(_cand IN LISTS _PTO_ISA_CANDIDATES)
-        if(EXISTS "${{_cand}}/include" AND EXISTS "${{_cand}}/tests/common")
+        if(EXISTS "${{_cand}}/include")
             set(PTO_ISA_ROOT "${{_cand}}" CACHE PATH "Path to pto-isa repo" FORCE)
             break()
         endif()
@@ -1322,7 +1324,6 @@ set(CMAKE_CPP_COMPILE_OPTIONS
 
 include_directories(
     ${{PTO_ISA_ROOT}}/include
-    ${{PTO_ISA_ROOT}}/tests/common
     ${{ASCEND_HOME_PATH}}/include
     ${{ASCEND_DRIVER_PATH}}/kernel/inc
 )
@@ -1339,8 +1340,7 @@ target_link_options({testcase}_kernel PRIVATE --cce-fatobj-link)
 add_executable({testcase} main.cpp)
 target_compile_options({testcase} PRIVATE ${{CMAKE_CPP_COMPILE_OPTIONS}})
 target_include_directories({testcase} PRIVATE
-    ${{PTO_ISA_ROOT}}/include
-    ${{PTO_ISA_ROOT}}/tests/common
+    ${{CMAKE_CURRENT_SOURCE_DIR}}
 )
 
 target_link_directories({testcase} PUBLIC
@@ -1358,8 +1358,7 @@ if(ENABLE_SIM_GOLDEN)
     add_executable({testcase}_sim main.cpp)
     target_compile_options({testcase}_sim PRIVATE ${{CMAKE_CPP_COMPILE_OPTIONS}})
     target_include_directories({testcase}_sim PRIVATE
-        ${{PTO_ISA_ROOT}}/include
-        ${{PTO_ISA_ROOT}}/tests/common
+        ${{CMAKE_CURRENT_SOURCE_DIR}}
     )
     target_link_directories({testcase}_sim PUBLIC
         ${{ASCEND_HOME_PATH}}/lib64

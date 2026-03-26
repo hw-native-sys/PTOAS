@@ -145,6 +145,12 @@ static llvm::cl::opt<bool> a5vmPrintIR(
     llvm::cl::desc("Print post-pass A5VM backend IR to stderr"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<std::string> a5vmLoweringStrategy(
+    "a5vm-lowering-strategy",
+    llvm::cl::desc("A5VM vector lowering strategy: post-update or no-post-update"),
+    llvm::cl::value_desc("post-update|no-post-update"),
+    llvm::cl::init("post-update"));
+
 static llvm::cl::opt<bool> dumpA5VMIR(
     "dump-a5vm-ir",
     llvm::cl::desc("Print post-pass A5VM backend IR to stderr"),
@@ -278,7 +284,7 @@ static void addSharedPreBackendPasses(OpPassManager &pm,
 static void addBackendLoweringPasses(OpPassManager &pm,
                                      PTOBackend effectiveBackend) {
   if (effectiveBackend == PTOBackend::A5VM) {
-    pm.addPass(pto::createLowerPTOToA5VMPass());
+    pm.addPass(pto::createLowerPTOToA5VMPass(a5vmLoweringStrategy));
     pm.addPass(mlir::createCSEPass());
     return;
   }
