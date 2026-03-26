@@ -7424,6 +7424,11 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         v = castOp.getOperand();
       return v;
     };
+    auto sourceCastOp = adaptor.getSource().getDefiningOp<emitc::CastOp>();
+    auto eraseDeadSourceCast = [&]() {
+      if (sourceCastOp && sourceCastOp->use_empty())
+        rewriter.eraseOp(sourceCastOp);
+    };
     auto isTileLike = [](Value v) -> bool {
       auto ot = dyn_cast<emitc::OpaqueType>(v.getType());
       if (!ot)
@@ -7690,6 +7695,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
                                            ArrayAttr{}, ArrayAttr{},
                                            ValueRange{dstTile, *addr});
       rewriter.replaceOp(op, dstTile);
+      eraseDeadSourceCast();
       return success();
     }
 
@@ -7704,6 +7710,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
                                            ArrayAttr{}, ArrayAttr{},
                                            ValueRange{dstTile, tileCandidate});
       rewriter.replaceOp(op, dstTile);
+      eraseDeadSourceCast();
       return success();
     }
 
@@ -7718,6 +7725,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         if (auto srcTy = dyn_cast<emitc::OpaqueType>(tileCandidate.getType())) {
           if (srcTy.getValue() == tileSpec->tileTypeStr) {
             rewriter.replaceOp(op, tileCandidate);
+            eraseDeadSourceCast();
             return success();
           }
         }
@@ -7732,6 +7740,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
                                            ArrayAttr{}, ArrayAttr{},
                                            ValueRange{dstTile, *addr});
       rewriter.replaceOp(op, dstTile);
+      eraseDeadSourceCast();
       return success();
     }
 
@@ -7758,6 +7767,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       newCast->setAttr(kForceDynamicValidShapeAttrName,
                        op->getAttr(kForceDynamicValidShapeAttrName));
     rewriter.replaceOp(op, newCast.getResult());
+    eraseDeadSourceCast();
 
     return success();
   }

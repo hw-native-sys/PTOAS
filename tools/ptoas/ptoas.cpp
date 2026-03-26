@@ -441,6 +441,27 @@ static void materializeControlFlowOperands(Operation *rootOp) {
   }
 }
 
+// Remove trivially dead scalar helpers that commonly remain after conversion.
+// These are pure value producers and safe to erase when they have no uses.
+static void dropTriviallyDeadEmitCOps(Operation *rootOp) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    llvm::SmallVector<Operation *, 32> toErase;
+    rootOp->walk([&](Operation *op) {
+      if (!op->use_empty())
+        return;
+      if (isa<emitc::CastOp, emitc::ConstantOp, UnrealizedConversionCastOp>(op))
+        toErase.push_back(op);
+    });
+    if (toErase.empty())
+      continue;
+    changed = true;
+    for (Operation *op : llvm::reverse(toErase))
+      op->erase();
+  }
+}
+
 static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marker,
                                          unsigned expectedNumArgs,
                                          bool isStore) {
@@ -871,6 +892,7 @@ int main(int argc, char **argv) {
 
   dropEmptyEmitCExpressions(module.get());
   materializeControlFlowOperands(module.get());
+  dropTriviallyDeadEmitCOps(module.get());
   if (failed(reorderEmitCFunctions(module.get()))) {
     llvm::errs() << "Error: Failed to order emitted functions for C++ emission.\n";
     return 1;
