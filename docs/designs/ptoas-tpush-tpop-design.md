@@ -218,6 +218,13 @@ pto.tfree_from_aiv { split = 0 }
 
 ### 3.5 前端层约束
 
+> **约束来源说明**：以下约束是当前软件方案的设计选择，而非硬件限制。
+> 当前 `tpush_to_aic` / `tpush_to_aiv` / `tpop_from_aic` / `tpop_from_aiv` /
+> `tfree_from_aic` / `tfree_from_aiv` 等前端接口上不携带 pipe 参数，因此在
+> lowering 时只能将函数内的所有 push/pop/free 绑定到同一条 pipe。这决定了每个
+> 函数最多只能存在一条初始化语句（即一条 pipe）。如果后续需要支持多条 pipe 并行
+> 通信，前端接口方案需要重新设计（例如在 push/pop/free 上显式引用 pipe handle）。
+
 前端 IR 需满足以下约束：
 
 - 每个 Cube function 最多一条 `pto.aic_initialize_pipe`

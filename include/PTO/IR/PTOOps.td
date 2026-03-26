@@ -1531,10 +1531,48 @@ def TPopOp : PTO_TOp<"tpop", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() {
-      if (getPipeHandle().getDefiningOp<::mlir::pto::InitializeL2G2LPipeOp>())
-        return ::mlir::pto::PIPE::PIPE_MTE2;
-      if (getPipeHandle().getDefiningOp<::mlir::pto::InitializeL2LPipeOp>())
-        return ::mlir::pto::PIPE::PIPE_S;
+      auto getAddressSpace = [](Type ty) -> std::optional<::mlir::pto::AddressSpace> {
+        if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
+          if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
+                  tb.getMemorySpace()))
+            return as.getAddressSpace();
+          return std::nullopt;
+        }
+        if (auto mr = ::mlir::dyn_cast<::mlir::MemRefType>(ty)) {
+          if (auto ms = mr.getMemorySpace()) {
+            if (auto as = ::mlir::dyn_cast<::mlir::pto::AddressSpaceAttr>(ms))
+              return as.getAddressSpace();
+          }
+          return std::nullopt;
+        }
+        return std::nullopt;
+      };
+
+      auto isA5Target = [&]() -> bool {
+        auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
+        if (!moduleOp)
+          return false;
+
+        if (auto arch =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
+          if (arch.getValue().equals_insensitive("a5"))
+            return true;
+        }
+        return false;
+      };
+
+      auto as = getAddressSpace(getTile().getType());
+      if (!as)
+        return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+
+      switch (*as) {
+      case ::mlir::pto::AddressSpace::VEC:
+      case ::mlir::pto::AddressSpace::MAT:
+        return isA5Target() ? ::mlir::pto::PIPE::PIPE_S
+                            : ::mlir::pto::PIPE::PIPE_MTE2;
+      default:
+        break;
+      }
       return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
     }
 

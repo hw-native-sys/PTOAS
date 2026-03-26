@@ -127,6 +127,11 @@ void PTOIRTranslator::RecursionIR(Region *region) {
           return WalkResult::interrupt();
        }
     }
+    else if (auto declareOp = dyn_cast<pto::DeclareTileMemRefOp>(op)) {
+      if (failed(UpdateDeclareTileMemRefOpMemInfo(declareOp))) {
+        return WalkResult::interrupt();
+      }
+    }
     else if (auto castOp = dyn_cast<pto::PointerCastOp>(op)) {
       if (failed(UpdatePointerCastOpMemInfo(castOp))) return WalkResult::interrupt();
     }
@@ -283,6 +288,45 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
       sizeInBytes
   );
  
+  buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
+  return success();
+}
+
+LogicalResult
+PTOIRTranslator::UpdateDeclareTileMemRefOpMemInfo(pto::DeclareTileMemRefOp op) {
+  Value res = op.getResult();
+  auto memRefType = dyn_cast<MemRefType>(res.getType());
+  if (!memRefType)
+    return failure();
+
+  uint64_t sizeInBytes = 0;
+  if (memRefType.hasStaticShape()) {
+    int64_t elemSize = memRefType.getElementType().getIntOrFloatBitWidth() / 8;
+    if (elemSize == 0)
+      elemSize = 1;
+
+    int64_t numElements = 1;
+    for (auto dim : memRefType.getShape())
+      numElements *= dim;
+    sizeInBytes = numElements * elemSize;
+  }
+
+  pto::AddressSpace space = pto::AddressSpace::MAT;
+  if (auto attr = memRefType.getMemorySpace()) {
+    if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(attr))
+      space = ptoAttr.getAddressSpace();
+  }
+
+  // declare_tile_memref is only a symbolic placeholder. Use its SSA result as
+  // both base/root so later bind_tile aliases and tpop consumers can be
+  // connected by InsertSync without inventing a fake allocation.
+  auto newMemInfo = std::make_unique<BaseMemInfo>(
+      res,
+      res,
+      space,
+      SmallVector<uint64_t>{0},
+      sizeInBytes);
+
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
 }

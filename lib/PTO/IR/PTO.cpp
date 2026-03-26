@@ -7959,7 +7959,8 @@ LogicalResult TPopOp::verify() {
   if (failed(verifySplitAttr(getOperation(), getSplit())))
     return failure();
   if (getPipe() == pto::PIPE::PIPE_UNASSIGNED)
-    return emitOpError("pipe_handle must map to a supported consumer pipe");
+    return emitOpError(
+        "tile type and target arch must map to a supported consumer pipe");
   return success();
 }
 
