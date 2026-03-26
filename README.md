@@ -235,6 +235,9 @@ python3 ./tmatmulk.py > ./tmatmulk.pto
 
 该流程用于将 `test/samples` 下生成的 `.cpp`（ptoas 输出）自动生成 NPU 验证用例，并在 NPU 上运行。
 
+> 只想在无卡机器上做 host-side compile-only，请先看 [docs/no_npu_compile_only_guide_zh.md](docs/no_npu_compile_only_guide_zh.md)。
+
+
 ```bash
 # 1) 生成 npu_validation 测试目录（会在当前 sample 目录下创建 npu_validation/）
 python3 test/npu_validation/scripts/generate_testcase.py \

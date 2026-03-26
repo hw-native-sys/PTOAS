@@ -164,47 +164,6 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
   return success();
 }
 
-// #define ADD_CANONICALIZER_PASS \
-//    CanonicalizerOptions options; \
-//    options.enableExtendedPattern = true; \
-//    std::vector<std::string> disabledPatterns{}; \
-//    options.disabledPatterns = disabledPatterns; \
-//    pm.addPass(createCanonicalizerPass(options))
-
-// #define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS \
-//    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
-
-// static void canonicalizationPipeline(OpPassManager &pm) {
-//    pm.addPass(createArithToAffineConversionPass());
-//    ADD_CANONICALIZER_PASS;
-//    pm.addPass(createSCFForLoopCanonicalizationPass());
-//    pm.addPass(createCSEPass());
-//    ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
-//    //pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-//    ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
-//    pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
-// }
-
-static void bufferizationPipeline(OpPassManager &pm) {
-  bufferization::OneShotBufferizationOptions oneShotOptions;
-  oneShotOptions.bufferizeFunctionBoundaries = true;
-  oneShotOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
-  oneShotOptions.allowReturnAllocsFromLoops = true;
-  oneShotOptions.allowUnknownOps = true;
-  pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
-  // pm.addPass(bufferization::createOneShotBufferizePass());
-
-  // if (hivmPipelineOptions.enableVfMerge) {
-  //    pm.addPass(hfusion::createMergeVecScopePass());
-  // }
-  // canonicalizationPipeline(pm);
-  // pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  // canonicalizationPipeline(pm);
-  // pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  pm.addPass(createConvertToPTOOpPass());
-}
-
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
@@ -805,6 +764,11 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Set target arch on the module from CLI before any passes run.
+  // This is the single source of truth — input IR does not need pto.target_arch.
+  module->getOperation()->setAttr("pto.target_arch",
+                                  mlir::StringAttr::get(&context, arch));
+
   PTOBuildLevel effectiveLevel = defaultBuildLevel();
   if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
     llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
@@ -868,9 +832,6 @@ int main(int argc, char **argv) {
   // Main PassManager
   PassManager pm(&context);
   
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertCVMovPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOLowerFrontendPipeOpsPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
@@ -879,7 +840,6 @@ int main(int argc, char **argv) {
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   pm.addPass(pto::createPTOViewToMemrefPass());
-  // bufferizationPipeline(pm);
   //pm.addPass(createInferPTOMemScopePass());
 
   if (effectiveLevel != PTOBuildLevel::Level3) {
@@ -888,20 +848,14 @@ int main(int argc, char **argv) {
     planMemoryOption.enableGlobalReuse = false;
     planMemoryOption.enablePrintMemoryAllocatedSize = false;
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
-    pm.addPass(pto::createPTOResolveReservedBuffersPass());
   }
+  pm.addPass(pto::createPTOResolveReservedBuffersPass());
 
   // Conditionally add Sync pass based on flag.
   if (enableInsertSync)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
 
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveRedundantBarrierPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
-
   pm.addPass(createCSEPass());
-  module->getOperation()->setAttr("pto.target_arch",
-                                  mlir::StringAttr::get(&context, arch));
   if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
   } else {

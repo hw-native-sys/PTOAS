@@ -1,4 +1,5 @@
-module attributes {pto.target_arch = "a5"} {
+// RUN: ptoas --pto-arch a5 %s
+module {
   func.func @matmul_tpush_tpop_print(
       %gm_a: !pto.ptr<f32>,
       %gm_b: !pto.ptr<f32>)

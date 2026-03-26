@@ -136,11 +136,16 @@ inline constexpr OpInfo kOpTable[] = {
   {0x1068, "pto.tsubc", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x1069, "pto.tsubs", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x106A, "pto.tsubsc", 0, 0x00, 0x00, 4, 0, 0, 0x00},
+  {0x106B, "pto.trowexpandsub", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x106C, "pto.ttrans", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x106D, "pto.ttri", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x106E, "pto.txor", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x106F, "pto.txors", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x1070, "pto.wait_event", 0, 0x00, 0x00, 0, 0, 0, 0x02},
+  {0x1071, "pto.tprint", 0, 0x00, 0x00, 1, 0, 0, 0x00},
+  {0x1072, "pto.subset", 0, 0x01, 0x02, 0, 1, 0, 0x00},
+  {0x1073, "pto.trowexpanddiv", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x1074, "pto.trowexpandmul", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x2000, "arith.addi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x2001, "arith.ceildivsi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x2002, "arith.cmpi", 0, 0x01, 0x00, 2, 1, 0, 0x01},
@@ -296,11 +301,16 @@ inline std::optional<uint16_t> lookupOpcodeByName(llvm::StringRef name) {
     .Case("pto.tsubc", 0x1068)
     .Case("pto.tsubs", 0x1069)
     .Case("pto.tsubsc", 0x106A)
+    .Case("pto.trowexpandsub", 0x106B)
     .Case("pto.ttrans", 0x106C)
     .Case("pto.ttri", 0x106D)
     .Case("pto.txor", 0x106E)
     .Case("pto.txors", 0x106F)
     .Case("pto.wait_event", 0x1070)
+    .Case("pto.tprint", 0x1071)
+    .Case("pto.subset", 0x1072)
+    .Case("pto.trowexpanddiv", 0x1073)
+    .Case("pto.trowexpandmul", 0x1074)
     .Case("scf.for", 0x4000)
     .Case("scf.if", 0x4001)
     .Case("scf.yield", 0x4002)
@@ -442,11 +452,16 @@ inline std::optional<OpcodeAndVariant> lookupOpcodeAndVariantByFullName(llvm::St
     .Case("pto.tsubc", OpcodeAndVariant{0x1068, 0, 0})
     .Case("pto.tsubs", OpcodeAndVariant{0x1069, 0, 0})
     .Case("pto.tsubsc", OpcodeAndVariant{0x106A, 0, 0})
+    .Case("pto.trowexpandsub", OpcodeAndVariant{0x106B, 0, 0})
     .Case("pto.ttrans", OpcodeAndVariant{0x106C, 0, 0})
     .Case("pto.ttri", OpcodeAndVariant{0x106D, 0, 0})
     .Case("pto.txor", OpcodeAndVariant{0x106E, 0, 0})
     .Case("pto.txors", OpcodeAndVariant{0x106F, 0, 0})
     .Case("pto.wait_event", OpcodeAndVariant{0x1070, 0, 0})
+    .Case("pto.tprint", OpcodeAndVariant{0x1071, 0, 0})
+    .Case("pto.subset", OpcodeAndVariant{0x1072, 0, 0})
+    .Case("pto.trowexpanddiv", OpcodeAndVariant{0x1073, 0, 0})
+    .Case("pto.trowexpandmul", OpcodeAndVariant{0x1074, 0, 0})
     .Case("scf.for", OpcodeAndVariant{0x4000, 0, 0})
     .Case("scf.if", OpcodeAndVariant{0x4001, 0, 0})
     .Case("scf.yield", OpcodeAndVariant{0x4002, 0, 0})

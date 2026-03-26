@@ -211,21 +211,48 @@ static bool isGmAddressSpaceAttr(Attribute memorySpace) {
   return false;
 }
 
-static VerifierTargetArch getVerifierTargetArch(Operation *op) {
-  auto module = op ? op->getParentOfType<ModuleOp>() : ModuleOp();
+PTOArch mlir::pto::getTargetArch(ModuleOp module) {
   if (!module)
-    return VerifierTargetArch::A2A3;
-  auto arch = module->getAttrOfType<StringAttr>("pto.target_arch");
+    return PTOArch::A3;
+
+  auto arch = module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName);
   if (arch && arch.getValue().equals_insensitive("a5"))
-    return VerifierTargetArch::A5;
-  return VerifierTargetArch::A2A3;
+    return PTOArch::A5;
+  return PTOArch::A3;
+}
+
+PTOArch mlir::pto::getTargetArch(Operation *op) {
+  if (!op)
+    return PTOArch::A3;
+  return getTargetArch(op->getParentOfType<ModuleOp>());
+}
+
+bool mlir::pto::isTargetArchA3(ModuleOp module) {
+  return getTargetArch(module) == PTOArch::A3;
+}
+
+bool mlir::pto::isTargetArchA5(ModuleOp module) {
+  return getTargetArch(module) == PTOArch::A5;
+}
+
+bool mlir::pto::isTargetArchA3(Operation *op) {
+  return getTargetArch(op) == PTOArch::A3;
+}
+
+bool mlir::pto::isTargetArchA5(Operation *op) {
+  return getTargetArch(op) == PTOArch::A5;
+}
+
+static VerifierTargetArch getVerifierTargetArch(Operation *op) {
+  return isTargetArchA5(op) ? VerifierTargetArch::A5
+                            : VerifierTargetArch::A2A3;
 }
 
 static std::optional<StringRef> getVerifierArchName(Operation *op) {
   auto module = op ? op->getParentOfType<ModuleOp>() : ModuleOp();
   if (!module)
     return std::nullopt;
-  if (auto arch = module->getAttrOfType<StringAttr>("pto.target_arch"))
+  if (auto arch = module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName))
     return arch.getValue();
   return std::nullopt;
 }
@@ -3138,6 +3165,10 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
       return ft.getWidth() == 8 || ft.isF16() || ft.isBF16() || ft.isF32();
     return false;
   };
+  auto isRowMajorNoneBoxND = [&](pto::TileBufType ty) -> bool {
+    return ty.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor) &&
+           ty.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::NoneBox);
+  };
   auto verifyA2A3 = [&]() -> LogicalResult {
     Type srcTy = getSrc().getType();
     Type dstTy = getDst().getType();
@@ -3204,7 +3235,8 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
           *dstSpace == pto::AddressSpace::RIGHT ||
           *dstSpace == pto::AddressSpace::SCALING)) ||
         (*srcSpace == pto::AddressSpace::VEC &&
-         *dstSpace == pto::AddressSpace::MAT);
+         (*dstSpace == pto::AddressSpace::MAT ||
+          *dstSpace == pto::AddressSpace::VEC));
     if (!okPair)
       return emitOpError("expects A5 textract to use a supported src/dst loc pair");
     if (*srcSpace == pto::AddressSpace::MAT) {
@@ -3216,78 +3248,177 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
           return emitOpError("expects A5 left dst to use col_major blayout and row_major slayout");
       } else if (*dstSpace == pto::AddressSpace::RIGHT) {
         if (dstTb.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) ||
-            dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::ColMajor))
+          dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::ColMajor))
           return emitOpError("expects A5 right dst to use row_major blayout and col_major slayout");
       }
+    } else if (*srcSpace == pto::AddressSpace::VEC &&
+               *dstSpace == pto::AddressSpace::VEC) {
+      if (!isRowMajorNoneBoxND(srcTb) || !isRowMajorNoneBoxND(dstTb))
+        return emitOpError(
+            "expects A5 vec->vec textract src/dst to use ND layout "
+            "(blayout=row_major, slayout=none_box)");
     }
     return success();
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 mlir::LogicalResult mlir::pto::TInsertOp::verify() {
-  Type srcTy = getSrc().getType();
-  Type dstTy = getDst().getType();
-  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
-    return emitOpError("expects src/dst to be PTO shaped-like types");
-
-  auto srcShape = getShapeVec(srcTy);
-  auto dstShape = getShapeVec(dstTy);
-  if (srcShape.size() != 2 || dstShape.size() != 2)
-    return emitOpError("expects rank-2 shaped types for src/dst");
-
-  Type srcElemTy = getElemTy(srcTy);
-  Type dstElemTy = getElemTy(dstTy);
-  bool sameElemTy = srcElemTy == dstElemTy;
-  bool castElemTy =
-      srcElemTy.isF32() && (dstElemTy.isF16() || dstElemTy.isBF16());
-  if (!sameElemTy && !castElemTy)
-    return emitOpError(
-        "expects src/dst element types to match, or src=f32 with dst=f16/bf16");
-
-  if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
-    return emitOpError("expects indexRow/indexCol to be index type");
-
-  auto readConstIndex = [&](Value v, int64_t &out) -> bool {
-    if (auto cOp = v.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
-      out = cOp.value();
-      return true;
+  auto getConstIndex = [&](Value v) -> std::optional<int64_t> {
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantIndexOp>())
+      return cst.value();
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantIntOp>())
+      return cst.value();
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantOp>()) {
+      if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+        return attr.getInt();
     }
-    if (auto cInt = v.getDefiningOp<mlir::arith::ConstantIntOp>()) {
-      out = cInt.value();
-      return true;
-    }
-    if (auto cOp = v.getDefiningOp<mlir::arith::ConstantOp>()) {
-      if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cOp.getValue())) {
-        out = ia.getInt();
-        return true;
-      }
-    }
+    return std::nullopt;
+  };
+  auto verifyIndexOperands = [&]() -> LogicalResult {
+    if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
+      return emitOpError("expects indexRow and indexCol to be index type");
+    auto row = getConstIndex(getIndexRow());
+    auto col = getConstIndex(getIndexCol());
+    if (row && *row < 0)
+      return emitOpError("expects indexRow to be non-negative");
+    if (col && *col < 0)
+      return emitOpError("expects indexCol to be non-negative");
+    return success();
+  };
+  auto verifyStaticBounds = [&](Type srcTy, Type dstTy) -> LogicalResult {
+    auto row = getConstIndex(getIndexRow());
+    auto col = getConstIndex(getIndexCol());
+    auto srcShape = getValidShapeVec(srcTy);
+    auto dstShape = getShapeVec(dstTy);
+    if (srcShape.size() != 2 || dstShape.size() != 2)
+      return emitOpError("expects src and dst to be rank-2 tile_buf");
+    if (row && srcShape[0] != ShapedType::kDynamic &&
+        dstShape[0] != ShapedType::kDynamic &&
+        *row + srcShape[0] > dstShape[0])
+      return emitOpError("expects indexRow + src.rows <= dst.rows");
+    if (col && srcShape[1] != ShapedType::kDynamic &&
+        dstShape[1] != ShapedType::kDynamic &&
+        *col + srcShape[1] > dstShape[1])
+      return emitOpError("expects indexCol + src.cols <= dst.cols");
+    return success();
+  };
+  auto isColMajorRowMajorNZ = [&](pto::TileBufType ty) -> bool {
+    return ty.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) &&
+           ty.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::RowMajor);
+  };
+  auto isRowMajorNoneBoxND = [&](pto::TileBufType ty) -> bool {
+    return ty.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor) &&
+           ty.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::NoneBox);
+  };
+  auto isA5SupportedVecElemType = [&](Type ty) -> bool {
+    if (auto it = dyn_cast<IntegerType>(ty))
+      return it.getWidth() == 8 || it.getWidth() == 32;
+    if (auto ft = dyn_cast<FloatType>(ty))
+      return ft.getWidth() == 8 || ft.isF16() || ft.isBF16() || ft.isF32();
     return false;
   };
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    Type srcTy = getSrc().getType();
+    Type dstTy = getDst().getType();
+    auto srcTb = dyn_cast<pto::TileBufType>(srcTy);
+    auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
+    if (!srcTb || !dstTb)
+      return emitOpError("expects src and dst to be !pto.tile_buf");
+    if (failed(verifyTileBufCommon(*this, srcTy, "src")) ||
+        failed(verifyTileBufCommon(*this, dstTy, "dst")) ||
+        failed(verifyIndexOperands()) ||
+        failed(verifyStaticBounds(srcTy, dstTy)))
+      return failure();
 
-  int64_t r0 = 0;
-  int64_t c0 = 0;
-  bool rowConst = readConstIndex(getIndexRow(), r0);
-  bool colConst = readConstIndex(getIndexCol(), c0);
-  if (rowConst && r0 < 0)
-    return emitOpError("indexRow must be non-negative");
-  if (colConst && c0 < 0)
-    return emitOpError("indexCol must be non-negative");
+    auto srcSpace = getPTOMemorySpaceEnum(srcTy);
+    auto dstSpace = getPTOMemorySpaceEnum(dstTy);
+    if (!srcSpace || !dstSpace || *srcSpace != pto::AddressSpace::ACC ||
+        *dstSpace != pto::AddressSpace::MAT)
+      return emitOpError("expects A2/A3 tinsert src to use loc=acc and dst to use loc=mat");
 
-  int64_t srcRows = srcShape[0];
-  int64_t srcCols = srcShape[1];
-  int64_t dstRows = dstShape[0];
-  int64_t dstCols = dstShape[1];
-  if (rowConst && srcRows != mlir::ShapedType::kDynamic &&
-      dstRows != mlir::ShapedType::kDynamic &&
-      r0 + srcRows > dstRows)
-    return emitOpError("indexRow + src rows exceeds dst rows");
-  if (colConst && srcCols != mlir::ShapedType::kDynamic &&
-      dstCols != mlir::ShapedType::kDynamic &&
-      c0 + srcCols > dstCols)
-    return emitOpError("indexCol + src cols exceeds dst cols");
+    if (!isColMajorRowMajorNZ(srcTb))
+      return emitOpError("expects A2/A3 tinsert src to use blayout=col_major and slayout=row_major");
+    if (!isColMajorRowMajorNZ(dstTb))
+      return emitOpError("expects A2/A3 tinsert dst to use blayout=col_major and slayout=row_major");
+    if (dstTb.getSFractalSizeI32() != 512)
+      return emitOpError("expects A2/A3 tinsert dst fractal size to be 512");
 
-  return mlir::success();
+    Type srcElem = getElemTy(srcTy);
+    Type dstElem = getElemTy(dstTy);
+    if (!(srcElem.isF32() && (dstElem.isF16() || dstElem.isBF16())))
+      return emitOpError("expects A2/A3 tinsert element types to be src=f32, dst=f16/bf16");
+    return success();
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    Type srcTy = getSrc().getType();
+    Type dstTy = getDst().getType();
+    auto srcTb = dyn_cast<pto::TileBufType>(srcTy);
+    auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
+    if (!srcTb || !dstTb)
+      return emitOpError("expects src and dst to be !pto.tile_buf");
+    if (failed(verifyTileBufCommon(*this, srcTy, "src")) ||
+        failed(verifyTileBufCommon(*this, dstTy, "dst")) ||
+        failed(verifyIndexOperands()) ||
+        failed(verifyStaticBounds(srcTy, dstTy)))
+      return failure();
+
+    auto srcSpace = getPTOMemorySpaceEnum(srcTy);
+    auto dstSpace = getPTOMemorySpaceEnum(dstTy);
+    Type srcElem = getElemTy(srcTy);
+    Type dstElem = getElemTy(dstTy);
+    if (!srcSpace || !dstSpace)
+      return emitOpError("expects A5 tinsert src/dst to have explicit loc");
+
+    // A5 regular acc->mat path.
+    if (*srcSpace == pto::AddressSpace::ACC && *dstSpace == pto::AddressSpace::MAT) {
+      if (!isColMajorRowMajorNZ(srcTb))
+        return emitOpError("expects A5 acc->mat tinsert src to use blayout=col_major and slayout=row_major");
+      if (!isColMajorRowMajorNZ(dstTb))
+        return emitOpError("expects A5 acc->mat tinsert dst to use blayout=col_major and slayout=row_major");
+      bool okTypes = (srcElem.isF32() &&
+                      (dstElem.isF16() || dstElem.isBF16() || dstElem.isF32())) ||
+                     (srcElem.isInteger(32) && dstElem.isInteger(32));
+      if (!okTypes)
+        return emitOpError(
+            "expects A5 acc->mat tinsert element types to be "
+            "(src=f32,dst=f16/bf16/f32) or (src=i32,dst=i32)");
+      return success();
+    }
+
+    // A5 vec->mat path (ND/NZ modes in pto-isa).
+    if (*srcSpace == pto::AddressSpace::VEC && *dstSpace == pto::AddressSpace::MAT) {
+      if (!isColMajorRowMajorNZ(dstTb))
+        return emitOpError("expects A5 vec->mat tinsert dst to use blayout=col_major and slayout=row_major");
+      bool srcIsND = isRowMajorNoneBoxND(srcTb);
+      bool srcIsNZ = isColMajorRowMajorNZ(srcTb);
+      if (!srcIsND && !srcIsNZ)
+        return emitOpError(
+            "expects A5 vec->mat tinsert src to use ND(row_major/none_box) or NZ(col_major/row_major) layout");
+      if (srcElem != dstElem || !isA5SupportedVecElemType(srcElem))
+        return emitOpError(
+            "expects A5 vec->mat tinsert src/dst to have same supported dtype "
+            "(fp8/f16/bf16/f32/i8/i32)");
+      return success();
+    }
+
+    // A5 vec->vec path (PR561 ND_VEC).
+    if (*srcSpace == pto::AddressSpace::VEC && *dstSpace == pto::AddressSpace::VEC) {
+      if (!isRowMajorNoneBoxND(srcTb) || !isRowMajorNoneBoxND(dstTb))
+        return emitOpError(
+            "expects A5 vec->vec tinsert src/dst to use ND layout "
+            "(blayout=row_major, slayout=none_box)");
+      if (srcElem != dstElem || !isA5SupportedVecElemType(srcElem))
+        return emitOpError(
+            "expects A5 vec->vec tinsert src/dst to have same supported dtype "
+            "(fp8/f16/bf16/f32/i8/i32)");
+      return success();
+    }
+
+    return emitOpError(
+        "expects A5 tinsert to use a supported src/dst loc pair: "
+        "acc->mat, vec->mat, or vec->vec");
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 static mlir::LogicalResult verifyTFillPadLike(Operation *op, Type srcTy, Type dstTy,
@@ -7831,8 +7962,8 @@ static LogicalResult verifyFrontendSplitOp(Operation *op,
 static LogicalResult verifyPipeShape(Operation *op, int8_t dirMask, int32_t slotSize,
                                      int32_t slotNum,
                                      std::optional<int32_t> flagBase) {
-  if (dirMask != 1 && dirMask != 2)
-    return op->emitOpError("expects 'dir_mask' to be 1 or 2");
+  if (dirMask != 1 && dirMask != 2 && dirMask != 3)
+    return op->emitOpError("expects 'dir_mask' to be 1, 2, or 3");
   if (slotSize <= 0)
     return op->emitOpError("expects 'slot_size' to be greater than 0");
   if (slotNum != 4 && slotNum != 8)
@@ -7910,15 +8041,26 @@ LogicalResult InitializeL2G2LPipeOp::verify() {
           "expects 'local_slot_num' to be less than or equal to slot_num");
   }
 
+  if (getDirMask() == 3 && !getPeerLocalAddr())
+    return emitOpError("expects 'peer_local_addr' when dir_mask is 3");
+  if (getDirMask() != 3 && getPeerLocalAddr())
+    return emitOpError("'peer_local_addr' is only allowed when dir_mask is 3");
   return success();
 }
 
 LogicalResult InitializeL2LPipeOp::verify() {
-  return verifyPipeShape(getOperation(), getDirMask(), getSlotSize(),
-                         getSlotNum(),
-                         getFlagBaseAttr()
-                             ? std::optional<int32_t>(getFlagBaseAttr().getInt())
-                             : std::nullopt);
+  if (failed(verifyPipeShape(getOperation(), getDirMask(), getSlotSize(),
+                              getSlotNum(),
+                              getFlagBaseAttr()
+                                  ? std::optional<int32_t>(getFlagBaseAttr().getInt())
+                                  : std::nullopt)))
+    return failure();
+
+  if (getDirMask() == 3 && !getPeerLocalAddr())
+    return emitOpError("expects 'peer_local_addr' when dir_mask is 3");
+  if (getDirMask() != 3 && getPeerLocalAddr())
+    return emitOpError("'peer_local_addr' is only allowed when dir_mask is 3");
+  return success();
 }
 
 LogicalResult TPushOp::verify() {

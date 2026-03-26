@@ -77,19 +77,6 @@ static std::string getFuncSymbol(func::FuncOp funcOp) {
   return funcOp.getSymName().str();
 }
 
-static std::string getParticipantSetKey(const std::set<std::string> &parts) {
-  // Canonicalize a participant set to one stable string key so the pass can
-  // aggregate which directions appear between the same pair of functions.
-  std::string key;
-  bool first = true;
-  for (const std::string &part : parts) {
-    if (!first)
-      key += "|";
-    first = false;
-    key += part;
-  }
-  return key;
-}
 
 static std::optional<PipePeerKey> getPipePeerKey(Value localAddr,
                                                  func::FuncOp currentFunc) {
@@ -141,16 +128,30 @@ struct PTOResolveReservedBuffersPass
       info.funcOp = initOp->template getParentOfType<func::FuncOp>();
       info.dirMask = initOp.getDirMask();
 
-      Value localAddr = getLocalAddrOperand(initOp);
-      auto key = getPipePeerKey(localAddr, info.funcOp);
-      if (key) {
-        // The same reserve/import pair may appear in both kernels. Include the
-        // direction in the final key so C2V and V2C stay in separate buckets.
-        key->dirMask = info.dirMask;
+      // Record one address into the keyed maps. Returns true when the
+      // address comes from reserve_buffer / import_reserved_buffer.
+      auto recordAddr = [&](Value addr, int8_t effectiveDirMask) -> bool {
+        auto key = getPipePeerKey(addr, info.funcOp);
+        if (!key)
+          return false;
+        key->dirMask = effectiveDirMask;
         keyedInits[*key].push_back(info);
         keyedParticipants[*key].insert(getFuncSymbol(info.funcOp));
         keyedParticipants[*key].insert(key->ownerFunc);
-        return;
+        return true;
+      };
+
+      if (info.dirMask == 3) {
+        // DIR_BOTH: treat as two logical pipes keyed by direction.
+        bool c2vOk = recordAddr(getLocalAddrOperand(initOp), /*c2v=*/1);
+        Value peerAddr = initOp.getPeerLocalAddr();
+        bool v2cOk = peerAddr && recordAddr(peerAddr, /*v2c=*/2);
+        if (c2vOk || v2cOk)
+          return;
+      } else {
+        Value localAddr = getLocalAddrOperand(initOp);
+        if (recordAddr(localAddr, info.dirMask))
+          return;
       }
       if (getFlagBaseAttr(initOp))
         return;
@@ -172,22 +173,12 @@ struct PTOResolveReservedBuffersPass
           "pto.reserve_buffer or pto.import_reserved_buffer");
     }
 
-    std::map<std::string, std::set<int8_t>> pairToDirs;
-    for (const auto &it : keyedParticipants)
-      pairToDirs[getParticipantSetKey(it.second)].insert(it.first.dirMask);
-
     OpBuilder builder(moduleOp.getContext());
     for (const auto &it : keyedInits) {
-      const PipePeerKey &key = it.first;
       const auto &inits = it.second;
-      const auto &participants = keyedParticipants[key];
-      // A pair is considered bidirectional only when the same two functions
-      // appear with both direction values across all grouped logical pipes.
-      bool isBidirectional =
-          participants.size() == 2 &&
-          pairToDirs[getParticipantSetKey(participants)].count(1) &&
-          pairToDirs[getParticipantSetKey(participants)].count(2);
-      int32_t desiredBase = key.dirMask == 1 ? 0 : (isBidirectional ? 2 : 0);
+      // flag_base is always 0: single-direction pipes use flag pair 0/1;
+      // DIR_BOTH pipes internally manage 0/1 for C2V and 2/3 for V2C.
+      int32_t desiredBase = 0;
 
       std::optional<int32_t> chosenBase;
       for (const PipeInitInfo &info : inits) {

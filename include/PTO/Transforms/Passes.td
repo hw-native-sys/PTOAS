@@ -17,21 +17,6 @@
 
 include "mlir/Pass/PassBase.td"
 
-def PTOConvertToDPS : Pass<"pto-convert-to-dps", "func::FuncOp"> {
-  let summary = "Convert PTO value-semantic ops to DPS ops";
-  let description = [{
-    Rewrites High-Level PTO ops (load/store/matmul) to their DPS variants 
-    by allocating empty tensors as destinations.
-  }];
- 
-  let constructor = "mlir::pto::createPTOConvertToDPSPass()";
- 
-  let dependentDialects = [
-    "tensor::TensorDialect",
-    "pto::PTODialect"
-  ];
-}
-
 // Define PTOInsertSync Pass
 def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   let summary = "Insert synchronization flags for PTO dialect";

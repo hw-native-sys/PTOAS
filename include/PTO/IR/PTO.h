@@ -71,11 +71,26 @@ class TypeConverter;
 
 namespace pto {
 
+inline constexpr char kPTOTargetArchAttrName[] = "pto.target_arch";
+
 /// Get PTO Address Space Attr from input type.
 AddressSpaceAttr getPTOAddressSpaceAttr(Type type);
 
 /// Return true if type is a ptr/memref in GM address space (or default).
 bool isScalarPtrOrMemRef(Type type);
+
+enum class PTOArch {
+  A3,
+  A5,
+};
+
+/// Resolve the effective PTO target architecture from module-level IR state.
+PTOArch getTargetArch(ModuleOp module);
+PTOArch getTargetArch(Operation *op);
+bool isTargetArchA3(ModuleOp module);
+bool isTargetArchA5(ModuleOp module);
+bool isTargetArchA3(Operation *op);
+bool isTargetArchA5(Operation *op);
 
 enum class PTOParserTargetArch {
   Unspecified,

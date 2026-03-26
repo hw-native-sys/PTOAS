@@ -1,7 +1,4 @@
 add_mlir_dialect_library(PTOTransforms
-  InsertLoadStoreForMixCV.cpp
-  PTOInsertCVMov.cpp
-  PTOConvertToDPS.cpp
   InsertSync/PTOInsertSync.cpp
   InsertSync/InsertSyncDebug.cpp
   PTOViewToMemref.cpp
@@ -15,8 +12,6 @@ add_mlir_dialect_library(PTOTransforms
   InferPTOLayout.cpp
   BufferizableOpInterfaceImpl.cpp
   ConvertToPTOOp.cpp
-  PTOHighDimLowering.cpp
-  PTOVFloopGather.cpp
   PTOLowerFrontendPipeOpsPass.cpp
   PTOResolveReservedBuffersPass.cpp
   PTOWrapFunctionsInSectionsPass.cpp

@@ -24,17 +24,6 @@ struct FrontendPipeHandles {
   Operation *anchorOp = nullptr;
 };
 
-static PTOArch getTargetArch(Operation *op) {
-  auto module = op->getParentOfType<ModuleOp>();
-  if (!module)
-    return PTOArch::A3;
-
-  auto arch = module->getAttrOfType<StringAttr>("pto.target_arch");
-  if (arch && arch.getValue().equals_insensitive("a5"))
-    return PTOArch::A5;
-  return PTOArch::A3;
-}
-
 template <typename InitOpT>
 static FailureOr<FrontendPipeHandles> lowerFrontendInitOp(InitOpT initOp,
                                                           IRRewriter &rewriter) {
@@ -53,7 +42,7 @@ static FailureOr<FrontendPipeHandles> lowerFrontendInitOp(InitOpT initOp,
     if (arch == PTOArch::A5) {
       auto pipe = rewriter.create<InitializeL2LPipeOp>(
           loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr, IntegerAttr{},
-          localAddr);
+          localAddr, /*peer_local_addr=*/Value{});
       return pipe.getPipe();
     }
 
@@ -65,7 +54,8 @@ static FailureOr<FrontendPipeHandles> lowerFrontendInitOp(InitOpT initOp,
     auto localSlotNumAttr = rewriter.getI32IntegerAttr(slotNum);
     auto pipe = rewriter.create<InitializeL2G2LPipeOp>(
         loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr, localSlotNumAttr,
-        IntegerAttr{}, initOp.getGmSlotBuffer(), localAddr);
+        IntegerAttr{}, initOp.getGmSlotBuffer(), localAddr,
+        /*peer_local_addr=*/Value{});
     return pipe.getPipe();
   };
 
@@ -89,18 +79,32 @@ static FailureOr<FrontendPipeHandles> lowerFrontendInitOp(InitOpT initOp,
     break;
   }
   case 3: {
-    auto c2vPipeOr =
-        createPipe(/*dirMask=*/1, /*slotNum=*/4, initOp.getC2vConsumerBuf());
-    if (failed(c2vPipeOr))
-      return failure();
-    handles.c2vPipe = *c2vPipeOr;
-    handles.anchorOp = handles.c2vPipe.getDefiningOp();
+    auto dirAttr = rewriter.getI8IntegerAttr(3);
+    auto slotSizeAttr = rewriter.getI32IntegerAttr(initOp.getSlotSize());
+    auto slotNumAttr = rewriter.getI32IntegerAttr(4);
+    Value c2vAddr = initOp.getC2vConsumerBuf();
+    Value v2cAddr = initOp.getV2cConsumerBuf();
 
-    auto v2cPipeOr =
-        createPipe(/*dirMask=*/2, /*slotNum=*/4, initOp.getV2cConsumerBuf());
-    if (failed(v2cPipeOr))
-      return failure();
-    handles.v2cPipe = *v2cPipeOr;
+    if (arch == PTOArch::A5) {
+      auto pipe = rewriter.create<InitializeL2LPipeOp>(
+          loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr, IntegerAttr{},
+          c2vAddr, v2cAddr);
+      handles.c2vPipe = pipe.getPipe();
+      handles.v2cPipe = pipe.getPipe();
+      handles.anchorOp = pipe.getOperation();
+    } else {
+      if (!initOp.getGmSlotBuffer()) {
+        initOp.emitOpError("requires 'gm_slot_buffer' when lowering to a2/a3");
+        return failure();
+      }
+      auto localSlotNumAttr = rewriter.getI32IntegerAttr(4);
+      auto pipe = rewriter.create<InitializeL2G2LPipeOp>(
+          loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr, localSlotNumAttr,
+          IntegerAttr{}, initOp.getGmSlotBuffer(), c2vAddr, v2cAddr);
+      handles.c2vPipe = pipe.getPipe();
+      handles.v2cPipe = pipe.getPipe();
+      handles.anchorOp = pipe.getOperation();
+    }
     break;
   }
   default:

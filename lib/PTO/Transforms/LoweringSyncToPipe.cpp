@@ -19,14 +19,6 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
-
-static bool isTargetArchA5(Operation *op) {
-  auto module = op->getParentOfType<ModuleOp>();
-  if (!module)
-    return false;
-  auto arch = module->getAttrOfType<StringAttr>("pto.target_arch");
-  return arch && arch.getValue().equals_insensitive("a5");
-}
 static FailureOr<SyncOpType> getSyncOpTypeFromAttr(Attribute attr, Operation *op,
                                                    StringRef name) {
   auto opType = parseSyncOpTypeLikeAttr(attr);

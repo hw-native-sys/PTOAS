@@ -42,6 +42,19 @@ namespace {
 // ==============================================================================
 // Main Pass Implementation
 // ==============================================================================
+
+static bool hasGatherScatterLikeOps(func::FuncOp func) {
+  bool found = false;
+  func.walk([&](Operation *op) {
+    if (isa<pto::TGatherOp, pto::TGatherBOp, pto::TScatterOp, pto::MGatherOp,
+            pto::MScatterOp>(op)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
  
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
   
@@ -101,9 +114,19 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
                         func.getOperation());
  
     // 4. [NEW] Optimization 2: Remove Redundant Sync
-    // 消除由于 Motion 或 Analysis 产生的冗余同步对
-    RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage, SyncAnalysisMode::NORMALSYNC);
-    removeRedundant.Run();
+    // 消除由于 Motion 或 Analysis 产生的冗余同步对。
+    //
+    // NOTE:
+    // Current redundancy matching is pipe-pair based and may over-remove
+    // set/wait around gather/scatter-like ops on A5, causing runtime mismatch
+    // or vector exceptions. Keep correctness-first behavior here by skipping
+    // this optimization for those kernels until dependency-aware matching is
+    // added.
+    if (!hasGatherScatterLikeOps(func)) {
+      RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage,
+                                          SyncAnalysisMode::NORMALSYNC);
+      removeRedundant.Run();
+    }
  
     dumpInsertSyncPhase("After Remove Redundant Sync", syncIR, syncOpsStorage,
                         func.getOperation());

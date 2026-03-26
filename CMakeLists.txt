@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20.0)
-project(ptoas VERSION 0.13)
+project(ptoas VERSION 0.17)
 
 set(PTOAS_RELEASE_VERSION_OVERRIDE ""
     CACHE STRING "Override the version printed by ptoas --version")

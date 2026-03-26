@@ -615,15 +615,21 @@ struct PTOViewToMemrefPass
         auto configAttr = tbTy.getConfigAttr();
         if (!configAttr) configAttr = pto::TileBufConfigAttr::getDefault(ctx);
 
-        // 6. If alloc_tile provides an explicit address, lower directly to
-        // pto.pointer_cast so downstream EmitC lowering can use the integral
-        // address without relying on MemPlan.
+        // 6. If alloc_tile provides an explicit address, keep the original
+        // pointer_cast lowering intact and additionally rebind through
+        // pto.bind_tile. PointerCastOp continues to carry the tile metadata
+        // used by existing lowering paths, while BindTileOp provides the
+        // unified anchor EmitC uses to recover tile_buf information.
         if (Value addr = op.getAddr()) {
           auto pc = rewriter.create<pto::PointerCastOp>(
               loc, targetType, ValueRange{addr}, vRow ? vRow : Value(),
               vCol ? vCol : Value(), configAttr);
           markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
-          rewriter.replaceOp(op, pc.getResult());
+          auto bindOp = rewriter.create<pto::BindTileOp>(
+              loc, targetType, pc.getResult(), vRow ? vRow : Value(),
+              vCol ? vCol : Value(), configAttr);
+          markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
+          rewriter.replaceOp(op, bindOp.getResult());
           continue;
         }
 
@@ -637,6 +643,64 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
             configAttr);
+        markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
+
+        rewriter.replaceOp(op, bindOp.getResult());
+      }
+
+      // ------------------------------------------------------------------
+      // Stage 0.75: lower pto.declare_tile -> pto.declare_tile_memref +
+      //             pto.bind_tile
+      // ------------------------------------------------------------------
+      SmallVector<mlir::pto::DeclareTileOp, 8> declaredTiles;
+      func.walk([&](mlir::pto::DeclareTileOp op) { declaredTiles.push_back(op); });
+
+      for (auto op : declaredTiles) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        Location loc = op.getLoc();
+
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getTile().getType());
+        if (!tbTy) {
+          op.emitError("declare_tile result must be tile_buf type");
+          signalPassFailure();
+          return;
+        }
+
+        auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
+        if (!targetType) {
+          op.emitError("failed to convert declare_tile result to memref type");
+          signalPassFailure();
+          return;
+        }
+
+        auto configAttr = tbTy.getConfigAttr();
+        if (!configAttr)
+          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+
+        Value vRow;
+        Value vCol;
+        ArrayRef<int64_t> validShape = tbTy.getValidShape();
+        if (!tbTy.hasDynamicValid()) {
+          if (validShape.size() >= 1 && validShape[0] >= 0) {
+            vRow = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[0]))
+                       .getResult();
+          }
+          if (validShape.size() >= 2 && validShape[1] >= 0) {
+            vCol = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[1]))
+                       .getResult();
+          }
+        }
+
+        auto declaredMemRef =
+            rewriter.create<pto::DeclareTileMemRefOp>(loc, targetType);
+        auto bindOp = rewriter.create<pto::BindTileOp>(
+            loc, targetType, declaredMemRef.getResult(),
+            vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
         markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
 
         rewriter.replaceOp(op, bindOp.getResult());

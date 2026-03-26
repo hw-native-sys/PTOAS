@@ -1,0 +1,18 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+
+module {
+  func.func @tci_i16_kernel(%dst: memref<16xi16, #pto.address_space<gm>>) {
+    %c0_i16 = arith.constant 0 : i16
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %src = memref.reinterpret_cast %dst to offset: [%c0], sizes: [%c1, %c16], strides: [%c16, %c1] {layout = #pto.layout<nd>} : memref<16xi16, #pto.address_space<gm>> to memref<1x16xi16, strided<[16, 1], offset: ?>, #pto.address_space<gm>>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+    pto.tci ins(%c0_i16 : i16) outs(%tile : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>) outs(%src : memref<1x16xi16, strided<[16, 1], offset: ?>, #pto.address_space<gm>>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    return
+  }
+}
+
+// A3: TCI<Tile<TileType::Vec, int16_t, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Zero>, int16_t, 0>(
+// A3-NOT: TCI<Tile<TileType::Vec, int16_t, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Zero>, int32_t, 0>(

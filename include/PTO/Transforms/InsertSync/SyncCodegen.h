@@ -41,6 +41,9 @@ private:
   // --- 指令生成 ---
   void CreateBarrierOp(IRRewriter &rewriter, Operation *op, SyncOperation *sync,
                        bool beforeInsert);
+
+  // Insert the compiler tail-clean barrier right before function return.
+  void AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter);
  
   void CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter, Operation *op,
                                       SyncOperation *sync, bool beforeInsert);
@@ -73,6 +76,9 @@ private:
  
   // 记录 SyncIndex -> EventID Value 的映射 (缓存)
   DenseMap<unsigned, Value> SyncIndex2SelectBuffer;
+
+  // Deferred tail-clean barrier requested by sync analysis.
+  bool pendingAutoSyncTailBarrier_ = false;
 };
  
 } // namespace pto

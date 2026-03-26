@@ -1,0 +1,23 @@
+// RUN: ptoas --pto-arch a5 --enable-insert-sync %s | FileCheck %s
+
+module attributes {"pto.target_arch" = "a5"} {
+  // A5: textract mat->scaling follows TEXTRACT_M2LR data-movement path and
+  // must be treated as PIPE_MTE1 in sync insertion.
+  func.func @textract_mat_scaling_sync(%in: memref<32x32xf16, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+
+    pto.tload ins(%in : memref<32x32xf16, #pto.address_space<gm>>)
+              outs(%src : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>, index, index)
+                outs(%dst : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void textract_mat_scaling_sync(
+// CHECK: set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+// CHECK-NOT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CHECK: TEXTRACT(

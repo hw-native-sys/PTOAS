@@ -246,6 +246,26 @@ Global tensor layout inference for [`tensor_view` (Section 2.3)](#23-ptotensor_v
 
 ## 4. Operations Reference
 
+In addition to the `pto.*` operations documented below, PTOAS also accepts a limited set of commonly used third-party MLIR dialect operations as part of the input IR and lowering pipeline.
+
+- **`func`**
+  - `func.func`
+  - `func.return`
+  - `func.call`
+- **`arith`**
+  - constants and casts such as `arith.constant`, `arith.constant_index`, `arith.index_cast`, `arith.index_castui`, `arith.bitcast`, `arith.extf`, `arith.truncf`, `arith.extsi`, `arith.extui`, `arith.trunci`, `arith.sitofp`, `arith.uitofp`, `arith.fptosi`, and `arith.fptoui`
+  - integer and floating-point arithmetic such as `arith.addi`, `arith.subi`, `arith.muli`, `arith.divsi`, `arith.divui`, `arith.remsi`, `arith.remui`, `arith.addf`, `arith.subf`, `arith.mulf`, `arith.divf`, `arith.remf`, and `arith.negf`
+  - bitwise and shift operations such as `arith.andi`, `arith.ori`, `arith.xori`, `arith.shli`, `arith.shrsi`, and `arith.shrui`
+  - comparisons and selection such as `arith.cmpi`, `arith.cmpf`, and `arith.select`
+  - selected extended and min/max operations such as `arith.addui_extended`, `arith.mulsi_extended`, `arith.mului_extended`, `arith.ceildivsi`, `arith.ceildivui`, `arith.floordivsi`, `arith.maxsi`, `arith.minsi`, `arith.maxui`, `arith.minui`, `arith.maximumf`, `arith.minimumf`, `arith.maxnumf`, and `arith.minnumf`
+- **`scf`**
+  - `scf.for`
+  - `scf.if`
+  - `scf.yield`
+  - PTOAS also handles several structured-control-flow forms by lowering them through `cf`, including `scf.execute_region`, `scf.while`, `scf.index_switch`, and `scf.condition`
+
+NOTE: These third-party ops are supported only to the extent required by PTOAS front-end construction, analysis, and lowering. PTOAS does not imply full support for every operation in these dialects.
+
 ### 4.1 Pointer & View Operations
 
 ##### `pto.addptr` - Add Element Offset to Pointer
@@ -5372,11 +5392,13 @@ Predefined mask patterns for gather operations.
 
 | Value | Int | Pattern |
 |-------|-----|---------|
-| `P0101` | 0 | Alternating 0-1-0-1 |
-| `P0011` | 1 | 0-0-1-1 |
-| `P0110` | 2 | 0-1-1-0 |
+| `P0101` | 1 | Alternating 0-1-0-1 |
+| `P1010` | 2 | Alternating 1-0-1-0 |
 | `P0001` | 3 | 0-0-0-1 |
-| `P1111` | 4 | All ones |
+| `P0010` | 4 | 0-0-1-0 |
+| `P0100` | 5 | 0-1-0-0 |
+| `P1000` | 6 | 1-0-0-0 |
+| `P1111` | 7 | All ones |
 
 ---
 
@@ -6625,7 +6647,8 @@ generated IR. The detailed design document is:
 ##### `pto.reserve_buffer` - Reserve Local Consumer FIFO Buffer
 
 **Summary:** Declares a local reserved FIFO buffer region for the consumer side
-of one frontend logical pipe.
+of one frontend logical pipe. The valid way to write this op depends on
+whether the active PTOAS compilation flow enables local address planning.
 
 **Syntax:**
 
@@ -6635,6 +6658,18 @@ of one frontend logical pipe.
   size = 8192,
   location = #pto.address_space<vec>,
   auto = true
+} -> i32
+```
+
+When the address is already fixed in the input IR:
+
+```mlir
+%buf = pto.reserve_buffer {
+  name = "c2v_fifo",
+  size = 8192,
+  location = #pto.address_space<vec>,
+  auto = false,
+  base = 4096
 } -> i32
 ```
 
@@ -6651,8 +6686,17 @@ of one frontend logical pipe.
 **Constraints & Verification:**
 
 - At most one `pto.reserve_buffer` is expected in one function
-- `auto = false` requires explicit `base`
 - `location` must be a supported local address space
+- Op-level verification requires:
+  - `auto = false` must provide `base`
+  - `auto = true` must not provide `base`
+- Pipeline compatibility requires:
+  - if the active compilation flow enables local address planning: write
+    `auto = true` and omit `base`; `PlanMemory` assigns the address and
+    `pto-resolve-reserved-buffers` materializes it
+  - if the active compilation flow skips local address planning: write
+    `auto = false` with explicit `base`; `pto-resolve-reserved-buffers` only
+    propagates the pre-resolved address
 
 ##### `pto.import_reserved_buffer` - Import Peer Reserved FIFO Buffer
 
@@ -6679,6 +6723,11 @@ function's reserved buffer declaration.
 
 - At most one `pto.import_reserved_buffer` is expected in one function
 - `peer_func` must contain a matching `pto.reserve_buffer`
+- The imported address is resolved by `pto-resolve-reserved-buffers`
+  - from the peer `reserve_buffer.base` filled by `PlanMemory` when the active
+    compilation flow enables local address planning
+  - from the peer's explicit `base` when the active compilation flow skips
+    local address planning
 
 ##### `pto.aic_initialize_pipe` - Frontend Cube Pipe Initialization
 

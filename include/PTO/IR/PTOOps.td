@@ -1382,7 +1382,8 @@ def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
       OptionalAttr<I32Attr>:$local_slot_num,
       OptionalAttr<I32Attr>:$flag_base,
       AnyType:$gm_addr,
-      AnyType:$local_addr
+      AnyType:$local_addr,
+      Optional<AnyType>:$peer_local_addr
   );
 
   let results = (outs PipeType:$pipe);
@@ -1395,7 +1396,8 @@ def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
         (`,` `local_slot_num` `=` $local_slot_num^)?
         (`,` `flag_base` `=` $flag_base^)?
         `}`
-    `(` $gm_addr `:` type($gm_addr) `,` $local_addr `:` type($local_addr) `)`
+    `(` $gm_addr `:` type($gm_addr) `,` $local_addr `:` type($local_addr)
+        (`,` $peer_local_addr^ `:` type($peer_local_addr))? `)`
     attr-dict `->` qualified(type($pipe))
   }];
 }
@@ -1410,7 +1412,8 @@ def InitializeL2LPipeOp : PTO_Op<"initialize_l2l_pipe", [
       I32Attr:$slot_size,
       I32Attr:$slot_num,
       OptionalAttr<I32Attr>:$flag_base,
-      AnyType:$local_addr
+      AnyType:$local_addr,
+      Optional<AnyType>:$peer_local_addr
   );
 
   let results = (outs PipeType:$pipe);
@@ -1422,7 +1425,8 @@ def InitializeL2LPipeOp : PTO_Op<"initialize_l2l_pipe", [
         `slot_num` `=` $slot_num
         (`,` `flag_base` `=` $flag_base^)?
         `}`
-    `(` $local_addr `:` type($local_addr) `)`
+    `(` $local_addr `:` type($local_addr)
+        (`,` $peer_local_addr^ `:` type($peer_local_addr))? `)`
     attr-dict `->` qualified(type($pipe))
   }];
 }
@@ -1485,6 +1489,22 @@ def DeclareTileOp : PTO_Op<"declare_tile", [Pure]> {
 
   let assemblyFormat = [{
     attr-dict `->` qualified(type($tile))
+  }];
+}
+
+def DeclareTileMemRefOp : PTO_Op<"declare_tile_memref", [Pure]> {
+  let summary = "Internal memref placeholder for a tile whose address is assigned later";
+  let description = [{
+    Internal lowering op used by PTOViewToMemref. This op does not allocate
+    storage; it only provides a memref-typed SSA handle so later passes can
+    attach tile metadata through pto.bind_tile before the address is filled by
+    pipe operations such as pto.tpop.
+  }];
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($result))
   }];
 }
 
@@ -2642,9 +2662,62 @@ def TExtractOp : PTO_TOp<"textract", [
   }];
 
   let extraClassDeclaration = [{
-    // TEXTRACT moves data between memory domains (L1/cbuf -> L0A/L0B/L0C),
-    // which is executed by the MTE1 pipeline.
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::pto::PIPE getPipe() {
+      // Align with pto-isa TEXTRACT op classes:
+      //   - TEXTRACT_M2LR : MAT -> LEFT/RIGHT (and scaling-like targets) (MTE1)
+      //   - TEXTRACT_V2M  : VEC -> MAT       (FIX)
+      //   - TEXTRACT_A2M  : ACC -> MAT       (FIX)
+      // For pure UB slices (VEC -> VEC), treat as vector pipe.
+      auto getASFromType = [](Type ty)
+          -> std::optional<::mlir::pto::AddressSpace> {
+        if (auto tb = llvm::dyn_cast<::mlir::pto::TileBufType>(ty)) {
+          if (auto as = llvm::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
+                  tb.getMemorySpace()))
+            return as.getAddressSpace();
+          return std::nullopt;
+        }
+        if (auto mr = llvm::dyn_cast<::mlir::MemRefType>(ty)) {
+          if (auto ms = mr.getMemorySpace()) {
+            if (auto as =
+                    llvm::dyn_cast<::mlir::pto::AddressSpaceAttr>(ms))
+              return as.getAddressSpace();
+          }
+          return std::nullopt;
+        }
+        return std::nullopt;
+      };
+
+      auto sOpt = getASFromType(getSrc().getType());
+      auto dOpt = getASFromType(getDst().getType());
+      if (!sOpt.has_value() || !dOpt.has_value())
+        return ::mlir::pto::PIPE::PIPE_V;
+
+      const auto s = sOpt.value();
+      const auto d = dOpt.value();
+
+      if (s == ::mlir::pto::AddressSpace::MAT &&
+          (d == ::mlir::pto::AddressSpace::LEFT ||
+           d == ::mlir::pto::AddressSpace::RIGHT ||
+           d == ::mlir::pto::AddressSpace::BIAS ||
+           d == ::mlir::pto::AddressSpace::SCALING)) {
+        return ::mlir::pto::PIPE::PIPE_MTE1;
+      }
+
+      if ((s == ::mlir::pto::AddressSpace::VEC &&
+           d == ::mlir::pto::AddressSpace::MAT) ||
+          (s == ::mlir::pto::AddressSpace::ACC &&
+           d == ::mlir::pto::AddressSpace::MAT)) {
+        return ::mlir::pto::PIPE::PIPE_FIX;
+      }
+
+      if (s == ::mlir::pto::AddressSpace::VEC &&
+          d == ::mlir::pto::AddressSpace::VEC) {
+        return ::mlir::pto::PIPE::PIPE_V;
+      }
+
+      // Default to vector pipe for unmatched combinations.
+      return ::mlir::pto::PIPE::PIPE_V;
+    }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }
@@ -2675,6 +2748,7 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
   let extraClassDeclaration = [{
     // TINSERT runs on different pipes depending on target/path:
+    // - A5 Vec(UB)->Vec(UB): PIPE_V  (ND_VEC path).
     // - A5 Vec(UB)->Mat(L1): PIPE_MTE3 (custom UB->L1 copy path).
     // - Acc->Mat (A2/A3/A5 regular path): PIPE_FIX.
     ::mlir::pto::PIPE getPipe() {
@@ -2718,6 +2792,10 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
       auto sOpt = getASFromType(getSrc().getType());
       auto dOpt = getASFromType(getDst().getType());
+      if (isA5Target() && sOpt.has_value() && dOpt.has_value() &&
+          sOpt.value() == ::mlir::pto::AddressSpace::VEC &&
+          dOpt.value() == ::mlir::pto::AddressSpace::VEC)
+        return ::mlir::pto::PIPE::PIPE_V;
       if (isA5Target() && sOpt.has_value() && dOpt.has_value() &&
           sOpt.value() == ::mlir::pto::AddressSpace::VEC &&
           dOpt.value() == ::mlir::pto::AddressSpace::MAT)
@@ -3549,7 +3627,8 @@ def TReshapeOp: PTO_TOp<"treshape", [
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    // Keep consistent with pto-isa opPipeList: TRESHAPE is modeled on PIPE_S.
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
     ::mlir::Value getViewSource() { return getSrc(); }
   }];
 }
@@ -3865,23 +3944,33 @@ def TScatterOp: PTO_TOp<"tscatter", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() {
-      // NOTE: On dav-c220 (Ascend910 A2/A3), pto-isa implements TSCATTER as a
-      // scalar loop over UB pointers, which executes on the scalar pipeline
-      // (PIPE_S). Waiting on PIPE_V does not block scalar UB accesses and can
-      // lead to using uninitialized indices/data (crash / aivec exception).
-      //
-      // On A5 instruction set devices, TSCATTER is implemented with vector
-      // scatter instructions and should be treated as PIPE_V.
-      auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
-      if (moduleOp) {
-        if (auto spec = moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
-          auto s = spec.getValue();
-          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95")) {
-            return ::mlir::pto::PIPE::PIPE_V;
-          }
+      // NOTE:
+      // - On A2/A3, pto-isa TSCATTER is a scalar UB loop (PIPE_S).
+      // - On A5, pto-isa TSCATTER is vector scatter (PIPE_V).
+      // We accept either `pto.target_arch=a5` or A5 `pto.device-spec`.
+      auto isA5Target = [&]() -> bool {
+        auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
+        if (!moduleOp)
+          return false;
+
+        if (auto arch =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
+          if (arch.getValue().equals_insensitive("a5"))
+            return true;
         }
-      }
-      return ::mlir::pto::PIPE::PIPE_S;
+
+        if (auto spec =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
+          auto s = spec.getValue();
+          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95"))
+            return true;
+        }
+
+        return false;
+      };
+
+      return isA5Target() ? ::mlir::pto::PIPE::PIPE_V
+                          : ::mlir::pto::PIPE::PIPE_S;
     }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];

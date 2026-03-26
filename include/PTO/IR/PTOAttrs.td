@@ -372,12 +372,13 @@ def PTO_RoundModeAttr : EnumAttr<PTO_Dialect, PTO_RoundModeEnum, "round_mode"> {
 
 def PTO_MaskPatternEnum : PTO_I32Enum<
   "MaskPattern", "PTO mask pattern", [
-    I32EnumAttrCase<"P0101", 0>,
-    I32EnumAttrCase<"P0011", 1>,
-    I32EnumAttrCase<"P0110", 2>,
+    I32EnumAttrCase<"P0101", 1>,
+    I32EnumAttrCase<"P1010", 2>,
     I32EnumAttrCase<"P0001", 3>,
-    I32EnumAttrCase<"P1111", 4>,
-    I32EnumAttrCase<"P1010", 5>
+    I32EnumAttrCase<"P0010", 4>,
+    I32EnumAttrCase<"P0100", 5>,
+    I32EnumAttrCase<"P1000", 6>,
+    I32EnumAttrCase<"P1111", 7>
   ]
 >;
 

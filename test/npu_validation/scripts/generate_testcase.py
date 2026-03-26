@@ -453,6 +453,14 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     return "dav-c220-cube" if needs_cube else "dav-c220-vec"
 
 
+def _infer_launch_block_count(kernel_text: str, testcase: str) -> int:
+    # Inter-core sync functional cases need at least two cores:
+    # one producer core does sync.set, one consumer core does sync.wait.
+    if testcase.startswith("test_intercore_sync_") and "get_block_idx()" in kernel_text:
+        return 2
+    return 1
+
+
 def _parse_int_list(blob: str):
     items = []
     for part in blob.split(","):
@@ -1305,6 +1313,7 @@ def generate_testcase(
     kernel_call_args_device = ", ".join(kernel_call_args_device)
     kernel_call_args_host = ", ".join(kernel_call_args_host)
     raw_params_host = [_rewrite_host_unsupported_types(p) for p in raw_params]
+    launch_block_count = _infer_launch_block_count(raw_kernel_for_analysis, testcase)
     launch_cpp = (
         INCLUDE_REPLACEMENT
         + "\n"
@@ -1315,9 +1324,9 @@ def generate_testcase(
         "#endif\n\n"
         f"void {launch_name}({launch_fn_params}) {{\n"
         "#if defined(__CCE_AICORE__)\n"
-        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args_device});\n"
+        f"    {kernel_name}<<<{launch_block_count}, nullptr, stream>>>({kernel_call_args_device});\n"
         "#else\n"
-        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args_host});\n"
+        f"    {kernel_name}<<<{launch_block_count}, nullptr, stream>>>({kernel_call_args_host});\n"
         "#endif\n"
         f"}}\n"
     )
@@ -1510,6 +1519,25 @@ endif()
                 compare_lines.append(
                     f"    ok = compare_bin(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}) and ok"
                 )
+    if testcase == "test_intercore_sync_a5_functional":
+        # Extra functional check (not just run-to-run determinism):
+        # core0 writes 2.0 to output[0], core1 waits then mirrors to output[1].
+        out_name = output_ptrs[0]["name"] if output_ptrs else "v1"
+        compare_lines.append(f"    __inter_out = np.fromfile(\"{out_name}.bin\", dtype=np.float32)")
+        compare_lines.append("    if __inter_out.size < 2:")
+        compare_lines.append("        print(f\"[ERROR] intercore check requires >=2 elements, got {__inter_out.size}\")")
+        compare_lines.append("        ok = False")
+        compare_lines.append("    else:")
+        compare_lines.append("        if abs(float(__inter_out[0]) - 2.0) > 1e-6:")
+        compare_lines.append(
+            "            print(f\"[ERROR] intercore check failed: out[0]={float(__inter_out[0])}, expect 2.0\")"
+        )
+        compare_lines.append("            ok = False")
+        compare_lines.append("        if abs(float(__inter_out[1]) - 2.0) > 1e-6:")
+        compare_lines.append(
+            "            print(f\"[ERROR] intercore check failed: out[1]={float(__inter_out[1])}, expect 2.0\")"
+        )
+        compare_lines.append("            ok = False")
     compare_py = compare_template.replace("@COMPARES@", "\n".join(compare_lines))
     (output_dir / "compare.py").write_text(compare_py, encoding="utf-8")
 

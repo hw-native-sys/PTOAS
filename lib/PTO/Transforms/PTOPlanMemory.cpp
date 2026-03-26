@@ -53,16 +53,10 @@ static int64_t alignUpBytes(int64_t value, int64_t align) {
 }
 
 static LocalMemSpec getLocalMemSpec(Operation *op, AddressSpace as) {
-  auto moduleOp = op->getParentOfType<ModuleOp>();
-  bool isA5 = false;
-  if (moduleOp) {
-    if (auto archAttr = moduleOp->getAttrOfType<StringAttr>("pto.target_arch"))
-      isA5 = archAttr.getValue().equals_insensitive("a5");
-  }
-
   switch (as) {
   case AddressSpace::VEC:
-    return isA5 ? LocalMemSpec{2031616, 256} : LocalMemSpec{1572864, 256};
+    return isTargetArchA5(op) ? LocalMemSpec{2031616, 256}
+                              : LocalMemSpec{1572864, 256};
   case AddressSpace::MAT:
     return LocalMemSpec{4194304, 256};
   default:
@@ -217,19 +211,6 @@ static LogicalResult assignAutoReserveBufferBase(
   return success();
 }
 
-static LogicalResult verifyManualReserveBufferMode(func::FuncOp funcOp) {
-  LogicalResult result = success();
-  funcOp.walk([&](memref::AllocOp allocOp) {
-    auto memorySpaceAttr = GetBufferSpaceAttr(allocOp.getResult());
-    if (!isLocalBuffer(memorySpaceAttr))
-      return WalkResult::advance();
-    result = allocOp.emitOpError("cannot use pto.reserve_buffer with auto = "
-                                 "false when local memref.alloc "
-                                 "still requires PlanMemory allocation");
-    return WalkResult::interrupt();
-  });
-  return result;
-}
 
 // bool isReusableCastOp(pto::VCastOp &castOp, Value output, Value input) {
 //   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
@@ -306,6 +287,11 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     if (mayAliasOp.has_value()) {
       auto aliasPair = mayAliasOp.value();
       UpdateBufferAlias(aliasPair.first, aliasPair.second);
+    } else if (isa<pto::DeclareTileMemRefOp>(op)) {
+      // Internal placeholder for a tile whose runtime address is assigned by
+      // pipe operations such as tpop. This op does not allocate local storage
+      // and should not participate in memory planning.
+      return WalkResult::advance();
     } else if (auto bindOp = dyn_cast<pto::BindTileOp>(op)) {
       // BindTile result is only an alias of the source buffer. Treat every use
       // of the result as a use of the source in liveness analysis.
@@ -2043,20 +2029,10 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
   // Default to a3.
   applySpec(kA3);
 
-  auto moduleOp = getTopLevelModuleOp(funcOp);
-  StringAttr archAttr = moduleOp->getAttrOfType<StringAttr>("pto.target_arch");
-  if (!archAttr) {
-    return success();
-  }
-
-  std::string arch = archAttr.getValue().str();
-  for (char &c : arch)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
   // --pto-arch options:
   // a3 -> default memory spec
   // a5 -> override memory spec
-  if (arch == "a5") {
+  if (isTargetArchA5(getTopLevelModuleOp(funcOp))) {
     applySpec(kA5);
   }
   return success();
@@ -2185,12 +2161,10 @@ void PlanMemoryPass::runOnOperation() {
     }
     if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN &&
         reservePlan.mode == ReserveBufferMode::Manual) {
-      // Manual mode means the function's local addresses are already fixed.
-      // Reject any remaining local allocs that would still need PlanMemory.
-      if (failed(verifyManualReserveBufferMode(funcOp))) {
-        return signalPassFailure();
-      }
-      continue;
+      reservePlan.reserveOp.emitOpError(
+          "pto.reserve_buffer with explicit 'base' (auto = false) is not "
+          "supported in PlanMemory; use --pto-level=level3 or set auto = true");
+      return signalPassFailure();
     }
 
     MemLivenessAnalysis memLiveness(funcOp, this->memMode);
