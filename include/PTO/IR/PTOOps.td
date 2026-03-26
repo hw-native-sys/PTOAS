@@ -1689,10 +1689,12 @@ def SyncSetOp : PTO_Op<"sync.set"> {
 
   let arguments = (ins
     PTO_PipeAttr:$pipe,
-    I32Attr:$event_id
+    OptionalAttr<I32Attr>:$event_id,
+    Optional<Index>:$event_id_dyn
   );
 
-  let assemblyFormat = "$pipe `,` $event_id attr-dict";
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def SyncWaitOp : PTO_Op<"sync.wait"> {
@@ -1704,10 +1706,12 @@ def SyncWaitOp : PTO_Op<"sync.wait"> {
 
   let arguments = (ins
     PTO_PipeAttr:$pipe,
-    I32Attr:$event_id
+    OptionalAttr<I32Attr>:$event_id,
+    Optional<Index>:$event_id_dyn
   );
 
-  let assemblyFormat = "$pipe `,` $event_id attr-dict";
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def BarrierOp : PTO_Op<"barrier"> {

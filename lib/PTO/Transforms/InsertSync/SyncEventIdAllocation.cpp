@@ -359,8 +359,14 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
       setFlag->GetType(), setFlag->GetSrcPipe(), setFlag->GetDstPipe(),
       static_cast<unsigned>(syncOperations_.size()), setFlag->GetSyncIRIndex(),
       setFlag->GetForEndIndex());
+  syncFront->depRootBuffers = setFlag->depRootBuffers;
+  syncFront->eventIdNum = setFlag->eventIdNum;
+  syncFront->SetDepSyncIRIndex(setFlag->GetDepSyncIRIndex());
       
   auto syncEnd = syncFront->GetMatchSync(waitFlag->GetSyncIRIndex());
+  syncEnd->depRootBuffers = waitFlag->depRootBuffers;
+  syncEnd->eventIdNum = waitFlag->eventIdNum;
+  syncEnd->SetDepSyncIRIndex(waitFlag->GetDepSyncIRIndex());
   
   syncFront->syncCoreType = setFlag->syncCoreType;
   syncEnd->syncCoreType = waitFlag->syncCoreType;

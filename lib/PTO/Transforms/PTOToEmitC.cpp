@@ -479,6 +479,14 @@ struct InterCoreSyncCallDesc {
   SmallVector<Value, 2> operands;
 };
 
+static Value castInterCoreEventIdToI32(ConversionPatternRewriter &rewriter,
+                                       Location loc, Value eventId) {
+  auto i32Ty = emitc::OpaqueType::get(rewriter.getContext(), "int32_t");
+  if (eventId.getType() == i32Ty)
+    return eventId;
+  return emitCCast(rewriter, loc, i32Ty, eventId);
+}
+
 static InterCoreSyncCallDesc buildInterCoreSyncSetCall(
     ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
     pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
@@ -520,6 +528,47 @@ static InterCoreSyncCallDesc buildInterCoreSyncSetCall(
   return desc;
 }
 
+static InterCoreSyncCallDesc buildInterCoreSyncSetCallDyn(
+    ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
+    pto::PipeAttr pipeAttr, Value eventIdVal) {
+  auto *ctx = rewriter.getContext();
+  std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
+  Value eventI32 = castInterCoreEventIdToI32(rewriter, loc, eventIdVal);
+
+  if (targetArch == PTOArch::A3) {
+    auto msgTy = emitc::OpaqueType::get(ctx, "uint16_t");
+    auto msgArgs = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, "FFTS_MODE_VAL"),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+    Value msgVal =
+        rewriter
+            .create<emitc::CallOpaqueOp>(loc, msgTy, "getFFTSMsg",
+                                         /*args=*/msgArgs,
+                                         /*templateArgs=*/ArrayAttr{},
+                                         /*operands=*/ValueRange{eventI32})
+            .getResult(0);
+
+    InterCoreSyncCallDesc desc;
+    desc.callee = "ffts_cross_core_sync";
+    desc.args = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, pipeTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+    desc.operands.push_back(msgVal);
+    return desc;
+  }
+
+  InterCoreSyncCallDesc desc;
+  desc.callee = "set_intra_block";
+  desc.args = rewriter.getArrayAttr({
+      emitc::OpaqueAttr::get(ctx, pipeTok),
+      IntegerAttr::get(IndexType::get(ctx), 0),
+  });
+  desc.operands.push_back(eventI32);
+  return desc;
+}
+
 static InterCoreSyncCallDesc buildInterCoreSyncWaitCall(
     ConversionPatternRewriter &rewriter, PTOArch targetArch,
     pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
@@ -536,6 +585,30 @@ static InterCoreSyncCallDesc buildInterCoreSyncWaitCall(
   desc.callee = "wait_intra_block";
   desc.args = rewriter.getArrayAttr(
       {emitc::OpaqueAttr::get(ctx, pipeTok), eventIdAttr});
+  return desc;
+}
+
+static InterCoreSyncCallDesc buildInterCoreSyncWaitCallDyn(
+    ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
+    pto::PipeAttr pipeAttr, Value eventIdVal) {
+  auto *ctx = rewriter.getContext();
+  std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
+  Value eventI32 = castInterCoreEventIdToI32(rewriter, loc, eventIdVal);
+
+  InterCoreSyncCallDesc desc;
+  if (targetArch == PTOArch::A3) {
+    desc.callee = "wait_flag_dev";
+    desc.args = rewriter.getArrayAttr({IntegerAttr::get(IndexType::get(ctx), 0)});
+    desc.operands.push_back(eventI32);
+    return desc;
+  }
+
+  desc.callee = "wait_intra_block";
+  desc.args = rewriter.getArrayAttr({
+      emitc::OpaqueAttr::get(ctx, pipeTok),
+      IntegerAttr::get(IndexType::get(ctx), 0),
+  });
+  desc.operands.push_back(eventI32);
   return desc;
 }
 
@@ -4170,10 +4243,22 @@ struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
   LogicalResult
   matchAndRewrite(mlir::pto::SyncSetOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    (void)adaptor;
     auto loc = op->getLoc();
-    auto desc = buildInterCoreSyncSetCall(rewriter, loc, targetArch, op.getPipe(),
-                                          op.getEventIdAttr());
+    IntegerAttr eventIdAttr = op.getEventIdAttr();
+    Value eventIdDyn = adaptor.getEventIdDyn();
+
+    if ((eventIdAttr != nullptr) == static_cast<bool>(eventIdDyn))
+      return rewriter.notifyMatchFailure(
+          op, "expects exactly one of static event_id attr or dynamic event_id operand");
+
+    InterCoreSyncCallDesc desc;
+    if (eventIdAttr) {
+      desc = buildInterCoreSyncSetCall(rewriter, loc, targetArch, op.getPipe(),
+                                       eventIdAttr);
+    } else {
+      desc = buildInterCoreSyncSetCallDyn(rewriter, loc, targetArch, op.getPipe(),
+                                          eventIdDyn);
+    }
     rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, desc.callee,
                                          /*args=*/desc.args,
                                          /*templateArgs=*/ArrayAttr{},
@@ -4195,10 +4280,22 @@ struct PTOSyncWaitToEmitC : public OpConversionPattern<mlir::pto::SyncWaitOp> {
   LogicalResult
   matchAndRewrite(mlir::pto::SyncWaitOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    (void)adaptor;
     auto loc = op->getLoc();
-    auto desc = buildInterCoreSyncWaitCall(rewriter, targetArch, op.getPipe(),
-                                           op.getEventIdAttr());
+    IntegerAttr eventIdAttr = op.getEventIdAttr();
+    Value eventIdDyn = adaptor.getEventIdDyn();
+
+    if ((eventIdAttr != nullptr) == static_cast<bool>(eventIdDyn))
+      return rewriter.notifyMatchFailure(
+          op, "expects exactly one of static event_id attr or dynamic event_id operand");
+
+    InterCoreSyncCallDesc desc;
+    if (eventIdAttr) {
+      desc = buildInterCoreSyncWaitCall(rewriter, targetArch, op.getPipe(),
+                                        eventIdAttr);
+    } else {
+      desc = buildInterCoreSyncWaitCallDyn(rewriter, loc, targetArch, op.getPipe(),
+                                           eventIdDyn);
+    }
     rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, desc.callee,
                                          desc.args, ArrayAttr{}, desc.operands);
 

@@ -1366,6 +1366,130 @@ LogicalResult mlir::pto::SetFFTsOp::verify() {
   return mlir::success();
 }
 
+ParseResult mlir::pto::SyncSetOp::parse(OpAsmParser &parser,
+                                        OperationState &result) {
+  PipeAttr pipeAttr;
+  if (succeeded(parser.parseOptionalLess())) {
+    StringRef pipeTok;
+    if (parser.parseKeyword(&pipeTok) || parser.parseGreater())
+      return failure();
+    auto pipeOr = symbolizePIPE(pipeTok);
+    if (!pipeOr)
+      return parser.emitError(parser.getCurrentLocation())
+             << "unknown pipe token: " << pipeTok;
+    pipeAttr = PipeAttr::get(parser.getContext(), *pipeOr);
+    result.addAttribute(getPipeAttrName(result.name), pipeAttr);
+  } else if (parser.parseAttribute(pipeAttr, getPipeAttrName(result.name),
+                                   result.attributes)) {
+    return failure();
+  }
+  if (parser.parseComma())
+    return failure();
+
+  OpAsmParser::UnresolvedOperand eventOperand;
+  OptionalParseResult parseEventOperand =
+      parser.parseOptionalOperand(eventOperand);
+  if (parseEventOperand.has_value()) {
+    if (failed(*parseEventOperand))
+      return failure();
+    if (parser.resolveOperand(eventOperand, parser.getBuilder().getIndexType(),
+                              result.operands))
+      return failure();
+  } else {
+    IntegerAttr eventAttr;
+    if (parser.parseAttribute(eventAttr, parser.getBuilder().getI32Type(),
+                              getEventIdAttrName(result.name),
+                              result.attributes))
+      return failure();
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+  return success();
+}
+
+void mlir::pto::SyncSetOp::print(OpAsmPrinter &p) {
+  p << " <" << stringifyPIPE(getPipe().getPipe()) << ">, ";
+  if (IntegerAttr eventAttr = getEventIdAttr()) {
+    p << eventAttr.getInt();
+  } else {
+    p << getEventIdDyn();
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          {getPipeAttrName(), getEventIdAttrName()});
+}
+
+LogicalResult mlir::pto::SyncSetOp::verify() {
+  bool hasStatic = getEventIdAttr() != nullptr;
+  bool hasDynamic = static_cast<bool>(getEventIdDyn());
+  if (hasStatic == hasDynamic)
+    return emitOpError()
+           << "expects exactly one event-id form: static attr or dynamic index operand";
+  return success();
+}
+
+ParseResult mlir::pto::SyncWaitOp::parse(OpAsmParser &parser,
+                                         OperationState &result) {
+  PipeAttr pipeAttr;
+  if (succeeded(parser.parseOptionalLess())) {
+    StringRef pipeTok;
+    if (parser.parseKeyword(&pipeTok) || parser.parseGreater())
+      return failure();
+    auto pipeOr = symbolizePIPE(pipeTok);
+    if (!pipeOr)
+      return parser.emitError(parser.getCurrentLocation())
+             << "unknown pipe token: " << pipeTok;
+    pipeAttr = PipeAttr::get(parser.getContext(), *pipeOr);
+    result.addAttribute(getPipeAttrName(result.name), pipeAttr);
+  } else if (parser.parseAttribute(pipeAttr, getPipeAttrName(result.name),
+                                   result.attributes)) {
+    return failure();
+  }
+  if (parser.parseComma())
+    return failure();
+
+  OpAsmParser::UnresolvedOperand eventOperand;
+  OptionalParseResult parseEventOperand =
+      parser.parseOptionalOperand(eventOperand);
+  if (parseEventOperand.has_value()) {
+    if (failed(*parseEventOperand))
+      return failure();
+    if (parser.resolveOperand(eventOperand, parser.getBuilder().getIndexType(),
+                              result.operands))
+      return failure();
+  } else {
+    IntegerAttr eventAttr;
+    if (parser.parseAttribute(eventAttr, parser.getBuilder().getI32Type(),
+                              getEventIdAttrName(result.name),
+                              result.attributes))
+      return failure();
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+  return success();
+}
+
+void mlir::pto::SyncWaitOp::print(OpAsmPrinter &p) {
+  p << " <" << stringifyPIPE(getPipe().getPipe()) << ">, ";
+  if (IntegerAttr eventAttr = getEventIdAttr()) {
+    p << eventAttr.getInt();
+  } else {
+    p << getEventIdDyn();
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          {getPipeAttrName(), getEventIdAttrName()});
+}
+
+LogicalResult mlir::pto::SyncWaitOp::verify() {
+  bool hasStatic = getEventIdAttr() != nullptr;
+  bool hasDynamic = static_cast<bool>(getEventIdDyn());
+  if (hasStatic == hasDynamic)
+    return emitOpError()
+           << "expects exactly one event-id form: static attr or dynamic index operand";
+  return success();
+}
+
 LogicalResult TStoreOp::verify() {
   auto verifyCommon = [&]() -> FailureOr<std::pair<pto::TileBufType, pto::PartitionTensorViewType>> {
     auto srcTile = dyn_cast<pto::TileBufType>(getSrc().getType());

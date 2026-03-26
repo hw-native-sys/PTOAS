@@ -82,7 +82,7 @@ __all__ = [
     # Low-level sync helpers (static/dynamic event id unified API)
     "set_flag", "wait_flag", "set_flag_dyn", "wait_flag_dyn",
     # Inter-core sync helpers
-    "sync_set", "sync_wait", "set_ffts",
+    "sync_set", "sync_wait", "sync_set_dyn", "sync_wait_dyn", "set_ffts",
     # A5 buffer-id sync helpers
     "get_buf", "rls_buf",
     # Scalar pointer helpers
@@ -188,6 +188,12 @@ def _is_static_event_id(event_id):
     return isinstance(event_id, _ods_ir.Attribute)
 
 
+def _is_static_i32_event_id(event_id):
+    if isinstance(event_id, (int, _ods_ir.IntegerAttr)):
+        return True
+    return False
+
+
 def set_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
     """Low-level dynamic event-id set_flag helper."""
     ctx = loc.context if loc else _ods_ir.Context.current
@@ -260,29 +266,72 @@ def wait_flag(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
 # -----------------------------------------------------------------------------
 # Inter-core sync helpers (pto.sync.set / pto.sync.wait / pto.set_ffts)
 # -----------------------------------------------------------------------------
+def sync_set_dyn(pipe, event_id, *, loc=None, ip=None):
+    ctx = loc.context if loc else _ods_ir.Context.current
+    pipe_attr = _ensure_pipe_attr(pipe, ctx)
+    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
+    # Preferred unified-op path: pto.sync.set(pipe, event_id_dyn=%v)
+    try:
+        return _pto_ops_gen.sync_set(
+            pipe_attr, event_id=None, event_id_dyn=event_val, loc=loc, ip=ip
+        )
+    except TypeError:
+        # Backward compatibility: older generated bindings with dedicated op.
+        if hasattr(_pto_ops_gen, "sync_set_dyn"):
+            return _pto_ops_gen.sync_set_dyn(pipe_attr, event_val, loc=loc, ip=ip)
+        raise
+
+
 def sync_set(pipe, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
-    return _ods_ir.Operation.create(
-        "pto.sync.set",
-        attributes={
-            "pipe": _ensure_pipe_attr(pipe, ctx),
-            "event_id": _ensure_i32_attr(event_id, "event_id", ctx),
-        },
-        loc=loc,
-        ip=ip,
-    )
+    pipe_attr = _ensure_pipe_attr(pipe, ctx)
+    if _is_static_i32_event_id(event_id):
+        event_attr = _ensure_i32_attr(event_id, "event_id", ctx)
+        try:
+            return _pto_ops_gen.sync_set(
+                pipe_attr, event_id=event_attr, event_id_dyn=None, loc=loc, ip=ip
+            )
+        except TypeError:
+            return _ods_ir.Operation.create(
+                "pto.sync.set",
+                attributes={"pipe": pipe_attr, "event_id": event_attr},
+                loc=loc,
+                ip=ip,
+            )
+    return sync_set_dyn(pipe_attr, event_id, loc=loc, ip=ip)
+
+
+def sync_wait_dyn(pipe, event_id, *, loc=None, ip=None):
+    ctx = loc.context if loc else _ods_ir.Context.current
+    pipe_attr = _ensure_pipe_attr(pipe, ctx)
+    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
+    try:
+        return _pto_ops_gen.sync_wait(
+            pipe_attr, event_id=None, event_id_dyn=event_val, loc=loc, ip=ip
+        )
+    except TypeError:
+        if hasattr(_pto_ops_gen, "sync_wait_dyn"):
+            return _pto_ops_gen.sync_wait_dyn(pipe_attr, event_val, loc=loc, ip=ip)
+        raise
+
 
 def sync_wait(pipe, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
-    return _ods_ir.Operation.create(
-        "pto.sync.wait",
-        attributes={
-            "pipe": _ensure_pipe_attr(pipe, ctx),
-            "event_id": _ensure_i32_attr(event_id, "event_id", ctx),
-        },
-        loc=loc,
-        ip=ip,
-    )
+    pipe_attr = _ensure_pipe_attr(pipe, ctx)
+    if _is_static_i32_event_id(event_id):
+        event_attr = _ensure_i32_attr(event_id, "event_id", ctx)
+        try:
+            return _pto_ops_gen.sync_wait(
+                pipe_attr, event_id=event_attr, event_id_dyn=None, loc=loc, ip=ip
+            )
+        except TypeError:
+            return _ods_ir.Operation.create(
+                "pto.sync.wait",
+                attributes={"pipe": pipe_attr, "event_id": event_attr},
+                loc=loc,
+                ip=ip,
+            )
+    return sync_wait_dyn(pipe_attr, event_id, loc=loc, ip=ip)
 
 def set_ffts(ffts, *, loc=None, ip=None):
     return _ods_ir.Operation.create(

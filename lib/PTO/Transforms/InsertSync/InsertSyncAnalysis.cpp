@@ -348,6 +348,11 @@ void InsertSyncAnalysis::InsertSyncOperation(
         SyncOperation::TYPE::SET_EVENT, frontPipe, nowPipe, syncIndex_,
         insertSetId, forEndIndex);
     auto waitOp = setOp->GetMatchSync(insertWaitId);
+    SmallVector<Value> depRoots = GetMemInfoBuffers(depBaseMemInfosVec);
+    setOp->depRootBuffers = depRoots;
+    waitOp->depRootBuffers = depRoots;
+    setOp->SetDepSyncIRIndex(frontCompound->GetIndex());
+    waitOp->SetDepSyncIRIndex(frontCompound->GetIndex());
 
     // Back-edge dependencies may require multi-buffer event IDs.
     if (forEndIndex.has_value()) {
@@ -505,6 +510,9 @@ SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
   }
   for (auto v : touchedBuffer)
     result.push_back(v);
+  llvm::sort(result, [](Value lhs, Value rhs) {
+    return lhs.getAsOpaquePointer() < rhs.getAsOpaquePointer();
+  });
   return result;
 }
 

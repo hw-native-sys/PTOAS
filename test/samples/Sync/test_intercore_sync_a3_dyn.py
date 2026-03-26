@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+from mlir.ir import (
+    Context,
+    F32Type,
+    IndexType,
+    InsertionPoint,
+    IntegerType,
+    Location,
+    MemRefType,
+    Module,
+)
+from mlir.dialects import arith, func, pto, scf
+
+
+def build():
+    with Context() as ctx:
+        pto.register_dialect(ctx, load=True)
+        with Location.unknown(ctx):
+            module = Module.create()
+
+            f32 = F32Type.get(ctx)
+            idx = IndexType.get(ctx)
+            i64 = IntegerType.get_signless(64, ctx)
+            i32 = IntegerType.get_signless(32, ctx)
+            ffts_ty = MemRefType.get([256], i64)
+            ptr_f32 = pto.PtrType.get(f32, ctx)
+            fn_ty = func.FunctionType.get([ffts_ty, ptr_f32, i32], [])
+
+            with InsertionPoint(module.body):
+                fn = func.FuncOp("test_intercore_sync_a3_dyn", fn_ty)
+                entry = fn.add_entry_block()
+
+            with InsertionPoint(entry):
+                c0 = arith.ConstantOp(idx, 0).result
+                c0_i32 = arith.ConstantOp(i32, 0).result
+                c3 = arith.ConstantOp(idx, 3).result
+                one = arith.ConstantOp(f32, 1.0).result
+                pipe_mte3 = pto.PipeAttr.get(pto.PIPE.PIPE_MTE3, ctx)
+                pipe_v = pto.PipeAttr.get(pto.PIPE.PIPE_V, ctx)
+
+                pto.set_ffts(entry.arguments[0])
+                pto.sync_set(pipe_mte3, c3)
+
+                should_wait = arith.CmpIOp(
+                    arith.CmpIPredicate.eq, entry.arguments[2], c0_i32
+                ).result
+                if_op = scf.IfOp(should_wait, [], hasElse=False)
+                with InsertionPoint(if_op.then_block):
+                    pto.sync_wait(pipe_v, c3)
+                    scf.YieldOp([])
+
+                pto.store_scalar(entry.arguments[1], c0, one)
+                func.ReturnOp([])
+
+            module.operation.verify()
+            return module
+
+
+if __name__ == "__main__":
+    print(build())

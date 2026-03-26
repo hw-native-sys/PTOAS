@@ -140,6 +140,10 @@ public:
  
 public:
   SmallVector<int> eventIds;
+  // Root buffers participating in the dependency that created this sync pair.
+  // Used by redundant-sync pruning to avoid removing syncs from unrelated
+  // producer/consumer chains that happen to share the same pipe pair.
+  SmallVector<Value> depRootBuffers;
   bool uselessSync{false};
   int eventIdNum{1};
   Value lowestCommonAncestorBuffer{nullptr};

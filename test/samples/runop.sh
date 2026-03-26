@@ -203,11 +203,19 @@ process_one_dir() {
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
       continue
     fi
+    if [[ "$base" == "test_intercore_sync_a5_dyn" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
+      echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
+      continue
+    fi
     if [[ "$base" == "test_intercore_sync_a5_functional" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
       continue
     fi
     if [[ "$base" == "test_intercore_sync_a3" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a3" ]]; then
+      echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a3"
+      continue
+    fi
+    if [[ "$base" == "test_intercore_sync_a3_dyn" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a3" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a3"
       continue
     fi
@@ -469,6 +477,55 @@ process_one_dir() {
       fi
       if grep -Fq "ffts_cross_core_sync(" "$cpp" || grep -Fq "wait_flag_dev(" "$cpp"; then
         echo -e "${A}(${base}.py)\tFAIL\tunexpected A3-style inter-core sync call in A5 output"
+        overall=1
+        continue
+      fi
+    fi
+    if [[ "$base" == "test_intercore_sync_a3_dyn" ]]; then
+      if ! grep -Fq "set_ffts_base_addr(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_ffts_base_addr() lowering"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "ffts_cross_core_sync(PIPE_MTE3" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing A3 dynamic sync.set lowering to ffts_cross_core_sync"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "getFFTSMsg(FFTS_MODE_VAL," "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing A3 dynamic getFFTSMsg(FFTS_MODE_VAL, ...)"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag_dev\\([[:space:]]*v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing A3 dynamic sync.wait lowering to wait_flag_dev(<var>)"
+        overall=1
+        continue
+      fi
+      if grep -Fq "wait_flag_dev(3)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected static wait_flag_dev(3) in dynamic test"
+        overall=1
+        continue
+      fi
+    fi
+    if [[ "$base" == "test_intercore_sync_a5_dyn" ]]; then
+      if ! grep -Eq "set_intra_block\\(PIPE_MTE3,[[:space:]]*v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing A5 dynamic sync.set lowering to set_intra_block(..., <var>)"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_intra_block\\(PIPE_V,[[:space:]]*v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing A5 dynamic sync.wait lowering to wait_intra_block(..., <var>)"
+        overall=1
+        continue
+      fi
+      if grep -Fq "set_intra_block(PIPE_MTE3, 5)" "$cpp" || grep -Fq "wait_intra_block(PIPE_V, 5)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected static literal event-id in dynamic A5 test"
+        overall=1
+        continue
+      fi
+      if grep -Fq "ffts_cross_core_sync(" "$cpp" || grep -Fq "wait_flag_dev(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected A3-style inter-core sync call in A5 dynamic output"
         overall=1
         continue
       fi

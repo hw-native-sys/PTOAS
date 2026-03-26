@@ -79,6 +79,10 @@ SyncOperation::GetMatchSync(unsigned index) const {
       std::make_unique<SyncOperation>(newType, this->srcPipe_, this->dstPipe_,
                                       kSyncIndex_, index, this->forEndIndex_);
   res->eventIds = this->eventIds;
+  res->depRootBuffers = this->depRootBuffers;
+  res->eventIdNum = this->eventIdNum;
+  res->isCompensation = this->isCompensation;
+  res->SetDepSyncIRIndex(this->GetDepSyncIRIndex());
   return res;
 }
  
