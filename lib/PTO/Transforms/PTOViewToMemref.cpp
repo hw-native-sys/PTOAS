@@ -1113,8 +1113,10 @@ struct PTOViewToMemrefPass
         //
         // Design choice:
         // - Keep lowering for compact/non-compact subview unified.
-        // - Lowered subview tile uses the *parent tile shape*.
-        // - Sub-tile size is represented through valid_row/valid_col.
+        // - IR-level subview result type exposes logical subview shape.
+        // - Lowered subview tile still uses the *parent tile shape* so
+        //   non-compact addressing/stride semantics remain unchanged.
+        // - Sub-tile extent is represented through valid_row/valid_col.
         // This avoids bifurcating codegen paths based on address compactness.
         SmallVector<int64_t> srcStrides;
         int64_t srcOffset = ShapedType::kDynamic;

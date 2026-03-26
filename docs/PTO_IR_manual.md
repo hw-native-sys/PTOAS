@@ -469,13 +469,13 @@ result = alloc_tile(base_addr, valid_row, valid_col)   // operands are optional
 
 ##### `pto.subview` - Tile SubView
 
-**Summary:** Create a logical subview from a parent tile. The subview window is expressed by `offsets + sizes`, while the result tile type keeps the parent tile shape.
+**Summary:** Create a logical subview from a parent tile. The subview window is expressed by `offsets + sizes`, and the result tile type shape equals `sizes`.
 
 **Semantics:**
 
 ```
 result = source[offsets] with static sizes
-result.shape = source.shape
+result.shape = sizes
 result.valid = clip(explicit_valid_or_sizes, sizes)
 ```
 
@@ -510,11 +510,13 @@ result.valid = clip(explicit_valid_or_sizes, sizes)
   - constant values must be positive and `<= sizes` in each dimension
   - non-constant values are represented as dynamic valid dims in the result type
 - The inferred result type uses:
-  - `shape = source.shape` (parent shape is preserved)
+  - `shape = sizes` (logical subview size)
   - the same element type and address space as `source`
   - the same tile config as `source`
   - `valid_shape` defaults to `sizes`
   - if explicit `valid_row/valid_col` are provided, `valid_shape` is clipped by `sizes`
+- Lowering keeps parent physical stride/base semantics for non-compact access,
+  so EmitC behavior remains unchanged from the previous implementation.
 
 **Hardware Mapping:**
 
@@ -523,8 +525,12 @@ result.valid = clip(explicit_valid_or_sizes, sizes)
 **Basic Example:**
 
 ```mlir
-%sub = pto.subview %src[%i, %j] sizes [32, 32] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-%sub2 = pto.subview %src[%i, %j] sizes [32, 32] valid [%vr, %vc] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%sub = pto.subview %src[%i, %j] sizes [32, 32] :
+  !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%sub2 = pto.subview %src[%i, %j] sizes [32, 32] valid [%vr, %vc] :
+  !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
 ##### `pto.set_validshape` - Update Dynamic Tile Valid Row/Col In Place

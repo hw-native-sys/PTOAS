@@ -7529,8 +7529,7 @@ LogicalResult SubViewOp::inferReturnTypes(
     subviewShape.push_back(dim);
   }
 
-  // Design: subview 的结果 tile 类型继承父 tile 的 shape；subview 的逻辑大小
-  // 通过 valid_row/valid_col（valid_shape）表达，而不是改写 type-level shape。
+  // Design: subview 的结果 tile 类型显式表达逻辑子窗口 shape（sizes）。
   ArrayRef<int64_t> parentShape = sourceType.getShape();
   if (subviewShape.size() != parentShape.size())
     return failure();
@@ -7565,7 +7564,7 @@ LogicalResult SubViewOp::inferReturnTypes(
   // 4. 构建 Result Type
   auto canonicalValidShape = canonicalizeTileBufValidShape(validShape);
   auto resultType = TileBufType::get(
-      context, parentShape, sourceType.getElementType(),
+      context, subviewShape, sourceType.getElementType(),
       sourceType.getMemorySpace(), canonicalValidShape, cfg);
 
   inferredReturnTypes.push_back(resultType);
@@ -7732,8 +7731,19 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   auto srcShape = srcTy.getShape();
   if (srcShape.size() != 2)
     return emitOpError("expects source to be rank-2");
-  if (dstShape[0] != srcShape[0] || dstShape[1] != srcShape[1])
-    return emitOpError("expects result shape to match source shape");
+  if (dstShape[0] != sizeR || dstShape[1] != sizeC)
+    return emitOpError("expects result shape to match subview sizes");
+
+  if (dstTy.getElementType() != srcTy.getElementType())
+    return emitOpError("expects result element type to match source");
+  if (dstTy.getMemorySpace() != srcTy.getMemorySpace())
+    return emitOpError("expects result address space to match source");
+  auto srcCfg = srcTy.getConfigAttr();
+  if (!srcCfg) srcCfg = TileBufConfigAttr::getDefault(getContext());
+  auto dstCfg = dstTy.getConfigAttr();
+  if (!dstCfg) dstCfg = TileBufConfigAttr::getDefault(getContext());
+  if (dstCfg != srcCfg)
+    return emitOpError("expects result tile config to match source");
 
   // Design choice: when valid[...] is omitted, infer result valid_shape from
   // subview sizes directly. We intentionally do not constrain it by source
