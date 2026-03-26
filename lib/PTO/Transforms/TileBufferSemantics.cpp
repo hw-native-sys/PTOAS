@@ -230,14 +230,24 @@ bool isOpTouchPlannableLocalBuffer(Operation *op) {
   return false;
 }
 
+// Records semantic inference failure reason when callers request diagnostics.
+static LogicalResult failSemantics(std::string *failureReason,
+                                   llvm::StringRef message) {
+  if (failureReason) {
+    *failureReason = message.str();
+  }
+  return failure();
+}
+
 // Builds normalized planning semantics from a value:
 // - root: traced storage owner
 // - scope: local memory space
 // - shape/valid/config/view-kind
 // - constBits: static bytes in bits
-LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out) {
+LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out,
+                                       std::string *failureReason) {
   if (!value)
-    return failure();
+    return failSemantics(failureReason, "value is null");
 
   out = TileBufferSemantics{};
   out.value = value;
@@ -247,7 +257,8 @@ LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out) {
   } else if (auto as = getPlanningBufferSpaceAttr(out.root)) {
     out.scope = as->getAddressSpace();
   } else {
-    return failure();
+    return failSemantics(failureReason,
+                         "failed to resolve address-space from value/root");
   }
 
   // Prefer root storage type for size calculation and keep queried type as
@@ -260,7 +271,24 @@ LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out) {
                                   out.validShape, out.config);
   }
   if (!decoded)
-    return failure();
+    return failSemantics(
+        failureReason,
+        "failed to decode shape/element/config from root/value type");
+
+  if (out.shape.empty()) {
+    return failSemantics(failureReason, "decoded shape is empty");
+  }
+  for (int64_t dim : out.shape) {
+    if (ShapedType::isDynamic(dim)) {
+      return failSemantics(
+          failureReason,
+          "dynamic shape is unsupported for PlanMemory static sizing");
+    }
+    if (dim <= 0) {
+      return failSemantics(failureReason,
+                           "shape dimensions must be positive");
+    }
+  }
 
   if (auto def = value.getDefiningOp()) {
     out.viewKind = getTileViewKind(def);
@@ -273,11 +301,20 @@ LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out) {
 
   auto staticSize = getStaticTotalSize(out.shape);
   int64_t elemBits = getElemBitWidth(out.elementType);
-  if (staticSize.has_value() && elemBits > 0) {
-    out.constBits = staticSize.value() * elemBits;
-    return success();
+  if (!staticSize.has_value()) {
+    return failSemantics(failureReason,
+                         "failed to compute static element count from shape");
   }
-  return failure();
+  if (staticSize.value() <= 0) {
+    return failSemantics(failureReason,
+                         "static element count must be positive");
+  }
+  if (elemBits <= 0) {
+    return failSemantics(failureReason,
+                         "unsupported element type bit-width for sizing");
+  }
+  out.constBits = staticSize.value() * elemBits;
+  return success();
 }
 
 } // namespace pto

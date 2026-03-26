@@ -268,7 +268,9 @@ public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode)
       : func_(func), planMode(planMode) {}
 
-  void build();
+  /// Builds alias/gen-kill/lifetime data used by PlanMemory.
+  /// Returns failure if traversal encounters unsupported local-memory patterns.
+  LogicalResult build();
 
   /// linear operation info.
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
@@ -324,15 +326,19 @@ private:
   /// Update and obtain op info information.
   OpInfo *UpdateLinearOperation(Operation *op);
 
-  /// Obtain all information about the buffer.
-  void UpdateOpBufferInfo(Operation *op, const ValueRange &results);
+  /// Materialize planning buffer-info for op results.
+  /// Returns failure when any result cannot be expressed as tilebuf semantics.
+  LogicalResult UpdateOpBufferInfo(Operation *op, const ValueRange &results);
 
-  /// Generate buffer info.
-  BufferInfo GenerateBufferInfo(Operation *op, Value operand);
+  /// Build planning metadata for one operand.
+  /// Returns failure when tilebuf semantic inference fails.
+  LogicalResult GenerateBufferInfo(Operation *op, Value operand,
+                                   BufferInfo &out);
 
-  /// Obtain the buffer info of plan operation.
-  BufferInfo GetBufferInfo(Operation *op, Value operand,
-                           pto::AddressSpace bufferScope);
+  /// Populate `out` from tilebuf semantic inference in the target scope.
+  /// No memref fallback is allowed in tilebuf-only PlanMemory mode.
+  LogicalResult GetBufferInfo(Operation *op, Value operand,
+                              pto::AddressSpace bufferScope, BufferInfo &out);
 
   /// Process gen buffer based on the result value of op.
   void UpdateOpGenInfo(OpInfo *opInfo, const ValueRange &results);
@@ -366,8 +372,8 @@ private:
   /// Update store op information.
   void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
 
-  /// Check whether a local-buffer defining op (memref.alloc / pto.alloc_tile)
-  /// is placed in a supported local address space.
+  /// Check whether a local-buffer defining op (`pto.alloc_tile`) is placed in
+  /// a supported local address space.
   LogicalResult CheckLocalBufferDefOp(Operation *op) const;
 
   /// kill buffer handle.
@@ -401,6 +407,9 @@ private:
 
   /// map on buffer alias
   DenseMap<Value, SetVector<Value>> buffer2AliasVec;
+
+  /// Set when IR traversal already emitted a semantic/validation diagnostic.
+  bool hasAnalysisError{false};
 
   int seqIndex{0};
 };

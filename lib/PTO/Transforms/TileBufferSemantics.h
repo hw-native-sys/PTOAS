@@ -10,6 +10,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace mlir {
@@ -63,8 +64,16 @@ Value tracebackBufferRoot(Value value);
 bool isOpTouchPlannableLocalBuffer(Operation *op);
 
 /// Infers normalized tile semantics (scope/shape/valid/config/root/bytes).
-/// Returns failure when static bits cannot be proven.
-LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out);
+/// Returns failure when static bits cannot be proven. If `failureReason` is
+/// provided, it will be filled with a concise cause.
+LogicalResult inferTileBufferSemantics(Value value, TileBufferSemantics &out,
+                                       std::string *failureReason);
+
+/// Convenience wrapper for callers that do not need failure diagnostics.
+inline LogicalResult inferTileBufferSemantics(Value value,
+                                              TileBufferSemantics &out) {
+  return inferTileBufferSemantics(value, out, nullptr);
+}
 
 } // namespace pto
 } // namespace mlir

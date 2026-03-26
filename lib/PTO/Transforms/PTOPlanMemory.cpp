@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <vector>
 
 #define DEBUG_TYPE "pto-plan-memory"
@@ -217,17 +218,40 @@ static LogicalResult assignAutoReserveBufferBase(
   return success();
 }
 
+// Verifies that manual reserve-buffer mode has no unresolved local allocations.
+//
+// In `auto=false` mode, local addresses are already fixed by contract.
+// Any local `alloc_tile` without explicit `addr` still needs PlanMemory
+// assignment and must be rejected. Legacy local `memref.alloc` is also
+// rejected because Phase-2 PlanMemory is tilebuf-only.
 static LogicalResult verifyManualReserveBufferMode(func::FuncOp funcOp) {
   LogicalResult result = success();
-  funcOp.walk([&](memref::AllocOp allocOp) {
-    auto memorySpaceAttr = GetBufferSpaceAttr(allocOp.getResult());
+  auto walkResult = funcOp.walk([&](Operation *op) {
+    if (auto allocTileOp = dyn_cast<pto::AllocTileOp>(op)) {
+      auto memorySpaceAttr = getPlanningBufferSpaceAttr(allocTileOp.getResult());
+      if (!isLocalBuffer(memorySpaceAttr))
+        return WalkResult::advance();
+      if (allocTileOp.getAddr())
+        return WalkResult::advance();
+      result = allocTileOp.emitOpError(
+          "cannot use pto.reserve_buffer with auto = false when local "
+          "pto.alloc_tile still requires PlanMemory address assignment");
+      return WalkResult::interrupt();
+    }
+
+    auto allocOp = dyn_cast<memref::AllocOp>(op);
+    if (!allocOp)
+      return WalkResult::advance();
+    auto memorySpaceAttr = getPlanningBufferSpaceAttr(allocOp.getResult());
     if (!isLocalBuffer(memorySpaceAttr))
       return WalkResult::advance();
-    result = allocOp.emitOpError("cannot use pto.reserve_buffer with auto = "
-                                 "false when local memref.alloc "
-                                 "still requires PlanMemory allocation");
+    result = allocOp.emitOpError(
+        "PlanMemory is tilebuf-only: local memref.alloc is unsupported; use "
+        "pto.alloc_tile");
     return WalkResult::interrupt();
   });
+  if (walkResult.wasInterrupted())
+    return failure();
   return result;
 }
 
@@ -272,14 +296,20 @@ static LogicalResult verifyManualReserveBufferMode(func::FuncOp funcOp) {
 } // namespace
 
 // Entry point that builds linear op order, alias map and lifetime intervals.
-void MemLivenessAnalysis::build() {
+// Returns failure when IR traversal already emitted a validation diagnostic.
+LogicalResult MemLivenessAnalysis::build() {
   Region &funcRegion = func_.getBody();
   Liveness live(func_);
+  hasAnalysisError = false;
   // Recursively obtaining IR information.
   RecursionIR(&funcRegion, live);
+  if (hasAnalysisError) {
+    return failure();
+  }
   // the lifetime of the buffer.
   GenerateBufferLife();
   //InitializeInplacePairList();
+  return success();
 }
 
 // True when planning mode is local on-chip memory allocation.
@@ -298,12 +328,22 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
   // 2) local-buffer definitions,
   // 3) gen/kill events used by memory planning.
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (hasAnalysisError) {
+      return WalkResult::interrupt();
+    }
+
     // recursive control flow
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
       RecursiveIfOp(ifOp, live);
+      if (hasAnalysisError) {
+        return WalkResult::interrupt();
+      }
       return WalkResult::skip();
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       RecursiveForOp(forOp, live);
+      if (hasAnalysisError) {
+        return WalkResult::interrupt();
+      }
       return WalkResult::skip();
     }
 
@@ -313,14 +353,24 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     if (mayAliasOp.has_value()) {
       auto aliasPair = mayAliasOp.value();
       UpdateBufferAlias(aliasPair.first, aliasPair.second);
-    // Local-memory planning now accepts both legacy memref.alloc and
-    // tile-native pto.alloc_tile as defining points.
-    } else if (isLocalMemPlan() &&
-               (isa<memref::AllocOp, pto::AllocTileOp>(op))) {
+    // Local-memory planning only accepts tile-native defining points.
+    } else if (isLocalMemPlan() && isa<pto::AllocTileOp>(op)) {
       if (failed(CheckLocalBufferDefOp(op))) {
         return WalkResult::interrupt();
       }
-      UpdateOpBufferInfo(op, op->getResults());
+      if (failed(UpdateOpBufferInfo(op, op->getResults()))) {
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    } else if (isLocalMemPlan() && isa<memref::AllocOp>(op)) {
+      auto allocOp = cast<memref::AllocOp>(op);
+      auto memorySpaceAttr = getPlanningBufferSpaceAttr(allocOp.getResult());
+      if (isLocalBuffer(memorySpaceAttr)) {
+        allocOp.emitOpError(
+            "PlanMemory is tilebuf-only: local memref.alloc is unsupported; "
+            "use pto.alloc_tile");
+        return WalkResult::interrupt();
+      }
       return WalkResult::advance();
     // } else if (isGlobalWorkSpaceMemPlan() &&
     //            dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(op)) {
@@ -382,7 +432,8 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     return WalkResult::advance();
   });
   if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PlanMemory Traverse IR Failed! ");
+    hasAnalysisError = true;
+    return;
   }
 }
 
@@ -444,6 +495,9 @@ void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
   UpdateOpGenInfo(forBeginSeq, GetLiveBuffersInLoop(forOp, live));
   UpdateForOpInitArgsAlias(forOp);
   RecursionIR(&forOp.getRegion(), live);
+  if (hasAnalysisError) {
+    return;
+  }
   UpdateForOpBufferAlias(forOp);
   auto forEndSeq = UpdateLinearOperation(forOp.getOperation());
   OpKillHandle(forEndSeq, live, forOp->getBlock());
@@ -478,14 +532,20 @@ void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, Liveness live) {
   //        scf.yield %alloc0: memref<16xf16, #pto.address_space<ub>>
   //      else:
   //        scf.yield %alloc1 : memref<16xf16, #pto.address_space<ub>>
-  auto curIfThen = UpdateLinearOperation(ifOp.getOperation());
+  UpdateLinearOperation(ifOp.getOperation());
   RecursionIR(&ifOp.getThenRegion(), live);
+  if (hasAnalysisError) {
+    return;
+  }
   auto curIfElse = UpdateLinearOperation(ifOp.getOperation());
   UpdateIfOpBufferAlias(ifOp, ifOp.thenYield());
 
   auto curIfEnd = curIfElse;
   if (ifOp.elseBlock()) {
     RecursionIR(&ifOp.getElseRegion(), live);
+    if (hasAnalysisError) {
+      return;
+    }
     curIfEnd = UpdateLinearOperation(ifOp.getOperation());
     UpdateIfOpBufferAlias(ifOp, ifOp.elseYield());
   }
@@ -537,25 +597,21 @@ SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(scf::ForOp forOp,
 //   buffer2MultiNum[markOp.getSrc()] = static_cast<uint64_t>(valAttr.getInt());
 // }
 
-// Validates local buffer defining ops and rejects non-local address-space.
+// Validates that a local PlanMemory defining op is tile-native alloc_tile and
+// that its result is in a supported local address space.
 LogicalResult MemLivenessAnalysis::CheckLocalBufferDefOp(Operation *op) const {
-  // Validate the defining op shape: this helper is intentionally limited to
-  // ops that create local buffers participating in PlanMemory.
-  Value defBuffer;
-  if (auto allocOp = dyn_cast<memref::AllocOp>(op)) {
-    defBuffer = allocOp.getResult();
-  } else if (auto allocTileOp = dyn_cast<pto::AllocTileOp>(op)) {
-    defBuffer = allocTileOp.getResult();
-  } else {
-    op->emitError("expects local buffer defining op");
+  auto allocTileOp = dyn_cast<pto::AllocTileOp>(op);
+  if (!allocTileOp) {
+    op->emitError("expects local buffer defining op pto.alloc_tile");
     return failure();
   }
 
+  Value defBuffer = allocTileOp.getResult();
   auto memorySpaceAttr = getPlanningBufferSpaceAttr(defBuffer);
   if (isLocalBuffer(memorySpaceAttr)) {
     return success();
   }
-  op->emitError("Alloc buffer not at local memory space!");
+  op->emitError("expects pto.alloc_tile result in local address space");
   return failure();
 }
 
@@ -617,8 +673,7 @@ void MemLivenessAnalysis::UpdateBufferAlias(Value buffer, Value aliasBuffer,
   //   buffer2status[buffer] = BufferStatus::UNDEFFINED;
   // }
 
-  // mark the alias buffer as ignoring Inplace if it is not generated by
-  // memref.alloc.
+  // Mark alias values as ignore-inplace when they are transient view results.
   auto it = bufferInfos.find(aliasBuffer);
   if (isIgnoreInplace && it != bufferInfos.end()) {
     it->second.ignoreInplace = true;
@@ -652,16 +707,23 @@ void MemLivenessAnalysis::UpdateStoreOpInfo(OpInfo *opInfo,
   OpKillHandle(opInfo, live, opInfo->operation->getBlock());
 }
 
-void MemLivenessAnalysis::UpdateOpBufferInfo(Operation *op,
-                                             const ValueRange &results) {
+// Builds BufferInfo records for op results and marks them as defined.
+// Fails when any result cannot be expressed as tile-buffer semantics.
+LogicalResult MemLivenessAnalysis::UpdateOpBufferInfo(
+    Operation *op, const ValueRange &results) {
   for (const Value &operand : results) {
     auto it = buffer2status.find(operand);
     if (it != buffer2status.end()) {
       continue;
     }
-    bufferInfos[operand] = GenerateBufferInfo(op, operand);
+    BufferInfo bufferInfo;
+    if (failed(GenerateBufferInfo(op, operand, bufferInfo))) {
+      return failure();
+    }
+    bufferInfos[operand] = std::move(bufferInfo);
     buffer2status[operand] = BufferStatus::DEFFINED;
   }
+  return success();
 }
 
 void MemLivenessAnalysis::UpdateOpGenInfo(OpInfo *opInfo,
@@ -737,91 +799,70 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
   return true;
 }
 
-// Dispatches to local/global buffer-info builders based on memory scope.
-BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
-                                                   Value operand) {
+// Dispatches to the tilebuf-only buffer-info builder based on memory scope.
+// Fails if the value is not a local plannable tile buffer.
+LogicalResult MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
+                                                      Value operand,
+                                                      BufferInfo &out) {
   auto memorySpaceAttr = getPlanningBufferSpaceAttr(operand);
   if (isLocalMemPlan() && isLocalBuffer(memorySpaceAttr)) {
     assert(memorySpaceAttr.has_value() && "buffer must has space!");
-    return GetBufferInfo(op, operand,
-                         memorySpaceAttr.value().getAddressSpace());
+    return GetBufferInfo(op, operand, memorySpaceAttr.value().getAddressSpace(),
+                         out);
   }
   // } else if (isGlobalWorkSpaceMemPlan() &&
   //            isa<bishengir::memref_ext::AllocWorkspaceOp>(
   //                operand.getDefiningOp())) {
   //   return GetBufferInfo(op, operand, pto::AddressSpace::GM);
   // }
-  llvm_unreachable("buffer must has BufferInfo !");
+  op->emitError("expects local tile buffer result for PlanMemory");
+  return failure();
 }
 
-BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
-                                              pto::AddressSpace bufferScope) {
-  // Build normalized buffer metadata consumed by PlanMemory without coupling
-  // to a memref-only representation.
+// Resolves normalized tile-buffer semantics and materializes one BufferInfo.
+// Fails with a location-aware diagnostic when semantic inference is incomplete.
+LogicalResult MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
+                                                 pto::AddressSpace bufferScope,
+                                                 BufferInfo &out) {
   BufferInfo bufferInfo;
   bufferInfo.operation = op;
   bufferInfo.bufferScope = bufferScope;
 
-  // Prefer tile-native semantic extraction. This keeps PlanMemory input
-  // independent from a specific memref-only view chain.
+  std::string failureReason;
   TileBufferSemantics semantics;
-  if (succeeded(inferTileBufferSemantics(operand, semantics)) &&
-      semantics.constBits > 0) {
-    bufferInfo.rootBuffer = semantics.root;
-    bufferInfo.bufferScope = semantics.scope;
-    bufferInfo.bufferType = semantics.elementType;
-    bufferInfo.bufferShape = semantics.shape;
-    bufferInfo.bufferValidShape = semantics.validShape;
-    bufferInfo.tileConfig = semantics.config;
-    bufferInfo.viewKind = semantics.viewKind;
-    bufferInfo.constBits = semantics.constBits;
-    return bufferInfo;
+  if (failed(inferTileBufferSemantics(operand, semantics, &failureReason))) {
+    auto diag =
+        op->emitOpError("failed to infer tile buffer semantics for PlanMemory");
+    if (!failureReason.empty()) {
+      diag << " (reason: " << failureReason << ")";
+    }
+    diag.attachNote(operand.getLoc()) << "buffer value: " << operand;
+    if (Operation *def = operand.getDefiningOp()) {
+      diag.attachNote(def->getLoc()) << "defining op: " << def->getName();
+    } else if (auto arg = dyn_cast<BlockArgument>(operand)) {
+      diag.attachNote(arg.getLoc())
+          << "value is block argument #" << arg.getArgNumber();
+    }
+    return failure();
   }
 
-  // Fallback path: keep legacy sizing behavior for boundary cases where
-  // tile semantics are not fully recoverable in this phase.
-  Value traceValue = tracebackMemRef(operand);
-  if (auto memRefType = dyn_cast<MemRefType>(traceValue.getType())) {
-    bufferInfo.rootBuffer = traceValue;
-    bufferInfo.bufferType = memRefType.getElementType();
-    bufferInfo.bufferShape.assign(memRefType.getShape().begin(),
-                                  memRefType.getShape().end());
-    bufferInfo.bufferValidShape = bufferInfo.bufferShape;
-    std::optional<int64_t> totalStaticSize =
-        getStaticTotalSize(memRefType.getShape());
-    assert(totalStaticSize.has_value() &&
-           "Failed to obtain op buffer shape size!");
-    bufferInfo.constBits =
-        totalStaticSize.value() *
-        static_cast<int64_t>(memRefType.getElementTypeBitWidth());
-    return bufferInfo;
+  if (semantics.constBits <= 0) {
+    op->emitOpError(
+        "failed to infer tile buffer semantics for PlanMemory: "
+        "constBits must be positive");
+    return failure();
   }
 
-  if (auto tileType = dyn_cast<pto::TileBufType>(traceValue.getType())) {
-    bufferInfo.rootBuffer = traceValue;
-    bufferInfo.bufferType = tileType.getElementType();
-    bufferInfo.bufferShape.assign(tileType.getShape().begin(),
-                                  tileType.getShape().end());
-    bufferInfo.bufferValidShape.assign(tileType.getValidShape().begin(),
-                                       tileType.getValidShape().end());
-    bufferInfo.tileConfig = tileType.getConfigAttr();
-    std::optional<int64_t> totalStaticSize =
-        getStaticTotalSize(tileType.getShape());
-    assert(totalStaticSize.has_value() &&
-           "Failed to obtain tile buffer shape size!");
-    int64_t elemBits = 0;
-    if (auto intTy = dyn_cast<IntegerType>(bufferInfo.bufferType))
-      elemBits = intTy.getWidth();
-    else if (auto floatTy = dyn_cast<FloatType>(bufferInfo.bufferType))
-      elemBits = floatTy.getWidth();
-    else if (isa<IndexType>(bufferInfo.bufferType))
-      elemBits = 64;
-    assert(elemBits > 0 && "Unsupported element type for tile buffer sizing");
-    bufferInfo.constBits = totalStaticSize.value() * elemBits;
-    return bufferInfo;
-  }
-
-  llvm_unreachable("Failed to infer buffer info");
+  bufferInfo.rootBuffer = semantics.root;
+  bufferInfo.bufferScope = semantics.scope;
+  bufferInfo.bufferType = semantics.elementType;
+  bufferInfo.bufferShape = semantics.shape;
+  bufferInfo.bufferValidShape = semantics.validShape;
+  bufferInfo.tileConfig = semantics.config;
+  bufferInfo.viewKind = semantics.viewKind;
+  bufferInfo.constBits = semantics.constBits;
+  out = std::move(bufferInfo);
+  return success();
 }
 
 // void MemLivenessAnalysis::InitializeInplacePairList() {
@@ -1429,11 +1470,7 @@ void MemPlan::ReportMemLifeDebugInfo(StorageEntry *rootStorageEntry) {
 
 void MemPlan::MemLifeDebugInfo(StorageEntry *storageEntry) {
   for (auto &buffer : storageEntry->inplaceBuffers) {
-    if (buffer.getDefiningOp()) {
-      if (auto allocOp = dyn_cast<memref::AllocOp>(buffer.getDefiningOp())) {
-        LDBG("Buffer : " << allocOp.getResult() << "\n");
-      }
-    }
+    LDBG("Buffer : " << buffer << "\n");
   }
   for (auto &bufferLife : storageEntry->bufferLifeVec) {
     LDBG("bufferLife : "
@@ -1445,12 +1482,8 @@ void MemPlan::MemLifeDebugInfo(StorageEntry *storageEntry) {
 
 void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) {
   for (auto &buffer : curEntry->inplaceBuffers) {
-    if (buffer.getDefiningOp()) {
-      if (auto allocOp = dyn_cast<memref::AllocOp>(buffer.getDefiningOp())) {
-        LDBG("buffer : ");
-        LDBG(allocOp.getResult());
-      }
-    }
+    LDBG("buffer : ");
+    LDBG(buffer);
   }
 }
 
@@ -2261,7 +2294,9 @@ void PlanMemoryPass::runOnOperation() {
     }
 
     MemLivenessAnalysis memLiveness(funcOp, this->memMode);
-    memLiveness.build();
+    if (failed(memLiveness.build())) {
+      return signalPassFailure();
+    }
 
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enablePrintMemoryAllocatedSize,

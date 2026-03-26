@@ -1,0 +1,15 @@
+// RUN: not ptoas %s 2>&1 | FileCheck %s
+
+module {
+  func.func @semantics_infer_fail_diag() {
+    %buf = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=0, cols=16, v_row=0, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%buf : !pto.tile_buf<loc=vec, dtype=f16, rows=0, cols=16,
+                                      v_row=0, v_col=16, blayout=row_major,
+                                      slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: error: 'pto.alloc_tile' op failed to infer tile buffer semantics for PlanMemory (reason: shape dimensions must be positive)

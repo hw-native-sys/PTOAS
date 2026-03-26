@@ -22,4 +22,4 @@ module {
   }
 }
 
-// CHECK: error: 'memref.alloc' op cannot use pto.reserve_buffer with auto = false when local memref.alloc still requires PlanMemory allocation
+// CHECK: error: 'memref.alloc' op PlanMemory is tilebuf-only: local memref.alloc is unsupported; use pto.alloc_tile
