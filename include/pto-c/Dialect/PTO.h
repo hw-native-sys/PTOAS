@@ -90,9 +90,29 @@ MLIR_CAPI_EXPORTED MlirAttribute mlirPTOEventAttrGet(MlirContext ctx, int32_t va
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAEventAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTOEventAttrGetValue(MlirAttribute attr);
 // ---- MaskPattern attr ----
+// Backward-compatible int entry point:
+//   accepts only unambiguous values {0,3,6,7};
+//   rejects ambiguous raw ints {1,2,4,5} so callers must choose either the
+//   ISA-aligned enum API below or the explicit legacy-raw compatibility API.
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAMaskPatternAttr(MlirAttribute attr);
+// Returns the ISA-aligned numeric value {1..7}.
 MLIR_CAPI_EXPORTED int32_t mlirPTOMaskPatternAttrGetValue(MlirAttribute attr);
+typedef enum MlirPTOMaskPattern {
+  MlirPTOMaskPattern_P0101 = 1,
+  MlirPTOMaskPattern_P1010 = 2,
+  MlirPTOMaskPattern_P0001 = 3,
+  MlirPTOMaskPattern_P0010 = 4,
+  MlirPTOMaskPattern_P0100 = 5,
+  MlirPTOMaskPattern_P1000 = 6,
+  MlirPTOMaskPattern_P1111 = 7,
+} MlirPTOMaskPattern;
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGetEnum(MlirContext ctx, MlirPTOMaskPattern value);
+MLIR_CAPI_EXPORTED MlirPTOMaskPattern mlirPTOMaskPatternAttrGetEnumValue(MlirAttribute attr);
+// Legacy raw-int compatibility path for historical PTOAS encodings:
+//   0 -> P0101, 3 -> P0001, 4 -> P1111, 5 -> P1010.
+// Removed legacy-only patterns 1/2 are rejected and return null.
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGetLegacyRaw(MlirContext ctx, int32_t value);
 
 // ---- CmpMode (compare mode for cmp/cvt) ----
 typedef enum MlirPTOCmpMode {

@@ -5392,11 +5392,13 @@ Predefined mask patterns for gather operations.
 
 | Value | Int | Pattern |
 |-------|-----|---------|
-| `P0101` | 0 | Alternating 0-1-0-1 |
-| `P0011` | 1 | 0-0-1-1 |
-| `P0110` | 2 | 0-1-1-0 |
+| `P0101` | 1 | Alternating 0-1-0-1 |
+| `P1010` | 2 | Alternating 1-0-1-0 |
 | `P0001` | 3 | 0-0-0-1 |
-| `P1111` | 4 | All ones |
+| `P0010` | 4 | 0-0-1-0 |
+| `P0100` | 5 | 0-1-0-0 |
+| `P1000` | 6 | 1-0-0-0 |
+| `P1111` | 7 | All ones |
 
 ---
 
