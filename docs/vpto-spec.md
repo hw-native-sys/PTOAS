@@ -75,7 +75,7 @@ Elements per VLane by data type:
 
 VPTO enforces a strict memory hierarchy. The Unified Buffer (UB) is the only valid operand source for vector compute instructions. Consequently, the architecture of a VPTO program is defined by the explicit management of data movement:
 
-**Address Space Isolation**: The IR uses LLVM pointer address spaces to distinguish between GM (`!llvm.ptr<1>`) and UB (`!llvm.ptr<6>`). The verifier ensures that no compute operation attempts to access GM directly.
+**Address Space Isolation**: The IR uses `!pto.ptr<element-type, space>` to distinguish between GM (`!pto.ptr<T, gm>`) and UB (`!pto.ptr<T, ub>`). The verifier ensures that vector compute operations do not access GM directly; data must first be moved into UB.
 
 **UB Capacity**: The Unified Buffer provides 256KB of on-chip SRAM (also referred to as "vecTile").
 
@@ -89,7 +89,7 @@ VPTO enforces a strict memory hierarchy. The Unified Buffer (UB) is the only val
                       │ DMA (MTE2 inbound / MTE3 outbound)
 ┌─────────────────────▼───────────────────────┐
 │              Unified Buffer (UB)             │
-│        (On-chip SRAM, 256KB, AS=6)           │
+│            (On-chip SRAM, 256KB)             │
 └─────────────────────┬───────────────────────┘
                       │ Vector Load/Store (PIPE_V)
 ┌─────────────────────▼───────────────────────┐
@@ -166,9 +166,9 @@ The execution model follows non-blocking fork semantics:
 
 ```mlir
 scf.for %dummy = %c0 to %c1 step %c1 {
-  %v = pto.vlds %ub[%lane] : !llvm.ptr<6> -> !pto.vreg<64xf32>
+  %v = pto.vlds %ub[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
   %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%lane] : !pto.vreg<64xf32>, !llvm.ptr<6>
+  pto.vsts %abs, %ub_out[%lane] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
 } {llvm.loop.aivector_scope}
 ```
 
@@ -180,16 +180,16 @@ pto.set_loop1_stride_outtoub %c4096_i64, %c4096_i64 : i64, i64
 pto.set_loop_size_outtoub %c1_i64, %c1_i64 : i64, i64
 pto.copy_gm_to_ubuf %7, %2, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c0_i64, %c0_i64, %c128_i64, %c128_i64
     {data_select_bit = false, layout = "nd", ub_pad = false}
-    : !llvm.ptr<1>, !llvm.ptr<6>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64
+    : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64
 
 pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
 scf.for %dummy = %c0 to %c1 step %c1 {
   scf.for %lane = %c0 to %9 step %c64 {
-    %v = pto.vlds %2[%lane] : !llvm.ptr<6> -> !pto.vreg<64xf32>
+    %v = pto.vlds %2[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
     %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-    pto.vsts %abs, %8[%lane] : !pto.vreg<64xf32>, !llvm.ptr<6>
+    pto.vsts %abs, %8[%lane] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
   }
 } {llvm.loop.aivector_scope}
 
@@ -200,7 +200,7 @@ pto.set_loop1_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
 pto.set_loop2_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
 pto.copy_ubuf_to_gm %8, %14, %3, %3, %c0_i64, %c32_i64, %4, %c0_i64, %c128_i64, %c128_i64
     {layout = "nd"}
-    : !llvm.ptr<6>, !llvm.ptr<1>, i64, i64, i64, i64, i64, i64, i64, i64
+    : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64, i64, i64
 ```
 
 ### Scope
@@ -244,18 +244,79 @@ VPTO source programs are not restricted to `pto` operations alone. In practice t
 
 ### Address Space Conventions
 
-| `AS` | PTO mnemonic | Interpretation |
-|------|--------------|----------------|
-| `0` | `Zero` | Default / unspecified (treated as GM-like) |
-| `1` | `GM` | Global Memory (GM) |
-| `2` | `MAT` | Matrix / L1-related storage |
-| `3` | `LEFT` | Left matrix buffer / L0A |
-| `4` | `RIGHT` | Right matrix buffer / L0B |
-| `5` | `ACC` | Accumulator / L0C |
-| `6` | `VEC` | Unified Buffer (UB) / vector buffer (256KB) |
-| `7` | `BIAS` | Bias buffer |
-| `8` | `SCALING` | Scaling buffer |
+VPTO memory operands use `!pto.ptr<element-type, space>`. This specification models the following memory-space attributes:
 
+| Space | Interpretation |
+|-------|----------------|
+| `gm` | Global Memory (GM), off-chip HBM/DDR storage |
+| `ub` | Unified Buffer (UB), on-chip vector buffer |
+
+Typical pointer construction and pointer arithmetic follow the same `!pto.ptr<..., space>` form:
+
+```mlir
+%0 = pto.castptr %c0 : i64 to !pto.ptr<f32, ub>
+%1 = pto.addptr %0, %c1024 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+```
+
+### `!pto.ptr<T, space>`
+
+`!pto.ptr<T, space>` is the typed pointer form used for explicit memory operands in VPTO.
+
+- `T` is the element type associated with the pointed-to storage.
+- `space` is the memory domain, typically `gm` or `ub` in this specification.
+- A `pto.ptr` value carries an address plus its element-type / memory-space interpretation, but it does not carry tensor shape or stride metadata by itself.
+- Tensor semantics are introduced separately through view-building operations such as `pto.make_tensor_view`.
+- Pointer arithmetic is element-based rather than byte-based.
+
+Typical examples:
+
+- `!pto.ptr<f32, gm>`
+- `!pto.ptr<f32, ub>`
+- `!pto.ptr<bf16, gm>`
+
+### Pointer Operations
+
+#### `pto.castptr`
+
+- **syntax:** `%result = pto.castptr %addr : i64 to !pto.ptr<T, space>`
+- **semantics:** Reinterpret a scalar address value as a typed PTO pointer in the target memory space.
+
+```c
+result = (ptr<T, space>)addr;
+```
+
+`pto.castptr` is a pointer-construction operation. It does not perform data movement and does not by itself imply any load/store side effect.
+
+#### `pto.addptr`
+
+- **syntax:** `%result = pto.addptr %ptr, %offset : !pto.ptr<T, space> -> !pto.ptr<T, space>`
+- **semantics:** Compute a new pointer by advancing the base pointer by an element offset.
+
+```c
+result = ptr + offset;  // offset counted in elements, not bytes
+```
+
+`pto.addptr` preserves both the element type `T` and the memory-space tag `space`.
+
+#### Pointer-Based Vector Access Example
+
+The following lowered-style fragment shows how typed PTO pointers flow through pointer construction, pointer arithmetic, structured control flow, and PTO memory ops:
+
+```mlir
+%0 = pto.castptr %c0 : i64 to !pto.ptr<f32, ub>
+%1 = pto.addptr %0, %c1024 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+scf.for %arg2 = %c0 to %c1 step %c1 {
+  %16 = scf.for %arg3 = %c0 to %11 step %c64 iter_args(%arg4 = %12) -> (i32) {
+    %mask, %scalar_out = pto.plt_b32 %arg4 : i32 -> !pto.mask, i32
+    %17 = pto.vlds %1[%arg3] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %18 = pto.vabs %17, %mask {mode = "MODE_ZEROING"} : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+    pto.vsts %18, %10[%arg3], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
+    scf.yield %scalar_out : i32
+  }
+} {llvm.loop.aivector_scope}
+```
+
+In this pattern, `pto.castptr` materializes a typed UB pointer, `pto.addptr` shifts the base by 1024 `f32` elements, and the subsequent `[%arg3]` indexing on `pto.vlds` / `pto.vsts` applies an additional element offset relative to that base.
 
 ### Special Types
 
@@ -299,8 +360,8 @@ dst[i] = mask[i] ? op(src0[i], src1[i]) : 0    // ZEROING mode
 `!pto.align` models the A5 vector-align carrier state. It is not payload data.
 
 ```mlir
-%align = pto.vldas %ub[%c0] : !llvm.ptr<6> -> !pto.align
-%vec = pto.vldus %align, %ub[%c64] : !pto.align, !llvm.ptr<6> -> !pto.vreg<64xf32>
+%align = pto.vldas %ub[%c0] : !pto.ptr<f32, ub> -> !pto.align
+%vec = pto.vldus %align, %ub[%c64] : !pto.align, !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 ```
 
 ---
@@ -334,25 +395,25 @@ All VPTO operations follow standard MLIR syntax. The common patterns are:
 **Load (memory to register):**
 
 ```mlir
-%result = pto.vlds %source[%offset] {dist = "DIST"} : !llvm.ptr<6> -> !pto.vreg<NxT>
+%result = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub> -> !pto.vreg<NxT>
 ```
 
 **Store (register to memory):**
 
 ```mlir
-pto.vsts %value, %destination[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !llvm.ptr<6>
+pto.vsts %value, %destination[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>
 ```
 
 **Dual Load (one load, two results — deinterleave):**
 
 ```mlir
-%low, %high = pto.vldx2 %source[%offset], "DIST" : !llvm.ptr<6>, index -> !pto.vreg<NxT>, !pto.vreg<NxT>
+%low, %high = pto.vldx2 %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.vreg<NxT>
 ```
 
 **Dual Store (two inputs, one interleaved store):**
 
 ```mlir
-pto.vstx2 %low, %high, %dest[%offset], "DIST", %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !llvm.ptr<6>, index, !pto.mask
+pto.vstx2 %low, %high, %dest[%offset], "DIST", %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.ptr<T, ub>, index, !pto.mask
 ```
 
 **Compare (two vectors + seed mask in, mask out):**
@@ -380,6 +441,13 @@ pto.vstx2 %low, %high, %dest[%offset], "DIST", %mask : !pto.vreg<NxT>, !pto.vreg
 pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 pto.mem_bar "VV_ALL"
+```
+
+**Pointer construction and arithmetic:**
+
+```mlir
+%ptr = pto.castptr %addr : i64 to !pto.ptr<T, SPACE>
+%ptr2 = pto.addptr %ptr, %offset : !pto.ptr<T, SPACE> -> !pto.ptr<T, SPACE>
 ```
 
 ### Shared Dialect Syntax Patterns
@@ -611,16 +679,16 @@ Group 14 covers the full scalar `arith` surface. The rows below list common VPTO
 ```mlir
 // 1. Find max
 %max_vec = pto.vcmax %logits : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-pto.vsts %max_vec, %ub_tmp[%c0] {dist = "NORM_B32"} : !pto.vreg<64xf32>, !llvm.ptr<6>
-%max_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !llvm.ptr<6> -> !pto.vreg<64xf32>
+pto.vsts %max_vec, %ub_tmp[%c0] {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+%max_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 
 // 2. exp(x - max) using fused op
 %exp = pto.vexpdiff %logits, %max_bc : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
 
 // 3. Sum
 %sum = pto.vcadd %exp : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-pto.vsts %sum, %ub_tmp[%c0] {dist = "NORM_B32"} : !pto.vreg<64xf32>, !llvm.ptr<6>
-%sum_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !llvm.ptr<6> -> !pto.vreg<64xf32>
+pto.vsts %sum, %ub_tmp[%c0] {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+%sum_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 
 // 4. Divide
 %softmax = pto.vdiv %exp, %sum_bc : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
@@ -646,10 +714,10 @@ pto.vsts %sum, %ub_tmp[%c0] {dist = "NORM_B32"} : !pto.vreg<64xf32>, !llvm.ptr<6
 
 ```mlir
 // AoS → SoA (deinterleave)
-%x, %y = pto.vldx2 %ub_xy[%offset], "DINTLV_B32" : !llvm.ptr<6>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+%x, %y = pto.vldx2 %ub_xy[%offset], "DINTLV_B32" : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
 
 // SoA → AoS (interleave)
-pto.vstx2 %x, %y, %ub_xy[%offset], "INTLV_B32", %all_mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !llvm.ptr<6>, index, !pto.mask
+pto.vstx2 %x, %y, %ub_xy[%offset], "INTLV_B32", %all_mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask
 ```
 
 ---
