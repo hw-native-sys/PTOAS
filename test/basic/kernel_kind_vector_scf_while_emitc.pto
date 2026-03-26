@@ -1,4 +1,5 @@
 // RUN: ptoas %s | FileCheck %s
+// RUN: ptoas --cpu-sim %s | FileCheck %s --check-prefix=CPU-SIM
 
 module {
   func.func @vector_while_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -74,3 +75,18 @@ module {
 // CHECK: goto [[HEADER]];
 // CHECK: [[EXIT]]:
 // CHECK: #endif // __DAV_VEC__
+
+// CPU-SIM: AICORE void vector_while_kernel()
+// CPU-SIM: using T = float;
+// CPU-SIM: #if defined(__DAV_VEC__)
+// CPU-SIM-NOT: set_mask_norm();
+// CPU-SIM-NOT: set_vector_mask(-1, -1);
+// CPU-SIM: goto [[CPU_HEADER:label[0-9]+]];
+// CPU-SIM: [[CPU_HEADER]]:
+// CPU-SIM: if ({{.*}}) {
+// CPU-SIM: goto [[CPU_BODY:label[0-9]+]];
+// CPU-SIM: goto [[CPU_EXIT:label[0-9]+]];
+// CPU-SIM: [[CPU_BODY]]:
+// CPU-SIM: goto [[CPU_HEADER]];
+// CPU-SIM: [[CPU_EXIT]]:
+// CPU-SIM: #endif // __DAV_VEC__

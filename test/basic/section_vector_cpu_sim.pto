@@ -1,0 +1,23 @@
+// RUN: ptoas %s | FileCheck %s --check-prefix=DEFAULT
+// RUN: ptoas --cpu-sim %s | FileCheck %s --check-prefix=CPU-SIM
+
+module {
+  func.func @section_vec() {
+    pto.section.vector {
+      %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    }
+    return
+  }
+}
+
+// DEFAULT-LABEL: AICORE void section_vec()
+// DEFAULT: #if defined(__DAV_VEC__)
+// DEFAULT: set_mask_norm();
+// DEFAULT: set_vector_mask(-1, -1);
+// DEFAULT: #endif // __DAV_VEC__
+
+// CPU-SIM-LABEL: AICORE void section_vec()
+// CPU-SIM: #if defined(__DAV_VEC__)
+// CPU-SIM-NOT: set_mask_norm();
+// CPU-SIM-NOT: set_vector_mask(-1, -1);
+// CPU-SIM: #endif // __DAV_VEC__

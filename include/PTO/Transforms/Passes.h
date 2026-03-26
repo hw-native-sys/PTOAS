@@ -42,6 +42,9 @@ std::unique_ptr<Pass> createPTOInsertSyncPass();
 std::unique_ptr<Pass> createEmitPTOManualPass();
 // Explicitly select target arch for codegen.
 std::unique_ptr<Pass> createEmitPTOManualPass(PTOArch arch);
+// CPU simulation mode suppresses vector mask reset boilerplate that breaks
+// pto-isa simulation.
+std::unique_ptr<Pass> createEmitPTOManualPass(PTOArch arch, bool cpuSim);
 
 
 /// Create a pass to convert ops from other dialects to PTO Ops.

@@ -2393,7 +2393,11 @@ static std::optional<StringRef> getKernelKindMacro(func::FuncOp funcOp) {
 }
 
 struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
-  using OpConversionPattern<func::FuncOp>::OpConversionPattern;
+  FuncToEmitC(TypeConverter &typeConverter, MLIRContext *context, bool cpuSim)
+      : OpConversionPattern<func::FuncOp>(typeConverter, context),
+        cpuSim(cpuSim) {}
+
+  bool cpuSim;
 
   LogicalResult matchAndRewrite(func::FuncOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -2463,7 +2467,7 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
       if (kernelKindMacro) {
         std::string startMacro = "\n#if defined(" + kernelKindMacro->str() + ")";
         rewriter.create<emitc::VerbatimOp>(op.getLoc(), startMacro);
-        if (*kernelKindMacro == "__DAV_VEC__") {
+        if (!cpuSim && *kernelKindMacro == "__DAV_VEC__") {
           rewriter.create<emitc::VerbatimOp>(op.getLoc(), "set_mask_norm();");
           rewriter.create<emitc::VerbatimOp>(op.getLoc(),
                                              "set_vector_mask(-1, -1);");
@@ -7834,7 +7838,12 @@ public:
 //===----------------------------------------------------------------------===//
 template <typename SectionOpTy>
 struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
-  using OpConversionPattern<SectionOpTy>::OpConversionPattern;
+  SectionToEmitC(TypeConverter &typeConverter, MLIRContext *context,
+                 bool cpuSim)
+      : OpConversionPattern<SectionOpTy>(typeConverter, context),
+        cpuSim(cpuSim) {}
+
+  bool cpuSim;
 
   std::string getMacroName() const {
     if (std::is_same<SectionOpTy, pto::SectionCubeOp>::value)
@@ -7856,8 +7865,10 @@ struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
       // Vector mask is a global HW state and may be modified by previous kernels
       // (or earlier sections). Reset it to a well-defined state for deterministic
       // execution of VEC ops.
-      rewriter.create<emitc::VerbatimOp>(loc, "set_mask_norm();");
-      rewriter.create<emitc::VerbatimOp>(loc, "set_vector_mask(-1, -1);");
+      if (!cpuSim) {
+        rewriter.create<emitc::VerbatimOp>(loc, "set_mask_norm();");
+        rewriter.create<emitc::VerbatimOp>(loc, "set_vector_mask(-1, -1);");
+      }
     }
 
     Block &innerBlock = op.getBody().front();
@@ -8317,7 +8328,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
                                        TypeConverter &typeConverter,
                                        MLIRContext *ctx,
                                        DataFlowSolver &solver,
-                                       PTOArch targetArch) {
+                                       PTOArch targetArch,
+                                       bool cpuSim) {
   (void)solver;
   patterns.add<ArithCmpIToEmitC>(typeConverter, ctx);
   patterns.add<PTOBindTileToEmitC>(typeConverter, ctx);
@@ -8390,7 +8402,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMovFPToEmitC>(typeConverter, ctx);
   patterns.add<PTOOrsToEmitC>(typeConverter, ctx);
   patterns.add<PTOLogToEmitC>(typeConverter, ctx);
-  patterns.add<FuncToEmitC>(typeConverter, ctx);
+  patterns.add<FuncToEmitC>(typeConverter, ctx, cpuSim);
   patterns.add<PTOMovToEmitC>(typeConverter, ctx);
   patterns.add<ArithConstantToEmitC>(typeConverter, ctx);
   patterns.add<ArithAddUIExtendedToEmitC>(typeConverter, ctx);
@@ -8490,8 +8502,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOTFreeToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTOSyncSetToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTOSyncWaitToEmitC>(typeConverter, ctx, targetArch);
-  patterns.add<SectionToEmitC<pto::SectionCubeOp>>(typeConverter, ctx);
-  patterns.add<SectionToEmitC<pto::SectionVectorOp>>(typeConverter, ctx);
+  patterns.add<SectionToEmitC<pto::SectionCubeOp>>(typeConverter, ctx, cpuSim);
+  patterns.add<SectionToEmitC<pto::SectionVectorOp>>(typeConverter, ctx,
+                                                     cpuSim);
   patterns.add<PTOGetBlockIdxToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetBlockNumToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetSubBlockIdxToEmitC>(typeConverter, ctx);
@@ -8530,10 +8543,14 @@ struct EmitPTOManualPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(EmitPTOManualPass)
 
   PTOArch targetArch;
+  bool cpuSim;
 
-  EmitPTOManualPass() : targetArch(PTOArch::A3) {}
+  EmitPTOManualPass() : targetArch(PTOArch::A3), cpuSim(false) {}
 
-  explicit EmitPTOManualPass(PTOArch arch) : targetArch(arch) {}
+  explicit EmitPTOManualPass(PTOArch arch) : targetArch(arch), cpuSim(false) {}
+
+  EmitPTOManualPass(PTOArch arch, bool cpuSim)
+      : targetArch(arch), cpuSim(cpuSim) {}
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<emitc::EmitCDialect, func::FuncDialect, arith::ArithDialect,
@@ -8736,7 +8753,8 @@ static AICORE inline void ptoas_auto_sync_tail(
       return signalPassFailure();
 
     RewritePatternSet patterns(ctx);
-    populatePTOToEmitCPatterns(patterns, typeConverter, ctx, *solver, targetArch);
+    populatePTOToEmitCPatterns(patterns, typeConverter, ctx, *solver,
+                               targetArch, cpuSim);
 
     // 4. 执行转换
     if (failed(applyPartialConversion(mop, target, std::move(patterns)))) {
@@ -8923,4 +8941,9 @@ std::unique_ptr<Pass> mlir::pto::createEmitPTOManualPass() {
 
 std::unique_ptr<Pass> mlir::pto::createEmitPTOManualPass(PTOArch arch) {
   return std::make_unique<EmitPTOManualPass>(arch);
+}
+
+std::unique_ptr<Pass> mlir::pto::createEmitPTOManualPass(PTOArch arch,
+                                                         bool cpuSim) {
+  return std::make_unique<EmitPTOManualPass>(arch, cpuSim);
 }

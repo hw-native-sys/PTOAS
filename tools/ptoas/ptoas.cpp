@@ -190,6 +190,13 @@ static llvm::cl::opt<bool> emitAddPtrTrace(
     llvm::cl::desc("Emit addptr trace comments in generated C++ output"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> cpuSim(
+    "cpu-sim",
+    llvm::cl::desc(
+        "Emit C++ suitable for pto-isa CPU simulation by suppressing vector "
+        "mask reset boilerplate"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<std::string> ptoTargetArch(
     "pto-arch",
     llvm::cl::desc("Target Ascend architecture for codegen: a3 or a5 (default: a3)"),
@@ -857,9 +864,9 @@ int main(int argc, char **argv) {
 
   pm.addPass(createCSEPass());
   if (arch == "a3") {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3, cpuSim));
   } else {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5, cpuSim));
   }
   pm.addPass(emitc::createFormExpressionsPass());
   pm.addPass(mlir::createCSEPass());
