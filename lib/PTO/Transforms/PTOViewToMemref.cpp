@@ -1153,53 +1153,10 @@ struct PTOViewToMemrefPass
         auto sv = rewriter.create<memref::SubViewOp>(
             loc, subViewMemRefType, src, mixedOffsets, mixedSizes, mixedStrides);
 
-        // Reinterpret the subview base as a parent-shaped tile view.
-        // valid_row/valid_col (below) carries the actual sub-tile extent.
-        SmallVector<OpFoldResult> parentMixedSizes;
-        SmallVector<OpFoldResult> parentMixedStrides;
-        parentMixedSizes.reserve(parentShape.size());
-        parentMixedStrides.reserve(srcStrides.size());
-
-        memref::ExtractStridedMetadataOp srcMd;
-        bool needDynamicMeta = false;
-        for (size_t i = 0; i < parentShape.size(); ++i)
-          needDynamicMeta |= (parentShape[i] == ShapedType::kDynamic);
-        for (int64_t s : srcStrides)
-          needDynamicMeta |= (s == ShapedType::kDynamic);
-        if (needDynamicMeta)
-          srcMd = rewriter.create<memref::ExtractStridedMetadataOp>(loc, src);
-
-        for (size_t i = 0; i < parentShape.size(); ++i) {
-          if (parentShape[i] == ShapedType::kDynamic) {
-            if (!srcMd) {
-              op.emitError("failed to materialize dynamic parent size for subview");
-              signalPassFailure();
-              return;
-            }
-            parentMixedSizes.push_back(srcMd.getSizes()[i]);
-          } else {
-            parentMixedSizes.push_back(rewriter.getIndexAttr(parentShape[i]));
-          }
-        }
-
-        for (size_t i = 0; i < srcStrides.size(); ++i) {
-          if (srcStrides[i] == ShapedType::kDynamic) {
-            if (!srcMd) {
-              op.emitError("failed to materialize dynamic parent stride for subview");
-              signalPassFailure();
-              return;
-            }
-            parentMixedStrides.push_back(srcMd.getStrides()[i]);
-          } else {
-            parentMixedStrides.push_back(rewriter.getIndexAttr(srcStrides[i]));
-          }
-        }
-
-        auto subAsParent = rewriter.create<memref::ReinterpretCastOp>(
-            loc, resultMemRefType, sv.getResult(), rewriter.getIndexAttr(0),
-            parentMixedSizes, parentMixedStrides);
-
         // 6. Re-bind tile metadata (config + valid dims).
+        // BindTileOp already models metadata rebind + memref type bridge,
+        // so we can bind subview directly and avoid an intermediate
+        // memref.reinterpret_cast.
         // subview defaults valid dims to subview shape unless user explicitly
         // provides valid_row/valid_col.
         Value vRow;
@@ -1212,8 +1169,8 @@ struct PTOViewToMemrefPass
                                       staticSizes[1], op);
 
         auto bindOp = rewriter.create<pto::BindTileOp>(
-            loc, resultMemRefType, subAsParent.getResult(),
-            vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+            loc, resultMemRefType, sv.getResult(), vRow ? vRow : Value(),
+            vCol ? vCol : Value(), configAttr);
         markForceDynamicValidShape(bindOp,
                                    resultTileTy && resultTileTy.hasDynamicValid(),
                                    ctx);
