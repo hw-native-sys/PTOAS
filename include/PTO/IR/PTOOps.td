@@ -3940,23 +3940,33 @@ def TScatterOp: PTO_TOp<"tscatter", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() {
-      // NOTE: On dav-c220 (Ascend910 A2/A3), pto-isa implements TSCATTER as a
-      // scalar loop over UB pointers, which executes on the scalar pipeline
-      // (PIPE_S). Waiting on PIPE_V does not block scalar UB accesses and can
-      // lead to using uninitialized indices/data (crash / aivec exception).
-      //
-      // On A5 instruction set devices, TSCATTER is implemented with vector
-      // scatter instructions and should be treated as PIPE_V.
-      auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
-      if (moduleOp) {
-        if (auto spec = moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
-          auto s = spec.getValue();
-          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95")) {
-            return ::mlir::pto::PIPE::PIPE_V;
-          }
+      // NOTE:
+      // - On A2/A3, pto-isa TSCATTER is a scalar UB loop (PIPE_S).
+      // - On A5, pto-isa TSCATTER is vector scatter (PIPE_V).
+      // We accept either `pto.target_arch=a5` or A5 `pto.device-spec`.
+      auto isA5Target = [&]() -> bool {
+        auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
+        if (!moduleOp)
+          return false;
+
+        if (auto arch =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
+          if (arch.getValue().equals_insensitive("a5"))
+            return true;
         }
-      }
-      return ::mlir::pto::PIPE::PIPE_S;
+
+        if (auto spec =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
+          auto s = spec.getValue();
+          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95"))
+            return true;
+        }
+
+        return false;
+      };
+
+      return isA5Target() ? ::mlir::pto::PIPE::PIPE_V
+                          : ::mlir::pto::PIPE::PIPE_S;
     }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
