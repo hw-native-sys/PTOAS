@@ -106,34 +106,34 @@ VPTO enforces a strict memory hierarchy. The Unified Buffer (UB) is the only val
 
 **Load/Store Access Patterns**:
 
-| Pattern | Instructions | Description |
-|---------|--------------|-------------|
-| Contiguous | `pto.vlds` NORM | Sequential 256B access |
-| Strided | `pto.vsld` | Fixed stride pattern access |
-| Block-Strided | `pto.vsldb`, `pto.vsstb` | 2D tile access pattern |
-| Unaligned | `pto.vldas` + `pto.vldus` | Non-aligned address handling via align state |
-| Broadcast | `pto.vlds` BRC_* | Single element → all lanes |
-| Upsample | `pto.vlds` US_* | Each element duplicated to 2 lanes |
-| Downsample | `pto.vlds` DS_* | Every 2nd element selected |
-| Pack/Unpack | `pto.vlds` UNPK_* / `pto.vsts` PK_* | Narrowing/widening on load/store |
-| Interleave | `pto.vstx2` INTLV_* / `pto.vldx2` DINTLV_* | AoS ↔ SoA conversion |
-| Channel Split/Merge | `pto.vlds` SPLT* / `pto.vsts` MRG* | Multi-channel deinterleave/interleave |
-| Gather/Scatter | `pto.vgather2`, `pto.vscatter` | Indirect indexed access |
-| Squeeze/Expand | `pto.vsqz`, `pto.vusqz` | Compress/expand by mask |
+For UB↔vreg data movement, besides contiguous load/store, the architecture provides rich access pattern support including strided access, pack/unpack, interleave/deinterleave, broadcast, upsample/downsample, channel split/merge, gather/scatter, and squeeze/expand operations. For detailed instruction syntax and distribution modes, refer to the [Vector Load/Store](isa/03-vector-load-store.md) group in the ISA specification.
 
 #### Synchronization Model
 
-VPTO provides two levels of synchronization:
+The Ascend 950 architecture employs a cluster-based design with a 1:2 ratio of Cube cores to Vector cores. VPTO provides multiple levels of synchronization to manage concurrent execution across pipelines and cores:
 
-**Inter-Pipeline Synchronization (MTE ↔ Vector):**
+**Inter-Core Synchronization (within a cluster):**
 
-Because the MTE and Vector pipelines operate asynchronously, VPTO utilizes a Flag/Event mechanism. Developers must explicitly insert `pto.set_flag` and `pto.wait_flag` operations to resolve Read-After-Write (RAW) and Write-After-Read (WAR) hazards between memory staging and computation.
+Synchronization between cores within the same cluster is achieved via the core sync mechanism using `pto.set_intra_core` and `pto.wait_intra_core` operations. This enables coordination between Cube and Vector cores sharing the same cluster resources.
 
-For enhanced inter-pipeline coordination on Ascend 950, `pto.get_buf` and `pto.rls_buf` provide a finer-grained synchronization mechanism that coordinates pipeline execution through buffer acquisition and release semantics.
+**Vector Core Pipeline Synchronization:**
+
+Within a single core, multiple pipelines operate asynchronously:
+
+- **MTE2 (PIPE_MTE2)**: DMA copy-in from GM to UB
+- **MTE3 (PIPE_MTE3)**: DMA copy-out from UB to GM
+- **Vector Compute (PIPE_V)**: Vector ALU operations
+- **Scalar (PIPE_S)**: Scalar unit running the kernel program
+
+Pipeline synchronization can be achieved through two mechanisms:
+
+1. **Flag/Event mechanism**: `pto.set_flag` and `pto.wait_flag` operations resolve Read-After-Write (RAW) and Write-After-Read (WAR) hazards between pipelines.
+
+2. **Buffer-ID mechanism**: `pto.get_buf` and `pto.rls_buf` provide finer-grained synchronization through buffer acquisition and release semantics for producer-consumer coordination.
 
 **Intra-Pipeline Memory Barriers (within `__VEC_SCOPE__`):**
 
-Within the vector execution scope, the hardware does not track UB address aliasing. When UB addresses overlap or alias between vector load/store operations, explicit memory barriers are required:
+Within the vector execution scope, the hardware does not track UB address aliasing between reg↔UB accesses. When UB addresses overlap or alias between vector load/store operations, explicit memory barriers are required:
 
 ```c
 pto.mem_bar "VV_ALL"      // All prior vector ops complete before subsequent
@@ -142,16 +142,6 @@ pto.mem_bar "VLD_VST"     // All prior vector loads complete before subsequent s
 ```
 
 Without proper barriers, loads may see stale data or stores may be reordered incorrectly.
-
-#### Predication Model
-
-Vector compute and load/store instructions support **predicated execution** via `!pto.mask`:
-
-```
-dst[i] = mask[i] ? op(src0[i], src1[i]) : 0    // ZEROING mode
-```
-
-In ZEROING mode, inactive lanes produce zero. This is the native hardware predication mode.
 
 #### Execution Scopes (__VEC_SCOPE__)
 
@@ -271,9 +261,35 @@ VPTO source programs are not restricted to `pto` operations alone. In practice t
 
 #### `!pto.mask`
 
-`!pto.mask` models an A5 predicate register, not an integer vector.
+`!pto.mask` models an A5 predicate register (256-bit), not an integer vector.
+
+**Mask Granularity:**
+
+The mask is 256 bits in length, where each bit controls 1 byte of data. This means mask granularity varies by element type:
+
+| Element Type | Bits/Element | Mask Bits per Element |
+|--------------|--------------|----------------------|
+| `f32`/`i32` | 32 | 4 bits |
+| `f16`/`bf16`/`i16` | 16 | 2 bits |
+| `f8`/`i8` | 8 | 1 bit |
+
+**Predication Behavior (Zero-Merge):**
+
+The native hardware predication mode is **ZEROING** — inactive lanes produce zero:
+
+```c
+dst[i] = mask[i] ? op(src0[i], src1[i]) : 0    // ZEROING mode
+```
 
 ```mlir
+// Predicated add: inactive lanes produce zero
+%mask = pto.vpset_b32 "PAT_VL32" : !pto.mask   // first 32 lanes active
+%result = pto.vadd %a, %b, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+// result[0..31] = a[0..31] + b[0..31], result[32..63] = 0
+```
+
+```mlir
+// Compare and select: generate mask from comparison, use for conditional select
 %mask = pto.vcmp %lhs, %rhs, %seed, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.mask
 %out = pto.vsel %x, %y, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 ```

@@ -2080,7 +2080,7 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
     auto emitcFunc = rewriter.create<emitc::FuncOp>(op.getLoc(), op.getName(),
                                                     funcType);
     emitcFunc.setSpecifiersAttr(
-        rewriter.getStrArrayAttr({"__global__ AICORE"}));
+        rewriter.getStrArrayAttr({"extern \"C\"", "__global__ AICORE"}));
 
     // Inline the original body, then convert region/block argument types to
     // match the converted signature (also covers CFG blocks introduced by

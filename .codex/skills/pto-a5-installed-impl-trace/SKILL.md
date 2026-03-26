@@ -13,6 +13,20 @@ Use this skill when the task is specifically about:
 - resolving conflicts between generated repo IR and installed PTO headers
 - tracing `Cmp`, `Cmps`, predicate, pack, store, or typed vector behavior
 
+## Strong Rule
+
+If you are about to change repo code for an A5 op, stop and inspect the
+installed PTO implementation first. Treat the installed PTO library under
+`ASCEND_HOME_PATH` as the semantic source of truth.
+
+Only make a repo-local substitution after you have confirmed one of:
+- the installed PTO headers already express that replacement relationship
+- the frontend/compiler intrinsic contract proves two forms are equivalent at
+  the intrinsic layer
+
+Do not guess behavior from repo-local lowering, emitter code, or from what
+"seems plausible" for an intrinsic sequence.
+
 Do not start from repo-local lowering when the question is about real A5
 behavior. The installed PTO implementation under `ASCEND_HOME_PATH` is the
 first source of truth.
@@ -69,6 +83,33 @@ Stop at the builtin wrapper layer if the lower compiler implementation is not
 available. That is still enough to answer questions such as:
 - `pset_b32 -> __builtin_cce_pset_b32`
 - `plt_b32 -> __builtin_cce_plt_b32_v300`
+
+## When The Builtin Name Is Still Not Enough
+
+If the installed PTO headers tell you the wrapper builtin but that still does
+not answer the LLVM/HIVM operand contract, do not guess from repo-local
+lowering. Extend the trace using the generated sample kernel and the real
+compiler frontend:
+
+1. generate the sample testcase kernel that already compiles on this machine
+2. inspect the testcase build flags from:
+   - `<testcase>/build/CMakeFiles/<target>.dir/flags.make`
+   - `<testcase>/build/CMakeFiles/<target>.dir/build.make`
+3. rerun the same `bisheng` compile with `-v` and `-save-temps`
+4. inspect:
+   - `*.ccei` for the exact installed PTO wrapper call sequence
+   - `strings *.bc | rg 'llvm.hivm\\.'` to see which HIVM intrinsics survived
+5. if needed, rerun the same frontend compile with `-S`, `-emit-llvm`, or the
+   equivalent `cc1` invocation from `-v` to inspect the real LLVM IR emitted by
+   the compiler frontend before instruction selection
+
+This is the required fallback when the question is really:
+- what exact `llvm.hivm.*` intrinsic shape the compiler expects
+- whether a hand-written LLVM IR call shape is valid
+- whether a selector failure is caused by a guessed mask/value form
+
+Prefer this real-frontend route over inventing mask constants or argument
+shapes from memory.
 
 ## Reporting Back
 

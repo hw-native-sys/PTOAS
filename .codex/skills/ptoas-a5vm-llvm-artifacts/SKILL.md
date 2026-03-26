@@ -13,6 +13,16 @@ Use this skill when the task is specifically about:
 - assembling a device object, fat relocatable object, or shared kernel library from the LLVM path
 - helping with an "LLVM IR path build", "LLVM IR path compile", or "A5VM MLIR" request
 
+## Strong Rule
+
+If an LLVM-path code change is needed for an A5 op, first inspect the installed
+PTO implementation under `ASCEND_HOME_PATH` and treat it as the semantic
+baseline. Repo-local lowering and emitter code are not authoritative.
+
+Only accept an intrinsic-level replacement after confirming it from installed
+PTO headers or from real frontend-generated compiler artifacts such as
+`-save-temps` outputs. Do not invent intrinsic mappings from memory.
+
 This is not the primary entry point for:
 - generating `test/npu_validation` testcases
 - running on hardware, handling `aclrtSetDevice`, or deciding whether `sudo` is needed
@@ -181,6 +191,34 @@ Checks:
 - keep `-march` and `--cce-aicore-arch` aligned with the intended testcase arch
 - for the LLVM IR path, the resulting object should not retain unresolved
   `llvm.hivm.*` symbols
+
+## If You Need The Real Compiler-Expected Intrinsic Shape
+
+Do not infer the final `llvm.hivm.*` operand contract from repo-local emitter
+code alone.
+
+When a hand-written LLVM IR path fails in instruction selection or appears to
+miscompile, use this trace order:
+
+1. confirm the installed PTO wrapper path first with `pto-a5-installed-impl-trace`
+2. generate the normal testcase kernel source through the working emitc path
+3. inspect testcase compile flags from:
+   - `<testcase>/build/CMakeFiles/<target>.dir/flags.make`
+   - `<testcase>/build/CMakeFiles/<target>.dir/build.make`
+4. rerun that same `bisheng` compile with `-v` and `-save-temps`
+5. inspect:
+   - `*.ccei` to confirm the wrapper builtin sequence
+   - `strings *.bc | rg 'llvm.hivm\\.'` to see which HIVM intrinsics survive
+6. if builtin names still are not enough, extract the exact frontend-produced
+   LLVM IR by replaying the `cc1` invocation from `-v` with `-emit-llvm -S`
+
+Use this when you need to answer questions such as:
+- is the intrinsic name correct but the mask form wrong
+- did the compiler expect a `plt/pset` result instead of a literal mask
+- is the LLVM IR path missing hidden frontend-generated structure or attrs
+
+This is the preferred way to align repo-local LLVM emission with the real
+compiler contract.
 
 ## Assemble Fat Objects And Shared Libraries
 

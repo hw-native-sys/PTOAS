@@ -195,22 +195,88 @@ FailureOr<IntrinsicSelection> selectLoadIntrinsic(Operation *op) {
 
 FailureOr<IntrinsicSelection> selectUnaryIntrinsic(Operation *op) {
   auto vabs = dyn_cast<a5vm::VabsOp>(op);
-  if (!vabs)
-    return failure();
+  if (vabs) {
+    const std::string vecFragment = getVectorTypeFragment(vabs.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vabs", "vector=" + vecFragment, "variant=x"};
 
-  const std::string vecFragment = getVectorTypeFragment(vabs.getResult().getType());
-  llvm::SmallVector<std::string, 3> usedFields = {
-      "family=vabs", "vector=" + vecFragment, "variant=x"};
+    if (vecFragment == "v64f32")
+      return makeResolved(op, "llvm.hivm.vabs.v64f32.x", usedFields, vecFragment);
 
-  if (vecFragment == "v64f32")
-    return makeResolved(op, "llvm.hivm.vabs.v64f32.x", usedFields, vecFragment);
+    llvm::SmallVector<std::string, 2> missingFields = {"confirmed_hivm_name"};
+    std::string candidate = "llvm.hivm.vabs";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".x";
+    return makeUnresolved(op, "vabs", candidate, usedFields, missingFields,
+                          vecFragment);
+  }
 
-  llvm::SmallVector<std::string, 2> missingFields = {"confirmed_hivm_name"};
-  std::string candidate = "llvm.hivm.vabs";
-  if (!vecFragment.empty())
-    candidate += "." + vecFragment + ".x";
-  return makeUnresolved(op, "vabs", candidate, usedFields, missingFields,
-                        vecFragment);
+  if (auto vexp = dyn_cast<a5vm::VexpOp>(op)) {
+    const std::string vecFragment = getVectorTypeFragment(vexp.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vexp", "vector=" + vecFragment, "variant=x"};
+    std::string candidate = "llvm.hivm.vexp";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".x";
+    return makeResolved(op, candidate, usedFields, vecFragment);
+  }
+
+  if (auto vdup = dyn_cast<a5vm::VdupOp>(op)) {
+    const std::string vecFragment = getVectorTypeFragment(vdup.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vdups", "vector=" + vecFragment, "variant=z"};
+    if (!isa<FloatType, IntegerType>(vdup.getInput().getType())) {
+      llvm::SmallVector<std::string, 2> missingFields = {"vector_input_vdup_mapping"};
+      return makeUnresolved(op, "vdup", "llvm.hivm.vdups", usedFields, missingFields,
+                            vecFragment);
+    }
+    std::string candidate = "llvm.hivm.vdups";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".z";
+    return makeResolved(op, candidate, usedFields, vecFragment);
+  }
+
+  if (auto binary = dyn_cast<a5vm::VaddOp>(op)) {
+    const std::string vecFragment = getVectorTypeFragment(binary.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vadd", "vector=" + vecFragment, "variant=x"};
+    std::string candidate = "llvm.hivm.vadd";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".x";
+    return makeResolved(op, candidate, usedFields, vecFragment);
+  }
+
+  if (auto binary = dyn_cast<a5vm::VsubOp>(op)) {
+    const std::string vecFragment = getVectorTypeFragment(binary.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vsub", "vector=" + vecFragment, "variant=x"};
+    std::string candidate = "llvm.hivm.vsub";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".x";
+    return makeResolved(op, candidate, usedFields, vecFragment);
+  }
+
+  if (auto binary = dyn_cast<a5vm::VmulOp>(op)) {
+    const std::string vecFragment = getVectorTypeFragment(binary.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vmul", "vector=" + vecFragment, "variant=x"};
+    std::string candidate = "llvm.hivm.vmul";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".x";
+    return makeResolved(op, candidate, usedFields, vecFragment);
+  }
+
+  if (auto binary = dyn_cast<a5vm::VmaxOp>(op)) {
+    const std::string vecFragment = getVectorTypeFragment(binary.getResult().getType());
+    llvm::SmallVector<std::string, 3> usedFields = {
+        "family=vmax", "vector=" + vecFragment, "variant=x"};
+    std::string candidate = "llvm.hivm.vmax";
+    if (!vecFragment.empty())
+      candidate += "." + vecFragment + ".x";
+    return makeResolved(op, candidate, usedFields, vecFragment);
+  }
+
+  return failure();
 }
 
 FailureOr<IntrinsicSelection> selectStoreIntrinsic(Operation *op) {
@@ -244,9 +310,13 @@ FailureOr<IntrinsicSelection> selectStoreIntrinsic(Operation *op) {
     if (copy.getUbPadAttr())
       usedFields.push_back(std::string("ub_pad=") +
                            (*copy.getUbPad() ? "true" : "false"));
-    if (elemFragment == "f32")
-      return makeResolved(op, "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.f32.DV",
-                          usedFields, "");
+    if (elemFragment == "u8" || elemFragment == "u16" ||
+        elemFragment == "u32" || elemFragment == "f32") {
+      std::string callee = "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.";
+      callee += elemFragment;
+      callee += ".DV";
+      return makeResolved(op, callee, usedFields, "");
+    }
     std::string candidate = "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2";
     if (!elemFragment.empty())
       candidate += "." + elemFragment + ".DV";
