@@ -351,6 +351,12 @@ dst[i] = mask[i] ? op(src0[i], src1[i]) : 0    // ZEROING mode
 // result[0..31] = a[0..31] + b[0..31], result[32..63] = 0
 ```
 
+```mlir
+// Compare and select: generate mask from comparison, use for conditional select
+%mask = pto.vcmp %lhs, %rhs, %seed, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.mask
+%out = pto.vsel %x, %y, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+```
+
 #### `!pto.align`
 
 `!pto.align` models the A5 vector-align carrier state. It is not payload data.
