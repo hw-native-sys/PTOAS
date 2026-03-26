@@ -274,6 +274,8 @@ build_host_executable() {
       die "SIM_LIB_DIR is not set or invalid for DEVICE=SIM: ${SIM_LIB_DIR}"
     extra_lib_dirs+=(-L "${SIM_LIB_DIR}" -Wl,-rpath,"${SIM_LIB_DIR}")
     extra_ldflags+=(-lruntime_camodel)
+  else
+    extra_ldflags+=(-lruntime)
   fi
 
   "${BISHENG_BIN}" \
@@ -288,8 +290,8 @@ build_host_executable() {
     -Wl,-rpath,"${out_dir}" \
     -Wl,-rpath,"${ASCEND_HOME_PATH}/lib64" \
     -o "${out_dir}/${case_name}" \
-    -lruntime -lstdc++ -lascendcl -lm -ltiling_api -lplatform -lc_sec -ldl -lnnopbase \
     "${extra_ldflags[@]}" \
+    -lstdc++ -lascendcl -lm -ltiling_api -lplatform -lc_sec -ldl -lnnopbase \
     -l"${case_name}_kernel"
 }
 
