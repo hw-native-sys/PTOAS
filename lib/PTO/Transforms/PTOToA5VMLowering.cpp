@@ -510,6 +510,24 @@ Value adjustPointerByElemOffset(Value ptr, Value elemOffsetI64, int64_t elemByte
   return {};
 }
 
+Value castPtrToElementType(Value ptr, Type elementType, PatternRewriter &rewriter,
+                           Location loc) {
+  auto ptrType = dyn_cast_or_null<PtrType>(ptr.getType());
+  if (!ptrType || !elementType)
+    return {};
+  auto targetType =
+      PtrType::get(rewriter.getContext(), elementType, ptrType.getMemorySpace());
+  if (targetType == ptrType)
+    return ptr;
+  return rewriter.create<CastPtrOp>(loc, targetType, ptr).getResult();
+}
+
+Type getCopyTransferElementType(Type elementType, Builder &builder) {
+  if (getElementByteSize(elementType) == 8)
+    return builder.getI32Type();
+  return elementType;
+}
+
 LogicalResult buildVecNdLoadPlan(ArrayRef<OpFoldResult> shape,
                                  ArrayRef<OpFoldResult> strides, int64_t tileCols,
                                  Value validColsValue, int64_t validCols,
@@ -4305,20 +4323,27 @@ LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter) {
                                               plan.loop1Size);
 
   auto emitCopy = [&](Value srcPtr, Value dstPtr) {
-    auto copy = rewriter.create<a5vm::CopyGmToUbufOp>(
-        op.getLoc(), srcPtr, dstPtr, validRowsValue, validColsValue, sidValue,
+    Type transferElementType =
+        getCopyTransferElementType(contract.elementType, rewriter);
+    Value typedSrcPtr =
+        castPtrToElementType(srcPtr, transferElementType, rewriter, op.getLoc());
+    Value typedDstPtr =
+        castPtrToElementType(dstPtr, transferElementType, rewriter, op.getLoc());
+    if (!typedSrcPtr || !typedDstPtr)
+      return failure();
+    Value dataSelectBitValue =
+        rewriter.create<arith::ConstantOp>(op.getLoc(), rewriter.getI1Type(),
+                                           rewriter.getBoolAttr(ubPad));
+    rewriter.create<a5vm::CopyGmToUbufOp>(
+        op.getLoc(), typedSrcPtr, typedDstPtr, validRowsValue, validColsValue, sidValue,
         plan.nBurst, plan.lenBurst, leftPaddingValue, rightPaddingValue,
-        cacheCtlValue, plan.firstStrideBytes, plan.secondStrideBytes,
-        rewriter.getStringAttr(sourceLayout), rewriter.getBoolAttr(ubPad),
-        rewriter.getBoolAttr(ubPad));
-    copy->setAttr("a5vm.element_type",
-                  rewriter.getStringAttr(
-                      stringifyCopyTransferTypeFragment(contract.elementType)));
+        dataSelectBitValue, cacheCtlValue, plan.firstStrideBytes,
+        plan.secondStrideBytes);
+    return success();
   };
 
   if (std::optional<int64_t> outerConst = getConstInt(plan.outerCount); outerConst && *outerConst == 1) {
-    emitCopy(sourceBase, destinationBuffer);
-    return success();
+    return emitCopy(sourceBase, destinationBuffer);
   }
 
   Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
@@ -4336,8 +4361,7 @@ LogicalResult lowerTLOAD(TLoadOp op, PatternRewriter &rewriter) {
                                             op.getLoc());
   Value iterDst = adjustPointerByElemOffset(destinationBuffer, dstStep, elemBytes, rewriter,
                                             op.getLoc());
-  emitCopy(iterSrc, iterDst);
-  return success();
+  return emitCopy(iterSrc, iterDst);
 }
 
 LogicalResult lowerTABS(TAbsOp op, PatternRewriter &rewriter,
@@ -7081,18 +7105,23 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
       op.getLoc(), plan.loop2FirstStrideBytes, plan.loop2SecondStrideBytes);
 
   auto emitCopy = [&](Value srcPtr, Value dstPtr) {
-    auto copy = rewriter.create<a5vm::CopyUbufToGmOp>(
-        op.getLoc(), srcPtr, dstPtr, validRowsValue, validColsValue, sidValue,
+    Type transferElementType =
+        getCopyTransferElementType(contract.elementType, rewriter);
+    Value typedSrcPtr =
+        castPtrToElementType(srcPtr, transferElementType, rewriter, op.getLoc());
+    Value typedDstPtr =
+        castPtrToElementType(dstPtr, transferElementType, rewriter, op.getLoc());
+    if (!typedSrcPtr || !typedDstPtr)
+      return failure();
+    rewriter.create<a5vm::CopyUbufToGmOp>(
+        op.getLoc(), typedSrcPtr, typedDstPtr, validRowsValue, validColsValue, sidValue,
         plan.nBurst, plan.lenBurst, reservedValue, plan.firstStrideBytes,
-        plan.secondStrideBytes, rewriter.getStringAttr(destinationLayout));
-    copy->setAttr("a5vm.element_type",
-                  rewriter.getStringAttr(
-                      stringifyCopyTransferTypeFragment(contract.elementType)));
+        plan.secondStrideBytes);
+    return success();
   };
 
   if (std::optional<int64_t> outerConst = getConstInt(plan.outerCount); outerConst && *outerConst == 1) {
-    emitCopy(sourceBuffer, destinationBase);
-    return success();
+    return emitCopy(sourceBuffer, destinationBase);
   }
 
   Value c0 = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
@@ -7110,8 +7139,7 @@ LogicalResult lowerTSTORE(TStoreOp op, PatternRewriter &rewriter) {
                                             op.getLoc());
   Value iterDst = adjustPointerByElemOffset(destinationBase, dstStep, elemBytes, rewriter,
                                             op.getLoc());
-  emitCopy(iterSrc, iterDst);
-  return success();
+  return emitCopy(iterSrc, iterDst);
 }
 
 LogicalResult lowerSetFlag(SetFlagOp op, PatternRewriter &rewriter) {

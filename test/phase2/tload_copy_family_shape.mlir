@@ -10,14 +10,16 @@
 // CHECK: %[[LOOP_STRIDE:.*]] = arith.constant 4096 : i64
 // CHECK: %[[LEN_BURST:.*]] = arith.muli %[[VALID]], %[[ELEM_BYTES]] : i64
 // CHECK: %[[STRIDE_BYTES:.*]] = arith.constant 128 : i64
+// CHECK: %[[GM_BASE_BYTES:.*]] = pto.castptr %arg0 : !pto.ptr<f32, gm> -> !pto.ptr<i8, gm>
+// CHECK: %[[ZERO_INDEX:.*]] = arith.index_castui %[[ZERO_I64]] : i64 to index
+// CHECK: %[[GM_OFFSET_PTR:.*]] = pto.addptr %[[GM_BASE_BYTES]], %[[ZERO_INDEX]] : <i8, gm> -> <i8, gm>
 // CHECK: a5vm.set_loop2_stride_outtoub %[[LOOP_STRIDE]], %[[LOOP_STRIDE]]
 // CHECK: a5vm.set_loop1_stride_outtoub %[[LOOP_STRIDE]], %[[LOOP_STRIDE]]
 // CHECK: a5vm.set_loop_size_outtoub %[[C1_I64]], %[[C1_I64]]
-// CHECK: a5vm.copy_gm_to_ubuf %{{.*}}, %{{.*}}, %[[VALID]], %[[VALID]], %[[ZERO_I64]], %[[NBURST]], %[[LEN_BURST]], %[[ZERO_I64]], %[[ZERO_I64]], %[[ZERO_I64]], %[[STRIDE_BYTES]], %[[STRIDE_BYTES]]
-// CHECK-SAME: data_select_bit = false
-// CHECK-SAME: layout = "nd"
-// CHECK-SAME: ub_pad = false
-// CHECK-SAME: : !pto.ptr<i8, gm>, !pto.ptr<f32, ub>
+// CHECK: %[[GM_TYPED_PTR:.*]] = pto.castptr %[[GM_OFFSET_PTR]] : !pto.ptr<i8, gm> -> !pto.ptr<f32, gm>
+// CHECK: %[[FALSE:.*]] = arith.constant false
+// CHECK: a5vm.copy_gm_to_ubuf %[[GM_TYPED_PTR]], %{{.*}}, %[[VALID]], %[[VALID]], %[[ZERO_I64]], %[[NBURST]], %[[LEN_BURST]], %[[ZERO_I64]], %[[ZERO_I64]], %[[FALSE]], %[[ZERO_I64]], %[[STRIDE_BYTES]], %[[STRIDE_BYTES]]
+// CHECK-SAME: : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64, i1, i64, i64, i64
 // CHECK-NOT: g_shape =
 // CHECK-NOT: g_strides =
 // CHECK-NOT: src_strides =

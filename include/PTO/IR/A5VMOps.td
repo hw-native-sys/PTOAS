@@ -122,12 +122,10 @@ def A5VM_CopyGmToUbufOp : A5VM_Op<"copy_gm_to_ubuf", [
     I64:$len_burst,
     I64:$left_padding_count,
     I64:$right_padding_count,
+    I1:$data_select_bit,
     I64:$l2_cache_ctl,
     I64:$gm_stride,
-    I64:$ub_stride,
-    OptionalAttr<StrAttr>:$layout,
-    OptionalAttr<BoolAttr>:$data_select_bit,
-    OptionalAttr<BoolAttr>:$ub_pad
+    I64:$ub_stride
   );
 
   let results = (outs);
@@ -136,10 +134,10 @@ def A5VM_CopyGmToUbufOp : A5VM_Op<"copy_gm_to_ubuf", [
 
   let assemblyFormat = [{
     $source `,` $destination `,` $valid_rows `,` $valid_cols `,` $sid `,` $n_burst `,` $len_burst `,`
-    $left_padding_count `,` $right_padding_count `,` $l2_cache_ctl `,` $gm_stride `,` $ub_stride
+    $left_padding_count `,` $right_padding_count `,` $data_select_bit `,` $l2_cache_ctl `,` $gm_stride `,` $ub_stride
     attr-dict `:` type($source) `,` type($destination) `,` type($valid_rows) `,` type($valid_cols) `,`
     type($sid) `,` type($n_burst) `,` type($len_burst) `,` type($left_padding_count) `,`
-    type($right_padding_count) `,` type($l2_cache_ctl) `,` type($gm_stride) `,` type($ub_stride)
+    type($right_padding_count) `,` type($data_select_bit) `,` type($l2_cache_ctl) `,` type($gm_stride) `,` type($ub_stride)
   }];
 }
 
@@ -985,8 +983,7 @@ def A5VM_CopyUbufToGmOp : A5VM_Op<"copy_ubuf_to_gm", [
     I64:$len_burst,
     I64:$reserved,
     I64:$burst_dst_stride,
-    I64:$burst_src_stride,
-    OptionalAttr<StrAttr>:$layout
+    I64:$burst_src_stride
   );
 
   let results = (outs);

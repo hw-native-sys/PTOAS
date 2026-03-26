@@ -449,13 +449,7 @@ process_one_dir() {
     # Explicit layout on make_tensor_view must be preserved and reflected in the
     # emitted GlobalTensor layout parameter.
     if [[ "$base" == "tensor_view_layout_dn" ]]; then
-      if [[ "$target_backend" == "a5vm" ]]; then
-        if ! grep -Fq 'layout = "dn"' "$cpp"; then
-          echo -e "${A}(${base}.py)\tFAIL\tmissing DN layout in A5VM copy-family lowering"
-          overall=1
-          continue
-        fi
-      else
+      if [[ "$target_backend" != "a5vm" ]]; then
         if ! grep -Fq "pto::Layout::DN" "$cpp"; then
           echo -e "${A}(${base}.py)\tFAIL\tmissing pto::Layout::DN in emitted GlobalTensor"
           overall=1
@@ -501,8 +495,7 @@ process_one_dir() {
           continue
         fi
         if ! grep -Fq "a5vm.copy_gm_to_ubuf" "$cpp" || \
-           ! grep -Fq "a5vm.copy_ubuf_to_gm" "$cpp" || \
-           ! grep -Fq 'a5vm.element_type = "f32"' "$cpp"; then
+           ! grep -Fq "a5vm.copy_ubuf_to_gm" "$cpp"; then
           echo -e "${A}(${base}.py)\tFAIL\tmissing A5VM copy-family lowering for pto.bitcast alias path"
           overall=1
           continue
@@ -633,13 +626,7 @@ PY
 	    # Regression guard for Issue #190:
 	    # Infer layout for a 2D column-vector view (16 x 1) should prefer DN.
 	    if [[ "$base" == "tensor_view_infer_layout_dn" ]]; then
-        if [[ "$target_backend" == "a5vm" ]]; then
-          if ! grep -Fq 'layout = "dn"' "$cpp"; then
-            echo -e "${A}(${base}.py)\tFAIL\texpected DN layout in A5VM copy-family lowering for shape (16 x 1)"
-            overall=1
-            continue
-          fi
-        else
+        if [[ "$target_backend" != "a5vm" ]]; then
 	        if ! grep -Eq "pto::Shape<1, 1, 1, 16, 1>.*pto::Layout::DN" "$cpp"; then
 	          echo -e "${A}(${base}.py)\tFAIL\texpected pto::Layout::DN for shape (16 x 1) GlobalTensor"
 	          overall=1

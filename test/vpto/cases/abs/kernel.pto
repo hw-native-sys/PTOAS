@@ -20,38 +20,40 @@ module attributes {pto.target_arch = "a5"} {
     a5vm.set_loop2_stride_outtoub %4, %c4096_i64 : i64, i64
     a5vm.set_loop1_stride_outtoub %5, %c4096_i64 : i64, i64
     a5vm.set_loop_size_outtoub %c1_i64, %c1_i64 : i64, i64
-    a5vm.copy_gm_to_ubuf %9, %0, %1, %1, %c0_i64, %1, %6, %c0_i64, %c0_i64, %c0_i64, %c128_i64, %c128_i64 {a5vm.element_type = "u32", data_select_bit = false, layout = "nd", ub_pad = false} : !pto.ptr<i8, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64
+    %10 = pto.castptr %9 : !pto.ptr<i8, gm> -> !pto.ptr<f32, gm>
+    %false = arith.constant false
+    a5vm.copy_gm_to_ubuf %10, %0, %1, %1, %c0_i64, %1, %6, %c0_i64, %c0_i64, %false, %c0_i64, %c128_i64, %c128_i64 : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64, i1, i64, i64, i64
     a5vm.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
     a5vm.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
-    %10 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<f32, ub>
+    %11 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<f32, ub>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %11 = arith.muli %c32, %c32 : index
+    %12 = arith.muli %c32, %c32 : index
     %c64 = arith.constant 64 : index
-    %12 = arith.index_castui %11 : index to i32
-    %13 = arith.index_castui %c32 : index to i32
-    %14 = arith.cmpi eq, %c32, %c32 : index
-    %15 = arith.andi %14, %14 : i1
+    %13 = arith.index_castui %12 : index to i32
+    %14 = arith.index_castui %c32 : index to i32
+    %15 = arith.cmpi eq, %c32, %c32 : index
+    %16 = arith.andi %15, %15 : i1
     scf.for %arg2 = %c0 to %c1 step %c1 {
-      scf.if %15 {
-        %18:3 = scf.for %arg3 = %c0 to %11 step %c64 iter_args(%arg4 = %0, %arg5 = %10, %arg6 = %12) -> (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i32) {
+      scf.if %16 {
+        %20:3 = scf.for %arg3 = %c0 to %12 step %c64 iter_args(%arg4 = %0, %arg5 = %11, %arg6 = %13) -> (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i32) {
           %mask, %scalar_out = a5vm.plt_b32 %arg6 : i32 -> !a5vm.mask, i32
           %result, %updated_source = a5vm.vlds_post %arg4[%c64] : !pto.ptr<f32, ub> -> !a5vm.vec<64xf32>, !pto.ptr<f32, ub>
-          %19 = a5vm.vabs %result, %mask {mode = "MODE_ZEROING"} : !a5vm.vec<64xf32>, !a5vm.mask -> !a5vm.vec<64xf32>
-          %20 = a5vm.vsts_post %19, %arg5[%c64], %mask : !a5vm.vec<64xf32>, !pto.ptr<f32, ub>, !a5vm.mask -> !pto.ptr<f32, ub>
-          scf.yield %updated_source, %20, %scalar_out : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i32
+          %21 = a5vm.vabs %result, %mask {mode = "MODE_ZEROING"} : !a5vm.vec<64xf32>, !a5vm.mask -> !a5vm.vec<64xf32>
+          %22 = a5vm.vsts_post %21, %arg5[%c64], %mask : !a5vm.vec<64xf32>, !pto.ptr<f32, ub>, !a5vm.mask -> !pto.ptr<f32, ub>
+          scf.yield %updated_source, %22, %scalar_out : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i32
         }
       } else {
-        %18 = arith.ceildivui %c32, %c64 : index
+        %20 = arith.ceildivui %c32, %c64 : index
         scf.for %arg3 = %c0 to %c32 step %c1 {
-          %19 = arith.muli %arg3, %c32 : index
-          %20 = scf.for %arg4 = %c0 to %18 step %c1 iter_args(%arg5 = %13) -> (i32) {
+          %21 = arith.muli %arg3, %c32 : index
+          %22 = scf.for %arg4 = %c0 to %20 step %c1 iter_args(%arg5 = %14) -> (i32) {
             %mask, %scalar_out = a5vm.plt_b32 %arg5 : i32 -> !a5vm.mask, i32
-            %21 = arith.muli %arg4, %c64 : index
-            %22 = arith.addi %19, %21 : index
-            %23 = a5vm.vlds %0[%22] : !pto.ptr<f32, ub> -> !a5vm.vec<64xf32>
-            %24 = a5vm.vabs %23, %mask {mode = "MODE_ZEROING"} : !a5vm.vec<64xf32>, !a5vm.mask -> !a5vm.vec<64xf32>
-            a5vm.vsts %24, %10[%22], %mask : !a5vm.vec<64xf32>, !pto.ptr<f32, ub>, !a5vm.mask
+            %23 = arith.muli %arg4, %c64 : index
+            %24 = arith.addi %21, %23 : index
+            %25 = a5vm.vlds %0[%24] : !pto.ptr<f32, ub> -> !a5vm.vec<64xf32>
+            %26 = a5vm.vabs %25, %mask {mode = "MODE_ZEROING"} : !a5vm.vec<64xf32>, !a5vm.mask -> !a5vm.vec<64xf32>
+            a5vm.vsts %26, %11[%24], %mask : !a5vm.vec<64xf32>, !pto.ptr<f32, ub>, !a5vm.mask
             scf.yield %scalar_out : i32
           }
         }
@@ -59,12 +61,13 @@ module attributes {pto.target_arch = "a5"} {
     } {llvm.loop.aivector_scope}
     a5vm.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     a5vm.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-    %16 = pto.castptr %arg1 : !pto.ptr<f32, gm> -> !pto.ptr<i8, gm>
-    %17 = pto.addptr %16, %8 : <i8, gm> -> <i8, gm>
+    %17 = pto.castptr %arg1 : !pto.ptr<f32, gm> -> !pto.ptr<i8, gm>
+    %18 = pto.addptr %17, %8 : <i8, gm> -> <i8, gm>
     a5vm.set_loop_size_ubtoout %c1_i64, %c1_i64 : i64, i64
     a5vm.set_loop1_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
     a5vm.set_loop2_stride_ubtoout %c4096_i64, %c4096_i64 : i64, i64
-    a5vm.copy_ubuf_to_gm %10, %17, %1, %1, %c0_i64, %c32_i64, %6, %c0_i64, %c128_i64, %c128_i64 {a5vm.element_type = "u32", layout = "nd"} : !pto.ptr<f32, ub>, !pto.ptr<i8, gm>, i64, i64, i64, i64, i64, i64, i64, i64
+    %19 = pto.castptr %18 : !pto.ptr<i8, gm> -> !pto.ptr<f32, gm>
+    a5vm.copy_ubuf_to_gm %11, %19, %1, %1, %c0_i64, %c32_i64, %6, %c0_i64, %c128_i64, %c128_i64 : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64, i64, i64
     a5vm.pipe_barrier "PIPE_ALL"
     return
   }

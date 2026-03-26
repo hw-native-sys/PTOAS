@@ -9,6 +9,7 @@
 #include "PTO/Transforms/HIVMIntrinsicNaming.h"
 
 #include "PTO/IR/A5VM.h"
+#include "PTO/IR/PTO.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -62,9 +63,37 @@ static std::string getVectorTypeFragment(Type type) {
           getElementTypeFragment(vecType.getElementType()));
 }
 
-static std::string getCopyElementFragment(Operation *op) {
-  if (auto attr = dyn_cast_or_null<StringAttr>(op->getAttr("a5vm.element_type")))
-    return attr.getValue().str();
+static std::string getCopyElementFragment(Type type) {
+  auto ptrType = dyn_cast<pto::PtrType>(type);
+  if (!ptrType)
+    return {};
+  Type elementType = ptrType.getElementType();
+  if (auto floatType = dyn_cast<FloatType>(elementType)) {
+    switch ((floatType.getWidth() + 7) / 8) {
+    case 1:
+      return "u8";
+    case 2:
+      return "u16";
+    case 4:
+    case 8:
+      return "u32";
+    default:
+      return {};
+    }
+  }
+  if (auto intType = dyn_cast<IntegerType>(elementType)) {
+    switch ((intType.getWidth() + 7) / 8) {
+    case 1:
+      return "u8";
+    case 2:
+      return "u16";
+    case 4:
+    case 8:
+      return "u32";
+    default:
+      return {};
+    }
+  }
   return {};
 }
 
@@ -380,18 +409,10 @@ FailureOr<IntrinsicSelection> selectStoreIntrinsic(Operation *op) {
   }
 
   if (auto copy = dyn_cast<a5vm::CopyGmToUbufOp>(op)) {
-    std::string elemFragment = getCopyElementFragment(op);
+    std::string elemFragment = getCopyElementFragment(copy.getSource().getType());
     usedFields = {"family=copy_gm_to_ubuf"};
     if (!elemFragment.empty())
       usedFields.push_back("element=" + elemFragment);
-    if (copy.getLayoutAttr())
-      usedFields.push_back("layout=" + (*copy.getLayout()).str());
-    if (copy.getDataSelectBitAttr())
-      usedFields.push_back(std::string("data_select_bit=") +
-                           (*copy.getDataSelectBit() ? "true" : "false"));
-    if (copy.getUbPadAttr())
-      usedFields.push_back(std::string("ub_pad=") +
-                           (*copy.getUbPad() ? "true" : "false"));
     if (elemFragment == "u8" || elemFragment == "u16" ||
         elemFragment == "u32" || elemFragment == "f32") {
       std::string callee = "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2.";
@@ -408,12 +429,10 @@ FailureOr<IntrinsicSelection> selectStoreIntrinsic(Operation *op) {
   }
 
   if (auto copy = dyn_cast<a5vm::CopyUbufToGmOp>(op)) {
-    std::string elemFragment = getCopyElementFragment(op);
+    std::string elemFragment = getCopyElementFragment(copy.getSource().getType());
     usedFields = {"family=copy_ubuf_to_gm"};
     if (!elemFragment.empty())
       usedFields.push_back("element=" + elemFragment);
-    if (copy.getLayoutAttr())
-      usedFields.push_back("layout=" + (*copy.getLayout()).str());
     if (elemFragment == "f32")
       return makeResolved(op, "llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV",
                           usedFields, "");

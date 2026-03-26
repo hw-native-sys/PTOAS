@@ -195,6 +195,19 @@ static bool isBufferLike(Type type) {
   return isa<BaseMemRefType, pto::PtrType>(type);
 }
 
+static int64_t getPtrElementByteSize(Type type) {
+  auto ptrType = dyn_cast<pto::PtrType>(type);
+  if (!ptrType)
+    return 0;
+
+  Type elementType = ptrType.getElementType();
+  if (auto floatType = dyn_cast<FloatType>(elementType))
+    return (floatType.getWidth() + 7) / 8;
+  if (auto intType = dyn_cast<IntegerType>(elementType))
+    return (intType.getWidth() + 7) / 8;
+  return 0;
+}
+
 static LogicalResult verifySyncToken(Operation *op, StringAttr token,
                                      StringRef role) {
   if (!token || token.getValue().empty())
@@ -204,12 +217,10 @@ static LogicalResult verifySyncToken(Operation *op, StringAttr token,
 
 template <typename CopyOp>
 static LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
-  if (!isBufferLike(op.getSource().getType()) ||
-      !isBufferLike(op.getDestination().getType()))
-    return op.emitOpError("requires pointer-like source and destination");
-
-  bool hasAllMetadata =
-      op.getLayoutAttr() && op.getDataSelectBitAttr() && op.getUbPadAttr();
+  auto sourceType = dyn_cast<pto::PtrType>(op.getSource().getType());
+  auto destinationType = dyn_cast<pto::PtrType>(op.getDestination().getType());
+  if (!sourceType || !destinationType)
+    return op.emitOpError("requires typed !pto.ptr source and destination");
 
   MemoryRole sourceRole = classifyMemoryRole(op.getSource().getType());
   MemoryRole destinationRole = classifyMemoryRole(op.getDestination().getType());
@@ -222,24 +233,29 @@ static LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
     directionMatches &= destinationRole != MemoryRole::UB;
   }
 
-  if (!hasAllMetadata || !directionMatches) {
+  if (!directionMatches) {
     return op.emitOpError()
            << "requires "
-           << (expectSourceGM ? "GM source, UB destination"
-                              : "UB source, GM destination")
-           << ", and complete transfer metadata";
+           << (expectSourceGM ? "GM source and UB destination"
+                              : "UB source and GM destination");
   }
+
+  int64_t sourceElemBytes = getPtrElementByteSize(sourceType);
+  int64_t destinationElemBytes = getPtrElementByteSize(destinationType);
+  if (sourceElemBytes <= 0 || destinationElemBytes <= 0)
+    return op.emitOpError("requires copy source and destination element types with known byte width");
+  if (sourceElemBytes != destinationElemBytes)
+    return op.emitOpError("requires source and destination element byte widths to match");
 
   return success();
 }
 
 template <typename CopyOp>
 static LogicalResult verifyCopyUbufToGmOp(CopyOp op, bool expectSourceGM) {
-  if (!isBufferLike(op.getSource().getType()) ||
-      !isBufferLike(op.getDestination().getType()))
-    return op.emitOpError("requires pointer-like source and destination");
-
-  bool hasAllMetadata = static_cast<bool>(op.getLayoutAttr());
+  auto sourceType = dyn_cast<pto::PtrType>(op.getSource().getType());
+  auto destinationType = dyn_cast<pto::PtrType>(op.getDestination().getType());
+  if (!sourceType || !destinationType)
+    return op.emitOpError("requires typed !pto.ptr source and destination");
 
   MemoryRole sourceRole = classifyMemoryRole(op.getSource().getType());
   MemoryRole destinationRole = classifyMemoryRole(op.getDestination().getType());
@@ -252,13 +268,19 @@ static LogicalResult verifyCopyUbufToGmOp(CopyOp op, bool expectSourceGM) {
     directionMatches &= destinationRole != MemoryRole::UB;
   }
 
-  if (!hasAllMetadata || !directionMatches) {
+  if (!directionMatches) {
     return op.emitOpError()
            << "requires "
-           << (expectSourceGM ? "GM source, UB destination"
-                              : "UB source, GM destination")
-           << ", and complete transfer metadata";
+           << (expectSourceGM ? "GM source and UB destination"
+                              : "UB source and GM destination");
   }
+
+  int64_t sourceElemBytes = getPtrElementByteSize(sourceType);
+  int64_t destinationElemBytes = getPtrElementByteSize(destinationType);
+  if (sourceElemBytes <= 0 || destinationElemBytes <= 0)
+    return op.emitOpError("requires copy source and destination element types with known byte width");
+  if (sourceElemBytes != destinationElemBytes)
+    return op.emitOpError("requires source and destination element byte widths to match");
 
   return success();
 }

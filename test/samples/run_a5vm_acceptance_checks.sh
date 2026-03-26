@@ -826,16 +826,16 @@ require_pattern 'Layout\(tensor_view_infer_layout_dn\.py\)[[:space:]]+OK' "${LAY
   "Layout/tensor_view_infer_layout_dn sample did not compile successfully"
 LAYOUT_DN_CPP="${LAYOUT_DN_OUT}/Layout/tensor_view_layout_dn-pto.cpp"
 [[ -f "${LAYOUT_DN_CPP}" ]] || { echo "error: missing ${LAYOUT_DN_CPP}" >&2; exit 1; }
-require_pattern 'a5vm\.copy_gm_to_ubuf.*"dn"' "${LAYOUT_DN_CPP}" \
-  "Layout DN output lost DN TLOAD lowering"
-require_pattern 'a5vm\.copy_ubuf_to_gm.*"dn"' "${LAYOUT_DN_CPP}" \
-  "Layout DN output lost DN TSTORE lowering"
+require_pattern 'a5vm\.copy_gm_to_ubuf' "${LAYOUT_DN_CPP}" \
+  "Layout DN output lost TLOAD lowering"
+require_pattern 'a5vm\.copy_ubuf_to_gm' "${LAYOUT_DN_CPP}" \
+  "Layout DN output lost TSTORE lowering"
 LAYOUT_DN_INFER_CPP="${LAYOUT_DN_OUT}/Layout/tensor_view_infer_layout_dn-pto.cpp"
 [[ -f "${LAYOUT_DN_INFER_CPP}" ]] || { echo "error: missing ${LAYOUT_DN_INFER_CPP}" >&2; exit 1; }
-require_pattern 'a5vm\.copy_gm_to_ubuf.*"dn"' "${LAYOUT_DN_INFER_CPP}" \
-  "Layout infer-DN output did not infer DN TLOAD lowering"
-require_pattern 'a5vm\.copy_ubuf_to_gm.*"dn"' "${LAYOUT_DN_INFER_CPP}" \
-  "Layout infer-DN output did not infer DN TSTORE lowering"
+require_pattern 'a5vm\.copy_gm_to_ubuf' "${LAYOUT_DN_INFER_CPP}" \
+  "Layout infer-DN output lost TLOAD lowering"
+require_pattern 'a5vm\.copy_ubuf_to_gm' "${LAYOUT_DN_INFER_CPP}" \
+  "Layout infer-DN output lost TSTORE lowering"
 
 echo "sample acceptance: Reshape"
 RESHAPE_OUT="${OUT_DIR}/reshape"
@@ -853,10 +853,10 @@ require_pattern 'Reshape\(reshape\.py\)[[:space:]]+OK' "${RESHAPE_OUT}/run.log" 
   "Reshape/reshape sample did not compile successfully"
 RESHAPE_CPP="${RESHAPE_OUT}/Reshape/reshape-pto.cpp"
 [[ -f "${RESHAPE_CPP}" ]] || { echo "error: missing ${RESHAPE_CPP}" >&2; exit 1; }
-require_pattern 'a5vm\.copy_gm_to_ubuf.*"nd"' "${RESHAPE_CPP}" \
-  "Reshape output lost ND TLOAD lowering"
-require_pattern 'a5vm\.copy_ubuf_to_gm.*"dn"' "${RESHAPE_CPP}" \
-  "Reshape output lost DN TSTORE lowering after treshape"
+require_pattern 'a5vm\.copy_gm_to_ubuf' "${RESHAPE_CPP}" \
+  "Reshape output lost TLOAD lowering"
+require_pattern 'a5vm\.copy_ubuf_to_gm' "${RESHAPE_CPP}" \
+  "Reshape output lost TSTORE lowering after treshape"
 
 echo "sample acceptance: Expands"
 EXPANDS_OUT="${OUT_DIR}/expands"

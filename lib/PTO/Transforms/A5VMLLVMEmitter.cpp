@@ -173,10 +173,27 @@ static std::string getVbrScalarFragment(Type type) {
   return {};
 }
 
-static std::string getCopyElementFragment(Operation *op) {
-  if (auto attr = dyn_cast_or_null<StringAttr>(op->getAttr("a5vm.element_type")))
-    return attr.getValue().str();
-  return {};
+static std::string getCopyElementFragment(Type type) {
+  auto ptrType = dyn_cast<pto::PtrType>(type);
+  if (!ptrType)
+    return {};
+  Type elementType = ptrType.getElementType();
+  unsigned byteWidth = 0;
+  if (auto floatType = dyn_cast<FloatType>(elementType))
+    byteWidth = (floatType.getWidth() + 7) / 8;
+  else if (auto intType = dyn_cast<IntegerType>(elementType))
+    byteWidth = (intType.getWidth() + 7) / 8;
+  switch (byteWidth) {
+  case 1:
+    return "u8";
+  case 2:
+    return "u16";
+  case 4:
+  case 8:
+    return "u32";
+  default:
+    return {};
+  }
 }
 
 static std::optional<ABIExpr> buildABIExprFromValue(Value value);
@@ -1099,7 +1116,7 @@ static FailureOr<Value> packLoopSize(Operation *anchor, Value loop2, Value loop1
 static FailureOr<Value>
 packCopyGmToUbConfig0(Operation *anchor, a5vm::CopyGmToUbufOp op,
                       ValueRange operands) {
-  if (operands.size() != 12)
+  if (operands.size() != 13)
     return failure();
 
   OpBuilder builder(anchor);
@@ -1115,13 +1132,11 @@ packCopyGmToUbConfig0(Operation *anchor, a5vm::CopyGmToUbufOp op,
   Value lenBurst = getI64Operand(6);
   Value leftPadding = getI64Operand(7);
   Value rightPadding = getI64Operand(8);
-  Value cacheCtl = getI64Operand(9);
-  if (!sid || !nBurst || !lenBurst || !leftPadding || !rightPadding || !cacheCtl)
+  Value dataSelect = castIntegerLikeTo(anchor, operands[9], builder.getI64Type());
+  Value cacheCtl = getI64Operand(10);
+  if (!sid || !nBurst || !lenBurst || !leftPadding || !rightPadding ||
+      !dataSelect || !cacheCtl)
     return failure();
-
-  Value dataSelect =
-      getI64Constant(builder, loc,
-                     op.getDataSelectBit().has_value() && *op.getDataSelectBit());
 
   auto shl = [&](Value value, uint64_t amount) -> Value {
     return builder.create<arith::ShLIOp>(loc, value,
@@ -1143,9 +1158,9 @@ packCopyGmToUbConfig0(Operation *anchor, a5vm::CopyGmToUbufOp op,
 
 static FailureOr<Value>
 packCopyGmToUbConfig1(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 12)
+  if (operands.size() != 13)
     return failure();
-  return packLoopPair(anchor, operands[10], operands[11]);
+  return packLoopPair(anchor, operands[11], operands[12]);
 }
 
 static FailureOr<Value>
@@ -1215,7 +1230,7 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
   if (isa<a5vm::SetLoopSizeUbToOutOp>(op))
     return std::string("llvm.hivm.SET.LOOP.SIZE.UBTOOUT");
   if (isa<a5vm::CopyGmToUbufOp>(op)) {
-    std::string elem = getCopyElementFragment(op);
+    std::string elem = getCopyElementFragment(op->getOperand(0).getType());
     if (elem.empty())
       elem = "f32";
     return "llvm.hivm.MOV.OUT.TO.UB.ALIGN.V2." + elem + ".DV";
