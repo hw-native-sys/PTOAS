@@ -6753,8 +6753,6 @@ LogicalResult lowerTRowExpandBinaryLike(OpTy op, PatternRewriter &rewriter,
       rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstRowStride);
   Value blockSizeValue =
       rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 32 / elemBytes);
-  Value elemBytesValue =
-      rewriter.create<arith::ConstantIndexOp>(op.getLoc(), elemBytes);
 
   A5VMLoopScopeContract loopScope;
   loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
@@ -6778,15 +6776,16 @@ LogicalResult lowerTRowExpandBinaryLike(OpTy op, PatternRewriter &rewriter,
 
   Value expandVec;
   if (expandIsColMajor) {
-    Value expandByteOffset =
-        rewriter.create<arith::MulIOp>(op.getLoc(), expandRowOffset, elemBytesValue);
+    Value expandBase = offsetBufferPointer(expandBuffer, elementType, expandRowOffset,
+                                          rewriter, op.getLoc());
     auto alignType = a5vm::AlignType::get(rewriter.getContext());
     Value expandAlign =
-        rewriter.create<a5vm::VldasOp>(op.getLoc(), alignType, expandBuffer, expandByteOffset);
-    Value expandScalar = rewriter
-                             .create<a5vm::VldusOp>(op.getLoc(), vecType, expandAlign,
-                                                    expandBuffer, expandRowOffset)
-                             .getResult();
+        rewriter.create<a5vm::VldasOp>(op.getLoc(), alignType, expandBase);
+    auto expandLoad = rewriter.create<a5vm::VldusOp>(
+        op.getLoc(),
+        TypeRange{vecType, alignType, expandBase.getType()},
+        ValueRange{expandBase, expandAlign});
+    Value expandScalar = expandLoad.getResult();
     expandVec = rewriter
                     .create<a5vm::VdupOp>(op.getLoc(), vecType, expandScalar,
                                           rewriter.getStringAttr("POS_LOWEST"),
@@ -6918,7 +6917,6 @@ LogicalResult lowerTRowExpandSub(TRowExpandSubOp op, PatternRewriter &rewriter) 
   Value expandStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), expandRowStride);
   Value dstStrideValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dstRowStride);
   Value blockSizeValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 32 / elemBytes);
-  Value elemBytesValue = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), elemBytes);
 
   A5VMLoopScopeContract loopScope;
   loopScope.kind = A5VMLoopScopeKind::AIVVectorScope;
@@ -6936,6 +6934,7 @@ LogicalResult lowerTRowExpandSub(TRowExpandSubOp op, PatternRewriter &rewriter) 
   Value row = rowLoop.getInductionVar();
   Value baseRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, baseStrideValue);
   Value dstRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, dstStrideValue);
+  Value expandRowOffset = rewriter.create<arith::MulIOp>(op.getLoc(), row, expandStrideValue);
 
   Value expandedVec;
   if (expandIsRowMajor) {
@@ -6946,17 +6945,16 @@ LogicalResult lowerTRowExpandSub(TRowExpandSubOp op, PatternRewriter &rewriter) 
                                             rewriter.getStringAttr("BLK"))
                       .getResult();
   } else {
-    Value expandOffset =
-        rewriter.create<arith::MulIOp>(op.getLoc(), row, expandStrideValue);
-    Value expandByteOffset =
-        rewriter.create<arith::MulIOp>(op.getLoc(), expandOffset, elemBytesValue);
+    Value expandBase = offsetBufferPointer(expandBuffer, elementType, expandRowOffset,
+                                          rewriter, op.getLoc());
     auto alignType = a5vm::AlignType::get(rewriter.getContext());
     Value expandAlign =
-        rewriter.create<a5vm::VldasOp>(op.getLoc(), alignType, expandBuffer, expandByteOffset);
-    Value loaded = rewriter
-                       .create<a5vm::VldusOp>(op.getLoc(), vecType, expandAlign, expandBuffer,
-                                              expandOffset)
-                       .getResult();
+        rewriter.create<a5vm::VldasOp>(op.getLoc(), alignType, expandBase);
+    auto expandLoad = rewriter.create<a5vm::VldusOp>(
+        op.getLoc(),
+        TypeRange{vecType, alignType, expandBase.getType()},
+        ValueRange{expandBase, expandAlign});
+    Value loaded = expandLoad.getResult();
     expandedVec = rewriter
                       .create<a5vm::VdupOp>(op.getLoc(), vecType, loaded,
                                             rewriter.getStringAttr("POS_LOWEST"),

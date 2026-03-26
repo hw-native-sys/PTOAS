@@ -42,6 +42,7 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -726,8 +727,14 @@ static FailureOr<std::string> getConfirmedCallee(Operation *op) {
     return std::string("llvm.hivm.plt.b32.v300");
   if (isa<a5vm::VldasOp>(op))
     return std::string("llvm.hivm.vldas");
-  if (isa<a5vm::VldusOp>(op))
-    return std::string("llvm.hivm.vldus");
+  if (auto vldus = dyn_cast<a5vm::VldusOp>(op)) {
+    std::string vec = getElementTypeFragment(
+        getElementTypeFromVectorLike(vldus.getResult().getType()));
+    auto lanes = getElementCountFromVectorLike(vldus.getResult().getType());
+    if (vec.empty() || !lanes)
+      return failure();
+    return "llvm.hivm.vldus.v" + std::to_string(*lanes) + vec;
+  }
   if (auto vlds = dyn_cast<a5vm::VldsOp>(op)) {
     std::string vec = getElementTypeFragment(getElementTypeFromVectorLike(vlds.getResult().getType()));
     auto lanes = getElementCountFromVectorLike(vlds.getResult().getType());
@@ -1044,20 +1051,10 @@ static LogicalResult rewriteA5VMOp(Operation *op, ModuleOp module,
       return failure();
     callArgs.push_back(laneCount);
   } else if (auto vldas = dyn_cast<a5vm::VldasOp>(op)) {
-    Value offsetBytes = castIntegerLikeTo(op, vldas.getOffset(), builder.getI64Type());
-    if (!offsetBytes)
-      return failure();
     callArgs.push_back(vldas.getSource());
-    callArgs.push_back(offsetBytes);
   } else if (auto vldus = dyn_cast<a5vm::VldusOp>(op)) {
-    Type elementType = getElementTypeFromVectorLike(vldus.getResult().getType());
-    auto offsetBytes =
-        convertElementOffsetToBytes(op, vldus.getOffset(), elementType);
-    if (!elementType || failed(offsetBytes))
-      return failure();
-    callArgs.push_back(vldus.getAlign());
     callArgs.push_back(vldus.getSource());
-    callArgs.push_back(*offsetBytes);
+    callArgs.push_back(vldus.getAlign());
   } else if (auto vlds = dyn_cast<a5vm::VldsOp>(op)) {
     Type elementType = getElementTypeFromVectorLike(vlds.getResult().getType());
     auto offsetBytes = convertElementOffsetToBytes(
@@ -1256,7 +1253,7 @@ collectVecScopeLoopCounts(ModuleOp module) {
   return counts;
 }
 
-static bool ensureDummyPredForAIVectorScopeLatch(llvm::Loop *loop) {
+static bool satisfiesAIVectorScopeLatchPostcondition(llvm::Loop *loop) {
   llvm::BasicBlock *latch = loop->getLoopLatch();
   if (!latch)
     return false;
@@ -1265,24 +1262,68 @@ static bool ensureDummyPredForAIVectorScopeLatch(llvm::Loop *loop) {
   if (preds.size() != 1)
     return false;
 
-  llvm::BasicBlock *pred = preds.front();
-  auto *predTerm = pred->getTerminator();
-  if (!predTerm || predTerm->getNumSuccessors() <= 1)
-    return false;
-
-  llvm::Function *function = latch->getParent();
-  if (!function)
-    return false;
-
-  llvm::BasicBlock *dummy =
-      llvm::BasicBlock::Create(function->getContext(), "aivscope.dummy", function, latch);
-  llvm::BranchInst::Create(latch, dummy);
-  predTerm->replaceUsesOfWith(latch, dummy);
-  return true;
+  auto *predTerm = preds.front()->getTerminator();
+  return predTerm && predTerm->getNumSuccessors() == 1 &&
+         predTerm->getSuccessor(0) == latch;
 }
 
-static void attachAIVectorScopeMetadata(llvm::Module &llvmModule,
-                                        const llvm::StringMap<unsigned> &counts) {
+// Bisheng imposes a strict CFG contract on loops carrying
+// `llvm.loop.aivector_scope` metadata:
+//   1. the latch must have exactly one predecessor
+//   2. that predecessor must have exactly one successor, namely the latch
+//
+// The generic SCF/LLVM lowering pipeline does not preserve this shape for us.
+// Unary-style lowering can legitimately materialize extra CFG around the loop
+// backedge, for example a fast-path/slow-path `scf.if` whose branches both feed
+// the latch. Even if the condition later folds to a constant, the exported LLVM
+// CFG can still violate the Bisheng-only latch contract.
+//
+// Therefore A5VM LLVM emission treats this as a required postcondition instead
+// of a best-effort cleanup:
+//   - if the loop already satisfies the contract, keep it as-is
+//   - otherwise normalize all latch predecessors through a dummy block
+//   - if normalization still cannot re-establish the contract, fail the export
+//
+// Failing loudly here is intentional. Silently attaching aivscope metadata to
+// an unsupported latch shape only defers the problem into Bisheng as a backend
+// crash, which makes future regressions harder to diagnose.
+static LogicalResult ensureDummyPredForAIVectorScopeLatch(llvm::Loop *loop,
+                                                          llvm::raw_ostream &diagOS) {
+  if (satisfiesAIVectorScopeLatchPostcondition(loop))
+    return success();
+
+  llvm::BasicBlock *latch = loop->getLoopLatch();
+  if (!latch) {
+    diagOS << "A5VM LLVM emission failed: aivscope loop is missing a latch\n";
+    return failure();
+  }
+
+  llvm::SmallVector<llvm::BasicBlock *, 4> preds(llvm::predecessors(latch));
+  if (preds.empty()) {
+    diagOS << "A5VM LLVM emission failed: aivscope latch has no predecessor\n";
+    return failure();
+  }
+
+  auto *dummy = llvm::SplitBlockPredecessors(
+      latch, preds, "aivscope.dummy", static_cast<llvm::DominatorTree *>(nullptr),
+      static_cast<llvm::LoopInfo *>(nullptr), nullptr, /*PreserveLCSSA=*/false);
+  if (!dummy) {
+    diagOS << "A5VM LLVM emission failed: failed to normalize aivscope latch "
+              "predecessors\n";
+    return failure();
+  }
+
+  if (!satisfiesAIVectorScopeLatchPostcondition(loop)) {
+    diagOS << "A5VM LLVM emission failed: normalized aivscope latch still does "
+              "not satisfy the single-predecessor/single-successor contract\n";
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult attachAIVectorScopeMetadata(
+    llvm::Module &llvmModule, const llvm::StringMap<unsigned> &counts,
+    llvm::raw_ostream &diagOS) {
   for (llvm::Function &function : llvmModule) {
     auto it = counts.find(function.getName());
     if (it == counts.end() || it->second == 0)
@@ -1296,21 +1337,34 @@ static void attachAIVectorScopeMetadata(llvm::Module &llvmModule,
       continue;
 
     llvm::Loop *loop = *loopInfo.begin();
-    (void)ensureDummyPredForAIVectorScopeLatch(loop);
+    if (failed(ensureDummyPredForAIVectorScopeLatch(loop, diagOS)))
+      return failure();
 
     dt.recalculate(function);
     loopInfo.releaseMemory();
     loopInfo.analyze(dt);
-    if (loopInfo.empty())
-      continue;
+    if (loopInfo.empty()) {
+      diagOS << "A5VM LLVM emission failed: aivscope loop disappeared after "
+                "latch normalization in function "
+             << function.getName() << "\n";
+      return failure();
+    }
     loop = *loopInfo.begin();
 
     llvm::BasicBlock *latch = loop->getLoopLatch();
-    if (!latch)
-      continue;
+    if (!latch) {
+      diagOS << "A5VM LLVM emission failed: aivscope loop has no latch after "
+                "normalization in function "
+             << function.getName() << "\n";
+      return failure();
+    }
     auto *terminator = latch->getTerminator();
-    if (!terminator)
-      continue;
+    if (!terminator) {
+      diagOS << "A5VM LLVM emission failed: aivscope latch has no terminator "
+                "in function "
+             << function.getName() << "\n";
+      return failure();
+    }
 
     llvm::LLVMContext &ctx = llvmModule.getContext();
     llvm::Metadata *ops[] = {
@@ -1319,6 +1373,7 @@ static void attachAIVectorScopeMetadata(llvm::Module &llvmModule,
     loopID->replaceOperandWith(0, loopID);
     terminator->setMetadata(llvm::LLVMContext::MD_loop, loopID);
   }
+  return success();
 }
 
 static void attachHIVMKernelAnnotations(llvm::Module &llvmModule) {
@@ -1838,7 +1893,8 @@ buildLLVMModuleFromA5VM(ModuleOp module, llvm::LLVMContext &llvmContext,
     return nullptr;
   }
 
-  attachAIVectorScopeMetadata(*llvmModule, vecScopeCounts);
+  if (failed(attachAIVectorScopeMetadata(*llvmModule, vecScopeCounts, diagOS)))
+    return nullptr;
   if (failed(rewriteFunctionsToEmitCStyleABI(*llvmModule, abiSpecs, diagOS)))
     return nullptr;
   attachHIVMKernelAnnotations(*llvmModule);

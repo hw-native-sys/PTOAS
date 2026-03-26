@@ -647,12 +647,17 @@ void VldusOp::getEffects(
 
 LogicalResult VldusOp::verify() {
   if (failed(verifyAlignTypeLike(*this, getAlign().getType(), "align type")) ||
-      failed(verifyVecTypeLike(*this, getResult().getType(), "result type")))
+      failed(verifyVecTypeLike(*this, getResult().getType(), "result type")) ||
+      failed(verifyAlignTypeLike(*this, getUpdatedAlign().getType(),
+                                 "updated align type")))
     return failure();
   if (!isBufferLike(getSource().getType()))
     return emitOpError("requires a pointer-like source");
   if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
     return emitOpError("requires a UB-backed source");
+  if (getUpdatedSource().getType() != getSource().getType())
+    return emitOpError(
+        "requires updated source result to match source type");
   return success();
 }
 
