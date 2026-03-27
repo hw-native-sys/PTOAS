@@ -211,6 +211,31 @@ jobs:
         run: |
           bash "$PTO_SOURCE_DIR/docker/collect_ptoas_dist_mac.sh" "$GITHUB_WORKSPACE/ptoas-dist"
 
+      - name: Archive ptoas binary artifact
+        if: matrix.python == '3.11'
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/ptoas-dist/ptoas" "$GITHUB_WORKSPACE/ptoas-dist/bin/ptoas"
+          tar -czf "$GITHUB_WORKSPACE/ptoas-bin-macos-${{ matrix.arch }}.tar.gz" \
+            -C "$GITHUB_WORKSPACE/ptoas-dist" .
+
+      - name: Smoke test archived ptoas binary artifact
+        if: matrix.python == '3.11'
+        run: |
+          TEST_DIR="$RUNNER_TEMP/ptoas-dist-smoke-${{ matrix.arch }}"
+          rm -rf "$TEST_DIR"
+          mkdir -p "$TEST_DIR/extracted"
+          tar -xzf "$GITHUB_WORKSPACE/ptoas-bin-macos-${{ matrix.arch }}.tar.gz" -C "$TEST_DIR/extracted"
+
+          test -x "$TEST_DIR/extracted/ptoas"
+          test -x "$TEST_DIR/extracted/bin/ptoas"
+
+          env -u PYTHONPATH -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH \
+            "$TEST_DIR/extracted/ptoas" --version
+          env -u PYTHONPATH -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH \
+            "$TEST_DIR/extracted/ptoas" \
+            "$PTO_SOURCE_DIR/test/basic/kernel_kind_vector_scf_while_emitc.pto" \
+            >/dev/null
+
       - name: Smoke test wheel imports after collecting artifacts
         if: matrix.python == '3.11'
         run: |
@@ -252,7 +277,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ptoas-bin-macos-${{ matrix.arch }}
-          path: ptoas-dist/
+          path: ptoas-bin-macos-${{ matrix.arch }}.tar.gz
 
   upload_release_assets:
     name: Upload release assets
@@ -308,13 +333,13 @@ jobs:
           name: ptoas-bin-macos-aarch64
           path: release-artifacts/ptoas-bin-macos-aarch64
 
-      - name: Package ptoas binaries
+      - name: Collect packaged ptoas binaries
         run: |
           set -euo pipefail
-          tar -czf "release-artifacts/ptoas-bin-macos-x86_64.tar.gz" \
-            -C "release-artifacts/ptoas-bin-macos-x86_64" .
-          tar -czf "release-artifacts/ptoas-bin-macos-aarch64.tar.gz" \
-            -C "release-artifacts/ptoas-bin-macos-aarch64" .
+          mv "release-artifacts/ptoas-bin-macos-x86_64/ptoas-bin-macos-x86_64.tar.gz" \
+            "release-artifacts/ptoas-bin-macos-x86_64.tar.gz"
+          mv "release-artifacts/ptoas-bin-macos-aarch64/ptoas-bin-macos-aarch64.tar.gz" \
+            "release-artifacts/ptoas-bin-macos-aarch64.tar.gz"
 
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2

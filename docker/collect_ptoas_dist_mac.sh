@@ -34,6 +34,7 @@ done
 PTOAS_BIN="${PTO_SOURCE_DIR}/build/tools/ptoas/ptoas"
 PTOAS_DEPS_DIR="${PTOAS_DIST_DIR}/lib"
 UNRESOLVED_NON_SYSTEM_COUNT=0
+NON_PORTABLE_DEP_COUNT=0
 
 if [ ! -f "$PTOAS_BIN" ]; then
   echo "Error: ptoas binary not found at $PTOAS_BIN" >&2
@@ -41,7 +42,8 @@ if [ ! -f "$PTOAS_BIN" ]; then
 fi
 
 mkdir -p "${PTOAS_DIST_DIR}/bin" "${PTOAS_DEPS_DIR}"
-cp "$PTOAS_BIN" "${PTOAS_DIST_DIR}/bin/"
+cp -fL "$PTOAS_BIN" "${PTOAS_DIST_DIR}/bin/"
+chmod +x "${PTOAS_DIST_DIR}/bin/ptoas"
 
 # Resolve @rpath / @loader_path / @executable_path / absolute install names.
 resolve_dep_path() {
@@ -124,7 +126,7 @@ collect_dylibs() {
     local base
     base="$(basename "$resolved")"
     if [ ! -f "${PTOAS_DEPS_DIR}/${base}" ]; then
-      cp "$resolved" "${PTOAS_DEPS_DIR}/${base}"
+      cp -fL "$resolved" "${PTOAS_DEPS_DIR}/${base}"
       install_name_tool -id "@loader_path/${base}" "${PTOAS_DEPS_DIR}/${base}" || true
       collect_dylibs "${PTOAS_DEPS_DIR}/${base}"
     fi
@@ -132,8 +134,32 @@ collect_dylibs() {
   done < <(otool -L "$bin" | awk 'NR>1 {print $1}')
 }
 
+validate_portable_deps() {
+  local target dep
+  while IFS= read -r target; do
+    while IFS= read -r dep; do
+      [ -n "$dep" ] || continue
+      case "$dep" in
+        @loader_path/*|@rpath/*|@executable_path/*|/usr/lib/*|/System/Library/*)
+          ;;
+        *)
+          echo "ERROR: non-portable dependency in ${target} -> ${dep}" >&2
+          NON_PORTABLE_DEP_COUNT=$((NON_PORTABLE_DEP_COUNT + 1))
+          ;;
+      esac
+    done < <(otool -L "$target" | awk 'NR>1 {print $1}')
+  done < <(find "${PTOAS_DIST_DIR}/bin" "${PTOAS_DEPS_DIR}" -type f \( -name 'ptoas' -o -name '*.dylib' \))
+}
+
 echo "Collecting dylib dependencies..."
 collect_dylibs "${PTOAS_DIST_DIR}/bin/ptoas"
+
+echo "Validating packaged dependency install names..."
+validate_portable_deps
+if [ "${NON_PORTABLE_DEP_COUNT}" -ne 0 ]; then
+  echo "Error: found ${NON_PORTABLE_DEP_COUNT} non-portable dependency install names" >&2
+  exit 1
+fi
 
 if ! command -v codesign >/dev/null 2>&1; then
   echo "Error: codesign is required on macOS to sign packaged artifacts" >&2
@@ -163,7 +189,11 @@ WRAPPER_EOF
 chmod +x "${PTOAS_DIST_DIR}/ptoas"
 
 echo "Smoke testing packaged ptoas dist..."
-"${PTOAS_DIST_DIR}/ptoas" --version
+env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "${PTOAS_DIST_DIR}/ptoas" --version
+env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH \
+  "${PTOAS_DIST_DIR}/ptoas" \
+  "${PTO_SOURCE_DIR}/test/basic/kernel_kind_vector_scf_while_emitc.pto" \
+  >/dev/null
 
 echo ""
 echo "=== ptoas distribution contents ==="
@@ -173,5 +203,6 @@ DYLIB_COUNT=$(find "${PTOAS_DEPS_DIR}" -name "*.dylib" 2>/dev/null | wc -l)
 echo "=== Collected .dylib dependencies (${DYLIB_COUNT} files) ==="
 du -sh "${PTOAS_DEPS_DIR}/"
 echo "=== Unresolved non-system deps: ${UNRESOLVED_NON_SYSTEM_COUNT} ==="
+echo "=== Non-portable deps after rewrite: ${NON_PORTABLE_DEP_COUNT} ==="
 echo ""
 echo "Distribution created at: ${PTOAS_DIST_DIR}"
