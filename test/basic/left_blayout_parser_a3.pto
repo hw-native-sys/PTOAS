@@ -1,6 +1,6 @@
 // RUN: ptoas --pto-arch a3 %s | FileCheck %s
 
-module {
+module attributes {"pto.target_arch" = "a3"} {
   func.func @left_blayout_parser_a3() {
     %c0 = arith.constant 0 : index
     %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
@@ -10,4 +10,5 @@ module {
   }
 }
 
-// CHECK: left_blayout_parser_a3
+// CHECK-LABEL: __global__ AICORE void left_blayout_parser_a3() {
+// CHECK: Tile<TileType::Left, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null>
