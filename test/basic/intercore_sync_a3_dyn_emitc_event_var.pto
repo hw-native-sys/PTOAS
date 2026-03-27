@@ -1,0 +1,24 @@
+// RUN: ptoas --enable-insert-sync %s | FileCheck %s
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @test_intercore_sync_a3_dyn(%arg0: memref<256xi64>, %arg1: memref<?xf32>, %arg2: i32) {
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c3 = arith.constant 3 : index
+    %cst = arith.constant 1.000000e+00 : f32
+    pto.set_ffts %arg0 : memref<256xi64>
+    pto.sync.set <PIPE_MTE3>, %c3
+    %0 = arith.cmpi eq, %arg2, %c0_i32 : i32
+    scf.if %0 {
+      pto.sync.wait <PIPE_V>, %c3
+    }
+    pto.store_scalar %cst, %arg1[%c0] : memref<?xf32>, f32
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void test_intercore_sync_a3_dyn
+// CHECK: int32_t {{v[0-9]+}} = 3;
+// CHECK: getFFTSMsg(FFTS_MODE_VAL, {{v[0-9]+}})
+// CHECK: wait_flag_dev({{v[0-9]+}})
+// CHECK-NOT: wait_flag_dev(3)

@@ -487,6 +487,34 @@ static Value castInterCoreEventIdToI32(ConversionPatternRewriter &rewriter,
   return emitCCast(rewriter, loc, i32Ty, eventId);
 }
 
+static Value materializeEmitCScalarForCallOperand(
+    ConversionPatternRewriter &rewriter, Location loc, Value value) {
+  if (!value)
+    return value;
+
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp || isa<emitc::VariableOp, emitc::ConstantOp>(defOp))
+    return value;
+
+  auto *ctx = rewriter.getContext();
+  if (auto literalOp = dyn_cast<emitc::LiteralOp>(defOp)) {
+    return rewriter.create<emitc::ConstantOp>(
+        loc, value.getType(), emitc::OpaqueAttr::get(ctx, literalOp.getValue()));
+  }
+
+  if (auto castOp = dyn_cast<emitc::CastOp>(defOp)) {
+    if (auto literalOp = castOp.getSource().getDefiningOp<emitc::LiteralOp>()) {
+      Value literalCst = rewriter.create<emitc::ConstantOp>(
+          loc, castOp.getSource().getType(),
+          emitc::OpaqueAttr::get(ctx, literalOp.getValue()));
+      return rewriter.create<emitc::CastOp>(loc, value.getType(), literalCst)
+          .getResult();
+    }
+  }
+
+  return value;
+}
+
 static InterCoreSyncCallDesc buildInterCoreSyncSetCall(
     ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
     pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
@@ -534,6 +562,7 @@ static InterCoreSyncCallDesc buildInterCoreSyncSetCallDyn(
   auto *ctx = rewriter.getContext();
   std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
   Value eventI32 = castInterCoreEventIdToI32(rewriter, loc, eventIdVal);
+  eventI32 = materializeEmitCScalarForCallOperand(rewriter, loc, eventI32);
 
   if (targetArch == PTOArch::A3) {
     auto msgTy = emitc::OpaqueType::get(ctx, "uint16_t");
@@ -594,6 +623,7 @@ static InterCoreSyncCallDesc buildInterCoreSyncWaitCallDyn(
   auto *ctx = rewriter.getContext();
   std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
   Value eventI32 = castInterCoreEventIdToI32(rewriter, loc, eventIdVal);
+  eventI32 = materializeEmitCScalarForCallOperand(rewriter, loc, eventI32);
 
   InterCoreSyncCallDesc desc;
   if (targetArch == PTOArch::A3) {
