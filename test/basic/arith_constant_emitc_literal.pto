@@ -1,0 +1,23 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @const_inline_entry(%arg0: i32) attributes {pto.entry} {
+    %0 = func.call @const_inline_helper(%arg0) : (i32) -> i32
+    return
+  }
+
+  func.func private @const_inline_helper(%arg0: i32) -> i32 {
+    %c1 = arith.constant 1 : i32
+    %c2 = arith.constant 2 : i32
+    %1 = arith.addi %arg0, %c1 : i32
+    %2 = arith.addi %1, %c2 : i32
+    return %2 : i32
+  }
+}
+
+// CHECK-LABEL: static AICORE int32_t const_inline_helper(int32_t
+// CHECK-NOT: int32_t {{v[0-9]+}} = 1;
+// CHECK-NOT: int32_t {{v[0-9]+}} = 2;
+// CHECK: return
+// CHECK-SAME: + (uint32_t) 1
+// CHECK-SAME: + (uint32_t) 2

@@ -1991,8 +1991,8 @@ static emitc::OpaqueType getWiderUnsignedIntOpaqueType(MLIRContext *ctx,
 static Value makeEmitCOpaqueConstant(ConversionPatternRewriter &rewriter,
                                      Location loc, Type type,
                                      llvm::StringRef literal) {
-  auto attr = emitc::OpaqueAttr::get(rewriter.getContext(), literal);
-  return rewriter.create<emitc::ConstantOp>(loc, type, attr);
+  return rewriter.create<emitc::LiteralOp>(loc, type,
+                                           rewriter.getStringAttr(literal));
 }
 
 static Value makeEmitCIntConstant(ConversionPatternRewriter &rewriter,
@@ -2218,51 +2218,53 @@ struct ArithTruncIToEmitC : public OpConversionPattern<arith::TruncIOp> {
   }
 };
 
-		struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
-		  using OpConversionPattern<arith::ConstantOp>::OpConversionPattern;
-		
-		  LogicalResult matchAndRewrite(arith::ConstantOp op, OpAdaptor adaptor,
-		                                ConversionPatternRewriter &rewriter) const override {
-	    Type newType = getTypeConverter()->convertType(op.getType());
-	    if (!newType) return failure();
-	
-	    // `adaptor.getValue()` may be null if attribute conversion isn't defined.
-	    // Use the original attribute as fallback and always cast null-safely.
-	    Attribute valueAttr = adaptor.getValue();
-	    if (!valueAttr) valueAttr = op.getValue();
+struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
+  using OpConversionPattern<arith::ConstantOp>::OpConversionPattern;
 
-		    if (auto floatAttr = dyn_cast_or_null<FloatAttr>(valueAttr)) {
-		      SmallString<32> valStr;
-		      floatAttr.getValue().toString(valStr);
-		      llvm::StringRef s(valStr);
-		      // Ensure the literal parses as a floating-point constant in C/C++.
-		      // `APFloat::toString` may emit "1" for integral values; make it "1.0".
-		      const bool hasFloatMarker =
-		          s.contains('.') || s.contains('e') || s.contains('E') ||
-		          s.contains('p') || s.contains('P') || s.starts_with("0x") ||
-		          s.starts_with("0X") || s.starts_with("nan") ||
-		          s.starts_with("-nan") || s.starts_with("inf") ||
-		          s.starts_with("-inf");
-		      if (!hasFloatMarker)
-		        valStr.append(".0");
-		      // Suffix: keep `f` for f16/f32; omit for f64.
-		      if (!floatAttr.getType().isF64())
-		        valStr.append("f");
-		      auto constAttr = emitc::OpaqueAttr::get(rewriter.getContext(), valStr);
-		      rewriter.replaceOpWithNewOp<emitc::ConstantOp>(op, newType, constAttr);
-		      return success();
-		    }
-	
-	    if (auto intAttr = dyn_cast_or_null<IntegerAttr>(valueAttr)) {
-	      std::string valStr = std::to_string(intAttr.getValue().getSExtValue());
-	      auto constAttr = emitc::OpaqueAttr::get(rewriter.getContext(), valStr);
-	      rewriter.replaceOpWithNewOp<emitc::ConstantOp>(op, newType, constAttr);
-	      return success();
-	    }
-	
-	    return failure();
-	  }
-	};
+  LogicalResult matchAndRewrite(arith::ConstantOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Type newType = getTypeConverter()->convertType(op.getType());
+    if (!newType)
+      return failure();
+
+    // `adaptor.getValue()` may be null if attribute conversion isn't defined.
+    // Use the original attribute as fallback and always cast null-safely.
+    Attribute valueAttr = adaptor.getValue();
+    if (!valueAttr)
+      valueAttr = op.getValue();
+
+    if (auto floatAttr = dyn_cast_or_null<FloatAttr>(valueAttr)) {
+      SmallString<32> valStr;
+      floatAttr.getValue().toString(valStr);
+      llvm::StringRef s(valStr);
+      // Ensure the literal parses as a floating-point constant in C/C++.
+      // `APFloat::toString` may emit "1" for integral values; make it "1.0".
+      const bool hasFloatMarker =
+          s.contains('.') || s.contains('e') || s.contains('E') ||
+          s.contains('p') || s.contains('P') || s.starts_with("0x") ||
+          s.starts_with("0X") || s.starts_with("nan") ||
+          s.starts_with("-nan") || s.starts_with("inf") ||
+          s.starts_with("-inf");
+      if (!hasFloatMarker)
+        valStr.append(".0");
+      // Suffix: keep `f` for f16/f32; omit for f64.
+      if (!floatAttr.getType().isF64())
+        valStr.append("f");
+      rewriter.replaceOpWithNewOp<emitc::LiteralOp>(
+          op, newType, rewriter.getStringAttr(valStr));
+      return success();
+    }
+
+    if (auto intAttr = dyn_cast_or_null<IntegerAttr>(valueAttr)) {
+      std::string valStr = std::to_string(intAttr.getValue().getSExtValue());
+      rewriter.replaceOpWithNewOp<emitc::LiteralOp>(
+          op, newType, rewriter.getStringAttr(valStr));
+      return success();
+    }
+
+    return failure();
+  }
+};
 //===----------------------------------------------------------------------===//
 // pto.mgather lowering -> MGATHER(dst, mem, idx)
 // %dst = pto.mgather %mem, %idx : memref<...>, memref<...> -> memref<...>
@@ -2319,9 +2321,9 @@ struct AffineApplyMulConstToEmitC
     Value inputVal = adaptor.getMapOperands()[0];
 
     std::string valStr = std::to_string(constExpr.getValue());
-    auto cstAttr = emitc::OpaqueAttr::get(rewriter.getContext(), valStr);
-    auto cstOp = rewriter.create<emitc::ConstantOp>(
-        op.getLoc(), inputVal.getType(), cstAttr);
+    auto cstOp =
+        makeEmitCOpaqueConstant(rewriter, op.getLoc(), inputVal.getType(),
+                                valStr);
 
     rewriter.replaceOpWithNewOp<emitc::MulOp>(
         op, inputVal.getType(), inputVal, cstOp);
@@ -2584,8 +2586,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     
     // Helper: 创建 unsigned 常量
     auto mkU32 = [&](int64_t v) -> Value {
-      return rewriter.create<emitc::ConstantOp>(
-          loc, u32Ty, emitc::OpaqueAttr::get(ctx, std::to_string(v)));
+      return makeEmitCOpaqueConstant(rewriter, loc, u32Ty, std::to_string(v));
     };
 
     // Helper: 将 OpFoldResult 转为 EmitC Value (用于计算)
@@ -3080,8 +3081,8 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   Value ptr = basePtr;
   if (offset != 0) {
     Type u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
-    auto offVal = rewriter.create<emitc::ConstantOp>(
-        loc, u32Ty, emitc::OpaqueAttr::get(ctx, std::to_string(offset)));
+    auto offVal =
+        makeEmitCOpaqueConstant(rewriter, loc, u32Ty, std::to_string(offset));
     ptr = rewriter.create<emitc::AddOp>(loc, basePtr.getType(), basePtr,
                                         offVal);
   }
@@ -4930,8 +4931,9 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
       if (offU64.getType() != u64Ty)
         offU64 = rewriter.create<emitc::CastOp>(loc, u64Ty, offU64).getResult();
 
-      auto bytesAttr = emitc::OpaqueAttr::get(ctx, std::to_string(elemBytes));
-      Value bytesVal = rewriter.create<emitc::ConstantOp>(loc, u64Ty, bytesAttr);
+      Value bytesVal =
+          makeEmitCOpaqueConstant(rewriter, loc, u64Ty,
+                                  std::to_string(elemBytes));
       Value byteOff = rewriter.create<emitc::MulOp>(loc, u64Ty, offU64, bytesVal);
       addr = rewriter.create<emitc::AddOp>(loc, u64Ty, baseAddr, byteOff);
     }
@@ -5289,8 +5291,7 @@ struct PTOCmpToEmitC : public OpConversionPattern<pto::TCmpOp> {
       tok = cmpModeTok(a);
 
     auto modeTy = emitc::OpaqueType::get(ctx, "CmpMode");
-    Value modeVal = rewriter.create<emitc::ConstantOp>(
-        loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
+    Value modeVal = makeEmitCOpaqueConstant(rewriter, loc, modeTy, tok);
 
     auto argsAttr = rewriter.getArrayAttr({});
 
@@ -5324,8 +5325,7 @@ struct PTOCmpSToEmitC : public OpConversionPattern<pto::TCmpSOp> {
     std::string tok = cmpModeTok(cmpAttr);
 
     auto modeTy = emitc::OpaqueType::get(ctx, "CmpMode");
-    Value modeVal = rewriter.create<emitc::ConstantOp>(
-        loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
+    Value modeVal = makeEmitCOpaqueConstant(rewriter, loc, modeTy, tok);
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc,
@@ -5406,8 +5406,8 @@ struct PTOColSumToEmitC : public OpConversionPattern<pto::TColSumOp> {
 
       auto boolTy = emitc::OpaqueType::get(ctx, "bool");
       auto tok = isBinary ? "true" : "false";
-      Value isBinaryVal = rewriter.create<emitc::ConstantOp>(
-          loc, boolTy, emitc::OpaqueAttr::get(ctx, tok));
+      Value isBinaryVal =
+          makeEmitCOpaqueConstant(rewriter, loc, boolTy, tok);
 
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TCOLSUM",
@@ -5459,8 +5459,7 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::TCvtOp> {
 
     // 生成: TCVT(dst, src, RoundMode::XXX)
     auto rmodeTy = emitc::OpaqueType::get(ctx, "RoundMode");
-    Value rmodeVal = rewriter.create<emitc::ConstantOp>(
-        loc, rmodeTy, emitc::OpaqueAttr::get(ctx, rmTok));
+    Value rmodeVal = makeEmitCOpaqueConstant(rewriter, loc, rmodeTy, rmTok);
 
     // 这里 args 被清空，只保留 operands，包括 src, dst 和 rmode
     rewriter.create<emitc::CallOpaqueOp>(
