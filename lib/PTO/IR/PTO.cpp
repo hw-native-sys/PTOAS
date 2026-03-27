@@ -684,6 +684,154 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
   }
 }
 
+ParseResult mlir::pto::TQuantOp::parse(OpAsmParser &parser, OperationState &result) {
+  SmallVector<OpAsmParser::UnresolvedOperand, 3> insOps;
+  SmallVector<Type, 3> insTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand, 5> outOps;
+  SmallVector<Type, 5> outTypes;
+
+  if (parser.parseKeyword("ins") || parser.parseLParen() ||
+      parser.parseOperandList(insOps) || parser.parseColonTypeList(insTypes) ||
+      parser.parseRParen())
+    return failure();
+
+  if (insOps.size() != insTypes.size())
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expects the same number of ins operands and types");
+
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperandList(outOps) || parser.parseColonTypeList(outTypes) ||
+      parser.parseRParen())
+    return failure();
+
+  if (outOps.size() != outTypes.size())
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expects the same number of outs operands and types");
+
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  auto *ctx = parser.getContext();
+  auto quantTypeName = StringAttr::get(ctx, "quantType");
+  if (!result.attributes.get(quantTypeName)) {
+    result.addAttribute("quantType",
+                        mlir::pto::QuantTypeAttr::get(
+                            ctx, mlir::pto::QuantType::INT8_SYM));
+  }
+
+  if (insOps.empty())
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expects at least one input operand for src");
+  if (outOps.empty())
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expects at least one output operand for dst");
+
+  SmallVector<int32_t, 9> segs(9, 0);
+  SmallVector<std::pair<OpAsmParser::UnresolvedOperand, Type>, 9> ordered;
+
+  // src
+  segs[0] = 1;
+  ordered.push_back({insOps[0], insTypes[0]});
+
+  if (outOps.size() == 1) {
+    // Scale[/offset] form.
+    if (!(insOps.size() == 2 || insOps.size() == 3))
+      return parser.emitError(parser.getCurrentLocation(),
+                              "expects scale form to use ins(src, scale[, offset])");
+    segs[1] = 1;
+    ordered.push_back({insOps[1], insTypes[1]});
+    if (insOps.size() == 3) {
+      segs[2] = 1;
+      ordered.push_back({insOps[2], insTypes[2]});
+    }
+  } else if (outOps.size() == 4) {
+    // A5 MXFP8 ND form.
+    if (insOps.size() != 1)
+      return parser.emitError(parser.getCurrentLocation(),
+                              "expects MXFP8 ND form to use ins(src)");
+  } else if (outOps.size() == 5) {
+    // A5 MXFP8 NZ form.
+    if (insOps.size() != 2)
+      return parser.emitError(parser.getCurrentLocation(),
+                              "expects MXFP8 NZ form to use ins(src, vgather_idx)");
+    segs[3] = 1;
+    ordered.push_back({insOps[1], insTypes[1]});
+  } else {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expects outs to be one of: (dst), (dst, exp, max, scaling), or (dst, exp, max, scaling, exp_zz)");
+  }
+
+  // dst
+  segs[4] = 1;
+  ordered.push_back({outOps[0], outTypes[0]});
+  if (outOps.size() >= 4) {
+    segs[5] = 1;
+    segs[6] = 1;
+    segs[7] = 1;
+    ordered.push_back({outOps[1], outTypes[1]});
+    ordered.push_back({outOps[2], outTypes[2]});
+    ordered.push_back({outOps[3], outTypes[3]});
+  }
+  if (outOps.size() == 5) {
+    segs[8] = 1;
+    ordered.push_back({outOps[4], outTypes[4]});
+  }
+
+  for (auto [operand, type] : ordered) {
+    if (parser.resolveOperand(operand, type, result.operands))
+      return failure();
+  }
+
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(segs));
+  return success();
+}
+
+void mlir::pto::TQuantOp::print(OpAsmPrinter &p) {
+  p << " ins(" << getSrc();
+  if (auto scale = getScale())
+    p << ", " << scale;
+  if (auto offset = getOffset())
+    p << ", " << offset;
+  if (auto vgatherIdx = getVgatherIdx())
+    p << ", " << vgatherIdx;
+  p << " : " << getSrc().getType();
+  if (auto scale = getScale())
+    p << ", " << scale.getType();
+  if (auto offset = getOffset())
+    p << ", " << offset.getType();
+  if (auto vgatherIdx = getVgatherIdx())
+    p << ", " << vgatherIdx.getType();
+  p << ")";
+
+  p << " outs(" << getDst();
+  if (auto exp = getExp())
+    p << ", " << exp;
+  if (auto max = getMax())
+    p << ", " << max;
+  if (auto scalingOut = getScalingOut())
+    p << ", " << scalingOut;
+  if (auto expZZ = getExpZZ())
+    p << ", " << expZZ;
+  p << " : " << getDst().getType();
+  if (auto exp = getExp())
+    p << ", " << exp.getType();
+  if (auto max = getMax())
+    p << ", " << max.getType();
+  if (auto scalingOut = getScalingOut())
+    p << ", " << scalingOut.getType();
+  if (auto expZZ = getExpZZ())
+    p << ", " << expZZ.getType();
+  p << ")";
+
+  SmallVector<StringRef, 3> elidedAttrs;
+  if (getQuantType() == mlir::pto::QuantType::INT8_SYM)
+    elidedAttrs.push_back("quantType");
+  if (!getStoreModeAttr())
+    elidedAttrs.push_back("storeMode");
+  p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+}
+
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
@@ -5159,6 +5307,135 @@ mlir::LogicalResult mlir::pto::TPReluOp::verify() {
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
+mlir::LogicalResult mlir::pto::TQuantOp::verify() {
+  auto isEightBitFloatLike = [](Type ty) {
+    if (auto ft = mlir::dyn_cast<FloatType>(ty))
+      return ft.getWidth() == 8;
+    return false;
+  };
+  auto isEightBitStorageLike = [&](Type ty) {
+    if (isEightBitFloatLike(ty))
+      return true;
+    if (auto it = mlir::dyn_cast<IntegerType>(ty))
+      return it.getWidth() == 8;
+    return false;
+  };
+  auto verifyTile = [&](Value v, StringRef name) -> LogicalResult {
+    return verifyTileBufCommon(getOperation(), v.getType(), name);
+  };
+
+  if (failed(verifyTile(getSrc(), "src")) || failed(verifyTile(getDst(), "dst")))
+    return failure();
+
+  Type srcElem = getElemTy(getSrc().getType());
+  Type dstElem = getElemTy(getDst().getType());
+  if (!srcElem || !dstElem)
+    return emitOpError("failed to get element type for src/dst");
+  if (!srcElem.isF32())
+    return emitOpError("expects src element type to be f32");
+
+  const bool scaleForm = isScaleForm();
+  const bool ndForm = isMxfp8NDForm();
+  const bool nzForm = isMxfp8NZForm();
+  if ((scaleForm ? 1 : 0) + (ndForm ? 1 : 0) + (nzForm ? 1 : 0) != 1)
+    return emitOpError(
+        "expects exactly one tquant form: scale, MXFP8 ND, or MXFP8 NZ");
+
+  auto quantType = getQuantType();
+  auto storeMode = getStoreMode();
+
+  if (scaleForm) {
+    if (!getScale())
+      return emitOpError("expects scale form to provide scale");
+    if (getVgatherIdx() || getExp() || getMax() || getScalingOut() || getExpZZ())
+      return emitOpError(
+          "expects scale form to use only src/scale[/offset] and dst");
+    if (failed(verifyTile(getScale(), "scale")))
+      return failure();
+    Type scaleElem = getElemTy(getScale().getType());
+    if (!scaleElem || !scaleElem.isF32())
+      return emitOpError("expects scale element type to be f32");
+    if (getOffset()) {
+      if (failed(verifyTile(getOffset(), "offset")))
+        return failure();
+      if (getElemTy(getOffset().getType()) != scaleElem)
+        return emitOpError("expects offset element type to match scale");
+    }
+    if (getStoreModeAttr())
+      return emitOpError("expects scale form to omit storeMode");
+    if (quantType == mlir::pto::QuantType::MXFP8)
+      return emitOpError("expects scale form quantType to be int8_sym or int8_asym");
+    if (quantType == mlir::pto::QuantType::INT8_SYM) {
+      auto dstInt = mlir::dyn_cast<IntegerType>(dstElem);
+      if (!dstInt || dstInt.getWidth() != 8 || dstInt.isUnsigned())
+        return emitOpError("expects INT8_SYM dst element type to be i8");
+      if (getOffset())
+        return emitOpError("expects INT8_SYM scale form to omit offset");
+    } else {
+      auto dstInt = mlir::dyn_cast<IntegerType>(dstElem);
+      if (!dstInt || dstInt.getWidth() != 8 || !dstInt.isUnsigned())
+        return emitOpError("expects INT8_ASYM dst element type to be ui8");
+      if (!getOffset())
+        return emitOpError("expects INT8_ASYM scale form to provide offset");
+    }
+    return success();
+  }
+
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    return emitOpError("expects MXFP8 tquant forms to be used only with --pto-arch=a5");
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (quantType != mlir::pto::QuantType::MXFP8)
+      return emitOpError("expects MXFP8 forms to use quantType = #pto.quant_type<mxfp8>");
+    if (!isEightBitFloatLike(dstElem))
+      return emitOpError("expects MXFP8 dst element type to be an fp8-like type");
+
+    if (!getExp() || !getMax() || !getScalingOut())
+      return emitOpError("expects MXFP8 forms to provide exp, max, and scaling outputs");
+    if (failed(verifyTile(getExp(), "exp")) ||
+        failed(verifyTile(getMax(), "max")) ||
+        failed(verifyTile(getScalingOut(), "scalingOut")))
+      return failure();
+
+    Type expElem = getElemTy(getExp().getType());
+    Type maxElem = getElemTy(getMax().getType());
+    Type scalingElem = getElemTy(getScalingOut().getType());
+    if (!expElem || !maxElem || !scalingElem)
+      return emitOpError("failed to get element type for MXFP8 auxiliary outputs");
+    if (!isEightBitStorageLike(expElem))
+      return emitOpError("expects exp element type to be an 8-bit storage type");
+    if (!maxElem.isF32())
+      return emitOpError("expects max element type to be f32");
+    if (!scalingElem.isF32())
+      return emitOpError("expects scaling output element type to be f32");
+
+    if (ndForm) {
+      if (getStoreModeAttr() && storeMode != mlir::pto::VecStoreMode::ND)
+        return emitOpError("expects MXFP8 ND storeMode, if present, to be nd");
+      if (getExpZZ())
+        return emitOpError("expects MXFP8 ND form to omit exp_zz");
+      return success();
+    }
+
+    if (!getVgatherIdx() || !getExpZZ())
+      return emitOpError("expects MXFP8 NZ form to provide vgather_idx and exp_zz");
+    if (failed(verifyTile(getVgatherIdx(), "vgatherIdx")) ||
+        failed(verifyTile(getExpZZ(), "expZZ")))
+      return failure();
+    Type idxElem = getElemTy(getVgatherIdx().getType());
+    auto idxInt = mlir::dyn_cast<IntegerType>(idxElem);
+    if (!idxInt || idxInt.getWidth() != 16 || !idxInt.isUnsigned())
+      return emitOpError("expects vgather_idx element type to be ui16");
+    if (getElemTy(getExpZZ().getType()) != expElem)
+      return emitOpError("expects exp_zz element type to match exp");
+    if (getStoreModeAttr() && storeMode != mlir::pto::VecStoreMode::NZ)
+      return emitOpError("expects MXFP8 NZ storeMode, if present, to be nz");
+    return success();
+  };
+
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}
+
 mlir::LogicalResult mlir::pto::TRecipOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();
@@ -7809,6 +8086,34 @@ void TPReluOp::getEffects(
   PTO_ADD_READ(getSrc1Mutable());
   PTO_ADD_WRITE(getTmpMutable());
   PTO_ADD_WRITE(getDstMutable());
+}
+
+void TQuantOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  auto scale = getScaleMutable();
+  if (!scale.empty())
+    PTO_ADD_READ(scale[0]);
+  auto offset = getOffsetMutable();
+  if (!offset.empty())
+    PTO_ADD_READ(offset[0]);
+  auto vgatherIdx = getVgatherIdxMutable();
+  if (!vgatherIdx.empty())
+    PTO_ADD_READ(vgatherIdx[0]);
+
+  PTO_ADD_WRITE(getDstMutable());
+  auto exp = getExpMutable();
+  if (!exp.empty())
+    PTO_ADD_WRITE(exp[0]);
+  auto max = getMaxMutable();
+  if (!max.empty())
+    PTO_ADD_WRITE(max[0]);
+  auto scalingOut = getScalingOutMutable();
+  if (!scalingOut.empty())
+    PTO_ADD_WRITE(scalingOut[0]);
+  auto expZZ = getExpZZMutable();
+  if (!expZZ.empty())
+    PTO_ADD_WRITE(expZZ[0]);
 }
 
 PTO_DEFINE_UNARY_EFFECTS(TRecipOp, getSrcMutable(), getDstMutable())

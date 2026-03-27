@@ -1,0 +1,34 @@
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @tquant_int8_forms() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scale = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %offset = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst_s8 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst_u8 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tquant ins(%src, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst_s8 : !pto.tile_buf<loc=vec, dtype=i8, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tquant ins(%src, %scale, %offset : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst_u8 : !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quantType = #pto.quant_type<int8_asym>}
+    return
+  }
+
+  func.func @tquant_mxfp8_forms() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %exp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %max = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %exp_zz = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vgather = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui16, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tquant ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quantType = #pto.quant_type<mxfp8>}
+    pto.tquant ins(%src, %vgather : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui16, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling, %exp_zz : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=8, cols=1, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quantType = #pto.quant_type<mxfp8>, storeMode = #pto.vec_store_mode<nz>}
+    return
+  }
+}
+
+// A5: ptoas_tquant_scale<QuantType::INT8_SYM
+// A5: ptoas_tquant_scale_offset<QuantType::INT8_ASYM
+// A5: ptoas_tquant_mxfp8_nd<QuantType::MXFP8
+// A5: ptoas_tquant_mxfp8_store<QuantType::MXFP8, VecStoreMode::NZ

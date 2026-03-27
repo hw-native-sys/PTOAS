@@ -2377,6 +2377,74 @@ struct PTOViewToMemrefPass
         return;
       }
 
+      SmallVector<mlir::pto::TQuantOp, 8> quantops;
+      func.walk([&](mlir::pto::TQuantOp op) { quantops.push_back(op); });
+
+      for (auto op : quantops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        auto requireMemRef = [&](Value v, StringRef name) -> LogicalResult {
+          if (!v)
+            return success();
+          if (!dyn_cast<MemRefType>(v.getType()))
+            return op.emitError() << name << " is not memref yet";
+          return success();
+        };
+
+        if (failed(requireMemRef(op.getSrc(), "src")) ||
+            failed(requireMemRef(op.getDst(), "dst")))
+        {
+          signalPassFailure();
+          return;
+        }
+        if (op.getScale() && failed(requireMemRef(op.getScale(), "scale"))) {
+          signalPassFailure();
+          return;
+        }
+        if (op.getOffset() && failed(requireMemRef(op.getOffset(), "offset"))) {
+          signalPassFailure();
+          return;
+        }
+        if (op.getVgatherIdx() &&
+            failed(requireMemRef(op.getVgatherIdx(), "vgatherIdx"))) {
+          signalPassFailure();
+          return;
+        }
+        if (op.getExp() && failed(requireMemRef(op.getExp(), "exp"))) {
+          signalPassFailure();
+          return;
+        }
+        if (op.getMax() && failed(requireMemRef(op.getMax(), "max"))) {
+          signalPassFailure();
+          return;
+        }
+        if (op.getScalingOut() &&
+            failed(requireMemRef(op.getScalingOut(), "scalingOut"))) {
+          signalPassFailure();
+          return;
+        }
+        if (op.getExpZZ() && failed(requireMemRef(op.getExpZZ(), "expZZ"))) {
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::TQuantOp>(
+            op,
+            TypeRange{},
+            op.getSrc(),
+            op.getScale(),
+            op.getOffset(),
+            op.getVgatherIdx(),
+            op.getDst(),
+            op.getExp(),
+            op.getMax(),
+            op.getScalingOut(),
+            op.getExpZZ(),
+            op.getQuantTypeAttr(),
+            op.getStoreModeAttr());
+      }
+
       SmallVector<mlir::pto::TGatherBOp, 8> gatherbops;
       func.walk([&](mlir::pto::TGatherBOp op) { gatherbops.push_back(op); });
 

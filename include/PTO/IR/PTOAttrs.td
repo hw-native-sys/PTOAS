@@ -366,6 +366,33 @@ def PTO_RoundModeEnum : PTO_I32Enum<
 def PTO_RoundModeAttr : EnumAttr<PTO_Dialect, PTO_RoundModeEnum, "round_mode"> {
   let summary = "rounding mode attribute";
 }
+
+//===----------------------------------------------------------------------===//
+// QuantType / VecStoreMode
+//===----------------------------------------------------------------------===//
+
+def PTO_QuantTypeEnum : PTO_I32Enum<
+  "QuantType", "PTO quantization mode", [
+    I32EnumAttrCase<"MXFP8", 0, "mxfp8">,
+    I32EnumAttrCase<"INT8_SYM", 1, "int8_sym">,
+    I32EnumAttrCase<"INT8_ASYM", 2, "int8_asym">
+  ]>;
+
+def PTO_QuantTypeAttr : EnumAttr<PTO_Dialect, PTO_QuantTypeEnum, "quant_type"> {
+  let summary = "quantization mode attribute";
+  let assemblyFormat = "`<` $value `>`";
+}
+
+def PTO_VecStoreModeEnum : PTO_I32Enum<
+  "VecStoreMode", "PTO vector store mode", [
+    I32EnumAttrCase<"ND", 0, "nd">,
+    I32EnumAttrCase<"NZ", 1, "nz">
+  ]>;
+
+def PTO_VecStoreModeAttr : EnumAttr<PTO_Dialect, PTO_VecStoreModeEnum, "vec_store_mode"> {
+  let summary = "vector store mode attribute";
+  let assemblyFormat = "`<` $value `>`";
+}
 //===----------------------------------------------------------------------===//
 // MaskPattern
 //===----------------------------------------------------------------------===//

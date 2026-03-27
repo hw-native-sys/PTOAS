@@ -3525,6 +3525,72 @@ def TPReluOp: PTO_TOp<"tprelu", [
   }];
 }
 //===----------------------------------------------------------------------===//
+// PTOOps.td  (add TQUANT TBDPS/tile buffer op)
+//===----------------------------------------------------------------------===//
+
+def TQuantOp: PTO_TOp<"tquant", [
+  AttrSizedOperandSegments,
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "TQUANT: Quantize an fp32 tile into INT8/MXFP8 formats.";
+
+  let description = [{
+    Supported PTO IR forms:
+
+    1. Scale form:
+       pto.tquant ins(%src, %scale[, %offset]) outs(%dst)
+
+    2. A5 MXFP8 ND form:
+       pto.tquant ins(%src) outs(%dst, %exp, %max, %scaling)
+
+    3. A5 MXFP8 NZ form:
+       pto.tquant ins(%src, %vgather_idx) outs(%dst, %exp, %max, %scaling, %exp_zz)
+  }];
+
+  let arguments = (ins
+    PTODpsType:$src,
+    Optional<PTODpsType>:$scale,
+    Optional<PTODpsType>:$offset,
+    Optional<PTODpsType>:$vgatherIdx,
+    PTODpsType:$dst,
+    Optional<PTODpsType>:$exp,
+    Optional<PTODpsType>:$max,
+    Optional<PTODpsType>:$scalingOut,
+    Optional<PTODpsType>:$expZZ,
+    DefaultValuedAttr<PTO_QuantTypeAttr, "::mlir::pto::QuantType::INT8_SYM">:$quantType,
+    OptionalAttr<PTO_VecStoreModeAttr>:$storeMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    bool isScaleForm() {
+      return static_cast<bool>(getScale()) || static_cast<bool>(getOffset());
+    }
+    bool isMxfp8NDForm() {
+      return !getScale() && !getOffset() && !getVgatherIdx() &&
+             getExp() && getMax() && getScalingOut() && !getExpZZ();
+    }
+    bool isMxfp8NZForm() {
+      return !getScale() && !getOffset() && getVgatherIdx() &&
+             getExp() && getMax() && getScalingOut() && getExpZZ();
+    }
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      unsigned numOuts = 1u + (getExp() ? 1u : 0u) + (getMax() ? 1u : 0u) +
+                         (getScalingOut() ? 1u : 0u) + (getExpZZ() ? 1u : 0u);
+      return ::mlir::MutableOperandRange(getOperation(),
+                                         getOperation()->getNumOperands() - numOuts,
+                                         numOuts);
+    }
+  }];
+}
+//===----------------------------------------------------------------------===//
 // PTOOps.td  (add TRECIP TBDPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 

@@ -81,6 +81,154 @@ static const char *addrSpaceQualifier(pto::AddressSpace as) {
   return "__gm__";
 }
 
+static std::string getEmitCElementTypeToken(Type elemTy) {
+  std::string typeSpelling;
+  {
+    llvm::raw_string_ostream os(typeSpelling);
+    elemTy.print(os);
+  }
+  if (typeSpelling.find("f8E4M3") != std::string::npos ||
+      typeSpelling.find("f8e4m3") != std::string::npos)
+    return "float8_e4m3_t";
+  if (typeSpelling.find("f8E5M2") != std::string::npos ||
+      typeSpelling.find("f8e5m2") != std::string::npos)
+    return "float8_e5m2_t";
+  if (typeSpelling.find("f8E8M0") != std::string::npos ||
+      typeSpelling.find("f8e8m0") != std::string::npos)
+    return "float8_e8m0_t";
+  if (typeSpelling.find("hifloat8") != std::string::npos)
+    return "hifloat8_t";
+  if (elemTy.isF16())
+    return "half";
+  if (elemTy.isBF16())
+    return "bfloat16_t";
+  if (elemTy.isF32())
+    return "float";
+  if (elemTy.isF64())
+    return "double";
+  if (elemTy.isInteger(8)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return (intTy.isSignless() || intTy.isSigned()) ? "int8_t" : "uint8_t";
+  }
+  if (elemTy.isInteger(16)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return (intTy.isSignless() || intTy.isSigned()) ? "int16_t" : "uint16_t";
+  }
+  if (elemTy.isInteger(32)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return (intTy.isSignless() || intTy.isSigned()) ? "int32_t" : "uint32_t";
+  }
+  if (elemTy.isInteger(64)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return intTy.isUnsigned() ? "uint64_t" : "int64_t";
+  }
+  return "";
+}
+
+static const char *getEmitCTileRoleToken(pto::AddressSpace as) {
+  switch (as) {
+  case pto::AddressSpace::VEC:
+    return "TileType::Vec";
+  case pto::AddressSpace::MAT:
+    return "TileType::Mat";
+  case pto::AddressSpace::LEFT:
+    return "TileType::Left";
+  case pto::AddressSpace::RIGHT:
+    return "TileType::Right";
+  case pto::AddressSpace::ACC:
+    return "TileType::Acc";
+  case pto::AddressSpace::BIAS:
+    return "TileType::Bias";
+  case pto::AddressSpace::SCALING:
+    return "TileType::Scaling";
+  case pto::AddressSpace::GM:
+  case pto::AddressSpace::Zero:
+    return "TileType::Vec";
+  }
+  return "TileType::Vec";
+}
+
+struct EmitCTileLayoutDefaults {
+  const char *blTok;
+  const char *slTok;
+  int fractalBytes;
+  const char *padTok;
+};
+
+static EmitCTileLayoutDefaults
+getEmitCTileLayoutDefaults(pto::AddressSpace as, PTOArch targetArch) {
+  switch (as) {
+  case pto::AddressSpace::ACC:
+    return {"BLayout::ColMajor", "SLayout::RowMajor", 1024,
+            "PadValue::Null"};
+  case pto::AddressSpace::RIGHT:
+    return {"BLayout::RowMajor", "SLayout::ColMajor", 512,
+            "PadValue::Null"};
+  case pto::AddressSpace::LEFT:
+    if (targetArch == PTOArch::A3)
+      return {"BLayout::RowMajor", "SLayout::RowMajor", 512,
+              "PadValue::Null"};
+    return {"BLayout::ColMajor", "SLayout::RowMajor", 512,
+            "PadValue::Null"};
+  case pto::AddressSpace::MAT:
+    return {"BLayout::ColMajor", "SLayout::RowMajor", 512,
+            "PadValue::Null"};
+  case pto::AddressSpace::VEC:
+  case pto::AddressSpace::BIAS:
+  case pto::AddressSpace::SCALING:
+  case pto::AddressSpace::GM:
+  case pto::AddressSpace::Zero:
+    return {"BLayout::RowMajor", "SLayout::NoneBox", 512,
+            "PadValue::Null"};
+  }
+  return {"BLayout::RowMajor", "SLayout::NoneBox", 512, "PadValue::Null"};
+}
+
+static FailureOr<std::string> getEmitCTileTypeTokenFromType(Type ty,
+                                                            PTOArch targetArch) {
+  int64_t rows = ShapedType::kDynamic;
+  int64_t cols = ShapedType::kDynamic;
+  Type elemTy;
+  pto::AddressSpace as = pto::AddressSpace::VEC;
+
+  if (auto mrTy = dyn_cast<MemRefType>(ty)) {
+    if (mrTy.getRank() < 2 || !mrTy.hasStaticShape())
+      return failure();
+    rows = mrTy.getDimSize(0);
+    cols = mrTy.getDimSize(1);
+    elemTy = mrTy.getElementType();
+    if (auto asAttr =
+            dyn_cast_or_null<pto::AddressSpaceAttr>(mrTy.getMemorySpace()))
+      as = asAttr.getAddressSpace();
+  } else if (auto tileTy = dyn_cast<pto::TileBufType>(ty)) {
+    if (tileTy.getRank() < 2)
+      return failure();
+    rows = tileTy.getShape()[0];
+    cols = tileTy.getShape()[1];
+    elemTy = tileTy.getElementType();
+    if (auto asAttr =
+            dyn_cast_or_null<pto::AddressSpaceAttr>(tileTy.getMemorySpace()))
+      as = asAttr.getAddressSpace();
+  } else {
+    return failure();
+  }
+
+  if (rows == ShapedType::kDynamic || cols == ShapedType::kDynamic)
+    return failure();
+
+  std::string elemTok = getEmitCElementTypeToken(elemTy);
+  if (elemTok.empty())
+    return failure();
+
+  const char *roleTok = getEmitCTileRoleToken(as);
+  auto defaults = getEmitCTileLayoutDefaults(as, targetArch);
+  return std::string("Tile<") + roleTok + ", " + elemTok + ", " +
+         std::to_string(rows) + ", " + std::to_string(cols) + ", " +
+         defaults.blTok + ", " + std::to_string(rows) + ", " +
+         std::to_string(cols) + ", " + defaults.slTok + ", " +
+         std::to_string(defaults.fractalBytes) + ", " + defaults.padTok + ">";
+}
+
 static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
     "__pto.lowered_set_validshape";
 static constexpr llvm::StringLiteral kLoweredSetValidShapeConfigAttrName =
@@ -160,10 +308,9 @@ public:
     // 1. 基本类型 (f32, i32, index)
     // ---------------------------------------------------------
     addConversion([Ctx](FloatType type) -> Type {
-      if (type.isF32()) return emitc::OpaqueType::get(Ctx, "float");
-      if (type.isF16()) return emitc::OpaqueType::get(Ctx, "half");
-      if (type.isBF16()) return emitc::OpaqueType::get(Ctx, "bfloat16_t");
-      if (type.isF64()) return emitc::OpaqueType::get(Ctx, "double");
+      std::string tok = getEmitCElementTypeToken(type);
+      if (!tok.empty())
+        return emitc::OpaqueType::get(Ctx, tok);
       llvm::errs() << "[Debug] Unsupported FloatType: " << type << "\n";
       return Type{};
     });
@@ -6427,6 +6574,136 @@ struct PTOPreluToEmitC : public OpConversionPattern<pto::TPReluOp> {
     return success();
   }
 };
+
+static std::string quantTypeTok(mlir::pto::QuantType q) {
+  switch (q) {
+  case mlir::pto::QuantType::MXFP8:
+    return "QuantType::MXFP8";
+  case mlir::pto::QuantType::INT8_SYM:
+    return "QuantType::INT8_SYM";
+  case mlir::pto::QuantType::INT8_ASYM:
+    return "QuantType::INT8_ASYM";
+  }
+  return "QuantType::INT8_SYM";
+}
+
+static std::string vecStoreModeTok(mlir::pto::VecStoreMode mode) {
+  switch (mode) {
+  case mlir::pto::VecStoreMode::ND:
+    return "VecStoreMode::ND";
+  case mlir::pto::VecStoreMode::NZ:
+    return "VecStoreMode::NZ";
+  }
+  return "VecStoreMode::ND";
+}
+
+struct PTOQuantToEmitC : public OpConversionPattern<pto::TQuantOp> {
+  using OpConversionPattern<pto::TQuantOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TQuantOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+
+    auto getOpaqueTok = [&](Value v, StringRef name) -> FailureOr<std::string> {
+      v = peelUnrealized(v);
+      if (auto ot = v.getType().dyn_cast<emitc::OpaqueType>())
+        return ot.getValue().str();
+      return rewriter.notifyMatchFailure(op, (name + " must be emitc::OpaqueType").str());
+    };
+
+    Value dst = peelUnrealized(adaptor.getDst());
+    Value src = peelUnrealized(adaptor.getSrc());
+
+    if (op.isScaleForm()) {
+      auto dstTokOr = getOpaqueTok(dst, "dst");
+      auto srcTokOr = getOpaqueTok(src, "src");
+      auto scaleTokOr = getOpaqueTok(adaptor.getScale(), "scale");
+      if (failed(dstTokOr) || failed(srcTokOr) || failed(scaleTokOr))
+        return failure();
+
+      SmallVector<Attribute, 4> targs{
+          emitc::OpaqueAttr::get(ctx, quantTypeTok(op.getQuantType())),
+          emitc::OpaqueAttr::get(ctx, *dstTokOr),
+          emitc::OpaqueAttr::get(ctx, *srcTokOr),
+          emitc::OpaqueAttr::get(ctx, *scaleTokOr),
+      };
+
+      SmallVector<Value, 4> operands{dst, src, peelUnrealized(adaptor.getScale())};
+      StringRef callee = "ptoas_tquant_scale";
+      if (adaptor.getOffset()) {
+        operands.push_back(peelUnrealized(adaptor.getOffset()));
+        callee = "ptoas_tquant_scale_offset";
+      }
+
+      rewriter.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, callee,
+          /*args=*/ArrayAttr{},
+          /*templateArgs=*/rewriter.getArrayAttr(targs),
+          /*operands=*/operands);
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    auto dstTokOr = getOpaqueTok(dst, "dst");
+    auto srcTokOr = getOpaqueTok(src, "src");
+    auto expTokOr = getOpaqueTok(adaptor.getExp(), "exp");
+    auto maxTokOr = getOpaqueTok(adaptor.getMax(), "max");
+    if (failed(dstTokOr) || failed(srcTokOr) || failed(expTokOr) || failed(maxTokOr))
+      return failure();
+
+    if (op.isMxfp8NDForm()) {
+      auto scalingTokOr = getOpaqueTok(adaptor.getScalingOut(), "scalingOut");
+      if (failed(scalingTokOr))
+        return failure();
+      auto targs = rewriter.getArrayAttr({
+          emitc::OpaqueAttr::get(ctx, quantTypeTok(op.getQuantType())),
+          emitc::OpaqueAttr::get(ctx, *dstTokOr),
+          emitc::OpaqueAttr::get(ctx, *srcTokOr),
+          emitc::OpaqueAttr::get(ctx, *expTokOr),
+          emitc::OpaqueAttr::get(ctx, *maxTokOr),
+      });
+      rewriter.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, "ptoas_tquant_mxfp8_nd",
+          /*args=*/ArrayAttr{},
+          /*templateArgs=*/targs,
+          /*operands=*/ValueRange{dst, src, peelUnrealized(adaptor.getExp()),
+                                  peelUnrealized(adaptor.getMax()),
+                                  peelUnrealized(adaptor.getScalingOut())});
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    auto scalingTokOr = getOpaqueTok(adaptor.getScalingOut(), "scalingOut");
+    auto expZZTokOr = getOpaqueTok(adaptor.getExpZZ(), "expZZ");
+    auto idxTokOr = getOpaqueTok(adaptor.getVgatherIdx(), "vgatherIdx");
+    if (failed(scalingTokOr) || failed(expZZTokOr) || failed(idxTokOr))
+      return failure();
+    auto storeMode = op.getStoreModeAttr()
+                         ? op.getStoreModeAttr().getValue()
+                         : mlir::pto::VecStoreMode::NZ;
+    auto targs = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, quantTypeTok(op.getQuantType())),
+        emitc::OpaqueAttr::get(ctx, vecStoreModeTok(storeMode)),
+        emitc::OpaqueAttr::get(ctx, *dstTokOr),
+        emitc::OpaqueAttr::get(ctx, *srcTokOr),
+        emitc::OpaqueAttr::get(ctx, *expTokOr),
+        emitc::OpaqueAttr::get(ctx, *maxTokOr),
+        emitc::OpaqueAttr::get(ctx, *idxTokOr),
+    });
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "ptoas_tquant_mxfp8_store",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/targs,
+        /*operands=*/ValueRange{dst, src, peelUnrealized(adaptor.getExp()),
+                                peelUnrealized(adaptor.getMax()),
+                                peelUnrealized(adaptor.getScalingOut()),
+                                peelUnrealized(adaptor.getExpZZ()),
+                                peelUnrealized(adaptor.getVgatherIdx())});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TRECIP DPS/memref op)
 //===----------------------------------------------------------------------===//
@@ -8376,6 +8653,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMulsToEmitC>(typeConverter, ctx);
   patterns.add<PTOExpToEmitC>(typeConverter, ctx);
   patterns.add<PTOPreluToEmitC>(typeConverter, ctx);
+  patterns.add<PTOQuantToEmitC>(typeConverter, ctx);
   patterns.add<PTORemSToEmitC>(typeConverter, ctx);
   patterns.add<PTOPartMaxToEmitC>(typeConverter, ctx);
   patterns.add<PTONotToEmitC>(typeConverter, ctx);
@@ -8619,6 +8897,45 @@ static AICORE inline void ptoas_auto_sync_tail(
 		}
 		)cpp"));
 	    }
+
+      bool needsTQuantHelpers = false;
+      mop.walk([&](pto::TQuantOp) {
+        needsTQuantHelpers = true;
+        return WalkResult::interrupt();
+      });
+      if (needsTQuantHelpers) {
+        builder.create<emitc::VerbatimOp>(
+            loc, builder.getStringAttr(R"cpp(
+template <auto quant_type, typename TileDataOut, typename TileDataSrc, typename TileDataPara>
+static inline void ptoas_tquant_scale(TileDataOut &dst, TileDataSrc &src,
+                                      TileDataPara &scale) {
+  TQUANT<quant_type, TileDataOut, TileDataSrc, TileDataPara>(dst, src, scale);
+}
+
+template <auto quant_type, typename TileDataOut, typename TileDataSrc, typename TileDataPara>
+static inline void ptoas_tquant_scale_offset(TileDataOut &dst, TileDataSrc &src,
+                                             TileDataPara &scale, TileDataPara &offset) {
+  TQUANT<quant_type, TileDataOut, TileDataSrc, TileDataPara>(dst, src, scale, &offset);
+}
+
+template <auto quant_type, typename TileDataOut, typename TileDataSrc, typename TileDataExp,
+          typename TileDataMax>
+static inline void ptoas_tquant_mxfp8_nd(TileDataOut &dst, TileDataSrc &src, TileDataExp &exp,
+                                         TileDataMax &max, TileDataSrc &scaling) {
+  TQUANT<quant_type, TileDataOut, TileDataSrc, TileDataExp, TileDataMax>(
+      dst, src, &exp, &max, &scaling);
+}
+
+template <auto quant_type, auto store_mode, typename TileDataOut, typename TileDataSrc,
+          typename TileDataExp, typename TileDataMax, typename TileDataIdx>
+static inline void ptoas_tquant_mxfp8_store(TileDataOut &dst, TileDataSrc &src, TileDataExp &exp,
+                                            TileDataMax &max, TileDataSrc &scaling,
+                                            TileDataExp &exp_zz, TileDataIdx &vgather_idx) {
+  TQUANT<quant_type, store_mode, TileDataOut, TileDataSrc, TileDataExp, TileDataMax, TileDataIdx>(
+      dst, src, &exp, &max, &scaling, &exp_zz, &vgather_idx);
+}
+)cpp"));
+      }
 
 	    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
 	    {
