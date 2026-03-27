@@ -11,7 +11,7 @@ Fused operations, special functions, and UB-to-UB operations that leverage hardw
 
 ### `pto.vlrelu`
 
-- **syntax:** `%result = pto.vlrelu %input, %alpha : !pto.vreg<NxT>, T -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vlrelu %input, %alpha, %mask : !pto.vreg<NxT>, T, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** f16, f32
 - **semantics:** Leaky ReLU with scalar alpha.
 
@@ -141,18 +141,14 @@ for (int i = 0; i < 64; i++) {
 
 ### `pto.vmula`
 
-- **syntax:** `%result = pto.vmula %acc, %lhs, %rhs, %mask {mode = "MODE"} : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
-- **semantics:** Multiply-accumulate with mode control.
+- **syntax:** `%result = pto.vmula %acc, %lhs, %rhs, %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
+- **semantics:** Multiply-accumulate.
 
 ```c
 for (int i = 0; i < N; i++)
     if (mask[i])
         dst[i] = acc[i] + lhs[i] * rhs[i];
-    else if (mode == MODE_ZEROING)
-        dst[i] = 0;
 ```
-
-**Mode tokens:** `MODE_ZEROING`, `MODE_MERGING`, `MODE_UNKNOWN`
 
 ---
 
@@ -199,6 +195,16 @@ for (int i = 0; i < N; i++)
 
 ---
 
+## Current Implementation Surface Summary
+
+- `pto.vmull %lhs, %rhs, %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>, !pto.vreg<NxT>`
+- `pto.vmula %acc, %lhs, %rhs, %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
+- `pto.vci %index {order = "ORDER"} : integer -> !pto.vreg<NxT>`
+- `pto.vbitsort %dest, %src, %indices, %repeat_times : !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, index`
+- `pto.vmrgsort4 %dest, %src0, %src1, %src2, %src3, %count, %config : !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, i64, i64`
+
+---
+
 ## Typical Usage
 
 ```mlir
@@ -207,7 +213,7 @@ for (int i = 0; i < N; i++)
 %exp_stable = pto.vexpdiff %logits, %max_broadcast : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
 
 // Leaky ReLU activation
-%activated = pto.vlrelu %linear_out, %alpha_scalar : !pto.vreg<64xf32>, f32 -> !pto.vreg<64xf32>
+%activated = pto.vlrelu %linear_out, %alpha_scalar, %mask : !pto.vreg<64xf32>, f32, !pto.mask -> !pto.vreg<64xf32>
 
 // Fused residual add + ReLU
 %residual = pto.vaddrelu %conv_out, %skip_connection : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>

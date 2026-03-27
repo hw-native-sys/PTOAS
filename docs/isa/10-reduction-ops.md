@@ -11,7 +11,7 @@ Operations that reduce a vector to a scalar or per-group result.
 
 ### `pto.vcadd`
 
-- **syntax:** `%result = pto.vcadd %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcadd %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** i16-i64, f16, f32
 - **semantics:** Sum all elements. Result in lane 0, others zeroed.
 
@@ -28,7 +28,7 @@ for (int i = 1; i < N; i++)
 
 ### `pto.vcmax`
 
-- **syntax:** `%result = pto.vcmax %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcmax %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** i16-i32, f16, f32
 - **semantics:** Find max element with argmax. Result value + index in lane 0.
 
@@ -44,7 +44,7 @@ dst_idx[0] = idx;
 
 ### `pto.vcmin`
 
-- **syntax:** `%result = pto.vcmin %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcmin %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** i16-i32, f16, f32
 - **semantics:** Find min element with argmin. Result value + index in lane 0.
 
@@ -70,7 +70,7 @@ VLane 4: [32..39] VLane 5: [40..47] VLane 6: [48..55] VLane 7: [56..63]
 
 ### `pto.vcgadd`
 
-- **syntax:** `%result = pto.vcgadd %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcgadd %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** i16-i32, f16, f32
 - **semantics:** Sum within each VLane. 8 results at indices 0, 8, 16, 24, 32, 40, 48, 56 (for f32).
 
@@ -91,7 +91,7 @@ for (int g = 0; g < 8; g++) {
 
 ### `pto.vcgmax`
 
-- **syntax:** `%result = pto.vcgmax %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcgmax %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** i16-i32, f16, f32
 - **semantics:** Max within each VLane.
 
@@ -111,7 +111,7 @@ for (int g = 0; g < 8; g++) {
 
 ### `pto.vcgmin`
 
-- **syntax:** `%result = pto.vcgmin %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcgmin %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** i16-i32, f16, f32
 - **semantics:** Min within each VLane.
 
@@ -133,7 +133,7 @@ for (int g = 0; g < 8; g++) {
 
 ### `pto.vcpadd`
 
-- **syntax:** `%result = pto.vcpadd %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vcpadd %input, %mask : !pto.vreg<NxT>, !pto.mask -> !pto.vreg<NxT>`
 - **A5 types:** f16, f32
 - **semantics:** Inclusive prefix sum (scan).
 
@@ -155,18 +155,18 @@ for (int i = 1; i < N; i++)
 
 ```mlir
 // Softmax: find max for numerical stability
-%max_vec = pto.vcmax %logits : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%max_vec = pto.vcmax %logits, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 // max is in lane 0, broadcast it
 %max_broadcast = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 
 // Row-wise sum using vcgadd (for 8-row tile)
-%row_sums = pto.vcgadd %tile : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%row_sums = pto.vcgadd %tile, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 // Results at indices 0, 8, 16, 24, 32, 40, 48, 56
 
 // Full vector sum for normalization
-%total = pto.vcadd %values : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%total = pto.vcadd %values, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 // total[0] contains the sum
 
 // Prefix sum for cumulative distribution
-%cdf = pto.vcpadd %pdf : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%cdf = pto.vcpadd %pdf, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 ```

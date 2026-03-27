@@ -33,7 +33,7 @@ for (int i = 0; i < N; i++)
 
 **Example:**
 ```mlir
-%all_active = pto.vpset_b32 "PAT_ALL" : !pto.mask
+%all_active = pto.pset_b32 "PAT_ALL" : !pto.mask
 %lt_mask = pto.vcmp %a, %b, %all_active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.mask
 // lt_mask[i] = 1 if a[i] < b[i]
 ```
@@ -83,7 +83,7 @@ for (int i = 0; i < N; i++)
 
 ### `pto.vselr`
 
-- **syntax:** `%result = pto.vselr %src0, %src1 : !pto.vreg<NxT>, !pto.vreg<NxI> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vselr %src0, %src1 : !pto.vreg<NxT>, !pto.vreg<NxT> -> !pto.vreg<NxT>`
 - **semantics:** Select with reversed mask semantics.
 
 ```c
@@ -93,11 +93,18 @@ for (int i = 0; i < N; i++)
 
 ---
 
+### `pto.vselrv2`
+
+- **syntax:** `%result = pto.vselrv2 %src0, %src1 : !pto.vreg<NxT>, !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **semantics:** Variant select form with the same current two-vector operand shape.
+
+---
+
 ## Typical Usage
 
 ```mlir
 // Clamp negative values to zero (manual ReLU)
-%all = pto.vpset_b32 "PAT_ALL" : !pto.mask
+%all = pto.pset_b32 "PAT_ALL" : !pto.mask
 %zero = pto.vbr %c0_f32 : f32 -> !pto.vreg<64xf32>
 %neg_mask = pto.vcmps %input, %c0_f32, %all, "lt" : !pto.vreg<64xf32>, f32, !pto.mask -> !pto.mask
 %clamped = pto.vsel %zero, %input, %neg_mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
@@ -119,7 +126,7 @@ for (int i = 0; i < N; i++)
 // Softmax safe exp: exp(x - max) where x < max returns exp of negative
 // but we want to clamp to avoid underflow
 
-%all = pto.vpset_b32 "PAT_ALL" : !pto.mask
+%all = pto.pset_b32 "PAT_ALL" : !pto.mask
 
 // 1. Compare against threshold
 %too_small = pto.vcmps %x_minus_max, %min_exp_arg, %all, "lt"
@@ -130,5 +137,5 @@ for (int i = 0; i < N; i++)
     : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 
 // 3. Safe exp
-%exp_result = pto.vexp %clamped : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%exp_result = pto.vexp %clamped, %all : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 ```

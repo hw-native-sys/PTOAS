@@ -40,9 +40,10 @@ Ops such as `scf.execute_region`, `scf.forall`, or `scf.index_switch` are not pa
 ```mlir
 scf.for %i = %c0 to %c4 step %c1 {
   %offset = arith.muli %i, %c32 : index
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask
   %v = pto.vlds %ub[%offset] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-  %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%offset] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+  %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+  pto.vsts %abs, %ub_out[%offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
 }
 ```
 

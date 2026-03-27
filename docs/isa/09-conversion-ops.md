@@ -7,6 +7,13 @@ Operations that convert between data types (float/int, narrowing/widening).
 
 ---
 
+## `pto.vci`
+
+- **syntax:** `%result = pto.vci %index {order = "ORDER"} : integer -> !pto.vreg<NxT>`
+- **semantics:** Generate a lane-index vector from a scalar seed/index value.
+
+---
+
 ## `pto.vcvt`
 
 - **syntax:** `%result = pto.vcvt %input {round_mode = "ROUND_MODE", sat = "SAT_MODE", part = "PART_MODE"} : !pto.vreg<NxT0> -> !pto.vreg<MxT1>`
@@ -78,7 +85,7 @@ For conversions that change width (e.g., f32→f16), use even/odd parts and comb
     : !pto.vreg<64xf32> -> !pto.vreg<128xf16>
 %odd  = pto.vcvt %in1 {round_mode = "ROUND_R", sat = "RS_ENABLE", part = "PART_ODD"}
     : !pto.vreg<64xf32> -> !pto.vreg<128xf16>
-%result = pto.vor %even, %odd : !pto.vreg<128xf16>, !pto.vreg<128xf16> -> !pto.vreg<128xf16>
+%result = pto.vor %even, %odd, %mask : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask -> !pto.vreg<128xf16>
 ```
 
 ---
@@ -107,7 +114,7 @@ for (int i = 0; i < N; i++)
 
 ```mlir
 // Quantization: f32 → i8 with saturation
-%scaled = pto.vmuls %input, %scale : !pto.vreg<64xf32>, f32 -> !pto.vreg<64xf32>
+%scaled = pto.vmuls %input, %scale, %mask : !pto.vreg<64xf32>, f32, !pto.mask -> !pto.vreg<64xf32>
 %quantized = pto.vcvt %scaled {round_mode = "ROUND_R", sat = "RS_ENABLE"}
     : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
 // Then narrow i32 → i8 via pack ops

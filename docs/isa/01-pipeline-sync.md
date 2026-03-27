@@ -135,8 +135,9 @@ pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
 scf.for %dummy = %c0 to %c1 step %c1 {
   %v   = pto.vlds %ub_ptr[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-  %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%lane] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask
+  %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
 } {llvm.loop.aivector_scope}
 
 // Vector signals: "UB output is ready for MTE3"
@@ -160,34 +161,35 @@ Instead of naming events, each pipeline declares when it **acquires** (`get_buf`
 ```mlir
 // ─── Stage 1: MTE2 loads data into UB ───
 // MTE2 acquires ub_ptr — blocks if Vector hasn't released it from a prior iteration
-pto.get_buf %bufid_ub_ptr, "PIPE_MTE2"
+pto.get_buf "PIPE_MTE2", %bufid_ub_ptr, %mode : i64, i64
 pto.copy_gm_to_ubuf %gm_ptr, %ub_ptr, ...
 // MTE2 done writing ub_ptr — release it so Vector can consume
-pto.rls_buf %bufid_ub_ptr, "PIPE_MTE2"
+pto.rls_buf "PIPE_MTE2", %bufid_ub_ptr, %mode : i64, i64
 
 // ─── Stage 2: Vector computation ───
 // Vector acquires ub_ptr (input) — blocks until MTE2 releases it (RAW: MTE2 write → V read)
-pto.get_buf %bufid_ub_ptr, "PIPE_V"
+pto.get_buf "PIPE_V", %bufid_ub_ptr, %mode : i64, i64
 // Vector acquires ub_out (output) — blocks until MTE3 releases it from a prior iteration (WAR: MTE3 read → V write)
-pto.get_buf %bufid_ub_out, "PIPE_V"
+pto.get_buf "PIPE_V", %bufid_ub_out, %mode : i64, i64
 
 scf.for %dummy = %c0 to %c1 step %c1 {
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask
   %v   = pto.vlds %ub_ptr[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-  %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%lane] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+  %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
 } {llvm.loop.aivector_scope}
 
 // Vector done reading ub_ptr — release so MTE2 can reuse it in next iteration
-pto.rls_buf %bufid_ub_ptr, "PIPE_V"
+pto.rls_buf "PIPE_V", %bufid_ub_ptr, %mode : i64, i64
 // Vector done writing ub_out — release so MTE3 can consume
-pto.rls_buf %bufid_ub_out, "PIPE_V"
+pto.rls_buf "PIPE_V", %bufid_ub_out, %mode : i64, i64
 
 // ─── Stage 3: MTE3 stores result to GM ───
 // MTE3 acquires ub_out — blocks until Vector releases it (RAW: V write → MTE3 read)
-pto.get_buf %bufid_ub_out, "PIPE_MTE3"
+pto.get_buf "PIPE_MTE3", %bufid_ub_out, %mode : i64, i64
 pto.copy_ubuf_to_gm %ub_out, %gm_out, ...
 // MTE3 done reading ub_out — release so Vector can reuse it in next iteration
-pto.rls_buf %bufid_ub_out, "PIPE_MTE3"
+pto.rls_buf "PIPE_MTE3", %bufid_ub_out, %mode : i64, i64
 ```
 
 **Key property:** No event IDs needed. Dependencies are implicit from program order of `get_buf`/`rls_buf` on the same buffer ID. This becomes much more convenient in multi-iteration loops (see Example 3).
@@ -249,8 +251,9 @@ scf.for %i = %c0 to %N step %c1 {
   pto.wait_flag["PIPE_MTE3", "PIPE_V", "EVT_OUT_REV_{pp}"]
   scf.for %dummy = %c0 to %c1 step %c1 {
     %v   = pto.vlds %ub_in[%pp][%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-    %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-    pto.vsts %abs, %ub_out[%pp][%lane] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask
+    %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+    pto.vsts %abs, %ub_out[%pp][%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
   } {llvm.loop.aivector_scope}
   // WAR: tell MTE2 "done reading buf_in[i%2]"
   pto.set_flag["PIPE_V", "PIPE_MTE2", "EVT_IN_REV_{pp}"]
@@ -300,8 +303,9 @@ scf.for %i = %c0 to %N step %c1 {
   pto.get_buf %bufid_out[%pp], "PIPE_V"
   scf.for %dummy = %c0 to %c1 step %c1 {
     %v   = pto.vlds %ub_buf[%pp][%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-    %abs = pto.vabs %v : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
-    pto.vsts %abs, %ub_out[%pp][%lane] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask
+    %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
+    pto.vsts %abs, %ub_out[%pp][%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
   } {llvm.loop.aivector_scope}
   // Release buf[i%2] — MTE2 can reuse in iteration i+2 (WAR resolved)
   pto.rls_buf %bufid_buf[%pp], "PIPE_V"

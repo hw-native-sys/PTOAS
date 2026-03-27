@@ -184,10 +184,22 @@ for (int i = 0; i < N/2; i++)
 // Sliding window sum
 %prev_window = pto.vslide %curr, %prev, %c1
     : !pto.vreg<64xf32>, !pto.vreg<64xf32>, i16 -> !pto.vreg<64xf32>
-%window_sum = pto.vadd %curr, %prev_window
-    : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%window_sum = pto.vadd %curr, %prev_window, %all
+    : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
 
 // Type narrowing via pack
 %packed_i16 = pto.vpack %wide0_i32, %wide1_i32, %c0
     : !pto.vreg<64xi32>, !pto.vreg<64xi32>, index -> !pto.vreg<128xi16>
 ```
+
+---
+
+## V2 Interleave Forms
+
+### `pto.vintlvv2`
+
+- **syntax:** `%result = pto.vintlvv2 %lhs, %rhs, "PART" : !pto.vreg<NxT>, !pto.vreg<NxT> -> !pto.vreg<NxT>`
+
+### `pto.vdintlvv2`
+
+- **syntax:** `%result = pto.vdintlvv2 %lhs, %rhs, "PART" : !pto.vreg<NxT>, !pto.vreg<NxT> -> !pto.vreg<NxT>`

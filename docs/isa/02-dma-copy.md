@@ -137,10 +137,11 @@ set_loop1_stride_ubtoout(gm_dst_stride << 21 | ub_src_stride);
 
 - **syntax:**
 ```mlir
-pto.copy_gm_to_ubuf %gm_src, %ub_dst, %sid, %n_burst, %len_burst,
-    %left_padding, %right_padding, %l2_cache_ctl, %gm_src_stride, %ub_dst_stride
-    {layout = "LAYOUT", data_select_bit = true|false, ub_pad = true|false}
-    : !pto.ptr<T, gm>, !pto.ptr<T, ub>, i64 x8
+pto.copy_gm_to_ubuf %gm_src, %ub_dst, %valid_rows, %valid_cols,
+    %sid, %n_burst, %len_burst, %left_padding, %right_padding,
+    %data_select_bit, %l2_cache_ctl, %gm_src_stride, %ub_dst_stride
+    : !pto.ptr<T, gm>, !pto.ptr<T, ub>, i64, i64, i64, i64, i64,
+      i64, i64, i1, i64, i64, i64
 ```
 - **semantics:** DMA transfer from Global Memory (`!pto.ptr<T, gm>`) to Unified Buffer (`!pto.ptr<T, ub>`).
 
@@ -150,22 +151,17 @@ pto.copy_gm_to_ubuf %gm_src, %ub_dst, %sid, %n_burst, %len_burst,
 |-----------|-------------|
 | `%gm_src` | GM source pointer (`!pto.ptr<T, gm>`) |
 | `%ub_dst` | UB destination pointer (`!pto.ptr<T, ub>`, 32B-aligned) |
+| `%valid_rows` | Valid row count |
+| `%valid_cols` | Valid column count |
 | `%sid` | Stream ID (usually 0) |
 | `%n_burst` | Number of burst rows (innermost loop count) |
 | `%len_burst` | Contiguous bytes transferred per burst row |
 | `%left_padding` | Left padding count (bytes) |
 | `%right_padding` | Right padding count (bytes) |
+| `%data_select_bit` | Padding / data-select control bit (`i1`) |
 | `%l2_cache_ctl` | L2 cache allocate control (TBD — controls whether DMA allocates in L2 cache) |
 | `%gm_src_stride` | GM source stride: start-to-start distance between consecutive burst rows (bytes) |
 | `%ub_dst_stride` | UB destination stride: start-to-start distance between consecutive burst rows (bytes, 32B-aligned) |
-
-**Attributes:**
-
-| Attribute | Values | Description |
-|-----------|--------|-------------|
-| `layout` | `"nd"` | Data layout |
-| `data_select_bit` | `true`/`false` | Enable padding fill |
-| `ub_pad` | `true`/`false` | Enable UB padding |
 
 ---
 
@@ -173,10 +169,9 @@ pto.copy_gm_to_ubuf %gm_src, %ub_dst, %sid, %n_burst, %len_burst,
 
 - **syntax:**
 ```mlir
-pto.copy_ubuf_to_gm %ub_src, %gm_dst, %sid, %n_burst, %len_burst,
-    %reserved, %gm_dst_stride, %ub_src_stride
-    {layout = "LAYOUT"}
-    : !pto.ptr<T, ub>, !pto.ptr<T, gm>, i64 x6
+pto.copy_ubuf_to_gm %ub_src, %gm_dst, %valid_rows, %valid_cols,
+    %sid, %n_burst, %len_burst, %reserved, %gm_dst_stride, %ub_src_stride
+    : !pto.ptr<T, ub>, !pto.ptr<T, gm>, i64, i64, i64, i64, i64, i64, i64, i64
 ```
 - **semantics:** DMA transfer from Unified Buffer (`!pto.ptr<T, ub>`) to Global Memory (`!pto.ptr<T, gm>`). MTE3 reads only `len_burst` bytes from each UB row (de-padding).
 
@@ -186,6 +181,8 @@ pto.copy_ubuf_to_gm %ub_src, %gm_dst, %sid, %n_burst, %len_burst,
 |-----------|-------------|
 | `%ub_src` | UB source pointer (`!pto.ptr<T, ub>`, 32B-aligned) |
 | `%gm_dst` | GM destination pointer (`!pto.ptr<T, gm>`) |
+| `%valid_rows` | Valid row count |
+| `%valid_cols` | Valid column count |
 | `%sid` | Stream ID (usually 0) |
 | `%n_burst` | Number of burst rows |
 | `%len_burst` | Contiguous bytes transferred per burst row |

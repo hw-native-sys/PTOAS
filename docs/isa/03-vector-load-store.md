@@ -42,20 +42,20 @@ Vector loads move data from Unified Buffer (UB) to vector registers (`vreg`). Ve
 
 ### `pto.vldas`
 
-- **syntax:** `%result = pto.vldas %source[%offset] : !pto.ptr<T, ub> -> !pto.align`
+- **syntax:** `%result = pto.vldas %source : !pto.ptr<T, ub> -> !pto.align`
 - **semantics:** Prime alignment buffer for subsequent unaligned load.
 
 ---
 
 ### `pto.vldus`
 
-- **syntax:** `%result = pto.vldus %align, %source[%offset] : !pto.align, !pto.ptr<T, ub> -> !pto.vreg<NxT>`
+- **syntax:** `%result, %align_out, %base_out = pto.vldus %source, %align : !pto.ptr<T, ub>, !pto.align -> !pto.vreg<NxT>, !pto.align, !pto.ptr<T, ub>`
 - **semantics:** Unaligned load using primed align state.
 
 **Unaligned load pattern:**
 ```mlir
-%align = pto.vldas %ub[%c0] : !pto.ptr<f32, ub> -> !pto.align
-%vec = pto.vldus %align, %ub[%c64] : !pto.align, !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%align = pto.vldas %ub : !pto.ptr<f32, ub> -> !pto.align
+%vec, %align2, %ub2 = pto.vldus %ub, %align : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align, !pto.ptr<f32, ub>
 ```
 
 ---
@@ -139,7 +139,7 @@ for (int i = 0; i < active_lanes; i++)
 
 ### `pto.vsts`
 
-- **syntax:** `pto.vsts %value, %dest[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>`
+- **syntax:** `pto.vsts %value, %dest[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.mask`
 - **semantics:** Vector store with distribution mode.
 
 **Distribution modes:**
@@ -153,15 +153,8 @@ for (int i = 0; i < active_lanes; i++)
 
 **Example — Contiguous store:**
 ```mlir
-pto.vsts %v, %ub[%offset] {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+pto.vsts %v, %ub[%offset], %mask {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask
 ```
-
----
-
-### `pto.vsts_pred`
-
-- **syntax:** `pto.vsts_pred %value, %dest[%offset], %active_lanes {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, index`
-- **semantics:** Predicated vector store.
 
 ---
 
@@ -246,7 +239,7 @@ These ops make reference-updated state explicit as SSA results.
 - **syntax:** `%align_out, %offset_out = pto.vstu %align_in, %offset_in, %value, %base, "MODE" : !pto.align, index, !pto.vreg<NxT>, !pto.ptr<T, ub> -> !pto.align, index`
 - **semantics:** Unaligned store with align + offset state update.
 
-**Mode tokens:** `POST_UPDATE`, `NO_POST_UPDATE`
+**Mode tokens:** `π_UPDATE`, `NO_POST_UPDATE`
 
 ---
 
