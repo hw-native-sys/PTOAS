@@ -5,6 +5,29 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+namespace {
+thread_local PTOParserTargetArch currentParserTargetArch =
+    PTOParserTargetArch::Unspecified;
+}
+
+void mlir::pto::setPTOParserTargetArch(PTOParserTargetArch arch) {
+  currentParserTargetArch = arch;
+}
+
+PTOParserTargetArch mlir::pto::getPTOParserTargetArch() {
+  return currentParserTargetArch;
+}
+
+mlir::pto::ScopedPTOParserTargetArch::ScopedPTOParserTargetArch(
+    PTOParserTargetArch arch)
+    : previousArch(getPTOParserTargetArch()) {
+  setPTOParserTargetArch(arch);
+}
+
+mlir::pto::ScopedPTOParserTargetArch::~ScopedPTOParserTargetArch() {
+  setPTOParserTargetArch(previousArch);
+}
+
 TileBufConfigAttr TileBufType::getConfigAttr() const {
   // 情况 A：getConfig() 已经是 TileBufConfigAttr
   if constexpr (std::is_same_v<decltype(getConfig()), TileBufConfigAttr>) {
