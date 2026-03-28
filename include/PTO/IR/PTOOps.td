@@ -1492,7 +1492,7 @@ def DeclareTileOp : PTO_Op<"declare_tile", [Pure]> {
   }];
 }
 
-def DeclareEventIdArrayOp : PTO_Op<"declare_eventid_array", [Pure]> {
+def DeclareEventIdArrayOp : PTO_Op<"declare_eventid_array"> {
   let summary = "Declare a manual-only local event-id array";
   let description = [{
     Declares a local array used to store dynamic event ids in manual sync code.
