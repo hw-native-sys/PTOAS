@@ -5,37 +5,6 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-namespace {
-thread_local PTOParserTargetArch currentParserTargetArch =
-    PTOParserTargetArch::Unspecified;
-}
-
-void mlir::pto::setPTOParserTargetArch(PTOParserTargetArch arch) {
-  currentParserTargetArch = arch;
-}
-
-PTOParserTargetArch mlir::pto::getPTOParserTargetArch() {
-  return currentParserTargetArch;
-}
-
-mlir::pto::ScopedPTOParserTargetArch::ScopedPTOParserTargetArch(
-    PTOParserTargetArch arch)
-    : previousArch(getPTOParserTargetArch()) {
-  setPTOParserTargetArch(arch);
-}
-
-mlir::pto::ScopedPTOParserTargetArch::~ScopedPTOParserTargetArch() {
-  setPTOParserTargetArch(previousArch);
-}
-
-static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
-  SmallVector<int64_t, 4> canonical;
-  canonical.reserve(validShape.size());
-  for (int64_t dim : validShape)
-    canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
-  return canonical;
-}
-
 TileBufConfigAttr TileBufType::getConfigAttr() const {
   // 情况 A：getConfig() 已经是 TileBufConfigAttr
   if constexpr (std::is_same_v<decltype(getConfig()), TileBufConfigAttr>) {
@@ -81,130 +50,93 @@ int32_t TileBufType::getPadValueI32() const {
 }
 
 // ---- TileBufType custom asm ----
-// !pto.tile_buf<<loc=.., dtype=.., rows=.., cols=.., blayout=.., valid=..x.., slayout=.., fractal=.., pad=..>>
+// 支持旧格式：
+//   !pto.tile_buf<loc=.., dtype=.., rows=.., cols=.., v_row=.., v_col=.., blayout=.., slayout=.., fractal=.., pad=..>
+// 支持新格式（默认打印）：
+//   !pto.tile_buf<vec, 16x16xf16, valid=16x8, blayout=ColMajor>
 Type TileBufType::parse(AsmParser &parser) {
   MLIRContext *ctx = parser.getContext();
 
   if (failed(parser.parseLess()))
     return Type();
 
-  std::string locStr;
-  Type dtype;
-  int64_t rows = 0, cols = 0;
-  int64_t vrow = -1, vcol = -1;
-  std::string blayoutStr, slayoutStr;
-  int64_t fractal = 0;
-  uint32_t padInt;
+  auto defCfg = TileBufConfigAttr::getDefault(ctx);
 
-  auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
-    if (failed(parser.parseKeyword(expectedKey)))
+  std::optional<AddressSpace> memorySpace;
+  Type dtype;
+  bool hasDType = false;
+  int64_t rows = 0, cols = 0;
+  bool hasRows = false, hasCols = false;
+  int64_t vrow = ShapedType::kDynamic, vcol = ShapedType::kDynamic;
+  bool hasValid = false;
+  bool hasVRow = false;
+  bool hasVCol = false;
+  BLayout blayout = defCfg.getBLayout().getValue();
+  SLayout slayout = defCfg.getSLayout().getValue();
+  int64_t fractal = defCfg.getSFractalSize().getInt();
+  PadValue pad = defCfg.getPad().getValue();
+
+  auto parseDim = [&](int64_t &dim) -> LogicalResult {
+    if (succeeded(parser.parseOptionalQuestion())) {
+      dim = ShapedType::kDynamic;
+      return success();
+    }
+    int64_t value = 0;
+    if (failed(parser.parseInteger(value)))
       return failure();
-    if (failed(parser.parseEqual()))
+    if (value < 0) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "dimension must be '?' or a non-negative integer");
       return failure();
+    }
+    dim = value;
     return success();
   };
 
-  // loc=Vec
-  {
-    if (failed(parseKeyEq("loc"))) return Type();
-    // Vec/Mat/Acc 不是类型/属性，直接当 keyword/string 读
-    if (failed(parser.parseKeywordOrString(&locStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // dtype=f16
-  {
-    if (failed(parseKeyEq("dtype"))) return Type();
-    if (failed(parser.parseType(dtype))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // rows=16
-  {
-    if (failed(parseKeyEq("rows"))) return Type();
-    if (failed(parser.parseInteger(rows))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // cols=16
-  {
-    if (failed(parseKeyEq("cols"))) return Type();
-    if (failed(parser.parseInteger(cols))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-   
-  {
-    // v_row=?/-1/16 , v_col=?/-1/8   （支持半动态）
-    if (failed(parseKeyEq("v_row"))) return Type();
-
-    // 解析 v_row：'?' -> -1，否则整数（允许 -1 兼容）
-    if (succeeded(parser.parseOptionalQuestion())) {
-        vrow = -1;
-    } else {
-        if (failed(parser.parseInteger(vrow))) return Type();
-        if (vrow < -1) {
-            parser.emitError(parser.getCurrentLocation(),
-                            "v_row must be '?', -1, or a non-negative integer");
-            return Type();
-        }
+  auto parseValidShape = [&]() -> LogicalResult {
+    SmallVector<int64_t, 2> dims;
+    if (failed(parser.parseDimensionList(dims, /*allowDynamic=*/true,
+                                         /*withTrailingX=*/false)))
+      return failure();
+    if (dims.size() != 2) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "valid shape expects exactly 2 dimensions");
+      return failure();
     }
+    vrow = dims[0];
+    vcol = dims[1];
+    hasValid = true;
+    hasVRow = true;
+    hasVCol = true;
+    return success();
+  };
 
-    if (failed(parser.parseComma())) return Type();
-
-    if (failed(parseKeyEq("v_col"))) return Type();
-
-    // 解析 v_col：'?' -> -1，否则整数（允许 -1 兼容）
-    if (succeeded(parser.parseOptionalQuestion())) {
-        vcol = -1;
-    } else {
-        if (failed(parser.parseInteger(vcol))) return Type();
-        if (vcol < -1) {
-            parser.emitError(parser.getCurrentLocation(),
-                            "v_col must be '?', -1, or a non-negative integer");
-            return Type();
-        }
+  auto setRowsCols = [&](int64_t r, int64_t c) -> LogicalResult {
+    if ((hasRows && rows != r) || (hasCols && cols != c)) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "conflicting rows/cols values");
+      return failure();
     }
-    if (failed(parser.parseComma())) return Type();
-  }
+    rows = r;
+    cols = c;
+    hasRows = true;
+    hasCols = true;
+    return success();
+  };
 
-  // blayout=RowMajor
-  {
-    if (failed(parseKeyEq("blayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&blayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
+  auto setDType = [&](Type t) -> LogicalResult {
+    if (hasDType && t != dtype) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "conflicting dtype values");
+      return failure();
+    }
+    dtype = t;
+    hasDType = true;
+    return success();
+  };
 
-
-  // slayout=NoneBox
-  {
-    if (failed(parseKeyEq("slayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&slayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // fractal=512
-  {
-    if (failed(parseKeyEq("fractal"))) return Type();
-    if (failed(parser.parseInteger(fractal))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // pad=Null
-  {
-    if (failed(parseKeyEq("pad"))) return Type();
-    if (failed(parser.parseInteger(padInt))) return Type();
-  }
-
-  if (failed(parser.parseGreater()))
-    return Type();
-
-  // -------- 语义校验/构造 --------
-  if (rows < 0 || cols < 0) {
-    parser.emitError(parser.getNameLoc(), "rows/cols must be non-negative");
-    return Type();
-  }
-
-  auto memorySpace = ::llvm::StringSwitch<::std::optional<AddressSpace>>(locStr)
+  auto parseLocValue = [&](StringRef locStr) -> LogicalResult {
+    auto ms = ::llvm::StringSwitch<::std::optional<AddressSpace>>(locStr)
         .Case("mat", AddressSpace::MAT)
         .Case("left", AddressSpace::LEFT)
         .Case("right", AddressSpace::RIGHT)
@@ -213,55 +145,234 @@ Type TileBufType::parse(AsmParser &parser) {
         .Case("bias", AddressSpace::BIAS)
         .Case("scaling", AddressSpace::SCALING)
         .Default(::std::nullopt);
-  if (!memorySpace.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown loc: ") << locStr;
-    return Type();
-  }
-
-  auto bl = symbolizeBLayout(blayoutStr);
-  auto sl = symbolizeSLayout(slayoutStr);
-  auto pv = symbolizePadValue(padInt);
-  if (!bl.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown blayout: ") << blayoutStr;
-    return Type();
-  }
-  if (!sl.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown slayout: ") << slayoutStr;
-    return Type();
-  }
-  if (!pv.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown pad: ") << padInt;
-    return Type();
-  }
-
-  BLayout effectiveBLayout = bl.value();
-  if (memorySpace.value() == AddressSpace::LEFT) {
-    switch (getPTOParserTargetArch()) {
-    case PTOParserTargetArch::A3:
-      effectiveBLayout = BLayout::RowMajor;
-      break;
-    case PTOParserTargetArch::A5:
-      effectiveBLayout = BLayout::ColMajor;
-      break;
-    case PTOParserTargetArch::Unspecified:
-      break;
+    if (!ms.has_value()) {
+      parser.emitError(parser.getNameLoc(), "unknown loc: ") << locStr;
+      return failure();
     }
+    if (memorySpace.has_value() && memorySpace.value() != ms.value()) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "conflicting loc values");
+      return failure();
+    }
+    memorySpace = ms.value();
+    return success();
+  };
+
+  while (true) {
+    if (succeeded(parser.parseOptionalGreater()))
+      break;
+
+    bool parsedClause = false;
+    // Positional shape: 16x16xf16
+    {
+      int64_t firstDim = 0;
+      if (succeeded(parser.parseOptionalQuestion())) {
+        firstDim = ShapedType::kDynamic;
+        parsedClause = true;
+      } else {
+        OptionalParseResult intRes = parser.parseOptionalInteger(firstDim);
+        if (intRes.has_value()) {
+          if (failed(*intRes))
+            return Type();
+          parsedClause = true;
+        }
+      }
+      if (parsedClause) {
+        int64_t secondDim = 0;
+        if (failed(parser.parseXInDimensionList()))
+          return Type();
+        if (failed(parseDim(secondDim)))
+          return Type();
+        if (failed(parser.parseXInDimensionList()))
+          return Type();
+        Type elemTy;
+        if (failed(parser.parseType(elemTy)))
+          return Type();
+        if (failed(setRowsCols(firstDim, secondDim)))
+          return Type();
+        if (failed(setDType(elemTy)))
+          return Type();
+      }
+    }
+
+    if (!parsedClause) {
+      std::string keyOrToken;
+      if (failed(parser.parseKeywordOrString(&keyOrToken)))
+        return Type();
+      if (succeeded(parser.parseOptionalEqual())) {
+        if (keyOrToken == "loc") {
+          std::string locStr;
+          if (failed(parser.parseKeywordOrString(&locStr)))
+            return Type();
+          if (failed(parseLocValue(locStr)))
+            return Type();
+        } else if (keyOrToken == "dtype") {
+          Type ty;
+          if (failed(parser.parseType(ty)))
+            return Type();
+          if (failed(setDType(ty)))
+            return Type();
+        } else if (keyOrToken == "rows") {
+          int64_t r = 0;
+          if (failed(parser.parseInteger(r)))
+            return Type();
+          if (r < 0) {
+            parser.emitError(parser.getCurrentLocation(),
+                             "rows must be non-negative");
+            return Type();
+          }
+          if (hasRows && rows != r) {
+            parser.emitError(parser.getCurrentLocation(),
+                             "conflicting rows values");
+            return Type();
+          }
+          rows = r;
+          hasRows = true;
+        } else if (keyOrToken == "cols") {
+          int64_t c = 0;
+          if (failed(parser.parseInteger(c)))
+            return Type();
+          if (c < 0) {
+            parser.emitError(parser.getCurrentLocation(),
+                             "cols must be non-negative");
+            return Type();
+          }
+          if (hasCols && cols != c) {
+            parser.emitError(parser.getCurrentLocation(),
+                             "conflicting cols values");
+            return Type();
+          }
+          cols = c;
+          hasCols = true;
+        } else if (keyOrToken == "v_row") {
+          int64_t vr = 0;
+          if (succeeded(parser.parseOptionalQuestion())) {
+            vr = ShapedType::kDynamic;
+          } else {
+            if (failed(parser.parseInteger(vr)))
+              return Type();
+            if (vr < -1) {
+              parser.emitError(parser.getCurrentLocation(),
+                               "v_row must be '?', -1, or a non-negative integer");
+              return Type();
+            }
+            if (vr == -1)
+              vr = ShapedType::kDynamic;
+          }
+          vrow = vr;
+          hasValid = true;
+          hasVRow = true;
+        } else if (keyOrToken == "v_col") {
+          int64_t vc = 0;
+          if (succeeded(parser.parseOptionalQuestion())) {
+            vc = ShapedType::kDynamic;
+          } else {
+            if (failed(parser.parseInteger(vc)))
+              return Type();
+            if (vc < -1) {
+              parser.emitError(parser.getCurrentLocation(),
+                               "v_col must be '?', -1, or a non-negative integer");
+              return Type();
+            }
+            if (vc == -1)
+              vc = ShapedType::kDynamic;
+          }
+          vcol = vc;
+          hasValid = true;
+          hasVCol = true;
+        } else if (keyOrToken == "valid") {
+          if (failed(parseValidShape()))
+            return Type();
+        } else if (keyOrToken == "blayout") {
+          std::string blayoutStr;
+          if (failed(parser.parseKeywordOrString(&blayoutStr)))
+            return Type();
+          auto bl = symbolizeBLayout(blayoutStr);
+          if (!bl.has_value()) {
+            parser.emitError(parser.getNameLoc(), "unknown blayout: ")
+                << blayoutStr;
+            return Type();
+          }
+          blayout = bl.value();
+        } else if (keyOrToken == "slayout") {
+          std::string slayoutStr;
+          if (failed(parser.parseKeywordOrString(&slayoutStr)))
+            return Type();
+          auto sl = symbolizeSLayout(slayoutStr);
+          if (!sl.has_value()) {
+            parser.emitError(parser.getNameLoc(), "unknown slayout: ")
+                << slayoutStr;
+            return Type();
+          }
+          slayout = sl.value();
+        } else if (keyOrToken == "fractal") {
+          if (failed(parser.parseInteger(fractal)))
+            return Type();
+        } else if (keyOrToken == "pad") {
+          uint32_t padInt = 0;
+          if (failed(parser.parseInteger(padInt)))
+            return Type();
+          auto pv = symbolizePadValue(padInt);
+          if (!pv.has_value()) {
+            parser.emitError(parser.getNameLoc(), "unknown pad: ") << padInt;
+            return Type();
+          }
+          pad = pv.value();
+        } else {
+          parser.emitError(parser.getNameLoc(), "unknown key in tile_buf: ")
+              << keyOrToken;
+          return Type();
+        }
+      } else {
+        if (failed(parseLocValue(keyOrToken)))
+          return Type();
+      }
+    }
+
+    if (succeeded(parser.parseOptionalGreater()))
+      break;
+    if (failed(parser.parseComma()))
+      return Type();
   }
 
-  auto blAttr = BLayoutAttr::get(ctx, effectiveBLayout);
-  auto slAttr = SLayoutAttr::get(ctx, sl.value());
+  if (!memorySpace.has_value()) {
+    parser.emitError(parser.getNameLoc(), "missing loc");
+    return Type();
+  }
+  if (!hasDType) {
+    parser.emitError(parser.getNameLoc(), "missing dtype");
+    return Type();
+  }
+  if (!(hasRows && hasCols)) {
+    parser.emitError(parser.getNameLoc(), "missing rows/cols");
+    return Type();
+  }
+  if (!hasValid) {
+    vrow = rows;
+    vcol = cols;
+  } else if (hasVRow != hasVCol) {
+    parser.emitError(parser.getNameLoc(),
+                     "v_row and v_col must be provided together");
+    return Type();
+  }
+  if (rows < 0 || cols < 0) {
+    parser.emitError(parser.getNameLoc(), "rows/cols must be non-negative");
+    return Type();
+  }
+
+  // -------- 语义校验/构造 --------
+  auto blAttr = BLayoutAttr::get(ctx, blayout);
+  auto slAttr = SLayoutAttr::get(ctx, slayout);
   auto fractalAttr =
       IntegerAttr::get(IntegerType::get(ctx, 32), fractal);
-  auto padAttr = PadValueAttr::get(ctx, pv.value());
+  auto padAttr = PadValueAttr::get(ctx, pad);
   auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
   auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
 
   SmallVector<int64_t, 2> shape{rows, cols};
   SmallVector<int64_t, 2> validShape{vrow, vcol};
-  auto canonicalValidShape = canonicalizeTileBufValidShape(validShape);
 
-  return TileBufType::get(ctx, shape, dtype, memorySpaceAttr,
-                          llvm::ArrayRef<int64_t>(canonicalValidShape), cfg);
+  return TileBufType::get(ctx, shape, dtype, memorySpaceAttr, llvm::ArrayRef<int64_t>(validShape), cfg);
 }
 
 static llvm::StringRef stringifyLocFromMemorySpace(mlir::Attribute memorySpace) {
@@ -294,43 +405,52 @@ static llvm::StringRef stringifyLocFromPad(mlir::Attribute pad) {
 
 void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     auto shape = getShape();
-    int64_t rows = shape.size() > 0 ? shape[0] : 0;
-    int64_t cols = shape.size() > 1 ? shape[1] : 0;
+    int64_t rows = shape.size() > 0 ? shape[0] : ShapedType::kDynamic;
+    int64_t cols = shape.size() > 1 ? shape[1] : ShapedType::kDynamic;
 
     auto cfg = getConfigAttr();
     if (!cfg) cfg = mlir::pto::TileBufConfigAttr::getDefault(getContext());
+    auto defCfg = mlir::pto::TileBufConfigAttr::getDefault(getContext());
 
     llvm::StringRef locStr = stringifyLocFromMemorySpace(getMemorySpace());
 
-    printer << "<"
-            << "loc=" << locStr
-            << ", dtype=";
+    printer << "<" << locStr << ", ";
+    auto printDim = [&](int64_t dim) {
+      if (dim < 0)
+        printer << "?";
+      else
+        printer << dim;
+    };
+    printDim(rows);
+    printer << "x";
+    printDim(cols);
+    printer << "x";
     printer.printType(getElementType());
-
-    auto blayout = llvm::dyn_cast<BLayoutAttr>(cfg.getBLayout());
-    auto slayout = llvm::dyn_cast<SLayoutAttr>(cfg.getSLayout());
 
     auto vs = getValidShape(); // ArrayRef<int64_t>
     int64_t vrow = rows;
     int64_t vcol = cols;
-
     if (vs.size() >= 2) {
-        vrow = vs[0];
-        vcol = vs[1];
+      vrow = vs[0];
+      vcol = vs[1];
     }
-    printer << ", rows=" << rows
-            << ", cols=" << cols;
-    printer << ", v_row=";
-    if (vrow < 0) printer << "?";
-    else printer << vrow;
+    if (!(vrow == rows && vcol == cols)) {
+      printer << ", valid=";
+      printDim(vrow);
+      printer << "x";
+      printDim(vcol);
+    }
 
-    printer << ", v_col=";
-    if (vcol < 0) printer << "?";
-    else printer << vcol;
+    auto blayout = llvm::dyn_cast<BLayoutAttr>(cfg.getBLayout());
+    auto slayout = llvm::dyn_cast<SLayoutAttr>(cfg.getSLayout());
+    if (cfg.getBLayout() != defCfg.getBLayout())
+      printer << ", blayout=" << stringifyBLayout(blayout.getValue());
+    if (cfg.getSLayout() != defCfg.getSLayout())
+      printer << ", slayout=" << stringifySLayout(slayout.getValue());
+    if (cfg.getSFractalSize() != defCfg.getSFractalSize())
+      printer << ", fractal=" << cfg.getSFractalSize().getInt();
+    if (cfg.getPad() != defCfg.getPad())
+      printer << ", pad=" << stringifyLocFromPad(cfg.getPad());
 
-    printer << ", blayout=" << stringifyBLayout(blayout.getValue())
-        << ", slayout=" << stringifySLayout(slayout.getValue())
-        << ", fractal=" << cfg.getSFractalSize().getInt()
-        << ", pad=" << stringifyLocFromPad(cfg.getPad())
-        << ">";
+    printer << ">";
 }
