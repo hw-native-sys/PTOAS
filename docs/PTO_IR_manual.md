@@ -4485,7 +4485,8 @@ pto.tcmp ins(<src0>, <src1> {cmpMode = <mode>} : <type0>, <type1>)
   - Output type must be `i8`.
   - `src0/src1/dst` must use `loc=vec`.
   - Valid bounds: `src valid row <= src.rows` and `src valid column <= src.cols`.
-  - `src0` and `dst` must have the same valid region: `src0 valid row == dst valid row` and `src0 valid column == dst valid column`.
+  - `src0` and `dst` must have the same valid region: 
+      `src0 valid row == src1 valid row == dst valid row` and `src0 valid column == src1 valid column`.
 - **Implementation checks (A5)**:
   - Input type must be one of: `i32`, `i16`, `i8`, `f32`, `f16`.
 

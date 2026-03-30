@@ -248,8 +248,20 @@ bool mlir::pto::isTargetArchA5(Operation *op) {
 }
 
 static VerifierTargetArch getVerifierTargetArch(Operation *op) {
-  return isTargetArchA5(op) ? VerifierTargetArch::A5
+  if (auto archName = getVerifierArchName(op)) {
+    return archName->equals_insensitive("a5") ? VerifierTargetArch::A5
                             : VerifierTargetArch::A2A3;
+  }
+
+  switch (getPTOParserTargetArch()) {
+  case PTOParserTargetArch::A5:
+    return VerifierTargetArch::A5;
+  case PTOParserTargetArch::A3:
+  case PTOParserTargetArch::Unspecified:
+    return VerifierTargetArch::A2A3;
+  }
+
+  return VerifierTargetArch::A2A3;
 }
 
 static std::optional<StringRef> getVerifierArchName(Operation *op) {
@@ -2627,17 +2639,20 @@ LogicalResult pto::TCmpOp::verify() {
       return emitOpError("expects src0 and src1 to have the same element type");
     if (!(e0.isInteger(32) || e0.isF16() || e0.isF32()))
       return emitOpError("expects A2/A3 tcmp input element type to be i32/f16/f32");
-    if (auto it = dyn_cast<IntegerType>(ed)) {
-      if (it.getWidth() != 8)
-        return emitOpError("expects dst element type to be i8");
-    } else {
+    if (!ed.isInteger(8))
       return emitOpError("expects dst element type to be i8");
-    }
 
-    if (getShapeVec(t0) != getShapeVec(t1) || getShapeVec(t0) != getShapeVec(td))
-      return emitOpError("expects src0, src1, and dst to have the same shape");
-    if (failed(verifyTileBufSameValidShape(*this, t0, td, "src0", "dst")))
-      return failure();
+    auto valid0 = getValidShapeVec(t0);
+    auto valid1 = getValidShapeVec(t1);
+    auto validd = getValidShapeVec(td);
+    if (valid0.size() != 2 || valid1.size() != 2 || validd.size() != 2)
+      return emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+    if (!hasCompatibleKnownExtent(valid0[0], valid1[0]))
+      return emitOpError("expects src0 and src1 to have the same valid row");
+    if (!hasCompatibleKnownExtent(valid0[1], valid1[1]))
+      return emitOpError("expects src0 and src1 to have the same valid column");
+    if (!hasCompatibleKnownExtent(valid0[0], validd[0]))
+      return emitOpError("expects src0 valid row to equal dst valid row");
     return success();
   };
 
