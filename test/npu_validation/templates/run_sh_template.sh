@@ -11,7 +11,7 @@ set -euo pipefail
 
 RUN_MODE="@RUN_MODE@"
 SOC_VERSION="@SOC_VERSION@"
-GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
+GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|npu_precision|skip
 BUILD_DIR="${BUILD_DIR:-build}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -110,6 +110,19 @@ copy_outputs_as_golden() {
   done
 }
 
+has_reference_golden_outputs() {
+  local found=0
+  if [[ -f "${ROOT_DIR}/outputs.txt" ]]; then
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      found=1
+      [[ -f "${ROOT_DIR}/golden_${name}.bin" ]] || return 1
+    done < "${ROOT_DIR}/outputs.txt"
+    [[ "${found}" -eq 1 ]] && return 0
+  fi
+  compgen -G "${ROOT_DIR}/golden_*.bin" > /dev/null
+}
+
 case "${GOLDEN_MODE}" in
   sim)
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@_sim"
@@ -131,6 +144,19 @@ case "${GOLDEN_MODE}" in
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@"
     COMPARE_STRICT=1 python3 "${ROOT_DIR}/compare.py"
     ;;
+  npu_precision)
+    if [[ "${RUN_MODE}" != "npu" ]]; then
+      echo "[ERROR] GOLDEN_MODE=npu_precision requires RUN_MODE=npu" >&2
+      exit 2
+    fi
+    python3 "${ROOT_DIR}/golden.py"
+    if ! has_reference_golden_outputs; then
+      echo "[ERROR] GOLDEN_MODE=npu_precision requires golden.py to generate golden_*.bin" >&2
+      exit 2
+    fi
+    LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@"
+    COMPARE_STRICT=1 python3 "${ROOT_DIR}/compare.py"
+    ;;
   skip)
     if [[ "${RUN_MODE}" == "npu" ]]; then
       python3 "${ROOT_DIR}/golden.py"
@@ -139,7 +165,7 @@ case "${GOLDEN_MODE}" in
     echo "[WARN] compare skipped (GOLDEN_MODE=skip)"
     ;;
   *)
-    echo "[ERROR] Unknown GOLDEN_MODE=${GOLDEN_MODE} (expected: sim|npu|skip)" >&2
+    echo "[ERROR] Unknown GOLDEN_MODE=${GOLDEN_MODE} (expected: sim|npu|npu_precision|skip)" >&2
     exit 2
     ;;
 esac
