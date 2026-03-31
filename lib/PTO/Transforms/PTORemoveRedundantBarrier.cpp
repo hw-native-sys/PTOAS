@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h" 
@@ -62,6 +57,21 @@ bool isPipeUsedInRegion(Region &region, Attribute targetPipe) {
 // 向后扫描：检查 targetPipe 在当前 Block 后续是否"真正"活跃
 // WaitOp 不再被视为活跃标志。
 // 如果一个 Pipe 后面只剩 Wait，说明它已经完成了工作，发给它的信号是多余的。
+static bool hasPipelineActivityAfterOp(Operation *parentOp, Attribute targetPipe) {
+    Block *parentBlock = parentOp ? parentOp->getBlock() : nullptr;
+    if (!parentBlock)
+      return false;
+    for (auto it = std::next(parentOp->getIterator()); it != parentBlock->end(); ++it) {
+        if (isResourceOp(&*it, targetPipe))
+          return true;
+        if (it->getNumRegions() > 0)
+          return true;
+        if (isa<func::ReturnOp>(&*it))
+          return false;
+    }
+    return false;
+}
+
 bool isPipelineActiveFuture(Block *block, Block::iterator startIt, Attribute targetPipe) {
     for (auto it = startIt; it != block->end(); ++it) {
         Operation *op = &*it;
@@ -81,25 +91,7 @@ bool isPipelineActiveFuture(Block *block, Block::iterator startIt, Attribute tar
         if (op->hasTrait<OpTrait::IsTerminator>()) {
             // 如果是 Return，肯定死了
             if (isa<func::ReturnOp>(op)) return false;
-            
-            // 如果是 Yield (scf.if / scf.for)，我们需要看 Parent Block 的后续
-            // 这是一个简单的单层 Lookahead，防止 Set 被误删
-            if (auto parentOp = block->getParentOp()) {
-                Block *parentBlock = parentOp->getBlock();
-                if (parentBlock) {
-                    // 从 Parent Op 的下一条指令开始查
-                    for (auto pIt = std::next(parentOp->getIterator()); pIt != parentBlock->end(); ++pIt) {
-                        if (isResourceOp(&*pIt, targetPipe)) return true;
-                        
-                        // 如果外面还有嵌套，理论上要继续递归，这里保守返回 true
-                        if (pIt->getNumRegions() > 0) return true; 
-                        
-                        // 如果遇到 Return，说明后面真没了
-                        if (isa<func::ReturnOp>(&*pIt)) return false;
-                    }
-                }
-            }
-            return false; // 如果 Parent Block 后面也没东西，那就是死了
+            return hasPipelineActivityAfterOp(block->getParentOp(), targetPipe);
         }
     }
     return false;

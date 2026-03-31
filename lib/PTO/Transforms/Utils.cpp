@@ -6,13 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/IR/PTO.h"
 #include "Utils.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -59,7 +55,8 @@ void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
 
   if (auto curMemScope = dyn_cast_if_present<AddressSpaceAttr>(
           dyn_cast<BaseMemRefType>(type).getMemorySpace())) {
-    assert(curMemScope == targetMemScope);
+    if (curMemScope != targetMemScope)
+      llvm::report_fatal_error("memref scope mismatch while propagating PTO address space");
     return;
   }
 
@@ -207,7 +204,8 @@ std::optional<int64_t> getStaticTotalSize(const ArrayRef<int64_t> &shapes) {
 }
 
 uint64_t AlignUp(uint64_t lhs, uint64_t rhs) {
-  assert(rhs != 0);
+  if (rhs == 0)
+    return lhs;
   if (lhs % rhs != 0) {
     lhs += rhs - (lhs % rhs);
   }
@@ -301,7 +299,8 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
 }
 
 LoopLikeOpInterface getParentLoop(Value val) {
-  assert(val.getDefiningOp() && "val should have defining op.");
+  if (!val.getDefiningOp())
+    return nullptr;
 
   // Firstly, get parent loop
   LoopLikeOpInterface parentLoop =

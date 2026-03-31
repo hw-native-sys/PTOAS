@@ -19,6 +19,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
 #include <optional>
@@ -353,14 +354,17 @@ void MemLivenessAnalysis::UpdateForOpBufferAlias(scf::ForOp forOp) {
     return;
   }
   if (!forOp.getRegionIterArgs().empty()) {
-    assert(forOp.getYieldedValues().size() == forOp.getRegionIterArgs().size());
-    assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
+    if (forOp.getYieldedValues().size() != forOp.getRegionIterArgs().size() ||
+        forOp.getInitArgs().size() != forOp.getRegionIterArgs().size()) {
+      llvm::report_fatal_error("scf.for alias sizes are inconsistent");
+    }
     for (auto [i, arg] : llvm::enumerate(forOp.getRegionIterArgs())) {
       // yielded values alias region iter args.
       UpdateBufferAlias(forOp.getYieldedValues()[i], arg);
     }
   }
-  assert(forOp->getResults().size() == forOp.getYieldedValues().size());
+  if (forOp->getResults().size() != forOp.getYieldedValues().size())
+    llvm::report_fatal_error("scf.for result/yield sizes are inconsistent");
   for (auto [i, arg] : llvm::enumerate(forOp.getYieldedValues())) {
     // forOp result values alias region iter yielded values.
     UpdateBufferAlias(forOp->getResult(i), arg);
@@ -389,7 +393,8 @@ void MemLivenessAnalysis::UpdateForOpInitArgsAlias(scf::ForOp forOp) {
   if (forOp.getInitArgs().empty()) {
     return;
   }
-  assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
+  if (forOp.getInitArgs().size() != forOp.getRegionIterArgs().size())
+    llvm::report_fatal_error("scf.for init/iter-arg sizes are inconsistent");
   for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
     // init args alias region iter args.
     UpdateBufferAlias(forOp.getRegionIterArgs()[i], arg);
@@ -401,7 +406,8 @@ void MemLivenessAnalysis::UpdateIfOpBufferAlias(scf::IfOp ifOp,
   if (ifOp.getResults().empty()) {
     return;
   }
-  assert(ifOp->getResults().size() == yieldOp->getOperands().size());
+  if (ifOp->getResults().size() != yieldOp->getOperands().size())
+    llvm::report_fatal_error("scf.if result/yield sizes are inconsistent");
   for (auto [i, arg] : llvm::enumerate(yieldOp->getOperands())) {
     // Multiple buffers involved, requiring one-to-one correspondence.
     UpdateBufferAlias(ifOp->getResult(i), arg);
@@ -457,7 +463,8 @@ SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(scf::ForOp forOp,
 LogicalResult
 MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
   auto allocOp = dyn_cast<memref::AllocOp>(op);
-  assert(allocOp && "must be alloc op");
+  if (!allocOp)
+    return op->emitError("must be alloc op"), failure();
   auto memorySpaceAttr = GetBufferSpaceAttr(allocOp.getResult());
   if (isLocalBuffer(memorySpaceAttr)) {
     return success();
@@ -629,7 +636,8 @@ BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
                                                    Value operand) {
   auto memorySpaceAttr = GetBufferSpaceAttr(operand);
   if (isLocalMemPlan() && isLocalBuffer(memorySpaceAttr)) {
-    assert(memorySpaceAttr.has_value() && "buffer must has space!");
+    if (!memorySpaceAttr.has_value())
+      llvm::report_fatal_error("local buffer must have memory space");
     return GetBufferInfo(op, operand,
                          memorySpaceAttr.value().getAddressSpace());
   }
@@ -647,8 +655,8 @@ BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
   bufferInfo.bufferType = memRefType.getElementType();
   std::optional<int64_t> totalStaticSize =
       getStaticTotalSize(memRefType.getShape());
-  assert(totalStaticSize.has_value() &&
-         "Failed to obtain op buffer shape size!");
+  if (!totalStaticSize.has_value())
+    llvm::report_fatal_error("failed to obtain buffer static shape size");
   bufferInfo.constBits =
       totalStaticSize.value() *
       static_cast<int64_t>(memRefType.getElementTypeBitWidth());
@@ -673,8 +681,8 @@ void MemLivenessAnalysis::GenerateBufferLife() {
     // Time given to buffer end.
     for (const Value &killBuffer : it->second.kill) {
       auto iter = buffer2Life.find(killBuffer);
-      assert(iter != buffer2Life.end() &&
-             "buffer has not been generated before! ");
+      if (iter == buffer2Life.end())
+        llvm::report_fatal_error("buffer lifetime killed before generation");
       iter->second->freeTime = scopeTime;
     }
     scopeTime++;
@@ -713,20 +721,20 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
       continue;
     if (hasTouchOp[operationSeq->operation]) {
       continue;
-    }
-    for (const Value &genBuffer : it->second.gen) {
-      auto genBufferIter = bufferInfos.find(genBuffer);
-      assert(genBufferIter != bufferInfos.end() &&
-             "genBuffer should be find in bufferInfos");
-      if (genBufferIter->second.ignoreInplace) {
-        continue;
       }
-      for (const Value &killBuffer : it->second.kill) {
-        auto killBufferIter = bufferInfos.find(killBuffer);
-        assert(killBufferIter != bufferInfos.end() &&
-               "killBuffer should be find in bufferInfos");
-        if (killBufferIter->second.ignoreInplace) {
+      for (const Value &genBuffer : it->second.gen) {
+        auto genBufferIter = bufferInfos.find(genBuffer);
+        if (genBufferIter == bufferInfos.end())
+          llvm::report_fatal_error("gen buffer missing from buffer info map");
+        if (genBufferIter->second.ignoreInplace) {
           continue;
+        }
+        for (const Value &killBuffer : it->second.kill) {
+          auto killBufferIter = bufferInfos.find(killBuffer);
+          if (killBufferIter == bufferInfos.end())
+            llvm::report_fatal_error("kill buffer missing from buffer info map");
+          if (killBufferIter->second.ignoreInplace) {
+            continue;
         }
 
         bool bufferSizeMatch =
@@ -842,7 +850,8 @@ void MemPlan::GenerateStorageEntry() {
 void MemPlan::PrintSuccessfulAllocatedMaxBits() {
   auto it = memscope2rootStorageEntry.find(pto::AddressSpace::VEC);
   if (it != memscope2rootStorageEntry.end()) {
-    assert(it->second != nullptr);
+    if (!it->second)
+      llvm::report_fatal_error("missing root storage entry for VEC scope");
     uint64_t ubAllocBits = it->second->alignedConstBits + it->second->bitsOffset;
     for (auto& child : it->second->mergedChildren) {
       ubAllocBits = std::max(ubAllocBits, child->bitsOffset + child->alignedConstBits);
@@ -853,9 +862,12 @@ void MemPlan::PrintSuccessfulAllocatedMaxBits() {
 }
 
 void MemPlan::ValidateParameters(std::unique_ptr<StorageEntry> &e) const {
-  assert(e->bufInfo->operation && "Unrecognized legal define operation !");
-  assert(e->bufInfo->constBits >= 0U && "recognized illegal memory sizes !");
-  assert(!e->bufferLifeVec.empty() && "Unrecognized buffer's life time !");
+  if (!e->bufInfo->operation)
+    llvm::report_fatal_error("storage entry missing defining operation");
+  if (e->bufInfo->constBits < 0U)
+    llvm::report_fatal_error("storage entry has invalid memory size");
+  if (e->bufferLifeVec.empty())
+    llvm::report_fatal_error("storage entry missing lifetime information");
 }
 
 void MemPlan::UpdateBuffer2Offsets() {
@@ -897,8 +909,8 @@ void MemPlan::MergeInplaceSE() {
       // already same storageEntry, no need to inplace.
       continue;
     }
-    assert(genSE != nullptr && killSE != nullptr &&
-           " genSE and killSE should be valid");
+    if (genSE == nullptr || killSE == nullptr)
+      llvm::report_fatal_error("invalid storage entry during inplace merge");
     BufferLifeVec mergedBufferLifeVec;
     mergedBufferLifeVec.insert(mergedBufferLifeVec.end(),
                                genSE->bufferLifeVec.begin(),
@@ -1014,7 +1026,8 @@ bool MemPlan::IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
                                         size_t alignUnit) {
   auto iter =
       bufferScope2RequiredSize.find(rootStorageEntry->bufInfo->bufferScope);
-  assert(iter != bufferScope2RequiredSize.end());
+  if (iter == bufferScope2RequiredSize.end())
+    llvm::report_fatal_error("missing required-size entry for buffer scope");
   if (iter->second < restBufferSize) {
     PlanBuffersWithoutReuse(rootStorageEntry, alignUnit);
     return true;
@@ -1393,7 +1406,8 @@ MemPlan::GetBufferParentLoop(const SmallVector<Value> &buffers) {
   llvm::SmallSet<LoopLikeOpInterface, 1> parentLoopVec;
   for (auto buffer : buffers) {
     if (!buffer.getDefiningOp()) {
-      assert(isa<scf::ForOp>(buffer.getParentBlock()->getParentOp()));
+      if (!isa<scf::ForOp>(buffer.getParentBlock()->getParentOp()))
+        llvm::report_fatal_error("expected loop-carried block argument");
       // Init args and region iter arg are inplace, ignore Region Iter Arg
       // without DefineOp.
       continue;
@@ -1495,7 +1509,8 @@ void MemPlan::SpecAllocRelationPongEntry(MemBoundList &outline, PlanRecHis &his,
       if (e->multiBufferNum == 2 && e->relationPongEntry) {
         pongStorageEntry = e->relationPongEntry;
       }
-      assert(pongStorageEntry && "PongStorage Entry not found!");
+      if (!pongStorageEntry)
+        llvm::report_fatal_error("pong storage entry not found");
       UpdateOutline(outline, his, pongStorageEntry,
                     OutlineSectionInfo(start, end, size, true), SPEC_LEVEL_1);
       return;
@@ -1816,7 +1831,8 @@ void MemPlan::ReportAllocatedEntryDebugInfo(StorageEntry *rootStorageEntry) {
       LDBG("\n");
     }
     size_t num = allocatedEntry.size() - 1;
-    assert(rootStorageEntry->mergedChildren.size() > num);
+    if (rootStorageEntry->mergedChildren.size() <= num)
+      llvm::report_fatal_error("missing failed storage entry");
     const StorageEntry *failedSe = rootStorageEntry->mergedChildren[num];
     printRecord(failedSe);
     LDBG("alloc fail,because exceed bound of memory \n"

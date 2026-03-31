@@ -25,13 +25,8 @@ using namespace mlir::pto;
 
 namespace {} // namespace
 
-LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
-    memref::AllocOp op, PatternRewriter &rewriter) const {
-  const auto &currentMemRefType = cast<BaseMemRefType>(op.getType());
-
-  // Preserve tile config carried by the downstream bind_tile user. Losing this
-  // metadata here makes PointerCast lowering fall back to RowMajor defaults,
-  // which can generate illegal intermediate TRESHAPE sequences.
+namespace {
+static TileBufConfigAttr inferBindTileConfig(memref::AllocOp op) {
   TileBufConfigAttr configAttr;
   for (Operation *user : op.getResult().getUsers()) {
     auto bind = dyn_cast<pto::BindTileOp>(user);
@@ -47,12 +42,15 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
       break;
     }
   }
-  
+  return configAttr;
+}
+
+static SmallVector<uint64_t> getAllocatedOffsets(memref::AllocOp op,
+                                                 BaseMemRefType memRefType,
+                                                 const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+                                                 uint64_t &fallbackNextOffset) {
   constexpr uint64_t kAlign = 4096;
   auto iter = buffer2Offsets.find(op.getResult());
-
-  // If MemPlan didn't assign an address, synthesize a unique, aligned offset so
-  // downstream PointerCast lowering won't crash on empty addrs.
   SmallVector<uint64_t> offsets;
   if (iter != buffer2Offsets.end())
     offsets = iter->second;
@@ -61,12 +59,15 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
     // Estimate buffer size (best-effort). Most PTO tile buffers are 32x32 and
     // naturally align to 4096 bytes.
     uint64_t bytes = kAlign;
-    if (auto memrefTy = dyn_cast<MemRefType>(currentMemRefType)) {
+    if (auto memrefTy = dyn_cast<MemRefType>(memRefType)) {
       uint64_t elemBytes = 0;
       Type elemTy = memrefTy.getElementType();
-      if (elemTy.isF16()) elemBytes = 2;
-      else if (elemTy.isF32()) elemBytes = 4;
-      else if (auto it = dyn_cast<IntegerType>(elemTy)) elemBytes = it.getWidth() / 8;
+      if (elemTy.isF16())
+        elemBytes = 2;
+      else if (elemTy.isF32())
+        elemBytes = 4;
+      else if (auto it = dyn_cast<IntegerType>(elemTy))
+        elemBytes = it.getWidth() / 8;
 
       if (elemBytes != 0) {
         uint64_t numel = 1;
@@ -87,7 +88,29 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
     fallbackNextOffset += std::max<uint64_t>(stride, kAlign);
     offsets.push_back(off);
   }
+  return offsets;
+}
 
+static std::pair<Value, Value> getDynamicValidShapeValues(memref::AllocOp op) {
+  Value vRow;
+  Value vCol;
+  auto dynSizes = op.getDynamicSizes();
+  if (dynSizes.size() >= 2) {
+    vRow = dynSizes[0];
+    vCol = dynSizes[1];
+  } else if (dynSizes.size() == 1) {
+    vCol = dynSizes[0];
+  }
+  return {vRow, vCol};
+}
+} // namespace
+
+LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
+    memref::AllocOp op, PatternRewriter &rewriter) const {
+  const auto &currentMemRefType = cast<BaseMemRefType>(op.getType());
+  TileBufConfigAttr configAttr = inferBindTileConfig(op);
+  SmallVector<uint64_t> offsets = getAllocatedOffsets(
+      op, currentMemRefType, buffer2Offsets, fallbackNextOffset);
   SmallVector<Value> addrs;
   addrs.reserve(offsets.size());
   for (uint64_t offset : offsets) {
@@ -96,35 +119,10 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
     addrs.push_back(constantIntOffsetOp);
   }
 
-  // [修改 1] 从 ValueRange 中拆解出 row 和 col
-  // memref.alloc 的 getDynamicSizes() 返回的是变长列表。
-  // 既然我们只支持 2D Tile，且如果是动态 shape 通常两个维度都是动态的 (?x?)，
-  // 我们直接按顺序提取。
-  Value vRow, vCol;
-  auto dynSizes = op.getDynamicSizes();
-  
-  if (dynSizes.size() >= 2) {
-      vRow = dynSizes[0];
-      vCol = dynSizes[1];
-  } else if (dynSizes.size() == 1) {
-      // 极其罕见的混合情况 (例如 32x?)，视具体需求处理，这里默认取第一个
-      // 或者根据维度索引判断是 row 还是 col，这里暂时从简
-      vCol = dynSizes[0]; 
-  }
-
-  // [修改 2] 调用新的 Builder 签名
-  // 1. ValueRange(addrs) -> 传递物理地址列表
-  // 2. vRow ? vRow : Value() -> 传递 Value 对象（如果为空则传空 Value）
-  // 3. TileBufConfigAttr() -> 传递空 Attribute 对象 (不能传 nullptr)
-  
+  auto [vRow, vCol] = getDynamicValidShapeValues(op);
   auto ptoPointerCastOp = rewriter.create<pto::PointerCastOp>(
-      op.getLoc(), 
-      currentMemRefType, 
-      ValueRange(addrs),      // addrs
-      vRow ? vRow : Value(),  // valid_row
-      vCol ? vCol : Value(),  // valid_col
-      configAttr              // preserve bind_tile config when available
-  );
+      op.getLoc(), currentMemRefType, ValueRange(addrs), vRow ? vRow : Value(),
+      vCol ? vCol : Value(), configAttr);
 
   rewriter.replaceOp(op, ptoPointerCastOp->getResults());
   return success();

@@ -270,87 +270,113 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
 //   PTOAS__EVENTID_ARRAY_LOAD(arr, idx)     -> arr[idx]
 //   PTOAS__EVENTID_ARRAY_STORE(arr, idx, v) -> arr[idx] = v
 // --------------------------------------------------------------------------
+struct ParsedMarkerCall {
+  size_t markerPos = std::string::npos;
+  size_t rparenPos = std::string::npos;
+  llvm::SmallVector<llvm::StringRef, 4> args;
+};
+
+static bool parseMarkerArgs(llvm::StringRef argsRef,
+                            llvm::SmallVectorImpl<llvm::StringRef> &args) {
+  size_t partBegin = 0;
+  int parenDepth = 0;
+  for (size_t i = 0; i < argsRef.size(); ++i) {
+    char c = argsRef[i];
+    if (c == '(') {
+      ++parenDepth;
+      continue;
+    }
+    if (c == ')') {
+      if (parenDepth > 0)
+        --parenDepth;
+      continue;
+    }
+    if (c == ',' && parenDepth == 0) {
+      args.push_back(argsRef.slice(partBegin, i).trim());
+      partBegin = i + 1;
+    }
+  }
+  if (partBegin > argsRef.size())
+    return false;
+  args.push_back(argsRef.drop_front(partBegin).trim());
+  return true;
+}
+
+static std::optional<ParsedMarkerCall>
+findNextMarkerCall(const std::string &cpp, llvm::StringRef marker,
+                   size_t searchPos) {
+  ParsedMarkerCall call;
+  call.markerPos = cpp.find(marker.str(), searchPos);
+  if (call.markerPos == std::string::npos)
+    return std::nullopt;
+
+  size_t lparenPos = call.markerPos + marker.size();
+  if (lparenPos >= cpp.size() || cpp[lparenPos] != '(')
+    return ParsedMarkerCall{call.markerPos, std::string::npos, {}};
+
+  size_t argsBegin = lparenPos + 1;
+  int parenDepth = 0;
+  for (size_t i = argsBegin; i < cpp.size(); ++i) {
+    char c = cpp[i];
+    if (c == '(') {
+      ++parenDepth;
+      continue;
+    }
+    if (c != ')')
+      continue;
+    if (parenDepth == 0) {
+      call.rparenPos = i;
+      break;
+    }
+    --parenDepth;
+  }
+  if (call.rparenPos == std::string::npos)
+    return call;
+
+  llvm::StringRef argsRef(cpp.data() + argsBegin, call.rparenPos - argsBegin);
+  if (!parseMarkerArgs(argsRef, call.args))
+    call.args.clear();
+  return call;
+}
+
 static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
                                       unsigned expectedNumArgs) {
   size_t searchPos = 0;
   bool changed = false;
   while (true) {
-    size_t markerPos = cpp.find(marker.str(), searchPos);
-    if (markerPos == std::string::npos)
+    auto call = findNextMarkerCall(cpp, marker, searchPos);
+    if (!call)
       break;
-
-    size_t lparenPos = markerPos + marker.size();
-    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
-      searchPos = markerPos + marker.size();
+    if (call->rparenPos == std::string::npos) {
+      searchPos = call->markerPos + marker.size();
       continue;
     }
-
-    // Find the matching ')' for this call, tracking nested parentheses.
-    size_t argsBegin = lparenPos + 1;
-    int parenDepth = 0;
-    size_t rparenPos = std::string::npos;
-    for (size_t i = argsBegin; i < cpp.size(); ++i) {
-      char c = cpp[i];
-      if (c == '(') {
-        ++parenDepth;
-      } else if (c == ')') {
-        if (parenDepth == 0) {
-          rparenPos = i;
-          break;
-        }
-        --parenDepth;
-      }
-    }
-    if (rparenPos == std::string::npos) {
-      // Unbalanced parentheses; stop trying to rewrite.
-      break;
-    }
-
-    llvm::StringRef argsRef(cpp.data() + argsBegin, rparenPos - argsBegin);
-    llvm::SmallVector<llvm::StringRef, 4> args;
-    size_t partBegin = 0;
-    parenDepth = 0;
-    for (size_t i = 0; i < argsRef.size(); ++i) {
-      char c = argsRef[i];
-      if (c == '(') {
-        ++parenDepth;
-      } else if (c == ')') {
-        if (parenDepth > 0)
-          --parenDepth;
-      } else if (c == ',' && parenDepth == 0) {
-        args.push_back(argsRef.slice(partBegin, i).trim());
-        partBegin = i + 1;
-      }
-    }
-    if (partBegin <= argsRef.size())
-      args.push_back(argsRef.drop_front(partBegin).trim());
-
-    if (args.size() != expectedNumArgs) {
-      searchPos = rparenPos + 1;
+    if (call->args.size() != expectedNumArgs) {
+      searchPos = call->rparenPos + 1;
       continue;
     }
 
     std::string replacement;
-    replacement.reserve(marker.size() + argsRef.size() + 16);
-    replacement.append(args[0].str());
+    replacement.reserve(marker.size() + 16);
+    replacement.append(call->args[0].str());
     replacement.push_back('.');
     replacement.append(memberName.str());
     replacement.push_back('(');
     if (expectedNumArgs == 1) {
-      // no args
     } else if (expectedNumArgs == 2) {
-      replacement.append(args[1].str());
+      replacement.append(call->args[1].str());
     } else if (expectedNumArgs == 3) {
-      replacement.append(args[1].str());
+      replacement.append(call->args[1].str());
       replacement.append(", ");
-      replacement.append(args[2].str());
+      replacement.append(call->args[2].str());
     }
     replacement.push_back(')');
 
-    cpp.replace(markerPos, (rparenPos - markerPos) + 1, replacement);
+    cpp.replace(call->markerPos, (call->rparenPos - call->markerPos) + 1,
+                replacement);
     changed = true;
-    searchPos = markerPos + replacement.size();
+    searchPos = call->markerPos + replacement.size();
   }
   return changed;
 }
@@ -452,69 +478,30 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
   size_t searchPos = 0;
   bool changed = false;
   while (true) {
-    size_t markerPos = cpp.find(marker.str(), searchPos);
-    if (markerPos == std::string::npos)
+    auto call = findNextMarkerCall(cpp, marker, searchPos);
+    if (!call)
       break;
-
-    size_t lparenPos = markerPos + marker.size();
-    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
-      searchPos = markerPos + marker.size();
+    if (call->rparenPos == std::string::npos) {
+      searchPos = call->markerPos + marker.size();
       continue;
     }
-
-    size_t argsBegin = lparenPos + 1;
-    int parenDepth = 0;
-    size_t rparenPos = std::string::npos;
-    for (size_t i = argsBegin; i < cpp.size(); ++i) {
-      char c = cpp[i];
-      if (c == '(') {
-        ++parenDepth;
-      } else if (c == ')') {
-        if (parenDepth == 0) {
-          rparenPos = i;
-          break;
-        }
-        --parenDepth;
-      }
-    }
-    if (rparenPos == std::string::npos) {
-      break;
-    }
-
-    llvm::StringRef argsRef(cpp.data() + argsBegin, rparenPos - argsBegin);
-    llvm::SmallVector<llvm::StringRef, 4> args;
-    size_t partBegin = 0;
-    parenDepth = 0;
-    for (size_t i = 0; i < argsRef.size(); ++i) {
-      char c = argsRef[i];
-      if (c == '(') {
-        ++parenDepth;
-      } else if (c == ')') {
-        if (parenDepth > 0)
-          --parenDepth;
-      } else if (c == ',' && parenDepth == 0) {
-        args.push_back(argsRef.slice(partBegin, i).trim());
-        partBegin = i + 1;
-      }
-    }
-    if (partBegin <= argsRef.size())
-      args.push_back(argsRef.drop_front(partBegin).trim());
-
-    if (args.size() != expectedNumArgs) {
-      searchPos = rparenPos + 1;
+    if (call->args.size() != expectedNumArgs) {
+      searchPos = call->rparenPos + 1;
       continue;
     }
 
     std::string replacement;
     if (isStore) {
-      replacement = (args[0] + "[" + args[1] + "] = " + args[2]).str();
+      replacement =
+          (call->args[0] + "[" + call->args[1] + "] = " + call->args[2]).str();
     } else {
-      replacement = (args[0] + "[" + args[1] + "]").str();
+      replacement = (call->args[0] + "[" + call->args[1] + "]").str();
     }
 
-    cpp.replace(markerPos, (rparenPos - markerPos) + 1, replacement);
+    cpp.replace(call->markerPos, (call->rparenPos - call->markerPos) + 1,
+                replacement);
     changed = true;
-    searchPos = markerPos + replacement.size();
+    searchPos = call->markerPos + replacement.size();
   }
   return changed;
 }
@@ -547,85 +534,64 @@ static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
   size_t searchPos = 0;
   bool changed = false;
   while (true) {
-    size_t markerPos = cpp.find("PTOAS__ADDPTR_TRACE", searchPos);
-    if (markerPos == std::string::npos)
+    auto call = findNextMarkerCall(cpp, "PTOAS__ADDPTR_TRACE", searchPos);
+    if (!call)
       break;
-
-    size_t lparenPos = markerPos + (sizeof("PTOAS__ADDPTR_TRACE") - 1);
-    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
-      searchPos = markerPos + 1;
+    if (call->rparenPos == std::string::npos) {
+      searchPos = call->markerPos + 1;
       continue;
     }
-
-    size_t argsBegin = lparenPos + 1;
-    int parenDepth = 0;
-    size_t rparenPos = std::string::npos;
-    for (size_t i = argsBegin; i < cpp.size(); ++i) {
-      char c = cpp[i];
-      if (c == '(') {
-        ++parenDepth;
-      } else if (c == ')') {
-        if (parenDepth == 0) {
-          rparenPos = i;
-          break;
-        }
-        --parenDepth;
-      }
-    }
-    if (rparenPos == std::string::npos) {
-      break;
-    }
-
-    llvm::StringRef argsRef(cpp.data() + argsBegin, rparenPos - argsBegin);
-    llvm::SmallVector<llvm::StringRef, 4> args;
-    size_t partBegin = 0;
-    parenDepth = 0;
-    for (size_t i = 0; i < argsRef.size(); ++i) {
-      char c = argsRef[i];
-      if (c == '(') {
-        ++parenDepth;
-      } else if (c == ')') {
-        if (parenDepth > 0)
-          --parenDepth;
-      } else if (c == ',' && parenDepth == 0) {
-        args.push_back(argsRef.slice(partBegin, i).trim());
-        partBegin = i + 1;
-      }
-    }
-    if (partBegin <= argsRef.size())
-      args.push_back(argsRef.drop_front(partBegin).trim());
-
-    if (args.size() != 3) {
-      searchPos = rparenPos + 1;
+    if (call->args.size() != 3) {
+      searchPos = call->rparenPos + 1;
       continue;
     }
 
     std::string replacement;
     if (showTrace) {
-      replacement.reserve(64 + argsRef.size());
+      replacement.reserve(64);
       replacement.append("/* ADDPTR_TRACE: ");
-      replacement.append(args[0].str());
+      replacement.append(call->args[0].str());
       replacement.append(" = ");
-      replacement.append(args[1].str());
+      replacement.append(call->args[1].str());
       replacement.append(" + ");
-      replacement.append(args[2].str());
+      replacement.append(call->args[2].str());
       replacement.append(" */");
     }
 
-    size_t replaceEnd = rparenPos;
+    size_t replaceEnd = call->rparenPos;
     if (!showTrace) {
-      size_t i = rparenPos + 1;
+      size_t i = call->rparenPos + 1;
       while (i < cpp.size() && std::isspace(static_cast<unsigned char>(cpp[i])))
         ++i;
       if (i < cpp.size() && cpp[i] == ';')
         replaceEnd = i;
     }
 
-    cpp.replace(markerPos, (replaceEnd - markerPos) + 1, replacement);
+    cpp.replace(call->markerPos, (replaceEnd - call->markerPos) + 1,
+                replacement);
     changed = true;
-    searchPos = markerPos + replacement.size();
+    searchPos = call->markerPos + replacement.size();
   }
   return changed;
+}
+
+static bool isGeneratedGlobalTensorDecl(llvm::StringRef trimmed,
+                                        llvm::StringRef &decl,
+                                        llvm::StringRef &varName) {
+  if (!trimmed.starts_with("GlobalTensor<") || !trimmed.ends_with(";") ||
+      trimmed.contains('=') || trimmed.contains('(')) {
+    return false;
+  }
+
+  decl = trimmed.drop_back().rtrim();
+  size_t lastWs = decl.find_last_of(" \t");
+  if (lastWs == llvm::StringRef::npos)
+    return false;
+  varName = decl.drop_front(lastWs + 1);
+  if (!varName.starts_with("v") || varName.size() <= 1)
+    return false;
+  return llvm::all_of(varName.drop_front(1),
+                      [](char c) { return std::isdigit(c); });
 }
 
 static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
@@ -652,33 +618,18 @@ static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
 
     llvm::StringRef trimmed = line.trim();
     bool rewritten = false;
-    if (trimmed.starts_with("GlobalTensor<") && trimmed.ends_with(";") &&
-        !trimmed.contains('=') && !trimmed.contains('(')) {
-      llvm::StringRef decl = trimmed.drop_back().rtrim();
-      size_t lastWs = decl.find_last_of(" \t");
-      if (lastWs != llvm::StringRef::npos) {
-        llvm::StringRef varName = decl.drop_front(lastWs + 1);
-        if (varName.starts_with("v") && varName.size() > 1) {
-          bool allDigits = true;
-          for (char c : varName.drop_front(1)) {
-            if (c < '0' || c > '9') {
-              allDigits = false;
-              break;
-            }
-          }
-          if (allDigits) {
-            size_t indentLen = line.find_first_not_of(" \t");
-            if (indentLen == std::string::npos)
-              indentLen = 0;
-            llvm::StringRef indent = line.take_front(indentLen);
+    llvm::StringRef decl;
+    llvm::StringRef varName;
+    if (isGeneratedGlobalTensorDecl(trimmed, decl, varName)) {
+      size_t indentLen = line.find_first_not_of(" \t");
+      if (indentLen == std::string::npos)
+        indentLen = 0;
+      llvm::StringRef indent = line.take_front(indentLen);
 
-            out.append(indent.str());
-            out.append(decl.str());
-            out.append("(nullptr);");
-            rewritten = true;
-          }
-        }
-      }
+      out.append(indent.str());
+      out.append(decl.str());
+      out.append("(nullptr);");
+      rewritten = true;
     }
 
     if (!rewritten)
@@ -917,6 +868,12 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
   cpp.swap(out);
 }
 
+static bool shouldDeclareVariablesAtTop(ModuleOp module) {
+  auto hasMultiBlockFunc = [](auto func) { return func.getBlocks().size() > 1; };
+  return llvm::any_of(module.getOps<func::FuncOp>(), hasMultiBlockFunc) ||
+         llvm::any_of(module.getOps<emitc::FuncOp>(), hasMultiBlockFunc);
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect>();
@@ -929,10 +886,8 @@ int main(int argc, char **argv) {
   registry.insert<mlir::scf::SCFDialect>();
 
   registry.insert<mlir::pto::PTODialect>();
-  //mlir::registerAllDialects(registry);
   arith::registerBufferizableOpInterfaceExternalModels(registry);
   tensor::registerBufferizableOpInterfaceExternalModels(registry);
-  //func::registerBufferizableOpInterfaceExternalModels(registry);
   pto::registerBufferizableOpInterfaceExternalModels(registry);
 
   registry.insert<emitc::EmitCDialect>();
@@ -1084,7 +1039,6 @@ int main(int argc, char **argv) {
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   pm.addPass(pto::createPTOViewToMemrefPass());
-  //pm.addPass(createInferPTOMemScopePass());
 
   if (effectiveLevel != PTOBuildLevel::Level3) {
     PlanMemoryOptions planMemoryOption;
@@ -1126,21 +1080,7 @@ int main(int argc, char **argv) {
   // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
   // multiple blocks, requiring variables to be declared at the top for valid
   // C++ emission.
-  bool declareVariablesAtTop = false;
-  for (auto func : module->getOps<func::FuncOp>()) {
-    if (func.getBlocks().size() > 1) {
-      declareVariablesAtTop = true;
-      break;
-    }
-  }
-  if (!declareVariablesAtTop) {
-    for (auto func : module->getOps<emitc::FuncOp>()) {
-      if (func.getBlocks().size() > 1) {
-        declareVariablesAtTop = true;
-        break;
-      }
-    }
-  }
+  bool declareVariablesAtTop = shouldDeclareVariablesAtTop(*module);
   if (failed(emitc::translateToCpp(*module, cppOS,
                                   /*declareVariablesAtTop=*/declareVariablesAtTop))) {
     llvm::errs() << "Error: Failed to emit C++.\n";

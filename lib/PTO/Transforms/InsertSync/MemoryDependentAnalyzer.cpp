@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
@@ -22,12 +17,9 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-static bool isTraceEnabled() {
-  return isInsertSyncDebugEnabled(InsertSyncDebugLevel::Trace);
-}
- 
-// [Debug] 打印 Value 详细信息
-static void printValueDebug(const char* tag, Value v) {
+static bool isTraceEnabled() { return isInsertSyncDebugEnabled(InsertSyncDebugLevel::Trace); }
+
+static void printValueDebug(const char *tag, Value v) {
   if (!isTraceEnabled())
     return;
   llvm::errs() << tag << ": ";
@@ -43,64 +35,44 @@ static void printValueDebug(const char* tag, Value v) {
   }
   llvm::errs() << " | Type: " << v.getType() << "\n";
 }
- 
-// [Fix & Debug] 增强版 GetRealRoot
+
+static Value peelRootValue(Value value, bool trace) {
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp) {
+    if (trace)
+      llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
+    return Value();
+  }
+  if (auto op = dyn_cast<memref::CollapseShapeOp>(defOp))
+    return op.getSrc();
+  if (auto op = dyn_cast<memref::ExpandShapeOp>(defOp))
+    return op.getSrc();
+  if (auto op = dyn_cast<memref::ViewOp>(defOp))
+    return op.getSource();
+  if (auto view = dyn_cast<ViewLikeOpInterface>(defOp))
+    return view.getViewSource();
+  if (auto cast = dyn_cast<memref::CastOp>(defOp))
+    return cast.getSource();
+  if (auto reCast = dyn_cast<memref::ReinterpretCastOp>(defOp))
+    return reCast.getSource();
+  if (trace)
+    llvm::errs() << "    -> Hit Alloc/Other [" << defOp->getName() << "]. Stop.\n";
+  return Value();
+}
+
 static Value GetRealRoot(Value v) {
   const bool trace = isTraceEnabled();
   if (trace) {
     llvm::errs() << "  [Trace] GetRealRoot Start:\n";
     printValueDebug("    Current", v);
   }
-  
-  int depth = 0;
-  const int maxDepth = 20;
- 
-  while (v && depth++ < maxDepth) {
-    Operation *defOp = v.getDefiningOp();
-    if (!defOp) {
-        if (trace)
-          llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
-        break; 
-    }
- 
-    if (auto op = dyn_cast<memref::CollapseShapeOp>(defOp)) {
-        if (trace)
-          llvm::errs() << "    -> Hit CollapseShapeOp. Peel off.\n";
-        v = op.getSrc();
-        continue;
-    }
-    if (auto op = dyn_cast<memref::ExpandShapeOp>(defOp)) {
-        if (trace)
-          llvm::errs() << "    -> Hit ExpandShapeOp. Peel off.\n";
-        v = op.getSrc();
-        continue;
-    }
-    if (auto op = dyn_cast<memref::ViewOp>(defOp)) {
-        if (trace)
-          llvm::errs() << "    -> Hit ViewOp. Peel off.\n";
-        v = op.getSource();
-        continue;
-    }
-    if (auto view = dyn_cast<ViewLikeOpInterface>(defOp)) {
-        if (trace)
-          llvm::errs() << "    -> Hit ViewLikeInterface. Peel off.\n";
-        v = view.getViewSource();
-        continue;
-    }
-    if (auto cast = dyn_cast<memref::CastOp>(defOp)) {
-        v = cast.getSource();
-        continue;
-    }
-    if (auto reCast = dyn_cast<memref::ReinterpretCastOp>(defOp)) {
-        v = reCast.getSource();
-        continue;
-    }
- 
-    if (trace) {
-      llvm::errs() << "    -> Hit Alloc/Other [" << defOp->getName()
-                   << "]. Stop.\n";
-    }
-    break;
+
+  constexpr int kMaxDepth = 20;
+  for (int depth = 0; v && depth < kMaxDepth; ++depth) {
+    Value peeled = peelRootValue(v, trace);
+    if (!peeled)
+      break;
+    v = peeled;
   }
   return v;
 }

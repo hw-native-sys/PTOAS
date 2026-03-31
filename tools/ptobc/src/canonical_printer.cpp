@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "ptobc/canonical_printer.h"
 
 #include <mlir/Dialect/Arith/IR/Arith.h>
@@ -189,6 +184,45 @@ static std::string canonicalConstBaseName(const std::string &imm, const std::str
   return base;
 }
 
+static bool findConstantDefinition(const std::vector<std::string> &lines,
+                                   const std::string &name, std::string &imm,
+                                   std::string &ty) {
+  for (const auto &line : lines) {
+    if (line.find('%' + name) == std::string::npos)
+      continue;
+    if (line.find("= arith.constant") == std::string::npos)
+      continue;
+    size_t pos = line.find('%');
+    if (pos == std::string::npos)
+      continue;
+    size_t end = pos + 1;
+    while (end < line.size() && isSSAIdentChar(line[end]))
+      ++end;
+    if (line.substr(pos + 1, end - (pos + 1)) != name)
+      continue;
+    return parseConstantLine(line, imm, ty);
+  }
+  return false;
+}
+
+static std::string getCanonicalSSAName(const std::vector<std::string> &lines,
+                                       const std::string &oldName,
+                                       std::unordered_map<std::string, int> &constCounts,
+                                       uint64_t &nextNonConst) {
+  std::string imm;
+  std::string ty;
+  if (!findConstantDefinition(lines, oldName, imm, ty))
+    return std::to_string(nextNonConst++);
+
+  std::string base = canonicalConstBaseName(imm, ty);
+  int &count = constCounts[base];
+  std::string newName = base;
+  if (count > 0)
+    newName += "_" + std::to_string(count);
+  ++count;
+  return newName;
+}
+
 static std::string canonicalizeSSANames(const std::string &printed) {
   auto lines = splitLinesPreserveEmpty(printed);
 
@@ -221,44 +255,10 @@ static std::string canonicalizeSSANames(const std::string &printed) {
   std::unordered_map<std::string, std::string> ren;
   ren.reserve(defs.size() * 2);
 
-  // Pre-scan constants for nicer `%c...` aliases.
   std::unordered_map<std::string, int> constCounts;
-
-  // Assign names in definition order, but keep constants named via their immediates.
   uint64_t nextNonConst = 0;
-
-  for (const auto &old : defs) {
-    // Find the line that defines this value to see if it is a constant.
-    // (Linear scan; ok for now.)
-    bool isConst = false;
-    std::string imm, ty;
-    for (const auto &ln : lines) {
-      // quick filter
-      if (ln.find('%' + old) == std::string::npos) continue;
-      if (ln.find("= arith.constant") == std::string::npos) continue;
-      // Must be the definition line.
-      size_t pos = ln.find('%');
-      if (pos == std::string::npos) continue;
-      size_t j = pos + 1;
-      while (j < ln.size() && isSSAIdentChar(ln[j])) ++j;
-      if (ln.substr(pos + 1, j - (pos + 1)) != old) continue;
-      if (parseConstantLine(ln, imm, ty)) {
-        isConst = true;
-      }
-      break;
-    }
-
-    if (isConst) {
-      std::string base = canonicalConstBaseName(imm, ty);
-      int &n = constCounts[base];
-      std::string name = base;
-      if (n > 0) name += "_" + std::to_string(n);
-      ++n;
-      ren.emplace(old, name);
-    } else {
-      ren.emplace(old, std::to_string(nextNonConst++));
-    }
-  }
+  for (const auto &old : defs)
+    ren.emplace(old, getCanonicalSSAName(lines, old, constCounts, nextNonConst));
 
   return renameSSAInText(printed, ren);
 }
