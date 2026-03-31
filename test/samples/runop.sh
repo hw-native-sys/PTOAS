@@ -240,15 +240,20 @@ process_one_dir() {
     mlir="${out_subdir}/${base}-pto-ir.pto"
     cpp="${out_subdir}/${base}-pto.cpp"
 
-    if ! "$python" "$f" > "$mlir"; then
+    local python_log="${out_subdir}/${base}-python.log"
+    if ! "$python" "$f" > "$mlir" 2>"${python_log}"; then
       if [[ $expect_fail -eq 1 ]]; then
         echo -e "${A}(${base}.py)\tXFAIL\tpython failed as expected"
         continue
       fi
       echo -e "${A}(${base}.py)\tFAIL\tpython failed: ${base}.py"
+      if [[ -s "${python_log}" ]]; then
+        sed 's/^/  /' "${python_log}" >&2
+      fi
       overall=1
       continue
     fi
+    rm -f "${python_log}"
 
     local pto_input="$mlir"
     ptobc_file="${out_subdir}/${base}.ptobc"
