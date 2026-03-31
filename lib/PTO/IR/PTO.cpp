@@ -577,11 +577,161 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
   p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"maskPattern"});
 }
 
+static void fillIndexTypes(OpAsmParser &parser, size_t count,
+                           SmallVectorImpl<Type> &types) {
+  types.assign(count, parser.getBuilder().getIndexType());
+}
+
+static bool allTypesAreIndex(TypeRange types) {
+  return llvm::all_of(types, [](Type ty) { return ty.isIndex(); });
+}
+
+static bool allOperandsAreIndex(ValueRange values) {
+  return llvm::all_of(values, [](Value value) { return value.getType().isIndex(); });
+}
+
+static ParseResult parseBracketedTypeList(OpAsmParser &parser,
+                                          SmallVectorImpl<Type> &types) {
+  if (parser.parseLSquare() || parser.parseTypeList(types) || parser.parseRSquare())
+    return failure();
+  return success();
+}
+
+static ParseResult verifyTypeCount(OpAsmParser &parser, ArrayRef<Type> types,
+                                   size_t expectedCount, StringRef label) {
+  if (types.size() != expectedCount) {
+    return parser.emitError(parser.getCurrentLocation())
+           << "expected " << expectedCount << " " << label << " type(s), got "
+           << types.size();
+  }
+  return success();
+}
+
+static void printTypeList(OpAsmPrinter &printer, TypeRange types) {
+  llvm::interleaveComma(types, printer, [&](Type ty) {
+    printer.printStrippedAttrOrType(ty);
+  });
+}
+
+static void printBracketedTypeList(OpAsmPrinter &printer, TypeRange types) {
+  printer << "[";
+  printTypeList(printer, types);
+  printer << "]";
+}
+
+ParseResult mlir::pto::AddPtrOp::parse(OpAsmParser &parser,
+                                       OperationState &result) {
+  OpAsmParser::UnresolvedOperand ptr;
+  OpAsmParser::UnresolvedOperand offset;
+  Type ptrTy;
+  Type resultTy;
+  Type offsetTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(ptr) || parser.parseComma() || parser.parseOperand(offset) ||
+      parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(ptrTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma()) && parser.parseType(offsetTy))
+    return failure();
+
+  if (parser.parseArrow() || parser.parseType(resultTy))
+    return failure();
+
+  result.addTypes(resultTy);
+  if (parser.resolveOperand(ptr, ptrTy, result.operands) ||
+      parser.resolveOperand(offset, offsetTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::AddPtrOp::print(OpAsmPrinter &p) {
+  p << " " << getPtr() << ", " << getOffset();
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getPtr().getType();
+  if (!getOffset().getType().isIndex())
+    p << ", " << getOffset().getType();
+  p << " -> " << getResult().getType();
+}
+
+ParseResult mlir::pto::LoadScalarOp::parse(OpAsmParser &parser,
+                                           OperationState &result) {
+  OpAsmParser::UnresolvedOperand ptr;
+  OpAsmParser::UnresolvedOperand offset;
+  Type ptrTy;
+  Type valueTy;
+  Type offsetTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(ptr) || parser.parseLSquare() || parser.parseOperand(offset) ||
+      parser.parseRSquare() || parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColonType(ptrTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma()) && parser.parseType(offsetTy))
+    return failure();
+
+  if (parser.parseArrow() || parser.parseType(valueTy))
+    return failure();
+
+  result.addTypes(valueTy);
+  if (parser.resolveOperand(ptr, ptrTy, result.operands) ||
+      parser.resolveOperand(offset, offsetTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::LoadScalarOp::print(OpAsmPrinter &p) {
+  p << " " << getPtr() << "[" << getOffset() << "]";
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getPtr().getType();
+  if (!getOffset().getType().isIndex())
+    p << ", " << getOffset().getType();
+  p << " -> " << getValue().getType();
+}
+
+ParseResult mlir::pto::StoreScalarOp::parse(OpAsmParser &parser,
+                                            OperationState &result) {
+  OpAsmParser::UnresolvedOperand value;
+  OpAsmParser::UnresolvedOperand ptr;
+  OpAsmParser::UnresolvedOperand offset;
+  Type ptrTy;
+  Type valueTy;
+  Type offsetTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(value) || parser.parseComma() || parser.parseOperand(ptr) ||
+      parser.parseLSquare() || parser.parseOperand(offset) || parser.parseRSquare() ||
+      parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(ptrTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma()) && parser.parseType(offsetTy))
+    return failure();
+
+  if (parser.parseComma() || parser.parseType(valueTy))
+    return failure();
+
+  if (parser.resolveOperand(value, valueTy, result.operands) ||
+      parser.resolveOperand(ptr, ptrTy, result.operands) ||
+      parser.resolveOperand(offset, offsetTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::StoreScalarOp::print(OpAsmPrinter &p) {
+  p << " " << getValue() << ", " << getPtr() << "[" << getOffset() << "]";
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getPtr().getType();
+  if (!getOffset().getType().isIndex())
+    p << ", " << getOffset().getType();
+  p << ", " << getValue().getType();
+}
+
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
   SmallVector<OpAsmParser::UnresolvedOperand, 4> shapeOps;
   SmallVector<OpAsmParser::UnresolvedOperand, 4> strideOps;
+  SmallVector<Type, 4> shapeTypes;
+  SmallVector<Type, 4> strideTypes;
 
   Type resultTy;
 
@@ -610,6 +760,19 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
   // : result-type
   if (parser.parseColonType(resultTy))
     return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parseBracketedTypeList(parser, shapeTypes) || parser.parseComma() ||
+        parseBracketedTypeList(parser, strideTypes))
+      return failure();
+    if (failed(verifyTypeCount(parser, shapeTypes, shapeOps.size(), "shape")) ||
+        failed(verifyTypeCount(parser, strideTypes, strideOps.size(), "stride")))
+      return failure();
+  } else {
+    fillIndexTypes(parser, shapeOps.size(), shapeTypes);
+    fillIndexTypes(parser, strideOps.size(), strideTypes);
+  }
+
   result.addTypes(resultTy);
 
   auto tvTy = llvm::dyn_cast<mlir::pto::TensorViewType>(resultTy);
@@ -625,11 +788,11 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
   if (parser.resolveOperand(ptr, ptrTy, result.operands))
     return failure();
 
-  // resolve shape/strides 为 index
-  Type indexTy = parser.getBuilder().getIndexType();
-  if (parser.resolveOperands(shapeOps, indexTy, result.operands))
+  if (parser.resolveOperands(shapeOps, shapeTypes, parser.getCurrentLocation(),
+                             result.operands))
     return failure();
-  if (parser.resolveOperands(strideOps, indexTy, result.operands))
+  if (parser.resolveOperands(strideOps, strideTypes, parser.getCurrentLocation(),
+                             result.operands))
     return failure();
 
   auto segAttr = parser.getBuilder().getDenseI32ArrayAttr(
@@ -654,6 +817,592 @@ void mlir::pto::MakeTensorViewOp::print(OpAsmPrinter &p) {
                         /*elidedAttrs=*/{"operandSegmentSizes"});
 
   p << " : " << getResult().getType();
+  if (!allOperandsAreIndex(getShape()) || !allOperandsAreIndex(getStrides())) {
+    p << ", ";
+    printBracketedTypeList(p, getShape().getTypes());
+    p << ", ";
+    printBracketedTypeList(p, getStrides().getTypes());
+  }
+}
+
+ParseResult mlir::pto::PartitionViewOp::parse(OpAsmParser &parser,
+                                              OperationState &result) {
+  OpAsmParser::UnresolvedOperand source;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> sizes;
+  SmallVector<Type, 4> offsetTypes;
+  SmallVector<Type, 4> sizeTypes;
+  Type sourceTy;
+  Type resultTy;
+
+  if (parser.parseOperand(source) || parser.parseComma() ||
+      parser.parseKeyword("offsets") || parser.parseEqual() || parser.parseLSquare() ||
+      parser.parseOperandList(offsets) || parser.parseRSquare() || parser.parseComma() ||
+      parser.parseKeyword("sizes") || parser.parseEqual() || parser.parseLSquare() ||
+      parser.parseOperandList(sizes) || parser.parseRSquare() ||
+      parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(sourceTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parseBracketedTypeList(parser, offsetTypes) || parser.parseComma() ||
+        parseBracketedTypeList(parser, sizeTypes))
+      return failure();
+    if (failed(verifyTypeCount(parser, offsetTypes, offsets.size(), "offset")) ||
+        failed(verifyTypeCount(parser, sizeTypes, sizes.size(), "size")))
+      return failure();
+  } else {
+    fillIndexTypes(parser, offsets.size(), offsetTypes);
+    fillIndexTypes(parser, sizes.size(), sizeTypes);
+  }
+
+  if (parser.parseArrow() || parser.parseType(resultTy))
+    return failure();
+
+  result.addTypes(resultTy);
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(
+                          {1, (int32_t)offsets.size(), (int32_t)sizes.size()}));
+
+  if (parser.resolveOperand(source, sourceTy, result.operands) ||
+      parser.resolveOperands(offsets, offsetTypes, parser.getCurrentLocation(),
+                             result.operands) ||
+      parser.resolveOperands(sizes, sizeTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::PartitionViewOp::print(OpAsmPrinter &p) {
+  p << " " << getSource() << ", offsets = [";
+  p.printOperands(getOffsets());
+  p << "], sizes = [";
+  p.printOperands(getSizes());
+  p << "]";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+  p << " : " << getSource().getType();
+  if (!allOperandsAreIndex(getOffsets()) || !allOperandsAreIndex(getSizes())) {
+    p << ", ";
+    printBracketedTypeList(p, getOffsets().getTypes());
+    p << ", ";
+    printBracketedTypeList(p, getSizes().getTypes());
+  }
+  p << " -> " << getResult().getType();
+}
+
+ParseResult mlir::pto::GetTensorViewDimOp::parse(OpAsmParser &parser,
+                                                 OperationState &result) {
+  OpAsmParser::UnresolvedOperand tensorView;
+  OpAsmParser::UnresolvedOperand dimIndex;
+  Type tensorViewTy;
+  Type dimIndexTy = parser.getBuilder().getIndexType();
+  Type resultTy;
+
+  if (parser.parseOperand(tensorView) || parser.parseComma() ||
+      parser.parseOperand(dimIndex) || parser.parseColonType(tensorViewTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma()) && parser.parseType(dimIndexTy))
+    return failure();
+
+  if (parser.parseArrow() || parser.parseType(resultTy) ||
+      parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  result.addTypes(resultTy);
+  if (parser.resolveOperand(tensorView, tensorViewTy, result.operands) ||
+      parser.resolveOperand(dimIndex, dimIndexTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::GetTensorViewDimOp::print(OpAsmPrinter &p) {
+  p << " " << getTensorView() << ", " << getDimIndex() << " : "
+    << getTensorView().getType();
+  if (!getDimIndex().getType().isIndex())
+    p << ", " << getDimIndex().getType();
+  p << " -> " << getResult().getType();
+  p.printOptionalAttrDict((*this)->getAttrs());
+}
+
+ParseResult mlir::pto::AllocTileOp::parse(OpAsmParser &parser,
+                                          OperationState &result) {
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> addrOperands;
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> validRowOperands;
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> validColOperands;
+  Type validRowTy = parser.getBuilder().getIndexType();
+  Type validColTy = parser.getBuilder().getIndexType();
+  Type resultTy;
+
+  if (succeeded(parser.parseOptionalKeyword("addr"))) {
+    if (parser.parseEqual())
+      return failure();
+    OpAsmParser::UnresolvedOperand addr;
+    if (parser.parseOperand(addr))
+      return failure();
+    addrOperands.push_back(addr);
+  }
+
+  if (succeeded(parser.parseOptionalKeyword("valid_row"))) {
+    if (parser.parseEqual())
+      return failure();
+    OpAsmParser::UnresolvedOperand validRow;
+    if (parser.parseOperand(validRow))
+      return failure();
+    validRowOperands.push_back(validRow);
+  }
+
+  if (succeeded(parser.parseOptionalKeyword("valid_col"))) {
+    if (parser.parseEqual())
+      return failure();
+    OpAsmParser::UnresolvedOperand validCol;
+    if (parser.parseOperand(validCol))
+      return failure();
+    validColOperands.push_back(validCol);
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(resultTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (!validRowOperands.empty()) {
+      if (parser.parseType(validRowTy))
+        return failure();
+    }
+    if (!validColOperands.empty()) {
+      if (parser.parseComma() || parser.parseType(validColTy))
+        return failure();
+    }
+  }
+
+  result.addTypes(resultTy);
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(
+                          {(int32_t)addrOperands.size(),
+                           (int32_t)validRowOperands.size(),
+                           (int32_t)validColOperands.size()}));
+
+  if (!addrOperands.empty() &&
+      parser.resolveOperands(addrOperands, parser.getBuilder().getI64Type(),
+                             result.operands))
+    return failure();
+  if (!validRowOperands.empty() &&
+      parser.resolveOperands(validRowOperands, validRowTy, result.operands))
+    return failure();
+  if (!validColOperands.empty() &&
+      parser.resolveOperands(validColOperands, validColTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::AllocTileOp::print(OpAsmPrinter &p) {
+  p << " ";
+  if (getAddr()) {
+    p << "addr = " << getAddr();
+    if (getValidRow() || getValidCol())
+      p << " ";
+  }
+  if (getValidRow()) {
+    p << "valid_row = " << getValidRow();
+    if (getValidCol())
+      p << " ";
+  }
+  if (getValidCol())
+    p << "valid_col = " << getValidCol();
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+  p << " : " << getResult().getType();
+  bool printedType = false;
+  if (getValidRow() && !getValidRow().getType().isIndex()) {
+    p << ", " << getValidRow().getType();
+    printedType = true;
+  }
+  if (getValidCol() && (!getValidCol().getType().isIndex() || printedType)) {
+    p << ", " << getValidCol().getType();
+  }
+}
+
+ParseResult mlir::pto::BindTileOp::parse(OpAsmParser &parser,
+                                         OperationState &result) {
+  OpAsmParser::UnresolvedOperand source;
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> validRowOperands;
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> validColOperands;
+  Type sourceTy;
+  Type resultTy;
+  Type validRowTy = parser.getBuilder().getIndexType();
+  Type validColTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(source))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    OpAsmParser::UnresolvedOperand validRow;
+    OpAsmParser::UnresolvedOperand validCol;
+    if (parser.parseOperand(validRow) || parser.parseComma() || parser.parseOperand(validCol))
+      return failure();
+    validRowOperands.push_back(validRow);
+    validColOperands.push_back(validCol);
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(sourceTy) ||
+      parser.parseArrow() || parser.parseType(resultTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (!validRowOperands.empty()) {
+      if (parser.parseType(validRowTy) || parser.parseComma() ||
+          parser.parseType(validColTy))
+        return failure();
+    } else {
+      return parser.emitError(parser.getCurrentLocation())
+             << "unexpected valid_row/valid_col type list without operands";
+    }
+  }
+
+  result.addTypes(resultTy);
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(
+                          {1, (int32_t)validRowOperands.size(),
+                           (int32_t)validColOperands.size()}));
+
+  if (parser.resolveOperand(source, sourceTy, result.operands))
+    return failure();
+  if (!validRowOperands.empty() &&
+      parser.resolveOperands(validRowOperands, validRowTy, result.operands))
+    return failure();
+  if (!validColOperands.empty() &&
+      parser.resolveOperands(validColOperands, validColTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::BindTileOp::print(OpAsmPrinter &p) {
+  p << " " << getSource();
+  if (getValidRow()) {
+    p << ", " << getValidRow() << ", " << getValidCol();
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+  p << " : " << getSource().getType() << " -> " << getResult().getType();
+  if (getValidRow() &&
+      (!getValidRow().getType().isIndex() || !getValidCol().getType().isIndex())) {
+    p << ", " << getValidRow().getType() << ", " << getValidCol().getType();
+  }
+}
+
+ParseResult mlir::pto::SubsetOp::parse(OpAsmParser &parser,
+                                       OperationState &result) {
+  OpAsmParser::UnresolvedOperand source;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
+  SmallVector<Type, 4> offsetTypes;
+  Attribute rawSizes;
+  Type sourceTy;
+
+  if (parser.parseOperand(source) || parser.parseLSquare() ||
+      parser.parseOperandList(offsets) || parser.parseRSquare() ||
+      parser.parseKeyword("sizes") || parser.parseAttribute(rawSizes))
+    return failure();
+
+  auto sizesAttr = dyn_cast<ArrayAttr>(rawSizes);
+  if (!sizesAttr)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected i64 array attribute for sizes");
+  result.addAttribute("sizes", sizesAttr);
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(sourceTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseTypeList(offsetTypes))
+      return failure();
+    if (failed(verifyTypeCount(parser, offsetTypes, offsets.size(), "offset")))
+      return failure();
+  } else {
+    fillIndexTypes(parser, offsets.size(), offsetTypes);
+  }
+
+  if (parser.resolveOperand(source, sourceTy, result.operands) ||
+      parser.resolveOperands(offsets, offsetTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+
+  SmallVector<Type> inferredReturnTypes;
+  if (failed(SubsetOp::inferReturnTypes(
+          parser.getContext(), result.location, result.operands,
+          result.attributes.getDictionary(parser.getContext()),
+          result.getRawProperties(), result.regions, inferredReturnTypes)))
+    return failure();
+  result.addTypes(inferredReturnTypes);
+  return success();
+}
+
+void mlir::pto::SubsetOp::print(OpAsmPrinter &p) {
+  p << " " << getSource() << "[";
+  p.printOperands(getOffsets());
+  p << "] sizes ";
+  p.printAttributeWithoutType(getSizesAttr());
+  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"sizes"});
+  p << " : " << getSource().getType();
+  if (!allOperandsAreIndex(getOffsets())) {
+    p << ", ";
+    printTypeList(p, getOffsets().getTypes());
+  }
+}
+
+ParseResult mlir::pto::SetValidShapeOp::parse(OpAsmParser &parser,
+                                              OperationState &result) {
+  OpAsmParser::UnresolvedOperand source;
+  OpAsmParser::UnresolvedOperand validRow;
+  OpAsmParser::UnresolvedOperand validCol;
+  Type sourceTy;
+  Type validRowTy = parser.getBuilder().getIndexType();
+  Type validColTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(source) || parser.parseComma() || parser.parseOperand(validRow) ||
+      parser.parseComma() || parser.parseOperand(validCol) ||
+      parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(sourceTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseType(validRowTy) || parser.parseComma() || parser.parseType(validColTy))
+      return failure();
+  }
+
+  if (parser.resolveOperand(source, sourceTy, result.operands) ||
+      parser.resolveOperand(validRow, validRowTy, result.operands) ||
+      parser.resolveOperand(validCol, validColTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::SetValidShapeOp::print(OpAsmPrinter &p) {
+  p << " " << getSource() << ", " << getValidRow() << ", " << getValidCol();
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getSource().getType();
+  if (!getValidRow().getType().isIndex() || !getValidCol().getType().isIndex())
+    p << ", " << getValidRow().getType() << ", " << getValidCol().getType();
+}
+
+ParseResult mlir::pto::PointerCastOp::parse(OpAsmParser &parser,
+                                            OperationState &result) {
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> addrs;
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> validRowOperands;
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> validColOperands;
+  Type resultTy;
+  Type validRowTy = parser.getBuilder().getIndexType();
+  Type validColTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseLParen() || parser.parseOperandList(addrs) || parser.parseRParen())
+    return failure();
+
+  {
+    OpAsmParser::UnresolvedOperand validRow;
+    auto parseResult = parser.parseOptionalOperand(validRow);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return failure();
+      validRowOperands.push_back(validRow);
+      OpAsmParser::UnresolvedOperand validCol;
+      if (parser.parseComma() || parser.parseOperand(validCol))
+        return failure();
+      validColOperands.push_back(validCol);
+    }
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(resultTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (!validRowOperands.empty()) {
+      if (parser.parseType(validRowTy) || parser.parseComma() ||
+          parser.parseType(validColTy))
+        return failure();
+    } else {
+      return parser.emitError(parser.getCurrentLocation())
+             << "unexpected valid_row/valid_col type list without operands";
+    }
+  }
+
+  result.addTypes(resultTy);
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(
+                          {(int32_t)addrs.size(), (int32_t)validRowOperands.size(),
+                           (int32_t)validColOperands.size()}));
+
+  if (!addrs.empty() &&
+      parser.resolveOperands(addrs, parser.getBuilder().getI64Type(), result.operands))
+    return failure();
+  if (!validRowOperands.empty() &&
+      parser.resolveOperands(validRowOperands, validRowTy, result.operands))
+    return failure();
+  if (!validColOperands.empty() &&
+      parser.resolveOperands(validColOperands, validColTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::PointerCastOp::print(OpAsmPrinter &p) {
+  p << " (";
+  p.printOperands(getAddrs());
+  p << ")";
+  if (getValidRow())
+    p << " " << getValidRow() << ", " << getValidCol();
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+  p << " : " << getResult().getType();
+  if (getValidRow() &&
+      (!getValidRow().getType().isIndex() || !getValidCol().getType().isIndex()))
+    p << ", " << getValidRow().getType() << ", " << getValidCol().getType();
+}
+
+ParseResult mlir::pto::EventIdArrayGetOp::parse(OpAsmParser &parser,
+                                                OperationState &result) {
+  OpAsmParser::UnresolvedOperand array;
+  OpAsmParser::UnresolvedOperand index;
+  Type arrayTy;
+  Type indexTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(array) || parser.parseLSquare() || parser.parseOperand(index) ||
+      parser.parseRSquare() || parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColonType(arrayTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma()) && parser.parseType(indexTy))
+    return failure();
+
+  result.addTypes(parser.getBuilder().getIndexType());
+  if (parser.resolveOperand(array, arrayTy, result.operands) ||
+      parser.resolveOperand(index, indexTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::EventIdArrayGetOp::print(OpAsmPrinter &p) {
+  p << " " << getArray() << "[" << getIndex() << "]";
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getArray().getType();
+  if (!getIndex().getType().isIndex())
+    p << ", " << getIndex().getType();
+}
+
+ParseResult mlir::pto::EventIdArraySetOp::parse(OpAsmParser &parser,
+                                                OperationState &result) {
+  OpAsmParser::UnresolvedOperand array;
+  OpAsmParser::UnresolvedOperand index;
+  OpAsmParser::UnresolvedOperand value;
+  Type arrayTy;
+  Type indexTy = parser.getBuilder().getIndexType();
+  Type valueTy = parser.getBuilder().getIndexType();
+
+  if (parser.parseOperand(array) || parser.parseLSquare() || parser.parseOperand(index) ||
+      parser.parseRSquare() || parser.parseComma() || parser.parseOperand(value) ||
+      parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(arrayTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseType(indexTy) || parser.parseComma() || parser.parseType(valueTy))
+      return failure();
+  }
+
+  if (parser.resolveOperand(array, arrayTy, result.operands) ||
+      parser.resolveOperand(index, indexTy, result.operands) ||
+      parser.resolveOperand(value, valueTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::EventIdArraySetOp::print(OpAsmPrinter &p) {
+  p << " " << getArray() << "[" << getIndex() << "], " << getValue();
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << getArray().getType();
+  if (!getIndex().getType().isIndex() || !getValue().getType().isIndex())
+    p << ", " << getIndex().getType() << ", " << getValue().getType();
+}
+
+ParseResult mlir::pto::SetFlagDynOp::parse(OpAsmParser &parser,
+                                           OperationState &result) {
+  Attribute rawSrcPipe;
+  Attribute rawDstPipe;
+  auto indexTy = parser.getBuilder().getIndexType();
+  Type eventTy = indexTy;
+  OpAsmParser::UnresolvedOperand eventId;
+
+  if (parser.parseLSquare() || parser.parseAttribute(rawSrcPipe) || parser.parseComma() ||
+      parser.parseAttribute(rawDstPipe) || parser.parseComma() ||
+      parser.parseOperand(eventId) || parser.parseRSquare())
+    return failure();
+
+  auto srcPipe = dyn_cast<mlir::pto::PipeAttr>(rawSrcPipe);
+  auto dstPipe = dyn_cast<mlir::pto::PipeAttr>(rawDstPipe);
+  if (!srcPipe || !dstPipe)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected #pto.pipe<...> attributes");
+
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+  if (succeeded(parser.parseOptionalColon()) && parser.parseType(eventTy))
+    return failure();
+
+  result.addAttribute("src_pipe", srcPipe);
+  result.addAttribute("dst_pipe", dstPipe);
+  if (parser.resolveOperand(eventId, eventTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::SetFlagDynOp::print(OpAsmPrinter &p) {
+  p << "[";
+  p.printStrippedAttrOrType(getSrcPipeAttr());
+  p << ", ";
+  p.printStrippedAttrOrType(getDstPipeAttr());
+  p << ", " << getEventId() << "]";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"src_pipe", "dst_pipe"});
+  if (!getEventId().getType().isIndex())
+    p << " : " << getEventId().getType();
+}
+
+ParseResult mlir::pto::WaitFlagDynOp::parse(OpAsmParser &parser,
+                                            OperationState &result) {
+  Attribute rawSrcPipe;
+  Attribute rawDstPipe;
+  auto indexTy = parser.getBuilder().getIndexType();
+  Type eventTy = indexTy;
+  OpAsmParser::UnresolvedOperand eventId;
+
+  if (parser.parseLSquare() || parser.parseAttribute(rawSrcPipe) || parser.parseComma() ||
+      parser.parseAttribute(rawDstPipe) || parser.parseComma() ||
+      parser.parseOperand(eventId) || parser.parseRSquare())
+    return failure();
+
+  auto srcPipe = dyn_cast<mlir::pto::PipeAttr>(rawSrcPipe);
+  auto dstPipe = dyn_cast<mlir::pto::PipeAttr>(rawDstPipe);
+  if (!srcPipe || !dstPipe)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected #pto.pipe<...> attributes");
+
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+  if (succeeded(parser.parseOptionalColon()) && parser.parseType(eventTy))
+    return failure();
+
+  result.addAttribute("src_pipe", srcPipe);
+  result.addAttribute("dst_pipe", dstPipe);
+  if (parser.resolveOperand(eventId, eventTy, result.operands))
+    return failure();
+  return success();
+}
+
+void mlir::pto::WaitFlagDynOp::print(OpAsmPrinter &p) {
+  p << "[";
+  p.printStrippedAttrOrType(getSrcPipeAttr());
+  p << ", ";
+  p.printStrippedAttrOrType(getDstPipeAttr());
+  p << ", " << getEventId() << "]";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"src_pipe", "dst_pipe"});
+  if (!getEventId().getType().isIndex())
+    p << " : " << getEventId().getType();
 }
 
 // Layout inference helpers for make_tensor_view
@@ -2981,8 +3730,12 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
     return std::nullopt;
   };
   auto verifyIndexOperands = [&]() -> LogicalResult {
-    if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
-      return emitOpError("expects indexRow and indexCol to be index type");
+    auto isIndexLike = [](Type ty) {
+      return ty.isIndex() || isa<IntegerType>(ty);
+    };
+    if (!isIndexLike(getIndexRow().getType()) ||
+        !isIndexLike(getIndexCol().getType()))
+      return emitOpError("expects indexRow and indexCol to be index or integer type");
     auto row = getConstIndex(getIndexRow());
     auto col = getConstIndex(getIndexCol());
     if (row && *row < 0)
@@ -3151,8 +3904,12 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
     return std::nullopt;
   };
   auto verifyIndexOperands = [&]() -> LogicalResult {
-    if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
-      return emitOpError("expects indexRow and indexCol to be index type");
+    auto isIndexLike = [](Type ty) {
+      return ty.isIndex() || isa<IntegerType>(ty);
+    };
+    if (!isIndexLike(getIndexRow().getType()) ||
+        !isIndexLike(getIndexCol().getType()))
+      return emitOpError("expects indexRow and indexCol to be index or integer type");
     auto row = getConstIndex(getIndexRow());
     auto col = getConstIndex(getIndexCol());
     if (row && *row < 0)

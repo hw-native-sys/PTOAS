@@ -11,19 +11,18 @@ module {
     %0 = pto.get_block_idx
     %1 = pto.get_subblock_idx
     %2 = pto.get_subblock_num
-    %3 = arith.muli %0, %2 : i64
-    %4 = arith.addi %3, %1 : i64
-    %5 = arith.index_cast %4 : i64 to index
+    %3 = arith.muli %0, %2 : i32
+    %4 = arith.addi %3, %1 : i32
+    %5 = arith.index_cast %4 : i32 to index
     %6 = arith.muli %c32, %c32_1 : index
     %7 = arith.muli %5, %6 : index
-    %8 = arith.index_cast %4 : i64 to index
-    %9 = arith.muli %c32_1, %c32_0 : index
-    %10 = arith.muli %8, %9 : index
-    %11 = pto.make_tensor_view %arg0, shape = [%c32, %c32_1] strides = [%c32_4, %c1] : !pto.tensor_view<?x?xf32>
-    %12 = pto.make_tensor_view %arg1, shape = [%c32_1, %c32_0] strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
-    %13 = pto.make_tensor_view %arg2, shape = [%c32, %c32_0] strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
+    %8 = arith.muli %c32_1, %c32_0 : index
+    %9 = arith.muli %5, %8 : index
+    %11 = pto.make_tensor_view %arg0, shape = [%c32, %c32_1], strides = [%c32_4, %c1] : !pto.tensor_view<?x?xf32>
+    %12 = pto.make_tensor_view %arg1, shape = [%c32_1, %c32_0], strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
+    %13 = pto.make_tensor_view %arg2, shape = [%c32, %c32_0], strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
     %14 = pto.partition_view %11, offsets = [%c0, %7], sizes = [%c32, %c32_1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
-    %15 = pto.partition_view %12, offsets = [%c0, %10], sizes = [%c32_1, %c32_0] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    %15 = pto.partition_view %12, offsets = [%c0, %9], sizes = [%c32_1, %c32_0] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %16 = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>
     %17 = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>
     %18 = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>
@@ -44,4 +43,3 @@ module {
     return
   }
 }
-

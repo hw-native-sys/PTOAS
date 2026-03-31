@@ -51,6 +51,9 @@ def ScalarPtrOrMemRef :
 def ScalarType :
   AnyTypeOf<[AnySignlessInteger, AnyFloat], "numeric (integer/float)">;
 
+def IndexLike :
+  AnyTypeOf<[Index, AnySignlessInteger], "index or signless integer">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -86,16 +89,13 @@ def AddPtrOp : PTO_Op<"addptr", [
 
   let arguments = (ins
     PtrType:$ptr,
-    Index:$offset
+    IndexLike:$offset
   );
 
   let results = (outs PtrType:$result);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $ptr `,` $offset attr-dict `:` type($ptr) `->` type($result)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -109,16 +109,13 @@ def LoadScalarOp : PTO_Op<"load_scalar", [
 
   let arguments = (ins
     ScalarPtrOrMemRef:$ptr,
-    Index:$offset
+    IndexLike:$offset
   );
 
   let results = (outs AnyType:$value);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def StoreScalarOp : PTO_Op<"store_scalar", [
@@ -128,17 +125,14 @@ def StoreScalarOp : PTO_Op<"store_scalar", [
 
   let arguments = (ins
     ScalarPtrOrMemRef:$ptr,
-    Index:$offset,
+    IndexLike:$offset,
     AnyType:$value
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
@@ -146,8 +140,8 @@ def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     AnyType:$ptr,
-    Variadic<Index>:$shape,
-    Variadic<Index>:$strides,
+    Variadic<IndexLike>:$shape,
+    Variadic<IndexLike>:$strides,
     OptionalAttr<PTO_LayoutAttr>:$layout
   );
 
@@ -173,18 +167,14 @@ def PartitionViewOp : PTO_Op<"partition_view", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     TensorViewType:$source,    // 输入: 物理大底座 (MakeTensorViewOp 的结果)
-    Variadic<Index>:$offsets,  // 动态 offsets
-    Variadic<Index>:$sizes     // 动态 sizes
+    Variadic<IndexLike>:$offsets,  // 动态 offsets
+    Variadic<IndexLike>:$sizes     // 动态 sizes
   );
 
   let results = (outs PartitionTensorViewType:$result); // 输出: 逻辑切片
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `,` `offsets` `=` `[` $offsets `]` `,` `sizes` `=` `[` $sizes `]`
-    attr-dict `:` qualified(type($source)) `->` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // Helper: tensor_view or memref (after lowering tensor_view to memref).
@@ -207,13 +197,10 @@ def GetTensorViewDimOp : PTO_Op<"get_tensor_view_dim", [Pure]> {
   }];
   let arguments = (ins
     TensorViewOrMemRef:$tensor_view,
-    Index:$dim_index
+    IndexLike:$dim_index
   );
   let results = (outs Index:$result);
-  let assemblyFormat = [{
-    $tensor_view `,` $dim_index `:` qualified(type($tensor_view)) `->` qualified(type($result))
-    attr-dict
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
@@ -221,18 +208,12 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     Optional<I64>:$addr,
-    Optional<Index>:$valid_row,
-    Optional<Index>:$valid_col
+    Optional<IndexLike>:$valid_row,
+    Optional<IndexLike>:$valid_col
   );
 
   let results = (outs TileBufType:$result);
-
-  let assemblyFormat = [{
-    (`addr` `=` $addr^)?
-    (`valid_row` `=` $valid_row^)? 
-    (`valid_col` `=` $valid_col^)?
-     attr-dict `:` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
     ::mlir::LogicalResult verify();
@@ -257,17 +238,14 @@ def BindTileOp : PTO_Op<"bind_tile", [
   // 现在改为明确的 Optional Row/Col，与 PointerCastOp 保持一致
   let arguments = (ins
     AnyMemRef:$source,
-    Optional<Index>:$valid_row,
-    Optional<Index>:$valid_col,
+    Optional<IndexLike>:$valid_row,
+    Optional<IndexLike>:$valid_col,
     TileBufConfigAttr:$config
   );
 
   let results = (outs AnyMemRef:$result);
 
-  // [修改] assemblyFormat: 去掉 valid_dims，改为 ($row, $col)?
-  let assemblyFormat = [{
-    $source (`,` $valid_row^ `,` $valid_col)? attr-dict `:` qualified(type($source)) `->` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def SubsetOp : PTO_Op<"subset", [
@@ -286,18 +264,14 @@ def SubsetOp : PTO_Op<"subset", [
 
   let arguments = (ins
     TileBufType:$source,
-    Variadic<Index>:$offsets, // 运行时动态偏移 [i, j]
+    Variadic<IndexLike>:$offsets, // 运行时动态偏移 [i, j]
     I64ArrayAttr:$sizes       // 静态形状 [32, 32]
   );
 
   let results = (outs TileBufType:$result);
   let hasVerifier = 1;
 
-  // 语法示例: %sub = pto.subset %src[%i, %j] sizes [32, 32] : !type
-  // 注意：没有 -> qualified(type($result))
-  let assemblyFormat = [{
-    $source `[` $offsets `]` `sizes` $sizes attr-dict `:` qualified(type($source))
-  }];
+  let hasCustomAssemblyFormat = 1;
 
   // [新增] 显式实现 ViewLikeOpInterface 缺失的方法
   let extraClassDeclaration = [{
@@ -326,16 +300,13 @@ def SetValidShapeOp : PTO_Op<"set_validshape", [
 
   let arguments = (ins
     TileBufOrMemRef:$source,
-    Index:$valid_row,
-    Index:$valid_col
+    IndexLike:$valid_row,
+    IndexLike:$valid_col
   );
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    $source `,` $valid_row `,` $valid_col attr-dict `:`
-    qualified(type($source))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ============================================================================
@@ -396,7 +367,7 @@ def TLoadOp  : PTO_TOp<"tload", [
     PTODpsType:$dst,
     OptionalAttr<PTO_PadModeAttr>:$pad_mode,
     Optional<AnyType>:$pad_value,
-    Optional<Index>:$left_padding_num,
+    Optional<IndexLike>:$left_padding_num,
     Optional<AnyType>:$right_padding_num,
     DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
     Optional<AnyType>:$init_condition
@@ -1012,17 +983,13 @@ def PointerCastOp : PTO_Op<"pointer_cast", [AttrSizedOperandSegments, Pure]> {
   // 参数定义 (保持 Optional)
   let arguments = (ins 
     Variadic<I64>:$addrs,
-    Optional<Index>:$valid_row,
-    Optional<Index>:$valid_col,
+    Optional<IndexLike>:$valid_row,
+    Optional<IndexLike>:$valid_col,
     OptionalAttr<TileBufConfigAttr>:$config
   );
   
   let results = (outs Res<AnyMemRef, "", [MemAlloc]>:$result);
-
-  // Assembly Format (去掉了 [])
-  let assemblyFormat = [{
-    `(` $addrs `)` ($valid_row^ `,` $valid_col)? attr-dict `:` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
 
   // Builder (修复 addOperand -> addOperands)
   let builders = [
@@ -1055,7 +1022,7 @@ def GetBlockIdxOp : PTO_Op<"get_block_idx", [Pure]> {
   }];
 
   let arguments = (ins);
-  let results = (outs I64:$result);
+  let results = (outs I32:$result);
 
   let assemblyFormat = "attr-dict";
 }
@@ -1068,7 +1035,7 @@ def GetSubBlockIdxOp : PTO_Op<"get_subblock_idx", [Pure]> {
   }];
 
   let arguments = (ins);
-  let results = (outs I64:$result);
+  let results = (outs I32:$result);
 
   let assemblyFormat = "attr-dict";
 }
@@ -1080,7 +1047,7 @@ def GetBlockNumOp : PTO_Op<"get_block_num", [Pure]> {
   }];
 
   let arguments = (ins);
-  let results = (outs I64:$result);
+  let results = (outs I32:$result);
 
   let assemblyFormat = "attr-dict";
 }
@@ -1092,7 +1059,7 @@ def GetSubBlockNumOp : PTO_Op<"get_subblock_num", [Pure]> {
   }];
 
   let arguments = (ins);
-  let results = (outs I64:$result);
+  let results = (outs I32:$result);
 
   let assemblyFormat = "attr-dict";
 }
@@ -1508,13 +1475,10 @@ def EventIdArrayGetOp : PTO_Op<"eventid_array_get", [Pure]> {
 
   let arguments = (ins
     EventIdArrayType:$array,
-    Index:$index
+    IndexLike:$index
   );
   let results = (outs Index:$result);
-
-  let assemblyFormat = [{
-    $array `[` $index `]` attr-dict `:` qualified(type($array))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def EventIdArraySetOp : PTO_Op<"eventid_array_set"> {
@@ -1522,14 +1486,11 @@ def EventIdArraySetOp : PTO_Op<"eventid_array_set"> {
 
   let arguments = (ins
     EventIdArrayType:$array,
-    Index:$index,
-    Index:$value
+    IndexLike:$index,
+    IndexLike:$value
   );
   let results = (outs);
-
-  let assemblyFormat = [{
-    $array `[` $index `]` `,` $value attr-dict `:` qualified(type($array))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def TPopOp : PTO_TOp<"tpop", [
@@ -1625,12 +1586,10 @@ def SetFlagDynOp : PTO_Op<"set_flag_dyn"> {
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
     PTO_PipeAttr:$dst_pipe,
-    Index:$event_id
+    IndexLike:$event_id
   );
   let results = (outs);
-  let assemblyFormat = [{
-    `[` $src_pipe `,` $dst_pipe `,` $event_id `]` attr-dict
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def WaitFlagDynOp : PTO_Op<"wait_flag_dyn"> {
@@ -1638,12 +1597,10 @@ def WaitFlagDynOp : PTO_Op<"wait_flag_dyn"> {
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
     PTO_PipeAttr:$dst_pipe,
-    Index:$event_id
+    IndexLike:$event_id
   );
   let results = (outs);
-  let assemblyFormat = [{
-    `[` $src_pipe `,` $dst_pipe `,` $event_id `]` attr-dict
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1825,7 +1782,7 @@ def TSetValOp : PTO_TOp<"tsetval", [
 
   let arguments = (ins
     PTODpsType:$dst,
-    Index:$offset,
+    IndexLike:$offset,
     ScalarType:$val
   );
 
@@ -1856,7 +1813,7 @@ def TGetValOp : PTO_TOp<"tgetval", [
 
   let arguments = (ins
     PTODpsType:$src,
-    Index:$offset
+    IndexLike:$offset
   );
 
   let results = (outs ScalarType:$dst);
@@ -2666,8 +2623,8 @@ def TExtractOp : PTO_TOp<"textract", [
 
   let arguments = (ins
     PTODpsType:$src,
-    Index:$indexRow,
-    Index:$indexCol,
+    IndexLike:$indexRow,
+    IndexLike:$indexCol,
     PTODpsType:$dst
   );
 
@@ -2750,8 +2707,8 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
   let arguments = (ins
     PTODpsType:$src,
-    Index:$indexRow,
-    Index:$indexCol,
+    IndexLike:$indexRow,
+    IndexLike:$indexCol,
     PTODpsType:$dst
   );
 

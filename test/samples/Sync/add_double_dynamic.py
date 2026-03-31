@@ -12,11 +12,11 @@ def main():
     %0 = pto.get_block_idx
     %1 = pto.get_subblock_idx
     %2 = pto.get_subblock_num
-    %3 = arith.muli %0, %2 : i64
-    %4 = arith.addi %3, %1 : i64
+    %3 = arith.muli %0, %2 : i32
+    %4 = arith.addi %3, %1 : i32
     %5 = pto.get_block_num
-    %6 = arith.index_cast %4 : i64 to index
-    %7 = arith.index_cast %5 : i64 to index
+    %6 = arith.index_cast %4 : i32 to index
+    %7 = arith.index_cast %5 : i32 to index
     %8 = arith.index_cast %arg3 : i32 to index
     %9 = arith.ceildivsi %8, %c8192 : index
     %10 = arith.ceildivsi %9, %7 : index
@@ -74,4 +74,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
