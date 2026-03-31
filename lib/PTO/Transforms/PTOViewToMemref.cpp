@@ -617,21 +617,16 @@ struct PTOViewToMemrefPass
         auto configAttr = tbTy.getConfigAttr();
         if (!configAttr) configAttr = pto::TileBufConfigAttr::getDefault(ctx);
 
-        // 6. If alloc_tile provides an explicit address, keep the original
-        // pointer_cast lowering intact and additionally rebind through
-        // pto.bind_tile. PointerCastOp continues to carry the tile metadata
-        // used by existing lowering paths, while BindTileOp provides the
-        // unified anchor EmitC uses to recover tile_buf information.
+        // 6. If alloc_tile provides an explicit address, lower directly to
+        // pto.pointer_cast. Rebinding through pto.bind_tile here is redundant
+        // and can produce an extra tile rewrap in EmitC for dynamic valid
+        // shapes (double TASSIGN pattern).
         if (Value addr = op.getAddr()) {
           auto pc = rewriter.create<pto::PointerCastOp>(
               loc, targetType, ValueRange{addr}, vRow ? vRow : Value(),
               vCol ? vCol : Value(), configAttr);
           markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
-          auto bindOp = rewriter.create<pto::BindTileOp>(
-              loc, targetType, pc.getResult(), vRow ? vRow : Value(),
-              vCol ? vCol : Value(), configAttr);
-          markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-          rewriter.replaceOp(op, bindOp.getResult());
+          rewriter.replaceOp(op, pc.getResult());
           continue;
         }
 
