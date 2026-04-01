@@ -1,0 +1,21 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+
+module {
+  func.func @trsqrt_forms() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.trsqrt ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst0 : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.trsqrt ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst1 : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// A3: pto.trsqrt ins([[SRC0:%[0-9]+]] : memref<1x16xf16
+// A3: outs([[DST0:%[0-9]+]] : memref<1x16xf16
+// A3: pto.trsqrt ins([[SRC1:%[0-9]+]], [[TMP:%[0-9]+]] : memref<1x16xf16
+// A3: outs([[DST1:%[0-9]+]] : memref<1x16xf16
+// A3: TRSQRT([[VDST0:v[0-9]+]], [[VSRC0:v[0-9]+]]);
+// A3: TRSQRT([[VDST1:v[0-9]+]], [[VSRC1:v[0-9]+]], [[VTMP:v[0-9]+]]);

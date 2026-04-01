@@ -5787,6 +5787,55 @@ void mlir::pto::TSort32Op::print(OpAsmPrinter &p) {
   p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"operandSegmentSizes"});
 }
 
+ParseResult mlir::pto::TRsqrtOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src, tmp, dst;
+  Type srcTy, tmpTy, dstTy;
+  bool hasTmp = false;
+
+  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+    return failure();
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseOperand(tmp))
+      return failure();
+    hasTmp = true;
+  }
+  if (parser.parseColonType(srcTy))
+    return failure();
+  if (hasTmp) {
+    if (parser.parseComma() || parser.parseType(tmpTy))
+      return failure();
+  }
+  if (parser.parseRParen())
+    return failure();
+
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
+      parser.parseRParen())
+    return failure();
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  if (parser.resolveOperand(src, srcTy, result.operands) ||
+      parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+  if (hasTmp && parser.resolveOperand(tmp, tmpTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::TRsqrtOp::print(OpAsmPrinter &p) {
+  p << " ins(" << getSrc();
+  if (getTmp())
+    p << ", " << getTmp();
+  p << " : " << getSrc().getType();
+  if (getTmp())
+    p << ", " << getTmp().getType();
+  p << ")";
+  p << " outs(" << getDst() << " : " << getDst().getType() << ")";
+  p.printOptionalAttrDict((*this)->getAttrs());
+}
+
 ParseResult mlir::pto::TRowExpandDivOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand src0, src1, tmp, dst;
   Type src0Ty, src1Ty, tmpTy, dstTy;
@@ -6231,6 +6280,19 @@ mlir::LogicalResult mlir::pto::TRsqrtOp::verify() {
   auto ft = getElemTy(ts).dyn_cast<mlir::FloatType>();
   if (!ft || (!ft.isF16() && !ft.isF32()))
     return emitOpError("expects element type to be f16 or f32");
+  if (auto tmp = getTmp()) {
+    Type tt = tmp.getType();
+    if (failed(verifyVecTileCommon(*this, tt, "tmp")))
+      return failure();
+
+    auto tmpElemTy = getElemTy(tt);
+    auto tmpElemBytes = getElemBytes(tmpElemTy);
+    auto tmpNumel = getStaticNumElements(getShapeVec(tt));
+    if (!tmpElemBytes.has_value() || !tmpNumel.has_value())
+      return emitOpError("expects tmp to have a static, byte-addressable tile type");
+    if (tmpElemBytes.value() * tmpNumel.value() < 32)
+      return emitOpError("expects tmp to be at least 32 bytes when provided");
+  }
   return mlir::success();
 }
 
@@ -8068,7 +8130,14 @@ void TRowSumOp::getEffects(
   PTO_ADD_WRITE(getDstMutable());
 }
 
-PTO_DEFINE_UNARY_EFFECTS(TRsqrtOp, getSrcMutable(), getDstMutable())
+void TRsqrtOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  auto tmp = getTmpMutable();
+  if (!tmp.empty())
+    PTO_ADD_READ(tmp[0]);
+  PTO_ADD_WRITE(getDstMutable());
+}
 PTO_DEFINE_BINARY_EFFECTS(TScatterOp, getSrcMutable(), getIndexesMutable(), getDstMutable())
 
 // Select: Read(mask, src0, src1) -> Write(tmp, dst)

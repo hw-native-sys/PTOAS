@@ -54,10 +54,12 @@ def build():
 
                 tb0 = pto.AllocTileOp(tile_buf_32).result
                 tb1 = pto.AllocTileOp(tile_buf_32).result
+                tb2 = pto.AllocTileOp(tile_buf_32).result
 
                 pto.TLoadOp(None, sv0, tb0)  # result=None
 
                 pto.TRsqrtOp(tb0, tb1)
+                pto.TRsqrtOp(tb0, tb1, tmp=tb2)
 
                 sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 

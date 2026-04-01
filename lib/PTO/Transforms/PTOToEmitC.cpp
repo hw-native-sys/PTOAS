@@ -7037,6 +7037,8 @@ struct PTORowSumToEmitC : public OpConversionPattern<pto::TRowSumOp> {
 };
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TRSQRT DPS/memref op)
+// - no-tmp form : TRSQRT(dst, src)
+// - tmp form    : TRSQRT(dst, src, tmp)
 //===----------------------------------------------------------------------===//
 
 struct PTORsqrtToEmitC : public OpConversionPattern<pto::TRsqrtOp> {
@@ -7048,8 +7050,9 @@ struct PTORsqrtToEmitC : public OpConversionPattern<pto::TRsqrtOp> {
 
     Value src = peelUnrealized(adaptor.getSrc());
     Value dst = peelUnrealized(adaptor.getDst());
-
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value, 3> operands{dst, src};
+    if (Value tmp = adaptor.getTmp())
+      operands.push_back(peelUnrealized(tmp));
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TRSQRT",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

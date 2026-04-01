@@ -35,3 +35,5 @@ grep -F "pto.subset " "${ROUNDTRIP}" >/dev/null
 grep -F "pto.tprint ins(" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.trowexpanddiv ins(" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.trowexpandmul ins(" "${ROUNDTRIP}" >/dev/null
+grep -F "pto.trsqrt ins(" "${ROUNDTRIP}" >/dev/null
+grep -E "pto\\.trsqrt ins\\(%[^,]+, %[^:]+ :" "${ROUNDTRIP}" >/dev/null
