@@ -51,6 +51,16 @@ def ScalarPtrOrMemRef :
 def ScalarType :
   AnyTypeOf<[AnySignlessInteger, AnyFloat], "numeric (integer/float)">;
 
+def IndexOrI64 :
+  Type<
+    CPred<"$_self.isIndex() || $_self.isSignlessInteger(64)">,
+    "index or i64">;
+
+def IndexOrU32 :
+  Type<
+    CPred<"$_self.isIndex() || $_self.isUnsignedInteger(32) || $_self.isSignlessInteger(32)">,
+    "index or u32-compatible i32">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -86,16 +96,14 @@ def AddPtrOp : PTO_Op<"addptr", [
 
   let arguments = (ins
     PtrType:$ptr,
-    Index:$offset
+    IndexOrI64:$offset
   );
 
   let results = (outs PtrType:$result);
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    $ptr `,` $offset attr-dict `:` type($ptr) `->` type($result)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -109,16 +117,14 @@ def LoadScalarOp : PTO_Op<"load_scalar", [
 
   let arguments = (ins
     ScalarPtrOrMemRef:$ptr,
-    Index:$offset
+    IndexOrI64:$offset
   );
 
   let results = (outs AnyType:$value);
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def StoreScalarOp : PTO_Op<"store_scalar", [
@@ -128,7 +134,7 @@ def StoreScalarOp : PTO_Op<"store_scalar", [
 
   let arguments = (ins
     ScalarPtrOrMemRef:$ptr,
-    Index:$offset,
+    IndexOrI64:$offset,
     AnyType:$value
   );
 
@@ -136,9 +142,7 @@ def StoreScalarOp : PTO_Op<"store_scalar", [
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
@@ -146,8 +150,8 @@ def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     AnyType:$ptr,
-    Variadic<Index>:$shape,
-    Variadic<Index>:$strides,
+    Variadic<IndexOrI64>:$shape,
+    Variadic<IndexOrI64>:$strides,
     OptionalAttr<PTO_LayoutAttr>:$layout
   );
 
@@ -173,18 +177,15 @@ def PartitionViewOp : PTO_Op<"partition_view", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     TensorViewType:$source,    // 输入: 物理大底座 (MakeTensorViewOp 的结果)
-    Variadic<Index>:$offsets,  // 动态 offsets
-    Variadic<Index>:$sizes     // 动态 sizes
+    Variadic<IndexOrI64>:$offsets,  // 动态 offsets
+    Variadic<IndexOrI64>:$sizes     // 动态 sizes
   );
 
   let results = (outs PartitionTensorViewType:$result); // 输出: 逻辑切片
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    $source `,` `offsets` `=` `[` $offsets `]` `,` `sizes` `=` `[` $sizes `]`
-    attr-dict `:` qualified(type($source)) `->` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // Helper: tensor_view or memref (after lowering tensor_view to memref).
@@ -207,13 +208,10 @@ def GetTensorViewDimOp : PTO_Op<"get_tensor_view_dim", [Pure]> {
   }];
   let arguments = (ins
     TensorViewOrMemRef:$tensor_view,
-    Index:$dim_index
+    IndexOrI64:$dim_index
   );
   let results = (outs Index:$result);
-  let assemblyFormat = [{
-    $tensor_view `,` $dim_index `:` qualified(type($tensor_view)) `->` qualified(type($result))
-    attr-dict
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
@@ -221,18 +219,13 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     Optional<I64>:$addr,
-    Optional<Index>:$valid_row,
-    Optional<Index>:$valid_col
+    Optional<IndexOrU32>:$valid_row,
+    Optional<IndexOrU32>:$valid_col
   );
 
   let results = (outs TileBufType:$result);
 
-  let assemblyFormat = [{
-    (`addr` `=` $addr^)?
-    (`valid_row` `=` $valid_row^)? 
-    (`valid_col` `=` $valid_col^)?
-     attr-dict `:` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
     ::mlir::LogicalResult verify();
@@ -326,16 +319,13 @@ def SetValidShapeOp : PTO_Op<"set_validshape", [
 
   let arguments = (ins
     TileBufOrMemRef:$source,
-    Index:$valid_row,
-    Index:$valid_col
+    IndexOrU32:$valid_row,
+    IndexOrU32:$valid_col
   );
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    $source `,` $valid_row `,` $valid_col attr-dict `:`
-    qualified(type($source))
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ============================================================================
@@ -396,7 +386,7 @@ def TLoadOp  : PTO_TOp<"tload", [
     PTODpsType:$dst,
     OptionalAttr<PTO_PadModeAttr>:$pad_mode,
     Optional<AnyType>:$pad_value,
-    Optional<Index>:$left_padding_num,
+    Optional<IndexOrU32>:$left_padding_num,
     Optional<AnyType>:$right_padding_num,
     DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
     Optional<AnyType>:$init_condition
@@ -1383,7 +1373,7 @@ def TSetValOp : PTO_TOp<"tsetval", [
 
   let arguments = (ins
     PTODpsType:$dst,
-    Index:$offset,
+    IndexOrU32:$offset,
     ScalarType:$val
   );
 
@@ -1414,7 +1404,7 @@ def TGetValOp : PTO_TOp<"tgetval", [
 
   let arguments = (ins
     PTODpsType:$src,
-    Index:$offset
+    IndexOrU32:$offset
   );
 
   let results = (outs ScalarType:$dst);
@@ -2166,8 +2156,8 @@ def TExtractOp : PTO_TOp<"textract", [
 
   let arguments = (ins
     PTODpsType:$src,
-    Index:$indexRow,
-    Index:$indexCol,
+    IndexOrU32:$indexRow,
+    IndexOrU32:$indexCol,
     PTODpsType:$dst
   );
 
@@ -2198,8 +2188,8 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
   let arguments = (ins
     PTODpsType:$src,
-    Index:$indexRow,
-    Index:$indexCol,
+    IndexOrU32:$indexRow,
+    IndexOrU32:$indexCol,
     PTODpsType:$dst
   );
 
