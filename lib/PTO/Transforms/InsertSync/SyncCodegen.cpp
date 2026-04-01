@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -57,6 +52,25 @@ static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
       dstList.push_back(sync);
     }
   }
+}
+
+static void setSyncInsertionPoint(IRRewriter &rewriter, Operation *op,
+                                  bool beforeInsert) {
+  if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>())
+    rewriter.setInsertionPoint(op);
+  else
+    rewriter.setInsertionPointAfter(op);
+}
+
+static void emitSetOrWaitOp(IRRewriter &rewriter, Operation *op,
+                            SyncOperation *sync) {
+  auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
+  auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
+  auto eventId = getEventAttr(rewriter, sync->eventIds[0]);
+  if (sync->isSyncWaitType())
+    rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
+  else
+    rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
 }
  
 // ==============================================================================
@@ -315,56 +329,19 @@ void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
                                                  Operation *op,
                                                  SyncOperation *sync,
                                                  bool beforeInsert) {
-  // [Fix] Terminator 强制前置插入
-  if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>()) {
-      rewriter.setInsertionPoint(op);
-  } else {
-      rewriter.setInsertionPointAfter(op);
-  }
- 
-  auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
-  auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
-  auto eventId = getEventAttr(rewriter, sync->eventIds[0]);
- 
-  if (sync->isSyncWaitType()) {
-    rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
-  } else {
-    rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
-  }
+  setSyncInsertionPoint(rewriter, op, beforeInsert);
+  emitSetOrWaitOp(rewriter, op, sync);
 }
  
 void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 Operation *op,
                                                 SyncOperation *sync,
                                                 bool beforeInsert) {
-  // 注意：GetBufferSelected 可能需要在插入 Set/Wait 之前调用，以确保 SSA 顺序
-  // 但这里只是获取 Value，不影响 InsertionPoint 的设定
   Value bufferSelected = GetBufferSelected(rewriter, op, sync);
   (void)bufferSelected; 
-  
-  // [Fix] Terminator 强制前置插入
-  if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>()) {
-      rewriter.setInsertionPoint(op);
-  } else {
-      rewriter.setInsertionPointAfter(op);
-  }
- 
-  auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
-  auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
-  auto eventId = getEventAttr(rewriter, sync->eventIds[0]); // 注意：MultiBuffer可能需要特殊处理Attr
- 
-  // 这里假设 SetFlagOp/WaitFlagOp 支持动态 Value 作为 EventID，或者您有特殊的 Op
-  // 如果 PTO 定义只支持 Attribute，那么上面的 GetBufferSelected 逻辑需要配合修改 Op 定义
-  // 假设目前的 Op 定义如下：
-  if (sync->isSyncWaitType()) {
-    // 假设 WaitFlagOp 有支持 Value eventId 的重载或变体
-    // 如果没有，这行代码可能需要调整。但在您之前的 Double Buffer 测试中，看起来它是工作的？
-    // 或者您是否使用了 UpdateFlagOp (带 Value)?
-    // 这里保持原样，只修改 InsertionPoint
-    rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
-  } else {
-    rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
-  }
+
+  setSyncInsertionPoint(rewriter, op, beforeInsert);
+  emitSetOrWaitOp(rewriter, op, sync);
 }
  
 Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,

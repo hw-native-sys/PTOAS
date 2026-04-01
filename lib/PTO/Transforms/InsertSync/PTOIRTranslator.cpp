@@ -6,16 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -428,10 +424,12 @@ void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
   index++;
   
   auto *forBeginPtr = dyn_cast<LoopInstanceElement>(forElement.get());
-  assert(forBeginPtr != nullptr && "Sync IR Construction failed.");
+  if (!forBeginPtr)
+    llvm::report_fatal_error("failed to build loop sync IR node");
   
   if (!forOp.getInitArgs().empty()) {
-    assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
+    if (forOp.getInitArgs().size() != forOp.getRegionIterArgs().size())
+      return;
     for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
       UpdateAliasBufferInfo(forOp.getRegionIterArgs()[i], arg);
     }
@@ -539,7 +537,8 @@ void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
   auto *parentOp = yieldOp->getParentOp();
   if (!parentOp || isa<scf::WhileOp>(parentOp)) return;
  
-  assert(parentOp->getResults().size() == yieldOp->getOpOperands().size());
+  if (parentOp->getResults().size() != yieldOp->getOpOperands().size())
+    return;
   for (auto [yieldVal, resultVal] : llvm::zip(yieldOp->getOpOperands(), parentOp->getResults())) {
     UpdateAliasBufferInfo(resultVal, yieldVal.get());
   }

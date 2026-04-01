@@ -35,6 +35,7 @@
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
 #include <numeric>
@@ -1205,9 +1206,11 @@ void PTODialect::initialize() {
 
 AddressSpaceAttr mlir::pto::getPTOAddressSpaceAttr(Type type) {
   auto memRefType = dyn_cast<BaseMemRefType>(type);
-  assert(memRefType && "input type must be a memref type");
+  if (!memRefType)
+    return {};
   auto scopeAttr = dyn_cast<AddressSpaceAttr>(memRefType.getMemorySpace());
-  assert(scopeAttr && "memory scope should be a pto address scope");
+  if (!scopeAttr)
+    return {};
   return scopeAttr;
 }
 
@@ -4516,14 +4519,15 @@ void mlir::pto::TMrgSortOp::print(OpAsmPrinter &p) {
     p << " ins(" << getSrc() << ", " << getBlockLen() << " : " << getSrc().getType()
       << ", " << getBlockLen().getType() << ") outs(" << getDst() << " : "
       << getDst().getType() << ")";
-  } else {
-    assert(isFormat2());
+  } else if (isFormat2()) {
     p << " ins(" << getSrcs()[0] << ", " << getSrcs()[1] << ", " << getSrcs()[2]
       << ", " << getSrcs()[3] << " {exhausted = " << (getExhausted() ? "true" : "false")
       << "} : " << getSrcs()[0].getType() << ", " << getSrcs()[1].getType() << ", "
       << getSrcs()[2].getType() << ", " << getSrcs()[3].getType() << ") outs("
       << getDst() << ", " << getTmp() << ", " << getExcuted() << " : " << getDst().getType() << ", "
       << getTmp().getType() << ", " << getExcuted().getType() << ")";
+  } else {
+    llvm::report_fatal_error("TMrgSortOp print expects format1 or format2");
   }
   p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"operandSegmentSizes", "exhausted"});
 }

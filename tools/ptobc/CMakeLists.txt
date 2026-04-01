@@ -21,6 +21,7 @@ add_library(ptobc_lib STATIC
   src/ptobc_format.cpp
   src/mlir_helpers.cpp
   src/mlir_encode.cpp
+  src/ptobc_opcodes_v0.cpp
   src/canonical_printer.cpp
   src/ptobc_decode_print.cpp
 )

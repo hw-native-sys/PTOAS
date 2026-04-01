@@ -6,14 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 //===- PTOTypeDefs.cpp --------------------------------------------*- C++ -*-===//
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/DialectImplementation.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -47,6 +43,119 @@ static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> v
   for (int64_t dim : validShape)
     canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
   return canonical;
+}
+
+static LogicalResult parseTileBufKeyEq(AsmParser &parser,
+                                       StringRef expectedKey) {
+  if (failed(parser.parseKeyword(expectedKey)))
+    return failure();
+  return parser.parseEqual();
+}
+
+static LogicalResult parseTileBufComma(AsmParser &parser) {
+  return parser.parseComma();
+}
+
+static LogicalResult parseTileBufKeywordField(AsmParser &parser, StringRef key,
+                                              std::string &value) {
+  if (failed(parseTileBufKeyEq(parser, key)))
+    return failure();
+  if (failed(parser.parseKeywordOrString(&value)))
+    return failure();
+  return parseTileBufComma(parser);
+}
+
+static LogicalResult parseTileBufTypeField(AsmParser &parser, StringRef key,
+                                           Type &value) {
+  if (failed(parseTileBufKeyEq(parser, key)))
+    return failure();
+  if (failed(parser.parseType(value)))
+    return failure();
+  return parseTileBufComma(parser);
+}
+
+static LogicalResult parseTileBufIntegerField(AsmParser &parser, StringRef key,
+                                              int64_t &value) {
+  if (failed(parseTileBufKeyEq(parser, key)))
+    return failure();
+  if (failed(parser.parseInteger(value)))
+    return failure();
+  return parseTileBufComma(parser);
+}
+
+static LogicalResult parseTileBufValidDim(AsmParser &parser, StringRef key,
+                                          int64_t &value) {
+  if (failed(parseTileBufKeyEq(parser, key)))
+    return failure();
+
+  if (succeeded(parser.parseOptionalQuestion())) {
+    value = -1;
+    return success();
+  }
+
+  if (failed(parser.parseInteger(value)))
+    return failure();
+  if (value < -1) {
+    parser.emitError(parser.getCurrentLocation(),
+                     key + " must be '?', -1, or a non-negative integer");
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult parseTileBufValidShapeFields(AsmParser &parser,
+                                                  int64_t &vrow,
+                                                  int64_t &vcol) {
+  if (failed(parseTileBufValidDim(parser, "v_row", vrow)))
+    return failure();
+  if (failed(parseTileBufComma(parser)))
+    return failure();
+  if (failed(parseTileBufValidDim(parser, "v_col", vcol)))
+    return failure();
+  return parseTileBufComma(parser);
+}
+
+static LogicalResult parseTileBufPadField(AsmParser &parser, uint32_t &padInt) {
+  int64_t parsedPad = 0;
+  if (failed(parseTileBufKeyEq(parser, "pad")))
+    return failure();
+  if (failed(parser.parseInteger(parsedPad)))
+    return failure();
+  if (parsedPad < 0 || parsedPad > std::numeric_limits<uint32_t>::max()) {
+    parser.emitError(parser.getCurrentLocation(),
+                     "pad must be a non-negative 32-bit integer");
+    return failure();
+  }
+  padInt = static_cast<uint32_t>(parsedPad);
+  return success();
+}
+
+static std::optional<AddressSpace> resolveTileBufMemorySpace(StringRef locStr) {
+  return ::llvm::StringSwitch<::std::optional<AddressSpace>>(locStr)
+      .Case("mat", AddressSpace::MAT)
+      .Case("left", AddressSpace::LEFT)
+      .Case("right", AddressSpace::RIGHT)
+      .Case("acc", AddressSpace::ACC)
+      .Case("vec", AddressSpace::VEC)
+      .Case("bias", AddressSpace::BIAS)
+      .Case("scaling", AddressSpace::SCALING)
+      .Default(::std::nullopt);
+}
+
+static BLayout resolveTileBufBLayout(AddressSpace memorySpace,
+                                     BLayout parsedLayout) {
+  if (memorySpace != AddressSpace::LEFT)
+    return parsedLayout;
+
+  switch (getPTOParserTargetArch()) {
+  case PTOParserTargetArch::A3:
+    return BLayout::RowMajor;
+  case PTOParserTargetArch::A5:
+    return BLayout::ColMajor;
+  case PTOParserTargetArch::Unspecified:
+    return parsedLayout;
+  }
+  return parsedLayout;
 }
 
 TileBufConfigAttr TileBufType::getConfigAttr() const {
@@ -108,104 +217,16 @@ Type TileBufType::parse(AsmParser &parser) {
   std::string blayoutStr, slayoutStr;
   int64_t fractal = 0;
   uint32_t padInt;
-
-  auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
-    if (failed(parser.parseKeyword(expectedKey)))
-      return failure();
-    if (failed(parser.parseEqual()))
-      return failure();
-    return success();
-  };
-
-  // loc=Vec
-  {
-    if (failed(parseKeyEq("loc"))) return Type();
-    // Vec/Mat/Acc 不是类型/属性，直接当 keyword/string 读
-    if (failed(parser.parseKeywordOrString(&locStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // dtype=f16
-  {
-    if (failed(parseKeyEq("dtype"))) return Type();
-    if (failed(parser.parseType(dtype))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // rows=16
-  {
-    if (failed(parseKeyEq("rows"))) return Type();
-    if (failed(parser.parseInteger(rows))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // cols=16
-  {
-    if (failed(parseKeyEq("cols"))) return Type();
-    if (failed(parser.parseInteger(cols))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-   
-  {
-    // v_row=?/-1/16 , v_col=?/-1/8   （支持半动态）
-    if (failed(parseKeyEq("v_row"))) return Type();
-
-    // 解析 v_row：'?' -> -1，否则整数（允许 -1 兼容）
-    if (succeeded(parser.parseOptionalQuestion())) {
-        vrow = -1;
-    } else {
-        if (failed(parser.parseInteger(vrow))) return Type();
-        if (vrow < -1) {
-            parser.emitError(parser.getCurrentLocation(),
-                            "v_row must be '?', -1, or a non-negative integer");
-            return Type();
-        }
-    }
-
-    if (failed(parser.parseComma())) return Type();
-
-    if (failed(parseKeyEq("v_col"))) return Type();
-
-    // 解析 v_col：'?' -> -1，否则整数（允许 -1 兼容）
-    if (succeeded(parser.parseOptionalQuestion())) {
-        vcol = -1;
-    } else {
-        if (failed(parser.parseInteger(vcol))) return Type();
-        if (vcol < -1) {
-            parser.emitError(parser.getCurrentLocation(),
-                            "v_col must be '?', -1, or a non-negative integer");
-            return Type();
-        }
-    }
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // blayout=RowMajor
-  {
-    if (failed(parseKeyEq("blayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&blayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-
-  // slayout=NoneBox
-  {
-    if (failed(parseKeyEq("slayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&slayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // fractal=512
-  {
-    if (failed(parseKeyEq("fractal"))) return Type();
-    if (failed(parser.parseInteger(fractal))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // pad=Null
-  {
-    if (failed(parseKeyEq("pad"))) return Type();
-    if (failed(parser.parseInteger(padInt))) return Type();
+  if (failed(parseTileBufKeywordField(parser, "loc", locStr)) ||
+      failed(parseTileBufTypeField(parser, "dtype", dtype)) ||
+      failed(parseTileBufIntegerField(parser, "rows", rows)) ||
+      failed(parseTileBufIntegerField(parser, "cols", cols)) ||
+      failed(parseTileBufValidShapeFields(parser, vrow, vcol)) ||
+      failed(parseTileBufKeywordField(parser, "blayout", blayoutStr)) ||
+      failed(parseTileBufKeywordField(parser, "slayout", slayoutStr)) ||
+      failed(parseTileBufIntegerField(parser, "fractal", fractal)) ||
+      failed(parseTileBufPadField(parser, padInt))) {
+    return Type();
   }
 
   if (failed(parser.parseGreater()))
@@ -217,15 +238,7 @@ Type TileBufType::parse(AsmParser &parser) {
     return Type();
   }
 
-  auto memorySpace = ::llvm::StringSwitch<::std::optional<AddressSpace>>(locStr)
-        .Case("mat", AddressSpace::MAT)
-        .Case("left", AddressSpace::LEFT)
-        .Case("right", AddressSpace::RIGHT)
-        .Case("acc", AddressSpace::ACC)
-        .Case("vec", AddressSpace::VEC)
-        .Case("bias", AddressSpace::BIAS)
-        .Case("scaling", AddressSpace::SCALING)
-        .Default(::std::nullopt);
+  auto memorySpace = resolveTileBufMemorySpace(locStr);
   if (!memorySpace.has_value()) {
     parser.emitError(parser.getNameLoc(), "unknown loc: ") << locStr;
     return Type();
@@ -247,19 +260,8 @@ Type TileBufType::parse(AsmParser &parser) {
     return Type();
   }
 
-  BLayout effectiveBLayout = bl.value();
-  if (memorySpace.value() == AddressSpace::LEFT) {
-    switch (getPTOParserTargetArch()) {
-    case PTOParserTargetArch::A3:
-      effectiveBLayout = BLayout::RowMajor;
-      break;
-    case PTOParserTargetArch::A5:
-      effectiveBLayout = BLayout::ColMajor;
-      break;
-    case PTOParserTargetArch::Unspecified:
-      break;
-    }
-  }
+  BLayout effectiveBLayout =
+      resolveTileBufBLayout(memorySpace.value(), bl.value());
 
   auto blAttr = BLayoutAttr::get(ctx, effectiveBLayout);
   auto slAttr = SLayoutAttr::get(ctx, sl.value());

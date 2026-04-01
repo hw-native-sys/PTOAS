@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 //===- DialectPTO.cpp -----------------------------------------------------===//
 //
 // Python bindings for the PTO dialect types (pybind11 version).
@@ -52,7 +47,8 @@ void populatePTODialectSubmodule(pybind11::module &m);
 void populatePTODialectSubmodule(pybind11::module &m) {
   (void)m;
 }
-PYBIND11_MODULE(_pto, m) {
+
+static void bindPTOModule(pybind11::module &m) {
     m.doc() = "PTO dialect Python bindings (pybind11).";
 
     // --------------------------------------------------------------------------
@@ -688,4 +684,8 @@ PYBIND11_MODULE(_pto, m) {
             py::arg("cls"), py::arg("type"));
 	
 	populatePTODialectSubmodule(m);
+}
+
+PYBIND11_MODULE(_pto, m) {
+  bindPTOModule(m);
 }

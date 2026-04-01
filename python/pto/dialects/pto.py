@@ -6,17 +6,22 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from . import _pto_ops_gen as _pto_ops_gen
-from ._pto_ops_gen import *
+import importlib
+import importlib.util
+from pathlib import Path
+
 from mlir import ir as _ods_ir
 
+from . import _pto_ops_gen as _pto_ops_gen
+
+
 def _load_local_pto_ext():
-    import importlib.util
-    from pathlib import Path
     lib_dir = Path(__file__).resolve().parent.parent / "_mlir_libs"
     for suffix in ("*.so", "*.pyd", "*.dll", "*.dylib"):
         for so_path in lib_dir.glob(f"_pto{suffix}"):
-            spec = importlib.util.spec_from_file_location("mlir._mlir_libs._pto", so_path)
+            spec = importlib.util.spec_from_file_location(
+                "mlir._mlir_libs._pto", so_path
+            )
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
@@ -27,7 +32,21 @@ def _load_local_pto_ext():
 try:
     _pto_mod = _load_local_pto_ext()
 except Exception:
-    from .._mlir_libs import _pto as _pto_mod
+    _pto_mod = importlib.import_module(".._mlir_libs._pto", __package__)
+
+
+def _export_generated_symbols():
+    for name, obj in _pto_ops_gen.__dict__.items():
+        if name.startswith("_"):
+            continue
+        globals()[name] = obj
+
+
+def get_op_result_or_value(value):
+    return getattr(_pto_ops_gen, "_get_op_result_or_value")(value)
+
+
+_export_generated_symbols()
 
 register_dialect = _pto_mod.register_dialect
 PtrType = _pto_mod.PtrType
@@ -64,49 +83,86 @@ QuantTypeAttr = _pto_mod.QuantTypeAttr
 __all__ = [
     # Dialect utilities
     "register_dialect",
-
     # Types
     "PtrType",
     "TensorViewType",
     "PartitionTensorViewType",
     "TileType",
     "TileBufType",
-    "AddressSpace", "AddressSpaceAttr",
-    "BLayout","BLayoutAttr",
-    "SLayout","SLayoutAttr",
-    "PadValue","PadValueAttr",
-    "RoundMode", "RoundModeAttr",
-    "CmpMode", "CmpModeAttr",
-    "PIPE", "PipeAttr",
-    "Layout", "LayoutAttr",
-    "SyncOpType", "SyncOpTypeAttr",
-    "EVENT", "EventAttr",
-    "MaskPattern", "MaskPatternAttr",
-    "QuantType", "QuantTypeAttr",
+    "AddressSpace",
+    "AddressSpaceAttr",
+    "BLayout",
+    "BLayoutAttr",
+    "SLayout",
+    "SLayoutAttr",
+    "PadValue",
+    "PadValueAttr",
+    "RoundMode",
+    "RoundModeAttr",
+    "CmpMode",
+    "CmpModeAttr",
+    "PIPE",
+    "PipeAttr",
+    "Layout",
+    "LayoutAttr",
+    "SyncOpType",
+    "SyncOpTypeAttr",
+    "EVENT",
+    "EventAttr",
+    "MaskPattern",
+    "MaskPatternAttr",
+    "QuantType",
+    "QuantTypeAttr",
     "TileBufConfigAttr",
     "TileConfig",
     # High-level sync helpers
-    "record_event", "wait_event", "barrier",
+    "record_event",
+    "wait_event",
+    "barrier",
     # Low-level sync helpers (static/dynamic event id unified API)
-    "set_flag", "wait_flag", "set_flag_dyn", "wait_flag_dyn",
+    "set_flag",
+    "wait_flag",
+    "set_flag_dyn",
+    "wait_flag_dyn",
     # Inter-core sync helpers
-    "sync_set", "sync_wait", "sync_set_dyn", "sync_wait_dyn", "set_ffts",
+    "sync_set",
+    "sync_wait",
+    "sync_set_dyn",
+    "sync_wait_dyn",
+    "set_ffts",
     # A5 buffer-id sync helpers
-    "get_buf", "rls_buf",
+    "get_buf",
+    "rls_buf",
     # Scalar pointer helpers
-    "load_scalar", "store_scalar"
-
+    "load_scalar",
+    "store_scalar",
     # Aliases for SyncOpType enums (for terse calls)
-    ,"TLOAD","TSTORE_ACC","TSTORE_VEC","TMOV_M2L","TMOV_M2S",
-    "TMOV_M2B","TMOV_M2V","TMOV_V2M","TMATMUL","TVEC","TVECWAIT_EVENT"
+    "TLOAD",
+    "TSTORE_ACC",
+    "TSTORE_VEC",
+    "TMOV_M2L",
+    "TMOV_M2S",
+    "TMOV_M2B",
+    "TMOV_M2V",
+    "TMOV_V2M",
+    "TMATMUL",
+    "TVEC",
+    "TVECWAIT_EVENT",
     # Aliases for EVENT enums
-    ,"EVENT_ID0","EVENT_ID1","EVENT_ID2","EVENT_ID3",
-    "EVENT_ID4","EVENT_ID5","EVENT_ID6","EVENT_ID7"
+    "EVENT_ID0",
+    "EVENT_ID1",
+    "EVENT_ID2",
+    "EVENT_ID3",
+    "EVENT_ID4",
+    "EVENT_ID5",
+    "EVENT_ID6",
+    "EVENT_ID7",
 ]
 
 # -----------------------------------------------------------------------------
 # Convenience wrappers for high-level sync to allow passing enums directly
 # -----------------------------------------------------------------------------
+
 
 def _ensure_sync_attr(val, ctx):
     # Accept SyncOpType enum, SyncOpTypeAttr, or string name ("TMATMUL"/"tmatmul").
@@ -116,10 +172,11 @@ def _ensure_sync_attr(val, ctx):
         name = val.upper()
         try:
             enum_val = getattr(SyncOpType, name)
-        except AttributeError:
-            raise ValueError(f"Unknown SyncOpType name: {val}")
+        except AttributeError as exc:
+            raise ValueError(f"Unknown SyncOpType name: {val}") from exc
         return SyncOpTypeAttr.get(enum_val, ctx)
     return val
+
 
 def _ensure_event_attr(val, ctx):
     if isinstance(val, EVENT):
@@ -130,17 +187,18 @@ def _ensure_event_attr(val, ctx):
         enum_name = f"EVENT_ID{val}"
         try:
             enum_val = getattr(EVENT, enum_name)
-        except AttributeError:
-            raise ValueError(f"Unknown EVENT integer id: {val}")
+        except AttributeError as exc:
+            raise ValueError(f"Unknown EVENT integer id: {val}") from exc
         return EventAttr.get(enum_val, ctx)
     if isinstance(val, str):
         name = val.upper()
         try:
             enum_val = getattr(EVENT, name)
-        except AttributeError:
-            raise ValueError(f"Unknown EVENT name: {val}")
+        except AttributeError as exc:
+            raise ValueError(f"Unknown EVENT name: {val}") from exc
         return EventAttr.get(enum_val, ctx)
     return val
+
 
 def _ensure_pipe_attr(val, ctx):
     if isinstance(val, PipeAttr):
@@ -151,10 +209,11 @@ def _ensure_pipe_attr(val, ctx):
         name = val.upper()
         try:
             enum_val = getattr(PIPE, name)
-        except AttributeError:
-            raise ValueError(f"Unknown PIPE name: {val}")
+        except AttributeError as exc:
+            raise ValueError(f"Unknown PIPE name: {val}") from exc
         return PipeAttr.get(enum_val, ctx)
     return val
+
 
 def _ensure_i32_attr(val, name, ctx):
     if isinstance(val, _ods_ir.IntegerAttr):
@@ -164,13 +223,17 @@ def _ensure_i32_attr(val, name, ctx):
         return _ods_ir.IntegerAttr.get(i32, val)
     raise TypeError(f"{name} must be int or IntegerAttr, got {type(val).__name__}")
 
+
 def record_event(src_op, dst_op, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     return _pto_ops_gen.record_event(
         _ensure_sync_attr(src_op, ctx),
         _ensure_sync_attr(dst_op, ctx),
         _ensure_event_attr(event_id, ctx),
-        loc=loc, ip=ip)
+        loc=loc,
+        ip=ip,
+    )
+
 
 def wait_event(src_op, dst_op, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
@@ -178,7 +241,10 @@ def wait_event(src_op, dst_op, event_id, *, loc=None, ip=None):
         _ensure_sync_attr(src_op, ctx),
         _ensure_sync_attr(dst_op, ctx),
         _ensure_event_attr(event_id, ctx),
-        loc=loc, ip=ip)
+        loc=loc,
+        ip=ip,
+    )
+
 
 def barrier(op, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
@@ -202,22 +268,31 @@ def _is_static_i32_event_id(event_id):
     return False
 
 
+def _create_pipe_event_op(op_name, src_attr, dst_attr, event_id, *, loc=None, ip=None):
+    return _ods_ir.Operation.create(
+        op_name,
+        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
+        operands=[get_op_result_or_value(event_id)],
+        loc=loc,
+        ip=ip,
+    )
+
+
 def set_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
     """Low-level dynamic event-id set_flag helper."""
     ctx = loc.context if loc else _ods_ir.Context.current
     src_attr = _ensure_pipe_attr(src_pipe, ctx)
     dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
-    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
     if hasattr(_pto_ops_gen, "set_flag_dyn"):
         return _pto_ops_gen.set_flag_dyn(
-            src_attr, dst_attr, event_val, loc=loc, ip=ip
+            src_attr,
+            dst_attr,
+            get_op_result_or_value(event_id),
+            loc=loc,
+            ip=ip,
         )
-    return _ods_ir.Operation.create(
-        "pto.set_flag_dyn",
-        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
-        operands=[event_val],
-        loc=loc,
-        ip=ip,
+    return _create_pipe_event_op(
+        "pto.set_flag_dyn", src_attr, dst_attr, event_id, loc=loc, ip=ip
     )
 
 
@@ -226,17 +301,16 @@ def wait_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     src_attr = _ensure_pipe_attr(src_pipe, ctx)
     dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
-    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
     if hasattr(_pto_ops_gen, "wait_flag_dyn"):
         return _pto_ops_gen.wait_flag_dyn(
-            src_attr, dst_attr, event_val, loc=loc, ip=ip
+            src_attr,
+            dst_attr,
+            get_op_result_or_value(event_id),
+            loc=loc,
+            ip=ip,
         )
-    return _ods_ir.Operation.create(
-        "pto.wait_flag_dyn",
-        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
-        operands=[event_val],
-        loc=loc,
-        ip=ip,
+    return _create_pipe_event_op(
+        "pto.wait_flag_dyn", src_attr, dst_attr, event_id, loc=loc, ip=ip
     )
 
 
@@ -271,13 +345,16 @@ def wait_flag(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
         )
     return wait_flag_dyn(src_attr, dst_attr, event_id, loc=loc, ip=ip)
 
+
 # -----------------------------------------------------------------------------
 # Inter-core sync helpers (pto.sync.set / pto.sync.wait / pto.set_ffts)
 # -----------------------------------------------------------------------------
+
+
 def sync_set_dyn(pipe, event_id, ffts_mode=2, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     pipe_attr = _ensure_pipe_attr(pipe, ctx)
-    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
+    event_val = get_op_result_or_value(event_id)
     mode_attr = None
     if ffts_mode != 2:
         mode_attr = _ensure_i32_attr(ffts_mode, "ffts_mode", ctx)
@@ -333,7 +410,7 @@ def sync_set(pipe, event_id, ffts_mode=2, *, loc=None, ip=None):
 def sync_wait_dyn(pipe, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     pipe_attr = _ensure_pipe_attr(pipe, ctx)
-    event_val = _pto_ops_gen._get_op_result_or_value(event_id)
+    event_val = get_op_result_or_value(event_id)
     try:
         return _pto_ops_gen.sync_wait(
             pipe_attr, event_id=None, event_id_dyn=event_val, loc=loc, ip=ip
@@ -362,17 +439,21 @@ def sync_wait(pipe, event_id, *, loc=None, ip=None):
             )
     return sync_wait_dyn(pipe_attr, event_id, loc=loc, ip=ip)
 
+
 def set_ffts(ffts, *, loc=None, ip=None):
     return _ods_ir.Operation.create(
         "pto.set_ffts",
-        operands=[_pto_ops_gen._get_op_result_or_value(ffts)],
+        operands=[get_op_result_or_value(ffts)],
         loc=loc,
         ip=ip,
     )
 
+
 # -----------------------------------------------------------------------------
 # A5 buffer-id sync helpers
 # -----------------------------------------------------------------------------
+
+
 def get_buf(op_type, buf_id, mode=0, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     if isinstance(op_type, (PipeAttr, PIPE)):
@@ -406,13 +487,16 @@ def rls_buf(op_type, buf_id, mode=0, *, loc=None, ip=None):
         ip=ip,
     )
 
+
 # -----------------------------------------------------------------------------
 # Scalar pointer helpers (manual wrappers until python ops are regenerated)
 # -----------------------------------------------------------------------------
+
+
 def load_scalar(result_type, ptr, offset, *, loc=None, ip=None):
     operands = [
-        _pto_ops_gen._get_op_result_or_value(ptr),
-        _pto_ops_gen._get_op_result_or_value(offset),
+        get_op_result_or_value(ptr),
+        get_op_result_or_value(offset),
     ]
     op = _ods_ir.Operation.create(
         "pto.load_scalar",
@@ -426,9 +510,9 @@ def load_scalar(result_type, ptr, offset, *, loc=None, ip=None):
 
 def store_scalar(ptr, offset, value, *, loc=None, ip=None):
     operands = [
-        _pto_ops_gen._get_op_result_or_value(ptr),
-        _pto_ops_gen._get_op_result_or_value(offset),
-        _pto_ops_gen._get_op_result_or_value(value),
+        get_op_result_or_value(ptr),
+        get_op_result_or_value(offset),
+        get_op_result_or_value(value),
     ]
     return _ods_ir.Operation.create(
         "pto.store_scalar",
@@ -436,6 +520,7 @@ def store_scalar(ptr, offset, value, *, loc=None, ip=None):
         loc=loc,
         ip=ip,
     )
+
 
 # -----------------------------------------------------------------------------
 # Export enum aliases for terse calls: pto.record_event(TLOAD, TLOAD, EVENT_ID0)
@@ -471,9 +556,12 @@ class TileConfig:
     fractalCSize = 1024
     fractalMxSize = 32
 
+
 # -----------------------------------------------------------------------------
 # Op aliases without "Op" suffix (user-facing)
 # -----------------------------------------------------------------------------
+
+
 def _install_op_aliases():
     added = []
     for name, obj in _pto_ops_gen.__dict__.items():
@@ -491,5 +579,6 @@ def _install_op_aliases():
         globals()[alias] = obj
         added.append(alias)
     return added
+
 
 __all__.extend(_install_op_aliases())

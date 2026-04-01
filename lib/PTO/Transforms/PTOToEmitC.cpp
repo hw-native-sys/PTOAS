@@ -1336,6 +1336,11 @@ struct ArithBitcastToEmitC : public OpConversionPattern<arith::BitcastOp> {
 struct ArithCmpFToEmitC : public OpConversionPattern<arith::CmpFOp> {
   using OpConversionPattern::OpConversionPattern;
 
+  struct CmpFConfig {
+    bool unordered = false;
+    emitc::CmpPredicate predicate = emitc::CmpPredicate::eq;
+  };
+
   static Value isNaN(ConversionPatternRewriter &rewriter, Location loc,
                      Value v) {
     return rewriter
@@ -1352,6 +1357,80 @@ struct ArithCmpFToEmitC : public OpConversionPattern<arith::CmpFOp> {
         .getResult();
   }
 
+  static std::optional<Value> buildSpecialCmpFResult(
+      arith::CmpFPredicate predicate, ConversionPatternRewriter &rewriter,
+      Location loc, Type i1Ty, Value lhs, Value rhs) {
+    switch (predicate) {
+    case arith::CmpFPredicate::AlwaysFalse:
+      return makeEmitCOpaqueConstant(rewriter, loc, i1Ty, "false");
+    case arith::CmpFPredicate::AlwaysTrue:
+      return makeEmitCOpaqueConstant(rewriter, loc, i1Ty, "true");
+    case arith::CmpFPredicate::ORD:
+      return rewriter.create<emitc::LogicalAndOp>(
+                 loc, i1Ty, isNotNaN(rewriter, loc, lhs),
+                 isNotNaN(rewriter, loc, rhs))
+          .getResult();
+    case arith::CmpFPredicate::UNO:
+      return rewriter.create<emitc::LogicalOrOp>(
+                 loc, i1Ty, isNaN(rewriter, loc, lhs),
+                 isNaN(rewriter, loc, rhs))
+          .getResult();
+    default:
+      return std::nullopt;
+    }
+  }
+
+  static std::optional<CmpFConfig>
+  getCmpFConfig(arith::CmpFPredicate predicate) {
+    switch (predicate) {
+    case arith::CmpFPredicate::OEQ:
+      return CmpFConfig{false, emitc::CmpPredicate::eq};
+    case arith::CmpFPredicate::OGT:
+      return CmpFConfig{false, emitc::CmpPredicate::gt};
+    case arith::CmpFPredicate::OGE:
+      return CmpFConfig{false, emitc::CmpPredicate::ge};
+    case arith::CmpFPredicate::OLT:
+      return CmpFConfig{false, emitc::CmpPredicate::lt};
+    case arith::CmpFPredicate::OLE:
+      return CmpFConfig{false, emitc::CmpPredicate::le};
+    case arith::CmpFPredicate::ONE:
+      return CmpFConfig{false, emitc::CmpPredicate::ne};
+    case arith::CmpFPredicate::UEQ:
+      return CmpFConfig{true, emitc::CmpPredicate::eq};
+    case arith::CmpFPredicate::UGT:
+      return CmpFConfig{true, emitc::CmpPredicate::gt};
+    case arith::CmpFPredicate::UGE:
+      return CmpFConfig{true, emitc::CmpPredicate::ge};
+    case arith::CmpFPredicate::ULT:
+      return CmpFConfig{true, emitc::CmpPredicate::lt};
+    case arith::CmpFPredicate::ULE:
+      return CmpFConfig{true, emitc::CmpPredicate::le};
+    case arith::CmpFPredicate::UNE:
+      return CmpFConfig{true, emitc::CmpPredicate::ne};
+    default:
+      return std::nullopt;
+    }
+  }
+
+  static Value buildCmpFResult(const CmpFConfig &config,
+                               ConversionPatternRewriter &rewriter,
+                               Location loc, Type i1Ty, Value lhs, Value rhs) {
+    Value cmp = rewriter
+                    .create<emitc::CmpOp>(loc, i1Ty, config.predicate, lhs, rhs)
+                    .getResult();
+    Value unord = rewriter.create<emitc::LogicalOrOp>(
+        loc, i1Ty, isNaN(rewriter, loc, lhs), isNaN(rewriter, loc, rhs));
+    if (config.unordered)
+      return rewriter
+          .create<emitc::LogicalOrOp>(loc, i1Ty, unord, cmp)
+          .getResult();
+    Value ord = rewriter.create<emitc::LogicalAndOp>(
+        loc, i1Ty, isNotNaN(rewriter, loc, lhs), isNotNaN(rewriter, loc, rhs));
+    return rewriter
+        .create<emitc::LogicalAndOp>(loc, i1Ty, ord, cmp)
+        .getResult();
+  }
+
   LogicalResult matchAndRewrite(arith::CmpFOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     if (!isa<FloatType>(op.getLhs().getType()))
@@ -1359,107 +1438,18 @@ struct ArithCmpFToEmitC : public OpConversionPattern<arith::CmpFOp> {
 
     auto loc = op.getLoc();
     auto i1Ty = rewriter.getI1Type();
-
-    bool unordered = false;
-    emitc::CmpPredicate pred = emitc::CmpPredicate::eq;
-
-    switch (op.getPredicate()) {
-    case arith::CmpFPredicate::AlwaysFalse: {
-      auto cst = makeEmitCOpaqueConstant(rewriter, loc, i1Ty, "false");
-      rewriter.replaceOp(op, cst);
-      return success();
-    }
-    case arith::CmpFPredicate::AlwaysTrue: {
-      auto cst = makeEmitCOpaqueConstant(rewriter, loc, i1Ty, "true");
-      rewriter.replaceOp(op, cst);
-      return success();
-    }
-    case arith::CmpFPredicate::OEQ:
-      unordered = false;
-      pred = emitc::CmpPredicate::eq;
-      break;
-    case arith::CmpFPredicate::OGT:
-      unordered = false;
-      pred = emitc::CmpPredicate::gt;
-      break;
-    case arith::CmpFPredicate::OGE:
-      unordered = false;
-      pred = emitc::CmpPredicate::ge;
-      break;
-    case arith::CmpFPredicate::OLT:
-      unordered = false;
-      pred = emitc::CmpPredicate::lt;
-      break;
-    case arith::CmpFPredicate::OLE:
-      unordered = false;
-      pred = emitc::CmpPredicate::le;
-      break;
-    case arith::CmpFPredicate::ONE:
-      unordered = false;
-      pred = emitc::CmpPredicate::ne;
-      break;
-    case arith::CmpFPredicate::ORD: {
-      Value ordered = rewriter.create<emitc::LogicalAndOp>(
-          loc, i1Ty, isNotNaN(rewriter, loc, adaptor.getLhs()),
-          isNotNaN(rewriter, loc, adaptor.getRhs()));
-      rewriter.replaceOp(op, ordered);
-      return success();
-    }
-    case arith::CmpFPredicate::UEQ:
-      unordered = true;
-      pred = emitc::CmpPredicate::eq;
-      break;
-    case arith::CmpFPredicate::UGT:
-      unordered = true;
-      pred = emitc::CmpPredicate::gt;
-      break;
-    case arith::CmpFPredicate::UGE:
-      unordered = true;
-      pred = emitc::CmpPredicate::ge;
-      break;
-    case arith::CmpFPredicate::ULT:
-      unordered = true;
-      pred = emitc::CmpPredicate::lt;
-      break;
-    case arith::CmpFPredicate::ULE:
-      unordered = true;
-      pred = emitc::CmpPredicate::le;
-      break;
-    case arith::CmpFPredicate::UNE:
-      unordered = true;
-      pred = emitc::CmpPredicate::ne;
-      break;
-    case arith::CmpFPredicate::UNO: {
-      Value unord = rewriter.create<emitc::LogicalOrOp>(
-          loc, i1Ty, isNaN(rewriter, loc, adaptor.getLhs()),
-          isNaN(rewriter, loc, adaptor.getRhs()));
-      rewriter.replaceOp(op, unord);
-      return success();
-    }
-    }
-
-    Value cmp = rewriter
-                    .create<emitc::CmpOp>(loc, i1Ty, pred, adaptor.getLhs(),
-                                          adaptor.getRhs())
-                    .getResult();
-
-    Value unord = rewriter.create<emitc::LogicalOrOp>(
-        loc, i1Ty, isNaN(rewriter, loc, adaptor.getLhs()),
-        isNaN(rewriter, loc, adaptor.getRhs()));
-    Value ord = rewriter.create<emitc::LogicalAndOp>(
-        loc, i1Ty, isNotNaN(rewriter, loc, adaptor.getLhs()),
-        isNotNaN(rewriter, loc, adaptor.getRhs()));
-
-    if (unordered) {
-      Value res =
-          rewriter.create<emitc::LogicalOrOp>(loc, i1Ty, unord, cmp).getResult();
-      rewriter.replaceOp(op, res);
+    if (auto special = buildSpecialCmpFResult(op.getPredicate(), rewriter, loc,
+                                              i1Ty, adaptor.getLhs(),
+                                              adaptor.getRhs())) {
+      rewriter.replaceOp(op, *special);
       return success();
     }
 
-    Value res =
-        rewriter.create<emitc::LogicalAndOp>(loc, i1Ty, ord, cmp).getResult();
-    rewriter.replaceOp(op, res);
+    auto config = getCmpFConfig(op.getPredicate());
+    if (!config)
+      return rewriter.notifyMatchFailure(op, "unsupported cmpf predicate");
+    rewriter.replaceOp(op, buildCmpFResult(*config, rewriter, loc, i1Ty,
+                                           adaptor.getLhs(), adaptor.getRhs()));
     return success();
   }
 };
@@ -1814,6 +1804,99 @@ struct ArithMinMaxFPropagateNaNToEmitC : public OpConversionPattern<ArithOp>,
                                         ArithFloatMinMaxToEmitCBase {
   using OpConversionPattern<ArithOp>::OpConversionPattern;
 
+  static Value buildPrimaryCandidate(ConversionPatternRewriter &rewriter,
+                                     Location loc, Type dstTy, Value lhs,
+                                     Value rhs) {
+    Value cmpLt =
+        rewriter
+            .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
+                                  emitc::CmpPredicate::lt, lhs, rhs)
+            .getResult();
+    return rewriter
+        .create<emitc::ConditionalOp>(
+            loc, dstTy, cmpLt, isMaximum ? rhs : lhs, isMaximum ? lhs : rhs)
+        .getResult();
+  }
+
+  static Value buildSignBitValue(ConversionPatternRewriter &rewriter,
+                                 Location loc, Value lhs, FloatType floatTy) {
+    auto bitsTy =
+        getUnsignedIntOpaqueType(rewriter.getContext(), floatTy.getWidth());
+    auto templateArgs = rewriter.getArrayAttr({emitc::OpaqueAttr::get(
+        rewriter.getContext(), cast<emitc::OpaqueType>(bitsTy).getValue())});
+    Value lhsBits =
+        rewriter
+            .create<emitc::CallOpaqueOp>(loc, TypeRange{bitsTy}, "ptoas_bitcast",
+                                         ValueRange{lhs}, ArrayAttr{},
+                                         templateArgs)
+            .getResult(0);
+    Value oneBits = makeEmitCIntConstant(rewriter, loc, bitsTy, 1);
+    Value shiftAmount =
+        makeEmitCIntConstant(rewriter, loc, bitsTy, floatTy.getWidth() - 1);
+    Value signMask = rewriter
+                         .create<emitc::BitwiseLeftShiftOp>(loc, bitsTy, oneBits,
+                                                            shiftAmount)
+                         .getResult();
+    return rewriter
+        .create<emitc::BitwiseAndOp>(loc, bitsTy, lhsBits, signMask)
+        .getResult();
+  }
+
+  static Value buildSignedZeroCandidate(ConversionPatternRewriter &rewriter,
+                                        Location loc, Type dstTy, Value lhs,
+                                        Value rhs, FloatType floatTy) {
+    Value zero = makeFZero(rewriter, loc, dstTy);
+    Value equal = rewriter
+                      .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
+                                            emitc::CmpPredicate::eq, lhs, rhs)
+                      .getResult();
+    Value lhsZero = rewriter
+                        .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
+                                              emitc::CmpPredicate::eq, lhs,
+                                              zero)
+                        .getResult();
+    Value bothZero = rewriter
+                         .create<emitc::LogicalAndOp>(loc, rewriter.getI1Type(),
+                                                      equal, lhsZero)
+                         .getResult();
+    auto bitsTy =
+        getUnsignedIntOpaqueType(rewriter.getContext(), floatTy.getWidth());
+    Value zeroBits = makeEmitCIntConstant(rewriter, loc, bitsTy, 0);
+    Value lhsIsNegZero =
+        rewriter
+            .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
+                                  emitc::CmpPredicate::ne,
+                                  buildSignBitValue(rewriter, loc, lhs, floatTy),
+                                  zeroBits)
+            .getResult();
+    Value tie = rewriter
+                    .create<emitc::ConditionalOp>(
+                        loc, dstTy, lhsIsNegZero, isMaximum ? rhs : lhs,
+                        isMaximum ? lhs : rhs)
+                    .getResult();
+    return rewriter
+        .create<emitc::ConditionalOp>(loc, dstTy, bothZero, tie,
+                                      buildPrimaryCandidate(rewriter, loc, dstTy,
+                                                            lhs, rhs))
+        .getResult();
+  }
+
+  static Value buildNaNPropagatingResult(ConversionPatternRewriter &rewriter,
+                                         Location loc, Type dstTy, Value lhs,
+                                         Value rhs, FloatType floatTy) {
+    Value lhsNaN = isNaN(rewriter, loc, lhs);
+    Value rhsNaN = isNaN(rewriter, loc, rhs);
+    Value noNaN =
+        buildSignedZeroCandidate(rewriter, loc, dstTy, lhs, rhs, floatTy);
+    Value rhsOrNoNaN = rewriter
+                           .create<emitc::ConditionalOp>(loc, dstTy, rhsNaN, rhs,
+                                                         noNaN)
+                           .getResult();
+    return rewriter
+        .create<emitc::ConditionalOp>(loc, dstTy, lhsNaN, lhs, rhsOrNoNaN)
+        .getResult();
+  }
+
   LogicalResult
   matchAndRewrite(ArithOp op, typename ArithOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -1825,91 +1908,10 @@ struct ArithMinMaxFPropagateNaNToEmitC : public OpConversionPattern<ArithOp>,
     if (!dstTy)
       return failure();
 
-    Value lhsNaN = isNaN(rewriter, loc, adaptor.getLhs());
-    Value rhsNaN = isNaN(rewriter, loc, adaptor.getRhs());
-
-    // Basic compare-based min/max.
-    Value cmpLt = rewriter
-                      .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
-                                            emitc::CmpPredicate::lt,
-                                            adaptor.getLhs(), adaptor.getRhs())
-                      .getResult();
-    Value candidate = rewriter
-                          .create<emitc::ConditionalOp>(
-                              loc, dstTy, cmpLt,
-                              isMaximum ? adaptor.getRhs() : adaptor.getLhs(),
-                              isMaximum ? adaptor.getLhs() : adaptor.getRhs())
-                          .getResult();
-
-    // Fix signed zero tie-breaking for equal zeros.
-    Value zero = makeFZero(rewriter, loc, dstTy);
-    Value eq = rewriter
-                   .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
-                                         emitc::CmpPredicate::eq,
-                                         adaptor.getLhs(), adaptor.getRhs())
-                   .getResult();
-    Value lhsZero = rewriter
-                        .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
-                                              emitc::CmpPredicate::eq,
-                                              adaptor.getLhs(), zero)
-                        .getResult();
-    Value bothZero = rewriter
-                         .create<emitc::LogicalAndOp>(loc, rewriter.getI1Type(),
-                                                      eq, lhsZero)
-                         .getResult();
-
     auto floatTy = cast<FloatType>(op.getType());
-    auto bitsTy = getUnsignedIntOpaqueType(rewriter.getContext(), floatTy.getWidth());
-    auto templateArgs =
-        rewriter.getArrayAttr({emitc::OpaqueAttr::get(rewriter.getContext(),
-                                                      cast<emitc::OpaqueType>(bitsTy).getValue())});
-    Value lhsBits =
-        rewriter
-            .create<emitc::CallOpaqueOp>(loc, TypeRange{bitsTy}, "ptoas_bitcast",
-                                         ValueRange{adaptor.getLhs()},
-                                         /*args=*/ArrayAttr{},
-                                         /*template_args=*/templateArgs)
-            .getResult(0);
-
-    Value oneBits = makeEmitCIntConstant(rewriter, loc, bitsTy, 1);
-    Value shAmt = makeEmitCIntConstant(rewriter, loc, bitsTy,
-                                       floatTy.getWidth() - 1);
-    Value signMask = rewriter
-                         .create<emitc::BitwiseLeftShiftOp>(loc, bitsTy, oneBits,
-                                                            shAmt)
-                         .getResult();
-    Value signBit = rewriter
-                        .create<emitc::BitwiseAndOp>(loc, bitsTy, lhsBits, signMask)
-                        .getResult();
-    Value zeroBits = makeEmitCIntConstant(rewriter, loc, bitsTy, 0);
-    Value lhsIsNegZero =
-        rewriter
-            .create<emitc::CmpOp>(loc, rewriter.getI1Type(),
-                                  emitc::CmpPredicate::ne, signBit, zeroBits)
-            .getResult();
-
-    Value tie =
-        rewriter
-            .create<emitc::ConditionalOp>(
-                loc, dstTy, lhsIsNegZero,
-                isMaximum ? adaptor.getRhs() : adaptor.getLhs(),
-                isMaximum ? adaptor.getLhs() : adaptor.getRhs())
-            .getResult();
-    Value noNaN = rewriter
-                      .create<emitc::ConditionalOp>(loc, dstTy, bothZero, tie,
-                                                    candidate)
-                      .getResult();
-
-    // Propagate NaN: if lhs is NaN return lhs, else if rhs is NaN return rhs.
-    Value rhsOrNoNaN = rewriter
-                           .create<emitc::ConditionalOp>(loc, dstTy, rhsNaN,
-                                                         adaptor.getRhs(), noNaN)
-                           .getResult();
-    Value res = rewriter
-                    .create<emitc::ConditionalOp>(loc, dstTy, lhsNaN,
-                                                  adaptor.getLhs(), rhsOrNoNaN)
-                    .getResult();
-    rewriter.replaceOp(op, res);
+    rewriter.replaceOp(op, buildNaNPropagatingResult(
+                               rewriter, loc, dstTy, adaptor.getLhs(),
+                               adaptor.getRhs(), floatTy));
     return success();
   }
 };
@@ -2502,26 +2504,49 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
 
 enum class Role { A, B, C, Unknown };
 
-static Role inferSubviewRole(memref::SubViewOp sv) {
-  for (Operation *u : sv.getResult().getUsers()) {
-    if (auto ld = dyn_cast<mlir::pto::TLoadOp>(u)) {
-      Value ub = ld.getDst();
-      if (!ub) continue;
-      for (Operation *uu : ub.getUsers()) {
-        if (auto mm = dyn_cast<mlir::pto::TMatmulOp>(uu)) {
-          if (mm.getLhs() == ub) return Role::A;
-          if (mm.getRhs() == ub) return Role::B;
-        }
-        if (auto mmacc = dyn_cast<mlir::pto::TMatmulAccOp>(uu)) {
-          if (mmacc.getLhs() == ub) return Role::A;
-          if (mmacc.getRhs() == ub) return Role::B;
-        }
-      }
-    }
+template <typename MatmulLikeOp>
+static std::optional<Role> inferMatmulLikeSubviewRole(MatmulLikeOp op,
+                                                      Value buffer) {
+  if (op.getLhs() == buffer)
+    return Role::A;
+  if (op.getRhs() == buffer)
+    return Role::B;
+  return std::nullopt;
+}
 
-    if (auto st = dyn_cast<mlir::pto::TStoreOp>(u)) {
-      if (st.getDst() == sv.getResult()) return Role::C;
+static std::optional<Role> inferSubviewRoleFromLoadUser(mlir::pto::TLoadOp load) {
+  Value buffer = load.getDst();
+  if (!buffer)
+    return std::nullopt;
+  for (Operation *user : buffer.getUsers()) {
+    if (auto matmul = dyn_cast<mlir::pto::TMatmulOp>(user)) {
+      if (auto role = inferMatmulLikeSubviewRole(matmul, buffer))
+        return role;
+      continue;
     }
+    if (auto matmulAcc = dyn_cast<mlir::pto::TMatmulAccOp>(user)) {
+      if (auto role = inferMatmulLikeSubviewRole(matmulAcc, buffer))
+        return role;
+    }
+  }
+  return std::nullopt;
+}
+
+static std::optional<Role> inferSubviewRoleFromUser(Operation *user, Value result) {
+  if (auto load = dyn_cast<mlir::pto::TLoadOp>(user))
+    return inferSubviewRoleFromLoadUser(load);
+  if (auto store = dyn_cast<mlir::pto::TStoreOp>(user)) {
+    if (store.getDst() == result)
+      return Role::C;
+  }
+  return std::nullopt;
+}
+
+static Role inferSubviewRole(memref::SubViewOp sv) {
+  Value result = sv.getResult();
+  for (Operation *user : result.getUsers()) {
+    if (auto role = inferSubviewRoleFromUser(user, result))
+      return *role;
   }
   return Role::Unknown;
 }
@@ -3057,159 +3082,183 @@ static std::string getElemTypeStringForGT(Type elemTy) {
   return "float";
 }
 
+static bool hasStaticShape(MemRefType mrTy) {
+  return llvm::none_of(mrTy.getShape(), [](int64_t dim) {
+    return dim == ShapedType::kDynamic;
+  });
+}
+
+static bool getStaticMemrefLayout(MemRefType mrTy, SmallVectorImpl<int64_t> &strides,
+                                  int64_t &offset) {
+  if (failed(getStridesAndOffset(mrTy, strides, offset))) {
+    strides.clear();
+    int64_t stride = 1;
+    ArrayRef<int64_t> shape = mrTy.getShape();
+    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+      strides.push_back(stride);
+      stride *= shape[i];
+    }
+    std::reverse(strides.begin(), strides.end());
+    offset = 0;
+  }
+  return offset != ShapedType::kDynamic &&
+         llvm::none_of(strides, [](int64_t strideValue) {
+           return strideValue == ShapedType::kDynamic;
+         });
+}
+
+static Value applyStaticMemrefOffset(ConversionPatternRewriter &rewriter,
+                                     Location loc, Value basePtr,
+                                     int64_t offset) {
+  if (offset == 0)
+    return basePtr;
+  auto *ctx = rewriter.getContext();
+  Type u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
+  auto offVal = rewriter.create<emitc::ConstantOp>(
+      loc, u32Ty, emitc::OpaqueAttr::get(ctx, std::to_string(offset)));
+  return rewriter.create<emitc::AddOp>(loc, basePtr.getType(), basePtr, offVal);
+}
+
+static int getGlobalTensorElementBytes(StringRef elemTypeStr) {
+  if (elemTypeStr.contains("half") || elemTypeStr.contains("bf16"))
+    return 2;
+  if (elemTypeStr.contains("double"))
+    return 8;
+  return 4;
+}
+
+static int64_t multiplyOrDynamic(int64_t lhs, int64_t rhs) {
+  if (lhs < 0 || rhs < 0)
+    return -1;
+  return lhs * rhs;
+}
+
+static void buildGlobalTensorShapeAndStride(ArrayRef<int64_t> shape,
+                                            ArrayRef<int64_t> strides,
+                                            SmallVectorImpl<int64_t> &shape5D,
+                                            SmallVectorImpl<int64_t> &stride5D) {
+  shape5D.assign(5, 1);
+  stride5D.assign(5, 1);
+  int rank = static_cast<int>(shape.size());
+  int shift = 5 - rank;
+  for (int i = 0; i < rank && i < 5; ++i) {
+    shape5D[shift + i] = shape[i];
+    stride5D[shift + i] = strides[i];
+  }
+  for (int i = 3; i >= 0; --i) {
+    if (i >= shift)
+      continue;
+    stride5D[i] = multiplyOrDynamic(shape5D[i + 1], stride5D[i + 1]);
+  }
+}
+
+static std::string joinIntTemplateParams(ArrayRef<int64_t> values) {
+  std::string result;
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i != 0)
+      result += ", ";
+    result += std::to_string(values[i]);
+  }
+  return result;
+}
+
+static std::string inferFallbackGlobalTensorLayout(ArrayRef<int64_t> shape5D,
+                                                   ArrayRef<int64_t> stride5D,
+                                                   StringRef elemTypeStr) {
+  int elemBytes = getGlobalTensorElementBytes(elemTypeStr);
+  if (shape5D[2] == 16 && multiplyOrDynamic(shape5D[2], shape5D[3]) * elemBytes == 512 &&
+      stride5D[4] == 1 && stride5D[3] == shape5D[4]) {
+    return "pto::Layout::NZ";
+  }
+
+  bool isRowMajor = stride5D[4] == 1;
+  for (int i = 3; i >= 0 && isRowMajor; --i)
+    isRowMajor = stride5D[i] == multiplyOrDynamic(stride5D[i + 1], shape5D[i + 1]);
+
+  bool isColMajor = stride5D[0] == 1;
+  for (int i = 0; i < 4 && isColMajor; ++i)
+    isColMajor = stride5D[i + 1] == multiplyOrDynamic(stride5D[i], shape5D[i]);
+
+  if (isColMajor)
+    return "pto::Layout::DN";
+  return isRowMajor ? "pto::Layout::ND" : "pto::Layout::ND";
+}
+
+static std::string resolveGlobalTensorLayout(Operation *anchor, Value basePtr,
+                                             ArrayRef<int64_t> shape5D,
+                                             ArrayRef<int64_t> stride5D,
+                                             StringRef elemTypeStr) {
+  if (auto layout = resolveLayoutForGlobalTensor(anchor, basePtr))
+    return layoutToEmitCString(*layout);
+  return inferFallbackGlobalTensorLayout(shape5D, stride5D, elemTypeStr);
+}
+
+struct GlobalTensorTypeNames {
+  std::string shapeTypeName;
+  std::string strideTypeName;
+  std::string tensorTypeName;
+  std::string layoutConstName;
+};
+
+static GlobalTensorTypeNames getGlobalTensorTypeNames(Operation *anchor) {
+  std::string suffix = "_" + std::to_string(reinterpret_cast<uintptr_t>(anchor));
+  return {
+      "GTShape" + suffix,
+      "GTStride" + suffix,
+      "GT" + suffix,
+      "GT" + suffix + "_layout",
+  };
+}
+
 static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
                                          Location loc, Value basePtr,
                                          MemRefType mrTy,
                                          Operation *anchor) {
   auto *ctx = rewriter.getContext();
 
-  // Only handle fully static shapes/strides for now.
-  auto shape = mrTy.getShape();
-  for (int64_t dim : shape) {
-    if (dim == ShapedType::kDynamic)
-      return Value();
-  }
+  ArrayRef<int64_t> shape = mrTy.getShape();
+  if (!hasStaticShape(mrTy))
+    return Value();
 
   SmallVector<int64_t> strides;
   int64_t offset = 0;
-  if (failed(getStridesAndOffset(mrTy, strides, offset))) {
-    // Fallback: compact row-major
-    strides.resize(shape.size());
-    int64_t s = 1;
-    for (int i = (int)shape.size() - 1; i >= 0; --i) {
-      strides[i] = s;
-      s *= shape[i];
-    }
-    offset = 0;
-  }
-  if (offset == ShapedType::kDynamic)
+  if (!getStaticMemrefLayout(mrTy, strides, offset))
     return Value();
-  for (int64_t s : strides) {
-    if (s == ShapedType::kDynamic)
-      return Value();
-  }
 
-  // Apply static base offset if needed.
-  Value ptr = basePtr;
-  if (offset != 0) {
-    Type u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
-    auto offVal = rewriter.create<emitc::ConstantOp>(
-        loc, u32Ty, emitc::OpaqueAttr::get(ctx, std::to_string(offset)));
-    ptr = rewriter.create<emitc::AddOp>(loc, basePtr.getType(), basePtr,
-                                        offVal);
-  }
-
-  std::string suffix = "_" + std::to_string(reinterpret_cast<uintptr_t>(anchor));
-  std::string shapeTypeName  = "GTShape"  + suffix;
-  std::string strideTypeName = "GTStride" + suffix;
-  std::string gtTypeName     = "GT"       + suffix;
-
+  Value ptr = applyStaticMemrefOffset(rewriter, loc, basePtr, offset);
+  GlobalTensorTypeNames names = getGlobalTensorTypeNames(anchor);
   std::string elemTypeStr = getElemTypeStringForGT(mrTy.getElementType());
-
-  SmallVector<std::string> shapeParamsVec;
-  SmallVector<std::string> strideParamsVec;
-  for (int i = 0, e = (int)shape.size(); i < e; ++i) {
-    shapeParamsVec.push_back(std::to_string(shape[i]));
-    strideParamsVec.push_back(std::to_string(strides[i]));
-  }
-
-  // Right-align to 5D (pad leading dims with 1).
-  SmallVector<std::string, 5> finalShape(5, "1");
-  SmallVector<std::string, 5> finalStride(5, "1");
-  int rank = (int)shape.size();
-  int shift = 5 - rank;
-  for (int i = 0; i < rank && i < 5; ++i) {
-    finalShape[shift + i] = shapeParamsVec[i];
-    finalStride[shift + i] = strideParamsVec[i];
-  }
-  auto mulOrDyn = [](const std::string &a, const std::string &b) -> std::string {
-    if (a == "-1" || b == "-1")
-      return "-1";
-    int64_t va = 1, vb = 1;
-    (void)llvm::to_integer(a, va);
-    (void)llvm::to_integer(b, vb);
-    return std::to_string(va * vb);
-  };
-  for (int i = 3; i >= 0; --i) {
-    if (i >= shift)
-      continue;
-    finalStride[i] = mulOrDyn(finalShape[i + 1], finalStride[i + 1]);
-  }
-
-  auto joinParams = [](llvm::ArrayRef<std::string> vec) {
-    std::string out;
-    for (size_t i = 0; i < vec.size(); ++i) {
-      if (i > 0) out += ", ";
-      out += vec[i];
-    }
-    return out;
-  };
-
-  std::string shapeParams = joinParams(finalShape);
-  std::string strideParams = joinParams(finalStride);
+  SmallVector<int64_t, 5> shape5D;
+  SmallVector<int64_t, 5> stride5D;
+  buildGlobalTensorShapeAndStride(shape, strides, shape5D, stride5D);
 
   rewriter.create<emitc::VerbatimOp>(
-      loc, "using " + shapeTypeName + " = pto::Shape<" + shapeParams + ">;");
+      loc, "using " + names.shapeTypeName + " = pto::Shape<" +
+               joinIntTemplateParams(shape5D) + ">;");
   rewriter.create<emitc::VerbatimOp>(
-      loc, "using " + strideTypeName + " = pto::Stride<" + strideParams + ">;");
+      loc, "using " + names.strideTypeName + " = pto::Stride<" +
+               joinIntTemplateParams(stride5D) + ">;");
 
-  // Layout: prefer the attribute from InferPTOLayout; only fall back to local
-  // inference when the pass is disabled.
-  std::string layoutEnum = "pto::Layout::ND";
-  bool hasLayoutAttr = false;
-  if (auto layout = resolveLayoutForGlobalTensor(anchor, basePtr)) {
-    layoutEnum = layoutToEmitCString(*layout);
-    hasLayoutAttr = true;
-  }
-  if (!hasLayoutAttr) {
-    SmallVector<int64_t, 5> shapeInt(5, -1), strideInt(5, -1);
-    for (int i = 0; i < 5; ++i) {
-      (void)llvm::to_integer(finalShape[i], shapeInt[i]);
-      (void)llvm::to_integer(finalStride[i], strideInt[i]);
-    }
-    int layoutTag = 0; // ND
-    int elemBytes = 4;
-    if (elemTypeStr.find("half") != std::string::npos ||
-        elemTypeStr.find("bf16") != std::string::npos)
-      elemBytes = 2;
-    else if (elemTypeStr.find("double") != std::string::npos)
-      elemBytes = 8;
-    if (shapeInt[2] == 16 && shapeInt[2] * shapeInt[3] * elemBytes == 512 &&
-        strideInt[4] == 1 && strideInt[3] == shapeInt[4]) {
-      layoutTag = 2; // NZ
-    } else {
-      bool isRow = strideInt[4] == 1;
-      for (int i = 3; i >= 0; --i)
-        isRow &= (strideInt[i] == strideInt[i + 1] * shapeInt[i + 1]);
-      bool isCol = strideInt[0] == 1;
-      for (int i = 0; i < 4; ++i)
-        isCol &= (strideInt[i + 1] == strideInt[i] * shapeInt[i]);
-      if (isCol) layoutTag = 1; // DN
-      else layoutTag = isRow ? 0 : 0; // fallback ND
-    }
-    if (layoutTag == 1)
-      layoutEnum = "pto::Layout::DN";
-    else if (layoutTag == 2)
-      layoutEnum = "pto::Layout::NZ";
-  }
-  std::string layoutConstName = gtTypeName + "_layout";
-  rewriter.create<emitc::VerbatimOp>(
-      loc, "constexpr pto::Layout " + layoutConstName + " = " + layoutEnum + ";");
+  std::string layoutEnum = resolveGlobalTensorLayout(anchor, basePtr, shape5D,
+                                                     stride5D, elemTypeStr);
+  rewriter.create<emitc::VerbatimOp>(loc, "constexpr pto::Layout " +
+                                              names.layoutConstName + " = " +
+                                              layoutEnum + ";");
 
-  auto shapeTypeOpaque = emitc::OpaqueType::get(ctx, shapeTypeName);
-  auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideTypeName);
+  auto shapeTypeOpaque = emitc::OpaqueType::get(ctx, names.shapeTypeName);
+  auto strideTypeOpaque = emitc::OpaqueType::get(ctx, names.strideTypeName);
   auto shapeInstOp = rewriter.create<emitc::CallOpaqueOp>(
-      loc, shapeTypeOpaque, shapeTypeName, ArrayAttr{}, ArrayAttr{},
+      loc, shapeTypeOpaque, names.shapeTypeName, ArrayAttr{}, ArrayAttr{},
       ValueRange{});
   auto strideInstOp = rewriter.create<emitc::CallOpaqueOp>(
-      loc, strideTypeOpaque, strideTypeName, ArrayAttr{}, ArrayAttr{},
+      loc, strideTypeOpaque, names.strideTypeName, ArrayAttr{}, ArrayAttr{},
       ValueRange{});
 
   rewriter.create<emitc::VerbatimOp>(
-      loc, "using " + gtTypeName + " = GlobalTensor<" + elemTypeStr + ", " +
-               shapeTypeName + ", " + strideTypeName + ", " +
-               layoutConstName + ">;");
-  auto gtType = emitc::OpaqueType::get(ctx, gtTypeName);
+      loc, "using " + names.tensorTypeName + " = GlobalTensor<" + elemTypeStr +
+               ", " + names.shapeTypeName + ", " + names.strideTypeName +
+               ", " + names.layoutConstName + ">;");
+  auto gtType = emitc::OpaqueType::get(ctx, names.tensorTypeName);
 
   SmallVector<Value> gtArgs;
   gtArgs.push_back(ptr);
@@ -3217,7 +3266,8 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   gtArgs.push_back(strideInstOp.getResult(0));
 
   auto gtInst = rewriter.create<emitc::CallOpaqueOp>(
-      loc, gtType, gtTypeName, ArrayAttr{}, ArrayAttr{}, ValueRange(gtArgs));
+      loc, gtType, names.tensorTypeName, ArrayAttr{}, ArrayAttr{},
+      ValueRange(gtArgs));
 
   return gtInst.getResult(0);
 }
@@ -3881,98 +3931,122 @@ struct PTOBarrierToEmitC : public OpConversionPattern<pto::BarrierOp> {
 // Replace your PTOSyncToRuntimeCall with the code below.
 //===----------------------------------------------------------------------===//
 
+static bool tryConvertPipeAttrToToken(Attribute attr, std::string &token) {
+  if (!attr)
+    return false;
+  if (auto pipe = dyn_cast<mlir::pto::PipeAttr>(attr)) {
+    token = mlir::pto::stringifyPIPE(pipe.getPipe()).str();
+    return true;
+  }
+  if (auto stringAttr = dyn_cast<StringAttr>(attr)) {
+    token = stringAttr.getValue().str();
+    return true;
+  }
+  return false;
+}
+
+static bool tryConvertEventAttrToToken(Attribute attr, std::string &token) {
+  if (!attr)
+    return false;
+  if (auto event = dyn_cast<mlir::pto::EventAttr>(attr)) {
+    token = mlir::pto::stringifyEVENT(event.getEvent()).str();
+    return true;
+  }
+  if (auto stringAttr = dyn_cast<StringAttr>(attr)) {
+    token = stringAttr.getValue().str();
+    return true;
+  }
+  return false;
+}
+
+static bool tryAssignSyncTokens(Attribute srcAttr, Attribute dstAttr,
+                                Attribute evtAttr, std::string &srcTok,
+                                std::string &dstTok, std::string &evtTok) {
+  std::string localSrc;
+  std::string localDst;
+  std::string localEvt;
+  if (!tryConvertPipeAttrToToken(srcAttr, localSrc) ||
+      !tryConvertPipeAttrToToken(dstAttr, localDst) ||
+      !tryConvertEventAttrToToken(evtAttr, localEvt)) {
+    return false;
+  }
+  srcTok = std::move(localSrc);
+  dstTok = std::move(localDst);
+  evtTok = std::move(localEvt);
+  return true;
+}
+
+static bool tryExtractSyncTokensFromNamedAttrs(Operation *op,
+                                               StringRef srcName,
+                                               StringRef dstName,
+                                               StringRef evtName,
+                                               std::string &srcTok,
+                                               std::string &dstTok,
+                                               std::string &evtTok) {
+  return tryAssignSyncTokens(op->getAttr(srcName), op->getAttr(dstName),
+                             op->getAttr(evtName), srcTok, dstTok, evtTok);
+}
+
+static bool tryExtractSyncTokensFromArrayAttr(Operation *op, StringRef attrName,
+                                              std::string &srcTok,
+                                              std::string &dstTok,
+                                              std::string &evtTok) {
+  auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName);
+  if (!arrayAttr || arrayAttr.size() < 3)
+    return false;
+  return tryAssignSyncTokens(arrayAttr[0], arrayAttr[1], arrayAttr[2], srcTok,
+                             dstTok, evtTok);
+}
+
+static bool tryExtractFallbackSyncTokens(Operation *op, std::string &srcTok,
+                                         std::string &dstTok,
+                                         std::string &evtTok) {
+  SmallVector<std::string, 2> pipes;
+  std::string event;
+  for (NamedAttribute namedAttr : op->getAttrs()) {
+    std::string token;
+    if (tryConvertPipeAttrToToken(namedAttr.getValue(), token)) {
+      pipes.push_back(std::move(token));
+      continue;
+    }
+    if (event.empty() &&
+        tryConvertEventAttrToToken(namedAttr.getValue(), token)) {
+      event = std::move(token);
+    }
+  }
+  if (pipes.size() < 2 || event.empty())
+    return false;
+  srcTok = pipes[0];
+  dstTok = pipes[1];
+  evtTok = event;
+  return true;
+}
+
 static LogicalResult extractSyncTripletTokens(Operation *op,
                                              std::string &srcTok,
                                              std::string &dstTok,
                                              std::string &evtTok,
                                              ConversionPatternRewriter &rewriter) {
-  auto *ctx = rewriter.getContext();
-
-  auto pipeToTok = [](mlir::Attribute a, std::string &out) -> bool {
-    if (!a) return false;
-    if (auto p = dyn_cast<mlir::pto::PipeAttr>(a)) {
-      out = mlir::pto::stringifyPIPE(p.getPipe()).str();
-      return true;
-    }
-    if (auto s = dyn_cast<StringAttr>(a)) {
-      out = s.getValue().str(); // expects already like "PIPE_MTE2"
-      return true;
-    }
-    return false;
-  };
-
-  auto evtToTok = [](mlir::Attribute a, std::string &out) -> bool {
-    if (!a) return false;
-    if (auto e = dyn_cast<mlir::pto::EventAttr>(a)) {
-      out = mlir::pto::stringifyEVENT(e.getEvent()).str();
-      return true;
-    }
-    if (auto s = dyn_cast<StringAttr>(a)) {
-      out = s.getValue().str(); // expects already like "EVENT_ID0"
-      return true;
-    }
-    return false;
-  };
-
-  auto tryNamed = [&](StringRef s0, StringRef s1, StringRef e0) -> bool {
-    std::string st, dt, et;
-    if (!pipeToTok(op->getAttr(s0), st)) return false;
-    if (!pipeToTok(op->getAttr(s1), dt)) return false;
-    if (!evtToTok(op->getAttr(e0), et)) return false;
-    srcTok = std::move(st);
-    dstTok = std::move(dt);
-    evtTok = std::move(et);
-    return true;
-  };
-
-  // 1) Most common named-attr encodings
-  if (tryNamed("src_pipe", "dst_pipe", "event_id")) return success();
-  if (tryNamed("srcPipe",  "dstPipe",  "eventId"))  return success();
-  if (tryNamed("src",      "dst",      "event"))    return success();
-
-  // 2) Bracket-form / custom-asm often packs them into an ArrayAttr under some key
-  auto tryArrayKey = [&](StringRef key) -> bool {
-    auto arr = op->getAttrOfType<ArrayAttr>(key);
-    if (!arr || arr.size() < 3) return false;
-
-    std::string st, dt, et;
-    if (!pipeToTok(arr[0], st)) return false;
-    if (!pipeToTok(arr[1], dt)) return false;
-    if (!evtToTok(arr[2], et))  return false;
-    srcTok = std::move(st);
-    dstTok = std::move(dt);
-    evtTok = std::move(et);
-    return true;
-  };
-
-  if (tryArrayKey("args") || tryArrayKey("pipes") || tryArrayKey("sync") ||
-      tryArrayKey("triplet") || tryArrayKey("attrs"))
-    return success();
-
-  // 3) Last resort: scan everything and pick 2 Pipe + 1 Event in encounter order.
-  std::vector<std::string> pipes;
-  std::string event;
-  for (auto &na : op->getAttrs()) {
-    Attribute a = na.getValue();
-    std::string tok;
-    if (pipeToTok(a, tok)) {
-      pipes.push_back(std::move(tok));
-      continue;
-    }
-    if (evtToTok(a, tok)) {
-      event = std::move(tok);
-      continue;
-    }
-  }
-
-  if (pipes.size() >= 2 && !event.empty()) {
-    srcTok = pipes[0];
-    dstTok = pipes[1];
-    evtTok = event;
+  if (tryExtractSyncTokensFromNamedAttrs(op, "src_pipe", "dst_pipe", "event_id",
+                                         srcTok, dstTok, evtTok) ||
+      tryExtractSyncTokensFromNamedAttrs(op, "srcPipe", "dstPipe", "eventId",
+                                         srcTok, dstTok, evtTok) ||
+      tryExtractSyncTokensFromNamedAttrs(op, "src", "dst", "event", srcTok,
+                                         dstTok, evtTok)) {
     return success();
   }
 
-  return rewriter.notifyMatchFailure(op, "cannot extract PIPE/PIPE/EVENT tokens from pto.{set,wait}_flag");
+  for (StringRef attrName : {"args", "pipes", "sync", "triplet", "attrs"}) {
+    if (tryExtractSyncTokensFromArrayAttr(op, attrName, srcTok, dstTok,
+                                          evtTok)) {
+      return success();
+    }
+  }
+
+  if (tryExtractFallbackSyncTokens(op, srcTok, dstTok, evtTok))
+    return success();
+  return rewriter.notifyMatchFailure(
+      op, "cannot extract PIPE/PIPE/EVENT tokens from pto.{set,wait}_flag");
 }
 static inline std::string pipeTokFromPipeEnum(mlir::pto::PIPE p) {
   return mlir::pto::stringifyPIPE(p).str();
@@ -8235,6 +8309,55 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
     return success();
   }
 
+  static Block *splitBlockForContinuation(PatternRewriter &rewriter,
+                                          scf::IndexSwitchOp op) {
+    auto switchIt = Block::iterator(op.getOperation());
+    return rewriter.splitBlock(op->getBlock(), std::next(switchIt));
+  }
+
+  static void addContinuationArguments(PatternRewriter &rewriter,
+                                       scf::IndexSwitchOp op, Location loc,
+                                       Block *continueBlock) {
+    SmallVector<BlockArgument> contArgs;
+    contArgs.reserve(op.getNumResults());
+    for (Type type : op.getResultTypes())
+      contArgs.push_back(continueBlock->addArgument(type, loc));
+    for (auto result : llvm::enumerate(op.getResults()))
+      result.value().replaceAllUsesWith(contArgs[result.index()]);
+  }
+
+  static void createIndexSwitchBlocks(PatternRewriter &rewriter,
+                                      Region *parentRegion,
+                                      Region::iterator insertPt,
+                                      unsigned numCases,
+                                      SmallVectorImpl<Block *> &checkBlocks,
+                                      Block *&defaultBlock,
+                                      SmallVectorImpl<Block *> &caseBlocks) {
+    checkBlocks.reserve(numCases);
+    caseBlocks.reserve(numCases);
+    for (unsigned i = 0; i < numCases; ++i)
+      checkBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+    defaultBlock = rewriter.createBlock(parentRegion, insertPt);
+    for (unsigned i = 0; i < numCases; ++i)
+      caseBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+  }
+
+  static void populateIndexSwitchCheckBlocks(
+      PatternRewriter &rewriter, Location loc, Value selector,
+      ArrayRef<int64_t> cases, ArrayRef<Block *> checkBlocks,
+      ArrayRef<Block *> caseBlocks, Block *defaultBlock) {
+    for (unsigned i = 0; i < checkBlocks.size(); ++i) {
+      rewriter.setInsertionPointToEnd(checkBlocks[i]);
+      Value caseVal = rewriter.create<arith::ConstantIndexOp>(loc, cases[i]);
+      Value cond = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, selector, caseVal);
+      Block *falseDest =
+          (i + 1 < checkBlocks.size()) ? checkBlocks[i + 1] : defaultBlock;
+      rewriter.create<cf::CondBranchOp>(loc, cond, caseBlocks[i], ValueRange{},
+                                        falseDest, ValueRange{});
+    }
+  }
+
   LogicalResult matchAndRewrite(scf::IndexSwitchOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
@@ -8246,50 +8369,22 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
 
     Block *curBlock = op->getBlock();
     Region *parentRegion = curBlock->getParent();
-
-    // Split the parent block so we can branch to a continuation block with phi
-    // arguments for the switch results.
-    auto switchIt = Block::iterator(op.getOperation());
-    Block *continueBlock = rewriter.splitBlock(curBlock, std::next(switchIt));
-
-    SmallVector<BlockArgument> contArgs;
-    contArgs.reserve(op.getNumResults());
-    for (Type t : op.getResultTypes())
-      contArgs.push_back(continueBlock->addArgument(t, loc));
-
-    for (auto it : llvm::enumerate(op.getResults()))
-      it.value().replaceAllUsesWith(contArgs[it.index()]);
+    Block *continueBlock = splitBlockForContinuation(rewriter, op);
+    addContinuationArguments(rewriter, op, loc, continueBlock);
 
     unsigned numCases = op.getCases().size();
     auto insertPt = continueBlock->getIterator();
 
     SmallVector<Block *> checkBlocks;
     SmallVector<Block *> caseBlocks;
-    checkBlocks.reserve(numCases);
-    caseBlocks.reserve(numCases);
-
-    // Create check blocks for each case: check_i compares selector to case_i.
-    for (unsigned i = 0; i < numCases; ++i)
-      checkBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
-
-    // Create one block for default and one block per case to execute the body.
-    Block *defaultBlock = rewriter.createBlock(parentRegion, insertPt);
-    for (unsigned i = 0; i < numCases; ++i)
-      caseBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+    Block *defaultBlock = nullptr;
+    createIndexSwitchBlocks(rewriter, parentRegion, insertPt, numCases,
+                            checkBlocks, defaultBlock, caseBlocks);
 
     Value selector = op.getArg();
     auto cases = op.getCases();
-
-    // Fill check blocks with chained comparisons.
-    for (unsigned i = 0; i < numCases; ++i) {
-      rewriter.setInsertionPointToEnd(checkBlocks[i]);
-      Value caseVal = rewriter.create<arith::ConstantIndexOp>(loc, cases[i]);
-      Value cond = rewriter.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, selector, caseVal);
-      Block *falseDest = (i + 1 < numCases) ? checkBlocks[i + 1] : defaultBlock;
-      rewriter.create<cf::CondBranchOp>(loc, cond, caseBlocks[i], ValueRange{},
-                                        falseDest, ValueRange{});
-    }
+    populateIndexSwitchCheckBlocks(rewriter, loc, selector, cases, checkBlocks,
+                                   caseBlocks, defaultBlock);
 
     // Fill case blocks and default block with cloned bodies + branch to cont.
     for (unsigned i = 0; i < numCases; ++i) {
@@ -8318,6 +8413,74 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
 struct SCFWhileToCF : public OpRewritePattern<scf::WhileOp> {
   using OpRewritePattern::OpRewritePattern;
 
+  static LogicalResult validateWhileResultUses(scf::WhileOp op) {
+    Block *parentBlock = op->getBlock();
+    for (Value result : op.getResults()) {
+      for (OpOperand &use : result.getUses()) {
+        if (use.getOwner()->getBlock() != parentBlock)
+          return failure();
+      }
+    }
+    return success();
+  }
+
+  static Block *splitAfterWhileBlock(PatternRewriter &rewriter,
+                                     scf::WhileOp op) {
+    auto whileIt = Block::iterator(op.getOperation());
+    return rewriter.splitBlock(op->getBlock(), std::next(whileIt));
+  }
+
+  static void addWhileExitArguments(PatternRewriter &rewriter, scf::WhileOp op,
+                                    Location loc, Block *afterWhileBlock) {
+    SmallVector<Value> exitArgs;
+    exitArgs.reserve(op.getNumResults());
+    for (Type type : op.getResultTypes())
+      exitArgs.push_back(afterWhileBlock->addArgument(type, loc));
+    for (auto result : llvm::enumerate(op.getResults()))
+      result.value().replaceAllUsesWith(exitArgs[result.index()]);
+  }
+
+  static Block *createWhileHeaderBlock(PatternRewriter &rewriter,
+                                       scf::WhileOp op, Location loc,
+                                       Block *afterWhileBlock) {
+    SmallVector<Type> headerArgTypes;
+    for (Value init : op.getInits())
+      headerArgTypes.push_back(init.getType());
+    SmallVector<Location> headerArgLocs(headerArgTypes.size(), loc);
+    return rewriter.createBlock(afterWhileBlock->getParent(),
+                                afterWhileBlock->getIterator(), headerArgTypes,
+                                headerArgLocs);
+  }
+
+  static Block *createWhileBodyBlock(PatternRewriter &rewriter, scf::WhileOp op,
+                                     Location loc, Block *afterWhileBlock) {
+    Block &afterRegionBlock = op.getAfter().front();
+    SmallVector<Type> bodyArgTypes(afterRegionBlock.getArgumentTypes().begin(),
+                                   afterRegionBlock.getArgumentTypes().end());
+    SmallVector<Location> bodyArgLocs(bodyArgTypes.size(), loc);
+    return rewriter.createBlock(afterWhileBlock->getParent(),
+                                afterWhileBlock->getIterator(), bodyArgTypes,
+                                bodyArgLocs);
+  }
+
+  static void rewriteWhileTerminators(PatternRewriter &rewriter, Location loc,
+                                      Block *headerBlock, Block *bodyBlock,
+                                      Block *afterWhileBlock) {
+    auto condOp = cast<scf::ConditionOp>(headerBlock->getTerminator());
+    rewriter.setInsertionPoint(condOp);
+    rewriter.create<cf::CondBranchOp>(loc, condOp.getCondition(),
+                                      /*trueDest=*/bodyBlock,
+                                      /*trueOperands=*/condOp.getArgs(),
+                                      /*falseDest=*/afterWhileBlock,
+                                      /*falseOperands=*/condOp.getArgs());
+    rewriter.eraseOp(condOp);
+
+    auto yieldOp = cast<scf::YieldOp>(bodyBlock->getTerminator());
+    rewriter.setInsertionPoint(yieldOp);
+    rewriter.create<cf::BranchOp>(loc, headerBlock, yieldOp.getOperands());
+    rewriter.eraseOp(yieldOp);
+  }
+
   LogicalResult matchAndRewrite(scf::WhileOp op,
                                 PatternRewriter &rewriter) const override {
     Operation *parentOp = op->getParentOp();
@@ -8326,77 +8489,24 @@ struct SCFWhileToCF : public OpRewritePattern<scf::WhileOp> {
           op, "cannot lower scf.while inside a single-block parent region");
     }
 
-    Block *curBlock = op->getBlock();
-
-    // Only support the common structured form where the while results are used
-    // in the same block after the op.
-    for (Value res : op.getResults()) {
-      for (auto &use : res.getUses()) {
-        if (use.getOwner()->getBlock() != curBlock)
-          return rewriter.notifyMatchFailure(
-              op, "unsupported: while results used outside the parent block");
-      }
-    }
+    if (failed(validateWhileResultUses(op)))
+      return rewriter.notifyMatchFailure(
+          op, "unsupported: while results used outside the parent block");
 
     auto loc = op.getLoc();
-    auto whileIt = Block::iterator(op.getOperation());
-    Block *afterWhileBlock = rewriter.splitBlock(curBlock, std::next(whileIt));
-
-    // Add block args to carry while results into the continuation block.
-    SmallVector<Value> exitArgs;
-    exitArgs.reserve(op.getNumResults());
-    for (Type t : op.getResultTypes())
-      exitArgs.push_back(afterWhileBlock->addArgument(t, loc));
-
-    for (auto it : llvm::enumerate(op.getResults()))
-      it.value().replaceAllUsesWith(exitArgs[it.index()]);
-
-    // Create the CFG blocks before the continuation block.
-    Region *parentRegion = curBlock->getParent();
-    auto insertPt = afterWhileBlock->getIterator();
-
-    // Header block arguments match the while init operands.
-    SmallVector<Type> headerArgTypes;
-    for (Value v : op.getInits())
-      headerArgTypes.push_back(v.getType());
-    SmallVector<Location> headerArgLocs(headerArgTypes.size(), loc);
-    Block *headerBlock =
-        rewriter.createBlock(parentRegion, insertPt, headerArgTypes,
-                             headerArgLocs);
-
-    // Body block arguments match the "after" region arguments.
-    Block &afterRegionBlock = op.getAfter().front();
-    SmallVector<Type> bodyArgTypes(afterRegionBlock.getArgumentTypes().begin(),
-                                  afterRegionBlock.getArgumentTypes().end());
-    SmallVector<Location> bodyArgLocs(bodyArgTypes.size(), loc);
-    insertPt = afterWhileBlock->getIterator();
-    Block *bodyBlock =
-        rewriter.createBlock(parentRegion, insertPt, bodyArgTypes, bodyArgLocs);
+    Block *afterWhileBlock = splitAfterWhileBlock(rewriter, op);
+    addWhileExitArguments(rewriter, op, loc, afterWhileBlock);
+    Block *headerBlock = createWhileHeaderBlock(rewriter, op, loc,
+                                                afterWhileBlock);
+    Block *bodyBlock = createWhileBodyBlock(rewriter, op, loc, afterWhileBlock);
 
     // Move the before/after region bodies into the new CFG blocks.
+    Block &afterRegionBlock = op.getAfter().front();
     rewriter.mergeBlocks(&op.getBefore().front(), headerBlock,
                          headerBlock->getArguments());
     rewriter.mergeBlocks(&afterRegionBlock, bodyBlock, bodyBlock->getArguments());
-
-    // Replace scf.condition in the header with cf.cond_br.
-    {
-      auto condOp = cast<scf::ConditionOp>(headerBlock->getTerminator());
-      rewriter.setInsertionPoint(condOp);
-      rewriter.create<cf::CondBranchOp>(loc, condOp.getCondition(),
-                                        /*trueDest=*/bodyBlock,
-                                        /*trueOperands=*/condOp.getArgs(),
-                                        /*falseDest=*/afterWhileBlock,
-                                        /*falseOperands=*/condOp.getArgs());
-      rewriter.eraseOp(condOp);
-    }
-
-    // Replace scf.yield in the body with cf.br back to the header.
-    {
-      auto yieldOp = cast<scf::YieldOp>(bodyBlock->getTerminator());
-      rewriter.setInsertionPoint(yieldOp);
-      rewriter.create<cf::BranchOp>(loc, headerBlock, yieldOp.getOperands());
-      rewriter.eraseOp(yieldOp);
-    }
+    rewriteWhileTerminators(rewriter, loc, headerBlock, bodyBlock,
+                            afterWhileBlock);
 
     // Replace scf.while itself with a branch to the header.
     rewriter.setInsertionPoint(op);
@@ -8411,6 +8521,65 @@ struct SCFWhileToCF : public OpRewritePattern<scf::WhileOp> {
 // EmitC C++ translation currently supports cf.br/cf.cond_br, but not cf.switch.
 struct CFSwitchToCondBr : public OpRewritePattern<cf::SwitchOp> {
   using OpRewritePattern::OpRewritePattern;
+
+  static SmallVector<SmallVector<Value>>
+  collectSwitchCaseOperands(cf::SwitchOp op) {
+    SmallVector<SmallVector<Value>> caseOperands;
+    caseOperands.reserve(op.getCaseDestinations().size());
+    for (auto range : op.getCaseOperands())
+      caseOperands.emplace_back(range.begin(), range.end());
+    return caseOperands;
+  }
+
+  static SmallVector<APInt> getSwitchCaseValues(cf::SwitchOp op) {
+    SmallVector<APInt> caseValues;
+    if (auto caseValuesAttr = op.getCaseValues()) {
+      for (APInt value : caseValuesAttr->getValues<APInt>())
+        caseValues.push_back(value);
+    }
+    return caseValues;
+  }
+
+  static SmallVector<Block *> createSwitchCheckBlocks(PatternRewriter &rewriter,
+                                                      Region *parentRegion,
+                                                      Block *curBlock,
+                                                      size_t numCases) {
+    auto insertPt = std::next(curBlock->getIterator());
+    SmallVector<Block *> checkBlocks;
+    checkBlocks.reserve(numCases);
+    for (size_t i = 0; i < numCases; ++i)
+      checkBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+    return checkBlocks;
+  }
+
+  static LogicalResult populateSwitchCheckBlocks(
+      PatternRewriter &rewriter, Location loc, Value flag, IntegerType flagTy,
+      ArrayRef<APInt> caseValues, ArrayRef<Block *> caseDests,
+      ArrayRef<SmallVector<Value>> caseOperands, Block *defaultDest,
+      ValueRange defaultOperands, ArrayRef<Block *> checkBlocks,
+      cf::SwitchOp op) {
+    for (size_t i = 0; i < caseDests.size(); ++i) {
+      rewriter.setInsertionPointToEnd(checkBlocks[i]);
+      APInt caseVal = caseValues[i];
+      if (caseVal.getBitWidth() != flagTy.getWidth()) {
+        return rewriter.notifyMatchFailure(
+            op, "case value bitwidth doesn't match flag type");
+      }
+
+      Value caseConst = rewriter.create<arith::ConstantOp>(
+          loc, flagTy, rewriter.getIntegerAttr(flagTy, caseVal));
+      Value cond = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, flag, caseConst);
+      Block *falseDest =
+          (i + 1 < checkBlocks.size()) ? checkBlocks[i + 1] : defaultDest;
+      ValueRange falseOperands =
+          (i + 1 < checkBlocks.size()) ? ValueRange{} : defaultOperands;
+      rewriter.create<cf::CondBranchOp>(loc, cond, caseDests[i],
+                                        caseOperands[i], falseDest,
+                                        falseOperands);
+    }
+    return success();
+  }
 
   LogicalResult matchAndRewrite(cf::SwitchOp op,
                                 PatternRewriter &rewriter) const override {
@@ -8435,62 +8604,30 @@ struct CFSwitchToCondBr : public OpRewritePattern<cf::SwitchOp> {
 
     SmallVector<Block *> caseDests(op.getCaseDestinations().begin(),
                                    op.getCaseDestinations().end());
-    SmallVector<SmallVector<Value>> caseOperands;
-    caseOperands.reserve(caseDests.size());
-    for (auto range : op.getCaseOperands())
-      caseOperands.emplace_back(range.begin(), range.end());
+    SmallVector<SmallVector<Value>> caseOperands = collectSwitchCaseOperands(op);
 
     if (caseDests.empty()) {
       rewriter.replaceOpWithNewOp<cf::BranchOp>(op, defaultDest, defaultOperands);
       return success();
     }
 
-    std::optional<DenseIntElementsAttr> caseValuesAttr = op.getCaseValues();
-    if (!caseValuesAttr)
+    if (!op.getCaseValues())
       return rewriter.notifyMatchFailure(op, "missing case_values");
-
-    SmallVector<APInt> caseValues;
-    for (APInt v : caseValuesAttr->getValues<APInt>())
-      caseValues.push_back(v);
+    SmallVector<APInt> caseValues = getSwitchCaseValues(op);
 
     if (caseValues.size() != caseDests.size())
       return rewriter.notifyMatchFailure(op, "case_values/destinations mismatch");
     if (caseOperands.size() != caseDests.size())
       return rewriter.notifyMatchFailure(op, "case_operands/destinations mismatch");
 
-    // Insert check blocks right after the current block.
-    auto insertPt = std::next(curBlock->getIterator());
-    SmallVector<Block *> checkBlocks;
-    checkBlocks.reserve(caseDests.size());
-    for (size_t i = 0; i < caseDests.size(); ++i)
-      checkBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
-
-    // Fill each check block with:
-    //   if (flag == caseVal_i) goto caseDest_i else goto nextCheck/default.
-    for (size_t i = 0; i < caseDests.size(); ++i) {
-      rewriter.setInsertionPointToEnd(checkBlocks[i]);
-
-      APInt caseVal = caseValues[i];
-      if (caseVal.getBitWidth() != flagTy.getWidth()) {
-        return rewriter.notifyMatchFailure(
-            op, "case value bitwidth doesn't match flag type");
-      }
-
-      Value caseConst = rewriter.create<arith::ConstantOp>(
-          loc, flagTy, rewriter.getIntegerAttr(flagTy, caseVal));
-      Value cond = rewriter.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, flag, caseConst);
-
-      Block *falseDest =
-          (i + 1 < checkBlocks.size()) ? checkBlocks[i + 1] : defaultDest;
-      ValueRange falseOperands =
-          (i + 1 < checkBlocks.size()) ? ValueRange{} : ValueRange(defaultOperands);
-
-      rewriter.create<cf::CondBranchOp>(loc, cond,
-                                        /*trueDest=*/caseDests[i],
-                                        /*trueOperands=*/caseOperands[i],
-                                        /*falseDest=*/falseDest,
-                                        /*falseOperands=*/falseOperands);
+    SmallVector<Block *> checkBlocks =
+        createSwitchCheckBlocks(rewriter, parentRegion, curBlock,
+                                caseDests.size());
+    if (failed(populateSwitchCheckBlocks(rewriter, loc, flag, flagTy,
+                                         caseValues, caseDests, caseOperands,
+                                         defaultDest, defaultOperands,
+                                         checkBlocks, op))) {
+      return failure();
     }
 
     // Replace the switch terminator with a branch into the first check block.

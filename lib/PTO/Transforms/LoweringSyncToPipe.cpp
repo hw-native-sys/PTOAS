@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
@@ -43,29 +38,43 @@ static FailureOr<SyncOpType> getSyncOpTypeFromAttr(Attribute attr, Operation *op
   return failure();
 }
 
+static FailureOr<std::pair<PIPE, PIPE>> getConcretePipePair(Operation *op,
+                                                            Attribute srcAttr,
+                                                            Attribute dstAttr) {
+  auto srcTypeOr = getSyncOpTypeFromAttr(srcAttr, op, "src_op");
+  if (failed(srcTypeOr))
+    return failure();
+  auto dstTypeOr = getSyncOpTypeFromAttr(dstAttr, op, "dst_op");
+  if (failed(dstTypeOr))
+    return failure();
+
+  PIPE srcPipe = mapSyncOpTypeToPipe(*srcTypeOr);
+  PIPE dstPipe = mapSyncOpTypeToPipe(*dstTypeOr);
+  if (!isConcreteSyncPipe(srcPipe) || !isConcreteSyncPipe(dstPipe)) {
+    op->emitError("Failed to map SyncOpType to hardware pipe during lowering.");
+    return failure();
+  }
+  return std::make_pair(srcPipe, dstPipe);
+}
+
+template <typename HighLevelOp, typename LowLevelOp>
+static LogicalResult lowerEventSyncOp(HighLevelOp op, PatternRewriter &rewriter) {
+  auto pipes = getConcretePipePair(op.getOperation(), op.getSrcOpAttr(),
+                                   op.getDstOpAttr());
+  if (failed(pipes))
+    return failure();
+  rewriter.replaceOpWithNewOp<LowLevelOp>(
+      op, PipeAttr::get(op.getContext(), pipes->first),
+      PipeAttr::get(op.getContext(), pipes->second), op.getEventIdAttr());
+  return success();
+}
+
 struct RecordEventLowering : public OpRewritePattern<RecordEventOp> {
   using OpRewritePattern<RecordEventOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(RecordEventOp op,
                                 PatternRewriter &rewriter) const override {
-    auto srcTypeOr = getSyncOpTypeFromAttr(op.getSrcOpAttr(), op, "src_op");
-    if (failed(srcTypeOr))
-      return failure();
-    auto dstTypeOr = getSyncOpTypeFromAttr(op.getDstOpAttr(), op, "dst_op");
-    if (failed(dstTypeOr))
-      return failure();
-    SyncOpType srcType = *srcTypeOr;
-    SyncOpType dstType = *dstTypeOr;
-
-    PIPE srcPipe = mapSyncOpTypeToPipe(srcType);
-    PIPE dstPipe = mapSyncOpTypeToPipe(dstType);
-    if (!isConcreteSyncPipe(srcPipe) || !isConcreteSyncPipe(dstPipe))
-      return op.emitError("Failed to map SyncOpType to hardware pipe during lowering.");
-
-    rewriter.replaceOpWithNewOp<SetFlagOp>(
-        op, PipeAttr::get(op.getContext(), srcPipe),
-        PipeAttr::get(op.getContext(), dstPipe), op.getEventIdAttr());
-    return success();
+    return lowerEventSyncOp<RecordEventOp, SetFlagOp>(op, rewriter);
   }
 };
 
@@ -74,24 +83,7 @@ struct WaitEventLowering : public OpRewritePattern<WaitEventOp> {
 
   LogicalResult matchAndRewrite(WaitEventOp op,
                                 PatternRewriter &rewriter) const override {
-    auto srcTypeOr = getSyncOpTypeFromAttr(op.getSrcOpAttr(), op, "src_op");
-    if (failed(srcTypeOr))
-      return failure();
-    auto dstTypeOr = getSyncOpTypeFromAttr(op.getDstOpAttr(), op, "dst_op");
-    if (failed(dstTypeOr))
-      return failure();
-    SyncOpType srcType = *srcTypeOr;
-    SyncOpType dstType = *dstTypeOr;
-
-    PIPE srcPipe = mapSyncOpTypeToPipe(srcType);
-    PIPE dstPipe = mapSyncOpTypeToPipe(dstType);
-    if (!isConcreteSyncPipe(srcPipe) || !isConcreteSyncPipe(dstPipe))
-      return op.emitError("Failed to map SyncOpType to hardware pipe during lowering.");
-
-    rewriter.replaceOpWithNewOp<WaitFlagOp>(
-        op, PipeAttr::get(op.getContext(), srcPipe),
-        PipeAttr::get(op.getContext(), dstPipe), op.getEventIdAttr());
-    return success();
+    return lowerEventSyncOp<WaitEventOp, WaitFlagOp>(op, rewriter);
   }
 };
 

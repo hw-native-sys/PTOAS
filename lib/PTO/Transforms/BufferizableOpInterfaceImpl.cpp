@@ -23,6 +23,22 @@ using namespace mlir::bufferization;
 
 namespace {
 
+template <typename Derived, typename OpTy>
+struct PTOReadWriteDpsOpInterfaceBase
+    : public DstBufferizableOpInterfaceExternalModel<Derived, OpTy> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInit(&opOperand);
+  }
+};
+
 /// Generic conversion for any DestinationStyleOpInterface on tensors.
 static LogicalResult bufferizeDestinationStyleOpInterface(
     RewriterBase &rewriter, DestinationStyleOpInterface op,
@@ -146,22 +162,7 @@ struct PTOMrgSortDpsOpInterface
 };
 
 struct PTOAddOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<PTOAddOpInterface,
-                                                     pto::TAddOp> {
-  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
-                              const AnalysisState &state) const {
-    // Operand is read if it is used in the computation.
-    auto dpsOp = cast<DestinationStyleOpInterface>(op);
-    return dpsOp.isDpsInput(&opOperand);
-  }
-
-  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
-                               const AnalysisState &state) const {
-    // Operand is written to if it is not an input/init.
-    auto dpsOp = cast<DestinationStyleOpInterface>(op);
-    return dpsOp.isDpsInit(&opOperand);
-  }
-
+    : public PTOReadWriteDpsOpInterfaceBase<PTOAddOpInterface, pto::TAddOp> {
   bool bufferizesToElementwiseAccess(Operation *op, const AnalysisState &state,
                                      ArrayRef<OpOperand *> opOperands) const {
     return true;
@@ -175,20 +176,8 @@ struct PTOAddOpInterface
 };
 
 struct PTOMatmulOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<PTOMatmulOpInterface,
-                                                     pto::TMatmulOp> {
-  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
-                              const AnalysisState &state) const {
-    auto dpsOp = cast<DestinationStyleOpInterface>(op);
-    return dpsOp.isDpsInput(&opOperand);
-  }
-
-  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
-                               const AnalysisState &state) const {
-    auto dpsOp = cast<DestinationStyleOpInterface>(op);
-    return dpsOp.isDpsInit(&opOperand);
-  }
-
+    : public PTOReadWriteDpsOpInterfaceBase<PTOMatmulOpInterface,
+                                            pto::TMatmulOp> {
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
