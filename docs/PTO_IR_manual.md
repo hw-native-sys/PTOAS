@@ -65,7 +65,7 @@ Common element categories include:
 Element type constraints are operation-specific:
 
 - **Shape/type consistency**: most elementwise ops require all operands and results to have the same element type.
-- **Numeric domain**: reductions, math ops, and division typically restrict element types to floating-point or a subset of integer types.
+- **Numeric domain**: reductions, math ops, and division typically restrict element types to floating-point or a limited set of integer types.
 - **Bitwise ops**: require integer element types.
 - **Conversions**: `pto.tcvt` defines explicit element type changes and is controlled by `RoundMode` when converting between numeric domains.
 
@@ -467,14 +467,16 @@ result = alloc_tile(base_addr, valid_row, valid_col)   // operands are optional
 %tb3 = pto.alloc_tile addr = %ad : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
-##### `pto.subset` - Subview Tile View
+##### `pto.subview` - Tile SubView
 
-**Summary:** Create a strided view from a parent tile. The result tile buffer is a logical subset of the input tile buffer.
+**Summary:** Create a logical subview from a parent tile. The subview window is expressed by `offsets + sizes`, and the result tile type shape equals `sizes`.
 
 **Semantics:**
 
 ```
 result = source[offsets] with static sizes
+result.shape = sizes
+result.valid = clip(explicit_valid_or_sizes, sizes)
 ```
 
 **Arguments:**
@@ -484,27 +486,37 @@ result = source[offsets] with static sizes
 | `source` | `pto.tile_buf` | Parent tile buffer |
 | `offsets` | `Variadic<Index>` | Runtime dynamic offsets [i, j] |
 | `sizes` | `I64ArrayAttr` | Static shape [rows, cols] |
+| `valid_row` | `Optional<Index>` | Optional explicit valid row |
+| `valid_col` | `Optional<Index>` | Optional explicit valid col |
 
 **Results:** `pto.tile_buf`
 
 **Constraints & Verification:**
 
 - The verifier derives boxed-vs-non-boxed behavior from `source`'s tile config (`blayout`, `slayout`, `fractal`) and element type.
-- For non-boxed layouts (`slayout=none_box`), no additional subset-specific structural checks are enforced.
+- For non-boxed layouts (`slayout=none_box`), no additional subview-specific structural checks are enforced.
 - For boxed layouts (`slayout != none_box`):
-  - The tile layout must be one of the subset layouts supported by the current implementation; otherwise verification fails.
-  - `sizes` must be present, must have length 2, and both subset sizes must be positive.
-  - The subset sizes must be multiples of the inferred inner boxed shape.
+  - The tile layout must be one of the subview layouts supported by the current implementation; otherwise verification fails.
+  - `sizes` must be present, must have length 2, and both subview sizes must be positive.
+  - The subview sizes must be multiples of the inferred inner boxed shape.
   - `offsets` must have length 2.
   - If an offset is compile-time constant, it must be non-negative and must be a multiple of the inferred inner boxed shape in that dimension.
   - The source tile shape must be statically known.
-  - For boxed row-major tiles, the subset must keep the full source column extent, and the column offset must be the constant `0`.
-  - For boxed col-major tiles, the subset must keep the full source row extent, and the row offset must be the constant `0`.
+  - For boxed row-major tiles, the subview must keep the full source column extent, and the column offset must be the constant `0`.
+  - For boxed col-major tiles, the subview must keep the full source row extent, and the row offset must be the constant `0`.
+- `valid_row` and `valid_col` must be both present or both absent.
+- If `valid_row/valid_col` are omitted, result `valid_shape` defaults to `sizes`.
+- If `valid_row/valid_col` are provided:
+  - constant values must be positive and `<= sizes` in each dimension
+  - non-constant values are represented as dynamic valid dims in the result type
 - The inferred result type uses:
-  - `shape = sizes`
+  - `shape = sizes` (logical subview size)
   - the same element type and address space as `source`
   - the same tile config as `source`
-  - a `valid_shape` derived from the parent `valid_shape` and constant offsets when possible, otherwise dynamic in that dimension
+  - `valid_shape` defaults to `sizes`
+  - if explicit `valid_row/valid_col` are provided, `valid_shape` is clipped by `sizes`
+- Lowering keeps parent physical stride/base semantics for non-compact access,
+  so EmitC behavior remains unchanged from the previous implementation.
 
 **Hardware Mapping:**
 
@@ -513,7 +525,12 @@ result = source[offsets] with static sizes
 **Basic Example:**
 
 ```mlir
-%sub = pto.subset %src[%i, %j] sizes [32, 32] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%sub = pto.subview %src[%i, %j] sizes [32, 32] :
+  !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%sub2 = pto.subview %src[%i, %j] sizes [32, 32] valid [%vr, %vc] :
+  !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
 ##### `pto.set_validshape` - Update Dynamic Tile Valid Row/Col In Place

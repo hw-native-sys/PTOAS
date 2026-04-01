@@ -7493,13 +7493,96 @@ static void printLayout(AsmPrinter &printer, Attribute layoutAttr) {
 // ---- TileBuf ---
 
 
-// Tile subset 相关实现
+// Tile subview 相关实现
 
 // =============================================================================
-// Op Interface Implementation: SubsetOp
+// Op Interface Implementation: SubViewOp
 // =============================================================================
 
-LogicalResult SubsetOp::inferReturnTypes(
+ParseResult mlir::pto::SubViewOp::parse(OpAsmParser &parser,
+                                        OperationState &result) {
+  OpAsmParser::UnresolvedOperand source;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
+  SmallVector<OpAsmParser::UnresolvedOperand, 2> valids;
+  Type sourceTy;
+  Type resultTy;
+  bool hasExplicitResultTy = false;
+
+  if (parser.parseOperand(source) || parser.parseLSquare() ||
+      parser.parseOperandList(offsets) || parser.parseRSquare() ||
+      parser.parseKeyword("sizes"))
+    return failure();
+
+  ArrayAttr sizesAttr;
+  if (parser.parseAttribute(sizesAttr, "sizes", result.attributes))
+    return failure();
+
+  if (succeeded(parser.parseOptionalKeyword("valid"))) {
+    OpAsmParser::UnresolvedOperand vrow, vcol;
+    if (parser.parseLSquare() || parser.parseOperand(vrow) || parser.parseComma() ||
+        parser.parseOperand(vcol) || parser.parseRSquare())
+      return failure();
+    valids.push_back(vrow);
+    valids.push_back(vcol);
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColonType(sourceTy))
+    return failure();
+
+  if (succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseType(resultTy))
+      return failure();
+    hasExplicitResultTy = true;
+  }
+
+  if (parser.resolveOperand(source, sourceTy, result.operands))
+    return failure();
+
+  Type indexTy = parser.getBuilder().getIndexType();
+  if (parser.resolveOperands(offsets, indexTy, result.operands))
+    return failure();
+  if (!valids.empty() &&
+      parser.resolveOperands(valids, indexTy, result.operands))
+    return failure();
+
+  int32_t hasValid = valids.empty() ? 0 : 1;
+  result.addAttribute(
+      "operandSegmentSizes",
+      parser.getBuilder().getDenseI32ArrayAttr(
+          {1, static_cast<int32_t>(offsets.size()), hasValid, hasValid}));
+
+  if (hasExplicitResultTy) {
+    result.addTypes(resultTy);
+    return success();
+  }
+
+  SmallVector<Type> inferredReturnTypes;
+  DictionaryAttr attrs = result.attributes.getDictionary(parser.getContext());
+  if (failed(SubViewOp::inferReturnTypes(
+          parser.getContext(), std::nullopt, result.operands, attrs, nullptr,
+          RegionRange(), inferredReturnTypes))) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "failed to infer pto.subview result type");
+  }
+  result.addTypes(inferredReturnTypes);
+  return success();
+}
+
+void mlir::pto::SubViewOp::print(OpAsmPrinter &printer) {
+  printer << " " << getSource() << "[";
+  printer.printOperands(getOffsets());
+  printer << "] sizes " << getSizes();
+  if (getValidRow()) {
+    printer << " valid [" << getValidRow() << ", " << getValidCol() << "]";
+  }
+  printer.printOptionalAttrDict((*this)->getAttrs(),
+                                /*elidedAttrs=*/{"operandSegmentSizes",
+                                                 "sizes"});
+  printer << " : " << getSource().getType() << " -> " << getResult().getType();
+}
+
+LogicalResult SubViewOp::inferReturnTypes(
     MLIRContext *context, std::optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
     SmallVectorImpl<Type> &inferredReturnTypes) {
@@ -7509,10 +7592,10 @@ LogicalResult SubsetOp::inferReturnTypes(
   auto sourceType = llvm::dyn_cast<TileBufType>(operands[0].getType());
   if (!sourceType) return failure();
 
-  // 2. 获取 Result Shape (Sizes)
+  // 2. 获取 subview 逻辑窗口（sizes）
   ArrayAttr sizeAttr;
   if (properties) {
-    const auto *prop = properties.as<SubsetOp::Properties *>();
+    const auto *prop = properties.as<SubViewOp::Properties *>();
     if (prop) sizeAttr = prop->sizes;
   }
   if (!sizeAttr && attributes) {
@@ -7520,60 +7603,37 @@ LogicalResult SubsetOp::inferReturnTypes(
   }
   if (!sizeAttr) return failure();
 
-  SmallVector<int64_t> resultShape;
+  SmallVector<int64_t> subviewShape;
   for (auto attr : sizeAttr) {
     int64_t dim = llvm::cast<IntegerAttr>(attr).getInt();
-    resultShape.push_back(dim);
+    subviewShape.push_back(dim);
   }
 
-  // Derive valid shape from parent valid dims when possible.
+  // Design: subview 的结果 tile 类型显式表达逻辑子窗口 shape（sizes）。
+  ArrayRef<int64_t> parentShape = sourceType.getShape();
+  if (subviewShape.size() != parentShape.size())
+    return failure();
+
+  // Derive valid shape from explicit valid_row/valid_col when provided.
+  // Otherwise default to subview shape (no parent valid-shape inheritance).
   SmallVector<int64_t> validShape;
   constexpr int64_t kDynamicValidDim = -1;
-  ArrayRef<int64_t> parentValid = sourceType.getValidShape();
-  for (size_t i = 0, e = resultShape.size(); i < e; ++i) {
-    int64_t sizeDim = resultShape[i];
-    int64_t vdim = sizeDim;
+  int64_t rank = static_cast<int64_t>(subviewShape.size());
+  size_t expectedWithoutValid = static_cast<size_t>(1 + rank);
+  Value explicitVRow;
+  Value explicitVCol;
+  if (rank == 2 && operands.size() >= expectedWithoutValid + 2) {
+    explicitVRow = operands[expectedWithoutValid];
+    explicitVCol = operands[expectedWithoutValid + 1];
+  }
 
-    if (parentValid.size() == resultShape.size()) {
-      int64_t pv = parentValid[i];
-      if (pv < 0) {
-        vdim = kDynamicValidDim;
-      } else {
-        int64_t off = 0;
-        // operands: [source, offsets...]
-        if (operands.size() > 1 + i) {
-          auto offOpt = getConstIndexValue(operands[1 + i]);
-          if (!offOpt) {
-            vdim = kDynamicValidDim;
-            validShape.push_back(vdim);
-            continue;
-          }
-          off = *offOpt;
-          // Interpret parent valid dims as a per-tile "period" when the parent
-          // buffer is wider than the valid region (e.g. ping/pong workspace).
-          // This avoids inferring a zero valid dim when taking a view at an
-          // offset equal to the parent valid dim.
-          //
-          // Example:
-          //   parent: shape 32x64, valid 32x32
-          //   subset: offset [0,32], sizes [32,32]
-          // should infer v_col=32 (not 0).
-          int64_t diff = 0;
-          if (pv > 0) {
-            int64_t offMod = off % pv;
-            if (offMod < 0)
-              offMod += pv;
-            diff = pv - offMod; // in [1, pv] when pv>0
-          }
-          if (diff < 0)
-            diff = 0;
-          vdim = std::min<int64_t>(sizeDim, diff);
-        } else {
-          vdim = kDynamicValidDim;
-        }
-      }
+  for (size_t i = 0, e = subviewShape.size(); i < e; ++i) {
+    int64_t vdim = subviewShape[i];
+    Value explicitV = (i == 0) ? explicitVRow : (i == 1 ? explicitVCol : Value());
+    if (explicitV) {
+      auto cst = getConstIndexValue(explicitV);
+      vdim = cst ? std::min<int64_t>(*cst, subviewShape[i]) : kDynamicValidDim;
     }
-
     validShape.push_back(vdim);
   }
 
@@ -7584,7 +7644,7 @@ LogicalResult SubsetOp::inferReturnTypes(
   // 4. 构建 Result Type
   auto canonicalValidShape = canonicalizeTileBufValidShape(validShape);
   auto resultType = TileBufType::get(
-      context, resultShape, sourceType.getElementType(),
+      context, subviewShape, sourceType.getElementType(),
       sourceType.getMemorySpace(), canonicalValidShape, cfg);
 
   inferredReturnTypes.push_back(resultType);
@@ -7592,7 +7652,7 @@ LogicalResult SubsetOp::inferReturnTypes(
 }
 
 // =============================================================================
-// SubsetOp verifier
+// SubViewOp verifier
 // =============================================================================
 static bool getConstIndex(Value v, int64_t &out) {
   if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>()) {
@@ -7695,7 +7755,7 @@ static LogicalResult computeInnerShape(TileBufConfigAttr cfg, Type elemTy,
   return failure();
 }
 
-mlir::LogicalResult mlir::pto::SubsetOp::verify() {
+mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();
   auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType());
@@ -7705,6 +7765,88 @@ mlir::LogicalResult mlir::pto::SubsetOp::verify() {
   if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError("expects rank-2 tilebuf for src/dst");
 
+  auto sizesAttr = getSizes();
+  if (!sizesAttr || sizesAttr.size() != 2)
+    return emitOpError("subview expects 2D sizes");
+  int64_t sizeR = cast<IntegerAttr>(sizesAttr[0]).getInt();
+  int64_t sizeC = cast<IntegerAttr>(sizesAttr[1]).getInt();
+  if (sizeR <= 0 || sizeC <= 0)
+    return emitOpError("subview sizes must be positive");
+  if (getOffsets().size() != 2)
+    return emitOpError("subview expects 2D offsets");
+
+  int64_t offR = 0, offC = 0;
+  bool offRConst = getConstIndex(getOffsets()[0], offR);
+  bool offCConst = getConstIndex(getOffsets()[1], offC);
+  if (offRConst && offR < 0)
+    return emitOpError("subview offsets must be non-negative");
+  if (offCConst && offC < 0)
+    return emitOpError("subview offsets must be non-negative");
+
+  bool hasValidRow = static_cast<bool>(getValidRow());
+  bool hasValidCol = static_cast<bool>(getValidCol());
+  if (hasValidRow != hasValidCol)
+    return emitOpError(
+        "subview expects valid_row and valid_col to be both present or both absent");
+
+  if (hasValidRow) {
+    int64_t vRow = 0, vCol = 0;
+    if (getConstIndex(getValidRow(), vRow)) {
+      if (vRow <= 0)
+        return emitOpError("valid_row must be positive when constant");
+      if (vRow > sizeR)
+        return emitOpError("valid_row must be <= subview row size");
+    }
+    if (getConstIndex(getValidCol(), vCol)) {
+      if (vCol <= 0)
+        return emitOpError("valid_col must be positive when constant");
+      if (vCol > sizeC)
+        return emitOpError("valid_col must be <= subview col size");
+    }
+  }
+
+  auto dstShape = dstTy.getShape();
+  if (dstShape.size() != 2)
+    return emitOpError("expects result to be rank-2");
+  auto srcShape = srcTy.getShape();
+  if (srcShape.size() != 2)
+    return emitOpError("expects source to be rank-2");
+  if (dstShape[0] != sizeR || dstShape[1] != sizeC)
+    return emitOpError("expects result shape to match subview sizes");
+
+  if (dstTy.getElementType() != srcTy.getElementType())
+    return emitOpError("expects result element type to match source");
+  if (dstTy.getMemorySpace() != srcTy.getMemorySpace())
+    return emitOpError("expects result address space to match source");
+  auto srcCfg = srcTy.getConfigAttr();
+  if (!srcCfg) srcCfg = TileBufConfigAttr::getDefault(getContext());
+  auto dstCfg = dstTy.getConfigAttr();
+  if (!dstCfg) dstCfg = TileBufConfigAttr::getDefault(getContext());
+  if (dstCfg != srcCfg)
+    return emitOpError("expects result tile config to match source");
+
+  // Design choice: when valid[...] is omitted, infer result valid_shape from
+  // subview sizes directly. We intentionally do not constrain it by source
+  // valid_shape to allow user-controlled subview semantics.
+
+  auto expectedValidDim = [&](Value explicitValid, int64_t defaultSize) {
+    if (!explicitValid)
+      return defaultSize;
+    int64_t c = 0;
+    if (getConstIndex(explicitValid, c))
+      return std::min<int64_t>(c, defaultSize);
+    return ShapedType::kDynamic;
+  };
+  int64_t expectedVRow = expectedValidDim(getValidRow(), sizeR);
+  int64_t expectedVCol = expectedValidDim(getValidCol(), sizeC);
+  auto dstValid = dstTy.getValidShape();
+  if (dstValid.size() != 2)
+    return emitOpError("expects result to have rank-2 valid_shape");
+  if (dstValid[0] != expectedVRow)
+    return emitOpError("expects result valid_shape[0] to match inferred/explicit valid_row");
+  if (dstValid[1] != expectedVCol)
+    return emitOpError("expects result valid_shape[1] to match inferred/explicit valid_col");
+
   auto cfg = srcTy.getConfigAttr();
   if (!cfg) cfg = TileBufConfigAttr::getDefault(getContext());
 
@@ -7713,62 +7855,41 @@ mlir::LogicalResult mlir::pto::SubsetOp::verify() {
   int32_t bl = 0, sl = 0;
   if (failed(computeInnerShape(cfg, srcTy.getElementType(), innerRows, innerCols,
                                boxed, bl, sl)))
-    return emitOpError("unsupported tile layout for subset");
+    return emitOpError("unsupported tile layout for subview");
 
   if (!boxed)
     return success();
 
   // Boxed layout: require static 2D sizes with inner alignment. Offsets may be
   // dynamic, but static offsets must be aligned.
-  auto sizesAttr = getSizes();
-  if (!sizesAttr || sizesAttr.size() != 2)
-    return emitOpError("boxed layout subset expects 2D sizes");
-
-  int64_t sizeR = cast<IntegerAttr>(sizesAttr[0]).getInt();
-  int64_t sizeC = cast<IntegerAttr>(sizesAttr[1]).getInt();
-  if (sizeR <= 0 || sizeC <= 0)
-    return emitOpError("subset sizes must be positive");
-
   if (sizeR % innerRows != 0 || sizeC % innerCols != 0)
-    return emitOpError("boxed layout subset sizes must be multiples of inner shape");
-
-  if (getOffsets().size() != 2)
-    return emitOpError("boxed layout subset expects 2D offsets");
-
-  int64_t offR = 0, offC = 0;
-  bool offRConst = getConstIndex(getOffsets()[0], offR);
-  bool offCConst = getConstIndex(getOffsets()[1], offC);
+    return emitOpError("boxed layout subview sizes must be multiples of inner shape");
 
   if (offRConst) {
-    if (offR < 0)
-      return emitOpError("subset offsets must be non-negative");
     if (offR % innerRows != 0)
-      return emitOpError("boxed layout subset offsets must be multiples of inner shape");
+      return emitOpError("boxed layout subview offsets must be multiples of inner shape");
   }
   if (offCConst) {
-    if (offC < 0)
-      return emitOpError("subset offsets must be non-negative");
     if (offC % innerCols != 0)
-      return emitOpError("boxed layout subset offsets must be multiples of inner shape");
+      return emitOpError("boxed layout subview offsets must be multiples of inner shape");
   }
 
-  auto srcShape = srcTy.getShape();
   if (srcShape.size() == 2 &&
       srcShape[0] != ShapedType::kDynamic &&
       srcShape[1] != ShapedType::kDynamic) {
     if (bl == 0) {
       if (sizeC != srcShape[1])
-        return emitOpError("boxed RowMajor subset must keep full cols");
+        return emitOpError("boxed RowMajor subview must keep full cols");
       if (!offCConst || offC != 0)
-        return emitOpError("boxed RowMajor subset requires static col offset = 0");
+        return emitOpError("boxed RowMajor subview requires static col offset = 0");
     } else if (bl == 1) {
       if (sizeR != srcShape[0])
-        return emitOpError("boxed ColMajor subset must keep full rows");
+        return emitOpError("boxed ColMajor subview must keep full rows");
       if (!offRConst || offR != 0)
-        return emitOpError("boxed ColMajor subset requires static row offset = 0");
+        return emitOpError("boxed ColMajor subview requires static row offset = 0");
     }
   } else {
-    return emitOpError("boxed layout subset requires static source shape");
+    return emitOpError("boxed layout subview requires static source shape");
   }
 
   return success();

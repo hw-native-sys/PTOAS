@@ -8,7 +8,7 @@
 
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
-from mlir.ir import F16Type, IndexType
+from mlir.ir import F32Type, IndexType
 
 
 def build():
@@ -18,33 +18,34 @@ def build():
         with Location.unknown(ctx):
             m = Module.create()
 
-            f16 = F16Type.get(ctx)
+            f32 = F32Type.get(ctx)
             idx = IndexType.get(ctx)
 
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
-            sl = pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx)
+            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
 
-            # Boxed layout: innerRows=16, innerCols=16 (f16).
-            # Dynamic row offset aligned to innerRows; col offset must be 0.
-            tile_ty = pto.TileBufType.get([32, 32], f16, vec, [32, 32], cfg, ctx)
+            # Workspace in UB: 32x64, split into two 32x32 tiles (ping/pong).
+            ws_type = pto.TileBufType.get([32, 64], f32, vec, [32, 64], cfg, ctx)
 
-            fn_ty = func.FunctionType.get([idx], [])
+            fn_ty = func.FunctionType.get([], [])
             with InsertionPoint(m.body):
-                fn = func.FuncOp("subset_boxed_dynamic", fn_ty)
+                fn = func.FuncOp("subview_pingpong_demo", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
-                i0 = entry.arguments[0]
                 c0 = arith.ConstantOp(idx, 0).result
-                c16 = arith.ConstantOp(idx, 16).result
-                row_off = arith.MulIOp(i0, c16).result
+                c32 = arith.ConstantOp(idx, 32).result
 
-                t0 = pto.AllocTileOp(tile_ty).result
-                _sub = pto.SubsetOp(t0, [row_off, c0], sizes=[16, 32]).result
+                workspace = pto.AllocTileOp(ws_type).result
+                ping = pto.SubViewOp(workspace, [c0, c0], sizes=[32, 32]).result
+                pong = pto.SubViewOp(workspace, [c0, c32], sizes=[32, 32]).result
+
+                pto.TAddOp(ping, ping, ping)
+                pto.TAddOp(pong, pong, pong)
 
                 func.ReturnOp([])
 
@@ -54,3 +55,4 @@ def build():
 
 if __name__ == "__main__":
     print(build())
+
