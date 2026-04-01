@@ -19,5 +19,5 @@ module {
 }
 
 // CHECK-LABEL: __global__ AICORE void tgemv_mx_variants_emitc()
-// CHECK: TGEMV_MX(
-// CHECK: TGEMV_MX(
+// CHECK: TGEMV_MX([[DST_ACC:v[0-9]+]], [[C_IN:v[0-9]+]], [[A:v[0-9]+]], [[A_SCALE:v[0-9]+]], [[B:v[0-9]+]], [[B_SCALE:v[0-9]+]]);
+// CHECK-NEXT: TGEMV_MX([[DST_BIAS:v[0-9]+]], [[A]], [[A_SCALE]], [[B]], [[B_SCALE]], [[BIAS:v[0-9]+]]);

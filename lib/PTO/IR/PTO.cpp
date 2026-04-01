@@ -2112,6 +2112,17 @@ static LogicalResult verifyAccTileCommon(Operation *op, Type ty, StringRef name)
   }
 }
 
+static LogicalResult verifyScalingTileCommon(Operation *op, Type ty,
+                                             StringRef name) {
+  if (failed(verifyTileBufCommon(op, ty, name)))
+    return failure();
+  auto as = getPTOMemorySpaceEnum(ty);
+  if (!as || *as != pto::AddressSpace::SCALING)
+    return op->emitOpError() << "expects " << name
+                             << " to be in the scaling address space";
+  return success();
+}
+
 static LogicalResult verifyMatTileOperandsA2A3(Operation *op, Type lhsTy,
                                                Type rhsTy, Type dstTy) {
   if (failed(verifyTileBufCommon(op, lhsTy, "lhs")) ||
@@ -4397,8 +4408,8 @@ LogicalResult TGemvBiasOp::verify() {
 
 LogicalResult TGemvMxOp::verify() {
   auto verifyA2A3 = [&]() -> LogicalResult {
-    if (failed(verifyTileBufCommon(*this, getAScale().getType(), "a_scale")) ||
-        failed(verifyTileBufCommon(*this, getBScale().getType(), "b_scale")) ||
+    if (failed(verifyScalingTileCommon(*this, getAScale().getType(), "a_scale")) ||
+        failed(verifyScalingTileCommon(*this, getBScale().getType(), "b_scale")) ||
         failed(verifyGemvTileOperands(*this, getA().getType(), getB().getType(),
                                       getDst().getType())))
       return failure();
@@ -4412,8 +4423,8 @@ LogicalResult TGemvMxOp::verify() {
 LogicalResult TGemvMxAccOp::verify() {
   auto verifyA2A3 = [&]() -> LogicalResult {
     if (failed(verifyAccTileCommon(*this, getCIn().getType(), "c_in")) ||
-        failed(verifyTileBufCommon(*this, getAScale().getType(), "a_scale")) ||
-        failed(verifyTileBufCommon(*this, getBScale().getType(), "b_scale")) ||
+        failed(verifyScalingTileCommon(*this, getAScale().getType(), "a_scale")) ||
+        failed(verifyScalingTileCommon(*this, getBScale().getType(), "b_scale")) ||
         failed(verifyGemvTileOperands(*this, getA().getType(), getB().getType(),
                                       getDst().getType())))
       return failure();
@@ -4426,8 +4437,8 @@ LogicalResult TGemvMxAccOp::verify() {
 
 LogicalResult TGemvMxBiasOp::verify() {
   auto verifyA2A3 = [&]() -> LogicalResult {
-    if (failed(verifyTileBufCommon(*this, getAScale().getType(), "a_scale")) ||
-        failed(verifyTileBufCommon(*this, getBScale().getType(), "b_scale")) ||
+    if (failed(verifyScalingTileCommon(*this, getAScale().getType(), "a_scale")) ||
+        failed(verifyScalingTileCommon(*this, getBScale().getType(), "b_scale")) ||
         failed(verifyGemvTileOperands(*this, getA().getType(), getB().getType(),
                                       getDst().getType())) ||
         failed(verifyMatBiasTile(*this, getBias().getType(), getDst().getType(),
