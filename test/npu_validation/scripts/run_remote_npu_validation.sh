@@ -12,7 +12,7 @@ set -euo pipefail
 STAGE="${STAGE:-run}"         # build|run
 RUN_MODE="${RUN_MODE:-npu}"   # npu|sim
 SOC_VERSION="${SOC_VERSION:-Ascend910}"
-GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
+GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|npu_precision|skip
 PTO_ISA_REPO="${PTO_ISA_REPO:-https://gitcode.com/cann/pto-isa.git}"
 PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-}"
 DEVICE_ID="${DEVICE_ID:-0}"
@@ -307,6 +307,19 @@ while IFS= read -r -d '' cpp; do
       done
     }
 
+    has_reference_golden_outputs() {
+      local found=0
+      if [[ -f "./outputs.txt" ]]; then
+        while IFS= read -r name; do
+          [[ -n "${name}" ]] || continue
+          found=1
+          [[ -f "./golden_${name}.bin" ]] || return 1
+        done < "./outputs.txt"
+        [[ "${found}" -eq 1 ]] && return 0
+      fi
+      compgen -G "./golden_*.bin" > /dev/null
+    }
+
     case "${GOLDEN_MODE}" in
       sim)
         python3 ./golden.py
@@ -333,6 +346,19 @@ while IFS= read -r -d '' cpp; do
         fi
         COMPARE_STRICT=1 python3 ./compare.py
         ;;
+      npu_precision)
+        if [[ "${RUN_MODE}" != "npu" ]]; then
+          log "ERROR: GOLDEN_MODE=npu_precision requires RUN_MODE=npu"
+          exit 2
+        fi
+        python3 ./golden.py
+        if ! has_reference_golden_outputs; then
+          log "ERROR: GOLDEN_MODE=npu_precision requires golden.py to generate golden_*.bin"
+          exit 2
+        fi
+        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        COMPARE_STRICT=1 python3 ./compare.py
+        ;;
       skip)
         python3 ./golden.py
         if [[ "${RUN_MODE}" == "npu" ]]; then
@@ -341,7 +367,7 @@ while IFS= read -r -d '' cpp; do
         log "WARN: compare skipped (GOLDEN_MODE=skip)"
         ;;
       *)
-        log "ERROR: unknown GOLDEN_MODE=${GOLDEN_MODE} (expected: sim|npu|skip)"
+        log "ERROR: unknown GOLDEN_MODE=${GOLDEN_MODE} (expected: sim|npu|npu_precision|skip)"
         exit 2
         ;;
     esac
