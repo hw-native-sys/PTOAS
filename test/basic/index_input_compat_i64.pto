@@ -1,0 +1,52 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @index_input_compat_i64(%src: !pto.ptr<f32>, %dst: !pto.ptr<f32>, %off: i64) {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %zero = arith.constant 0.0 : f32
+
+    %ptr = pto.addptr %src, %off : !pto.ptr<f32>, i64 -> !pto.ptr<f32>
+    %val = pto.load_scalar %ptr[%off] : !pto.ptr<f32>, i64 -> f32
+    pto.store_scalar %val, %dst[%off] : !pto.ptr<f32>, i64, f32
+
+    %view = pto.make_tensor_view %src,
+            shape = [%c32_i64, %c32_i64],
+            strides = [%c32_i64, %c1_i64]
+            : !pto.tensor_view<32x32xf32>, i64
+    %part_i64 = pto.partition_view %view,
+                offsets = [%c0_i64, %c0_i64],
+                sizes = [%c32_i64, %c32_i64]
+               : !pto.tensor_view<32x32xf32>, i64
+                 -> !pto.partition_tensor_view<32x32xf32>
+
+    %dim0 = pto.get_tensor_view_dim %view, %c0_i64 : !pto.tensor_view<32x32xf32>, i64 -> index
+    %part_dim = pto.partition_view %view,
+                offsets = [%c0, %c0],
+                sizes = [%dim0, %dim0]
+               : !pto.tensor_view<32x32xf32>
+                 -> !pto.partition_tensor_view<?x?xf32>
+
+    pto.store_scalar %zero, %dst[%dim0] : !pto.ptr<f32>, f32
+
+    %tile0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                                             blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                                             blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%part_i64 : !pto.partition_tensor_view<32x32xf32>)
+              outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%part_dim : !pto.partition_tensor_view<?x?xf32>)
+              outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void index_input_compat_i64(
+// CHECK-SAME: int64_t
+// CHECK: v2[v3] =
+// CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, -1, -1>
+// CHECK: TLOAD(

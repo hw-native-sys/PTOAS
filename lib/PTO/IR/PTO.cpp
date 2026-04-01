@@ -342,9 +342,8 @@ static bool isIndexOrI64Type(Type type) {
   return type && (type.isIndex() || type.isSignlessInteger(64));
 }
 
-static bool isIndexOrU32Type(Type type) {
-  return type && (type.isIndex() || type.isUnsignedInteger(32) ||
-                  type.isSignlessInteger(32));
+static bool isIndexOrI32Type(Type type) {
+  return type && (type.isIndex() || type.isSignlessInteger(32));
 }
 
 template <typename Pred>
@@ -502,9 +501,9 @@ ParseResult mlir::pto::StoreScalarOp::parse(OpAsmParser &parser,
     valueTy = secondTy;
   }
 
-  if (parser.resolveOperand(value, valueTy, result.operands) ||
-      parser.resolveOperand(ptr, ptrTy, result.operands) ||
-      parser.resolveOperand(offset, compatTy, result.operands))
+  if (parser.resolveOperand(ptr, ptrTy, result.operands) ||
+      parser.resolveOperand(offset, compatTy, result.operands) ||
+      parser.resolveOperand(value, valueTy, result.operands))
     return failure();
   return success();
 }
@@ -1355,8 +1354,8 @@ ParseResult mlir::pto::AllocTileOp::parse(OpAsmParser &parser,
   }
   if (parser.parseOptionalAttrDict(result.attributes) ||
       parser.parseColonType(resultTy) ||
-      parseOptionalCompatibleType(parser, compatTy, isIndexOrU32Type,
-                                  "index or u32-compatible operand type"))
+      parseOptionalCompatibleType(parser, compatTy, isIndexOrI32Type,
+                                  "index or i32 operand type"))
     return failure();
 
   result.addTypes(resultTy);
@@ -1586,7 +1585,7 @@ LogicalResult AllocTileOp::verify() {
   if (getValidCol())
     compatOperands.push_back(getValidCol());
   if (failed(verifyUniformCompatibleOperandTypes(
-          getOperation(), ValueRange(compatOperands), isIndexOrU32Type,
+          getOperation(), ValueRange(compatOperands), isIndexOrI32Type,
           "valid_row/valid_col operands")))
     return failure();
 
@@ -3306,9 +3305,9 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
     return std::nullopt;
   };
   auto verifyIndexOperands = [&]() -> LogicalResult {
-    if (!isIndexOrU32Type(getIndexRow().getType()) ||
-        !isIndexOrU32Type(getIndexCol().getType()))
-      return emitOpError("expects indexRow and indexCol to be index or u32-compatible type");
+    if (!isIndexOrI32Type(getIndexRow().getType()) ||
+        !isIndexOrI32Type(getIndexCol().getType()))
+      return emitOpError("expects indexRow and indexCol to be index or i32 type");
     auto row = getConstIndex(getIndexRow());
     auto col = getConstIndex(getIndexCol());
     if (row && *row < 0)
@@ -3473,9 +3472,9 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
     return emitOpError(
         "expects src/dst element types to match, or src=f32 with dst=f16/bf16");
 
-  if (!isIndexOrU32Type(getIndexRow().getType()) ||
-      !isIndexOrU32Type(getIndexCol().getType()))
-    return emitOpError("expects indexRow/indexCol to be index or u32-compatible type");
+  if (!isIndexOrI32Type(getIndexRow().getType()) ||
+      !isIndexOrI32Type(getIndexCol().getType()))
+    return emitOpError("expects indexRow/indexCol to be index or i32 type");
 
   auto readConstIndex = [&](Value v, int64_t &out) -> bool {
     if (auto cOp = v.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
@@ -5193,8 +5192,8 @@ ParseResult mlir::pto::SetValidShapeOp::parse(OpAsmParser &parser,
       parser.parseOperand(validRow) || parser.parseComma() ||
       parser.parseOperand(validCol) || parser.parseOptionalAttrDict(result.attributes) ||
       parser.parseColonType(sourceTy) ||
-      parseOptionalCompatibleType(parser, compatTy, isIndexOrU32Type,
-                                  "index or u32-compatible operand type"))
+      parseOptionalCompatibleType(parser, compatTy, isIndexOrI32Type,
+                                  "index or i32 operand type"))
     return failure();
 
   if (parser.resolveOperand(source, sourceTy, result.operands) ||
@@ -5237,7 +5236,7 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
   SmallVector<Value> compatOperands = {getValidRow(), getValidCol()};
   if (failed(verifyUniformCompatibleOperandTypes(
           getOperation(), ValueRange(compatOperands),
-          isIndexOrU32Type, "valid_row/valid_col operands")))
+          isIndexOrI32Type, "valid_row/valid_col operands")))
     return failure();
 
   SmallVector<int64_t> shape;

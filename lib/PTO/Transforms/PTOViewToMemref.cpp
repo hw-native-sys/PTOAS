@@ -1240,7 +1240,15 @@ struct PTOViewToMemrefPass
           Value dst = op->getOperand(1);
 
           auto newOp =
-              rewriter.create<pto::TLoadOp>(op.getLoc(), TypeRange{}, src, dst);
+              rewriter.create<pto::TLoadOp>(op.getLoc(), TypeRange{},
+                                            src,
+                                            dst,
+                                            op.getPadModeAttr(),
+                                            op.getPadValue(),
+                                            op.getLeftPaddingNum(),
+                                            op.getRightPaddingNum(),
+                                            op.getInitOutBuffer(),
+                                            op.getInitCondition());
           newOp->setAttrs(op->getAttrs());
           rewriter.replaceOp(op, newOp->getResults());
       }
@@ -2122,10 +2130,8 @@ struct PTOViewToMemrefPass
         auto srcTy = dyn_cast<MemRefType>(src.getType());
         auto dstTy = dyn_cast<MemRefType>(dst.getType());
         bool rowTyOk = indexRow.getType().isIndex() ||
-                       indexRow.getType().isUnsignedInteger(32) ||
                        indexRow.getType().isSignlessInteger(32);
         bool colTyOk = indexCol.getType().isIndex() ||
-                       indexCol.getType().isUnsignedInteger(32) ||
                        indexCol.getType().isSignlessInteger(32);
         if (!srcTy || !dstTy || !rowTyOk || !colTyOk) {
           op.emitError("ins/outs are not correct yet");

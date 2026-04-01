@@ -56,10 +56,10 @@ def IndexOrI64 :
     CPred<"$_self.isIndex() || $_self.isSignlessInteger(64)">,
     "index or i64">;
 
-def IndexOrU32 :
+def IndexOrI32 :
   Type<
-    CPred<"$_self.isIndex() || $_self.isUnsignedInteger(32) || $_self.isSignlessInteger(32)">,
-    "index or u32-compatible i32">;
+    CPred<"$_self.isIndex() || $_self.isSignlessInteger(32)">,
+    "index or i32">;
 
 //===----------------------------------------------------------------------===//
 // Op Class
@@ -219,8 +219,8 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
 
   let arguments = (ins
     Optional<I64>:$addr,
-    Optional<IndexOrU32>:$valid_row,
-    Optional<IndexOrU32>:$valid_col
+    Optional<IndexOrI32>:$valid_row,
+    Optional<IndexOrI32>:$valid_col
   );
 
   let results = (outs TileBufType:$result);
@@ -319,8 +319,8 @@ def SetValidShapeOp : PTO_Op<"set_validshape", [
 
   let arguments = (ins
     TileBufOrMemRef:$source,
-    IndexOrU32:$valid_row,
-    IndexOrU32:$valid_col
+    IndexOrI32:$valid_row,
+    IndexOrI32:$valid_col
   );
 
   let hasVerifier = 1;
@@ -386,7 +386,7 @@ def TLoadOp  : PTO_TOp<"tload", [
     PTODpsType:$dst,
     OptionalAttr<PTO_PadModeAttr>:$pad_mode,
     Optional<AnyType>:$pad_value,
-    Optional<IndexOrU32>:$left_padding_num,
+    Optional<IndexOrI32>:$left_padding_num,
     Optional<AnyType>:$right_padding_num,
     DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
     Optional<AnyType>:$init_condition
@@ -1373,7 +1373,7 @@ def TSetValOp : PTO_TOp<"tsetval", [
 
   let arguments = (ins
     PTODpsType:$dst,
-    IndexOrU32:$offset,
+    IndexOrI32:$offset,
     ScalarType:$val
   );
 
@@ -1404,7 +1404,7 @@ def TGetValOp : PTO_TOp<"tgetval", [
 
   let arguments = (ins
     PTODpsType:$src,
-    IndexOrU32:$offset
+    IndexOrI32:$offset
   );
 
   let results = (outs ScalarType:$dst);
@@ -2156,8 +2156,8 @@ def TExtractOp : PTO_TOp<"textract", [
 
   let arguments = (ins
     PTODpsType:$src,
-    IndexOrU32:$indexRow,
-    IndexOrU32:$indexCol,
+    IndexOrI32:$indexRow,
+    IndexOrI32:$indexCol,
     PTODpsType:$dst
   );
 
@@ -2188,8 +2188,8 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
   let arguments = (ins
     PTODpsType:$src,
-    IndexOrU32:$indexRow,
-    IndexOrU32:$indexCol,
+    IndexOrI32:$indexRow,
+    IndexOrI32:$indexCol,
     PTODpsType:$dst
   );
 
