@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -56,6 +51,9 @@ struct PipeInitInfo {
   func::FuncOp funcOp;
   int8_t dirMask = 0;
 };
+
+using PipeInitGroups = std::map<PipePeerKey, SmallVector<PipeInitInfo>>;
+using PipeParticipants = std::map<PipePeerKey, std::set<std::string>>;
 
 template <typename InitOpT> static Value getLocalAddrOperand(InitOpT op) {
   // Hide the concrete init-op type and expose the local address operand
@@ -123,54 +121,105 @@ static bool hasCompletePeerInitPair(const SmallVector<PipeInitInfo> &inits,
   return initFuncs.size() == 2;
 }
 
+template <typename InitOpT>
+static LogicalResult collectPeerAwareInit(InitOpT initOp,
+                                          PipeInitGroups &keyedInits,
+                                          PipeParticipants &keyedParticipants) {
+  PipeInitInfo info;
+  info.op = initOp.getOperation();
+  info.funcOp = initOp->template getParentOfType<func::FuncOp>();
+  info.dirMask = initOp.getDirMask();
+
+  auto recordAddr = [&](Value addr, int8_t effectiveDirMask) {
+    auto key = getPipePeerKey(addr, info.funcOp);
+    if (!key)
+      return false;
+    key->dirMask = effectiveDirMask;
+    keyedInits[*key].push_back(info);
+    keyedParticipants[*key].insert(getFuncSymbol(info.funcOp));
+    keyedParticipants[*key].insert(key->ownerFunc);
+    return true;
+  };
+
+  bool recorded = false;
+  if (info.dirMask == 3) {
+    Value peerAddr = initOp.getPeerLocalAddr();
+    recorded = recordAddr(getLocalAddrOperand(initOp), /*c2v=*/1);
+    recorded = (peerAddr && recordAddr(peerAddr, /*v2c=*/2)) || recorded;
+  } else {
+    recorded = recordAddr(getLocalAddrOperand(initOp), info.dirMask);
+  }
+
+  if (recorded || getFlagBaseAttr(initOp))
+    return success();
+
+  return initOp.emitOpError(
+      "requires local_addr to come from pto.reserve_buffer or "
+      "pto.import_reserved_buffer when 'flag_base' is not explicit");
+}
+
+static LogicalResult validatePeerInitGroups(const PipeInitGroups &keyedInits,
+                                            const PipeParticipants &keyedParticipants) {
+  for (const auto &it : keyedInits) {
+    if (hasCompletePeerInitPair(it.second, keyedParticipants.at(it.first)))
+      continue;
+    return it.second.front().op->emitOpError(
+        "requires a complete peer init pair when local_addr comes from "
+        "pto.reserve_buffer or pto.import_reserved_buffer");
+  }
+  return success();
+}
+
+static FailureOr<int32_t> chooseFlagBaseForPeerGroup(
+    const SmallVector<PipeInitInfo> &inits) {
+  std::optional<int32_t> chosenBase;
+  for (const PipeInitInfo &info : inits) {
+    IntegerAttr flagBaseAttr;
+    if (auto initOp = dyn_cast<InitializeL2LPipeOp>(info.op))
+      flagBaseAttr = getFlagBaseAttr(initOp);
+    else
+      flagBaseAttr = getFlagBaseAttr(cast<InitializeL2G2LPipeOp>(info.op));
+
+    if (!flagBaseAttr)
+      continue;
+    if (chosenBase && *chosenBase != flagBaseAttr.getInt()) {
+      return info.op->emitOpError(
+          "conflicting explicit flag_base across peer pipe inits");
+    }
+    chosenBase = flagBaseAttr.getInt();
+  }
+  return chosenBase.value_or(0);
+}
+
+static void assignMissingFlagBases(const SmallVector<PipeInitInfo> &inits,
+                                   IntegerAttr flagBaseAttr) {
+  for (const PipeInitInfo &info : inits) {
+    if (auto initOp = dyn_cast<InitializeL2LPipeOp>(info.op)) {
+      if (!getFlagBaseAttr(initOp))
+        setFlagBaseAttr(initOp, flagBaseAttr);
+      continue;
+    }
+
+    auto initOp = cast<InitializeL2G2LPipeOp>(info.op);
+    if (!getFlagBaseAttr(initOp))
+      setFlagBaseAttr(initOp, flagBaseAttr);
+  }
+}
+
 struct PTOResolveReservedBuffersPass
     : public mlir::pto::impl::PTOResolveReservedBuffersBase<
           PTOResolveReservedBuffersPass> {
   LogicalResult assignPeerAwareFlagBases(ModuleOp moduleOp) {
     // Group internal pipe init ops by their logical pipe identity, then fill
     // missing flag_base attrs so both sides of the same logical pipe agree.
-    std::map<PipePeerKey, SmallVector<PipeInitInfo>> keyedInits;
-    std::map<PipePeerKey, std::set<std::string>> keyedParticipants;
+    PipeInitGroups keyedInits;
+    PipeParticipants keyedParticipants;
     LogicalResult status = success();
 
     auto collectInit = [&](auto initOp) {
       if (failed(status))
         return;
-      PipeInitInfo info;
-      info.op = initOp.getOperation();
-      info.funcOp = initOp->template getParentOfType<func::FuncOp>();
-      info.dirMask = initOp.getDirMask();
-
-      // Record one address into the keyed maps. Returns true when the
-      // address comes from reserve_buffer / import_reserved_buffer.
-      auto recordAddr = [&](Value addr, int8_t effectiveDirMask) -> bool {
-        auto key = getPipePeerKey(addr, info.funcOp);
-        if (!key)
-          return false;
-        key->dirMask = effectiveDirMask;
-        keyedInits[*key].push_back(info);
-        keyedParticipants[*key].insert(getFuncSymbol(info.funcOp));
-        keyedParticipants[*key].insert(key->ownerFunc);
-        return true;
-      };
-
-      if (info.dirMask == 3) {
-        // DIR_BOTH: treat as two logical pipes keyed by direction.
-        bool c2vOk = recordAddr(getLocalAddrOperand(initOp), /*c2v=*/1);
-        Value peerAddr = initOp.getPeerLocalAddr();
-        bool v2cOk = peerAddr && recordAddr(peerAddr, /*v2c=*/2);
-        if (c2vOk || v2cOk)
-          return;
-      } else {
-        Value localAddr = getLocalAddrOperand(initOp);
-        if (recordAddr(localAddr, info.dirMask))
-          return;
-      }
-      if (getFlagBaseAttr(initOp))
-        return;
-      status = initOp.emitOpError(
-          "requires local_addr to come from pto.reserve_buffer or "
-          "pto.import_reserved_buffer when 'flag_base' is not explicit");
+      status = collectPeerAwareInit(initOp, keyedInits, keyedParticipants);
     };
 
     moduleOp.walk([&](InitializeL2LPipeOp initOp) { collectInit(initOp); });
@@ -178,59 +227,17 @@ struct PTOResolveReservedBuffersPass
     if (failed(status))
       return failure();
 
-    for (const auto &it : keyedInits) {
-      if (hasCompletePeerInitPair(it.second, keyedParticipants[it.first]))
-        continue;
-      return it.second.front().op->emitOpError(
-          "requires a complete peer init pair when local_addr comes from "
-          "pto.reserve_buffer or pto.import_reserved_buffer");
-    }
+    if (failed(validatePeerInitGroups(keyedInits, keyedParticipants)))
+      return failure();
 
     OpBuilder builder(moduleOp.getContext());
     for (const auto &it : keyedInits) {
       const auto &inits = it.second;
-      // flag_base is always 0: single-direction pipes use flag pair 0/1;
-      // DIR_BOTH pipes internally manage 0/1 for C2V and 2/3 for V2C.
-      int32_t desiredBase = 0;
-
-      std::optional<int32_t> chosenBase;
-      for (const PipeInitInfo &info : inits) {
-        // Respect any explicit flag_base already present on one side, but make
-        // sure all peers resolve to the same value.
-        if (auto initOp = dyn_cast<InitializeL2LPipeOp>(info.op)) {
-          if (auto flagBaseAttr = getFlagBaseAttr(initOp)) {
-            if (chosenBase && *chosenBase != flagBaseAttr.getInt()) {
-              return info.op->emitOpError(
-                  "conflicting explicit flag_base across peer pipe inits");
-            }
-            chosenBase = flagBaseAttr.getInt();
-          }
-          continue;
-        }
-
-        auto initOp = cast<InitializeL2G2LPipeOp>(info.op);
-        if (auto flagBaseAttr = getFlagBaseAttr(initOp)) {
-          if (chosenBase && *chosenBase != flagBaseAttr.getInt()) {
-            return info.op->emitOpError(
-                "conflicting explicit flag_base across peer pipe inits");
-          }
-          chosenBase = flagBaseAttr.getInt();
-        }
-      }
-      if (!chosenBase)
-        chosenBase = desiredBase;
-
-      auto flagBaseAttr = builder.getI32IntegerAttr(*chosenBase);
-      for (const PipeInitInfo &info : inits) {
-        if (auto initOp = dyn_cast<InitializeL2LPipeOp>(info.op)) {
-          if (!getFlagBaseAttr(initOp))
-            setFlagBaseAttr(initOp, flagBaseAttr);
-          continue;
-        }
-        auto initOp = cast<InitializeL2G2LPipeOp>(info.op);
-        if (!getFlagBaseAttr(initOp))
-          setFlagBaseAttr(initOp, flagBaseAttr);
-      }
+      auto chosenBaseOr = chooseFlagBaseForPeerGroup(inits);
+      if (failed(chosenBaseOr))
+        return failure();
+      auto flagBaseAttr = builder.getI32IntegerAttr(*chosenBaseOr);
+      assignMissingFlagBases(inits, flagBaseAttr);
     }
 
     return success();

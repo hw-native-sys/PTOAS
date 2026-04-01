@@ -42,7 +42,7 @@ def _export_generated_symbols():
         globals()[name] = obj
 
 
-def _get_op_result_or_value(value):
+def get_op_result_or_value(value):
     return getattr(_pto_ops_gen, "_get_op_result_or_value")(value)
 
 
@@ -264,22 +264,31 @@ def _is_static_i32_event_id(event_id):
     return False
 
 
+def _create_pipe_event_op(op_name, src_attr, dst_attr, event_id, *, loc=None, ip=None):
+    return _ods_ir.Operation.create(
+        op_name,
+        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
+        operands=[get_op_result_or_value(event_id)],
+        loc=loc,
+        ip=ip,
+    )
+
+
 def set_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
     """Low-level dynamic event-id set_flag helper."""
     ctx = loc.context if loc else _ods_ir.Context.current
     src_attr = _ensure_pipe_attr(src_pipe, ctx)
     dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
-    event_val = _get_op_result_or_value(event_id)
     if hasattr(_pto_ops_gen, "set_flag_dyn"):
         return _pto_ops_gen.set_flag_dyn(
-            src_attr, dst_attr, event_val, loc=loc, ip=ip
+            src_attr,
+            dst_attr,
+            get_op_result_or_value(event_id),
+            loc=loc,
+            ip=ip,
         )
-    return _ods_ir.Operation.create(
-        "pto.set_flag_dyn",
-        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
-        operands=[event_val],
-        loc=loc,
-        ip=ip,
+    return _create_pipe_event_op(
+        "pto.set_flag_dyn", src_attr, dst_attr, event_id, loc=loc, ip=ip
     )
 
 
@@ -288,17 +297,16 @@ def wait_flag_dyn(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     src_attr = _ensure_pipe_attr(src_pipe, ctx)
     dst_attr = _ensure_pipe_attr(dst_pipe, ctx)
-    event_val = _get_op_result_or_value(event_id)
     if hasattr(_pto_ops_gen, "wait_flag_dyn"):
         return _pto_ops_gen.wait_flag_dyn(
-            src_attr, dst_attr, event_val, loc=loc, ip=ip
+            src_attr,
+            dst_attr,
+            get_op_result_or_value(event_id),
+            loc=loc,
+            ip=ip,
         )
-    return _ods_ir.Operation.create(
-        "pto.wait_flag_dyn",
-        attributes={"src_pipe": src_attr, "dst_pipe": dst_attr},
-        operands=[event_val],
-        loc=loc,
-        ip=ip,
+    return _create_pipe_event_op(
+        "pto.wait_flag_dyn", src_attr, dst_attr, event_id, loc=loc, ip=ip
     )
 
 
@@ -342,7 +350,7 @@ def wait_flag(src_pipe, dst_pipe, event_id, *, loc=None, ip=None):
 def sync_set_dyn(pipe, event_id, ffts_mode=2, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     pipe_attr = _ensure_pipe_attr(pipe, ctx)
-    event_val = _get_op_result_or_value(event_id)
+    event_val = get_op_result_or_value(event_id)
     mode_attr = None
     if ffts_mode != 2:
         mode_attr = _ensure_i32_attr(ffts_mode, "ffts_mode", ctx)
@@ -398,7 +406,7 @@ def sync_set(pipe, event_id, ffts_mode=2, *, loc=None, ip=None):
 def sync_wait_dyn(pipe, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     pipe_attr = _ensure_pipe_attr(pipe, ctx)
-    event_val = _get_op_result_or_value(event_id)
+    event_val = get_op_result_or_value(event_id)
     try:
         return _pto_ops_gen.sync_wait(
             pipe_attr, event_id=None, event_id_dyn=event_val, loc=loc, ip=ip
@@ -431,7 +439,7 @@ def sync_wait(pipe, event_id, *, loc=None, ip=None):
 def set_ffts(ffts, *, loc=None, ip=None):
     return _ods_ir.Operation.create(
         "pto.set_ffts",
-        operands=[_get_op_result_or_value(ffts)],
+        operands=[get_op_result_or_value(ffts)],
         loc=loc,
         ip=ip,
     )
@@ -483,8 +491,8 @@ def rls_buf(op_type, buf_id, mode=0, *, loc=None, ip=None):
 
 def load_scalar(result_type, ptr, offset, *, loc=None, ip=None):
     operands = [
-        _get_op_result_or_value(ptr),
-        _get_op_result_or_value(offset),
+        get_op_result_or_value(ptr),
+        get_op_result_or_value(offset),
     ]
     op = _ods_ir.Operation.create(
         "pto.load_scalar",
@@ -498,9 +506,9 @@ def load_scalar(result_type, ptr, offset, *, loc=None, ip=None):
 
 def store_scalar(ptr, offset, value, *, loc=None, ip=None):
     operands = [
-        _get_op_result_or_value(ptr),
-        _get_op_result_or_value(offset),
-        _get_op_result_or_value(value),
+        get_op_result_or_value(ptr),
+        get_op_result_or_value(offset),
+        get_op_result_or_value(value),
     ]
     return _ods_ir.Operation.create(
         "pto.store_scalar",
@@ -508,6 +516,7 @@ def store_scalar(ptr, offset, value, *, loc=None, ip=None):
         loc=loc,
         ip=ip,
     )
+
 
 # -----------------------------------------------------------------------------
 # Export enum aliases for terse calls: pto.record_event(TLOAD, TLOAD, EVENT_ID0)

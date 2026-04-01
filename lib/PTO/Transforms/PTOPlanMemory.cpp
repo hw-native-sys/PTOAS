@@ -48,12 +48,13 @@ struct LocalMemSpec {
 static int64_t ceilDivBitsToBytes(int64_t bits) { return (bits + 7) / 8; }
 
 static int64_t alignUpBytes(int64_t value, int64_t align) {
-  if (align <= 1)
+  int64_t safeAlign = std::max<int64_t>(align, 1);
+  if (safeAlign == 1)
     return value;
-  int64_t rem = value % align;
+  int64_t rem = value % safeAlign;
   if (rem == 0)
     return value;
-  return value + (align - rem);
+  return value + (safeAlign - rem);
 }
 
 static LocalMemSpec getLocalMemSpec(Operation *op, AddressSpace as) {

@@ -344,10 +344,8 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       unsigned expectedNumArgs) {
   size_t searchPos = 0;
   bool changed = false;
-  while (true) {
-    auto call = findNextMarkerCall(cpp, marker, searchPos);
-    if (!call)
-      break;
+  for (auto call = findNextMarkerCall(cpp, marker, searchPos); call;
+       call = findNextMarkerCall(cpp, marker, searchPos)) {
     if (call->rparenPos == std::string::npos) {
       searchPos = call->markerPos + marker.size();
       continue;
@@ -477,10 +475,8 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
                                          bool isStore) {
   size_t searchPos = 0;
   bool changed = false;
-  while (true) {
-    auto call = findNextMarkerCall(cpp, marker, searchPos);
-    if (!call)
-      break;
+  for (auto call = findNextMarkerCall(cpp, marker, searchPos); call;
+       call = findNextMarkerCall(cpp, marker, searchPos)) {
     if (call->rparenPos == std::string::npos) {
       searchPos = call->markerPos + marker.size();
       continue;
@@ -533,10 +529,8 @@ static void rewriteEventIdArrayMarkers(std::string &cpp) {
 static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
   size_t searchPos = 0;
   bool changed = false;
-  while (true) {
-    auto call = findNextMarkerCall(cpp, "PTOAS__ADDPTR_TRACE", searchPos);
-    if (!call)
-      break;
+  for (auto call = findNextMarkerCall(cpp, "PTOAS__ADDPTR_TRACE", searchPos);
+       call; call = findNextMarkerCall(cpp, "PTOAS__ADDPTR_TRACE", searchPos)) {
     if (call->rparenPos == std::string::npos) {
       searchPos = call->markerPos + 1;
       continue;
@@ -778,13 +772,9 @@ static bool parseGeneratedValueAssignment(llvm::StringRef line,
 
 static void rewriteScalarConstantDecls(std::string &cpp) {
   llvm::SmallVector<std::string, 0> lines;
-  llvm::StringRef ref(cpp);
-  while (true) {
+  for (llvm::StringRef ref(cpp); !ref.empty(); ref = ref.split('\n').second) {
     auto split = ref.split('\n');
     lines.push_back(split.first.str());
-    if (split.second.empty())
-      break;
-    ref = split.second;
   }
 
   llvm::SmallVector<bool, 0> eraseLine(lines.size(), false);
