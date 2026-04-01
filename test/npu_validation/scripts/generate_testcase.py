@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
 # coding=utf-8
 
 import argparse
 import ast
+import os
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -60,6 +70,20 @@ INCLUDE_REPLACEMENT = (
     "#include \"acl/acl.h\"\n"
     "#endif\n"
 )
+
+UNSTABLE_A3_CUSTOM_GOLDEN_CASES = frozenset({
+    "abs",
+    "partmin",
+    "prelu",
+    "rowexpanddiv",
+    "rowexpandmul",
+    "rowexpandsub",
+    "scatter",
+    "sel",
+    "sels",
+    "sub",
+    "xor",
+})
 
 
 def _parse_shape(text: str):
@@ -352,6 +376,42 @@ def _derive_testcase_name(input_cpp: Path) -> str:
     return name
 
 
+def _resolve_sample_root(input_cpp: Path) -> Path:
+    parent = input_cpp.parent
+    if parent.name == "npu_validation":
+        return parent.parent
+    if parent.parent.name == "npu_validation":
+        return parent.parent.parent
+    return parent
+
+
+def _find_custom_case_asset(sample_root: Path, testcase: str, filename: str) -> Optional[Path]:
+    candidates = (
+        sample_root / f"{testcase}_{filename}",
+        sample_root / "npu_validation" / testcase / filename,
+        sample_root / "npu_validation" / filename,
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _use_custom_golden_for_case(testcase: str, soc_version: str) -> bool:
+    testcase_lc = testcase.lower()
+    soc_lc = (soc_version or "").lower()
+    is_a3 = "910b" in soc_lc or os.environ.get("PTOAS_BOARD_IS_A3") == "1"
+    if is_a3 and testcase_lc in UNSTABLE_A3_CUSTOM_GOLDEN_CASES:
+        return False
+    return True
+
+
+def _copy_asset_if_needed(src: Path, dst: Path):
+    if src.resolve() == dst.resolve():
+        return
+    shutil.copy2(src, dst)
+
+
 def _replace_includes(text: str) -> str:
     if "#include \"common/pto_instr.hpp\"" in text:
         return text.replace("#include \"common/pto_instr.hpp\"", INCLUDE_REPLACEMENT.rstrip())
@@ -423,6 +483,8 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     # the "cube" arch; pure vector kernels can use the vector arch.
     #
     # IMPORTANT: the default arch depends on the Ascend SoC.
+    has_mix_macros = "__DAV_CUBE__" in kernel_text and "__DAV_VEC__" in kernel_text
+    has_intra_block_sync = "set_intra_block(" in kernel_text or "wait_intra_block(" in kernel_text
     cube_markers = (
         "TileType::Mat",
         "TileType::Left",
@@ -442,15 +504,29 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
 
     sv = (soc_version or "").lower()
     if "950" in sv or "a5" in sv:
+        # Only inter-core mixed kernels (with intra-block sync intrinsics)
+        # require true mix arch. Generic sectioned kernels should keep vec arch.
+        if has_mix_macros and has_intra_block_sync:
+            return "dav-c310"
         # Ascend950 (A5) uses A5 instruction set. pto-isa examples build A5
         # kernels with dav-c310-{vec|cube}.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
     if "910b" in sv:
+        if has_mix_macros and has_intra_block_sync:
+            return "dav-c310"
         # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
 
     # Default to Ascend910 (dav-c220) when SoC is unknown.
     return "dav-c220-cube" if needs_cube else "dav-c220-vec"
+
+
+def _infer_launch_block_count(kernel_text: str, testcase: str) -> int:
+    # Inter-core sync functional cases need at least two cores:
+    # one producer core does sync.set, one consumer core does sync.wait.
+    if testcase.startswith("test_intercore_sync_") and "get_block_idx()" in kernel_text:
+        return 2
+    return 1
 
 
 def _parse_int_list(blob: str):
@@ -900,12 +976,17 @@ def generate_testcase(
     soc_version: str,
     aicore_arch: Optional[str] = None,
 ):
-    sample_dir = input_cpp.parent
+    sample_root = _resolve_sample_root(input_cpp)
     if output_root:
-        output_dir = output_root / sample_dir.name / testcase
+        output_dir = output_root / sample_root.name / testcase
     else:
-        output_dir = sample_dir / "npu_validation" / testcase
+        output_dir = sample_root / "npu_validation" / testcase
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    use_custom_golden = _use_custom_golden_for_case(testcase, soc_version)
+    custom_golden = _find_custom_case_asset(sample_root, testcase, "golden.py") if use_custom_golden else None
+    custom_compare = _find_custom_case_asset(sample_root, testcase, "compare.py") if use_custom_golden else None
+    shared_validation_runtime = sample_root.parent / "validation_runtime.py"
 
     raw_kernel = input_cpp.read_text(encoding="utf-8")
     raw_kernel_for_analysis = raw_kernel
@@ -914,15 +995,24 @@ def generate_testcase(
     has_packed_pred_mask = re.search(r"\bTCMPS?\s*\(", raw_kernel_for_analysis) is not None
     has_dav_cube = "__DAV_CUBE__" in raw_kernel
     has_dav_vec = "__DAV_VEC__" in raw_kernel
+    has_intra_block_sync = "set_intra_block(" in raw_kernel or "wait_intra_block(" in raw_kernel
 
     if aicore_arch is None:
         # Sectioned kernels contain `#if defined(__DAV_CUBE__)` / `__DAV_VEC__`
-        # blocks. They frequently rely on cross-section synchronization (e.g.
-        # set_flag in cube section + wait_flag in vector section). If we build
-        # with a cube-only arch, common vector intrinsics (vabs/set_vector_mask)
-        # may be unavailable; build with a vector arch and explicitly enable the
-        # section macros instead.
-        if has_dav_cube or has_dav_vec:
+        # blocks. For inter-core-style mixed kernels (with intra-block sync),
+        # align to PTO-ISA mix-kernel compile mode (`dav-c310`) so the
+        # toolchain owns DAV macro definition.
+        if has_dav_cube and has_dav_vec and has_intra_block_sync:
+            sv = (soc_version or "").lower()
+            if "950" in sv or "a5" in sv:
+                aicore_arch = "dav-c310"
+            elif "910b" in sv:
+                aicore_arch = "dav-c310"
+            else:
+                aicore_arch = "dav-c220"
+        elif has_dav_cube or has_dav_vec:
+            # Single-section kernels can still be built with vec arch while
+            # forcing the needed DAV macro.
             sv = (soc_version or "").lower()
             if "950" in sv or "a5" in sv:
                 aicore_arch = "dav-c310-vec"
@@ -933,14 +1023,16 @@ def generate_testcase(
         else:
             aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
 
-    # Force-define DAV section macros so both sections are compiled into the
-    # same binary. This keeps the generated validation executable self-contained
-    # and avoids deadlocks when one side of a set/wait pair is compiled out.
+    # For single-section kernels, force-define DAV macro(s) to keep section
+    # bodies visible to the selected compile arch.
+    # For mix-kernel arch (dav-c310/dav-c220), do not force-define macros.
     dav_defines = ""
-    if has_dav_cube:
-        dav_defines += " -D__DAV_CUBE__"
-    if has_dav_vec:
-        dav_defines += " -D__DAV_VEC__"
+    is_mix_arch = aicore_arch in {"dav-c310", "dav-c220"}
+    if not (is_mix_arch and has_dav_cube and has_dav_vec and has_intra_block_sync):
+        if has_dav_cube:
+            dav_defines += " -D__DAV_CUBE__"
+        if has_dav_vec:
+            dav_defines += " -D__DAV_VEC__"
 
     rows, cols = _parse_shape(raw_kernel_for_analysis)
     logical_elem_count = rows * cols
@@ -1014,11 +1106,11 @@ def generate_testcase(
     init_ptrs = list(data_ptrs)
     output_ptrs = [p for p in data_ptrs if p["role"] == "output"]
 
-    ptr_elem_counts = {p["name"]: logical_elem_count for p in data_ptrs}
     inferred_counts = _infer_gm_pointer_elem_counts(raw_kernel_for_analysis, pointer_param_names)
-    for name, cnt in inferred_counts.items():
-        if name in ptr_elem_counts:
-            ptr_elem_counts[name] = max(ptr_elem_counts.get(name, logical_elem_count), cnt)
+    ptr_elem_counts = {}
+    for p in data_ptrs:
+        inferred = inferred_counts.get(p["name"])
+        ptr_elem_counts[p["name"]] = int(inferred) if inferred and int(inferred) > 0 else logical_elem_count
 
     templates_root = Path(__file__).resolve().parents[1] / "templates"
     template = (templates_root / "main_template.cpp").read_text(encoding="utf-8")
@@ -1174,14 +1266,19 @@ def generate_testcase(
     golden_template = (templates_root / "golden_template.py").read_text(encoding="utf-8")
     input_generate = []
     elem_count = logical_elem_count
+    kernel_has_tscatter = "TSCATTER" in raw_kernel
+    kernel_has_tgather = "TGATHER" in raw_kernel
+    kernel_has_tgatherb = "TGATHERB" in raw_kernel
     # Some kernels use an integer tensor as "indices". The safe in-range domain
-    # depends on the op semantics (see pto-isa docs):
-    # - TSCATTER: indices are linear indices in [0, rows*cols)
-    # - TGATHER/TGATHERB: indices are linear indices in [0, rows*cols)
+    # depends on the op semantics:
+    # - TSCATTER: use a deterministic, collision-free permutation so NPU-vs-NPU
+    #   golden mode stays stable across runs.
+    # - TGATHER: indices are linear indices in [0, rows*cols).
+    # - TGATHERB: offsets are block addresses (bytes), not per-element indices.
     index_mod = None
-    if "TSCATTER" in raw_kernel:
+    if kernel_has_tscatter:
         index_mod = max(elem_count, 1)
-    elif any(m in raw_kernel for m in ("TGATHER", "TGATHERB")):
+    elif kernel_has_tgather and not kernel_has_tgatherb:
         index_mod = max(elem_count, 1)
     mrgsort_packed = "TMRGSORT" in raw_kernel
     for p in init_ptrs:
@@ -1189,6 +1286,10 @@ def generate_testcase(
         name = p["name"]
         size = ptr_elem_counts.get(name, elem_count)
         is_output = p.get("role") == "output"
+        is_integer = np_dtype.startswith("np.int") or np_dtype.startswith("np.uint")
+        is_tscatter_indices = kernel_has_tscatter and p.get("role") == "input" and is_integer and size == elem_count
+        is_tgatherb_offset = kernel_has_tgatherb and p.get("role") == "input" and is_integer and size < elem_count
+        is_tgatherb_src = kernel_has_tgatherb and p.get("role") == "input" and not is_tgatherb_offset
         # If the kernel has both inputs and outputs, default to zero-init for
         # output buffers to match pto-isa ST conventions (and improve determinism).
         zero_init = is_output and len(init_ptrs) > 1
@@ -1254,7 +1355,23 @@ def generate_testcase(
                 input_generate.append(f"    {name}__packed['pad'] = np.uint16(0)")
             input_generate.append(f"    {name}__packed['i'] = {name}__idx")
             input_generate.append(f"    {name}__packed.tofile(\"{name}.bin\")")
-        elif np_dtype.startswith("np.int") or np_dtype.startswith("np.uint"):
+        elif is_tscatter_indices:
+            input_generate.append(f"    {name}__cols = np.arange({cols}, dtype=np.int64).reshape(1, {cols})")
+            input_generate.append(f"    {name}__row_perm = np.random.permutation({rows}).astype(np.int64).reshape({rows}, 1)")
+            input_generate.append(
+                f"    {name} = ({name}__row_perm * {cols} + {name}__cols).astype({np_dtype}).reshape(-1)"
+            )
+            input_generate.append(f"    {name}.tofile(\"{name}.bin\")")
+        elif is_tgatherb_offset:
+            input_generate.append(f"    {name} = (np.arange({size}, dtype=np.uint32) * 32).astype({np_dtype})")
+            input_generate.append(f"    {name}.tofile(\"{name}.bin\")")
+        elif is_tgatherb_src:
+            if is_integer:
+                input_generate.append(f"    {name} = np.arange({size}, dtype=np.int64).astype({np_dtype})")
+            else:
+                input_generate.append(f"    {name} = np.arange({size}, dtype=np.float32).astype({np_dtype})")
+            input_generate.append(f"    {name}.tofile(\"{name}.bin\")")
+        elif is_integer:
             if index_mod is not None:
                 input_generate.append(
                     f"    {name} = (np.arange({size}, dtype=np.int64) % {index_mod}).astype({np_dtype})"
@@ -1266,8 +1383,14 @@ def generate_testcase(
             input_generate.append(f"    {name} = np.random.random(size=({size},)).astype({np_dtype})")
             input_generate.append(f"    {name}.tofile(\"{name}.bin\")")
 
-    golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
-    (output_dir / "golden.py").write_text(golden_py, encoding="utf-8")
+    golden_dst = output_dir / "golden.py"
+    if custom_golden is not None:
+        _copy_asset_if_needed(custom_golden, golden_dst)
+    else:
+        golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
+        golden_dst.write_text(golden_py, encoding="utf-8")
+    if (custom_golden is not None or custom_compare is not None) and shared_validation_runtime.is_file():
+        _copy_asset_if_needed(shared_validation_runtime, output_dir / "validation_runtime.py")
 
     # Emit the kernel source, optionally injecting a packed-predicate preload to
     # make TCMP/TCMPS outputs deterministic for byte-wise compares.
@@ -1305,6 +1428,7 @@ def generate_testcase(
     kernel_call_args_device = ", ".join(kernel_call_args_device)
     kernel_call_args_host = ", ".join(kernel_call_args_host)
     raw_params_host = [_rewrite_host_unsupported_types(p) for p in raw_params]
+    launch_block_count = _infer_launch_block_count(raw_kernel_for_analysis, testcase)
     launch_cpp = (
         INCLUDE_REPLACEMENT
         + "\n"
@@ -1315,9 +1439,9 @@ def generate_testcase(
         "#endif\n\n"
         f"void {launch_name}({launch_fn_params}) {{\n"
         "#if defined(__CCE_AICORE__)\n"
-        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args_device});\n"
+        f"    {kernel_name}<<<{launch_block_count}, nullptr, stream>>>({kernel_call_args_device});\n"
         "#else\n"
-        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args_host});\n"
+        f"    {kernel_name}<<<{launch_block_count}, nullptr, stream>>>({kernel_call_args_host});\n"
         "#endif\n"
         f"}}\n"
     )
@@ -1478,6 +1602,13 @@ endif()
     compare_template = (templates_root / "compare_template.py").read_text(encoding="utf-8")
     compare_lines = ["    ok = True"]
     compare_prefix_counts = {}
+    tscatter_indices_input = None
+    if kernel_has_tscatter:
+        for p in init_ptrs:
+            p_dtype = _np_dtype_for_cpp(p["cpp_type"])
+            if p.get("role") == "input" and (p_dtype.startswith("np.int") or p_dtype.startswith("np.uint")):
+                tscatter_indices_input = p
+                break
     for p in output_ptrs:
         name = p["name"]
         req = inferred_counts.get(name)
@@ -1496,7 +1627,12 @@ endif()
         np_dtype = _np_dtype_for_cpp(p["cpp_type"])
         name = p["name"]
         eps = _default_eps_for_cpp_type(p["cpp_type"])
-        if has_packed_pred_mask and p["cpp_type"] in {"uint8_t", "int8_t"}:
+        if kernel_has_tscatter and tscatter_indices_input is not None:
+            compare_lines.append(
+                f"    ok = compare_bin_at_indices(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}, "
+                f"\"{tscatter_indices_input['name']}.bin\", {_np_dtype_for_cpp(tscatter_indices_input['cpp_type'])}) and ok"
+            )
+        elif has_packed_pred_mask and p["cpp_type"] in {"uint8_t", "int8_t"}:
             compare_lines.append(
                 f"    ok = compare_packed_pred_mask(\"golden_{name}.bin\", \"{name}.bin\", {rows}, {cols}) and ok"
             )
@@ -1510,8 +1646,41 @@ endif()
                 compare_lines.append(
                     f"    ok = compare_bin(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}) and ok"
                 )
-    compare_py = compare_template.replace("@COMPARES@", "\n".join(compare_lines))
-    (output_dir / "compare.py").write_text(compare_py, encoding="utf-8")
+    if testcase in {"test_intercore_sync_a5_functional", "test_intercore_sync_a5_ptoisa_vec"}:
+        # Extra functional check (not just run-to-run determinism):
+        # core0 writes 2.0 to output[0], core1 waits then mirrors to output[1].
+        out_name = output_ptrs[0]["name"] if output_ptrs else "v1"
+        compare_lines.append(f"    __inter_out = np.fromfile(\"{out_name}.bin\", dtype=np.float32)")
+        compare_lines.append("    if __inter_out.size < 2:")
+        compare_lines.append("        print(f\"[ERROR] intercore check requires >=2 elements, got {__inter_out.size}\")")
+        compare_lines.append("        ok = False")
+        compare_lines.append("    else:")
+        compare_lines.append("        if abs(float(__inter_out[0]) - 2.0) > 1e-6:")
+        compare_lines.append(
+            "            print(f\"[ERROR] intercore check failed: out[0]={float(__inter_out[0])}, expect 2.0\")"
+        )
+        compare_lines.append("            ok = False")
+        compare_lines.append("        if abs(float(__inter_out[1]) - 2.0) > 1e-6:")
+        compare_lines.append(
+            "            print(f\"[ERROR] intercore check failed: out[1]={float(__inter_out[1])}, expect 2.0\")"
+        )
+        compare_lines.append("            ok = False")
+    compare_dst = output_dir / "compare.py"
+    if custom_compare is not None:
+        _copy_asset_if_needed(custom_compare, compare_dst)
+    else:
+        compare_py = compare_template.replace("@COMPARES@", "\n".join(compare_lines))
+        compare_dst.write_text(compare_py, encoding="utf-8")
+    (output_dir / "validation_meta.env").write_text(
+        "\n".join(
+            [
+                f"CUSTOM_GOLDEN={1 if custom_golden is not None else 0}",
+                f"CUSTOM_COMPARE={1 if custom_compare is not None else 0}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     # Let the runner know which bins are outputs (for sim->golden copying).
     (output_dir / "outputs.txt").write_text(

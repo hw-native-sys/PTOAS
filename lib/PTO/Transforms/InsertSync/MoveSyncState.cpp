@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 #include "PTO/Transforms/InsertSync/MoveSyncState.h"
 #include "llvm/ADT/STLExtras.h" // For llvm::reverse
  
@@ -62,13 +75,10 @@ void MoveSyncState::PlanMoveOutBranchSync(
   // 处理 PipeAfter (Set) - Sink Set out of If/Else when the matched Wait is
   // outside the branch region.
   //
-  // This avoids patterns like:
-  //   if (...) { set_flag(A) } else { set_flag(B) }
-  //   wait_flag(A); wait_flag(B);   // may deadlock if wait consumes the flag
-  //
-  // By sinking the conditional sets to IF_END, we effectively materialize a
-  // "merge" signal: regardless of which branch executed, the required events
-  // are set after the join point.
+  // This avoids branch-local event production followed by waits after the join
+  // point, which can deadlock if a wait consumes a flag that was not produced
+  // on the taken branch. Sinking the conditional sets to IF_END makes the join
+  // point behave like a single merged signal.
   SyncOps newPipeAfter;
   for (auto &s : llvm::reverse(e->pipeAfter)) {
     PlanMoveOutIfSetSync(newPipeAfter, s, pair, bound);

@@ -1,14 +1,15 @@
-//===- OptMemPlanForPipeline.h --Pipeline optimization for plan memory------==//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
+//===- OptMemPlanForPipeline.h --Pipeline optimization for plan memory------==//
 #ifndef OPT_MEM_PLAN_FOR_PIPELINE_H
 #define OPT_MEM_PLAN_FOR_PIPELINE_H
 #include "PTO/IR/PTO.h"
-//#include "Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -34,9 +35,6 @@ public:
   bool IsScalarBuffer(const Value buf) const;
 
 private:
-  /// Verify that PTOOpPipe has a pipe type.
-  //LogicalResult VerifyExistPtoPipe(pto::OpPipeInterface ptoPipeOp) const;
-
   /// Update the buffers for MTE2 and MTE3.
   void UpdateDmaBuffers(SmallVector<Value> dpsOperand);
 

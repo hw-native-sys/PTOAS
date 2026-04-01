@@ -4,9 +4,9 @@ module {
     %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
 
-    %softmax_tv = pto.make_tensor_view %softmax, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %v_tv = pto.make_tensor_view %v, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %out_tv = pto.make_tensor_view %out, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %softmax_tv = pto.make_tensor_view %softmax, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %v_tv = pto.make_tensor_view %v, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %out_tv = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %softmax_pt = pto.partition_view %softmax_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %v_pt = pto.partition_view %v_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>

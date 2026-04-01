@@ -15,9 +15,9 @@ module {
     %vrow = arith.index_cast %valid_row : i32 to index
     %vcol = arith.index_cast %valid_col : i32 to index
 
-    %scores_tv = pto.make_tensor_view %scores, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %group_tv = pto.make_tensor_view %group_scale, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %softmax_tv = pto.make_tensor_view %softmax, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %scores_tv = pto.make_tensor_view %scores, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %group_tv = pto.make_tensor_view %group_scale, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %softmax_tv = pto.make_tensor_view %softmax, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %scores_pt = pto.partition_view %scores_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %group_pt = pto.partition_view %group_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>

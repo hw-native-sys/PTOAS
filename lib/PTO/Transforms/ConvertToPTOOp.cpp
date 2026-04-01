@@ -1,9 +1,12 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- ConvertToPTOOp.cpp - Convert ops to PTO Ops ----------------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
@@ -38,21 +41,6 @@ namespace {
 std::optional<Value> getPadValue(std::optional<memref::AllocOp> maybeAlloc) {
   if (!maybeAlloc.has_value())
     return std::nullopt;
-  // Compatible with older versions
-//   for (auto *user : maybeAlloc.value()->getUsers()) {
-//     if (llvm::isa_and_nonnull<pto::VBrcOp>(user) &&
-//         user->getOperand(0).getType().isIntOrFloat()) {
-//       return user->getOperand(0);
-//     }
-//   }
-
-//   auto allocValue = maybeAlloc.value();
-//   auto padMarkOp = utils::getAnnotateOpWithAttr(allocValue, "pad_const");
-//   if (!padMarkOp.has_value())
-//     return std::nullopt;
-//   auto padValue = dyn_cast<annotation::MarkOp>(padMarkOp.value())
-//                       .getDynamicAttrValue("pad_const");
-//   return std::optional<Value>(padValue);
   return std::nullopt;
 }
 
@@ -78,19 +66,8 @@ std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
 
 std::pair<std::optional<Operation *>, std::optional<Value>>
 getInitInfo(Operation *op, pto::TLoadOp loadOp) {
-//   if (!llvm::isa<pto::VBrcOp>(op))
-//     return {std::nullopt, std::nullopt};
-//   if (!op->getOperand(0).getType().isIntOrFloat())
-//     return {std::nullopt, std::nullopt};
-
-//   if (op->getBlock() == loadOp->getBlock())
-//     return {op, std::nullopt};
-//   if (op->getParentOp()->getBlock() == loadOp->getBlock() &&
-//       isa<scf::IfOp>(op->getParentOp())) {
-//     auto ifOp = cast<scf::IfOp>(op->getParentOp());
-//     return {op, ifOp.getCondition()};
-//   }
-
+  (void)op;
+  (void)loadOp;
   return {std::nullopt, std::nullopt};
 }
 
@@ -215,17 +192,9 @@ void ConvertToPTOOpPass::runOnOperation() {
   auto *ctx = &getContext();
   Operation *moduleOp = getOperation();
   moduleOp->walk([&](func::FuncOp funcOp) {
-    // if (hacc::utils::isHost(funcOp))
-    //   // avoid convert host op to pto op
-    //   return;
-
-    // rewrite op within cur funcOp
     RewritePatternSet patterns(ctx);
     populatePTOOpRewritingRule(patterns);
     (void)applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
-    // rewrite cur funcOp
-    // RewritePatternSet funcOpPatterns(ctx);
-    // (void)applyOpPatternsAndFold({funcOp}, std::move(funcOpPatterns));
   });
 }
 

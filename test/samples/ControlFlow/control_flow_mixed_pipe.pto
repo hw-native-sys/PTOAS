@@ -8,9 +8,9 @@ module {
     %scale_val = arith.constant 5.000000e-01 : f32
 
     // A: 32x64, B: 64x32, C: 32x32
-    %a_tv = pto.make_tensor_view %a, shape = [%c32, %c64] strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
-    %b_tv = pto.make_tensor_view %b, shape = [%c64, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %c_tv = pto.make_tensor_view %c_out, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %a_tv = pto.make_tensor_view %a, shape = [%c32, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
+    %b_tv = pto.make_tensor_view %b, shape = [%c64, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %c_tv = pto.make_tensor_view %c_out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %c_pt = pto.partition_view %c_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
 

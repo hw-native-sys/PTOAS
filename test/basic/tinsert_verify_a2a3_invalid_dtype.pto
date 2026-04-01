@@ -1,0 +1,16 @@
+// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+
+module attributes {"pto.target_arch" = "a3"} {
+  func.func @tinsert_a2a3_invalid_dtype() {
+    %c0 = arith.constant 0 : index
+
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, index, index)
+               outs(%dst : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: error: 'pto.tinsert' op expects A2/A3 tinsert element types to be src=f32, dst=f16/bf16

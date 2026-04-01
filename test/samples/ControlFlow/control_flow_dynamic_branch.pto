@@ -14,8 +14,8 @@ module {
     %vrow = arith.index_cast %valid_row : i32 to index
     %vcol = arith.index_cast %valid_col : i32 to index
 
-    %in_tv = pto.make_tensor_view %input, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %out_tv = pto.make_tensor_view %output, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %in_tv = pto.make_tensor_view %input, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %out_tv = pto.make_tensor_view %output, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %in_pt = pto.partition_view %in_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %out_pt = pto.partition_view %out_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>

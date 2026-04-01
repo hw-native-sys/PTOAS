@@ -4,9 +4,9 @@ module {
     %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
 
-    %q_tv = pto.make_tensor_view %q, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %kt_tv = pto.make_tensor_view %kt, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %scores_tv = pto.make_tensor_view %scores, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %q_tv = pto.make_tensor_view %q, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %kt_tv = pto.make_tensor_view %kt, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %scores_tv = pto.make_tensor_view %scores, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %q_pt = pto.partition_view %q_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %kt_pt = pto.partition_view %kt_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>

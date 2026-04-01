@@ -1,10 +1,10 @@
-//===- ptoas.cpp -------------------------------------------------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
@@ -34,11 +34,14 @@
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/EmitC/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/StringMap.h"
 #include <string>
 
 using namespace mlir;
@@ -164,47 +167,6 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
   return success();
 }
 
-// #define ADD_CANONICALIZER_PASS \
-//    CanonicalizerOptions options; \
-//    options.enableExtendedPattern = true; \
-//    std::vector<std::string> disabledPatterns{}; \
-//    options.disabledPatterns = disabledPatterns; \
-//    pm.addPass(createCanonicalizerPass(options))
-
-// #define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS \
-//    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
-
-// static void canonicalizationPipeline(OpPassManager &pm) {
-//    pm.addPass(createArithToAffineConversionPass());
-//    ADD_CANONICALIZER_PASS;
-//    pm.addPass(createSCFForLoopCanonicalizationPass());
-//    pm.addPass(createCSEPass());
-//    ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
-//    //pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-//    ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
-//    pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
-// }
-
-static void bufferizationPipeline(OpPassManager &pm) {
-  bufferization::OneShotBufferizationOptions oneShotOptions;
-  oneShotOptions.bufferizeFunctionBoundaries = true;
-  oneShotOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
-  oneShotOptions.allowReturnAllocsFromLoops = true;
-  oneShotOptions.allowUnknownOps = true;
-  pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
-  // pm.addPass(bufferization::createOneShotBufferizePass());
-
-  // if (hivmPipelineOptions.enableVfMerge) {
-  //    pm.addPass(hfusion::createMergeVecScopePass());
-  // }
-  // canonicalizationPipeline(pm);
-  // pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  // canonicalizationPipeline(pm);
-  // pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  pm.addPass(createConvertToPTOOpPass());
-}
-
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
@@ -305,6 +267,8 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
 //   PTOAS__TILE_SET_VALIDSHAPE(obj, r, c)   -> obj.SetValidShape(r, c)
 //   PTOAS__PTR_LOAD(ptr, offset)            -> ptr[offset]
 //   PTOAS__PTR_STORE(ptr, offset, val)      -> ptr[offset] = val
+//   PTOAS__EVENTID_ARRAY_LOAD(arr, idx)     -> arr[idx]
+//   PTOAS__EVENTID_ARRAY_STORE(arr, idx, v) -> arr[idx] = v
 // --------------------------------------------------------------------------
 static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
@@ -566,6 +530,19 @@ static void rewritePtrScalarMarkers(std::string &cpp) {
   }
 }
 
+static void rewriteEventIdArrayMarkers(std::string &cpp) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    changed |= rewriteMarkerCallToSubscript(
+        cpp, "PTOAS__EVENTID_ARRAY_LOAD", /*expectedNumArgs=*/2,
+        /*isStore=*/false);
+    changed |= rewriteMarkerCallToSubscript(
+        cpp, "PTOAS__EVENTID_ARRAY_STORE", /*expectedNumArgs=*/3,
+        /*isStore=*/true);
+  }
+}
+
 static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
   size_t searchPos = 0;
   bool changed = false;
@@ -714,6 +691,232 @@ static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
   cpp.swap(out);
 }
 
+namespace {
+struct ConstantDeclCandidate {
+  size_t declLine = 0;
+  std::string indent;
+  std::string type;
+  bool hasInitializer = false;
+  std::string initializer;
+  size_t assignmentCount = 0;
+  size_t assignmentLine = 0;
+  std::string assignmentRhs;
+};
+} // namespace
+
+static bool isGeneratedValueName(llvm::StringRef name) {
+  if (!name.consume_front("v") || name.empty())
+    return false;
+  return llvm::all_of(name, [](char c) { return std::isdigit(c); });
+}
+
+static bool isConstFoldableScalarType(llvm::StringRef type) {
+  type = type.trim();
+  if (type.starts_with("const ") || type.starts_with("constexpr "))
+    return false;
+  return llvm::StringSwitch<bool>(type)
+      .Cases("bool", "float", "double", "half", "bfloat16_t", true)
+      .Cases("int8_t", "uint8_t", "int16_t", "uint16_t", true)
+      .Cases("int32_t", "uint32_t", "int64_t", "uint64_t", true)
+      .Default(false);
+}
+
+static bool isLiteralInitializer(llvm::StringRef rhs) {
+  rhs = rhs.trim();
+  if (rhs.empty())
+    return false;
+  if (rhs == "true" || rhs == "false" || rhs == "nullptr")
+    return true;
+
+  static const llvm::Regex kIntLiteral(
+      R"(^[+-]?(0[xX][0-9A-Fa-f]+|[0-9]+)[uUlL]*$)");
+  static const llvm::Regex kFloatLiteral(
+      R"(^[+-]?(([0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)[fF]?$)");
+  static const llvm::Regex kHexFloatLiteral(
+      R"(^[+-]?0[xX]([0-9A-Fa-f]+\.[0-9A-Fa-f]*|[0-9A-Fa-f]+|\.[0-9A-Fa-f]+)[pP][+-]?[0-9]+[fF]?$)");
+  static const llvm::Regex kSpecialFloatLiteral(
+      R"(^[+-]?(nan|inf)[fF]?$)");
+
+  return kIntLiteral.match(rhs) || kFloatLiteral.match(rhs) ||
+         kHexFloatLiteral.match(rhs) || kSpecialFloatLiteral.match(rhs);
+}
+
+static std::string normalizeConstInitializer(llvm::StringRef type,
+                                             llvm::StringRef rhs) {
+  type = type.trim();
+  rhs = rhs.trim();
+  if (type == "bool") {
+    if (rhs == "0" || rhs == "false")
+      return "false";
+    if (rhs == "1" || rhs == "-1" || rhs == "true")
+      return "true";
+  }
+  return rhs.str();
+}
+
+static bool parseConstantDeclarationLine(llvm::StringRef line,
+                                         ConstantDeclCandidate &candidate,
+                                         std::string &valueName) {
+  llvm::StringRef trimmed = line.trim();
+  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
+      !trimmed.ends_with(";"))
+    return false;
+
+  llvm::StringRef body = trimmed.drop_back().rtrim();
+  if (body.starts_with("return") || body.starts_with("goto ") ||
+      body.starts_with("if ") || body.starts_with("if(") ||
+      body.starts_with("switch ") || body.starts_with("switch(") ||
+      body.starts_with("for ") || body.starts_with("for(") ||
+      body.starts_with("while ") || body.starts_with("while(") ||
+      body.starts_with("case ") || body == "default")
+    return false;
+
+  llvm::StringRef lhs = body;
+  llvm::StringRef rhs;
+  if (size_t eqPos = body.find('='); eqPos != llvm::StringRef::npos) {
+    lhs = body.take_front(eqPos).rtrim();
+    rhs = body.drop_front(eqPos + 1).trim();
+  }
+
+  size_t lastWs = lhs.find_last_of(" \t");
+  if (lastWs == llvm::StringRef::npos)
+    return false;
+
+  llvm::StringRef type = lhs.take_front(lastWs).rtrim();
+  llvm::StringRef name = lhs.drop_front(lastWs + 1).trim();
+  if (!isGeneratedValueName(name) || !isConstFoldableScalarType(type))
+    return false;
+
+  size_t indentLen = line.find_first_not_of(" \t");
+  if (indentLen == llvm::StringRef::npos)
+    indentLen = 0;
+  candidate.indent = line.take_front(indentLen).str();
+  candidate.type = type.str();
+  valueName = name.str();
+
+  if (!rhs.empty()) {
+    if (!isLiteralInitializer(rhs))
+      return false;
+    candidate.hasInitializer = true;
+    candidate.initializer = normalizeConstInitializer(type, rhs);
+  }
+
+  return true;
+}
+
+static bool parseGeneratedValueAssignment(llvm::StringRef line,
+                                          llvm::StringRef &valueName,
+                                          llvm::StringRef &rhs) {
+  llvm::StringRef trimmed = line.trim();
+  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
+      !trimmed.ends_with(";"))
+    return false;
+
+  llvm::StringRef body = trimmed.drop_back().rtrim();
+  size_t eqPos = body.find('=');
+  if (eqPos == llvm::StringRef::npos)
+    return false;
+
+  llvm::StringRef lhs = body.take_front(eqPos).rtrim();
+  rhs = body.drop_front(eqPos + 1).trim();
+  if (!isGeneratedValueName(lhs))
+    return false;
+  valueName = lhs;
+  return true;
+}
+
+static void rewriteScalarConstantDecls(std::string &cpp) {
+  llvm::SmallVector<std::string, 0> lines;
+  llvm::StringRef ref(cpp);
+  while (true) {
+    auto split = ref.split('\n');
+    lines.push_back(split.first.str());
+    if (split.second.empty())
+      break;
+    ref = split.second;
+  }
+
+  llvm::SmallVector<bool, 0> eraseLine(lines.size(), false);
+  auto rewriteSegment = [&](size_t beginLine, size_t endLine) {
+    llvm::StringMap<ConstantDeclCandidate> candidates;
+
+    for (size_t i = beginLine; i <= endLine; ++i) {
+      ConstantDeclCandidate candidate;
+      std::string valueName;
+      if (parseConstantDeclarationLine(lines[i], candidate, valueName)) {
+        candidate.declLine = i;
+        candidates[valueName] = std::move(candidate);
+        continue;
+      }
+
+      llvm::StringRef assignedName;
+      llvm::StringRef rhs;
+      if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs))
+        continue;
+
+      auto it = candidates.find(assignedName);
+      if (it == candidates.end())
+        continue;
+
+      ConstantDeclCandidate &info = it->second;
+      ++info.assignmentCount;
+      info.assignmentLine = i;
+      info.assignmentRhs = rhs.str();
+    }
+
+    for (auto &entry : candidates) {
+      llvm::StringRef valueName = entry.getKey();
+      ConstantDeclCandidate &info = entry.getValue();
+
+      std::string initializer;
+      if (info.hasInitializer) {
+        if (info.assignmentCount != 0)
+          continue;
+        initializer = info.initializer;
+      } else {
+        if (info.assignmentCount != 1)
+          continue;
+        if (!isLiteralInitializer(info.assignmentRhs))
+          continue;
+        initializer = normalizeConstInitializer(
+            info.type, llvm::StringRef(info.assignmentRhs));
+        eraseLine[info.assignmentLine] = true;
+      }
+
+      lines[info.declLine] = (info.indent + "const " + info.type + " " +
+                              valueName.str() + " = " + initializer + ";");
+    }
+  };
+
+  int braceDepth = 0;
+  size_t segmentStart = 0;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    int depthBefore = braceDepth;
+    for (char c : lines[i]) {
+      if (c == '{')
+        ++braceDepth;
+      else if (c == '}')
+        --braceDepth;
+    }
+
+    if (depthBefore == 0 && braceDepth > 0)
+      segmentStart = i;
+    if (depthBefore > 0 && braceDepth == 0)
+      rewriteSegment(segmentStart, i);
+  }
+
+  std::string out;
+  out.reserve(cpp.size());
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (eraseLine[i])
+      continue;
+    out.append(lines[i]);
+    if (i + 1 != lines.size())
+      out.push_back('\n');
+  }
+  cpp.swap(out);
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect>();
@@ -805,6 +1008,11 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Set target arch on the module from CLI before any passes run.
+  // This is the single source of truth — input IR does not need pto.target_arch.
+  module->getOperation()->setAttr("pto.target_arch",
+                                  mlir::StringAttr::get(&context, arch));
+
   PTOBuildLevel effectiveLevel = defaultBuildLevel();
   if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
     llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
@@ -833,6 +1041,21 @@ int main(int argc, char **argv) {
   });
   if (invalidAutoSyncTailHint)
     return 1;
+
+  bool hasTAssign = false;
+  module->walk([&](pto::TAssignOp) { hasTAssign = true; });
+
+  if (hasTAssign && effectiveLevel != PTOBuildLevel::Level3) {
+    llvm::errs() << "Error: pto.tassign is only supported when "
+                    "--pto-level=level3.\n";
+    return 1;
+  }
+
+  if (hasTAssign && enableInsertSync) {
+    llvm::errs() << "Error: pto.tassign requires --enable-insert-sync to be "
+                    "disabled.\n";
+    return 1;
+  }
 
   if (effectiveLevel == PTOBuildLevel::Level3) {
     bool missing = false;
@@ -868,15 +1091,14 @@ int main(int argc, char **argv) {
   // Main PassManager
   PassManager pm(&context);
   
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertCVMovPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOLowerFrontendPipeOpsPass());
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   pm.addPass(pto::createPTOViewToMemrefPass());
-  // bufferizationPipeline(pm);
   //pm.addPass(createInferPTOMemScopePass());
 
   if (effectiveLevel != PTOBuildLevel::Level3) {
@@ -886,18 +1108,13 @@ int main(int argc, char **argv) {
     planMemoryOption.enablePrintMemoryAllocatedSize = false;
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
   }
+  pm.addPass(pto::createPTOResolveReservedBuffersPass());
 
   // Conditionally add Sync pass based on flag.
   if (enableInsertSync)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
 
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveRedundantBarrierPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
-  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
-
   pm.addPass(createCSEPass());
-  module->getOperation()->setAttr("pto.target_arch",
-                                  mlir::StringAttr::get(&context, arch));
   if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
   } else {
@@ -947,7 +1164,9 @@ int main(int argc, char **argv) {
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
   rewritePtrScalarMarkers(cppOutput);
+  rewriteEventIdArrayMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
+  rewriteScalarConstantDecls(cppOutput);
   rewriteHoistedGlobalTensorDecls(cppOutput);
   outputFile.os() << cppOutput;
 

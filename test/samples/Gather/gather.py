@@ -1,6 +1,14 @@
-from mlir.ir import Context, Location, Module, InsertionPoint
-from mlir.dialects import func, arith, pto
-from mlir.ir import F32Type, IndexType, IntegerType
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+from mlir.ir import Context, F32Type, IndexType, InsertionPoint, Location, Module
+from mlir.dialects import arith, func, pto
+from mlir.ir import IntegerType
 
 
 def build():
@@ -15,11 +23,7 @@ def build():
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
 
             i32 = IntegerType.get_signless(32, ctx)
-            ptr_i32 = pto.PtrType.get(i32, ctx)
-            tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-
             tile_view_f32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            tile_view_i32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
 
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
@@ -31,57 +35,31 @@ def build():
             tile_buf_f32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
             tile_buf_i32 = pto.TileBufType.get([32, 32], i32, vec, [32, 32], cfg, ctx)
 
-            fn_ty = func.FunctionType.get([ptr_f32, ptr_i32, ptr_f32], [])
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("vec_add_kernel_2d", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
-                # constants
                 c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
                 c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
-                arg0, arg1, arg2 = entry.arguments
+                arg0, arg1 = entry.arguments
 
-                # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
-                # 这里用原生 builder：通常签名会是 (result_type, ptr, shape, strides)
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
-                tv1 = pto.MakeTensorViewOp(tv2_i32, arg1, [c32, c32], [c32, c1]).result
-                tv2 = pto.MakeTensorViewOp(tv2_f32, arg2, [c32, c32], [c32, c1]).result
+                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
 
-                # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[32,32]
                 sv0 = pto.PartitionViewOp(tile_view_f32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
-                sv1 = pto.PartitionViewOp(tile_view_i32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
-                # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_f32).result
-                tb1 = pto.AllocTileOp(tile_buf_i32).result
-                tb2 = pto.AllocTileOp(tile_buf_f32).result  # tmp
-                tb3 = pto.AllocTileOp(tile_buf_f32).result  # out
+                tb1 = pto.AllocTileOp(tile_buf_f32).result
 
-                # pto.load_dps_tb ins(%sv) outs(%tb)
-                # 原生 builder 一般会把 optional operands/attrs 做成可选参数
-                # valid_dims 这里不给
-                pto.TLoadOp(None, sv0, tb0)  # result=None
-                pto.TLoadOp(None, sv1, tb1)  # result=None
-
-                # pto.tgather supports 2 mutually-exclusive forms:
-                # - index gather: ins(%src, %indices) outs(%dst)
-                # - mask gather : ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>}) outs(%dst)
-                #
-                # 这里串起来，确保两种形式都会在最终生成的 C++ 里出现。
-                pto.TGatherOp(tb0, tb2, indices=tb1)
-                # Use a full mask (P1111) so mask-gather overwrites every lane.
-                # This avoids any dependence on previous dst contents and keeps
-                # the output deterministic for the CI "run twice on NPU" check.
+                pto.TLoadOp(None, sv0, tb0)
                 mp = pto.MaskPatternAttr.get(pto.MaskPattern.P1111, ctx)
-                pto.TGatherOp(tb2, tb3, maskPattern=mp)
+                pto.TGatherOp(tb0, tb1, maskPattern=mp)
 
-                # %8 = subview on output tensor_view
-                sv2 = pto.PartitionViewOp(tile_view_f32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
-
-                # pto.store_dps_tb ins(%tb2) outs(%sv2)
-                pto.TStoreOp(None, tb3, sv2)
+                sv1 = pto.PartitionViewOp(tile_view_f32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
+                pto.TStoreOp(None, tb1, sv1)
 
                 func.ReturnOp([])
             m.operation.verify()

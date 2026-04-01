@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- PTO.cpp - C API for PTO dialect -----------------------------------===//
 //
 // This file provides the C API for the PTO dialect and its custom types.
@@ -345,6 +358,21 @@ MlirAttribute mlirPTOEventAttrGet(MlirContext ctx, int32_t value) {
   return wrap(mlir::pto::EventAttr::get(c, v));
 }
 
+MlirAttribute mlirPTOQuantTypeAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto v = static_cast<mlir::pto::QuantType>(value);
+  return wrap(mlir::pto::QuantTypeAttr::get(c, v));
+}
+
+bool mlirPTOAttrIsAQuantTypeAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::QuantTypeAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOQuantTypeAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::QuantTypeAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
 bool mlirPTOAttrIsAEventAttr(MlirAttribute attr) {
   return mlir::isa<mlir::pto::EventAttr>(unwrap(attr));
 }
@@ -354,10 +382,70 @@ int32_t mlirPTOEventAttrGetValue(MlirAttribute attr) {
   return static_cast<int32_t>(a.getEvent());
 }
 
+static std::optional<mlir::pto::MaskPattern>
+maskPatternFromIsaValue(int32_t value) {
+  switch (value) {
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P0101):
+    return mlir::pto::MaskPattern::P0101;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P1010):
+    return mlir::pto::MaskPattern::P1010;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P0001):
+    return mlir::pto::MaskPattern::P0001;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P0010):
+    return mlir::pto::MaskPattern::P0010;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P0100):
+    return mlir::pto::MaskPattern::P0100;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P1000):
+    return mlir::pto::MaskPattern::P1000;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P1111):
+    return mlir::pto::MaskPattern::P1111;
+  default:
+    return std::nullopt;
+  }
+}
+
+static std::optional<mlir::pto::MaskPattern>
+maskPatternFromLegacyRaw(int32_t value) {
+  switch (value) {
+  case 0:
+    return mlir::pto::MaskPattern::P0101;
+  case 3:
+    return mlir::pto::MaskPattern::P0001;
+  case 4:
+    return mlir::pto::MaskPattern::P1111;
+  case 5:
+    return mlir::pto::MaskPattern::P1010;
+  default:
+    return std::nullopt;
+  }
+}
+
 MlirAttribute mlirPTOMaskPatternAttrGet(MlirContext ctx, int32_t value) {
   auto *c = unwrap(ctx);
-  auto v = static_cast<mlir::pto::MaskPattern>(value);
-  return wrap(mlir::pto::MaskPatternAttr::get(c, v));
+  std::optional<mlir::pto::MaskPattern> v;
+  switch (value) {
+  case 0:
+  case 3:
+    v = maskPatternFromLegacyRaw(value);
+    break;
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P1000):
+  case static_cast<int32_t>(mlir::pto::MaskPattern::P1111):
+    v = maskPatternFromIsaValue(value);
+    break;
+  default:
+    break;
+  }
+  if (!v)
+    return MlirAttribute{nullptr};
+  return wrap(mlir::pto::MaskPatternAttr::get(c, *v));
+}
+
+MlirAttribute mlirPTOMaskPatternAttrGetLegacyRaw(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  std::optional<mlir::pto::MaskPattern> v = maskPatternFromLegacyRaw(value);
+  if (!v)
+    return MlirAttribute{nullptr};
+  return wrap(mlir::pto::MaskPatternAttr::get(c, *v));
 }
 
 bool mlirPTOAttrIsAMaskPatternAttr(MlirAttribute attr) {
@@ -367,6 +455,21 @@ bool mlirPTOAttrIsAMaskPatternAttr(MlirAttribute attr) {
 int32_t mlirPTOMaskPatternAttrGetValue(MlirAttribute attr) {
   auto a = mlir::cast<mlir::pto::MaskPatternAttr>(unwrap(attr));
   return static_cast<int32_t>(a.getValue());
+}
+
+MlirAttribute mlirPTOMaskPatternAttrGetEnum(MlirContext ctx,
+                                            MlirPTOMaskPattern value) {
+  auto *c = unwrap(ctx);
+  std::optional<mlir::pto::MaskPattern> v =
+      maskPatternFromIsaValue(static_cast<int32_t>(value));
+  if (!v)
+    return MlirAttribute{nullptr};
+  return wrap(mlir::pto::MaskPatternAttr::get(c, *v));
+}
+
+MlirPTOMaskPattern mlirPTOMaskPatternAttrGetEnumValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::MaskPatternAttr>(unwrap(attr));
+  return static_cast<MlirPTOMaskPattern>(static_cast<int32_t>(a.getValue()));
 }
 
 bool mlirAttributeIsAPTOCmpModeAttr(MlirAttribute attr) {

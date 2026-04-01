@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+
+// Negative tests for pto.tcvt verifier.
+// The two errors appear in file order so sequential CHECKs are sufficient.
+//
+// CHECK: error: 'pto.tcvt' op expects src and dst to have compatible shapes
+// CHECK: error: 'pto.tcvt' op expects src and dst to have the same valid_shape
+
+// -----------------------------------------------------------------------
+// Shape mismatch: src is 16x32, dst is 16x16 -> error
+// -----------------------------------------------------------------------
+func.func @tcvt_shape_mismatch() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+  pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+           outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+  return
+}
+
+// -----------------------------------------------------------------------
+// Valid-shape mismatch: same shape (16x16) but different valid region
+// src v_row=8, dst v_row=16 -> error
+// -----------------------------------------------------------------------
+func.func @tcvt_valid_shape_mismatch() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+  pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+           outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+  return
+}

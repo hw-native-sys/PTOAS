@@ -12,12 +12,12 @@ module {
     %c3 = arith.constant 1.666667e-01 : f32
     %c4 = arith.constant 4.166667e-02 : f32
 
-    %q_tv = pto.make_tensor_view %q, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %kt_tv = pto.make_tensor_view %kt, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %v_tv = pto.make_tensor_view %v, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %scores_tv = pto.make_tensor_view %scores_out, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %softmax_tv = pto.make_tensor_view %softmax_out, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %out_tv = pto.make_tensor_view %out, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %q_tv = pto.make_tensor_view %q, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %kt_tv = pto.make_tensor_view %kt, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %v_tv = pto.make_tensor_view %v, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %scores_tv = pto.make_tensor_view %scores_out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %softmax_tv = pto.make_tensor_view %softmax_out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %out_tv = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %q_pt = pto.partition_view %q_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %kt_pt = pto.partition_view %kt_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>

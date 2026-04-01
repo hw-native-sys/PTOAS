@@ -1,0 +1,28 @@
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+module {
+  func.func @eventid_array_get_set_get() {
+    %arr = pto.declare_eventid_array -> !pto.eventid_array<4>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    pto.eventid_array_set %arr[%c0], %c1 : !pto.eventid_array<4>
+    %eid0 = pto.eventid_array_get %arr[%c0] : !pto.eventid_array<4>
+    pto.eventid_array_set %arr[%c0], %c2 : !pto.eventid_array<4>
+    %eid1 = pto.eventid_array_get %arr[%c0] : !pto.eventid_array<4>
+    pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_MTE3>, %eid0]
+    pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_MTE3>, %eid1]
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void eventid_array_get_set_get() {
+// CHECK: PTOAS_EventIdArray<4> [[ARR:v[0-9]+]];
+// CHECK: [[ARR]][{{v[0-9]+}}] = {{v[0-9]+}};
+// CHECK: int32_t [[FIRST:v[0-9]+]] = [[ARR]][{{v[0-9]+}}];
+// CHECK: [[ARR]][{{v[0-9]+}}] = {{v[0-9]+}};
+// CHECK: int32_t [[SECOND:v[0-9]+]] = [[ARR]][{{v[0-9]+}}];
+// CHECK: event_t {{v[0-9]+}} = (event_t) [[FIRST]];
+// CHECK: set_flag(PIPE_MTE2, PIPE_MTE3, {{v[0-9]+}});
+// CHECK: event_t {{v[0-9]+}} = (event_t) [[SECOND]];
+// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE3, {{v[0-9]+}});

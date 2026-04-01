@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
 # Collect ptoas binary and macOS dylib dependencies into a self-contained distribution.
 #
 # Usage: ./collect_ptoas_dist_mac.sh <output_directory>
@@ -41,7 +49,8 @@ if [ ! -f "$PTOAS_BIN" ]; then
 fi
 
 mkdir -p "${PTOAS_DIST_DIR}/bin" "${PTOAS_DEPS_DIR}"
-cp "$PTOAS_BIN" "${PTOAS_DIST_DIR}/bin/"
+cp -fL "$PTOAS_BIN" "${PTOAS_DIST_DIR}/bin/"
+chmod +x "${PTOAS_DIST_DIR}/bin/ptoas"
 
 # Resolve @rpath / @loader_path / @executable_path / absolute install names.
 resolve_dep_path() {
@@ -124,7 +133,7 @@ collect_dylibs() {
     local base
     base="$(basename "$resolved")"
     if [ ! -f "${PTOAS_DEPS_DIR}/${base}" ]; then
-      cp "$resolved" "${PTOAS_DEPS_DIR}/${base}"
+      cp -fL "$resolved" "${PTOAS_DEPS_DIR}/${base}"
       install_name_tool -id "@loader_path/${base}" "${PTOAS_DEPS_DIR}/${base}" || true
       collect_dylibs "${PTOAS_DEPS_DIR}/${base}"
     fi
@@ -132,8 +141,152 @@ collect_dylibs() {
   done < <(otool -L "$bin" | awk 'NR>1 {print $1}')
 }
 
+rewrite_packaged_install_names() {
+  python3 - "${PTOAS_DIST_DIR}" "${PTOAS_DEPS_DIR}" <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+dist_dir = Path(sys.argv[1]).resolve()
+deps_dir = Path(sys.argv[2]).resolve()
+bin_dir = (dist_dir / "bin").resolve()
+allowed_prefixes = (
+    "@loader_path/",
+    "@rpath/",
+    "@executable_path/",
+    "/usr/lib/",
+    "/System/Library/",
+)
+
+
+def is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def packaged_dep_ref(owner: Path, dep_base: str) -> str:
+    if is_under(owner, bin_dir):
+        return f"@loader_path/../lib/{dep_base}"
+    if is_under(owner, deps_dir):
+        return f"@loader_path/{dep_base}"
+    return f"@loader_path/{dep_base}"
+
+
+def iter_targets():
+    for root in (bin_dir, deps_dir):
+        if not root.exists():
+            continue
+        for base, _, files in os.walk(root):
+            for name in sorted(files):
+                if name == "ptoas" or name.endswith(".dylib"):
+                    yield Path(base, name).resolve()
+
+
+def iter_deps(target: Path):
+    try:
+        output = subprocess.check_output(
+            ["otool", "-L", str(target)],
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(
+            f"ERROR: failed to inspect install names for {target}: "
+            f"{exc.output.strip()}\n"
+        )
+        raise SystemExit(exc.returncode or 1)
+
+    for line in output.splitlines()[1:]:
+        dep = line.strip().split(" ", 1)[0]
+        if dep:
+            yield dep
+
+
+for target in iter_targets():
+    for dep in iter_deps(target):
+        if dep.startswith(allowed_prefixes):
+            continue
+
+        dep_base = os.path.basename(dep)
+        if not (deps_dir / dep_base).is_file():
+            continue
+
+        replacement = packaged_dep_ref(target, dep_base)
+        if dep == replacement:
+            continue
+
+        print(f"rewrite install name: {target} :: {dep} -> {replacement}")
+        try:
+            subprocess.check_call(
+                ["install_name_tool", "-change", dep, replacement, str(target)]
+            )
+        except subprocess.CalledProcessError as exc:
+            sys.stderr.write(
+                f"ERROR: failed to rewrite install name for {target}: {dep} -> "
+                f"{replacement} (exit {exc.returncode})\n"
+            )
+            raise SystemExit(exc.returncode or 1)
+PY
+}
+
 echo "Collecting dylib dependencies..."
 collect_dylibs "${PTOAS_DIST_DIR}/bin/ptoas"
+
+echo "Rewriting packaged install names..."
+rewrite_packaged_install_names
+
+echo "Validating packaged dependency install names..."
+if ! python3 - "${PTOAS_DIST_DIR}" <<'PY'
+import os
+import subprocess
+import sys
+
+root = sys.argv[1]
+allowed_prefixes = (
+    "@loader_path/",
+    "@rpath/",
+    "@executable_path/",
+    "/usr/lib/",
+    "/System/Library/",
+)
+
+bad = []
+for base, _, files in os.walk(root):
+    for name in files:
+        if name != "ptoas" and not name.endswith(".dylib"):
+            continue
+        path = os.path.join(base, name)
+        try:
+            output = subprocess.check_output(
+                ["otool", "-L", path],
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(f"ERROR: failed to inspect {path}: {exc.output.strip()}",
+                  file=sys.stderr)
+            sys.exit(2)
+
+        for line in output.splitlines()[1:]:
+            dep = line.strip().split(" ", 1)[0]
+            if dep.startswith(allowed_prefixes):
+                continue
+            bad.append((path, dep))
+
+for path, dep in bad:
+    print(f"ERROR: non-portable dependency in {path} -> {dep}", file=sys.stderr)
+
+print(f"portable dependency scan checked {root} ({len(bad)} offending deps)")
+sys.exit(1 if bad else 0)
+PY
+then
+  echo "Error: found non-portable dependency install names" >&2
+  exit 1
+fi
 
 if ! command -v codesign >/dev/null 2>&1; then
   echo "Error: codesign is required on macOS to sign packaged artifacts" >&2
@@ -163,7 +316,11 @@ WRAPPER_EOF
 chmod +x "${PTOAS_DIST_DIR}/ptoas"
 
 echo "Smoke testing packaged ptoas dist..."
-"${PTOAS_DIST_DIR}/ptoas" --version
+env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "${PTOAS_DIST_DIR}/ptoas" --version
+env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH \
+  "${PTOAS_DIST_DIR}/ptoas" \
+  "${PTO_SOURCE_DIR}/test/basic/kernel_kind_vector_scf_while_emitc.pto" \
+  >/dev/null
 
 echo ""
 echo "=== ptoas distribution contents ==="

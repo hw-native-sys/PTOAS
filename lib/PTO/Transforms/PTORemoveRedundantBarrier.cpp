@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h" 
@@ -5,6 +18,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
  
 using namespace mlir;
 using namespace mlir::pto;
@@ -111,6 +125,42 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
       if (isa<pto::TAddOp>(op)) return attrVec;
       return {};
     };
+
+    auto getSetSyncPipes = [&](Operation *op, Attribute &src,
+                               Attribute &dst) -> bool {
+      if (auto setOp = dyn_cast<pto::SetFlagOp>(op)) {
+        src = setOp.getSrcPipe();
+        dst = setOp.getDstPipe();
+        return true;
+      }
+      StringRef opName = op->getName().getStringRef();
+      if (opName == "pto.set_flag_dyn" || opName == "pto.set_flag_d") {
+        auto srcAttr = op->getAttrOfType<pto::PipeAttr>("src_pipe");
+        auto dstAttr = op->getAttrOfType<pto::PipeAttr>("dst_pipe");
+        if (!srcAttr || !dstAttr)
+          return false;
+        src = srcAttr;
+        dst = dstAttr;
+        return true;
+      }
+      return false;
+    };
+
+    auto getWaitSyncDst = [&](Operation *op, Attribute &dst) -> bool {
+      if (auto waitOp = dyn_cast<pto::WaitFlagOp>(op)) {
+        dst = waitOp.getDstPipe();
+        return true;
+      }
+      StringRef opName = op->getName().getStringRef();
+      if (opName == "pto.wait_flag_dyn" || opName == "pto.wait_flag_d") {
+        auto dstAttr = op->getAttrOfType<pto::PipeAttr>("dst_pipe");
+        if (!dstAttr)
+          return false;
+        dst = dstAttr;
+        return true;
+      }
+      return false;
+    };
  
     llvm::SmallVector<Operation*> opsToErase;
  
@@ -149,11 +199,12 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
             // 紧跟 Set -> 删除 (Set 隐含 Barrier)
             auto nextIt = std::next(it);
             if (nextIt != block->end()) {
-                if (auto setOp = dyn_cast<pto::SetFlagOp>(&*nextIt)) {
-                    if (setOp.getSrcPipe() == bPipe) {
-                        opsToErase.push_back(op);
-                        continue;
-                    }
+                Attribute nextSrc;
+                Attribute nextDst;
+                if (getSetSyncPipes(&*nextIt, nextSrc, nextDst) &&
+                    nextSrc == bPipe) {
+                    opsToErase.push_back(op);
+                    continue;
                 }
             }
             // 如果 Barrier 留下了，管线变干净
@@ -161,29 +212,29 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
         }
  
         // === 3. Wait 消除 (幽灵 Wait 消除) ===
-        if (auto waitOp = dyn_cast<pto::WaitFlagOp>(op)) {
-            Attribute dst = waitOp.getDstPipe();
+        Attribute waitDst;
+        if (getWaitSyncDst(op, waitDst)) {
             
             // 规则: Dead Consumer
             // 如果 dst 后面没有 Resource Op，这个 Wait 是毫无意义的阻塞。
             // 即使逻辑上需要等，但如果等完不干活，等它干嘛？
-            if (!isPipelineActiveFuture(block, std::next(it), dst)) {
+            if (!isPipelineActiveFuture(block, std::next(it), waitDst)) {
                 opsToErase.push_back(op);
                 continue;
             }
         }
  
         // === 4. Set 消除 (死信 & 陈旧广播消除) ===
-        if (auto setOp = dyn_cast<pto::SetFlagOp>(op)) {
-            Attribute src = setOp.getSrcPipe();
-            Attribute dst = setOp.getDstPipe();
+        Attribute setSrc;
+        Attribute setDst;
+        if (getSetSyncPipes(op, setSrc, setDst)) {
  
             // 规则 A: Dead Receiver (死信)
             // 如果 dst 后面没有 Resource Op，发信号也没人用。
             // 注意：因为 isPipelineActiveFuture 忽略了 WaitOp，
             // 所以如果后面只有 Wait <Src, Dst> 而没有 Dst 的实质操作，这里也会判定为 Dead，
             // 从而删除 Set。上面的 Wait 消除逻辑会删除那个 Wait。完美闭环。
-            if (!isPipelineActiveFuture(block, std::next(it), dst)) {
+            if (!isPipelineActiveFuture(block, std::next(it), setDst)) {
                 opsToErase.push_back(op);
                 continue;
             }
@@ -191,7 +242,7 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
             // 规则 B: Stale Broadcast (陈旧广播)
             // 如果 Src 在当前 Block 没脏过 (没干活)，就不要发广播。
             // 这精准删除了 scf.if 中 MTE2->MTE3 的冗余广播，因为 MTE2 在分支里通常是不动的。
-            if (!intraPipeDirtySet.count(src)) {
+            if (!intraPipeDirtySet.count(setSrc)) {
                  opsToErase.push_back(op);
                  continue;
             }

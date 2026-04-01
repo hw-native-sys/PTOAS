@@ -1,9 +1,12 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- PTOInsertSync.cpp - PTO Insert Synchronization for PTO Pipeline ----===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
 //===----------------------------------------------------------------------===//
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
@@ -42,6 +45,19 @@ namespace {
 // ==============================================================================
 // Main Pass Implementation
 // ==============================================================================
+
+static bool hasGatherScatterLikeOps(func::FuncOp func) {
+  bool found = false;
+  func.walk([&](Operation *op) {
+    if (isa<pto::TGatherOp, pto::TGatherBOp, pto::TScatterOp, pto::MGatherOp,
+            pto::MScatterOp>(op)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
  
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
   
@@ -101,9 +117,19 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
                         func.getOperation());
  
     // 4. [NEW] Optimization 2: Remove Redundant Sync
-    // 消除由于 Motion 或 Analysis 产生的冗余同步对
-    RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage, SyncAnalysisMode::NORMALSYNC);
-    removeRedundant.Run();
+    // 消除由于 Motion 或 Analysis 产生的冗余同步对。
+    //
+    // NOTE:
+    // Current redundancy matching is pipe-pair based and may over-remove
+    // set/wait around gather/scatter-like ops on A5, causing runtime mismatch
+    // or vector exceptions. Keep correctness-first behavior here by skipping
+    // this optimization for those kernels until dependency-aware matching is
+    // added.
+    if (!hasGatherScatterLikeOps(func)) {
+      RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage,
+                                          SyncAnalysisMode::NORMALSYNC);
+      removeRedundant.Run();
+    }
  
     dumpInsertSyncPhase("After Remove Redundant Sync", syncIR, syncOpsStorage,
                         func.getOperation());

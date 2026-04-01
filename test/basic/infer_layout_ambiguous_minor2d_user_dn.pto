@@ -1,0 +1,21 @@
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+module {
+  func.func @infer_layout_ambiguous_minor2d_user_dn(%src: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+
+    // shape=[1,16], strides=[1,1] is minor-2D ambiguous (ND/DN both legal).
+    // User-specified DN should be accepted and preserved.
+    %tv = pto.make_tensor_view %src, shape = [%c1, %c16], strides = [%c1, %c1] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf16>
+    %sv = pto.partition_view %tv, offsets = [%c0, %c0], sizes = [%c1, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<1x16xf16>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=none_box, fractal=512, pad=1>
+    pto.tload ins(%sv : !pto.partition_tensor_view<1x16xf16>)
+              outs(%tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=none_box, fractal=512, pad=1>)
+    return
+  }
+}
+
+// CHECK-NOT: layout mismatch:
+// CHECK: pto::Layout::DN

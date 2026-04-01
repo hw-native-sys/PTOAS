@@ -1,0 +1,42 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module attributes {"pto.device-spec" = "Ascend910B3"} {
+  func.func @tquant_sym() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+    %fp  = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+    %dst = memref.alloc() : memref<16x16xi8, #pto.address_space<vec>>
+
+    pto.tquant ins(%src, %fp : memref<16x16xf32, #pto.address_space<vec>>,
+                               memref<16x16xf32, #pto.address_space<vec>>)
+               outs(%dst : memref<16x16xi8, #pto.address_space<vec>>)
+               {quant_type = #pto<quant_type INT8_SYM>}
+
+    return
+  }
+
+  func.func @tquant_asym() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src    = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+    %fp     = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+    %offset = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+    %dst    = memref.alloc() : memref<16x16xui8, #pto.address_space<vec>>
+
+    pto.tquant ins(%src, %fp, %offset : memref<16x16xf32, #pto.address_space<vec>>,
+                                        memref<16x16xf32, #pto.address_space<vec>>,
+                                        memref<16x16xf32, #pto.address_space<vec>>)
+               outs(%dst : memref<16x16xui8, #pto.address_space<vec>>)
+               {quant_type = #pto<quant_type INT8_ASYM>}
+
+    return
+  }
+}
+
+// A3-LABEL: AICORE void tquant_sym(
+// A3: TQUANT<pto::QuantType::INT8_SYM
+// A3-LABEL: AICORE void tquant_asym(
+// A3: TQUANT<pto::QuantType::INT8_ASYM
+
+// A5-LABEL: AICORE void tquant_sym(
+// A5: TQUANT<pto::QuantType::INT8_SYM
+// A5-LABEL: AICORE void tquant_asym(
+// A5: TQUANT<pto::QuantType::INT8_ASYM

@@ -11,8 +11,8 @@ module {
     %neg1 = arith.constant -1.000000e+00 : f32
 
     // Input: 64x32 (2 blocks of 32x32), Output: 32x32
-    %in_tv = pto.make_tensor_view %input, shape = [%c64, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %out_tv = pto.make_tensor_view %output, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %in_tv = pto.make_tensor_view %input, shape = [%c64, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %out_tv = pto.make_tensor_view %output, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %out_pt = pto.partition_view %out_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
 

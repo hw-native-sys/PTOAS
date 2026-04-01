@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- DialectPTO.cpp -----------------------------------------------------===//
 //
 // Python bindings for the PTO dialect types (pybind11 version).
@@ -150,12 +163,14 @@ PYBIND11_MODULE(_pto, m) {
 
     py::enum_<mlir::pto::MaskPattern>(m, "MaskPattern")
       .value("P0101", mlir::pto::MaskPattern::P0101)
-      .value("P0011", mlir::pto::MaskPattern::P0011)
-      .value("P0110", mlir::pto::MaskPattern::P0110)
-      .value("P0001", mlir::pto::MaskPattern::P0001)
-      .value("P1111", mlir::pto::MaskPattern::P1111)
       .value("P1010", mlir::pto::MaskPattern::P1010)
+      .value("P0001", mlir::pto::MaskPattern::P0001)
+      .value("P0010", mlir::pto::MaskPattern::P0010)
+      .value("P0100", mlir::pto::MaskPattern::P0100)
+      .value("P1000", mlir::pto::MaskPattern::P1000)
+      .value("P1111", mlir::pto::MaskPattern::P1111)
       .export_values();
+    py::object maskPatternEnumType = m.attr("MaskPattern");
 
     mlir_attribute_subclass(m, "BLayoutAttr",
                         [](MlirAttribute a) -> bool {
@@ -363,9 +378,14 @@ PYBIND11_MODULE(_pto, m) {
             return mlirPTOEventAttrGetValue(self);
           });
 
+    py::enum_<mlir::pto::QuantType>(m, "QuantType")
+      .value("INT8_SYM",  mlir::pto::QuantType::INT8_SYM)
+      .value("INT8_ASYM", mlir::pto::QuantType::INT8_ASYM)
+      .export_values();
+
     mlir_attribute_subclass(
-        m, "MaskPatternAttr",
-        [](MlirAttribute a) { return mlirPTOAttrIsAMaskPatternAttr(a); })
+        m, "QuantTypeAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsAQuantTypeAttr(a); })
       .def_classmethod(
           "get",
           [](py::object cls, py::object value, MlirContext ctx) -> py::object {
@@ -375,15 +395,63 @@ PYBIND11_MODULE(_pto, m) {
             } else if (py::hasattr(value, "value")) {
               v = value.attr("value").cast<int32_t>();
             } else {
-              throw std::runtime_error("MaskPatternAttr.get expects int or MaskPattern enum");
+              throw std::runtime_error("QuantTypeAttr.get expects int or QuantType enum");
             }
-            MlirAttribute a = mlirPTOMaskPatternAttrGet(ctx, v);
+            MlirAttribute a = mlirPTOQuantTypeAttrGet(ctx, v);
             if (mlirAttributeIsNull(a)) return py::none();
             return cls.attr("__call__")(a);
           },
           py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
       .def_property_readonly(
           "value",
+          [](MlirAttribute self) -> int32_t {
+            return mlirPTOQuantTypeAttrGetValue(self);
+          });
+
+    mlir_attribute_subclass(
+        m, "MaskPatternAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsAMaskPatternAttr(a); })
+      .def_classmethod(
+          "get",
+          [maskPatternEnumType](py::object cls, py::object value,
+                                MlirContext ctx) -> py::object {
+            MlirAttribute a{nullptr};
+            if (py::isinstance(value, maskPatternEnumType)) {
+              auto v =
+                  static_cast<MlirPTOMaskPattern>(value.attr("value").cast<int32_t>());
+              a = mlirPTOMaskPatternAttrGetEnum(ctx, v);
+            } else if (py::isinstance<py::int_>(value)) {
+              int32_t v = py::cast<int32_t>(value);
+              a = mlirPTOMaskPatternAttrGet(ctx, v);
+              if (mlirAttributeIsNull(a))
+                throw std::runtime_error(
+                    "MaskPatternAttr.get(int, ...) only accepts unambiguous values {0,3,6,7}; "
+                    "use MaskPattern enum for ISA values and get_legacy_raw(...) for historical raw encodings");
+            } else {
+              throw std::runtime_error("MaskPatternAttr.get expects int or MaskPattern enum");
+            }
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_classmethod(
+          "get_legacy_raw",
+          [](py::object cls, int32_t value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOMaskPatternAttrGetLegacyRaw(ctx, value);
+            if (mlirAttributeIsNull(a))
+              throw std::runtime_error(
+                  "MaskPatternAttr.get_legacy_raw(...) only accepts historical raw values {0,3,4,5}");
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) -> mlir::pto::MaskPattern {
+            return static_cast<mlir::pto::MaskPattern>(
+                mlirPTOMaskPatternAttrGetEnumValue(self));
+          })
+      .def_property_readonly(
+          "int_value",
           [](MlirAttribute self) -> int32_t {
             return mlirPTOMaskPatternAttrGetValue(self);
           });

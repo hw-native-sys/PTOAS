@@ -20,3 +20,7 @@ See `.claude/rules/` for specific guidance:
 - `cross-layer-sync.md`
 - `testing-and-examples.md`
 
+## File headers
+
+- New source or script files must include the PR386 OAT.3 license header at the top of the file.
+- When touching an existing source/script file that still lacks that header, add it in the same change.

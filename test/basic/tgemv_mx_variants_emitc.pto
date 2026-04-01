@@ -1,0 +1,23 @@
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+
+module {
+  func.func @tgemv_mx_variants_emitc() {
+    %a = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %a_scale = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+    %b = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %b_scale = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+    %c_in = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %bias = pto.alloc_tile : !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst0 = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst1 = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+
+    pto.tgemv.mx.acc ins(%c_in, %a, %a_scale, %b, %b_scale : !pto.tile_buf<loc=acc, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=left, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>, !pto.tile_buf<loc=scaling, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>) outs(%dst0 : !pto.tile_buf<loc=acc, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    pto.tgemv.mx.bias ins(%a, %a_scale, %b, %b_scale, %bias : !pto.tile_buf<loc=left, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>, !pto.tile_buf<loc=scaling, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst1 : !pto.tile_buf<loc=acc, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void tgemv_mx_variants_emitc()
+// CHECK: TGEMV_MX(
+// CHECK: TGEMV_MX(

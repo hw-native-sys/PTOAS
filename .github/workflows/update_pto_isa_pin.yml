@@ -6,18 +6,30 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   update-pto-isa-pin:
     if: github.repository == 'zhangstevenunity/PTOAS'
     runs-on: ubuntu-22.04
+    env:
+      AUTOMATION_TOKEN: ${{ secrets.WORKFLOW_BOT_TOKEN || secrets.RELEASE_BOT_TOKEN || '' }}
     steps:
+      - name: Validate automation token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${AUTOMATION_TOKEN}" ]; then
+            echo "ERROR: missing WORKFLOW_BOT_TOKEN or RELEASE_BOT_TOKEN secret"
+            echo "This workflow updates .github/workflows/ci.yml, so it must use a bot token with workflow-file write access."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ env.AUTOMATION_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -37,6 +49,7 @@ jobs:
       - name: Create draft pull request
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ env.AUTOMATION_TOKEN }}
           base: main
           branch: automation/weekly-pto-isa-pin
           delete-branch: true

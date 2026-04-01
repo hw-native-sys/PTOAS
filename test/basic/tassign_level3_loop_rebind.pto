@@ -1,0 +1,44 @@
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s | FileCheck %s
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync %s 2>&1 | FileCheck %s --check-prefix=ERR
+// RUN: not ptoas --pto-level=level2 --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=LV2ERR
+
+module {
+  func.func @tassign_loop_rebind() attributes {pto.entry} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 32768 : i64
+
+    %tile = pto.alloc_tile addr = %addr0
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    scf.for %i = %c0 to %c2 step %c1 {
+      %first = arith.cmpi eq, %i, %c0 : index
+      %addr = scf.if %first -> (i64) {
+        scf.yield %addr0 : i64
+      } else {
+        scf.yield %addr1 : i64
+      }
+      %tile_i = pto.tassign %tile, %addr
+        : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>
+          -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                           blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tprint ins(%tile_i : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32,
+                                            v_row=32, v_col=32, blayout=row_major,
+                                            slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void tassign_loop_rebind() {
+// CHECK: Tile<TileType::Vec, half, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> [[T:v[0-9]+]];
+// CHECK: for (
+// CHECK: TASSIGN([[T]],
+// CHECK: TPRINT([[T]]);
+
+// ERR: pto.tassign requires --enable-insert-sync to be disabled
+// LV2ERR: pto.tassign is only supported when --pto-level=level3.

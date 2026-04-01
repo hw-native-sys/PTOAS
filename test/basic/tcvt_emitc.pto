@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+// Tests that pto.tcvt lowers to TCVT(...) EmitC calls on both A3 and A5.
+// Covers:
+//   - f32 -> f16 with the default rmode (CAST_RINT, attribute elided)
+//   - f32 -> bf16 with an explicit ROUND rmode
+
+module attributes {"pto.device-spec" = "Ascend910B3"} {
+
+  // -----------------------------------------------------------------------
+  // f32 -> f16 with default rmode (CAST_RINT)
+  // -----------------------------------------------------------------------
+  func.func @tcvt_f32_to_f16() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    return
+  }
+
+  // -----------------------------------------------------------------------
+  // f32 -> bf16 with explicit ROUND rmode
+  // -----------------------------------------------------------------------
+  func.func @tcvt_f32_to_bf16_round() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tcvt ins(%src {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%dst : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    return
+  }
+
+}
+
+// A3-LABEL: AICORE void tcvt_f32_to_f16(
+// A3:       RoundMode::CAST_RINT
+// A3:       TCVT(
+
+// A3-LABEL: AICORE void tcvt_f32_to_bf16_round(
+// A3:       RoundMode::CAST_ROUND
+// A3:       TCVT(
+
+// A5-LABEL: AICORE void tcvt_f32_to_f16(
+// A5:       RoundMode::CAST_RINT
+// A5:       TCVT(
+
+// A5-LABEL: AICORE void tcvt_f32_to_bf16_round(
+// A5:       RoundMode::CAST_ROUND
+// A5:       TCVT(

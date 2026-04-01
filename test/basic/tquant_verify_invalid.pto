@@ -1,0 +1,79 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+
+// Negative tests for pto.tquant verifier.
+
+// -----------------------------------------------------------------------
+// INT8_ASYM without offset -> error
+// -----------------------------------------------------------------------
+// CHECK-LABEL: @tquant_asym_no_offset
+// CHECK: error: INT8_ASYM quantization requires an offset operand
+func.func @tquant_asym_no_offset() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %src = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %fp  = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %dst = memref.alloc() : memref<16x16xui8, #pto.address_space<vec>>
+
+  pto.tquant ins(%src, %fp : memref<16x16xf32, #pto.address_space<vec>>,
+                             memref<16x16xf32, #pto.address_space<vec>>)
+             outs(%dst : memref<16x16xui8, #pto.address_space<vec>>)
+             {quant_type = #pto<quant_type INT8_ASYM>}
+
+  return
+}
+
+// -----------------------------------------------------------------------
+// INT8_SYM with offset -> error
+// -----------------------------------------------------------------------
+// CHECK-LABEL: @tquant_sym_with_offset
+// CHECK: error: INT8_SYM quantization must not have an offset operand
+func.func @tquant_sym_with_offset() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %src    = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %fp     = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %offset = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %dst    = memref.alloc() : memref<16x16xi8, #pto.address_space<vec>>
+
+  pto.tquant ins(%src, %fp, %offset : memref<16x16xf32, #pto.address_space<vec>>,
+                                      memref<16x16xf32, #pto.address_space<vec>>,
+                                      memref<16x16xf32, #pto.address_space<vec>>)
+             outs(%dst : memref<16x16xi8, #pto.address_space<vec>>)
+             {quant_type = #pto<quant_type INT8_SYM>}
+
+  return
+}
+
+// -----------------------------------------------------------------------
+// INT8_SYM with ui8 dst -> error
+// -----------------------------------------------------------------------
+// CHECK-LABEL: @tquant_sym_wrong_dst
+// CHECK: error: expects dst element type i8 for INT8_SYM quantization
+func.func @tquant_sym_wrong_dst() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %src = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %fp  = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %dst = memref.alloc() : memref<16x16xui8, #pto.address_space<vec>>
+
+  pto.tquant ins(%src, %fp : memref<16x16xf32, #pto.address_space<vec>>,
+                             memref<16x16xf32, #pto.address_space<vec>>)
+             outs(%dst : memref<16x16xui8, #pto.address_space<vec>>)
+             {quant_type = #pto<quant_type INT8_SYM>}
+
+  return
+}
+
+// -----------------------------------------------------------------------
+// INT8_ASYM with i8 dst -> error
+// -----------------------------------------------------------------------
+// CHECK-LABEL: @tquant_asym_wrong_dst
+// CHECK: error: expects dst element type ui8 for INT8_ASYM quantization
+func.func @tquant_asym_wrong_dst() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %src    = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %fp     = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %offset = memref.alloc() : memref<16x16xf32, #pto.address_space<vec>>
+  %dst    = memref.alloc() : memref<16x16xi8, #pto.address_space<vec>>
+
+  pto.tquant ins(%src, %fp, %offset : memref<16x16xf32, #pto.address_space<vec>>,
+                                      memref<16x16xf32, #pto.address_space<vec>>,
+                                      memref<16x16xf32, #pto.address_space<vec>>)
+             outs(%dst : memref<16x16xi8, #pto.address_space<vec>>)
+             {quant_type = #pto<quant_type INT8_ASYM>}
+
+  return
+}

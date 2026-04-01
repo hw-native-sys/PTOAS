@@ -3,10 +3,10 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
-    %0 = pto.make_tensor_view %arg0, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %1 = pto.make_tensor_view %arg1, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %2 = pto.make_tensor_view %arg2, shape = [%c1, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %3 = pto.make_tensor_view %arg3, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %0 = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %1 = pto.make_tensor_view %arg1, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %2 = pto.make_tensor_view %arg2, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %3 = pto.make_tensor_view %arg3, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
     %4 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %5 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %6 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>

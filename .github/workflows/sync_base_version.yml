@@ -1,0 +1,67 @@
+name: Sync Base Version
+
+on:
+  delete:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional explicit base version (for example 0.17 or v0.17)
+        required: false
+        type: string
+  release:
+    types: [deleted]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-base-version:
+    if: >
+      github.repository == 'zhangstevenunity/PTOAS' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'delete' && github.event.ref_type == 'tag') ||
+        (github.event_name == 'release' && github.event.action == 'deleted')
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Refresh tags
+        run: |
+          git fetch --force --tags origin
+
+      - name: Sync CMake base version
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          manual_version="${{ github.event.inputs.version || '' }}"
+          if [ -n "${manual_version}" ]; then
+            target_version="$(python3 .github/scripts/update_ptoas_base_version.py --version "${manual_version}")"
+          else
+            target_version="$(python3 .github/scripts/update_ptoas_base_version.py --from-git-tags)"
+          fi
+          echo "target_version=${target_version}" >> "${GITHUB_OUTPUT}"
+          echo "Synchronized base version to ${target_version}"
+
+      - name: Commit synced base version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- CMakeLists.txt; then
+            echo "CMakeLists.txt already matches the target base version."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt
+          git commit -m "chore(release): sync base version to v${{ steps.sync.outputs.target_version }}"
+          git push origin HEAD:${{ github.event.repository.default_branch }}

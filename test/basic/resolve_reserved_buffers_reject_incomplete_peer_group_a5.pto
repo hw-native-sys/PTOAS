@@ -1,0 +1,28 @@
+// RUN: not ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+
+module {
+  func.func @cube_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c2v_local = pto.reserve_buffer {
+      name = "c2v_fifo",
+      size = 4096,
+      location = #pto.address_space<mat>,
+      auto = true
+    } -> i32
+    %pipe = pto.initialize_l2l_pipe {
+      dir_mask = 1,
+      slot_size = 1024,
+      slot_num = 8
+    }(%c2v_local : i32) -> !pto.pipe
+    return
+  }
+
+  func.func @vector_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c2v_import = pto.import_reserved_buffer {
+      name = "c2v_fifo",
+      peer_func = @cube_kernel
+    } -> i32
+    return
+  }
+}
+
+// CHECK: error: 'pto.initialize_l2l_pipe' op requires a complete peer init pair when local_addr comes from pto.reserve_buffer or pto.import_reserved_buffer

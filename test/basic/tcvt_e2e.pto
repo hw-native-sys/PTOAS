@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+// End-to-end test for pto.tcvt through the full lowering pipeline.
+// Covers the canonical pattern:
+//   pto.ptr -> make_tensor_view -> partition_view -> alloc_tile
+//   -> tload -> tcvt -> tstore
+
+module attributes {"pto.device-spec" = "Ascend910B3"} {
+
+  // f32 -> f16 conversion kernel (default rmode CAST_RINT)
+  func.func @tcvt_f32_to_f16_run(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f16>)
+      attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0  = arith.constant 0 : index
+    %c1  = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+
+    %src_part = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    %dst_part = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+
+    %src_tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst_tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src_part : !pto.partition_tensor_view<32x32xf32>)
+              outs(%src_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    pto.tcvt ins(%src_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%dst_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    pto.tstore ins(%dst_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst_part : !pto.partition_tensor_view<32x32xf16>)
+
+    return
+  }
+
+  // f32 -> bf16 conversion kernel with explicit ROUND rmode
+  func.func @tcvt_f32_to_bf16_run(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<bf16>)
+      attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0  = arith.constant 0 : index
+    %c1  = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
+
+    %src_part = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32>  -> !pto.partition_tensor_view<32x32xf32>
+    %dst_part = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<32x32xbf16>
+
+    %src_tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32,  rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst_tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src_part : !pto.partition_tensor_view<32x32xf32>)
+              outs(%src_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    pto.tcvt ins(%src_tile {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%dst_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    pto.tstore ins(%dst_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst_part : !pto.partition_tensor_view<32x32xbf16>)
+
+    return
+  }
+
+}
+
+// A3-LABEL: AICORE void tcvt_f32_to_f16_run(
+// A3:       RoundMode::CAST_RINT
+// A3:       TLOAD(
+// A3:       TCVT(
+// A3:       TSTORE(
+
+// A3-LABEL: AICORE void tcvt_f32_to_bf16_run(
+// A3:       RoundMode::CAST_ROUND
+// A3:       TLOAD(
+// A3:       TCVT(
+// A3:       TSTORE(
+
+// A5-LABEL: AICORE void tcvt_f32_to_f16_run(
+// A5:       RoundMode::CAST_RINT
+// A5:       TLOAD(
+// A5:       TCVT(
+// A5:       TSTORE(
+
+// A5-LABEL: AICORE void tcvt_f32_to_bf16_run(
+// A5:       RoundMode::CAST_ROUND
+// A5:       TLOAD(
+// A5:       TCVT(
+// A5:       TSTORE(

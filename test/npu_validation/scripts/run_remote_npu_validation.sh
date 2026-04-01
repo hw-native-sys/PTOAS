@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
 set -euo pipefail
 
 STAGE="${STAGE:-run}"         # build|run
@@ -113,6 +121,17 @@ if [[ -z "${ASCEND_HOME_PATH:-}" ]]; then
 fi
 log "ASCEND_HOME_PATH=${ASCEND_HOME_PATH}"
 
+# Detect the real board chip name for validation-only decisions.
+# Keep SOC_VERSION unchanged so generate_testcase.py continues to choose the
+# established compiler arch for Ascend910 board runs.
+_board_chip=""
+if command -v npu-smi &>/dev/null; then
+  _board_chip="$(timeout 5 npu-smi info -l 2>/dev/null | grep -i 'Chip Name' | head -1 | sed 's/.*: *//' | tr -d ' ' || true)"
+  if [[ -n "${_board_chip}" ]]; then
+    log "Detected board chip from npu-smi: ${_board_chip} (compile SOC_VERSION stays ${SOC_VERSION})"
+  fi
+fi
+
 if ! command -v bisheng >/dev/null 2>&1; then
   if [[ -x "${ASCEND_HOME_PATH}/bin/bisheng" ]]; then
     export PATH="${ASCEND_HOME_PATH}/bin:${PATH}"
@@ -131,6 +150,26 @@ if [[ "${SOC_VERSION}" == "Ascend910" ]]; then
     SIM_SOC_VERSION="Ascend910ProA"
   fi
 fi
+
+# Detect A3 (Ascend910B) board for golden-script gating.
+# This is separate from SOC_VERSION/SIM_SOC_VERSION used for compilation
+# to avoid changing the compiler arch (dav-c220 vs dav-c310).
+export PTOAS_BOARD_IS_A3=0
+if [[ "$(printf '%s' "${_board_chip}" | tr '[:upper:]' '[:lower:]')" == *910b* ]]; then
+  export PTOAS_BOARD_IS_A3=1
+  log "Detected A3 board from npu-smi chip name: ${_board_chip}"
+fi
+for _sim_dir in "${ASCEND_HOME_PATH}/aarch64-linux/simulator" \
+                "${ASCEND_HOME_PATH}/simulator" \
+                "${ASCEND_HOME_PATH}/tools/simulator"; do
+  for _d in "${_sim_dir}"/Ascend910B*/lib; do
+    if [[ -d "$_d" ]]; then
+      export PTOAS_BOARD_IS_A3=1
+      log "Detected A3 board (Ascend910B) from simulator dir: $_d"
+      break 2
+    fi
+  done
+done
 log "SIM_SOC_VERSION=${SIM_SOC_VERSION}"
 
 LD_LIBRARY_PATH_NPU="${LD_LIBRARY_PATH}"
@@ -233,6 +272,13 @@ while IFS= read -r -d '' cpp; do
     cd "${nv_dir}"
     export ACL_DEVICE_ID="${DEVICE_ID}"
 
+    CUSTOM_GOLDEN=0
+    CUSTOM_COMPARE=0
+    if [[ -f "./validation_meta.env" ]]; then
+      # shellcheck disable=SC1091
+      source "./validation_meta.env"
+    fi
+
     enable_sim_golden="OFF"
     [[ "${GOLDEN_MODE}" == "sim" ]] && enable_sim_golden="ON"
     cmake -S . -B ./build \
@@ -265,7 +311,9 @@ while IFS= read -r -d '' cpp; do
       sim)
         python3 ./golden.py
         LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
-        copy_outputs_as_golden
+        if [[ "${CUSTOM_GOLDEN}" != "1" ]]; then
+          copy_outputs_as_golden
+        fi
         if [[ "${RUN_MODE}" == "npu" ]]; then
           LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
         fi
@@ -278,9 +326,11 @@ while IFS= read -r -d '' cpp; do
         fi
         python3 ./golden.py
         LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        copy_outputs_as_golden
-        python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        if [[ "${CUSTOM_GOLDEN}" != "1" ]]; then
+          copy_outputs_as_golden
+          python3 ./golden.py
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        fi
         COMPARE_STRICT=1 python3 ./compare.py
         ;;
       skip)

@@ -1,9 +1,11 @@
-//==- OptMemPlanForPipeline.cpp --Pipeline optimization for plan memory------=//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===----------------------------------------------------------------------===//
 
 #include "OptMemPlanForPipeline.h"
@@ -14,28 +16,6 @@ using namespace mlir::pto;
 
 void OptMemPlanForDma::build(func::FuncOp func) {
   auto result = func->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    // if (auto implByScalarOp =
-    //         dyn_cast<mlir::pto::ImplByScalarOpInterface>(op)) {
-    //   if (implByScalarOp.shouldLowerToScalarLoops()) {
-    //     UpdateScalarBuffersForLowerToLoops(op);
-    //     return WalkResult::advance();
-    //   }
-    // }
-    // if (auto ptoStructuredOp = dyn_cast<PTOStructuredOp>(op)) {
-    //   auto ptoPipeOp = dyn_cast<pto::OpPipeInterface>(op);
-    //   assert(ptoPipeOp != nullptr);
-    //   if (!ptoPipeOp.isSinglePipeOp()) {
-    //     return WalkResult::skip();
-    //   }
-    //   if (failed(VerifyExistPtoPipe(ptoPipeOp))) {
-    //     return WalkResult::interrupt();
-    //   }
-    //   if (ptoPipeOp.getPipe() == pto::PIPE::PIPE_MTE2) {
-    //     UpdateDmaBuffers(ptoStructuredOp.getDpsInits());
-    //   } else if (ptoPipeOp.getPipe() == pto::PIPE::PIPE_MTE3) {
-    //     UpdateDmaBuffers(ptoStructuredOp.getDpsInputs());
-    //   }
-    // } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
     if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
       UpdateScalarBuffers(loadOp);
     } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
@@ -47,17 +27,6 @@ void OptMemPlanForDma::build(func::FuncOp func) {
     llvm_unreachable("OptMemPlanForLoop Traverse IR Failed! ");
   }
 }
-
-// LogicalResult
-// OptMemPlanForDma::VerifyExistPtoPipe(pto::OpPipeInterface ptoPipeOp) const {
-//   pto::PIPE curPipe = ptoPipeOp.getPipe();
-//   if (curPipe == pto::PIPE::PIPE_UNASSIGNED) {
-//     ptoPipeOp.getOperation()->emitError(
-//         "OptMemPlanForLoop failed to recognize ptoPipeOp! ");
-//     return failure();
-//   }
-//   return success();
-// }
 
 void OptMemPlanForDma::UpdateDmaBuffers(SmallVector<Value> dpsOperand) {
   for (Value operand : dpsOperand) {

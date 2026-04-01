@@ -1,0 +1,21 @@
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 %s 2>&1 | FileCheck %s
+
+module {
+  func.func @tassign_level3_missing_alloc_addr() attributes {pto.entry} {
+    %addr0 = arith.constant 0 : i64
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile1 = pto.tassign %tile, %addr0
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+        -> !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32,
+                         blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%tile1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32,
+                                          v_row=32, v_col=32, blayout=row_major,
+                                          slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: error: 'pto.alloc_tile' op requires 'addr' operand when --pto-level=level3

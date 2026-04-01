@@ -19,9 +19,9 @@ module {
     %8 = arith.index_cast %4 : i64 to index
     %9 = arith.muli %c32_1, %c32_0 : index
     %10 = arith.muli %8, %9 : index
-    %11 = pto.make_tensor_view %arg0, shape = [%c32, %c32_1] strides = [%c32_4, %c1] : !pto.tensor_view<?x?xf32>
-    %12 = pto.make_tensor_view %arg1, shape = [%c32_1, %c32_0] strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
-    %13 = pto.make_tensor_view %arg2, shape = [%c32, %c32_0] strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
+    %11 = pto.make_tensor_view %arg0, shape = [%c32, %c32_1], strides = [%c32_4, %c1] : !pto.tensor_view<?x?xf32>
+    %12 = pto.make_tensor_view %arg1, shape = [%c32_1, %c32_0], strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
+    %13 = pto.make_tensor_view %arg2, shape = [%c32, %c32_0], strides = [%c32_3, %c1] : !pto.tensor_view<?x?xf32>
     %14 = pto.partition_view %11, offsets = [%c0, %7], sizes = [%c32, %c32_1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %15 = pto.partition_view %12, offsets = [%c0, %10], sizes = [%c32_1, %c32_0] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     %16 = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>

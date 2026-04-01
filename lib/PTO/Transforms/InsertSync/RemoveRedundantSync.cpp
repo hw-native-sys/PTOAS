@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 #include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
@@ -7,6 +20,37 @@
  
 using namespace mlir;
 using namespace mlir::pto;
+
+namespace {
+
+SmallVector<const void *> canonicalizeDepRoots(const SmallVector<Value> &roots) {
+  SmallVector<const void *> result;
+  result.reserve(roots.size());
+  for (Value v : roots) {
+    if (!v) {
+      continue;
+    }
+    result.push_back(v.getAsOpaquePointer());
+  }
+  llvm::sort(result);
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
+bool hasSameDepRoots(const SyncOperation *lhs, const SyncOperation *rhs) {
+  if (!lhs || !rhs) {
+    return false;
+  }
+  if (lhs->depRootBuffers.empty() || rhs->depRootBuffers.empty()) {
+    // Missing dependency signature => be conservative and keep sync.
+    return false;
+  }
+  auto lhsRoots = canonicalizeDepRoots(lhs->depRootBuffers);
+  auto rhsRoots = canonicalizeDepRoots(rhs->depRootBuffers);
+  return lhsRoots == rhsRoots;
+}
+
+} // namespace
  
 void RemoveRedundantSync::Run() {
   // 1. 收集所有成对的同步指令 (Set/Wait)
@@ -47,6 +91,19 @@ void RemoveRedundantSync::Run() {
  
   // 3. 逐个检查并移除冗余
   for (auto [setFlag, waitFlag] : syncOps) {
+    // Conservative mode:
+    // 1) keep multi-buffer and compensation syncs
+    // 2) only prune syncs that carry concrete dependency signatures
+    if (setFlag->eventIdNum != 1 || waitFlag->eventIdNum != 1) {
+      continue;
+    }
+    if (setFlag->isCompensation || waitFlag->isCompensation) {
+      continue;
+    }
+    if (!hasSameDepRoots(setFlag, waitFlag)) {
+      continue;
+    }
+
     bool useless = CheckAllSync(setFlag, waitFlag);
     if (useless) {
       // 标记为冗余 (虽然这里是物理移除)
@@ -86,20 +143,9 @@ bool RemoveRedundantSync::CheckAllSync(SyncOperation *setFlag,
     // 普通的前向依赖
     return CheckRepeatSync(begin, end, syncFinder, setFlag);
   } else {
-    // 循环回边 (Back-edge): Set 在后面，Wait 在前面 (Loop Head)
-    // 这种情况下，范围是 [set, LoopEnd] + [LoopBegin, wait]
-    checkCondition(forEndIndex.has_value(), "setFlag expected to have forEndIndex for back-edge sync");
-    
-    // 获取 Loop 节点
-    auto *ptr = dyn_cast<LoopInstanceElement>(syncIR_[forEndIndex.value()].get());
-    checkCondition(ptr != nullptr, "Invalid loop element for sync");
-    
-    // 分两段检查：只要任意一段路径上有覆盖，或者两段组合覆盖？
-    // 注意：这里使用 OR（任意一段覆盖即认为冗余），属于更激进的策略。
-    // 对回边来说，这通常意味着只要循环体内有更强的回边同步，或者...
-    // 这是一个激进的策略。
-    return CheckRepeatSync(begin, ptr->endId, syncFinder, setFlag) ||
-           CheckRepeatSync(ptr->beginId, end, syncFinder, setFlag);
+    // Back-edge pruning is intentionally disabled in correctness-first mode.
+    (void)forEndIndex;
+    return false;
   }
 }
  
@@ -228,6 +274,10 @@ bool RemoveRedundantSync::CanMatchedSync(SmallVector<bool> &syncFinder,
  
   if (!isWait && !isSet) return false;
   if (relatedSync->GetSyncIndex() == setFlag->GetSyncIndex()) return false;
+  if (relatedSync->eventIdNum != setFlag->eventIdNum) return false;
+  if (relatedSync->GetForEndIndex() != setFlag->GetForEndIndex()) return false;
+  if (relatedSync->isCompensation || setFlag->isCompensation) return false;
+  if (!hasSameDepRoots(relatedSync, setFlag)) return false;
   
   // Pipe 检查：内部同步必须也是解决同样的 Src -> Dst 依赖
   if (relatedSync->GetSrcPipe() != setFlag->GetSrcPipe()) return false;

@@ -1,9 +1,12 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- PTOOps.td - Pattern descriptor operations -----------*- tablegen -*-===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
 //===----------------------------------------------------------------------===//
 //
 // This file declares the PTO dialect operations.
@@ -905,6 +908,107 @@ def TGemvBiasOp : PTO_TOp<"tgemv.bias", [
   }];
 }
 
+def TGemvMxOp : PTO_TOp<"tgemv.mx", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Mixed-precision GEMV with scale tiles (tile world, ins/outs).";
+
+  let arguments = (ins
+    PTODpsType:$a,
+    PTODpsType:$a_scale,
+    PTODpsType:$b,
+    PTODpsType:$b_scale,
+    PTODpsType:$dst
+  );
+
+  let results = (outs Optional<AnyRankedTensor>:$result);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $a `,` $a_scale `,` $b `,` $b_scale
+          `:` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+    (`->` qualified(type($result))^)?
+  }];
+
+  let extraClassDeclaration = [{
+    static StringRef getIntrinsicName() { return "TGEMV_MX"; }
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
+def TGemvMxAccOp : PTO_TOp<"tgemv.mx.acc", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Mixed-precision GEMV accumulate with scale tiles (tile world, ins/outs).";
+
+  let arguments = (ins
+    PTODpsType:$c_in,
+    PTODpsType:$a,
+    PTODpsType:$a_scale,
+    PTODpsType:$b,
+    PTODpsType:$b_scale,
+    PTODpsType:$dst
+  );
+
+  let results = (outs Optional<AnyRankedTensor>:$result);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $c_in `,` $a `,` $a_scale `,` $b `,` $b_scale
+          `:` type($c_in) `,` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+    (`->` qualified(type($result))^)?
+  }];
+
+  let extraClassDeclaration = [{
+    static StringRef getIntrinsicName() { return "TGEMV_MX"; }
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
+def TGemvMxBiasOp : PTO_TOp<"tgemv.mx.bias", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Mixed-precision GEMV with bias and scale tiles (tile world, ins/outs).";
+
+  let arguments = (ins
+    PTODpsType:$a,
+    PTODpsType:$a_scale,
+    PTODpsType:$b,
+    PTODpsType:$b_scale,
+    PTODpsType:$bias,
+    PTODpsType:$dst
+  );
+
+  let results = (outs Optional<AnyRankedTensor>:$result);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $a `,` $a_scale `,` $b `,` $b_scale `,` $bias
+          `:` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `,` qualified(type($bias)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+    (`->` qualified(type($result))^)?
+  }];
+
+  let extraClassDeclaration = [{
+    static StringRef getIntrinsicName() { return "TGEMV_MX"; }
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
 def TMovOp  : PTO_TOp<"tmov", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
@@ -1165,6 +1269,503 @@ def SectionCubeOp : PTO_SectionOp<"section.cube">;
 def SectionVectorOp : PTO_SectionOp<"section.vector">;
 
 //===----------------------------------------------------------------------===//
+// Frontend TPUSH/TPOP Pipe Communication Ops
+//===----------------------------------------------------------------------===//
+
+def AicInitializePipeOp : PTO_Op<"aic_initialize_pipe"> {
+  let summary = "Frontend Cube-kernel pipe initialization";
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      I32Attr:$slot_size,
+      Optional<PtrType>:$gm_slot_buffer,
+      I32:$c2v_consumer_buf,
+      I32:$v2c_consumer_buf
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `,`
+        `slot_size` `=` $slot_size `}`
+    `(`
+      (`gm_slot_buffer` `=` $gm_slot_buffer^ `:` type($gm_slot_buffer) `,`)?
+      `c2v_consumer_buf` `=` $c2v_consumer_buf `:` type($c2v_consumer_buf) `,`
+      `v2c_consumer_buf` `=` $v2c_consumer_buf `:` type($v2c_consumer_buf)
+    `)`
+    attr-dict
+  }];
+}
+
+def AivInitializePipeOp : PTO_Op<"aiv_initialize_pipe"> {
+  let summary = "Frontend Vector-kernel pipe initialization";
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      I32Attr:$slot_size,
+      Optional<PtrType>:$gm_slot_buffer,
+      I32:$c2v_consumer_buf,
+      I32:$v2c_consumer_buf
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `,`
+        `slot_size` `=` $slot_size `}`
+    `(`
+      (`gm_slot_buffer` `=` $gm_slot_buffer^ `:` type($gm_slot_buffer) `,`)?
+      `c2v_consumer_buf` `=` $c2v_consumer_buf `:` type($c2v_consumer_buf) `,`
+      `v2c_consumer_buf` `=` $v2c_consumer_buf `:` type($v2c_consumer_buf)
+    `)`
+    attr-dict
+  }];
+}
+
+def TPushToAivOp : PTO_TOp<"tpush_to_aiv"> {
+  let summary = "Frontend C2V producer push from Cube to Vector";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `:` qualified(type($tile)) `)`
+    `{` `split` `=` $split `}` attr-dict
+  }];
+}
+
+def TPushToAicOp : PTO_TOp<"tpush_to_aic"> {
+  let summary = "Frontend V2C producer push from Vector to Cube";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `:` qualified(type($tile)) `)`
+    `{` `split` `=` $split `}` attr-dict
+  }];
+}
+
+def TPopFromAicOp : PTO_TOp<"tpop_from_aic"> {
+  let summary = "Frontend C2V consumer pop in Vector kernel";
+
+  let arguments = (ins
+      I8Attr:$split
+  );
+
+  let results = (outs PTODpsType:$tile);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `split` `=` $split `}` attr-dict `->` qualified(type($tile))
+  }];
+}
+
+def TPopFromAivOp : PTO_TOp<"tpop_from_aiv"> {
+  let summary = "Frontend V2C consumer pop in Cube kernel";
+
+  let arguments = (ins
+      I8Attr:$split
+  );
+
+  let results = (outs PTODpsType:$tile);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `split` `=` $split `}` attr-dict `->` qualified(type($tile))
+  }];
+}
+
+def TFreeFromAicOp : PTO_TOp<"tfree_from_aic"> {
+  let summary = "Frontend C2V consumer free in Vector kernel";
+
+  let arguments = (ins
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `split` `=` $split `}` attr-dict
+  }];
+}
+
+def TFreeFromAivOp : PTO_TOp<"tfree_from_aiv"> {
+  let summary = "Frontend V2C consumer free in Cube kernel";
+
+  let arguments = (ins
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `split` `=` $split `}` attr-dict
+  }];
+}
+
+def ReserveBufferOp : PTO_Op<"reserve_buffer"> {
+  let summary = "Reserve a local consumer slot buffer";
+
+  let arguments = (ins
+      StrAttr:$name,
+      I32Attr:$size,
+      PTO_AddressSpaceAttr:$location,
+      BoolAttr:$autoAlloc,
+      OptionalAttr<I32Attr>:$base
+  );
+
+  let results = (outs I32:$addr);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `name` `=` $name `,`
+        `size` `=` $size `,`
+        `location` `=` $location `,`
+        `auto` `=` $autoAlloc
+        (`,` `base` `=` $base^)?
+        `}` attr-dict `->` type($addr)
+  }];
+}
+
+def ImportReservedBufferOp : PTO_Op<"import_reserved_buffer"> {
+  let summary = "Import a peer reserved local consumer slot buffer";
+
+  let arguments = (ins
+      StrAttr:$name,
+      FlatSymbolRefAttr:$peer_func
+  );
+
+  let results = (outs I32:$addr);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `name` `=` $name `,`
+        `peer_func` `=` $peer_func
+        `}` attr-dict `->` type($addr)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// TPUSH/TPOP Pipe Communication Ops
+//===----------------------------------------------------------------------===//
+
+def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Initialize a local-to-global-to-local pipe handle";
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      I32Attr:$slot_size,
+      I32Attr:$slot_num,
+      OptionalAttr<I32Attr>:$local_slot_num,
+      OptionalAttr<I32Attr>:$flag_base,
+      AnyType:$gm_addr,
+      AnyType:$local_addr,
+      Optional<AnyType>:$peer_local_addr
+  );
+
+  let results = (outs PipeType:$pipe);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `,`
+        `slot_size` `=` $slot_size `,`
+        `slot_num` `=` $slot_num
+        (`,` `local_slot_num` `=` $local_slot_num^)?
+        (`,` `flag_base` `=` $flag_base^)?
+        `}`
+    `(` $gm_addr `:` type($gm_addr) `,` $local_addr `:` type($local_addr)
+        (`,` $peer_local_addr^ `:` type($peer_local_addr))? `)`
+    attr-dict `->` qualified(type($pipe))
+  }];
+}
+
+def InitializeL2LPipeOp : PTO_Op<"initialize_l2l_pipe", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Initialize a local-to-local pipe handle";
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      I32Attr:$slot_size,
+      I32Attr:$slot_num,
+      OptionalAttr<I32Attr>:$flag_base,
+      AnyType:$local_addr,
+      Optional<AnyType>:$peer_local_addr
+  );
+
+  let results = (outs PipeType:$pipe);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `,`
+        `slot_size` `=` $slot_size `,`
+        `slot_num` `=` $slot_num
+        (`,` `flag_base` `=` $flag_base^)?
+        `}`
+    `(` $local_addr `:` type($local_addr)
+        (`,` $peer_local_addr^ `:` type($peer_local_addr))? `)`
+    attr-dict `->` qualified(type($pipe))
+  }];
+}
+
+def TPushOp : PTO_TOp<"tpush", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Push tile data through a unified pipe handle";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      PipeType:$pipe_handle,
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
+    `{` `split` `=` $split `}` attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() {
+      auto getAddressSpace = [](Type ty) -> std::optional<::mlir::pto::AddressSpace> {
+        if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
+          if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
+                  tb.getMemorySpace()))
+            return as.getAddressSpace();
+          return std::nullopt;
+        }
+        if (auto mr = ::mlir::dyn_cast<::mlir::MemRefType>(ty)) {
+          if (auto ms = mr.getMemorySpace()) {
+            if (auto as = ::mlir::dyn_cast<::mlir::pto::AddressSpaceAttr>(ms))
+              return as.getAddressSpace();
+          }
+          return std::nullopt;
+        }
+        return std::nullopt;
+      };
+
+      auto as = getAddressSpace(getTile().getType());
+      if (!as)
+        return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+      if (*as == ::mlir::pto::AddressSpace::ACC)
+        return ::mlir::pto::PIPE::PIPE_FIX;
+      if (*as == ::mlir::pto::AddressSpace::VEC)
+        return ::mlir::pto::PIPE::PIPE_MTE3;
+      return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+    }
+  }];
+}
+
+def DeclareTileOp : PTO_Op<"declare_tile", [Pure]> {
+  let summary = "Declare a tile value whose address will be assigned later";
+
+  let results = (outs PTODpsType:$tile);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($tile))
+  }];
+}
+
+def TAssignOp : PTO_Op<"tassign", [Pure]> {
+  let summary = "Rebind a declared tile handle to a runtime address";
+  let description = [{
+    Rebinds an existing tile handle to a new address. This op is intended for
+    manual synchronization workflows (for example, rebinding inside loops while
+    keeping the tile declaration outside the loop).
+  }];
+
+  let arguments = (ins
+    PTODpsType:$tile,
+    I64:$addr
+  );
+  let results = (outs PTODpsType:$result);
+
+  let assemblyFormat = [{
+    $tile `,` $addr attr-dict `:` qualified(type($tile)) `->` qualified(type($result))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::LogicalResult verify();
+  }];
+}
+
+def DeclareEventIdArrayOp : PTO_Op<"declare_eventid_array"> {
+  let summary = "Declare a manual-only local event-id array";
+  let description = [{
+    Declares a local array used to store dynamic event ids in manual sync code.
+    This is a frontend/EmitC convenience feature and is not intended to
+    participate in PlanMemory or automatic synchronization passes.
+  }];
+
+  let results = (outs EventIdArrayType:$array);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($array))
+  }];
+}
+
+def EventIdArrayGetOp : PTO_Op<"eventid_array_get"> {
+  let summary = "Read one element from a manual event-id array";
+
+  let arguments = (ins
+    EventIdArrayType:$array,
+    Index:$index
+  );
+  let results = (outs Index:$result);
+
+  let assemblyFormat = [{
+    $array `[` $index `]` attr-dict `:` qualified(type($array))
+  }];
+}
+
+def EventIdArraySetOp : PTO_Op<"eventid_array_set"> {
+  let summary = "Write one element into a manual event-id array";
+
+  let arguments = (ins
+    EventIdArrayType:$array,
+    Index:$index,
+    Index:$value
+  );
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $array `[` $index `]` `,` $value attr-dict `:` qualified(type($array))
+  }];
+}
+
+def DeclareTileMemRefOp : PTO_Op<"declare_tile_memref", [Pure]> {
+  let summary = "Internal memref placeholder for a tile whose address is assigned later";
+  let description = [{
+    Internal lowering op used by PTOViewToMemref. This op does not allocate
+    storage; it only provides a memref-typed SSA handle so later passes can
+    attach tile metadata through pto.bind_tile before the address is filled by
+    pipe operations such as pto.tpop.
+  }];
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($result))
+  }];
+}
+
+def TPopOp : PTO_TOp<"tpop", [
+    PTO_DpsInitOpInterface,
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Bind a declared consumer tile to the next FIFO slot";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      PipeType:$pipe_handle,
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
+    `{` `split` `=` $split `}` attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() {
+      auto getAddressSpace = [](Type ty) -> std::optional<::mlir::pto::AddressSpace> {
+        if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
+          if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
+                  tb.getMemorySpace()))
+            return as.getAddressSpace();
+          return std::nullopt;
+        }
+        if (auto mr = ::mlir::dyn_cast<::mlir::MemRefType>(ty)) {
+          if (auto ms = mr.getMemorySpace()) {
+            if (auto as = ::mlir::dyn_cast<::mlir::pto::AddressSpaceAttr>(ms))
+              return as.getAddressSpace();
+          }
+          return std::nullopt;
+        }
+        return std::nullopt;
+      };
+
+      auto isA5Target = [&]() -> bool {
+        auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
+        if (!moduleOp)
+          return false;
+
+        if (auto arch =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
+          if (arch.getValue().equals_insensitive("a5"))
+            return true;
+        }
+        return false;
+      };
+
+      auto as = getAddressSpace(getTile().getType());
+      if (!as)
+        return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+
+      switch (*as) {
+      case ::mlir::pto::AddressSpace::VEC:
+      case ::mlir::pto::AddressSpace::MAT:
+        return isA5Target() ? ::mlir::pto::PIPE::PIPE_S
+                            : ::mlir::pto::PIPE::PIPE_MTE2;
+      default:
+        break;
+      }
+      return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+    }
+
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getTileMutable(); }
+  }];
+}
+
+def TFreeOp : PTO_TOp<"tfree", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Release the current consumer slot for a pipe";
+
+  let arguments = (ins
+      PipeType:$pipe_handle,
+      I8Attr:$split
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `:` qualified(type($pipe_handle)) `)`
+    `{` `split` `=` $split `}` attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 
@@ -1187,6 +1788,32 @@ def WaitFlagOp : PTO_Op<"wait_flag"> {
     PTO_PipeAttr:$src_pipe,
     PTO_PipeAttr:$dst_pipe,
     PTO_EventAttr:$event_id
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $src_pipe `,` $dst_pipe `,` $event_id `]` attr-dict
+  }];
+}
+
+def SetFlagDynOp : PTO_Op<"set_flag_dyn"> {
+  let summary = "Set synchronization flag between pipes (dynamic event id)";
+  let arguments = (ins
+    PTO_PipeAttr:$src_pipe,
+    PTO_PipeAttr:$dst_pipe,
+    Index:$event_id
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $src_pipe `,` $dst_pipe `,` $event_id `]` attr-dict
+  }];
+}
+
+def WaitFlagDynOp : PTO_Op<"wait_flag_dyn"> {
+  let summary = "Wait for synchronization flag (dynamic event id)";
+  let arguments = (ins
+    PTO_PipeAttr:$src_pipe,
+    PTO_PipeAttr:$dst_pipe,
+    Index:$event_id
   );
   let results = (outs);
   let assemblyFormat = [{
@@ -1257,14 +1884,19 @@ def SyncSetOp : PTO_Op<"sync.set"> {
   let description = [{
     Sets a synchronization signal on the specified pipeline stage.
     Corresponds to `ffts_cross_core_sync` (A3) or `set_intra_block` (A5).
+    On A3, the optional `ffts_mode` attribute selects the first argument passed
+    to `getFFTSMsg`; if omitted, the legacy `FFTS_MODE_VAL` path is preserved.
   }];
 
   let arguments = (ins
     PTO_PipeAttr:$pipe,
-    I32Attr:$event_id
+    OptionalAttr<I32Attr>:$event_id,
+    OptionalAttr<I32Attr>:$ffts_mode,
+    Optional<Index>:$event_id_dyn
   );
 
-  let assemblyFormat = "$pipe `,` $event_id attr-dict";
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def SyncWaitOp : PTO_Op<"sync.wait"> {
@@ -1276,10 +1908,12 @@ def SyncWaitOp : PTO_Op<"sync.wait"> {
 
   let arguments = (ins
     PTO_PipeAttr:$pipe,
-    I32Attr:$event_id
+    OptionalAttr<I32Attr>:$event_id,
+    Optional<Index>:$event_id_dyn
   );
 
-  let assemblyFormat = "$pipe `,` $event_id attr-dict";
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def BarrierOp : PTO_Op<"barrier"> {
@@ -1860,6 +2494,64 @@ def TColExpandMulOp : PTO_TOp<"tcolexpandmul", [
   }];
 }
 
+def TColExpandDivOp : PTO_TOp<"tcolexpanddiv", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Column-wise broadcast divide: divide each element of src0 by a per-column scalar vector src1 ";
+
+  let arguments = (ins
+    PTODpsType:$src0,
+    PTODpsType:$src1,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+
+  let assemblyFormat = [{
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+}
+
+def TColExpandSubOp : PTO_TOp<"tcolexpandsub", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Column-wise broadcast subtract: subtract a per-column scalar vector src1 from src0 ";
+
+  let arguments = (ins
+    PTODpsType:$src0,
+    PTODpsType:$src1,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+
+  let assemblyFormat = [{
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+}
+
 def TColExpandMaxOp : PTO_TOp<"tcolexpandmax", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
@@ -2172,9 +2864,62 @@ def TExtractOp : PTO_TOp<"textract", [
   }];
 
   let extraClassDeclaration = [{
-    // TEXTRACT moves data between memory domains (L1/cbuf -> L0A/L0B/L0C),
-    // which is executed by the MTE1 pipeline.
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::pto::PIPE getPipe() {
+      // Align with pto-isa TEXTRACT op classes:
+      //   - TEXTRACT_M2LR : MAT -> LEFT/RIGHT (and scaling-like targets) (MTE1)
+      //   - TEXTRACT_V2M  : VEC -> MAT       (FIX)
+      //   - TEXTRACT_A2M  : ACC -> MAT       (FIX)
+      // For pure UB slices (VEC -> VEC), treat as vector pipe.
+      auto getASFromType = [](Type ty)
+          -> std::optional<::mlir::pto::AddressSpace> {
+        if (auto tb = llvm::dyn_cast<::mlir::pto::TileBufType>(ty)) {
+          if (auto as = llvm::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
+                  tb.getMemorySpace()))
+            return as.getAddressSpace();
+          return std::nullopt;
+        }
+        if (auto mr = llvm::dyn_cast<::mlir::MemRefType>(ty)) {
+          if (auto ms = mr.getMemorySpace()) {
+            if (auto as =
+                    llvm::dyn_cast<::mlir::pto::AddressSpaceAttr>(ms))
+              return as.getAddressSpace();
+          }
+          return std::nullopt;
+        }
+        return std::nullopt;
+      };
+
+      auto sOpt = getASFromType(getSrc().getType());
+      auto dOpt = getASFromType(getDst().getType());
+      if (!sOpt.has_value() || !dOpt.has_value())
+        return ::mlir::pto::PIPE::PIPE_V;
+
+      const auto s = sOpt.value();
+      const auto d = dOpt.value();
+
+      if (s == ::mlir::pto::AddressSpace::MAT &&
+          (d == ::mlir::pto::AddressSpace::LEFT ||
+           d == ::mlir::pto::AddressSpace::RIGHT ||
+           d == ::mlir::pto::AddressSpace::BIAS ||
+           d == ::mlir::pto::AddressSpace::SCALING)) {
+        return ::mlir::pto::PIPE::PIPE_MTE1;
+      }
+
+      if ((s == ::mlir::pto::AddressSpace::VEC &&
+           d == ::mlir::pto::AddressSpace::MAT) ||
+          (s == ::mlir::pto::AddressSpace::ACC &&
+           d == ::mlir::pto::AddressSpace::MAT)) {
+        return ::mlir::pto::PIPE::PIPE_FIX;
+      }
+
+      if (s == ::mlir::pto::AddressSpace::VEC &&
+          d == ::mlir::pto::AddressSpace::VEC) {
+        return ::mlir::pto::PIPE::PIPE_V;
+      }
+
+      // Default to vector pipe for unmatched combinations.
+      return ::mlir::pto::PIPE::PIPE_V;
+    }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }
@@ -2205,6 +2950,7 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
   let extraClassDeclaration = [{
     // TINSERT runs on different pipes depending on target/path:
+    // - A5 Vec(UB)->Vec(UB): PIPE_V  (ND_VEC path).
     // - A5 Vec(UB)->Mat(L1): PIPE_MTE3 (custom UB->L1 copy path).
     // - Acc->Mat (A2/A3/A5 regular path): PIPE_FIX.
     ::mlir::pto::PIPE getPipe() {
@@ -2248,6 +2994,10 @@ def TInsertOp : PTO_TOp<"tinsert", [
 
       auto sOpt = getASFromType(getSrc().getType());
       auto dOpt = getASFromType(getDst().getType());
+      if (isA5Target() && sOpt.has_value() && dOpt.has_value() &&
+          sOpt.value() == ::mlir::pto::AddressSpace::VEC &&
+          dOpt.value() == ::mlir::pto::AddressSpace::VEC)
+        return ::mlir::pto::PIPE::PIPE_V;
       if (isA5Target() && sOpt.has_value() && dOpt.has_value() &&
           sOpt.value() == ::mlir::pto::AddressSpace::VEC &&
           dOpt.value() == ::mlir::pto::AddressSpace::MAT)
@@ -2317,29 +3067,38 @@ def TFillPadExpandOp : PTO_TOp<"tfillpad_expand", [
 }
 
 def TGatherOp : PTO_TOp<"tgather", [
+  AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "Gather/select elements using an index tile or a mask pattern (tilebuf, DPS)";
+  let summary = "Gather/select elements using index+tmp, scalar-compare+tmp, or a mask pattern (tilebuf, DPS)";
 
-  // --- operands (DPS): src0 + optional indices + outs(dst) ---
   let arguments = (ins
     PTODpsType:$src,
     PTODpsType:$dst,
+    Optional<PTODpsType>:$cdst,
     Optional<PTODpsType>:$indices,
-    OptionalAttr<PTO_MaskPatternAttr>:$maskPattern
+    Optional<PTODpsType>:$tmp,
+    Optional<ScalarType>:$kValue,
+    OptionalAttr<PTO_MaskPatternAttr>:$maskPattern,
+    OptionalAttr<PTO_CmpModeAttr>:$cmpMode,
+    OptionalAttr<I32Attr>:$offset
   );
 
-  // --- DPS op: no SSA results ---
   let results = (outs);
 
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
+    bool hasCompareForm() { return static_cast<bool>(getCdst()) || static_cast<bool>(getKValue()); }
+    bool hasIndexForm() { return static_cast<bool>(getIndices()); }
+    bool hasMaskForm() { return static_cast<bool>(getMaskPatternAttr()); }
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return ::mlir::MutableOperandRange(getOperation(), 1, 1 + (getCdst() ? 1 : 0));
+    }
   }];
 }
 
@@ -2930,6 +3689,50 @@ def TPReluOp: PTO_TOp<"tprelu", [
   }];
 }
 //===----------------------------------------------------------------------===//
+// TQuantOp
+//===----------------------------------------------------------------------===//
+
+def TQuantOp : PTO_TOp<"tquant", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "TQUANT: Quantize a tile using a scaling (fp) tile.";
+
+  let description = [{
+    Converts src tile elements to a lower-precision format using the scaling
+    parameters held in the fp tile, writing results into dst.
+
+    For INT8_ASYM an additional offset tile must be supplied in ins.
+
+    DPS form (INT8_SYM):
+      pto.tquant ins(%src, %fp : <src_type>, <fp_type>)
+                 outs(%dst : <dst_type>) {quant_type = #pto<quant_type INT8_SYM>}
+    DPS form (INT8_ASYM):
+      pto.tquant ins(%src, %fp, %offset : <src_type>, <fp_type>, <offset_type>)
+                 outs(%dst : <dst_type>) {quant_type = #pto<quant_type INT8_ASYM>}
+  }];
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$fp,
+    Optional<PTODpsType>:$offset,
+    PTODpsType:$dst,
+    PTO_QuantTypeAttr:$quant_type
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+//===----------------------------------------------------------------------===//
 // PTOOps.td  (add TRECIP TBDPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
@@ -3079,7 +3882,8 @@ def TReshapeOp: PTO_TOp<"treshape", [
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    // Keep consistent with pto-isa opPipeList: TRESHAPE is modeled on PIPE_S.
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
     ::mlir::Value getViewSource() { return getSrc(); }
   }];
 }
@@ -3204,6 +4008,35 @@ def TRowExpandSubOp: PTO_TOp<"trowexpandsub", [
   let hasVerifier = 1;
 
   let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
+def TRowExpandAddOp: PTO_TOp<"trowexpandadd", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "TROWEXPANDADD: Row-wise broadcast add: add a per-row scalar vector src1 to each row of src0.";
+
+  let arguments = (ins
+    PTODpsType:$src0,
+    PTODpsType:$src1,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
@@ -3366,23 +4199,33 @@ def TScatterOp: PTO_TOp<"tscatter", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() {
-      // NOTE: On dav-c220 (Ascend910 A2/A3), pto-isa implements TSCATTER as a
-      // scalar loop over UB pointers, which executes on the scalar pipeline
-      // (PIPE_S). Waiting on PIPE_V does not block scalar UB accesses and can
-      // lead to using uninitialized indices/data (crash / aivec exception).
-      //
-      // On A5 instruction set devices, TSCATTER is implemented with vector
-      // scatter instructions and should be treated as PIPE_V.
-      auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
-      if (moduleOp) {
-        if (auto spec = moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
-          auto s = spec.getValue();
-          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95")) {
-            return ::mlir::pto::PIPE::PIPE_V;
-          }
+      // NOTE:
+      // - On A2/A3, pto-isa TSCATTER is a scalar UB loop (PIPE_S).
+      // - On A5, pto-isa TSCATTER is vector scatter (PIPE_V).
+      // We accept either `pto.target_arch=a5` or A5 `pto.device-spec`.
+      auto isA5Target = [&]() -> bool {
+        auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
+        if (!moduleOp)
+          return false;
+
+        if (auto arch =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
+          if (arch.getValue().equals_insensitive("a5"))
+            return true;
         }
-      }
-      return ::mlir::pto::PIPE::PIPE_S;
+
+        if (auto spec =
+                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
+          auto s = spec.getValue();
+          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95"))
+            return true;
+        }
+
+        return false;
+      };
+
+      return isA5Target() ? ::mlir::pto::PIPE::PIPE_V
+                          : ::mlir::pto::PIPE::PIPE_S;
     }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
@@ -3585,17 +4428,18 @@ def TSort32Op: PTO_TOp<"tsort32", [
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "TSORT32: Sort a fixed-size 32-element block and produce an index mapping.";
+  let summary = "TSORT32: Sort fixed-size 32-element blocks using explicit input indices.";
   let description = [{
-    DPS form. pto-isa has overloads: (dst, src, idx) or (dst, src, idx, tmp).
-    Optional tmp for scratch buffer when required by implementation.
+    DPS form matching pto-isa overloads: (dst, src, idx) or (dst, src, idx, tmp).
+    In PTO IR, `idx` is modeled as an input operand in `ins(...)`, while `dst`
+    remains the sole DPS init/output buffer in `outs(...)`.
   }];
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst,
     PTODpsType:$idx,
-    Optional<PTODpsType>:$tmp
+    Optional<PTODpsType>:$tmp,
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -3606,9 +4450,7 @@ def TSort32Op: PTO_TOp<"tsort32", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() {
-      return ::mlir::MutableOperandRange(getOperation(), 1, 2);
-    }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }
 //===----------------------------------------------------------------------===//

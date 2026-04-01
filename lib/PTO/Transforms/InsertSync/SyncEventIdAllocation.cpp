@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 #include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
  
@@ -359,8 +372,14 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
       setFlag->GetType(), setFlag->GetSrcPipe(), setFlag->GetDstPipe(),
       static_cast<unsigned>(syncOperations_.size()), setFlag->GetSyncIRIndex(),
       setFlag->GetForEndIndex());
+  syncFront->depRootBuffers = setFlag->depRootBuffers;
+  syncFront->eventIdNum = setFlag->eventIdNum;
+  syncFront->SetDepSyncIRIndex(setFlag->GetDepSyncIRIndex());
       
   auto syncEnd = syncFront->GetMatchSync(waitFlag->GetSyncIRIndex());
+  syncEnd->depRootBuffers = waitFlag->depRootBuffers;
+  syncEnd->eventIdNum = waitFlag->eventIdNum;
+  syncEnd->SetDepSyncIRIndex(waitFlag->GetDepSyncIRIndex());
   
   syncFront->syncCoreType = setFlag->syncCoreType;
   syncEnd->syncCoreType = waitFlag->syncCoreType;

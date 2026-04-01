@@ -6,9 +6,9 @@ module {
     %c128 = arith.constant 128 : index
     %c4 = arith.constant 4 : index
 
-    %softmax_tv = pto.make_tensor_view %softmax, shape = [%c32, %c128] strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
-    %v_tv = pto.make_tensor_view %v, shape = [%c128, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %out_tv = pto.make_tensor_view %out, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %softmax_tv = pto.make_tensor_view %softmax, shape = [%c32, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
+    %v_tv = pto.make_tensor_view %v, shape = [%c128, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %out_tv = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %out_pt = pto.partition_view %out_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
 

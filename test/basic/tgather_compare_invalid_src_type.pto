@@ -1,0 +1,15 @@
+// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+
+module {
+  func.func @bad_tgather_compare_src_type() {
+    %c0_i16 = arith.constant 0 : i16
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cmp_tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cmp_dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cmp_cdst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgather ins(%src, %c0_i16, %cmp_tmp : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, i16, !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%cmp_dst, %cmp_cdst : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: error: 'pto.tgather' op expects A2/A3 compare-form tgather src element type to be f16/f32, or i32 when cmpMode=eq

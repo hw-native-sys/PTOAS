@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -126,6 +139,11 @@ void PTOIRTranslator::RecursionIR(Region *region) {
        if (failed(UpdateMemrefAllocOpMemInfo(memAllocOp))) {
           return WalkResult::interrupt();
        }
+    }
+    else if (auto declareOp = dyn_cast<pto::DeclareTileMemRefOp>(op)) {
+      if (failed(UpdateDeclareTileMemRefOpMemInfo(declareOp))) {
+        return WalkResult::interrupt();
+      }
     }
     else if (auto castOp = dyn_cast<pto::PointerCastOp>(op)) {
       if (failed(UpdatePointerCastOpMemInfo(castOp))) return WalkResult::interrupt();
@@ -283,6 +301,45 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
       sizeInBytes
   );
  
+  buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
+  return success();
+}
+
+LogicalResult
+PTOIRTranslator::UpdateDeclareTileMemRefOpMemInfo(pto::DeclareTileMemRefOp op) {
+  Value res = op.getResult();
+  auto memRefType = dyn_cast<MemRefType>(res.getType());
+  if (!memRefType)
+    return failure();
+
+  uint64_t sizeInBytes = 0;
+  if (memRefType.hasStaticShape()) {
+    int64_t elemSize = memRefType.getElementType().getIntOrFloatBitWidth() / 8;
+    if (elemSize == 0)
+      elemSize = 1;
+
+    int64_t numElements = 1;
+    for (auto dim : memRefType.getShape())
+      numElements *= dim;
+    sizeInBytes = numElements * elemSize;
+  }
+
+  pto::AddressSpace space = pto::AddressSpace::MAT;
+  if (auto attr = memRefType.getMemorySpace()) {
+    if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(attr))
+      space = ptoAttr.getAddressSpace();
+  }
+
+  // declare_tile_memref is only a symbolic placeholder. Use its SSA result as
+  // both base/root so later bind_tile aliases and tpop consumers can be
+  // connected by InsertSync without inventing a fake allocation.
+  auto newMemInfo = std::make_unique<BaseMemInfo>(
+      res,
+      res,
+      space,
+      SmallVector<uint64_t>{0},
+      sizeInBytes);
+
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
 }

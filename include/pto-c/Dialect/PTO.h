@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 #ifndef MLIR_C_DIALECT_PTO_H
 #define MLIR_C_DIALECT_PTO_H
 
@@ -90,9 +103,29 @@ MLIR_CAPI_EXPORTED MlirAttribute mlirPTOEventAttrGet(MlirContext ctx, int32_t va
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAEventAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTOEventAttrGetValue(MlirAttribute attr);
 // ---- MaskPattern attr ----
+// Backward-compatible int entry point:
+//   accepts only unambiguous values {0,3,6,7};
+//   rejects ambiguous raw ints {1,2,4,5} so callers must choose either the
+//   ISA-aligned enum API below or the explicit legacy-raw compatibility API.
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAMaskPatternAttr(MlirAttribute attr);
+// Returns the ISA-aligned numeric value {1..7}.
 MLIR_CAPI_EXPORTED int32_t mlirPTOMaskPatternAttrGetValue(MlirAttribute attr);
+typedef enum MlirPTOMaskPattern {
+  MlirPTOMaskPattern_P0101 = 1,
+  MlirPTOMaskPattern_P1010 = 2,
+  MlirPTOMaskPattern_P0001 = 3,
+  MlirPTOMaskPattern_P0010 = 4,
+  MlirPTOMaskPattern_P0100 = 5,
+  MlirPTOMaskPattern_P1000 = 6,
+  MlirPTOMaskPattern_P1111 = 7,
+} MlirPTOMaskPattern;
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGetEnum(MlirContext ctx, MlirPTOMaskPattern value);
+MLIR_CAPI_EXPORTED MlirPTOMaskPattern mlirPTOMaskPatternAttrGetEnumValue(MlirAttribute attr);
+// Legacy raw-int compatibility path for historical PTOAS encodings:
+//   0 -> P0101, 3 -> P0001, 4 -> P1111, 5 -> P1010.
+// Removed legacy-only patterns 1/2 are rejected and return null.
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGetLegacyRaw(MlirContext ctx, int32_t value);
 
 // ---- CmpMode (compare mode for cmp/cvt) ----
 typedef enum MlirPTOCmpMode {
@@ -123,6 +156,11 @@ MLIR_CAPI_EXPORTED MlirType mlirPTOTileBufTypeGetWithValidShapeAndConfig(
     MlirContext ctx, intptr_t rank, const int64_t *shape, MlirType elementType,
     MlirAttribute memorySpace, intptr_t validRank, const int64_t *validShape,
     MlirAttribute config);
+
+// ---- QuantType attr ----
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOQuantTypeAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAQuantTypeAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOQuantTypeAttrGetValue(MlirAttribute attr);
 
 // ---- MemRef helpers ----
 MLIR_CAPI_EXPORTED MlirType mlirPTOGMTypeGet(

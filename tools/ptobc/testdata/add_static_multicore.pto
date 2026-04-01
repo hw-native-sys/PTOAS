@@ -11,9 +11,9 @@ module {
     %4 = arith.addi %3, %1 : i64
     %5 = arith.index_cast %arg3 : i32 to index
     %6 = arith.index_cast %arg4 : i32 to index
-    %7 = pto.make_tensor_view %arg0, shape = [%c1280, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %8 = pto.make_tensor_view %arg1, shape = [%c1280, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %9 = pto.make_tensor_view %arg2, shape = [%c1280, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %7 = pto.make_tensor_view %arg0, shape = [%c1280, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %8 = pto.make_tensor_view %arg1, shape = [%c1280, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %9 = pto.make_tensor_view %arg2, shape = [%c1280, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
     %10 = arith.index_cast %4 : i64 to index
     %11 = arith.muli %10, %c32 : index
     %12 = pto.partition_view %7, offsets = [%11, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>

@@ -6,9 +6,9 @@ module {
     %c128 = arith.constant 128 : index
     %c4 = arith.constant 4 : index
 
-    %q_tv = pto.make_tensor_view %q, shape = [%c32, %c128] strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
-    %kt_tv = pto.make_tensor_view %kt, shape = [%c128, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %scores_tv = pto.make_tensor_view %scores, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %q_tv = pto.make_tensor_view %q, shape = [%c32, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
+    %kt_tv = pto.make_tensor_view %kt, shape = [%c128, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %scores_tv = pto.make_tensor_view %scores, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %scores_pt = pto.partition_view %scores_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
 

@@ -1,0 +1,25 @@
+// RUN: ptoas %s 2>&1 1>/dev/null | FileCheck %s
+
+module {
+  func.func @manual_nested_alloc(%cond: i1) {
+    %fifo = pto.reserve_buffer {
+      name = "fifo",
+      size = 8192,
+      location = #pto.address_space<vec>,
+      auto = false,
+      base = 0
+    } -> i32
+
+    %ub = scf.if %cond -> (memref<16x16x16xf16, #pto.address_space<vec>>) {
+      %true_ub = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
+      scf.yield %true_ub : memref<16x16x16xf16, #pto.address_space<vec>>
+    } else {
+      %false_ub = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
+      scf.yield %false_ub : memref<16x16x16xf16, #pto.address_space<vec>>
+    }
+    memref.dealloc %ub : memref<16x16x16xf16, #pto.address_space<vec>>
+    return
+  }
+}
+
+// CHECK: error: 'memref.alloc' op cannot use pto.reserve_buffer with auto = false when local memref.alloc still requires PlanMemory allocation
