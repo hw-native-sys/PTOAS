@@ -41,10 +41,11 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
 def PTORemoveIdentityTMov : Pass<"pto-remove-identity-tmov", "func::FuncOp"> {
   let summary = "Remove identity pto.tmov before auto-sync on A5";
   let description = [{
-    Erases `pto.tmov` operations where source and destination are the same SSA
-    value. The pass is gated by `pto.target_arch = "a5"` and is intended to run
-    before `pto-insert-sync` to avoid generating synchronization edges for a
-    no-op move.
+    Erases provably-identity `pto.tmov` operations on A5 before
+    `pto-insert-sync`. Besides `src == dst`, this also handles distinct SSA
+    values when alias analysis proves source and destination have the exact same
+    address range and type/layout. Dynamic/unknown address cases are kept
+    conservative and are not removed.
   }];
   let constructor = "mlir::pto::createPTORemoveIdentityTMovPass()";
   let dependentDialects = [

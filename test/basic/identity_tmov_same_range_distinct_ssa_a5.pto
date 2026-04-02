@@ -1,0 +1,24 @@
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync %s | FileCheck %s --check-prefix=A5
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s | FileCheck %s --check-prefix=A3
+
+module attributes {"pto.device-spec" = "Ascend950"} {
+  func.func @identity_tmov_same_range_distinct_ssa_a5() {
+    %buf = memref.alloc() : memref<1024xi32, #pto.address_space<vec>>
+    %src = memref.subview %buf[0] [1024] [1]
+      : memref<1024xi32, #pto.address_space<vec>>
+      to memref<1024xi32, strided<[1]>, #pto.address_space<vec>>
+    %dst = memref.subview %buf[0] [1024] [1]
+      : memref<1024xi32, #pto.address_space<vec>>
+      to memref<1024xi32, strided<[1]>, #pto.address_space<vec>>
+
+    pto.tmov ins(%src : memref<1024xi32, strided<[1]>, #pto.address_space<vec>>)
+             outs(%dst : memref<1024xi32, strided<[1]>, #pto.address_space<vec>>)
+    return
+  }
+}
+
+// A5-LABEL: __global__ AICORE void identity_tmov_same_range_distinct_ssa_a5(
+// A5-NOT: TMOV(
+
+// A3-LABEL: __global__ AICORE void identity_tmov_same_range_distinct_ssa_a5(
+// A3: TMOV(
