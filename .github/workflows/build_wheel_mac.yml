@@ -44,6 +44,10 @@ jobs:
         run: |
           echo "PY_PATH=$(python -c 'import sys; print(sys.prefix)')" >> $GITHUB_ENV
 
+      - name: Self-check release version script
+        run: |
+          python .github/scripts/test_compute_ptoas_version.py
+
       - name: Compute PTOAS CLI version
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "release" ]; then

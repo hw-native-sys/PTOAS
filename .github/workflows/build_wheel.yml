@@ -47,6 +47,10 @@ jobs:
           echo "PY_VER=$PY_VER" >> $GITHUB_ENV
           echo "PY_PATH=/opt/python/$PY_VER" >> $GITHUB_ENV
 
+      - name: Self-check release version script
+        run: |
+          ${PY_PATH}/bin/python .github/scripts/test_compute_ptoas_version.py
+
       - name: Compute PTOAS CLI version
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "release" ]; then

@@ -6,6 +6,12 @@ import re
 import sys
 
 
+PROJECT_VERSION_RE = re.compile(
+    r"project\s*\(\s*ptoas\s+VERSION\s+([0-9]+\.[0-9]+)\s*\)"
+)
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Compute the ptoas CLI version from the top-level CMakeLists.txt."
@@ -30,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 
 def read_base_version(cmake_file: pathlib.Path) -> str:
     content = cmake_file.read_text(encoding="utf-8")
-    match = re.search(r"project\s*\(\s*ptoas\s+VERSION\s+([0-9]+\.[0-9]+)\s*\)", content)
+    match = PROJECT_VERSION_RE.search(content)
     if not match:
         raise ValueError(
             f"could not find 'project(ptoas VERSION x.y)' in {cmake_file}"
@@ -46,23 +52,44 @@ def bump_version(base_version: str) -> str:
 
 
 def normalize_tag(tag: str) -> str:
-    return tag[1:] if tag.startswith("v") else tag
+    normalized = tag[1:] if tag.startswith("v") else tag
+    if not VERSION_RE.fullmatch(normalized):
+        raise ValueError(f"invalid PTOAS release tag '{tag}'")
+    return normalized
+
+
+def compute_version(base_version: str, mode: str, check_tag: str | None = None) -> str:
+    if mode == "dev":
+        version = base_version
+    else:
+        next_release_version = bump_version(base_version)
+        version = next_release_version
+
+        if check_tag is not None:
+            normalized_tag = normalize_tag(check_tag.strip())
+            valid_versions = (next_release_version, base_version)
+            if normalized_tag not in valid_versions:
+                raise ValueError(
+                    "release tag "
+                    f"'{check_tag}' does not match next release version "
+                    f"'{next_release_version}' or current base version "
+                    f"'{base_version}'"
+                )
+            version = normalized_tag
+
+    return version
 
 
 def main() -> int:
     args = parse_args()
     cmake_file = pathlib.Path(args.cmake_file)
     base_version = read_base_version(cmake_file)
-    version = bump_version(base_version) if args.mode == "release" else base_version
 
-    if args.check_tag is not None:
-        normalized_tag = normalize_tag(args.check_tag.strip())
-        if normalized_tag != version:
-            print(
-                f"release tag '{args.check_tag}' does not match computed version '{version}'",
-                file=sys.stderr,
-            )
-            return 1
+    try:
+        version = compute_version(base_version, args.mode, args.check_tag)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     print(version)
     return 0
