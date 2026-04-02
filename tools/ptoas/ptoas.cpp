@@ -1111,8 +1111,11 @@ int main(int argc, char **argv) {
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
 
   // Conditionally add Sync pass based on flag.
-  if (enableInsertSync)
+  if (enableInsertSync) {
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTORemoveIdentityTMovPass());
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
+  }
 
   pm.addPass(createCSEPass());
   if (arch == "a3") {

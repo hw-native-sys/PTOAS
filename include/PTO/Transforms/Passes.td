@@ -38,6 +38,20 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTORemoveIdentityTMov : Pass<"pto-remove-identity-tmov", "func::FuncOp"> {
+  let summary = "Remove identity pto.tmov before auto-sync on A5";
+  let description = [{
+    Erases `pto.tmov` operations where source and destination are the same SSA
+    value. The pass is gated by `pto.target_arch = "a5"` and is intended to run
+    before `pto-insert-sync` to avoid generating synchronization edges for a
+    no-op move.
+  }];
+  let constructor = "mlir::pto::createPTORemoveIdentityTMovPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   let summary = "Convert Ops from other dialects to PTO Ops";
   let constructor = "mlir::pto::createConvertToPTOOpPass()";
