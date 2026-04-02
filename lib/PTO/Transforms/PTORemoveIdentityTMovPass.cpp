@@ -11,11 +11,14 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Pass/Pass.h"
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -48,21 +51,51 @@ getSingleMemInfo(const Buffer2MemInfoMap &buffer2MemInfoMap, Value value) {
   return it->second.front().get();
 }
 
-static bool hasConcreteAddress(const BaseMemInfo *info) {
-  if (!info || info->baseAddresses.empty())
-    return false;
+static std::optional<int64_t> tryEvalI64Constant(Value value) {
+  if (!value)
+    return std::nullopt;
+
+  APInt apInt;
+  if (matchPattern(value, m_ConstantInt(&apInt)))
+    return apInt.getSExtValue();
+
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp)
+    return std::nullopt;
+
+  if (auto castOp = dyn_cast<arith::IndexCastOp>(defOp))
+    return tryEvalI64Constant(castOp.getIn());
+  if (auto castOp = dyn_cast<arith::ExtSIOp>(defOp))
+    return tryEvalI64Constant(castOp.getIn());
+  if (auto castOp = dyn_cast<arith::ExtUIOp>(defOp))
+    return tryEvalI64Constant(castOp.getIn());
+  if (auto castOp = dyn_cast<arith::TruncIOp>(defOp))
+    return tryEvalI64Constant(castOp.getIn());
+
+  return std::nullopt;
+}
+
+static std::optional<int64_t>
+tryGetConcreteRootAddress(const BaseMemInfo *info) {
+  if (!info)
+    return std::nullopt;
+
+  if (auto direct = tryEvalI64Constant(info->rootBuffer))
+    return direct;
 
   Operation *defOp = info->rootBuffer.getDefiningOp();
   if (!defOp)
-    return false;
-
-  if (isa<pto::PointerCastOp>(defOp))
-    return true;
+    return std::nullopt;
 
   if (auto alloc = dyn_cast<pto::AllocTileOp>(defOp))
-    return static_cast<bool>(alloc.getAddr());
+    return tryEvalI64Constant(alloc.getAddr());
 
-  return false;
+  if (auto cast = dyn_cast<pto::PointerCastOp>(defOp)) {
+    if (!cast.getAddrs().empty())
+      return tryEvalI64Constant(cast.getAddrs().front());
+  }
+
+  return std::nullopt;
 }
 
 static bool hasDynamicStaticList(ArrayRef<int64_t> values) {
@@ -89,15 +122,8 @@ static bool isStaticallyAddressableValue(Value value) {
       continue;
     }
 
-    if (auto reCast = dyn_cast<memref::ReinterpretCastOp>(defOp)) {
-      if (hasDynamicStaticList(reCast.getStaticOffsets()) ||
-          hasDynamicStaticList(reCast.getStaticSizes()) ||
-          hasDynamicStaticList(reCast.getStaticStrides())) {
-        return false;
-      }
-      value = reCast.getSource();
-      continue;
-    }
+    if (isa<memref::ReinterpretCastOp>(defOp))
+      return false;
 
     if (auto cast = dyn_cast<memref::CastOp>(defOp)) {
       value = cast.getSource();
@@ -167,7 +193,11 @@ static bool canEraseIdentityTMov(
   if (srcInfo->rootBuffer == dstInfo->rootBuffer)
     return true;
 
-  return hasConcreteAddress(srcInfo) && hasConcreteAddress(dstInfo);
+  auto srcRootAddr = tryGetConcreteRootAddress(srcInfo);
+  auto dstRootAddr = tryGetConcreteRootAddress(dstInfo);
+  if (!srcRootAddr || !dstRootAddr)
+    return false;
+  return *srcRootAddr == *dstRootAddr;
 }
 
 struct PTORemoveIdentityTMovPass
