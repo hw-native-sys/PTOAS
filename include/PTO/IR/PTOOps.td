@@ -2833,6 +2833,37 @@ def TExtractOp : PTO_TOp<"textract", [
   }];
 }
 
+def TExtractFPOp : PTO_TOp<"textract_fp", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Extract acc tile window into dst using fp/scaling tile (tilebuf, DPS)";
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$fp,
+    Index:$indexRow,
+    Index:$indexCol,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $fp `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` qualified(type($fp)) `,` type($indexRow) `,` type($indexCol) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
 def TInsertOp : PTO_TOp<"tinsert", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
@@ -2915,6 +2946,37 @@ def TInsertOp : PTO_TOp<"tinsert", [
       // Default and Acc->Mat path.
       return ::mlir::pto::PIPE::PIPE_FIX;
     }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
+def TInsertFPOp : PTO_TOp<"tinsert_fp", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Insert acc tile window into dst using fp/scaling tile (tilebuf, DPS)";
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$fp,
+    Index:$indexRow,
+    Index:$indexCol,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $fp `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` qualified(type($fp)) `,` type($indexRow) `,` type($indexCol) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }

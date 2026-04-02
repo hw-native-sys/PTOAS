@@ -5851,6 +5851,32 @@ struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
   }
 };
 //===----------------------------------------------------------------------===//
+// pto.textract_fp lowering -> TEXTRACT_FP(dst, src, fp, indexRow, indexCol)
+//===----------------------------------------------------------------------===//
+
+struct PTOExtractFPToEmitC : public OpConversionPattern<pto::TExtractFPOp> {
+  using OpConversionPattern<pto::TExtractFPOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TExtractFPOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value fp = peelUnrealized(adaptor.getFp());
+    Value dst = peelUnrealized(adaptor.getDst());
+    Value r0 = peelUnrealized(adaptor.getIndexRow());
+    Value c0 = peelUnrealized(adaptor.getIndexCol());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TEXTRACT_FP",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{dst, src, fp, r0, c0});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+//===----------------------------------------------------------------------===//
 // pto.tinsert lowering -> TINSERT(dst, src, indexRow, indexCol)
 // Keep lowering arch-agnostic and let PTO-ISA infer proper A5 path.
 //===----------------------------------------------------------------------===//
@@ -5877,6 +5903,32 @@ struct PTOInsertToEmitC : public OpConversionPattern<pto::TInsertOp> {
   }
 };
 //===----------------------------------------------------------------------===//
+// pto.tinsert_fp lowering -> TINSERT_FP(dst, src, fp, indexRow, indexCol)
+//===----------------------------------------------------------------------===//
+
+struct PTOInsertFPToEmitC : public OpConversionPattern<pto::TInsertFPOp> {
+  using OpConversionPattern<pto::TInsertFPOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TInsertFPOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value fp = peelUnrealized(adaptor.getFp());
+    Value dst = peelUnrealized(adaptor.getDst());
+    Value r0 = peelUnrealized(adaptor.getIndexRow());
+    Value c0 = peelUnrealized(adaptor.getIndexCol());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TINSERT_FP",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{dst, src, fp, r0, c0});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+//===----------------------------------------------------------------------===//
 // pto.tfillpad lowering -> TFILLPAD(dst, src)
 //===----------------------------------------------------------------------===//
 
@@ -5889,9 +5941,12 @@ struct PTOFillPadToEmitC : public OpConversionPattern<pto::TFillPadOp> {
 
     Value src = peelUnrealized(adaptor.getSrc());
     Value dst = peelUnrealized(adaptor.getDst());
+    llvm::StringRef callee =
+        (op.getSrc() == op.getDst() || src == dst) ? "TFILLPAD_INPLACE"
+                                                   : "TFILLPAD";
 
     rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TFILLPAD",
+        loc, TypeRange{}, callee,
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
         /*operands=*/ValueRange{dst, src});
 
@@ -8628,7 +8683,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOExpandsToEmitC>(typeConverter, ctx);
   patterns.add<PTOOrToEmitC>(typeConverter, ctx);
   patterns.add<PTOPartAddToEmitC>(typeConverter, ctx);
-  patterns.add<PTOExtractToEmitC, PTOInsertToEmitC>(typeConverter, ctx);
+  patterns.add<PTOExtractToEmitC, PTOExtractFPToEmitC, PTOInsertToEmitC,
+               PTOInsertFPToEmitC>(typeConverter, ctx);
   patterns.add<PTOFillPadToEmitC, PTOFillPadExpandToEmitC>(typeConverter, ctx);
   patterns.add<PTOGatherToEmitC>(typeConverter, ctx);
   patterns.add<PTOGatherbToEmitC>(typeConverter, ctx);

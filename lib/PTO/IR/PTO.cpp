@@ -3587,6 +3587,276 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
+static bool isColMajorRowMajorNZTileBuf(pto::TileBufType ty) {
+  return ty.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) &&
+         ty.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::RowMajor);
+}
+
+static bool isA2A3VectorPreQuantTypePair(Type srcElem, Type dstElem) {
+  if (srcElem.isF32())
+    return dstElem.isInteger(8);
+  if (srcElem.isInteger(32))
+    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isInteger(16);
+  return false;
+}
+
+static bool isA5Fp8LikeType(Type ty) {
+  if (auto ft = dyn_cast<FloatType>(ty))
+    return ft.getWidth() == 8;
+  return false;
+}
+
+static bool isA5VectorPreQuantTypePair(Type srcElem, Type dstElem) {
+  if (srcElem.isF32())
+    return dstElem.isInteger(8) || isA5Fp8LikeType(dstElem) || dstElem.isF16() ||
+           dstElem.isBF16() || dstElem.isF32();
+  if (srcElem.isInteger(32))
+    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isBF16();
+  return false;
+}
+
+mlir::LogicalResult mlir::pto::TExtractFPOp::verify() {
+  auto getConstIndex = [&](Value v) -> std::optional<int64_t> {
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantIndexOp>())
+      return cst.value();
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantIntOp>())
+      return cst.value();
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantOp>()) {
+      if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+        return attr.getInt();
+    }
+    return std::nullopt;
+  };
+  auto verifyIndexOperands = [&]() -> LogicalResult {
+    if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
+      return emitOpError("expects indexRow and indexCol to be index type");
+    auto row = getConstIndex(getIndexRow());
+    auto col = getConstIndex(getIndexCol());
+    if (row && *row < 0)
+      return emitOpError("expects indexRow to be non-negative");
+    if (col && *col < 0)
+      return emitOpError("expects indexCol to be non-negative");
+    return success();
+  };
+  auto verifyStaticBounds = [&](Type srcTy, Type dstTy) -> LogicalResult {
+    auto row = getConstIndex(getIndexRow());
+    auto col = getConstIndex(getIndexCol());
+    auto srcShape = getShapeVec(srcTy);
+    auto dstShape = getShapeVec(dstTy);
+    if (srcShape.size() != 2 || dstShape.size() != 2)
+      return emitOpError("expects src and dst to be rank-2 tile_buf");
+    if (row && srcShape[0] != ShapedType::kDynamic &&
+        dstShape[0] != ShapedType::kDynamic &&
+        *row + dstShape[0] > srcShape[0])
+      return emitOpError("expects indexRow + dst.rows <= src.rows");
+    if (col && srcShape[1] != ShapedType::kDynamic &&
+        dstShape[1] != ShapedType::kDynamic &&
+        *col + dstShape[1] > srcShape[1])
+      return emitOpError("expects indexCol + dst.cols <= src.cols");
+    return success();
+  };
+  auto verifyCommon = [&]() -> FailureOr<std::tuple<Type, Type, Type, pto::TileBufType,
+                                                    pto::TileBufType, pto::TileBufType,
+                                                    pto::AddressSpace, pto::AddressSpace,
+                                                    pto::AddressSpace>> {
+    Type srcTy = getSrc().getType();
+    Type fpTy = getFp().getType();
+    Type dstTy = getDst().getType();
+    auto srcTb = dyn_cast<pto::TileBufType>(srcTy);
+    auto fpTb = dyn_cast<pto::TileBufType>(fpTy);
+    auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
+    if (!srcTb || !fpTb || !dstTb)
+      return emitOpError("expects src, fp, and dst to be !pto.tile_buf");
+    if (failed(verifyTileBufCommon(*this, srcTy, "src")) ||
+        failed(verifyTileBufCommon(*this, fpTy, "fp")) ||
+        failed(verifyTileBufCommon(*this, dstTy, "dst")) ||
+        failed(verifyIndexOperands()) ||
+        failed(verifyStaticBounds(srcTy, dstTy)))
+      return failure();
+    auto srcSpace = getPTOMemorySpaceEnum(srcTy);
+    auto fpSpace = getPTOMemorySpaceEnum(fpTy);
+    auto dstSpace = getPTOMemorySpaceEnum(dstTy);
+    if (!srcSpace || !fpSpace || !dstSpace)
+      return emitOpError("expects src, fp, and dst to have explicit loc");
+    if (*srcSpace != pto::AddressSpace::ACC)
+      return emitOpError("expects src to use loc=acc");
+    if (*fpSpace != pto::AddressSpace::SCALING)
+      return emitOpError("expects fp to use loc=scaling");
+    if (*dstSpace != pto::AddressSpace::MAT)
+      return emitOpError("expects dst to use loc=mat");
+    if (!isColMajorRowMajorNZTileBuf(srcTb))
+      return emitOpError("expects src to use blayout=col_major and slayout=row_major");
+    if (!isColMajorRowMajorNZTileBuf(dstTb))
+      return emitOpError("expects dst to use blayout=col_major and slayout=row_major");
+    return std::make_tuple(srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, *srcSpace,
+                           *fpSpace, *dstSpace);
+  };
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    auto common = verifyCommon();
+    if (failed(common))
+      return failure();
+    auto [srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, srcSpace, fpSpace, dstSpace] =
+        *common;
+    (void)fpTy;
+    (void)srcSpace;
+    (void)fpSpace;
+    (void)dstSpace;
+    if (dstTb.getSFractalSizeI32() != 512)
+      return emitOpError("expects dst fractal size to be 512");
+    Type srcElem = getElemTy(srcTy);
+    Type dstElem = getElemTy(dstTy);
+    if (!isA2A3VectorPreQuantTypePair(srcElem, dstElem))
+      return emitOpError(
+          "expects A2/A3 textract_fp element types to be (src=f32,dst=i8) "
+          "or (src=i32,dst=i8/f16/i16)");
+    return success();
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    auto common = verifyCommon();
+    if (failed(common))
+      return failure();
+    auto [srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, srcSpace, fpSpace, dstSpace] =
+        *common;
+    (void)fpTy;
+    (void)srcTb;
+    (void)fpTb;
+    (void)dstTb;
+    (void)srcSpace;
+    (void)fpSpace;
+    (void)dstSpace;
+    Type srcElem = getElemTy(srcTy);
+    Type dstElem = getElemTy(dstTy);
+    if (!isA5VectorPreQuantTypePair(srcElem, dstElem))
+      return emitOpError(
+          "expects A5 textract_fp element types to be (src=f32,dst=i8/fp8/f16/bf16/f32) "
+          "or (src=i32,dst=i8/f16/bf16)");
+    return success();
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}
+
+mlir::LogicalResult mlir::pto::TInsertFPOp::verify() {
+  auto getConstIndex = [&](Value v) -> std::optional<int64_t> {
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantIndexOp>())
+      return cst.value();
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantIntOp>())
+      return cst.value();
+    if (auto cst = v.getDefiningOp<mlir::arith::ConstantOp>()) {
+      if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
+        return attr.getInt();
+    }
+    return std::nullopt;
+  };
+  auto verifyIndexOperands = [&]() -> LogicalResult {
+    if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
+      return emitOpError("expects indexRow and indexCol to be index type");
+    auto row = getConstIndex(getIndexRow());
+    auto col = getConstIndex(getIndexCol());
+    if (row && *row < 0)
+      return emitOpError("expects indexRow to be non-negative");
+    if (col && *col < 0)
+      return emitOpError("expects indexCol to be non-negative");
+    return success();
+  };
+  auto verifyStaticBounds = [&](Type srcTy, Type dstTy) -> LogicalResult {
+    auto row = getConstIndex(getIndexRow());
+    auto col = getConstIndex(getIndexCol());
+    auto srcShape = getValidShapeVec(srcTy);
+    auto dstShape = getShapeVec(dstTy);
+    if (srcShape.size() != 2 || dstShape.size() != 2)
+      return emitOpError("expects src and dst to be rank-2 tile_buf");
+    if (row && srcShape[0] != ShapedType::kDynamic &&
+        dstShape[0] != ShapedType::kDynamic &&
+        *row + srcShape[0] > dstShape[0])
+      return emitOpError("expects indexRow + src.rows <= dst.rows");
+    if (col && srcShape[1] != ShapedType::kDynamic &&
+        dstShape[1] != ShapedType::kDynamic &&
+        *col + srcShape[1] > dstShape[1])
+      return emitOpError("expects indexCol + src.cols <= dst.cols");
+    return success();
+  };
+  auto verifyCommon = [&]() -> FailureOr<std::tuple<Type, Type, Type, pto::TileBufType,
+                                                    pto::TileBufType, pto::TileBufType,
+                                                    pto::AddressSpace, pto::AddressSpace,
+                                                    pto::AddressSpace>> {
+    Type srcTy = getSrc().getType();
+    Type fpTy = getFp().getType();
+    Type dstTy = getDst().getType();
+    auto srcTb = dyn_cast<pto::TileBufType>(srcTy);
+    auto fpTb = dyn_cast<pto::TileBufType>(fpTy);
+    auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
+    if (!srcTb || !fpTb || !dstTb)
+      return emitOpError("expects src, fp, and dst to be !pto.tile_buf");
+    if (failed(verifyTileBufCommon(*this, srcTy, "src")) ||
+        failed(verifyTileBufCommon(*this, fpTy, "fp")) ||
+        failed(verifyTileBufCommon(*this, dstTy, "dst")) ||
+        failed(verifyIndexOperands()) ||
+        failed(verifyStaticBounds(srcTy, dstTy)))
+      return failure();
+    auto srcSpace = getPTOMemorySpaceEnum(srcTy);
+    auto fpSpace = getPTOMemorySpaceEnum(fpTy);
+    auto dstSpace = getPTOMemorySpaceEnum(dstTy);
+    if (!srcSpace || !fpSpace || !dstSpace)
+      return emitOpError("expects src, fp, and dst to have explicit loc");
+    if (*srcSpace != pto::AddressSpace::ACC)
+      return emitOpError("expects src to use loc=acc");
+    if (*fpSpace != pto::AddressSpace::SCALING)
+      return emitOpError("expects fp to use loc=scaling");
+    if (*dstSpace != pto::AddressSpace::MAT)
+      return emitOpError("expects dst to use loc=mat");
+    if (!isColMajorRowMajorNZTileBuf(srcTb))
+      return emitOpError("expects src to use blayout=col_major and slayout=row_major");
+    if (!isColMajorRowMajorNZTileBuf(dstTb))
+      return emitOpError("expects dst to use blayout=col_major and slayout=row_major");
+    return std::make_tuple(srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, *srcSpace,
+                           *fpSpace, *dstSpace);
+  };
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    auto common = verifyCommon();
+    if (failed(common))
+      return failure();
+    auto [srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, srcSpace, fpSpace, dstSpace] =
+        *common;
+    (void)fpTy;
+    (void)srcTb;
+    (void)fpTb;
+    (void)srcSpace;
+    (void)fpSpace;
+    (void)dstSpace;
+    if (dstTb.getSFractalSizeI32() != 512)
+      return emitOpError("expects dst fractal size to be 512");
+    Type srcElem = getElemTy(srcTy);
+    Type dstElem = getElemTy(dstTy);
+    if (!isA2A3VectorPreQuantTypePair(srcElem, dstElem))
+      return emitOpError(
+          "expects A2/A3 tinsert_fp element types to be (src=f32,dst=i8) "
+          "or (src=i32,dst=i8/f16/i16)");
+    return success();
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    auto common = verifyCommon();
+    if (failed(common))
+      return failure();
+    auto [srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, srcSpace, fpSpace, dstSpace] =
+        *common;
+    (void)fpTy;
+    (void)srcTb;
+    (void)fpTb;
+    (void)dstTb;
+    (void)srcSpace;
+    (void)fpSpace;
+    (void)dstSpace;
+    Type srcElem = getElemTy(srcTy);
+    Type dstElem = getElemTy(dstTy);
+    if (!isA5VectorPreQuantTypePair(srcElem, dstElem))
+      return emitOpError(
+          "expects A5 tinsert_fp element types to be (src=f32,dst=i8/fp8/f16/bf16/f32) "
+          "or (src=i32,dst=i8/f16/bf16)");
+    return success();
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}
+
 static mlir::LogicalResult verifyTFillPadLike(Operation *op, Type srcTy, Type dstTy,
                                               bool allowDstExpand,
                                               llvm::StringRef opName) {
@@ -8004,6 +8274,22 @@ void TExtractOp::getEffects(
 void TInsertOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// TEXTRACT_FP: Read(src), Read(fp) -> Write(dst)
+void TExtractFPOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getFpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// TINSERT_FP: Read(src), Read(fp) -> Write(dst)
+void TInsertFPOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getFpMutable());
   PTO_ADD_WRITE(getDstMutable());
 }
 

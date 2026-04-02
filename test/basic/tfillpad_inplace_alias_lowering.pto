@@ -1,0 +1,14 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @tfillpad_inplace_alias() {
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+    pto.tfillpad ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+                 outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void tfillpad_inplace_alias(
+// CHECK: TFILLPAD_INPLACE(
+// CHECK-NOT: TFILLPAD_EXPAND(

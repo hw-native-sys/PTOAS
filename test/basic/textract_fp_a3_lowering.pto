@@ -1,0 +1,16 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @textract_fp_a3() {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>, index, index)
+                   outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void textract_fp_a3(
+// CHECK: TEXTRACT_FP(

@@ -830,6 +830,35 @@ PY
       fi
     fi
 
+    if [[ "$base" == "fillpad_inplace" ]]; then
+      if ! grep -Fq "TFILLPAD_INPLACE(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_INPLACE() lowering for aliased pto.tfillpad"
+        overall=1
+        continue
+      fi
+      if grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad alias path should not lower via TFILLPAD_EXPAND()"
+        overall=1
+        continue
+      fi
+    fi
+
+    if [[ "$base" == "extract_fp" ]]; then
+      if ! grep -Fq "TEXTRACT_FP(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TEXTRACT_FP() lowering for pto.textract_fp"
+        overall=1
+        continue
+      fi
+    fi
+
+    if [[ "$base" == "tinsert_fp" ]]; then
+      if ! grep -Fq "TINSERT_FP(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TINSERT_FP() lowering for pto.tinsert_fp"
+        overall=1
+        continue
+      fi
+    fi
+
 	    # Regression guard for Issue #190:
 	    # Infer layout for a 2D column-vector view (16 x 1) should prefer DN.
 	    if [[ "$base" == "tensor_view_infer_layout_dn" ]]; then
