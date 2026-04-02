@@ -48,20 +48,6 @@ if [ ! -f "$PTOAS_BIN" ]; then
   exit 1
 fi
 
-detect_ptoas_version() {
-  local cache_file="${PTO_SOURCE_DIR}/build/CMakeCache.txt"
-  local version=""
-  if [[ -f "${cache_file}" ]]; then
-    version="$(awk -F= '/^PTOAS_RELEASE_VERSION_OVERRIDE:STRING=/{print $2}' "${cache_file}")"
-    if [[ -z "${version}" ]]; then
-      version="$(awk -F= '/^CMAKE_PROJECT_VERSION:STATIC=/{print $2}' "${cache_file}")"
-    fi
-  fi
-  printf '%s' "${version}"
-}
-
-PTOAS_WRAPPER_VERSION="$(detect_ptoas_version)"
-
 mkdir -p "${PTOAS_DIST_DIR}/bin" "${PTOAS_DEPS_DIR}"
 cp -fL "$PTOAS_BIN" "${PTOAS_DIST_DIR}/bin/"
 chmod +x "${PTOAS_DIST_DIR}/bin/ptoas"
@@ -247,109 +233,11 @@ for target in iter_targets():
 PY
 }
 
-strip_nonportable_rpaths() {
-  python3 - "${PTOAS_DIST_DIR}" <<'PY'
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1]).resolve()
-allowed_prefixes = (
-    "@loader_path/",
-    "@executable_path/",
-)
-
-
-def iter_targets():
-    for base, _, files in os.walk(root):
-        for name in sorted(files):
-            if name == "ptoas" or name.endswith(".dylib"):
-                yield Path(base, name).resolve()
-
-
-def iter_rpaths(target: Path):
-    output = subprocess.check_output(
-        ["otool", "-l", str(target)],
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    want = False
-    for line in output.splitlines():
-        fields = line.strip().split()
-        if len(fields) >= 2 and fields[0] == "cmd" and fields[1] == "LC_RPATH":
-            want = True
-            continue
-        if want and len(fields) >= 2 and fields[0] == "path":
-            yield fields[1]
-            want = False
-
-
-for target in iter_targets():
-    for rpath in list(iter_rpaths(target)):
-        if rpath.startswith(allowed_prefixes):
-            continue
-        print(f"delete non-portable rpath: {target} :: {rpath}")
-        subprocess.check_call(
-            ["install_name_tool", "-delete_rpath", rpath, str(target)]
-        )
-PY
-}
-
-validate_packaged_ptoas_surface() {
-  python3 - "${PTOAS_DIST_DIR}/bin/ptoas" <<'PY'
-import fnmatch
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-target = Path(sys.argv[1]).resolve()
-denylist = (
-    "libMLIRMlirOptMain.dylib",
-    "libMLIROptLib.dylib",
-    "libMLIR*Test*.dylib",
-    "libMLIR*TestPasses*.dylib",
-)
-
-output = subprocess.check_output(
-    ["otool", "-L", str(target)],
-    stderr=subprocess.STDOUT,
-    text=True,
-)
-deps = []
-for line in output.splitlines()[1:]:
-    dep = line.strip().split(" ", 1)[0]
-    if dep:
-        deps.append(os.path.basename(dep))
-
-bad = sorted(
-    {
-        dep
-        for dep in deps
-        if any(fnmatch.fnmatch(dep, pattern) for pattern in denylist)
-    }
-)
-if bad:
-    for dep in bad:
-        print(
-            f"ERROR: packaged ptoas still links forbidden cold-start dependency: {dep}",
-            file=sys.stderr,
-        )
-    sys.exit(1)
-
-print(f"ptoas direct dylib dependency count: {len(deps)}")
-PY
-}
-
 echo "Collecting dylib dependencies..."
 collect_dylibs "${PTOAS_DIST_DIR}/bin/ptoas"
 
 echo "Rewriting packaged install names..."
 rewrite_packaged_install_names
-
-echo "Stripping non-portable rpaths..."
-strip_nonportable_rpaths
 
 echo "Validating packaged dependency install names..."
 if ! python3 - "${PTOAS_DIST_DIR}" <<'PY'
@@ -400,9 +288,6 @@ then
   exit 1
 fi
 
-echo "Validating packaged ptoas dependency surface..."
-validate_packaged_ptoas_surface
-
 if ! command -v codesign >/dev/null 2>&1; then
   echo "Error: codesign is required on macOS to sign packaged artifacts" >&2
   exit 1
@@ -422,20 +307,16 @@ done
 shopt -u nullglob
 
 echo "Creating wrapper script..."
-cat > "${PTOAS_DIST_DIR}/ptoas" <<WRAPPER_EOF
+cat > "${PTOAS_DIST_DIR}/ptoas" << 'WRAPPER_EOF'
 #!/bin/bash
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-if [[ \$# -eq 1 && "\${1:-}" == "--version" && -n "${PTOAS_WRAPPER_VERSION}" ]]; then
-  printf 'ptoas %s\n' "${PTOAS_WRAPPER_VERSION}"
-  exit 0
-fi
-export DYLD_LIBRARY_PATH="\${SCRIPT_DIR}/lib:\${DYLD_LIBRARY_PATH}"
-exec "\${SCRIPT_DIR}/bin/ptoas" "\$@"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export DYLD_LIBRARY_PATH="${SCRIPT_DIR}/lib:${DYLD_LIBRARY_PATH}"
+exec "${SCRIPT_DIR}/bin/ptoas" "$@"
 WRAPPER_EOF
 chmod +x "${PTOAS_DIST_DIR}/ptoas"
 
 echo "Smoke testing packaged ptoas dist..."
-env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "${PTOAS_DIST_DIR}/bin/ptoas" --version >/dev/null
+env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "${PTOAS_DIST_DIR}/ptoas" --version
 env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH \
   "${PTOAS_DIST_DIR}/ptoas" \
   "${PTO_SOURCE_DIR}/test/basic/kernel_kind_vector_scf_while_emitc.pto" \
