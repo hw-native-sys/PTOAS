@@ -86,6 +86,17 @@ UNSTABLE_A3_CUSTOM_GOLDEN_CASES = frozenset({
 })
 
 
+def _get_case_scalar_overrides(testcase: str, params):
+    scalar_params = [p for p in params if p.get("kind") == "scalar"]
+
+    # issue#828 guard: the target path is the `arg6 == 0` branch.
+    # Keep default behavior for all other cases.
+    if testcase == "issue828_softmax_rescale_incore_1_a5" and len(scalar_params) == 1:
+        return {scalar_params[0]["name"]: "0"}
+
+    return {}
+
+
 def _parse_shape(text: str):
     match = re.search(r"Shape<(\d+)\s*,\s*(\d+)>", text)
     if match:
@@ -1137,10 +1148,15 @@ def generate_testcase(
                 f"    size_t fileSize_{p['name']} = elemCount_{p['name']} * sizeof({p['host_type']});"
             )
 
+    scalar_overrides = _get_case_scalar_overrides(testcase, params)
     for p in params:
         if p["kind"] != "scalar":
             continue
         t = p["host_type"]
+        override = scalar_overrides.get(p["name"])
+        if override is not None:
+            param_decls_lines.append(f"    {t} {p['name']} = {override};")
+            continue
         # Some PTO-ISA APIs use small POD structs as scalar parameters.
         # Example: pto::MrgSortExecutedNumList (used by TMRGSORT multi-list variants).
         if t.endswith("MrgSortExecutedNumList"):
