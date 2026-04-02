@@ -193,6 +193,9 @@ ptoas tests/input.pto
 # 运行 AutoSyncInsert Pass
 ptoas tests/input.pto --enable-insert-sync -o outputfile.cpp
 
+# 调试开关：关闭 A5 identity tmov cleanup（用于 A/B 验证）
+ptoas tests/input.pto --enable-insert-sync --disable-identity-tmov-cleanup -o outputfile.cpp
+
 # 指定目标硬件架构（A3 / A5）
 ptoas tests/input.pto --pto-arch=a3 -o outputfile.cpp
 

@@ -185,8 +185,7 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
 
 static llvm::cl::opt<bool> disableIdentityTMovCleanup(
     "disable-identity-tmov-cleanup",
-    llvm::cl::desc("Disable A5 identity tmov cleanup pass before auto sync (debug only)"),
-    llvm::cl::Hidden,
+    llvm::cl::desc("Disable A5 identity tmov cleanup pass before auto sync"),
     llvm::cl::init(false));
 
 static llvm::cl::opt<bool> disableInferLayout(
