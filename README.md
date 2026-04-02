@@ -136,24 +136,31 @@ ninja -C build
 ninja -C build install
 
 # 5. 检查构建产物
-检查_pto*.so是不copy到了llvm的mlir_core
-$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core/
-└── mlir
-    └── _mlir_libs
-        └── _pto.cpython-311-*.so   ✅ 自动在这里
+# build 输出（便于本地开发/调试）
+$PTO_SOURCE_DIR/build/python/
+├── mlir
+│   ├── _mlir_libs
+│   │   └── _pto.cpython-*.so
+│   └── dialects
+│       ├── pto.py
+│       └── _pto_ops_gen.py
 
-_pto.py还是在ptoas install 目录
-./install/
+# install 输出（Python 方言文件）
+$PTO_INSTALL_DIR/
 └── mlir
     └── dialects
         ├── pto.py
         └── _pto_ops_gen.py
 
-ptoas在build目录下
-./build/
-└── tools
-    └── ptoas
-        └── ptoas
+# 安装到 MLIR Python 包中的原生扩展
+$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core/
+└── mlir
+    └── _mlir_libs
+        └── _pto.cpython-*.so
+
+# CLI 工具
+$PTO_SOURCE_DIR/build/tools/ptoas/ptoas
+$PTO_SOURCE_DIR/build/tools/ptobc/ptobc
 
 ```
 
@@ -172,11 +179,11 @@ export MLIR_PYTHON_ROOT=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
 export PTO_PYTHON_ROOT=$PTO_INSTALL_DIR/
 export PYTHONPATH=$MLIR_PYTHON_ROOT:$PTO_PYTHON_ROOT:$PYTHONPATH
 
-# 2. Library Path: 确保能加载 LLVM 和 PTO 的动态库 (.so)
+# 2. Library Path: 确保能加载 LLVM 和 PTO 的动态库
 export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH
 
-# 3. PATH: 将 ptoas 添加到命令行路径
-export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
+# 3. PATH: 将 ptoas / ptobc 添加到命令行路径
+export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PTO_SOURCE_DIR/build/tools/ptobc:$PATH
 
 ```
 
@@ -188,16 +195,16 @@ export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
 
 ```bash
 # 解析并打印 PTO IR
-ptoas tests/input.pto
+ptoas test/basic/empty_func.pto
 
 # 运行 AutoSyncInsert Pass
-ptoas tests/input.pto --enable-insert-sync -o outputfile.cpp
+ptoas test/basic/empty_func.pto --enable-insert-sync -o outputfile.cpp
 
 # 指定目标硬件架构（A3 / A5）
-ptoas tests/input.pto --pto-arch=a3 -o outputfile.cpp
+ptoas test/basic/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 
 # 指定构建 Level（level3 会禁用 PlanMemory/InsertSync）
-ptoas tests/input.pto --pto-level=level3 -o outputfile.cpp
+ptoas test/basic/empty_func.pto --pto-level=level3 -o outputfile.cpp
 
 # 查看当前 ptoas release 版本号
 ptoas --version
@@ -214,7 +221,7 @@ from mlir.ir import Context, Module, Location
 from mlir.dialects import pto
 
 with Context() as ctx, Location.unknown():
-    pto.register_dialect(ctx)
+    pto.register_dialect(ctx, load=True)
     module = Module.create()
     print("PTO Dialect registered successfully!")
 
@@ -224,33 +231,40 @@ with Context() as ctx, Location.unknown():
 
 ```bash
 # 运行python binding 测试
-cd ./test/samples/MatMul/
+cd $PTO_SOURCE_DIR/test/samples/MatMul/
 python3 ./tmatmulk.py > ./tmatmulk.pto
 
 # 运行ptoas 测试
-./build/tools/ptoas/ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
+$PTO_SOURCE_DIR/build/tools/ptoas/ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 ```
 
 ### 5.4 上板验证
 
-该流程用于将 `test/samples` 下生成的 `.cpp`（ptoas 输出）自动生成 NPU 验证用例，并在 NPU 上运行。
+该流程用于将 `test/samples` 下生成的 `.cpp`（ptoas 输出）自动生成 NPU 验证用例，并在 NPU 上运行。下面示例直接复用 5.3 里生成的 `MatMul/tmatmulk.cpp`。
 
 > 只想在无卡机器上做 host-side compile-only，请先看 [docs/no_npu_compile_only_guide_zh.md](docs/no_npu_compile_only_guide_zh.md)。
 
 
 ```bash
 # 1) 生成 npu_validation 测试目录（会在当前 sample 目录下创建 npu_validation/）
+# A2/A3 示例：
 python3 test/npu_validation/scripts/generate_testcase.py \
-  --input test/samples/Abs/abs-pto.cpp \
+  --input test/samples/MatMul/tmatmulk.cpp \
   --run-mode npu \
   --soc-version Ascend910B1
 
+# A5 示例:
+python3 test/npu_validation/scripts/generate_testcase.py \
+  --input test/samples/MatMul/tmatmulk.cpp \
+  --run-mode npu \
+  --soc-version Ascend950
+
 # 2) 运行验证（run.sh 无需额外参数）
-test/samples/Abs/npu_validation/run.sh
+test/samples/MatMul/npu_validation/tmatmulk/run.sh
 ```
 
 说明：
-- `npu_validation/` 下会生成 `abs_kernel.cpp / main.cpp / golden.py / compare.py / run.sh / CMakeLists.txt`
+- `test/samples/MatMul/npu_validation/tmatmulk/` 下会生成 `tmatmulk_kernel.cpp / main.cpp / golden.py / compare.py / run.sh / CMakeLists.txt`
 - `golden.py` 默认生成随机输入，输出默认全零（只保证输入/输出数量、shape、datatype 与 kernel 参数一致）
 - `compare.py` 负责对比 `golden*.bin` 与 `output*.bin`，不一致时会报错
 
