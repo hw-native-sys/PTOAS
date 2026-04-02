@@ -38,21 +38,30 @@ AICORE void scope3_incore_0_incore_0_aic(__gm__ float* v1, __gm__ bfloat16_t* v2
   pto::Stride<8192, 8192, 8192, 64, 1> v15 = pto::Stride<8192, 8192, 8192, 64, 1>();
   GlobalTensor<bfloat16_t, pto::Shape<1, 1, 1, 128, 64>, pto::Stride<8192, 8192, 8192, 64, 1>, pto::Layout::ND> v16 = GlobalTensor<bfloat16_t, pto::Shape<1, 1, 1, 128, 64>, pto::Stride<8192, 8192, 8192, 64, 1>, pto::Layout::ND>(v4 + (v5 + v5 * (unsigned) v8 + v5 * (unsigned) v7), v14, v15);
   TLOAD(v13, v16);
+  set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
   Tile<TileType::Mat, bfloat16_t, 16, 128, BLayout::ColMajor, 16, 128, SLayout::RowMajor, 512, PadValue::Null> v17;
   TPOP<TPipe<0, Direction::DIR_BOTH, 4096, 4>, Tile<TileType::Mat, bfloat16_t, 16, 128, BLayout::ColMajor, 16, 128, SLayout::RowMajor, 512, PadValue::Null>, TileSplitAxis::TILE_UP_DOWN>(v12, v17);
+  set_flag(PIPE_S, PIPE_MTE1, EVENT_ID0);
   Tile<TileType::Left, bfloat16_t, 16, 128, BLayout::ColMajor, 16, 128, SLayout::RowMajor, 512, PadValue::Null> v18;
   TASSIGN(v18, v9);
+  wait_flag(PIPE_S, PIPE_MTE1, EVENT_ID0);
   TMOV(v18, v17);
   TFREE<TPipe<0, Direction::DIR_BOTH, 4096, 4>, TileSplitAxis::TILE_UP_DOWN>(v12);
   Tile<TileType::Right, bfloat16_t, 128, 64, BLayout::RowMajor, 128, 64, SLayout::ColMajor, 512, PadValue::Null> v19;
   TASSIGN(v19, v9);
+  wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
   TMOV(v19, v13);
+  set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
   Tile<TileType::Acc, float, 16, 64, BLayout::ColMajor, 16, 64, SLayout::RowMajor, 1024, PadValue::Null> v20;
   TASSIGN(v20, v9);
+  wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
   TMATMUL(v20, v18, v19);
+  set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+  wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
   TPUSH<TPipe<0, Direction::DIR_BOTH, 4096, 4>, Tile<TileType::Acc, float, 16, 64, BLayout::ColMajor, 16, 64, SLayout::RowMajor, 1024, PadValue::Null>, TileSplitAxis::TILE_UP_DOWN>(v12, v20);
   #endif // __DAV_CUBE__
 
+  ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
   return;
 }
 
@@ -85,33 +94,44 @@ AICORE void scope3_incore_0_incore_0_aiv(__gm__ float* v1, __gm__ bfloat16_t* v2
   pto::Stride<1024, 1024, 1024, 128, 1> v24 = pto::Stride<1024, 1024, 1024, 128, 1>();
   GlobalTensor<float, pto::Shape<1, 1, 1, 8, 128>, pto::Stride<1024, 1024, 1024, 128, 1>, pto::Layout::ND> v25 = GlobalTensor<float, pto::Shape<1, 1, 1, 8, 128>, pto::Stride<1024, 1024, 1024, 128, 1>, pto::Layout::ND>(v1 + (v6 + (unsigned) v21 * (unsigned) v11 + v6 * (unsigned) v9), v23, v24);
   TLOAD(v22, v25);
+  set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
   Tile<TileType::Vec, bfloat16_t, 8, 128, BLayout::RowMajor, 8, 128, SLayout::NoneBox, 512, PadValue::Null> v26;
   TASSIGN(v26, v15);
+  wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
   TCVT(v26, v22, v5);
   Tile<TileType::Vec, bfloat16_t, 8, 128, BLayout::ColMajor, 8, 128, SLayout::RowMajor, 512, PadValue::Null> v27;
   TASSIGN(v27, v14);
   TMOV(v27, v26);
+  set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
   TPUSH<TPipe<0, Direction::DIR_BOTH, 4096, 4>, Tile<TileType::Vec, bfloat16_t, 8, 128, BLayout::ColMajor, 8, 128, SLayout::RowMajor, 512, PadValue::Null>, TileSplitAxis::TILE_UP_DOWN>(v20, v27);
   Tile<TileType::Vec, float, 8, 64, BLayout::RowMajor, 8, 64, SLayout::NoneBox, 512, PadValue::Null> v28;
   TPOP<TPipe<0, Direction::DIR_BOTH, 4096, 4>, Tile<TileType::Vec, float, 8, 64, BLayout::RowMajor, 8, 64, SLayout::NoneBox, 512, PadValue::Null>, TileSplitAxis::TILE_UP_DOWN>(v20, v28);
+  set_flag(PIPE_S, PIPE_V, EVENT_ID0);
   Tile<TileType::Vec, bfloat16_t, 8, 64, BLayout::RowMajor, 8, 64, SLayout::NoneBox, 512, PadValue::Null> v29;
   TASSIGN(v29, v12);
   pto::Shape<1, 1, 1, 8, 64> v30 = pto::Shape<1, 1, 1, 8, 64>();
   pto::Stride<512, 512, 512, 64, 1> v31 = pto::Stride<512, 512, 512, 64, 1>();
   GlobalTensor<bfloat16_t, pto::Shape<1, 1, 1, 8, 64>, pto::Stride<512, 512, 512, 64, 1>, pto::Layout::ND> v32 = GlobalTensor<bfloat16_t, pto::Shape<1, 1, 1, 8, 64>, pto::Stride<512, 512, 512, 64, 1>, pto::Layout::ND>(v2 + (v6 + (unsigned) v21 * (unsigned) v10 + v6 * (unsigned) v9), v30, v31);
   TLOAD(v29, v32);
+  set_flag(PIPE_MTE2, PIPE_V, EVENT_ID1);
   Tile<TileType::Vec, float, 8, 64, BLayout::RowMajor, 8, 64, SLayout::NoneBox, 512, PadValue::Null> v33;
   TASSIGN(v33, v13);
+  wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID1);
   TCVT(v33, v29, v5);
   Tile<TileType::Vec, float, 8, 64, BLayout::RowMajor, 8, 64, SLayout::NoneBox, 512, PadValue::Null> v34;
   TASSIGN(v34, v17);
+  wait_flag(PIPE_S, PIPE_V, EVENT_ID0);
   TADD(v34, v28, v33);
+  set_flag(PIPE_V, PIPE_MTE3, EVENT_ID1);
   TFREE<TPipe<0, Direction::DIR_BOTH, 4096, 4>, TileSplitAxis::TILE_UP_DOWN>(v20);
   pto::Shape<1, 1, 1, 8, 64> v35 = pto::Shape<1, 1, 1, 8, 64>();
   pto::Stride<512, 512, 512, 64, 1> v36 = pto::Stride<512, 512, 512, 64, 1>();
   GlobalTensor<float, pto::Shape<1, 1, 1, 8, 64>, pto::Stride<512, 512, 512, 64, 1>, pto::Layout::ND> v37 = GlobalTensor<float, pto::Shape<1, 1, 1, 8, 64>, pto::Stride<512, 512, 512, 64, 1>, pto::Layout::ND>(v3 + (v6 + (unsigned) v21 * (unsigned) v10 + v6 * (unsigned) v9), v35, v36);
+  wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID1);
   TSTORE(v37, v34);
   #endif // __DAV_VEC__
 
+  ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
   return;
 }
