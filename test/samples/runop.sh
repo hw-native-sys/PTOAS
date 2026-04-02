@@ -19,7 +19,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
 PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
-PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync}"
+PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync Qwen3Scope2}"
 ENABLE_BC=0
 
 usage() {
@@ -36,7 +36,7 @@ Env:
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
   PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
-  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync)
+  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync Qwen3Scope2)
 
 Flags:
   --enablebc  # enable: python -> .pto -> ptobc -> .pto -> ptoas
@@ -172,14 +172,21 @@ process_one_dir() {
   fi
 
   local target_arch="a3"
+  local has_pto_arch_override=0
   if ((${#ptoas_flags[@]})); then
     for ((idx=0; idx<${#ptoas_flags[@]}; ++idx)); do
       if [[ "${ptoas_flags[idx]}" == "--pto-arch" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
         target_arch="${ptoas_flags[idx + 1]}"
+        has_pto_arch_override=1
       elif [[ "${ptoas_flags[idx]}" == --pto-arch=* ]]; then
         target_arch="${ptoas_flags[idx]#--pto-arch=}"
+        has_pto_arch_override=1
       fi
     done
+  fi
+  if [[ "$A" == "Qwen3Scope2" && $has_pto_arch_override -eq 0 ]]; then
+    ptoas_flags+=(--pto-arch a5 --pto-level=level3)
+    target_arch="a5"
   fi
   local expected_vec_barrier="pipe_barrier(PIPE_V)"
   local skip_vec_barrier=0

@@ -33,7 +33,7 @@ on:
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
         type: string
-        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp"
+        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp,decode_attention_incore_0,decode_attention_incore_1,decode_attention_incore_2,decode_attention_incore_3,decode_attention_incore_4,decode_attention_incore_5,decode_attention_incore_6,decode_attention_incore_7,decode_attention_incore_8,decode_attention_incore_9,decode_attention_incore_10,decode_attention_incore_11,decode_attention_incore_12"
       run_only_cases:
         description: "Comma/space separated testcase names to run (empty = run all)"
         type: string
@@ -261,7 +261,14 @@ jobs:
       # Temporary CI gate: skip cases that still error/flap on the remote NPU.
       # Update this list as we fix the underlying issues.
       DEFAULT_SKIP_CASES: >-
-        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp
+        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp,
+        decode_attention_incore_0,decode_attention_incore_1,
+        decode_attention_incore_2,decode_attention_incore_3,
+        decode_attention_incore_4,decode_attention_incore_5,
+        decode_attention_incore_6,decode_attention_incore_7,
+        decode_attention_incore_8,decode_attention_incore_9,
+        decode_attention_incore_10,decode_attention_incore_11,
+        decode_attention_incore_12
     steps:
       - name: Resolve validation parameters
         shell: bash
