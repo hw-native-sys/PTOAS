@@ -167,6 +167,18 @@ static bool readSLayoutI32(Attribute attr, int32_t &out) {
   return false;
 }
 
+static bool readCompactModeI32(Attribute attr, int32_t &out) {
+  if (auto a = dyn_cast<CompactModeAttr>(attr)) {
+    out = (int32_t)a.getValue();
+    return true;
+  }
+  if (auto a = dyn_cast<IntegerAttr>(attr)) {
+    out = (int32_t)a.getInt();
+    return true;
+  }
+  return false;
+}
+
 static bool getConstIndexValue(Value v, int64_t &out) {
   if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>()) {
     out = cOp.value();
@@ -206,9 +218,20 @@ static bool computeTileLayoutInfo(mlir::pto::TileBufConfigAttr cfg, Type elemTy,
   int32_t bl = 0; // RowMajor
   int32_t sl = 0; // NoneBox
   int32_t fr = 512;
+  int32_t compact = 0; // Null
   (void)readBLayoutI32(cfg.getBLayout(), bl);
   (void)readSLayoutI32(cfg.getSLayout(), sl);
   if (auto attr = dyn_cast<IntegerAttr>(cfg.getSFractalSize())) fr = (int32_t)attr.getInt();
+  (void)readCompactModeI32(cfg.getCompactMode(), compact);
+
+  // CompactMode::RowPlusOne means adding one padded element in the major-stride
+  // dimension (the physically contiguous "row pitch" in row-major, or "column
+  // pitch" in col-major) to reduce bank conflicts on some vector paths.
+  auto applyCompactToMajorStride = [&](int64_t majorStride) -> int64_t {
+    if (compact == 2) // CompactMode::RowPlusOne
+      return majorStride + 1;
+    return majorStride;
+  };
 
   // Inner shape
   if (sl == 0) {
@@ -244,9 +267,9 @@ static bool computeTileLayoutInfo(mlir::pto::TileBufConfigAttr cfg, Type elemTy,
   if (sl == 0) {
     if (bl == 1) {
       info.rowStride = 1;
-      info.colStride = rows;
+      info.colStride = applyCompactToMajorStride(rows);
     } else {
-      info.rowStride = cols;
+      info.rowStride = applyCompactToMajorStride(cols);
       info.colStride = 1;
     }
   } else {
@@ -254,10 +277,10 @@ static bool computeTileLayoutInfo(mlir::pto::TileBufConfigAttr cfg, Type elemTy,
       // ColMajor + InnerRowMajor (NZ) is supported. InnerColMajor is unsupported.
       if (sl != 1) return false;
       info.rowStride = info.innerCols;
-      info.colStride = rows;
+      info.colStride = applyCompactToMajorStride(rows);
     } else {
       // RowMajor (ZZ/ZN)
-      info.rowStride = cols;
+      info.rowStride = applyCompactToMajorStride(cols);
       info.colStride = info.innerRows;
     }
   }

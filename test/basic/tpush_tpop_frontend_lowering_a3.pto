@@ -63,31 +63,31 @@ module {
 // A3-LABEL: AICORE void cube_kernel(__gm__ float*
 // A3: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>(
 // A3: TPUSH<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>
-// A3: Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null> {{v[0-9]+}};
-// A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null>, TileSplitAxis::TILE_NO_SPLIT>(
-// A3: Tile<TileType::Left, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null> {{v[0-9]+}};
+// A3: Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null> {{v[0-9]+}};
+// A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// A3: Tile<TileType::Left, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null> {{v[0-9]+}};
 // A3: TMOV(
 // A3: TFREE<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, TileSplitAxis::TILE_NO_SPLIT>(
 
 // A3-LABEL: AICORE void vector_kernel(__gm__ float*
 // A3: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>(
-// A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null> {{v[0-9]+}};
-// A3: TPUSH<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null>, TileSplitAxis::TILE_NO_SPLIT>(
-// A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null>, TileSplitAxis::TILE_NO_SPLIT>(
-// A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null> {{v[0-9]+}};
+// A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> {{v[0-9]+}};
+// A3: TPUSH<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> {{v[0-9]+}};
 // A3: TNEG(
 // A3: TFREE<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, TileSplitAxis::TILE_NO_SPLIT>(
 
 // SYNC-A3-LABEL: AICORE void cube_kernel(__gm__ float*
-// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
 // SYNC-A3: set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
-// SYNC-A3: Tile<TileType::Left, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null>
+// SYNC-A3: Tile<TileType::Left, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>
 // SYNC-A3: wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
 // SYNC-A3: TMOV(
 
 // SYNC-A3-LABEL: AICORE void vector_kernel(__gm__ float*
-// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
 // SYNC-A3: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
-// SYNC-A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null>
+// SYNC-A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>
 // SYNC-A3: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
 // SYNC-A3: TNEG(

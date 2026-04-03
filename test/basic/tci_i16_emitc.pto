@@ -14,5 +14,5 @@ module {
   }
 }
 
-// A3: TCI<Tile<TileType::Vec, int16_t, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Zero>, int16_t, 0>(
-// A3-NOT: TCI<Tile<TileType::Vec, int16_t, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Zero>, int32_t, 0>(
+// A3: TCI<Tile<TileType::Vec, int16_t, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Zero, CompactMode::Null>, int16_t, 0>(
+// A3-NOT: TCI<Tile<TileType::Vec, int16_t, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Zero, CompactMode::Null>, int32_t, 0>(

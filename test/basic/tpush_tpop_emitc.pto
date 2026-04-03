@@ -37,7 +37,7 @@ module {
 // A3: const int64_t {{v[0-9]+}} = 0;
 // A3: #if defined(__DAV_CUBE__)
 // A3: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_C2V, 1024, 8, 8>(
-// A3: TPUSH<TPipe<0, Direction::DIR_C2V, 1024, 8, 8>, Tile<TileType::Acc, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 1024, PadValue::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// A3: TPUSH<TPipe<0, Direction::DIR_C2V, 1024, 8, 8>, Tile<TileType::Acc, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
 // A3: #endif // __DAV_CUBE__
 
 // A3-LABEL: AICORE void vector_pop_gm(
@@ -46,7 +46,7 @@ module {
 // A3: set_mask_norm();
 // A3: set_vector_mask(-1, -1);
 // A3: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_C2V, 1024, 8, 8>(
-// A3: Tile<TileType::Vec, float, 8, 16, BLayout::RowMajor, 8, 16, SLayout::NoneBox, 512, PadValue::Null> {{v[0-9]+}};
-// A3: TPOP<TPipe<0, Direction::DIR_C2V, 1024, 8, 8>, Tile<TileType::Vec, float, 8, 16, BLayout::RowMajor, 8, 16, SLayout::NoneBox, 512, PadValue::Null>, TileSplitAxis::TILE_UP_DOWN>(
+// A3: Tile<TileType::Vec, float, 8, 16, BLayout::RowMajor, 8, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> {{v[0-9]+}};
+// A3: TPOP<TPipe<0, Direction::DIR_C2V, 1024, 8, 8>, Tile<TileType::Vec, float, 8, 16, BLayout::RowMajor, 8, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_UP_DOWN>(
 // A3: TFREE<TPipe<0, Direction::DIR_C2V, 1024, 8, 8>, TileSplitAxis::TILE_LEFT_RIGHT>(
 // A3: #endif // __DAV_VEC__

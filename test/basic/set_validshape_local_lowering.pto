@@ -15,9 +15,9 @@ module {
   }
 }
 
-// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> [[BASE:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[BASE:v[0-9]+]];
 // CHECK: TASSIGN([[BASE]], [[ADDR:v[0-9]+]]);
-// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> [[TILE:v[0-9]+]] = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>({{.*}})
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[TILE:v[0-9]+]] = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>({{.*}})
 // CHECK: __ubuf__ float* [[DATA:v[0-9]+]] = [[BASE]].data();
 // CHECK: uint64_t [[TILE_ADDR:v[0-9]+]] = reinterpret_cast<uint64_t>([[DATA]]);
 // CHECK: TASSIGN([[TILE]], [[TILE_ADDR]]);

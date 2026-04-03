@@ -69,6 +69,9 @@ bool TileBufType::hasNonDefaultConfig() const {
 mlir::Attribute TileBufType::getBLayoutAttr() const { return getConfigAttr().getBLayout(); }
 mlir::Attribute TileBufType::getSLayoutAttr() const { return getConfigAttr().getSLayout(); }
 mlir::Attribute TileBufType::getPadValueAttr() const { return getConfigAttr().getPad(); }
+mlir::Attribute TileBufType::getCompactModeAttr() const {
+  return getConfigAttr().getCompactMode();
+}
 
 // ✅ numeric getters（可选）
 int32_t TileBufType::getSFractalSizeI32() const {
@@ -93,6 +96,12 @@ int32_t TileBufType::getPadValueI32() const {
   return 0;
 }
 
+int32_t TileBufType::getCompactModeI32() const {
+  if (auto a = llvm::dyn_cast<CompactModeAttr>(getCompactModeAttr()))
+    return static_cast<int32_t>(a.getValue());
+  return 0;
+}
+
 // ---- TileBufType custom asm ----
 // !pto.tile_buf<<loc=.., dtype=.., rows=.., cols=.., blayout=.., valid=..x.., slayout=.., fractal=.., pad=..>>
 Type TileBufType::parse(AsmParser &parser) {
@@ -108,6 +117,7 @@ Type TileBufType::parse(AsmParser &parser) {
   std::string blayoutStr, slayoutStr;
   int64_t fractal = 0;
   uint32_t padInt;
+  uint32_t compactInt = 0;
 
   auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
     if (failed(parser.parseKeyword(expectedKey)))
@@ -202,10 +212,15 @@ Type TileBufType::parse(AsmParser &parser) {
     if (failed(parser.parseComma())) return Type();
   }
 
-  // pad=Null
+  // pad=0
   {
     if (failed(parseKeyEq("pad"))) return Type();
     if (failed(parser.parseInteger(padInt))) return Type();
+  }
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (failed(parseKeyEq("compact"))) return Type();
+    if (failed(parser.parseInteger(compactInt))) return Type();
   }
 
   if (failed(parser.parseGreater()))
@@ -234,6 +249,7 @@ Type TileBufType::parse(AsmParser &parser) {
   auto bl = symbolizeBLayout(blayoutStr);
   auto sl = symbolizeSLayout(slayoutStr);
   auto pv = symbolizePadValue(padInt);
+  auto compact = symbolizeCompactMode(compactInt);
   if (!bl.has_value()) {
     parser.emitError(parser.getNameLoc(), "unknown blayout: ") << blayoutStr;
     return Type();
@@ -244,6 +260,10 @@ Type TileBufType::parse(AsmParser &parser) {
   }
   if (!pv.has_value()) {
     parser.emitError(parser.getNameLoc(), "unknown pad: ") << padInt;
+    return Type();
+  }
+  if (!compact.has_value()) {
+    parser.emitError(parser.getNameLoc(), "unknown compact: ") << compactInt;
     return Type();
   }
 
@@ -266,8 +286,10 @@ Type TileBufType::parse(AsmParser &parser) {
   auto fractalAttr =
       IntegerAttr::get(IntegerType::get(ctx, 32), fractal);
   auto padAttr = PadValueAttr::get(ctx, pv.value());
+  auto compactAttr = CompactModeAttr::get(ctx, compact.value());
   auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
+  auto cfg =
+      TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr, compactAttr);
 
   SmallVector<int64_t, 2> shape{rows, cols};
   SmallVector<int64_t, 2> validShape{vrow, vcol};
@@ -300,6 +322,19 @@ static llvm::StringRef stringifyLocFromPad(mlir::Attribute pad) {
     case PadValue::Zero: return "1";
     case PadValue::Max: return "2";
     case PadValue::Min: return "3";
+    default:
+      return "9999";
+  }
+}
+
+static llvm::StringRef stringifyCompactModeInt(mlir::Attribute compactMode) {
+  auto compactAttr = llvm::dyn_cast_or_null<CompactModeAttr>(compactMode);
+  if (!compactAttr) return "9999";
+
+  switch (compactAttr.getValue()) {
+    case CompactMode::Null: return "0";
+    case CompactMode::Normal: return "1";
+    case CompactMode::RowPlusOne: return "2";
     default:
       return "9999";
   }
@@ -344,6 +379,10 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     printer << ", blayout=" << stringifyBLayout(blayout.getValue())
         << ", slayout=" << stringifySLayout(slayout.getValue())
         << ", fractal=" << cfg.getSFractalSize().getInt()
-        << ", pad=" << stringifyLocFromPad(cfg.getPad())
-        << ">";
+        << ", pad=" << stringifyLocFromPad(cfg.getPad());
+    if (auto compact = llvm::dyn_cast<CompactModeAttr>(cfg.getCompactMode())) {
+      if (compact.getValue() != CompactMode::Null)
+        printer << ", compact=" << stringifyCompactModeInt(compact);
+    }
+    printer << ">";
 }

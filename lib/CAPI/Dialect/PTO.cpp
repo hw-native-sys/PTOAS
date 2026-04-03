@@ -514,6 +514,30 @@ static mlir::pto::PadValueAttr toPadValueAttr(mlir::MLIRContext *c, mlir::Attrib
     return mlir::pto::PadValueAttr::get(c, static_cast<mlir::pto::PadValue>(ia.getInt()));
   return {};
 }
+static mlir::pto::CompactModeAttr toCompactModeAttr(mlir::MLIRContext *c,
+                                                    mlir::Attribute a) {
+  if (auto cm = mlir::dyn_cast<mlir::pto::CompactModeAttr>(a))
+    return cm;
+  if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(a))
+    return mlir::pto::CompactModeAttr::get(
+        c, static_cast<mlir::pto::CompactMode>(ia.getInt()));
+  return {};
+}
+
+bool mlirPTOAttrIsACompactModeAttr(MlirAttribute attr) {
+  return unwrap(attr).isa<mlir::pto::CompactModeAttr>();
+}
+
+MlirAttribute mlirPTOCompactModeAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  return wrap(mlir::pto::CompactModeAttr::get(
+      c, static_cast<mlir::pto::CompactMode>(value)));
+}
+
+int32_t mlirPTOCompactModeAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::CompactModeAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
 
 MlirAttribute mlirPTOTileBufConfigAttrGet(MlirContext ctx,
                                           MlirAttribute bLayout,
@@ -521,17 +545,28 @@ MlirAttribute mlirPTOTileBufConfigAttrGet(MlirContext ctx,
                                           MlirAttribute sFractalSize,
                                           MlirAttribute pad) {
   auto *c = unwrap(ctx);
+  auto compactMode =
+      wrap(mlir::pto::CompactModeAttr::get(c, mlir::pto::CompactMode::Null));
+  return mlirPTOTileBufConfigAttrGetWithCompactMode(
+      ctx, bLayout, sLayout, sFractalSize, pad, compactMode);
+}
+
+MlirAttribute mlirPTOTileBufConfigAttrGetWithCompactMode(
+    MlirContext ctx, MlirAttribute bLayout, MlirAttribute sLayout,
+    MlirAttribute sFractalSize, MlirAttribute pad, MlirAttribute compactMode) {
+  auto *c = unwrap(ctx);
   auto blA = toBLayoutAttr(c, unwrap(bLayout));
   auto slA = toSLayoutAttr(c, unwrap(sLayout));
   auto pvA = toPadValueAttr(c, unwrap(pad));
-  if (!blA || !slA || !pvA)
+  auto cmA = toCompactModeAttr(c, unwrap(compactMode));
+  if (!blA || !slA || !pvA || !cmA)
     return MlirAttribute{nullptr};
 
   auto sz = mlir::dyn_cast<mlir::IntegerAttr>(unwrap(sFractalSize));
   if (!sz || !sz.getType().isInteger(32))
     return MlirAttribute{nullptr};
 
-  return wrap(mlir::pto::TileBufConfigAttr::get(c, blA, slA, sz, pvA));
+  return wrap(mlir::pto::TileBufConfigAttr::get(c, blA, slA, sz, pvA, cmA));
 }
 
 MlirType mlirPTOGMTypeGet(MlirContext ctx, intptr_t rank, const int64_t *shape,

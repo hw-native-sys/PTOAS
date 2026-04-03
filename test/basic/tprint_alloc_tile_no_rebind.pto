@@ -13,7 +13,7 @@ module {
 }
 
 // CHECK-LABEL: __global__ AICORE void print_kernel() {
-// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> [[TILE:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[TILE:v[0-9]+]];
 // CHECK: TASSIGN([[TILE]], [[ADDR:v[0-9]+]]);
 // CHECK-NOT: TASSIGN(
 // CHECK-NOT: .data()

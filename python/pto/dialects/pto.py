@@ -44,6 +44,8 @@ SLayout = _pto_mod.SLayout
 SLayoutAttr = _pto_mod.SLayoutAttr
 PadValue = _pto_mod.PadValue
 PadValueAttr = _pto_mod.PadValueAttr
+CompactMode = _pto_mod.CompactMode
+CompactModeAttr = _pto_mod.CompactModeAttr
 RoundMode = _pto_mod.RoundMode
 RoundModeAttr = _pto_mod.RoundModeAttr
 CmpMode = _pto_mod.CmpMode
@@ -75,6 +77,7 @@ __all__ = [
     "BLayout","BLayoutAttr",
     "SLayout","SLayoutAttr",
     "PadValue","PadValueAttr",
+    "CompactMode", "CompactModeAttr",
     "RoundMode", "RoundModeAttr",
     "CmpMode", "CmpModeAttr",
     "PIPE", "PipeAttr",

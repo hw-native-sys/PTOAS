@@ -95,6 +95,11 @@ PYBIND11_MODULE(_pto, m) {
     .value("Max", mlir::pto::PadValue::Max)
     .value("Min", mlir::pto::PadValue::Min);
 
+    py::enum_<mlir::pto::CompactMode>(m, "CompactMode")
+    .value("Null", mlir::pto::CompactMode::Null)
+    .value("Normal", mlir::pto::CompactMode::Normal)
+    .value("RowPlusOne", mlir::pto::CompactMode::RowPlusOne);
+
     py::enum_<mlir::pto::RoundMode>(m, "RoundMode")
     .value("NONE", mlir::pto::RoundMode::NONE)
     .value("RINT", mlir::pto::RoundMode::RINT)
@@ -206,6 +211,19 @@ PYBIND11_MODULE(_pto, m) {
             "get",
             [](py::object cls, mlir::pto::PadValue value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOPadValueAttrGet(ctx, static_cast<int32_t>(value));
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls(a);
+            },
+            py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+
+    mlir_attribute_subclass(m, "CompactModeAttr",
+                            [](MlirAttribute a) -> bool {
+                            return mlirPTOAttrIsACompactModeAttr(a);
+                            })
+        .def_classmethod(
+            "get",
+            [](py::object cls, mlir::pto::CompactMode value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOCompactModeAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) return py::none();
             return cls(a);
             },
@@ -601,11 +619,25 @@ PYBIND11_MODULE(_pto, m) {
                 MlirAttribute slayout,
                 int32_t s_fractal_size,
                 MlirAttribute pad,
-                MlirContext ctx) -> py::object {
+                MlirContext ctx,
+                py::object compactModeObj) -> py::object {
                 MlirType i32 = mlirIntegerTypeGet(ctx, 32);
                 MlirAttribute sz = mlirIntegerAttrGet(i32, s_fractal_size);
-
-                MlirAttribute a = mlirPTOTileBufConfigAttrGet(ctx, blayout, slayout, sz, pad);
+                MlirAttribute compactMode = mlirPTOCompactModeAttrGet(
+                    ctx, static_cast<int32_t>(mlir::pto::CompactMode::Null));
+                if (!compactModeObj.is_none()) {
+                  if (py::isinstance<py::int_>(compactModeObj)) {
+                    compactMode = mlirPTOCompactModeAttrGet(
+                        ctx, compactModeObj.cast<int32_t>());
+                  } else if (py::hasattr(compactModeObj, "value")) {
+                    compactMode = mlirPTOCompactModeAttrGet(
+                        ctx, compactModeObj.attr("value").cast<int32_t>());
+                  } else {
+                    compactMode = compactModeObj.cast<MlirAttribute>();
+                  }
+                }
+                MlirAttribute a = mlirPTOTileBufConfigAttrGetWithCompactMode(
+                    ctx, blayout, slayout, sz, pad, compactMode);
                 if (mlirAttributeIsNull(a)) return py::none();
                 return cls(a);
             },
@@ -614,7 +646,8 @@ PYBIND11_MODULE(_pto, m) {
             py::arg("slayout"),
             py::arg("s_fractal_size"),
             py::arg("pad"),
-            py::arg("context") = py::none());
+            py::arg("context") = py::none(),
+            py::arg("compact_mode") = py::none());
 
     // ---- TileBufType ----
     mlir_type_subclass(m, "TileBufType",

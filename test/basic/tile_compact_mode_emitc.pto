@@ -1,0 +1,33 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+
+module {
+  func.func @tile_compact_mode_emitc() {
+    %default = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %compact = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                      compact=1>
+    %row_plus_one = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                      compact=2>
+    pto.tprint ins(%default : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16,
+                                            blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tprint ins(%compact : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16,
+                                            blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                                            compact=1>)
+    pto.tprint ins(%row_plus_one : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16,
+                                                  blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                                                  compact=2>)
+    return
+  }
+}
+
+// A3-DAG: memref.alloc() : memref<1x16xf16, strided<[16, 1]>, #pto.address_space<vec>>
+// A3-DAG: memref.alloc() : memref<1x16xf16, strided<[16, 1]>, #pto.address_space<vec>>
+// A3-DAG: memref.alloc() : memref<1x16xf16, strided<[17, 1]>, #pto.address_space<vec>>
+// A3: Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DEFAULT:v[0-9]+]];
+// A3: Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal> [[COMPACT:v[0-9]+]];
+// A3: Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::RowPlusOne> [[ROWP1:v[0-9]+]];
