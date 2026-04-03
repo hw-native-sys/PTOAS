@@ -50,9 +50,16 @@ module attributes {pto.target_arch = "a5"} {
     pto.tload ins(%in2_part : !pto.partition_tensor_view<16x128xf32>) outs(%src2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 
     // Non-identity TMOV triplet under investigation.
+    // Force full serialization around each TMOV for board-side diagnosis.
+    pto.barrier <PIPE_ALL>
     pto.tmov ins(%src0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%dst0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    pto.barrier <PIPE_ALL>
+    pto.barrier <PIPE_ALL>
     pto.tmov ins(%src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%dst1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    pto.barrier <PIPE_ALL>
+    pto.barrier <PIPE_ALL>
     pto.tmov ins(%src2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.barrier <PIPE_ALL>
 
     %out0_part = pto.partition_view %out0_view, offsets = [%c0, %c0], sizes = [%c16, %c1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
     %out1_part = pto.partition_view %out1_view, offsets = [%c0, %c0], sizes = [%c16, %c1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
