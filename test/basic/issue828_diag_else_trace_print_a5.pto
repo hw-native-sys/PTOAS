@@ -1,5 +1,6 @@
 // ELSE-only diagnostic variant from issue #828 (force branch condition false).
-// This case inserts print checkpoints to narrow down which op triggers runtime failure.
+// This case inserts scalar print checkpoints to narrow down which op triggers runtime failure.
+// Note: avoid pto.tprint here because some board CANN versions do not provide TPRINT_IMPL.
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync %s > /dev/null
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync --disable-identity-tmov-cleanup %s > /dev/null
 
@@ -64,7 +65,6 @@ module attributes {pto.target_arch = "a5"} {
     pto.print ins("E01_B_tmax", %dbg0 : i32)
     pto.tmax ins(%mi_new__rm_a0_tmp_v0, %mi_new__rm_a1_tmp_v1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%mi_new__row_major_tmp_v2 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.print ins("E01_A_tmax", %dbg0 : i32)
-    pto.tprint ins(%mi_new__row_major_tmp_v2 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %mi_new__tile = pto.alloc_tile addr = %c16640 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
     %t__rm_a0_tmp_v3 = pto.alloc_tile addr = %c192 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %t__rm_a1_tmp_v4 = pto.alloc_tile addr = %c16640 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
@@ -78,7 +78,6 @@ module attributes {pto.target_arch = "a5"} {
     pto.print ins("E03_B_texp0", %dbg0 : i32)
     pto.texp ins(%alpha__rm_a0_tmp_v6 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%alpha__row_major_tmp_v7 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.print ins("E03_A_texp0", %dbg0 : i32)
-    pto.tprint ins(%alpha__row_major_tmp_v7 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %alpha__tile = pto.alloc_tile addr = %c16704 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
     %t__rm_a0_tmp_v8 = pto.alloc_tile addr = %c64 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %t__rm_a1_tmp_v9 = pto.alloc_tile addr = %c16640 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
@@ -92,7 +91,6 @@ module attributes {pto.target_arch = "a5"} {
     pto.print ins("E05_B_texp1", %dbg0 : i32)
     pto.texp ins(%beta__rm_a0_tmp_v11 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%beta__row_major_tmp_v12 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.print ins("E05_A_texp1", %dbg0 : i32)
-    pto.tprint ins(%beta__row_major_tmp_v12 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %beta__tile = pto.alloc_tile addr = %c16768 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
     %t__rm_a0_tmp_v13 = pto.alloc_tile addr = %c16704 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %t__rm_a1_tmp_v14 = pto.alloc_tile addr = %c128 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
