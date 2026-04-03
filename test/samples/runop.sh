@@ -213,6 +213,12 @@ process_one_dir() {
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a3"
       continue
     fi
+    if [[ ( "$base" == "test_tmov_col_major_16x1_align_a5" || \
+            "$base" == "test_tmov_row_major_1x16_control_a5" ) && \
+          "${target_arch_lc}" != "a5" ]]; then
+      echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
+      continue
+    fi
 
     # Some samples are expected to fail depending on the selected ptoas flags.
     #
@@ -496,6 +502,34 @@ process_one_dir() {
       fi
       if grep -Fq "ffts_cross_core_sync(" "$cpp" || grep -Fq "wait_flag_dev(" "$cpp"; then
         echo -e "${A}(${base}.py)\tFAIL\tunexpected A3-style inter-core sync call in A5 output"
+        overall=1
+        continue
+      fi
+    fi
+
+    # A5 TMOV alignment repro/control samples:
+    # - col_major 16x1 should preserve TMOV + ColMajor tile shape in emitted C++
+    # - row_major 1x16 control should preserve TMOV + RowMajor tile shape
+    if [[ "$base" == "test_tmov_col_major_16x1_align_a5" ]]; then
+      if ! grep -Eq "\\bTMOV\\(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TMOV() in col_major repro sample"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "Tile<TileType::Vec, float, 16, 1, BLayout::ColMajor" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing 16x1 ColMajor tile in col_major repro sample"
+        overall=1
+        continue
+      fi
+    fi
+    if [[ "$base" == "test_tmov_row_major_1x16_control_a5" ]]; then
+      if ! grep -Eq "\\bTMOV\\(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TMOV() in row_major control sample"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing 1x16 RowMajor tile in row_major control sample"
         overall=1
         continue
       fi
