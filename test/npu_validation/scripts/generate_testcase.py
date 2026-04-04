@@ -86,6 +86,29 @@ UNSTABLE_A3_CUSTOM_GOLDEN_CASES = frozenset({
 })
 
 
+def _get_case_scalar_overrides(testcase: str, params):
+    scalar_params = [p for p in params if p.get("kind") == "scalar"]
+
+    # issue#828 guard: the target path is the `arg6 == 0` branch.
+    # Keep default behavior for all other cases.
+    if testcase == "issue828_softmax_rescale_incore_1_a5" and len(scalar_params) == 1:
+        return {scalar_params[0]["name"]: "0"}
+
+    return {}
+
+
+def _get_case_scalar_sweep(testcase: str, params):
+    scalar_params = [p for p in params if p.get("kind") == "scalar"]
+
+    # Run issue#828 twice in one executable:
+    #   1) arg6 == 0 => if branch
+    #   2) arg6 == 1 => else branch
+    if testcase == "issue828_softmax_rescale_incore_1_a5" and len(scalar_params) == 1:
+        return [(scalar_params[0]["name"], "0"), (scalar_params[0]["name"], "1")]
+
+    return []
+
+
 def _parse_shape(text: str):
     match = re.search(r"Shape<(\d+)\s*,\s*(\d+)>", text)
     if match:
@@ -1137,10 +1160,15 @@ def generate_testcase(
                 f"    size_t fileSize_{p['name']} = elemCount_{p['name']} * sizeof({p['host_type']});"
             )
 
+    scalar_overrides = _get_case_scalar_overrides(testcase, params)
     for p in params:
         if p["kind"] != "scalar":
             continue
         t = p["host_type"]
+        override = scalar_overrides.get(p["name"])
+        if override is not None:
+            param_decls_lines.append(f"    {t} {p['name']} = {override};")
+            continue
         # Some PTO-ISA APIs use small POD structs as scalar parameters.
         # Example: pto::MrgSortExecutedNumList (used by TMRGSORT multi-list variants).
         if t.endswith("MrgSortExecutedNumList"):
@@ -1236,6 +1264,18 @@ def generate_testcase(
         # header here instead of `runtime/rt.h` to avoid environment-specific
         # include path issues on some board images.
         runtime_rt_include = '#include <stdint.h>\n#include <ccelib/common/runtime.h>'
+    launch_call = f"    {launch_name}({', '.join(launch_call_args + ['stream'])});"
+    scalar_sweep = _get_case_scalar_sweep(testcase, params)
+    if scalar_sweep:
+        launch_lines = [
+            "    // Branch coverage for issue828: run both if/else paths in one test.",
+        ]
+        for scalar_name, scalar_value in scalar_sweep:
+            launch_lines.append(f"    {scalar_name} = {scalar_value};")
+            launch_lines.append(f"    {launch_name}({', '.join(launch_call_args + ['stream'])});")
+            launch_lines.append("    ACL_CHECK(aclrtSynchronizeStream(stream));")
+        launch_call = "\n".join(launch_lines)
+
     main_cpp = (
         template
         .replace("@RUNTIME_RT_INCLUDE@", runtime_rt_include)
@@ -1252,10 +1292,7 @@ def generate_testcase(
         .replace("@INIT_RUNTIME_PTRS@", "\n".join(init_runtime_ptrs))
         .replace("@READ_INPUTS@", "\n".join(read_inputs))
         .replace("@COPY_TO_DEVICE@", "\n".join(copy_inputs))
-        .replace(
-            "@LAUNCH_CALL@",
-            f"    {launch_name}({', '.join(launch_call_args + ['stream'])});",
-        )
+        .replace("@LAUNCH_CALL@", launch_call)
         .replace("@COPY_BACK@", "\n".join(output_copy_back))
         .replace("@WRITE_OUTPUT@", "\n".join(output_write))
         .replace("@FREE_DEVICE@", "\n".join(free_device))

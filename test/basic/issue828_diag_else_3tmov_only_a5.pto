@@ -1,0 +1,73 @@
+// Diagnostic case B (ELSE residual 3 TMOV only):
+// Goal: isolate the 3 non-identity TMOVs that remain after identity cleanup.
+// Suggested board runs:
+//   /run A5 issue828_diag_else_3tmov_only_a5 --pto-level=level3
+//   /run A5 issue828_diag_else_3tmov_only_a5 --pto-level=level3 --disable-identity-tmov-cleanup
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync %s > /dev/null
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync --disable-identity-tmov-cleanup %s > /dev/null
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @issue828_diag_else_3tmov_only_a5(
+      %in0: !pto.ptr<f32>, %in1: !pto.ptr<f32>, %in2: !pto.ptr<f32>,
+      %out0: !pto.ptr<f32>, %out1: !pto.ptr<f32>, %out2: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0i = arith.constant 0 : i64
+    %c64 = arith.constant 64 : i64
+    %c256 = arith.constant 256 : i64
+    %c8448 = arith.constant 8448 : i64
+    %c16640 = arith.constant 16640 : i64
+    %c16832 = arith.constant 16832 : i64
+
+    %c16 = arith.constant 16 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+
+    %in0_view = pto.make_tensor_view %in0, shape = [%c16, %c1], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+    %in1_view = pto.make_tensor_view %in1, shape = [%c16, %c1], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+    %in2_view = pto.make_tensor_view %in2, shape = [%c16, %c128], strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+
+    %out0_view = pto.make_tensor_view %out0, shape = [%c16, %c1], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+    %out1_view = pto.make_tensor_view %out1, shape = [%c16, %c1], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+    %out2_view = pto.make_tensor_view %out2, shape = [%c16, %c128], strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+
+    // Source addresses mirror residual else-path producers.
+    %src0 = pto.alloc_tile addr = %c16832 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile addr = %c16640 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %src2 = pto.alloc_tile addr = %c256 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    // Destination addresses mirror phi/result tiles in issue828.
+    %dst0 = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst1 = pto.alloc_tile addr = %c64 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst2 = pto.alloc_tile addr = %c8448 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    %in0_part = pto.partition_view %in0_view, offsets = [%c0, %c0], sizes = [%c16, %c1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %in1_part = pto.partition_view %in1_view, offsets = [%c0, %c0], sizes = [%c16, %c1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %in2_part = pto.partition_view %in2_view, offsets = [%c0, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+
+    pto.tload ins(%in0_part : !pto.partition_tensor_view<16x1xf32>) outs(%src0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%in1_part : !pto.partition_tensor_view<16x1xf32>) outs(%src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%in2_part : !pto.partition_tensor_view<16x128xf32>) outs(%src2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    // Non-identity TMOV triplet under investigation.
+    // Force full serialization around each TMOV for board-side diagnosis.
+    pto.barrier <PIPE_ALL>
+    pto.tmov ins(%src0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%dst0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    pto.barrier <PIPE_ALL>
+    pto.barrier <PIPE_ALL>
+    pto.tmov ins(%src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%dst1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    pto.barrier <PIPE_ALL>
+    pto.barrier <PIPE_ALL>
+    pto.tmov ins(%src2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.barrier <PIPE_ALL>
+
+    %out0_part = pto.partition_view %out0_view, offsets = [%c0, %c0], sizes = [%c16, %c1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %out1_part = pto.partition_view %out1_view, offsets = [%c0, %c0], sizes = [%c16, %c1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %out2_part = pto.partition_view %out2_view, offsets = [%c0, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+
+    pto.tstore ins(%dst0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%out0_part : !pto.partition_tensor_view<16x1xf32>)
+    pto.tstore ins(%dst1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%out1_part : !pto.partition_tensor_view<16x1xf32>)
+    pto.tstore ins(%dst2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out2_part : !pto.partition_tensor_view<16x128xf32>)
+    return
+  }
+}

@@ -1,0 +1,14 @@
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync %s | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend950"} {
+  func.func @identity_tmov_dynamic_addr_keep_a5(
+      %src: memref<?xi32, #pto.address_space<vec>>,
+      %dst: memref<?xi32, #pto.address_space<vec>>) {
+    pto.tmov ins(%src : memref<?xi32, #pto.address_space<vec>>)
+             outs(%dst : memref<?xi32, #pto.address_space<vec>>)
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void identity_tmov_dynamic_addr_keep_a5(
+// CHECK: TMOV(
