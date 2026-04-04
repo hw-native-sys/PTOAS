@@ -1,0 +1,12 @@
+module {
+  // A5 repro case: TMOV on a 16x1 f32 col_major view.
+  // Layout stride is [1, 16], i.e. RowStride=1.
+  // On A5 TMOV_V2V this tends to hit unaligned vector accesses at i>0.
+  func.func @test_tmov_col_major_16x1_align_a5() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    pto.tmov ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
