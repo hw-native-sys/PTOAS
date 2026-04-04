@@ -1,0 +1,54 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# Adapted from hw-native-sys/pypto for this repository.
+# Project-specific hooks from pypto are intentionally omitted here when the
+# supporting scripts or config files do not exist in PTOAS yet.
+
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-added-large-files
+        exclude: ^docs/images/
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v21.1.0
+    hooks:
+      - id: clang-format
+        types_or: [c++, c]
+        files: ^(include/|lib/|tools/).*\.(h|hpp|c|cc|cpp)$
+        exclude: ^tools/ptobc/generated/
+
+  - repo: https://github.com/cpplint/cpplint
+    rev: 2.0.0
+    hooks:
+      - id: cpplint
+        files: ^(include/|lib/|tools/).*\.(h|hpp|c|cc|cpp)$
+        exclude: ^tools/ptobc/generated/
+        args:
+          - --root=.
+          - --linelength=110
+          - --filter=-whitespace/parens,-whitespace/indent_namespace,-runtime/references
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.8
+    hooks:
+      - id: ruff-check
+        files: ^(\.github/scripts/|python/).*\.(py|pyi)$
+        args: [--fix]
+      - id: ruff-format
+        files: ^(\.github/scripts/|python/).*\.(py|pyi)$
+        args: [--line-length=110]
