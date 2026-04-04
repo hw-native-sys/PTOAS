@@ -1456,6 +1456,95 @@ pto.tgemv.bias ins(%a, %b, %bias : !pto.tile_buf<...>, !pto.tile_buf<...>, !pto.
 
 ---
 
+##### `pto.tgemv.mx` - Mixed-Precision Matrix-Vector Multiply
+
+**Summary:** Mixed-precision GEMV with explicit A/B scaling tiles.
+
+**Semantics:**
+
+```
+dst = gemv(a, b)   // quantization/mixed-precision behavior is target-defined
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `a` | `pto.tile_buf` | Matrix tile (`loc=left`) |
+| `a_scale` | `pto.tile_buf` | Scale tile associated with `a` |
+| `b` | `pto.tile_buf` | Vector tile (`loc=right`) |
+| `b_scale` | `pto.tile_buf` | Scale tile associated with `b` |
+| `dst` | `pto.tile_buf` | Destination accumulator tile (`loc=acc`) |
+
+**Results:** None. Writes into `dst` via DPS pattern.
+
+**Constraints & Verification:**
+
+- `a/b/dst` reuse the same GEMV shape/location checks as `pto.tgemv`.
+- `a_scale` and `b_scale` must be valid tile buffers.
+
+**Hardware Mapping:**
+
+- Executes on the **Matrix pipeline** (`PIPE_M`)
+
+**Basic Example:**
+
+```mlir
+pto.tgemv.mx ins(%a, %a_scale, %b, %b_scale : !pto.tile_buf<...>, !pto.tile_buf<...>,
+                                            !pto.tile_buf<...>, !pto.tile_buf<...>)
+             outs(%c : !pto.tile_buf<...>)
+```
+
+---
+
+##### `pto.tgemv.mx.acc` - Mixed-Precision GEMV with Accumulation
+
+**Summary:** Mixed-precision GEMV accumulation form using scale tiles.
+
+**Semantics:**
+
+```
+dst = c_in + gemv(a, b)
+```
+
+**Arguments:** `c_in, a, a_scale, b, b_scale, dst`
+
+**Hardware Mapping:** Matrix pipeline (`PIPE_M`)
+
+**Basic Example:**
+
+```mlir
+pto.tgemv.mx.acc ins(%c_in, %a, %a_scale, %b, %b_scale : !pto.tile_buf<...>, !pto.tile_buf<...>,
+                                                        !pto.tile_buf<...>, !pto.tile_buf<...>, !pto.tile_buf<...>)
+                 outs(%c_out : !pto.tile_buf<...>)
+```
+
+---
+
+##### `pto.tgemv.mx.bias` - Mixed-Precision GEMV with Bias
+
+**Summary:** Mixed-precision GEMV bias form using scale tiles.
+
+**Semantics:**
+
+```
+dst = gemv(a, b) + bias
+```
+
+**Arguments:** `a, a_scale, b, b_scale, bias, dst`
+
+**Hardware Mapping:** Matrix pipeline (`PIPE_M`)
+
+**Basic Example:**
+
+```mlir
+pto.tgemv.mx.bias ins(%a, %a_scale, %b, %b_scale, %bias : !pto.tile_buf<...>, !pto.tile_buf<...>,
+                                                            !pto.tile_buf<...>, !pto.tile_buf<...>, !pto.tile_buf<...>)
+                  outs(%c : !pto.tile_buf<...>)
+```
+
+---
+
 ### 4.5 Vector Arithmetic Operations
 
 All vector arithmetic operations execute on the **Vector pipeline** (`PIPE_V`) and use `ins`/`outs` with tile buffers in the **VEC (UB)** memory space.

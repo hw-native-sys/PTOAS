@@ -940,6 +940,15 @@ int main(int argc, char **argv) {
 
   llvm::cl::SetVersionPrinter(printPTOASVersion);
 
+  bool cliArchSpecified = false;
+  for (int i = 1; i < argc; ++i) {
+    llvm::StringRef arg(argv[i]);
+    if (arg == "--pto-arch" || arg.starts_with("--pto-arch=")) {
+      cliArchSpecified = true;
+      break;
+    }
+  }
+
   // Parse command line options
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
 
@@ -964,18 +973,37 @@ int main(int argc, char **argv) {
   context.getOrLoadDialect<affine::AffineDialect>();
   context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
 
-  std::string arch = ptoTargetArch;
-  for (char &c : arch)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (arch != "a3" && arch != "a5") {
-    llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
-                 << "'. Expected 'a3' or 'a5'.\n";
-    return 1;
-  }
-
   OwningOpRef<ModuleOp> module;
   llvm::StringRef buf = (*fileOrErr)->getBuffer();
   const bool isPTOBC = (buf.size() >= 6 && std::memcmp(buf.data(), "PTOBC\0", 6) == 0);
+  auto normalizeArch = [](llvm::StringRef archValue) {
+    std::string normalized = archValue.str();
+    for (char &c : normalized)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return normalized;
+  };
+  auto detectTextualModuleArch = [&](llvm::StringRef text) -> std::optional<std::string> {
+    llvm::SmallVector<llvm::StringRef, 4> matches;
+    llvm::Regex archRegex(
+        R"ptoarch("?(pto\.target_arch)"?[[:space:]]*=[[:space:]]*"([[:alpha:][:digit:]_]+)")ptoarch");
+    if (!archRegex.match(text, &matches) || matches.size() < 3)
+      return std::nullopt;
+    return normalizeArch(matches[2]);
+  };
+
+  std::string arch = normalizeArch(ptoTargetArch);
+  if (cliArchSpecified) {
+    if (arch != "a3" && arch != "a5") {
+      llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
+                   << "'. Expected 'a3' or 'a5'.\n";
+      return 1;
+    }
+  } else if (!isPTOBC) {
+    if (auto detectedArch = detectTextualModuleArch(buf))
+      arch = *detectedArch;
+  }
+  if (arch != "a3" && arch != "a5")
+    arch = "a3";
 
   if (isPTOBC) {
     // Decode PTO bytecode directly into an MLIR module.
@@ -1008,10 +1036,13 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Set target arch on the module from CLI before any passes run.
-  // This is the single source of truth — input IR does not need pto.target_arch.
-  module->getOperation()->setAttr("pto.target_arch",
-                                  mlir::StringAttr::get(&context, arch));
+  // If the CLI explicitly requested an arch, it overrides the input module.
+  // Otherwise, preserve the textual module's arch when present and only fall
+  // back to the effective default.
+  if (cliArchSpecified || !module->getOperation()->hasAttr("pto.target_arch")) {
+    module->getOperation()->setAttr("pto.target_arch",
+                                    mlir::StringAttr::get(&context, arch));
+  }
 
   PTOBuildLevel effectiveLevel = defaultBuildLevel();
   if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {

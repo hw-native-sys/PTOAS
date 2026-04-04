@@ -261,7 +261,7 @@ jobs:
       # Temporary CI gate: skip cases that still error/flap on the remote NPU.
       # Update this list as we fix the underlying issues.
       DEFAULT_SKIP_CASES: >-
-        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp
+        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp,Gemvmx
     steps:
       - name: Resolve validation parameters
         shell: bash

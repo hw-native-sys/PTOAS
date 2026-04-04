@@ -241,6 +241,21 @@ while IFS= read -r -d '' cpp; do
     log "SKIP: ${testcase} (SKIP_CASES)"
     continue
   fi
+  if [[ "${testcase}" == "gemvmx" ]]; then
+    soc_lc="$(printf '%s' "${SOC_VERSION:-}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$soc_lc" != *"a5"* && "$soc_lc" != *"950"* ]]; then
+      skip_count=$((skip_count + 1))
+      printf "%s\tSKIP\t%s\trequires A5 (set SOC_VERSION to A5/950)\n" "${testcase}" "${STAGE}" >> "${RESULTS_TSV}"
+      log "SKIP: ${testcase} (requires A5 SOC_VERSION)"
+      continue
+    fi
+    if [[ "${PTOAS_BOARD_IS_A3:-0}" == "1" ]]; then
+      skip_count=$((skip_count + 1))
+      printf "%s\tSKIP\t%s\trequires A5 board\n" "${testcase}" "${STAGE}" >> "${RESULTS_TSV}"
+      log "SKIP: ${testcase} (requires A5 board)"
+      continue
+    fi
+  fi
 
   echo
   log "=== CASE: ${cpp} ==="

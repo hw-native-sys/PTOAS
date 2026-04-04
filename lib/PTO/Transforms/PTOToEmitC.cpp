@@ -152,6 +152,51 @@ static std::string layoutToEmitCString(mlir::pto::Layout layout) {
   return "pto::Layout::ND";
 }
 
+static std::string getEmitCScalarTypeToken(Type elemTy) {
+  if (elemTy.isFloat8E4M3() || elemTy.isFloat8E4M3FN() ||
+      elemTy.isFloat8E4M3FNUZ() || elemTy.isFloat8E4M3B11FNUZ())
+    return "float8_e4m3_t";
+  if (elemTy.isFloat8E5M2() || elemTy.isFloat8E5M2FNUZ())
+    return "float8_e5m2_t";
+  if (elemTy.isF16())
+    return "half";
+  if (elemTy.isBF16())
+    return "bfloat16_t";
+  if (elemTy.isF32())
+    return "float";
+  if (elemTy.isF64())
+    return "double";
+  if (elemTy.isInteger(8))
+    return (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8)) ? "int8_t"
+                                                                       : "uint8_t";
+  if (elemTy.isInteger(16))
+    return (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
+               ? "int16_t"
+               : "uint16_t";
+  if (elemTy.isInteger(32))
+    return (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
+               ? "int32_t"
+               : "uint32_t";
+  if (elemTy.isInteger(64))
+    return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
+  return "float";
+}
+
+static int64_t getEmitCScalarByteWidth(Type elemTy) {
+  if (elemTy.isFloat8E4M3() || elemTy.isFloat8E4M3FN() ||
+      elemTy.isFloat8E4M3FNUZ() || elemTy.isFloat8E4M3B11FNUZ() ||
+      elemTy.isFloat8E5M2() || elemTy.isFloat8E5M2FNUZ() ||
+      elemTy.isInteger(8))
+    return 1;
+  if (elemTy.isF16() || elemTy.isBF16() || elemTy.isInteger(16))
+    return 2;
+  if (elemTy.isF32() || elemTy.isInteger(32))
+    return 4;
+  if (elemTy.isF64() || elemTy.isInteger(64))
+    return 8;
+  return 4;
+}
+
 //===----------------------------------------------------------------------===//
 // Type Converter
 //===----------------------------------------------------------------------===//
@@ -163,6 +208,11 @@ public:
     // 1. 基本类型 (f32, i32, index)
     // ---------------------------------------------------------
     addConversion([Ctx](FloatType type) -> Type {
+      if (type.isFloat8E4M3() || type.isFloat8E4M3FN() ||
+          type.isFloat8E4M3FNUZ() || type.isFloat8E4M3B11FNUZ())
+        return emitc::OpaqueType::get(Ctx, "float8_e4m3_t");
+      if (type.isFloat8E5M2() || type.isFloat8E5M2FNUZ())
+        return emitc::OpaqueType::get(Ctx, "float8_e5m2_t");
       if (type.isF32()) return emitc::OpaqueType::get(Ctx, "float");
       if (type.isF16()) return emitc::OpaqueType::get(Ctx, "half");
       if (type.isBF16()) return emitc::OpaqueType::get(Ctx, "bfloat16_t");
@@ -3027,36 +3077,6 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
   }
 };
 
-//===----------------------------------------------------------------------===//
-// Helper: build GlobalTensor from a static MemRef (for TLOAD/TSTORE)
-//===----------------------------------------------------------------------===//
-
-static std::string getElemTypeStringForGT(Type elemTy) {
-  if (elemTy.isF16()) return "half";
-  if (elemTy.isBF16()) return "bfloat16_t";
-  if (elemTy.isF32()) return "float";
-  if (elemTy.isF64()) return "double";
-  if (elemTy.isInteger(8)) {
-    if (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
-      return "int8_t";
-    return "uint8_t";
-  }
-  if (elemTy.isInteger(16)) {
-    if (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
-      return "int16_t";
-    return "uint16_t";
-  }
-  if (elemTy.isInteger(32)) {
-    if (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
-      return "int32_t";
-    return "uint32_t";
-  }
-  if (elemTy.isInteger(64)) {
-    return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
-  }
-  return "float";
-}
-
 static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
                                          Location loc, Value basePtr,
                                          MemRefType mrTy,
@@ -3104,7 +3124,7 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   std::string strideTypeName = "GTStride" + suffix;
   std::string gtTypeName     = "GT"       + suffix;
 
-  std::string elemTypeStr = getElemTypeStringForGT(mrTy.getElementType());
+  std::string elemTypeStr = getEmitCScalarTypeToken(mrTy.getElementType());
 
   SmallVector<std::string> shapeParamsVec;
   SmallVector<std::string> strideParamsVec;
@@ -3320,14 +3340,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     TileRole role = inferRole(op);
 
     // 2. 类型字符串生成 (elemTypeStr, dimStr)
-    std::string elemTypeStr = "T";
-    if (elemType.isF16()) elemTypeStr = "half";
-    else if (elemType.isBF16()) elemTypeStr = "bfloat16_t";
-    else if (elemType.isF32()) elemTypeStr = "float";
-    else if (elemType.isInteger(8)) elemTypeStr = cast<IntegerType>(elemType).isUnsigned() ? "uint8_t" : "int8_t";
-    else if (elemType.isInteger(16)) elemTypeStr = cast<IntegerType>(elemType).isUnsigned() ? "uint16_t" : "int16_t";
-    else if (elemType.isInteger(32)) elemTypeStr = cast<IntegerType>(elemType).isUnsigned() ? "uint32_t" : "int32_t";
-    else if (elemType.isInteger(64)) elemTypeStr = cast<IntegerType>(elemType).isUnsigned() ? "uint64_t" : "int64_t";
+    std::string elemTypeStr = getEmitCScalarTypeToken(elemType);
 
     std::string dimStr;
     auto dimToString = [](int64_t dim, const char* symbol) -> std::string {
@@ -5116,30 +5129,9 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     pto::AddressSpace as = asAttr.getAddressSpace();
 
     // Element type token.
-    std::string elemTok = "float";
     Type elemTy = resMrTy.getElementType();
-    int64_t elemBytes = 4;
-    if (elemTy.isF16())
-      elemBytes = 2,
-      elemTok = "half";
-    else if (elemTy.isBF16())
-      elemBytes = 2,
-      elemTok = "bfloat16_t";
-    else if (elemTy.isF32())
-      elemBytes = 4,
-      elemTok = "float";
-    else if (elemTy.isInteger(8))
-      elemBytes = 1,
-      elemTok = cast<IntegerType>(elemTy).isUnsigned() ? "uint8_t" : "int8_t";
-    else if (elemTy.isInteger(16))
-      elemBytes = 2,
-      elemTok = cast<IntegerType>(elemTy).isUnsigned() ? "uint16_t" : "int16_t";
-    else if (elemTy.isInteger(32))
-      elemBytes = 4,
-      elemTok = cast<IntegerType>(elemTy).isUnsigned() ? "uint32_t" : "int32_t";
-    else if (elemTy.isInteger(64))
-      elemBytes = 8,
-      elemTok = cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
+    std::string elemTok = getEmitCScalarTypeToken(elemTy);
+    int64_t elemBytes = getEmitCScalarByteWidth(elemTy);
 
     // Tile role.
     const char *roleTok = "TileType::Vec";
@@ -7160,6 +7152,18 @@ static void replaceOrEraseWithOpaqueCall(Operation *op,
     rewriter.replaceOp(op, call.getResults());
 }
 
+static void replaceOrEraseWithOpaqueCallAndReturnDst(Operation *op, Value dst,
+                                                     StringRef callee,
+                                                     ArrayRef<Value> args,
+                                                     ConversionPatternRewriter &rewriter) {
+  rewriter.create<emitc::CallOpaqueOp>(
+      op->getLoc(), TypeRange{}, callee, ArrayAttr{}, ArrayAttr{}, ValueRange(args));
+  if (op->getNumResults() == 1)
+    rewriter.replaceOp(op, dst);
+  else
+    rewriter.eraseOp(op);
+}
+
 // ---------- TOp ----------
 struct PTOTGemvBiasToTGEMV_BIAS
     : public OpConversionPattern<pto::TGemvBiasOp> {
@@ -7174,6 +7178,62 @@ struct PTOTGemvBiasToTGEMV_BIAS
 
     replaceOrEraseWithOpaqueCall(op.getOperation(), "TGEMV_BIAS",
                                 {dst, a, b, bias}, rewriter);
+    return success();
+  }
+};
+
+struct PTOTGemvMXToTGEMV_MX
+    : public OpConversionPattern<pto::TGemvMxOp> {
+  using OpConversionPattern<pto::TGemvMxOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TGemvMxOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value a       = peelUnrealized(adaptor.getA());
+    Value aScale  = peelUnrealized(adaptor.getAScale());
+    Value b       = peelUnrealized(adaptor.getB());
+    Value bScale  = peelUnrealized(adaptor.getBScale());
+    Value dst     = peelUnrealized(adaptor.getDst());
+
+    replaceOrEraseWithOpaqueCallAndReturnDst(op.getOperation(), dst, "TGEMV_MX",
+                                             {dst, a, aScale, b, bScale}, rewriter);
+    return success();
+  }
+};
+
+struct PTOTGemvMXAccToTGEMV_MX
+    : public OpConversionPattern<pto::TGemvMxAccOp> {
+  using OpConversionPattern<pto::TGemvMxAccOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TGemvMxAccOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value cIn     = peelUnrealized(adaptor.getCIn());
+    Value a       = peelUnrealized(adaptor.getA());
+    Value aScale  = peelUnrealized(adaptor.getAScale());
+    Value b       = peelUnrealized(adaptor.getB());
+    Value bScale  = peelUnrealized(adaptor.getBScale());
+    Value dst     = peelUnrealized(adaptor.getDst());
+
+    replaceOrEraseWithOpaqueCallAndReturnDst(op.getOperation(), dst, "TGEMV_MX",
+                                             {dst, cIn, a, aScale, b, bScale}, rewriter);
+    return success();
+  }
+};
+
+struct PTOTGemvMXBiasToTGEMV_MX
+    : public OpConversionPattern<pto::TGemvMxBiasOp> {
+  using OpConversionPattern<pto::TGemvMxBiasOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TGemvMxBiasOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value a       = peelUnrealized(adaptor.getA());
+    Value aScale  = peelUnrealized(adaptor.getAScale());
+    Value b       = peelUnrealized(adaptor.getB());
+    Value bScale  = peelUnrealized(adaptor.getBScale());
+    Value bias    = peelUnrealized(adaptor.getBias());
+    Value dst     = peelUnrealized(adaptor.getDst());
+
+    replaceOrEraseWithOpaqueCallAndReturnDst(op.getOperation(), dst, "TGEMV_MX",
+                                             {dst, a, aScale, b, bScale, bias}, rewriter);
     return success();
   }
 };
@@ -8253,33 +8313,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     };
 
     auto emitElemTypeToString = [&](Type elemTy) -> std::string {
-      if (elemTy.isF16())
-        return "half";
-      if (elemTy.isBF16())
-        return "bfloat16_t";
-      if (elemTy.isF32())
-        return "float";
-      if (elemTy.isF64())
-        return "double";
-      if (elemTy.isInteger(8)) {
-        if (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
-          return "int8_t";
-        return "uint8_t";
-      }
-      if (elemTy.isInteger(16)) {
-        if (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
-          return "int16_t";
-        return "uint16_t";
-      }
-      if (elemTy.isInteger(32)) {
-        if (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
-          return "int32_t";
-        return "uint32_t";
-      }
-      if (elemTy.isInteger(64)) {
-        return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
-      }
-      return "float";
+      return getEmitCScalarTypeToken(elemTy);
     };
 
     auto buildIntegralAddress = [&](Value sourceValue) -> FailureOr<Value> {
@@ -9174,6 +9208,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
     PTOTMatmulMXAccToTMATMUL_MX_ACC,
     PTOTMatmulMXBiasToTMATMUL_MX_BIAS,
     PTOTGemvBiasToTGEMV_BIAS,
+    PTOTGemvMXToTGEMV_MX,
+    PTOTGemvMXAccToTGEMV_MX,
+    PTOTGemvMXBiasToTGEMV_MX,
     PTOBarrierToEmitC
   >(typeConverter, ctx);
 

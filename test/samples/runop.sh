@@ -235,7 +235,6 @@ process_one_dir() {
         continue
       fi
     fi
-
     # Inter-core sync regression samples are arch-specific.
     if [[ "$base" == "test_intercore_sync_a5" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
@@ -250,6 +249,10 @@ process_one_dir() {
       continue
     fi
     if [[ "$base" == "test_intercore_sync_a5_ptoisa_vec" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
+      echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
+      continue
+    fi
+    if [[ "$base" == "gemvmx" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
       continue
     fi

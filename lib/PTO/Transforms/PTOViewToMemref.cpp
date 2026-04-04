@@ -1516,6 +1516,41 @@ struct PTOViewToMemrefPass
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
 
+      // --- TGemvMxOp [A, AScale, B, BScale, Dst] ---
+      SmallVector<mlir::pto::TGemvMxOp , 8> gemvMxs;
+      func.walk([&](mlir::pto::TGemvMxOp  op) { gemvMxs.push_back(op); });
+      for (auto op : gemvMxs) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::TGemvMxOp>(
+          op, TypeRange{},
+          op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4));
+      }
+
+      // --- TGemvMxAccOp [CIn, A, AScale, B, BScale, Dst] ---
+      SmallVector<mlir::pto::TGemvMxAccOp , 8> gemvMxAccs;
+      func.walk([&](mlir::pto::TGemvMxAccOp  op) { gemvMxAccs.push_back(op); });
+      for (auto op : gemvMxAccs) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::TGemvMxAccOp>(
+          op, TypeRange{},
+          op->getOperand(0), op->getOperand(1), op->getOperand(2),
+          op->getOperand(3), op->getOperand(4), op->getOperand(5));
+      }
+
+      // --- TGemvMxBiasOp [A, AScale, B, BScale, Bias, Dst] ---
+      SmallVector<mlir::pto::TGemvMxBiasOp , 8> gemvMxBiass;
+      func.walk([&](mlir::pto::TGemvMxBiasOp  op) { gemvMxBiass.push_back(op); });
+      for (auto op : gemvMxBiass) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::TGemvMxBiasOp>(
+          op, TypeRange{},
+          op->getOperand(0), op->getOperand(1), op->getOperand(2),
+          op->getOperand(3), op->getOperand(4), op->getOperand(5));
+      }
+
       // --- TMovOp [Src, Dst] ---
       SmallVector<mlir::pto::TMovOp , 8> movs;
       func.walk([&](mlir::pto::TMovOp  op) { movs.push_back(op); });

@@ -1971,6 +1971,45 @@ static LogicalResult verifyTileBufSameValidShape(Operation *op, Type lhs, Type r
   return success();
 }
 
+static LogicalResult verifyScaleTileMatchesOperand(Operation *op, Type scaleTy,
+                                                   Type operandTy,
+                                                   StringRef scaleName,
+                                                   StringRef operandName) {
+  if (failed(verifyTileBufCommon(op, scaleTy, scaleName)))
+    return failure();
+  auto scaleSpace = getPTOMemorySpaceEnum(scaleTy);
+  if (!scaleSpace || *scaleSpace != pto::AddressSpace::SCALING)
+    return op->emitOpError() << "expects " << scaleName
+                             << " to be in the scaling address space";
+
+  auto scaleShape = getShapeVec(scaleTy);
+  auto operandShape = getShapeVec(operandTy);
+  if (scaleShape.size() != operandShape.size())
+    return op->emitOpError() << "expects " << scaleName << " and " << operandName
+                             << " to have the same rank";
+  for (size_t i = 0; i < scaleShape.size(); ++i) {
+    if (scaleShape[i] != ShapedType::kDynamic &&
+        operandShape[i] != ShapedType::kDynamic &&
+        scaleShape[i] != operandShape[i])
+      return op->emitOpError() << "expects " << scaleName << " and " << operandName
+                               << " to have the same shape";
+  }
+
+  auto scaleValid = getValidShapeVec(scaleTy);
+  auto operandValid = getValidShapeVec(operandTy);
+  if (scaleValid.size() != operandValid.size())
+    return op->emitOpError() << "expects " << scaleName << " and " << operandName
+                             << " to have the same valid_shape";
+  for (size_t i = 0; i < scaleValid.size(); ++i) {
+    if (scaleValid[i] != ShapedType::kDynamic &&
+        operandValid[i] != ShapedType::kDynamic &&
+        scaleValid[i] != operandValid[i])
+      return op->emitOpError() << "expects " << scaleName << " and " << operandName
+                               << " to have the same valid_shape";
+  }
+  return success();
+}
+
 static LogicalResult verifyPartialValidPattern(Operation *op, Type src0Ty,
                                                Type src1Ty, Type dstTy) {
   auto src0Valid = getValidShapeVec(src0Ty);
@@ -3687,6 +3726,29 @@ static bool isA5Fp8LikeType(Type ty) {
   return false;
 }
 
+static bool isA5MxInputType(Type ty) {
+  return isA5Fp8LikeType(ty);
+}
+
+static LogicalResult verifyA5MxTypeTriple(Operation *op, Type lhsTy, Type rhsTy,
+                                          Type dstTy, StringRef lhsName,
+                                          StringRef rhsName, StringRef dstName) {
+  Type lhsElem = getElemTy(lhsTy);
+  Type rhsElem = getElemTy(rhsTy);
+  Type dstElem = getElemTy(dstTy);
+
+  if (!isA5MxInputType(lhsElem) || !isA5MxInputType(rhsElem))
+    return op->emitOpError()
+           << "expects A5 mx operands " << lhsName << " and " << rhsName
+           << " to use fp8 element types";
+
+  if (!dstElem.isF32())
+    return op->emitOpError()
+           << "expects A5 mx result " << dstName << " to use f32 element type";
+
+  return success();
+}
+
 static bool isA5VectorPreQuantTypePair(Type srcElem, Type dstElem) {
   if (srcElem.isF32())
     return dstElem.isInteger(8) || isA5Fp8LikeType(dstElem) || dstElem.isF16() ||
@@ -4746,6 +4808,87 @@ LogicalResult TGemvBiasOp::verify() {
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
+LogicalResult TGemvMxOp::verify() {
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    return emitOpError("tgemv.mx is only supported on A5 targets");
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (failed(verifyScaleTileMatchesOperand(*this, getAScale().getType(),
+                                             getA().getType(), "a_scale", "a")) ||
+        failed(verifyScaleTileMatchesOperand(*this, getBScale().getType(),
+                                             getB().getType(), "b_scale", "b")) ||
+        failed(verifyGemvTileOperands(*this, getA().getType(), getB().getType(),
+                                      getDst().getType())))
+      return failure();
+    if (failed(verifyA5MxTypeTriple(*this, getA().getType(), getB().getType(),
+                                    getDst().getType(), "a", "b", "dst")))
+      return failure();
+    return verifyMatmulLike(*this, getA().getType(), getB().getType(),
+                            getDst().getType());
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}
+
+LogicalResult TGemvMxAccOp::verify() {
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    return emitOpError("tgemv.mx.acc is only supported on A5 targets");
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (failed(verifyAccTileCommon(*this, getCIn().getType(), "c_in")) ||
+        failed(verifyScaleTileMatchesOperand(*this, getAScale().getType(),
+                                             getA().getType(), "a_scale", "a")) ||
+        failed(verifyScaleTileMatchesOperand(*this, getBScale().getType(),
+                                             getB().getType(), "b_scale", "b")) ||
+        failed(verifyGemvTileOperands(*this, getA().getType(), getB().getType(),
+                                      getDst().getType())))
+      return failure();
+    if (failed(verifyA5MxTypeTriple(*this, getA().getType(), getB().getType(),
+                                    getDst().getType(), "a", "b", "dst")))
+      return failure();
+    if (failed(verifyTileBufSameShapeAndElem(*this, getCIn().getType(),
+                                             getDst().getType(), "c_in", "dst")) ||
+        failed(verifyTileBufSameValidShape(*this, getCIn().getType(),
+                                           getDst().getType(), "c_in", "dst")))
+      return failure();
+    return verifyMatmulLike(*this, getA().getType(), getB().getType(),
+                            getDst().getType());
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}
+
+LogicalResult TGemvMxBiasOp::verify() {
+  auto verifyA2A3 = [&]() -> LogicalResult {
+    return emitOpError("tgemv.mx.bias is only supported on A5 targets");
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (failed(verifyScaleTileMatchesOperand(*this, getAScale().getType(),
+                                             getA().getType(), "a_scale", "a")) ||
+        failed(verifyScaleTileMatchesOperand(*this, getBScale().getType(),
+                                             getB().getType(), "b_scale", "b")) ||
+        failed(verifyGemvTileOperands(*this, getA().getType(), getB().getType(),
+                                      getDst().getType())) ||
+        failed(verifyMatBiasTile(*this, getBias().getType(), getDst().getType(),
+                                 /*requireFloatBias=*/true)))
+      return failure();
+    if (failed(verifyA5MxTypeTriple(*this, getA().getType(), getB().getType(),
+                                    getDst().getType(), "a", "b", "dst")))
+      return failure();
+    auto biasShape = getShapeVec(getBias().getType());
+    auto dstShape = getShapeVec(getDst().getType());
+    if (biasShape.size() != 2 || dstShape.size() != 2)
+      return emitOpError("expects bias and dst to be rank-2 for tgemv.mx.bias");
+    if (biasShape[1] != ShapedType::kDynamic && dstShape[1] != ShapedType::kDynamic &&
+        biasShape[1] != dstShape[1])
+      return emitOpError("expects bias and dst to have the same column shape");
+    if (failed(verifyTileBufSameValidShape(*this, getBias().getType(),
+                                           getDst().getType(), "bias", "dst")))
+      return failure();
+    return verifyMatmulLike(*this, getA().getType(), getB().getType(),
+                            getDst().getType());
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}
+
 LogicalResult TMatmulBiasOp::verify() {
   auto verifyA2A3 = [&]() -> LogicalResult {
     if (failed(verifyMatTileOperands(*this, getA().getType(), getB().getType(),
@@ -4771,7 +4914,12 @@ LogicalResult TMatmulMxOp::verify() {
     return verifyMatmulLike(*this, getA().getType(), getB().getType(),
                             getDst().getType());
   };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyA2A3(); };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (failed(verifyA2A3()))
+      return failure();
+    return verifyA5MxTypeTriple(*this, getA().getType(), getB().getType(),
+                                getDst().getType(), "a", "b", "dst");
+  };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -4783,7 +4931,19 @@ LogicalResult TMatmulMxAccOp::verify() {
       return failure();
     return success();
   };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyA2A3(); };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (failed(verifyA2A3()))
+      return failure();
+    if (failed(verifyA5MxTypeTriple(*this, getA().getType(), getB().getType(),
+                                    getDst().getType(), "a", "b", "dst")))
+      return failure();
+    if (failed(verifyTileBufSameShapeAndElem(*this, getCIn().getType(),
+                                             getDst().getType(), "c_in", "dst")) ||
+        failed(verifyTileBufSameValidShape(*this, getCIn().getType(),
+                                           getDst().getType(), "c_in", "dst")))
+      return failure();
+    return success();
+  };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 LogicalResult TMatmulMxBiasOp::verify() {
@@ -4798,7 +4958,12 @@ LogicalResult TMatmulMxBiasOp::verify() {
     return verifyMatmulLike(*this, getA().getType(), getB().getType(),
                             getDst().getType());
   };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyA2A3(); };
+  auto verifyA5 = [&]() -> LogicalResult {
+    if (failed(verifyA2A3()))
+      return failure();
+    return verifyA5MxTypeTriple(*this, getA().getType(), getB().getType(),
+                                getDst().getType(), "a", "b", "dst");
+  };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 // ---- TSetValOp ----
@@ -8977,6 +9142,38 @@ void TGemvAccOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEf
 void TGemvBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvMxOp ===
+// Read: a, a_scale, b, b_scale, Write: dst
+void TGemvMxOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvMxAccOp ===
+// Read: c_in, a, a_scale, b, b_scale, Write: dst
+void TGemvMxAccOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getCInMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvMxBiasOp ===
+// Read: a, a_scale, b, b_scale, bias, Write: dst
+void TGemvMxBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBScaleMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
