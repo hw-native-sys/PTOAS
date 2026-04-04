@@ -157,7 +157,9 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   // 2. Local Memory (UB/L1)
   
   if (a->rootBuffer == b->rootBuffer) {
+    if (a->unknownRange || b->unknownRange) return true;
     if (a->baseAddresses.empty() || b->baseAddresses.empty()) return true;
+    if (a->allocateSize == 0 || b->allocateSize == 0) return true;
     return isBufferAddressRangeOverlap(a, b);
   }
  
@@ -195,6 +197,7 @@ bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
     return true; 
   }
  
+  if (a->unknownRange || b->unknownRange) return true;
   if (a->baseAddresses.empty() || b->baseAddresses.empty()) return true; 
   if (a->allocateSize == 0 || b->allocateSize == 0) return true;
  

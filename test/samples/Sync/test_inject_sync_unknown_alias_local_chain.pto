@@ -1,0 +1,37 @@
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @test_unknown_alias_local_chain(%src: !pto.ptr<f32>, %dst: !pto.ptr<f32>, %dyn_off: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+
+    %src_tv = pto.make_tensor_view %src, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %dst_tv = pto.make_tensor_view %dst, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %src_part = pto.partition_view %src_tv, offsets = [%c0, %c0], sizes = [%c1, %c32]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    %dst_part = pto.partition_view %dst_tv, offsets = [%c0, %c0], sizes = [%c1, %c32]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+
+    %local = memref.alloc() : memref<1x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+    %tile_load = pto.bind_tile %local, %c1, %c32
+        {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>}
+        : memref<1x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+          -> memref<1x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+
+    %sub = memref.subview %local[%c0, %dyn_off] [1, 32] [1, 1]
+        : memref<1x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+          to memref<1x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+    %cast = memref.reinterpret_cast %sub to offset: [0], sizes: [%c1, %c32], strides: [%c32, %c1]
+        : memref<1x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+          to memref<1x32xf32, strided<[?, ?], offset: ?>, #pto.address_space<vec>>
+    %tile_store = pto.bind_tile %cast, %c1, %c32
+        {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>}
+        : memref<1x32xf32, strided<[?, ?], offset: ?>, #pto.address_space<vec>>
+          -> memref<1x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+
+    pto.tload ins(%src_part : !pto.partition_tensor_view<1x32xf32>)
+             outs(%tile_load : memref<1x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>)
+    pto.tstore ins(%tile_store : memref<1x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>)
+              outs(%dst_part : !pto.partition_tensor_view<1x32xf32>)
+    return
+  }
+}
