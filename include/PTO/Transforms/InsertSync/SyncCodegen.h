@@ -57,6 +57,19 @@ private:
 
   // Insert the compiler tail-clean barrier right before function return.
   void AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter);
+
+  // [Fix #428] Collect back-edge waits at loop heads that need pre-loop
+  // set_flag initialization to avoid hangs on iteration 0.
+  void CollectBackEdgeLoopHeadWaits();
+
+  // [Fix #428] Emit set_flag ops before a for-loop to initialize event
+  // registers for back-edge wait_flag ops at the loop head.
+  void EmitPreLoopEventInit(IRRewriter &rewriter, Operation *op);
+
+  // [Fix #428] Emit explicit wait_flag ops before function return to drain
+  // all pending back-edge event dependencies that pipe_barrier(PIPE_ALL)
+  // alone does not cover.
+  void EmitTailEventDrain(IRRewriter &rewriter, func::ReturnOp ret);
  
   void CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter, Operation *op,
                                       SyncOperation *sync, bool beforeInsert);
@@ -92,6 +105,10 @@ private:
 
   // Deferred tail-clean barrier requested by sync analysis.
   bool pendingAutoSyncTailBarrier_ = false;
+
+  // [Fix #428] Map from scf.for Operation* to the back-edge wait ops at
+  // its loop head that need pre-loop set_flag initialization.
+  DenseMap<const Operation *, SmallVector<SyncOperation *, 4>> preLoopInitWaits_;
 };
  
 } // namespace pto

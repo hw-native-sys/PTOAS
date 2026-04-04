@@ -66,14 +66,25 @@ static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
 void SyncCodegen::Run() {
   MLIRContext *ctx = func_->getContext();
   IRRewriter rewriter(ctx);
-  
+
   UpdateOpInsertSync(rewriter);
- 
-  // [Optional Debug] 这里的 Debug 打印可以保留或注释掉
-  // ...
- 
+
+  // [Fix #428] Collect back-edge wait ops at loop heads that need pre-loop
+  // set_flag initialization. A back-edge wait_flag at LOOP_BEGIN fires on
+  // iteration 0, but the matching set_flag only fires at the end of iteration
+  // 0. Without a pre-loop set_flag, the event register is uninitialized and
+  // the hardware hangs.
+  CollectBackEdgeLoopHeadWaits();
+
   func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (op2InsertSync.count(op)) {
+      // [Fix #428] Before emitting the normal pipeBefore waits for a loop op,
+      // emit pre-loop set_flag initialization for any back-edge wait_flag that
+      // would otherwise fire against an uninitialized event register.
+      if (isa<scf::ForOp>(op)) {
+        EmitPreLoopEventInit(rewriter, op);
+      }
+
       // 处理 PRE Sync
       for (auto &syncBefore : op2InsertSync[op].pipeBefore) {
         SyncInsert(rewriter, op, syncBefore, true);
@@ -299,6 +310,15 @@ void SyncCodegen::AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter) {
 
   auto pipeAllAttr = getPipeAttr(rewriter, PipelineType::PIPE_ALL);
   for (auto ret : returns) {
+    // [Fix #428] Before the tail barrier, emit explicit wait_flag ops to
+    // drain all pending back-edge event dependencies. pipe_barrier(PIPE_ALL)
+    // waits for in-flight pipe operations but does NOT drain event flag
+    // registers. Without explicit wait_flag calls, stale event state can
+    // leak to the next kernel invocation.
+    rewriter.setInsertionPoint(ret);
+    EmitTailEventDrain(rewriter, ret);
+
+    // Re-set insertion point before ret (after any drain ops we just emitted)
     rewriter.setInsertionPoint(ret);
     auto barrier = rewriter.create<pto::BarrierOp>(ret.getLoc(), pipeAllAttr);
     barrier->setAttr("pto.auto_sync_tail_barrier", rewriter.getUnitAttr());
@@ -330,6 +350,84 @@ void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
     rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
   } else {
     rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
+  }
+}
+
+// ==============================================================================
+// [Fix #428] Tail event drain for back-edge sync events
+// ==============================================================================
+
+void SyncCodegen::EmitTailEventDrain(IRRewriter &rewriter,
+                                     func::ReturnOp ret) {
+  // Collect all unique (srcPipe, dstPipe, eventId) triples from back-edge
+  // syncs across all loops. These events may still be pending when the kernel
+  // reaches the return statement and must be explicitly drained.
+  //
+  // We use a set of tuples to deduplicate — the same event may appear in
+  // multiple loops or be shared via widen.
+  struct EventKey {
+    PipelineType src;
+    PipelineType dst;
+    int eventId;
+    bool operator<(const EventKey &o) const {
+      if (src != o.src) return static_cast<unsigned>(src) < static_cast<unsigned>(o.src);
+      if (dst != o.dst) return static_cast<unsigned>(dst) < static_cast<unsigned>(o.dst);
+      return eventId < o.eventId;
+    }
+    bool operator==(const EventKey &o) const {
+      return src == o.src && dst == o.dst && eventId == o.eventId;
+    }
+  };
+
+  SmallVector<EventKey> drainEvents;
+  auto addUnique = [&](PipelineType src, PipelineType dst, int eid) {
+    EventKey key{src, dst, eid};
+    for (auto &existing : drainEvents) {
+      if (existing == key)
+        return;
+    }
+    drainEvents.push_back(key);
+  };
+
+  // Scan all LOOP_END elements for back-edge set/wait pairs with allocated
+  // event IDs.
+  for (auto &pair : preLoopInitWaits_) {
+    for (auto *waitSync : pair.second) {
+      if (waitSync->uselessSync || waitSync->eventIds.empty())
+        continue;
+      addUnique(waitSync->GetActualSrcPipe(), waitSync->GetActualDstPipe(),
+                waitSync->eventIds[0]);
+    }
+  }
+
+  // Also scan the last element's pipeAfter for any set_flag ops that might
+  // leave events pending (these are the "syncEnd" phantom pairs from
+  // UpdateBackwardMatchSync that sink to the function tail).
+  if (!syncIR_.empty()) {
+    for (auto *sync : syncIR_.back()->pipeAfter) {
+      if (sync->uselessSync || sync->eventIds.empty())
+        continue;
+      if (sync->isSyncWaitType()) {
+        addUnique(sync->GetActualSrcPipe(), sync->GetActualDstPipe(),
+                  sync->eventIds[0]);
+      }
+    }
+  }
+
+  if (drainEvents.empty())
+    return;
+
+  // Sort for deterministic output.
+  llvm::sort(drainEvents);
+
+  LLVM_DEBUG(llvm::dbgs() << "[Fix #428] Emitting " << drainEvents.size()
+                          << " tail event drain wait_flag ops\n");
+
+  for (auto &ev : drainEvents) {
+    auto srcPipe = getPipeAttr(rewriter, ev.src);
+    auto dstPipe = getPipeAttr(rewriter, ev.dst);
+    auto eventId = getEventAttr(rewriter, ev.eventId);
+    rewriter.create<pto::WaitFlagOp>(ret.getLoc(), srcPipe, dstPipe, eventId);
   }
 }
  
@@ -398,4 +496,65 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
   
   SyncIndex2SelectBuffer[sync->GetSyncIndex()] = selected;
   return selected;
+}
+
+// ==============================================================================
+// [Fix #428] Pre-loop event initialization for back-edge sync
+// ==============================================================================
+
+void SyncCodegen::CollectBackEdgeLoopHeadWaits() {
+  for (auto &nowElement : syncIR_) {
+    auto *loopElement = dyn_cast<LoopInstanceElement>(nowElement.get());
+    if (!loopElement || loopElement->getLoopKind() != KindOfLoop::LOOP_END)
+      continue;
+
+    // Look at the LOOP_BEGIN node's pipeBefore — these are waits that
+    // MoveSyncState hoisted to the loop head.
+    auto *loopBegin =
+        dyn_cast<LoopInstanceElement>(syncIR_[loopElement->beginId].get());
+    if (!loopBegin)
+      continue;
+
+    for (auto *sync : loopBegin->pipeBefore) {
+      if (sync->uselessSync)
+        continue;
+      if (!sync->isSyncWaitType())
+        continue;
+      if (sync->eventIds.empty())
+        continue;
+      // This is a wait at loop head with an allocated event ID.
+      // It needs a pre-loop set_flag to initialize the event register.
+      // Record {Operation* forOp -> SyncOperation* wait} for later emission.
+      if (loopElement->elementOp) {
+        preLoopInitWaits_[loopElement->elementOp].push_back(sync);
+      }
+    }
+  }
+}
+
+void SyncCodegen::EmitPreLoopEventInit(IRRewriter &rewriter, Operation *op) {
+  auto it = preLoopInitWaits_.find(op);
+  if (it == preLoopInitWaits_.end())
+    return;
+
+  // For each back-edge wait at the loop head, emit a set_flag before the
+  // for loop to initialize the event register. This ensures that on iteration
+  // 0, the wait_flag finds a valid (already-set) event instead of hanging.
+  rewriter.setInsertionPoint(op);
+  for (auto *waitSync : it->second) {
+    if (waitSync->uselessSync || waitSync->eventIds.empty())
+      continue;
+
+    auto srcPipe = getPipeAttr(rewriter, waitSync->GetActualSrcPipe());
+    auto dstPipe = getPipeAttr(rewriter, waitSync->GetActualDstPipe());
+    auto eventId = getEventAttr(rewriter, waitSync->eventIds[0]);
+
+    LLVM_DEBUG(llvm::dbgs()
+               << "[Fix #428] Emitting pre-loop set_flag("
+               << static_cast<unsigned>(waitSync->GetActualSrcPipe()) << ", "
+               << static_cast<unsigned>(waitSync->GetActualDstPipe()) << ", "
+               << waitSync->eventIds[0] << ") before loop\n");
+
+    rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
+  }
 }
