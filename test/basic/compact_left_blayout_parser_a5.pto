@@ -1,0 +1,11 @@
+// RUN: ptoas --pto-arch a5 %s 2>&1 | FileCheck %s
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @compact_left_blayout_parser_a5() {
+    %0 = pto.alloc_tile : !pto.tile_buf<left, 32x32xf32, slayout=row_major>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @compact_left_blayout_parser_a5() {
+// CHECK: #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=512, pad=#pto.pad_value<null>>
