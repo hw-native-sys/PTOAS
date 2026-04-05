@@ -65,6 +65,22 @@ MlirType mlirPTOPtrTypeGetElementType(MlirType type) {
   return wrap(t.getElementType());
 }
 
+bool mlirPTOTypeIsAAsyncSessionType(MlirType type) {
+  return isa<mlir::pto::AsyncSessionType>(unwrap(type));
+}
+
+MlirType mlirPTOAsyncSessionTypeGet(MlirContext ctx) {
+  return wrap(mlir::pto::AsyncSessionType::get(unwrap(ctx)));
+}
+
+bool mlirPTOTypeIsAAsyncEventType(MlirType type) {
+  return isa<mlir::pto::AsyncEventType>(unwrap(type));
+}
+
+MlirType mlirPTOAsyncEventTypeGet(MlirContext ctx) {
+  return wrap(mlir::pto::AsyncEventType::get(unwrap(ctx)));
+}
+
 bool mlirPTOAttrIsAAddressSpaceAttr(MlirAttribute attr) {
   return mlir::isa<mlir::pto::AddressSpaceAttr>(unwrap(attr));
 }
