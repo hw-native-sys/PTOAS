@@ -19,7 +19,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
 PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
-PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync}"
+PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync Qwen3Scope2}"
 ENABLE_BC=0
 
 usage() {
@@ -36,7 +36,7 @@ Env:
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
   PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
-  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync)
+  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync Qwen3Scope2)
 
 Flags:
   --enablebc  # enable: python -> .pto -> ptobc -> .pto -> ptoas
@@ -153,6 +153,12 @@ process_one_dir() {
   if [[ "${ENABLE_BC}" == "1" ]]; then
     use_ptobc_roundtrip=1
   fi
+  # Qwen3 scope2 kernels currently serve as direct ptoas compile-regression
+  # coverage. They require A5/level3 lowering, but are not expected to
+  # roundtrip through ptobc yet.
+  if [[ "$A" == "Qwen3Scope2" ]]; then
+    use_ptobc_roundtrip=0
+  fi
   local -a ptoas_flags=()
   if [[ -n "${PTOAS_FLAGS}" ]]; then
     # shellcheck disable=SC2206
@@ -172,14 +178,21 @@ process_one_dir() {
   fi
 
   local target_arch="a3"
+  local has_pto_arch_override=0
   if ((${#ptoas_flags[@]})); then
     for ((idx=0; idx<${#ptoas_flags[@]}; ++idx)); do
       if [[ "${ptoas_flags[idx]}" == "--pto-arch" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
         target_arch="${ptoas_flags[idx + 1]}"
+        has_pto_arch_override=1
       elif [[ "${ptoas_flags[idx]}" == --pto-arch=* ]]; then
         target_arch="${ptoas_flags[idx]#--pto-arch=}"
+        has_pto_arch_override=1
       fi
     done
+  fi
+  if [[ "$A" == "Qwen3Scope2" && $has_pto_arch_override -eq 0 ]]; then
+    ptoas_flags+=(--pto-arch a5 --pto-level=level3)
+    target_arch="a5"
   fi
   local expected_vec_barrier="pipe_barrier(PIPE_V)"
   local skip_vec_barrier=0
@@ -932,7 +945,6 @@ PY
       if [[ "$base" == "test_if_else_tile_result" ]]; then
         sample_use_ptobc_roundtrip=0
       fi
-
       if [[ $sample_use_ptobc_roundtrip -eq 1 ]]; then
         # Allow generic escape for ops that are not yet in the compact v0 opcode table.
         if ! PTOBC_ALLOW_GENERIC=1 "$ptobc" encode "$f" -o "$ptobc_file" >/dev/null 2>&1; then

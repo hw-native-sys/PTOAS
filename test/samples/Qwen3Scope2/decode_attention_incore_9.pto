@@ -1,0 +1,18 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @decode_attention_incore_9(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0i = arith.constant 0 : i64
+  %c16 = arith.constant 16 : index
+  %c64 = arith.constant 64 : index
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  %c0 = arith.constant 0 : index
+  %exp_padded__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c16, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xbf16>
+  %exp_scores_bf16__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c8, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xbf16>
+  %exp_tile__tile = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %exp_scores_bf16__ssa_v0_pview = pto.partition_view %exp_scores_bf16__ssa_v0_view, offsets = [%c0, %c0], sizes = [%c8, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<8x64xbf16>
+  pto.tload ins(%exp_scores_bf16__ssa_v0_pview : !pto.partition_tensor_view<8x64xbf16>) outs(%exp_tile__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %exp_padded__ssa_v0_pview = pto.partition_view %exp_padded__ssa_v0_view, offsets = [%c0, %c0], sizes = [%c8, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<8x64xbf16>
+  pto.tstore ins(%exp_tile__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%exp_padded__ssa_v0_pview : !pto.partition_tensor_view<8x64xbf16>)
+  return
+  }
+}
