@@ -253,7 +253,7 @@ SmallVector<bool> SyncEventIdAllocation::GetEventPool(const SyncOperation *sync,
   return eventIdPool;
 }
  
-int SyncEventIdAllocation::ScopePair(const SyncOperation *s) {
+int SyncEventIdAllocation::ScopePair(const SyncOperation *s) const {
   if (s->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
       s->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
     return 0;
@@ -480,10 +480,36 @@ void SyncEventIdAllocation::WidenEventId(SyncOps syncVector) {
       bool canWiden = TryWidenByOtherSync(sync);
       if (!canWiden) {
         int scopePair = ScopePair(sync);
-        reallocatedPipePair.insert(scopePair);
+        // Loop-carried syncs need a fully initialized head/tail schedule.
+        // Reallocating an entire scope that already contains back-edge pairs can
+        // rewrite those safe preheat/drain edges into mismatched waits.
+        if (!scopePairHasLoopCarriedSync(scopePair))
+          reallocatedPipePair.insert(scopePair);
       }
     }
   }
+}
+
+bool SyncEventIdAllocation::scopePairHasLoopCarriedSync(int scopePair) const {
+  for (auto &element : syncIR_) {
+    for (auto *sync : element->pipeBefore) {
+      if (!sync || sync->uselessSync)
+        continue;
+      if (!sync->GetForEndIndex().has_value())
+        continue;
+      if (ScopePair(sync) == scopePair)
+        return true;
+    }
+    for (auto *sync : element->pipeAfter) {
+      if (!sync || sync->uselessSync)
+        continue;
+      if (!sync->GetForEndIndex().has_value())
+        continue;
+      if (ScopePair(sync) == scopePair)
+        return true;
+    }
+  }
+  return false;
 }
  
 void SyncEventIdAllocation::clearAllocatedEventId() {

@@ -54,7 +54,7 @@ private:
   void SetEventId(SyncOperation *sync);
  
   SmallVector<bool> GetEventPool(const SyncOperation *sync, size_t eventIdNum);
-  int ScopePair(const SyncOperation *s);
+  int ScopePair(const SyncOperation *s) const;
   void FindUseEventID(unsigned int begin, unsigned int end,
                       const SyncOperation *s, SmallVector<bool> &eventId);
  
@@ -91,6 +91,7 @@ private:
   SyncOperation *FindWidenSync(const SyncOperation *setSync,
                                const SyncOperation *waitSync);
   void ClearEventId(const SyncOperation *sync);
+  bool scopePairHasLoopCarriedSync(int scopePair) const;
  
   SmallVector<int>
   GetAvailableEventId(SyncOperation *sync,
