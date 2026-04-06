@@ -64,6 +64,18 @@ list_contains() {
   [[ ",${list}," == *",${item},"* ]]
 }
 
+resolve_sample_dir() {
+  local cpp="$1"
+  local dir
+  dir="$(cd "$(dirname "${cpp}")" && pwd)"
+  if [[ "$(basename "${dir}")" == "npu_validation" ]]; then
+    dir="$(dirname "${dir}")"
+  elif [[ "$(basename "$(dirname "${dir}")")" == "npu_validation" ]]; then
+    dir="$(dirname "$(dirname "${dir}")")"
+  fi
+  printf '%s\n' "${dir}"
+}
+
 SKIP_CASES_NORM="$(normalize_list "${SKIP_CASES}")"
 RUN_ONLY_CASES_NORM="$(normalize_list "${RUN_ONLY_CASES}")"
 
@@ -245,7 +257,7 @@ while IFS= read -r -d '' cpp; do
   echo
   log "=== CASE: ${cpp} ==="
 
-  case_dir="$(cd "$(dirname "${cpp}")" && pwd)"
+  case_dir="$(resolve_sample_dir "${cpp}")"
   sample_name="$(basename "${case_dir}")"
   nv_dir="${OUTPUT_ROOT}/${sample_name}/${testcase}"
 

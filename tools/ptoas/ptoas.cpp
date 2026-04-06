@@ -42,7 +42,10 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/StringMap.h"
+#include <optional>
+#include <regex>
 #include <string>
+#include <vector>
 
 using namespace mlir;
 using namespace pto;
@@ -370,6 +373,149 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
         cpp, "PTOAS__TILE_SET_VALIDSHAPE", "SetValidShape",
         /*expectedNumArgs=*/3);
   }
+}
+
+struct TileIfBranchCapture {
+  std::string tileVar;
+  size_t castLine = 0;
+  size_t assignLine = 0;
+};
+
+static std::string getLineIndent(llvm::StringRef line) {
+  size_t pos = 0;
+  while (pos < line.size() && std::isspace(static_cast<unsigned char>(line[pos])))
+    ++pos;
+  return line.take_front(pos).str();
+}
+
+static std::optional<TileIfBranchCapture>
+findTileIfBranchCapture(const std::vector<std::string> &lines, size_t begin,
+                        size_t end, llvm::StringRef resultVar) {
+  std::smatch assignMatch;
+  std::regex assignRegex("^\\s*" + std::string(resultVar) +
+                         R"(\s*=\s*(v[0-9]+)\s*;\s*$)");
+  for (size_t lineIdx = end; lineIdx > begin; --lineIdx) {
+    if (!std::regex_match(lines[lineIdx - 1], assignMatch, assignRegex))
+      continue;
+    std::string tmpVar = assignMatch[1].str();
+
+    std::smatch castMatch;
+    std::regex castRegex("^\\s*.+\\s+" + tmpVar +
+                         R"(\s*=\s*\([^)]*\)\s*(v[0-9]+)\s*;\s*$)");
+    for (size_t castIdx = lineIdx - 1; castIdx > begin; --castIdx) {
+      if (!std::regex_match(lines[castIdx - 1], castMatch, castRegex))
+        continue;
+      return TileIfBranchCapture{
+          /*tileVar=*/castMatch[1].str(),
+          /*castLine=*/castIdx - 1,
+          /*assignLine=*/lineIdx - 1,
+      };
+    }
+  }
+  return std::nullopt;
+}
+
+static bool rewriteTileIfStorePattern(std::string &cpp) {
+  llvm::SmallVector<llvm::StringRef, 0> rawLines;
+  llvm::StringRef(cpp).split(rawLines, '\n');
+  std::vector<std::string> lines;
+  lines.reserve(rawLines.size());
+  for (llvm::StringRef line : rawLines)
+    lines.push_back(line.str());
+
+  std::regex declRegex(R"(^\s*.+\*\s+(v[0-9]+)\s*;\s*$)");
+  bool changed = false;
+
+  for (size_t i = 0; i + 3 < lines.size(); ++i) {
+    std::smatch declMatch;
+    if (!std::regex_match(lines[i], declMatch, declRegex))
+      continue;
+
+    llvm::StringRef ifLine = llvm::StringRef(lines[i + 1]).trim();
+    if (!ifLine.starts_with("if (") || !ifLine.ends_with("{"))
+      continue;
+
+    size_t elseLine = std::string::npos;
+    size_t endIfLine = std::string::npos;
+    int braceDepth = 0;
+    for (size_t j = i + 1; j < lines.size(); ++j) {
+      for (char c : lines[j]) {
+        if (c == '{')
+          ++braceDepth;
+        else if (c == '}')
+          --braceDepth;
+      }
+      llvm::StringRef trimmed = llvm::StringRef(lines[j]).trim();
+      if (trimmed == "} else {")
+        elseLine = j;
+      if (trimmed == "};" && braceDepth == 0) {
+        endIfLine = j;
+        break;
+      }
+    }
+    if (elseLine == std::string::npos || endIfLine == std::string::npos ||
+        elseLine <= i + 1 || endIfLine <= elseLine || endIfLine + 1 >= lines.size()) {
+      continue;
+    }
+
+    std::string resultVar = declMatch[1].str();
+    auto thenCapture =
+        findTileIfBranchCapture(lines, i + 2, elseLine, resultVar);
+    auto elseCapture =
+        findTileIfBranchCapture(lines, elseLine + 1, endIfLine, resultVar);
+    if (!thenCapture || !elseCapture)
+      continue;
+
+    std::smatch tstoreMatch;
+    std::regex tstoreRegex("^\\s*TSTORE\\((.+),\\s*" + resultVar +
+                           R"(\s*\);\s*$)");
+    if (!std::regex_match(lines[endIfLine + 1], tstoreMatch, tstoreRegex))
+      continue;
+
+    std::string tstoreIndent = getLineIndent(lines[thenCapture->castLine]);
+    std::string dstExpr = tstoreMatch[1].str();
+
+    std::vector<std::string> replacement;
+    replacement.reserve(endIfLine - i + 1);
+    replacement.push_back(lines[i + 1]);
+    for (size_t j = i + 2; j < elseLine; ++j) {
+      if (j == thenCapture->castLine || j == thenCapture->assignLine)
+        continue;
+      replacement.push_back(lines[j]);
+    }
+    replacement.push_back(tstoreIndent + "TSTORE(" + dstExpr + ", " +
+                          thenCapture->tileVar + ");");
+    replacement.push_back(lines[elseLine]);
+    for (size_t j = elseLine + 1; j < endIfLine; ++j) {
+      if (j == elseCapture->castLine || j == elseCapture->assignLine)
+        continue;
+      replacement.push_back(lines[j]);
+    }
+    replacement.push_back(tstoreIndent + "TSTORE(" + dstExpr + ", " +
+                          elseCapture->tileVar + ");");
+    replacement.push_back(lines[endIfLine]);
+
+    lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(i),
+                lines.begin() + static_cast<std::ptrdiff_t>(endIfLine + 2));
+    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(i),
+                 replacement.begin(), replacement.end());
+    changed = true;
+    if (i > 0)
+      --i;
+  }
+
+  if (!changed)
+    return false;
+
+  std::string rewritten;
+  rewritten.reserve(cpp.size());
+  for (size_t i = 0; i < lines.size(); ++i) {
+    rewritten.append(lines[i]);
+    if (i + 1 < lines.size())
+      rewritten.push_back('\n');
+  }
+  cpp.swap(rewritten);
+  return true;
 }
 
 // --------------------------------------------------------------------------
@@ -1163,6 +1309,7 @@ int main(int argc, char **argv) {
   }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
+  rewriteTileIfStorePattern(cppOutput);
   rewritePtrScalarMarkers(cppOutput);
   rewriteEventIdArrayMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
