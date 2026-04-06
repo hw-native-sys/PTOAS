@@ -372,14 +372,12 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
       setFlag->GetType(), setFlag->GetSrcPipe(), setFlag->GetDstPipe(),
       static_cast<unsigned>(syncOperations_.size()), setFlag->GetSyncIRIndex(),
       setFlag->GetForEndIndex());
-  syncFront->depRootBuffers = setFlag->depRootBuffers;
-  syncFront->eventIdNum = setFlag->eventIdNum;
-  syncFront->SetDepSyncIRIndex(setFlag->GetDepSyncIRIndex());
       
   auto syncEnd = syncFront->GetMatchSync(waitFlag->GetSyncIRIndex());
-  syncEnd->depRootBuffers = waitFlag->depRootBuffers;
-  syncEnd->eventIdNum = waitFlag->eventIdNum;
-  syncEnd->SetDepSyncIRIndex(waitFlag->GetDepSyncIRIndex());
+  // Backward-match syncs are synthetic loop head/tail anchors used to keep the
+  // chosen event id alive across iterations. They must not participate in the
+  // dependency-signature based redundant-sync reasoning that is reserved for
+  // real producer/consumer sync pairs.
   
   syncFront->syncCoreType = setFlag->syncCoreType;
   syncEnd->syncCoreType = waitFlag->syncCoreType;
@@ -604,7 +602,16 @@ void SyncEventIdAllocation::MoveOutBackwardMatchSync(
   if (!isConflictEventId) {
     setSync->uselessSync = true;
     waitSync->uselessSync = true;
+
+    // Move-out should really widen the loop-carried lifetime to the function
+    // boundary. Reusing UpdateBackwardMatchSync() while the scope pair is still
+    // marked as reallocated would only recreate another loop-local head/tail
+    // pair and silently drop the required pre-loop initialization.
+    int scopePair = ScopePair(setSync);
+    bool wasReallocated = reallocatedPipePair.erase(scopePair);
     UpdateBackwardMatchSync(setSync, waitSync, setSync->eventIds[0]);
+    if (wasReallocated)
+      reallocatedPipePair.insert(scopePair);
   }
 }
  
