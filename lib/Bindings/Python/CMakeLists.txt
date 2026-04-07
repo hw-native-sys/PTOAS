@@ -38,6 +38,7 @@ target_link_libraries(_pto PRIVATE
   MLIRCAPIIR
   MLIRSupport
   MLIRArithDialect
+  MLIRMemRefDialect
   MLIRDestinationStyleOpInterface
   MLIRInferTypeOpInterface
   MLIRSideEffectInterfaces
@@ -100,5 +101,4 @@ add_custom_command(TARGET _pto POST_BUILD
           "${CMAKE_BINARY_DIR}/python/mlir/_mlir_libs"
   VERBATIM
 )
-
 

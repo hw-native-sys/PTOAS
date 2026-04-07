@@ -1,0 +1,32 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+
+module {
+  func.func @async_put_get(%dst: memref<128xf32, #pto.address_space<gm>>,
+                           %src: memref<128xf32, #pto.address_space<gm>>,
+                           %workspace: memref<1024xi8, #pto.address_space<gm>>) {
+    %scratch = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %session = pto.build_async_session(%scratch, %workspace : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>, memref<1024xi8, #pto.address_space<gm>>) -> !pto.async_session
+    %put = pto.tput_async(%dst, %src, %session : memref<128xf32, #pto.address_space<gm>>, memref<128xf32, #pto.address_space<gm>>, !pto.async_session) -> !pto.async_event
+    %get = pto.tget_async(%src, %dst, %session : memref<128xf32, #pto.address_space<gm>>, memref<128xf32, #pto.address_space<gm>>, !pto.async_session) -> !pto.async_event
+    %put_done = pto.wait_async_event(%put, %session : !pto.async_event, !pto.async_session) -> i1
+    %get_done = pto.test_async_event(%get, %session : !pto.async_event, !pto.async_session) -> i1
+    return
+  }
+}
+
+// A3-LABEL: AICORE void async_put_get(
+// A3: Tile<TileType::Vec, int8_t, 1, 256, BLayout::RowMajor, 1, 256, SLayout::NoneBox, 512, PadValue::Null> [[SCRATCH:v[0-9]+]];
+// A3: TASSIGN([[SCRATCH]], [[SCRATCH_ADDR:v[0-9]+]]);
+// A3: pto::comm::AsyncSession [[SESSION:v[0-9]+]];
+// A3: pto::comm::sdma::SdmaBaseConfig [[CFG:v[0-9]+]] = {32768ULL, 0ULL, 1u};
+// A3: pto::comm::BuildAsyncSession<pto::comm::DmaEngine::SDMA>([[SCRATCH]], {{.*}}, [[SESSION]], {{.*}}, [[CFG]], {{.*}});
+// A3: pto::Shape<1, 1, 1, 1, 128> [[SHAPE0:v[0-9]+]] = pto::Shape<1, 1, 1, 1, 128>();
+// A3: pto::Stride<128, 128, 128, 128, 1> [[STRIDE0:v[0-9]+]] = pto::Stride<128, 128, 128, 128, 1>();
+// A3: GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND> [[GT0:v[0-9]+]] = GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND>({{.*}}, [[SHAPE0]], [[STRIDE0]]);
+// A3: pto::Shape<1, 1, 1, 1, 128> [[SHAPE1:v[0-9]+]] = pto::Shape<1, 1, 1, 1, 128>();
+// A3: pto::Stride<128, 128, 128, 128, 1> [[STRIDE1:v[0-9]+]] = pto::Stride<128, 128, 128, 128, 1>();
+// A3: GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND> [[GT1:v[0-9]+]] = GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND>({{.*}}, [[SHAPE1]], [[STRIDE1]]);
+// A3: pto::comm::AsyncEvent [[PUT_EVT:v[0-9]+]] = pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::SDMA>(
+// A3: pto::comm::AsyncEvent [[GET_EVT:v[0-9]+]] = pto::comm::TGET_ASYNC<pto::comm::DmaEngine::SDMA>(
+// A3: bool [[PUT_DONE:v[0-9]+]] = [[PUT_EVT]].Wait([[SESSION]]);
+// A3: bool [[GET_DONE:v[0-9]+]] = [[GET_EVT]].Test([[SESSION]]);

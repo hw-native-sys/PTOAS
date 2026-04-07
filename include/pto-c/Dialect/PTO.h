@@ -28,6 +28,12 @@ bool mlirPTOTypeIsAPtrType(MlirType type);
 MlirType mlirPTOPtrTypeGet(MlirContext ctx, MlirType elementType);
 MlirType mlirPTOPtrTypeGetElementType(MlirType type);
 
+// ---- !pto.async_session / !pto.async_event ----
+bool mlirPTOTypeIsAAsyncSessionType(MlirType type);
+MlirType mlirPTOAsyncSessionTypeGet(MlirContext ctx);
+bool mlirPTOTypeIsAAsyncEventType(MlirType type);
+MlirType mlirPTOAsyncEventTypeGet(MlirContext ctx);
+
 // ---- #pto.address_space<...> ----
 bool mlirPTOAttrIsAAddressSpaceAttr(MlirAttribute attr);
 

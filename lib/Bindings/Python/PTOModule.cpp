@@ -498,6 +498,28 @@ PYBIND11_MODULE(_pto, m) {
                 return mlirPTOPtrTypeGetElementType(self);
             });
 
+    mlir_type_subclass(
+        m, "AsyncSessionType",
+        [](MlirType type) -> bool { return mlirPTOTypeIsAAsyncSessionType(type); })
+        .def_classmethod(
+            "get",
+            [](py::object cls, MlirContext context) -> py::object {
+                MlirType t = mlirPTOAsyncSessionTypeGet(context);
+                return cls.attr("__call__")(t);
+            },
+            py::arg("cls"), py::arg("context") = py::none());
+
+    mlir_type_subclass(
+        m, "AsyncEventType",
+        [](MlirType type) -> bool { return mlirPTOTypeIsAAsyncEventType(type); })
+        .def_classmethod(
+            "get",
+            [](py::object cls, MlirContext context) -> py::object {
+                MlirType t = mlirPTOAsyncEventTypeGet(context);
+                return cls.attr("__call__")(t);
+            },
+            py::arg("cls"), py::arg("context") = py::none());
+
     // --------------------------------------------------------------------------
     // !pto.tensor_view<shape x elem>
     // --------------------------------------------------------------------------

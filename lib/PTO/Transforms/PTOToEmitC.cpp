@@ -9,6 +9,8 @@
 //===- PTOToEmitC.cpp - PTO to EmitC conversion pass ----------------------===//
 //===----------------------------------------------------------------------===//
 
+#include <climits>
+
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/Transforms/Passes.h"
@@ -150,6 +152,11 @@ static std::string layoutToEmitCString(mlir::pto::Layout layout) {
     return "pto::Layout::NZ";
   }
   return "pto::Layout::ND";
+}
+
+static bool isEmitCGlobalTensorLikeType(Type ty) {
+  auto opaqueTy = dyn_cast<emitc::OpaqueType>(ty);
+  return opaqueTy && opaqueTy.getValue().contains("GlobalTensor<");
 }
 
 static std::string getEmitCScalarTypeToken(Type elemTy) {
@@ -298,6 +305,16 @@ public:
     addConversion([Ctx](pto::EventIdArrayType type) -> Type {
       std::string tok = "PTOAS_EventIdArray<" + std::to_string(type.getSize()) + ">";
       return emitc::OpaqueType::get(Ctx, tok);
+    });
+    
+    addConversion([Ctx](pto::AsyncSessionType type) -> Type {
+      (void)type;
+      return emitc::OpaqueType::get(Ctx, "pto::comm::AsyncSession");
+    });
+
+    addConversion([Ctx](pto::AsyncEventType type) -> Type {
+      (void)type;
+      return emitc::OpaqueType::get(Ctx, "pto::comm::AsyncEvent");
     });
 
     // ---------------------------------------------------------
@@ -3242,6 +3259,126 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   return gtInst.getResult(0);
 }
 
+static Value castToGMBytePointer(ConversionPatternRewriter &rewriter,
+                                 Location loc, Value value) {
+  auto *ctx = rewriter.getContext();
+  auto targetTy = emitc::OpaqueType::get(ctx, "__gm__ uint8_t*");
+  if (value.getType() == targetTy)
+    return value;
+
+  auto castTyAttr =
+      rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "__gm__ uint8_t*")});
+  if (isSetFFTsPointerLikeType(value.getType())) {
+    return rewriter
+        .create<emitc::CallOpaqueOp>(loc, targetTy, "reinterpret_cast",
+                                     ArrayAttr{}, castTyAttr,
+                                     ValueRange{value})
+        .getResult(0);
+  }
+  return rewriter.create<emitc::CastOp>(loc, targetTy, value).getResult();
+}
+
+static std::string tileBufBLayoutToken(pto::TileBufConfigAttr configAttr) {
+  std::string blTok = "BLayout::RowMajor";
+  if (auto blAttr = dyn_cast<BLayoutAttr>(configAttr.getBLayout())) {
+    if (static_cast<int32_t>(blAttr.getValue()) == 1)
+      blTok = "BLayout::ColMajor";
+  }
+  return blTok;
+}
+
+static std::string tileBufSLayoutToken(pto::TileBufConfigAttr configAttr) {
+  std::string slTok = "SLayout::NoneBox";
+  if (auto slAttr = dyn_cast<SLayoutAttr>(configAttr.getSLayout())) {
+    int32_t slVal = static_cast<int32_t>(slAttr.getValue());
+    slTok = (slVal == 1) ? "SLayout::RowMajor"
+                         : (slVal == 2) ? "SLayout::ColMajor"
+                                        : "SLayout::NoneBox";
+  }
+  return slTok;
+}
+
+static std::string tileBufPadToken(pto::TileBufConfigAttr configAttr) {
+  std::string padTok = "PadValue::Null";
+  if (auto padAttr = dyn_cast<PadValueAttr>(configAttr.getPad())) {
+    switch (static_cast<int32_t>(padAttr.getValue())) {
+    case 1:
+      padTok = "PadValue::Zero";
+      break;
+    case 2:
+      padTok = "PadValue::Max";
+      break;
+    case 3:
+      padTok = "PadValue::Min";
+      break;
+    default:
+      padTok = "PadValue::Null";
+      break;
+    }
+  }
+  return padTok;
+}
+
+static FailureOr<Value> buildAsyncScratchTileValue(
+    ConversionPatternRewriter &rewriter, Location loc, Value originalScratch,
+    Value emittedScratch) {
+  Value scratch = peelUnrealized(emittedScratch);
+  if (auto opaqueTy = dyn_cast<emitc::OpaqueType>(scratch.getType())) {
+    StringRef typeStr = opaqueTy.getValue();
+    if (typeStr.contains("Tile<") || typeStr.contains("ConvTile<"))
+      return scratch;
+  }
+
+  auto memTy = dyn_cast<MemRefType>(originalScratch.getType());
+  if (!memTy)
+    return failure();
+
+  ArrayRef<int64_t> shape = memTy.getShape();
+  if (!memTy.hasStaticShape() || shape.empty() || shape.size() > 2)
+    return failure();
+
+  int64_t rows = shape.size() == 1 ? 1 : shape[0];
+  int64_t cols = shape.size() == 1 ? shape[0] : shape[1];
+
+  auto *ctx = rewriter.getContext();
+  pto::TileBufConfigAttr configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+  if (auto bind = originalScratch.getDefiningOp<pto::BindTileOp>()) {
+    configAttr = bind.getConfig();
+  } else if (auto cast = originalScratch.getDefiningOp<pto::PointerCastOp>()) {
+    if (auto config = cast.getConfig())
+      configAttr = *config;
+  }
+
+  int32_t fractal = 512;
+  if (auto frAttr = dyn_cast<IntegerAttr>(configAttr.getSFractalSize()))
+    fractal = frAttr.getInt();
+
+    std::string elemTypeStr = getEmitCScalarTypeToken(memTy.getElementType());
+  std::string tileTypeStr =
+      "Tile<TileType::Vec, " + elemTypeStr + ", " + std::to_string(rows) +
+      ", " + std::to_string(cols) + ", " + tileBufBLayoutToken(configAttr) +
+      ", " + std::to_string(rows) + ", " + std::to_string(cols) + ", " +
+      tileBufSLayoutToken(configAttr) + ", " + std::to_string(fractal) + ", " +
+      tileBufPadToken(configAttr) + ">";
+
+  Value tile = rewriter
+                   .create<emitc::VariableOp>(
+                       loc, emitc::OpaqueType::get(ctx, tileTypeStr),
+                       emitc::OpaqueAttr::get(ctx, ""))
+                   .getResult();
+  auto addr = rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+  Value scratchAddr =
+      rewriter
+          .create<emitc::CallOpaqueOp>(loc, emitc::OpaqueType::get(ctx, "uint64_t"),
+                                       "reinterpret_cast", ArrayAttr{}, addr,
+                                       ValueRange{scratch})
+          .getResult(0);
+  rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                       ArrayAttr{}, ArrayAttr{},
+                                       ValueRange{tile, scratchAddr});
+  return tile;
+}
+
 //===----------------------------------------------------------------------===//
 // pto.pointer_cast lowering
 //===----------------------------------------------------------------------===
@@ -4913,6 +5050,155 @@ struct PTOInitializeL2LPipeToEmitC
   }
 
   PTOArch targetArch;
+};
+
+struct PTOBuildAsyncSessionToEmitC
+    : public OpConversionPattern<mlir::pto::BuildAsyncSessionOp> {
+  PTOBuildAsyncSessionToEmitC(TypeConverter &typeConverter, MLIRContext *ctx)
+      : OpConversionPattern<mlir::pto::BuildAsyncSessionOp>(typeConverter, ctx) {}
+
+  LogicalResult matchAndRewrite(mlir::pto::BuildAsyncSessionOp op,
+                                OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto *ctx = rewriter.getContext();
+    Location loc = op.getLoc();
+
+    auto sessionTy =
+        dyn_cast<emitc::OpaqueType>(getTypeConverter()->convertType(op.getSession().getType()));
+    if (!sessionTy)
+      return rewriter.notifyMatchFailure(op, "failed to convert async session type");
+
+    FailureOr<Value> scratchTile =
+        buildAsyncScratchTileValue(rewriter, loc, op.getScratch(),
+                                   adaptor.getScratch());
+    if (failed(scratchTile))
+      return rewriter.notifyMatchFailure(op, "failed to materialize async scratch tile");
+
+    Value workspace =
+        castToGMBytePointer(rewriter, loc, peelUnrealized(adaptor.getWorkspace()));
+
+    Value session = rewriter
+                        .create<emitc::VariableOp>(
+                            loc, sessionTy, emitc::OpaqueAttr::get(ctx, ""))
+                        .getResult();
+
+    auto u32Ty = emitc::OpaqueType::get(ctx, "uint32_t");
+    auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+
+    auto makeU32Const = [&](uint64_t value) -> Value {
+      return makeEmitCOpaqueConstant(rewriter, loc, u32Ty,
+                                     std::to_string(value) + "u");
+    };
+    uint64_t syncId = op.getSyncIdAttr() ? op.getSyncIdAttr().getInt() : 0;
+    uint64_t blockBytes =
+        op.getBlockBytesAttr() ? op.getBlockBytesAttr().getInt() : 32 * 1024;
+    uint64_t commBlockOffset =
+        op.getCommBlockOffsetAttr() ? op.getCommBlockOffsetAttr().getInt() : 0;
+    uint64_t queueNum = op.getQueueNumAttr() ? op.getQueueNumAttr().getInt() : 1;
+    uint64_t channelGroupIdx = op.getChannelGroupIdxAttr()
+                                   ? op.getChannelGroupIdxAttr().getInt()
+                                   : UINT32_MAX;
+
+    Value syncIdVal = makeU32Const(syncId);
+    Value channelGroupIdxVal =
+        channelGroupIdx == UINT32_MAX
+            ? makeEmitCOpaqueConstant(rewriter, loc, u32Ty, "UINT32_MAX")
+            : makeU32Const(channelGroupIdx);
+
+    auto baseConfigTy =
+        emitc::OpaqueType::get(ctx, "pto::comm::sdma::SdmaBaseConfig");
+    Value baseConfig =
+        rewriter
+            .create<emitc::VariableOp>(
+                loc, baseConfigTy,
+                emitc::OpaqueAttr::get(
+                    ctx, "{" + std::to_string(blockBytes) + "ULL, " +
+                             std::to_string(commBlockOffset) + "ULL, " +
+                             std::to_string(queueNum) + "u}"))
+            .getResult();
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "pto::comm::BuildAsyncSession<pto::comm::DmaEngine::SDMA>",
+        ArrayAttr{}, ArrayAttr{},
+        ValueRange{*scratchTile, workspace, session, syncIdVal, baseConfig,
+                   channelGroupIdxVal});
+
+    rewriter.replaceOp(op, session);
+    return success();
+  }
+};
+
+template <typename AsyncOp>
+struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
+  using OpConversionPattern<AsyncOp>::OpConversionPattern;
+
+  explicit PTOAsyncTransferToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                                   StringRef callee)
+      : OpConversionPattern<AsyncOp>(typeConverter, ctx), callee(callee.str()) {}
+
+  LogicalResult matchAndRewrite(AsyncOp op, typename AsyncOp::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value dst = peelUnrealized(adaptor.getDst());
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value dstGT = dst;
+    Value srcGT = src;
+    if (!isEmitCGlobalTensorLikeType(dstGT.getType())) {
+      auto dstMrTy = dyn_cast<MemRefType>(op.getDst().getType());
+      if (!dstMrTy)
+        return rewriter.notifyMatchFailure(op, "expected dst to lower to GlobalTensor or memref");
+      dstGT = buildGlobalTensorFromMemref(rewriter, op.getLoc(), dst, dstMrTy,
+                                          op.getDst().getDefiningOp()
+                                              ? op.getDst().getDefiningOp()
+                                              : op.getOperation());
+    }
+    if (!isEmitCGlobalTensorLikeType(srcGT.getType())) {
+      auto srcMrTy = dyn_cast<MemRefType>(op.getSrc().getType());
+      if (!srcMrTy)
+        return rewriter.notifyMatchFailure(op, "expected src to lower to GlobalTensor or memref");
+      srcGT = buildGlobalTensorFromMemref(rewriter, op.getLoc(), src, srcMrTy,
+                                          op.getSrc().getDefiningOp()
+                                              ? op.getSrc().getDefiningOp()
+                                              : op.getOperation());
+    }
+    if (!dstGT || !srcGT)
+      return rewriter.notifyMatchFailure(op, "failed to build GlobalTensor operands");
+
+    Type eventTy = this->getTypeConverter()->convertType(op.getEvent().getType());
+    if (!eventTy)
+      return rewriter.notifyMatchFailure(op, "failed to convert async event type");
+
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{eventTy}, callee, ArrayAttr{}, ArrayAttr{},
+        ValueRange{dstGT, srcGT, peelUnrealized(adaptor.getSession())});
+    return success();
+  }
+
+  std::string callee;
+};
+
+template <typename AsyncEventOp>
+struct PTOAsyncEventToEmitC : public OpConversionPattern<AsyncEventOp> {
+  explicit PTOAsyncEventToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                                StringRef callee)
+      : OpConversionPattern<AsyncEventOp>(typeConverter, ctx),
+        callee(callee.str()) {}
+
+  LogicalResult matchAndRewrite(AsyncEventOp op,
+                                typename AsyncEventOp::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Type resultTy =
+        this->getTypeConverter()->convertType(op.getCompleted().getType());
+    if (!resultTy)
+      return rewriter.notifyMatchFailure(op, "failed to convert async event result type");
+
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{resultTy}, callee, ArrayAttr{}, ArrayAttr{},
+        ValueRange{peelUnrealized(adaptor.getEvent()),
+                   peelUnrealized(adaptor.getSession())});
+    return success();
+  }
+
+  std::string callee;
 };
 
 struct PTODeclareTileMemRefToEmitC
@@ -9208,6 +9494,17 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOAddSCToTADDSC>(typeConverter, ctx);
   patterns.add<ArithCastOPToEmitC>(typeConverter, ctx);
   patterns.add<ArithTruncIToEmitC>(typeConverter, ctx);
+  patterns.add<PTOBuildAsyncSessionToEmitC>(typeConverter, ctx);
+  patterns.add<PTOAsyncTransferToEmitC<pto::TPutAsyncOp>>(
+      typeConverter, ctx,
+      "pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::SDMA>");
+  patterns.add<PTOAsyncTransferToEmitC<pto::TGetAsyncOp>>(
+      typeConverter, ctx,
+      "pto::comm::TGET_ASYNC<pto::comm::DmaEngine::SDMA>");
+  patterns.add<PTOAsyncEventToEmitC<pto::WaitAsyncEventOp>>(
+      typeConverter, ctx, "PTOAS__ASYNC_EVENT_WAIT");
+  patterns.add<PTOAsyncEventToEmitC<pto::TestAsyncEventOp>>(
+      typeConverter, ctx, "PTOAS__ASYNC_EVENT_TEST");
   patterns.add<PTOInitializeL2G2LPipeToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTOInitializeL2LPipeToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTODeclareTileMemRefToEmitC>(typeConverter, ctx);
@@ -9300,8 +9597,9 @@ struct EmitPTOManualPass
     }
 
         bool needsEventIdArrayHelper = false;
-        mop.walk([&](mlir::pto::DeclareEventIdArrayOp) {
-          needsEventIdArrayHelper = true;
+        mop.walk([&](Operation *op) {
+          if (isa<mlir::pto::DeclareEventIdArrayOp>(op))
+            needsEventIdArrayHelper = true;
         });
 
 		    // 1. 插入头文件
@@ -9346,7 +9644,6 @@ static AICORE inline void ptoas_auto_sync_tail(
   }
 }
 )cpp"));
-	
 	    // Only inject the bitcast helper when we actually lower ops that need it
 	    // (e.g. arith.bitcast or arith.maximumf/minimumf tie-breaking on zeros).
 	    bool needsBitcastHelper = false;

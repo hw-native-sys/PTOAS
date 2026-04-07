@@ -223,3 +223,13 @@ def PipeType : TypeDef<PTO_Dialect, "Pipe"> {
   let mnemonic = "pipe";
   let summary = "Opaque pipe handle type for TPUSH/TPOP communication";
 }
+
+def AsyncSessionType : TypeDef<PTO_Dialect, "AsyncSession"> {
+  let mnemonic = "async_session";
+  let summary = "Opaque async DMA session handle type";
+}
+
+def AsyncEventType : TypeDef<PTO_Dialect, "AsyncEvent"> {
+  let mnemonic = "async_event";
+  let summary = "Opaque async DMA event handle type";
+}

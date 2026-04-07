@@ -1871,6 +1871,118 @@ static SmallVector<int64_t, 4> getValidShapeVec(Value value) {
   return valid;
 }
 
+static bool isByteIntegerType(Type ty) {
+  auto intTy = dyn_cast<IntegerType>(ty);
+  return intTy && intTy.getWidth() == 8;
+}
+
+static LogicalResult verifyAsyncFlatContiguous1DGMMemRef(Operation *op,
+                                                         Value value,
+                                                         StringRef name) {
+  auto memTy = dyn_cast<MemRefType>(value.getType());
+  if (!memTy)
+    return op->emitOpError() << "expects " << name << " to be a memref";
+  if (!memTy.hasRank())
+    return op->emitOpError() << "expects " << name << " to be a ranked memref";
+  if (!isGmAddressSpaceAttr(memTy.getMemorySpace()))
+    return op->emitOpError() << "expects " << name
+                             << " to be in GM address space";
+
+  ArrayRef<int64_t> shape = memTy.getShape();
+  if (shape.empty())
+    return op->emitOpError() << "expects " << name
+                             << " to have rank >= 1";
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic)
+      return op->emitOpError() << "expects " << name
+                               << " to have a static shape";
+  }
+
+  SmallVector<int64_t> strides;
+  int64_t offset = 0;
+  if (failed(getStridesAndOffset(memTy, strides, offset)))
+    return op->emitOpError() << "expects " << name
+                             << " to be a strided memref with a known layout";
+
+  bool hasDynamicLayout =
+      offset == ShapedType::kDynamic ||
+      llvm::any_of(strides, [](int64_t stride) {
+        return stride == ShapedType::kDynamic;
+      });
+  if (hasDynamicLayout)
+    return success();
+
+  bool packed = !strides.empty() && strides.back() == 1;
+  for (int i = static_cast<int>(shape.size()) - 2; i >= 0 && packed; --i)
+    packed &= strides[i] == strides[i + 1] * shape[i + 1];
+  if (!packed)
+    return op->emitOpError()
+           << "expects " << name
+           << " to be a static flat contiguous logical 1D GM memref";
+
+  bool logical1D = true;
+  for (int i = 0, e = static_cast<int>(shape.size()) - 1; i < e; ++i)
+    logical1D &= shape[i] == 1;
+  if (!logical1D)
+    return op->emitOpError()
+           << "expects " << name
+           << " to be a static flat contiguous logical 1D GM memref";
+
+  return success();
+}
+
+static LogicalResult verifyAsyncFlatContiguous1DGMViewLike(Operation *op,
+                                                           Value value,
+                                                           StringRef name) {
+  Type ty = value.getType();
+  if (isa<MemRefType>(ty))
+    return verifyAsyncFlatContiguous1DGMMemRef(op, value, name);
+
+  if (!isa<pto::TensorViewType, pto::PartitionTensorViewType>(ty))
+    return op->emitOpError() << "expects " << name
+                             << " to be a memref/tensor_view/partition_view";
+
+  SmallVector<int64_t, 4> shape = getShapeVec(ty);
+  if (shape.empty())
+    return op->emitOpError() << "expects " << name << " to have rank >= 1";
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic)
+      return op->emitOpError() << "expects " << name
+                               << " to have a static shape";
+  }
+
+  bool logical1D = true;
+  for (int i = 0, e = static_cast<int>(shape.size()) - 1; i < e; ++i)
+    logical1D &= shape[i] == 1;
+  if (!logical1D)
+    return op->emitOpError()
+           << "expects " << name
+           << " to be a static flat contiguous logical 1D GM view";
+
+  return success();
+}
+
+static std::optional<uint64_t> getStaticByteSize(Type ty) {
+  SmallVector<int64_t, 4> shape = getShapeVec(ty);
+  if (shape.empty())
+    return std::nullopt;
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic || dim < 0)
+      return std::nullopt;
+  }
+
+  Type elemTy = getElemTy(ty);
+  uint64_t elemBytes = getElemByteSize(elemTy);
+  if (elemBytes == 0)
+    return std::nullopt;
+
+  uint64_t total = elemBytes;
+  for (int64_t dim : shape) {
+    total *= static_cast<uint64_t>(dim);
+  }
+  return total;
+}
+
 static std::optional<pto::AddressSpace> getPTOMemorySpaceEnum(Type ty) {
   if (auto tb = dyn_cast<pto::TileBufType>(ty)) {
     if (auto as = dyn_cast_or_null<pto::AddressSpaceAttr>(tb.getMemorySpace()))
@@ -9383,6 +9495,94 @@ static LogicalResult verifyPipeHandleProducer(Operation *op, Value pipeHandle) {
   return success();
 }
 
+LogicalResult BuildAsyncSessionOp::verify() {
+  Type scratchTy = getScratch().getType();
+  if (!isa<pto::TileBufType, MemRefType>(scratchTy))
+    return emitOpError("expects scratch to be tile_buf or memref type");
+
+  auto scratchSpace = getPTOMemorySpaceEnum(scratchTy);
+  if (!scratchSpace || *scratchSpace != pto::AddressSpace::VEC)
+    return emitOpError("expects scratch to be in vec address space");
+
+  auto scratchShape = getShapeVec(scratchTy);
+  if (scratchShape.empty() || scratchShape.size() > 2)
+    return emitOpError("expects scratch to be rank-1 or rank-2");
+  for (int64_t dim : scratchShape) {
+    if (dim == ShapedType::kDynamic)
+      return emitOpError("expects scratch to have a static shape");
+  }
+
+  auto scratchBytes = getStaticByteSize(scratchTy);
+  if (!scratchBytes)
+    return emitOpError("expects scratch byte size to be statically known");
+  if (*scratchBytes < sizeof(uint64_t))
+    return emitOpError("expects scratch to provide at least 8 bytes");
+
+  Type workspaceElemTy;
+  Type workspaceTy = getWorkspace().getType();
+  if (auto ptrTy = dyn_cast<pto::PtrType>(workspaceTy)) {
+    workspaceElemTy = ptrTy.getElementType();
+  } else if (auto memTy = dyn_cast<MemRefType>(workspaceTy)) {
+    workspaceElemTy = memTy.getElementType();
+    if (!isGmAddressSpaceAttr(memTy.getMemorySpace()))
+      return emitOpError("expects workspace to be in GM address space");
+  } else {
+    return emitOpError("expects workspace to be !pto.ptr or memref type");
+  }
+  if (!isByteIntegerType(workspaceElemTy))
+    return emitOpError("expects workspace element type to be an 8-bit integer");
+
+  if (auto syncIdAttr = getSyncIdAttr()) {
+    int64_t syncId = syncIdAttr.getInt();
+    if (syncId < 0 || syncId > 7)
+      return emitOpError("expects sync_id in range [0, 7]");
+  }
+  if (auto blockBytesAttr = getBlockBytesAttr()) {
+    if (blockBytesAttr.getInt() <= 0)
+      return emitOpError("expects block_bytes to be greater than 0");
+  }
+  if (auto commBlockOffsetAttr = getCommBlockOffsetAttr()) {
+    if (commBlockOffsetAttr.getInt() < 0)
+      return emitOpError("expects comm_block_offset to be non-negative");
+  }
+  if (auto queueNumAttr = getQueueNumAttr()) {
+    if (queueNumAttr.getInt() <= 0)
+      return emitOpError("expects queue_num to be greater than 0");
+  }
+  if (auto channelGroupIdxAttr = getChannelGroupIdxAttr()) {
+    APInt value = channelGroupIdxAttr.getValue();
+    if (value.isNegative())
+      return emitOpError("expects channel_group_idx to be non-negative");
+    if (value.ugt(UINT32_MAX))
+      return emitOpError("expects channel_group_idx to fit in uint32");
+  }
+
+  return success();
+}
+
+static LogicalResult verifyAsyncTransferOp(Operation *op, Value dst, Value src) {
+  Type dstElemTy = getElemTy(dst.getType());
+  Type srcElemTy = getElemTy(src.getType());
+  if (!dstElemTy || !srcElemTy)
+    return op->emitOpError("expects src and dst to have element types");
+  if (dstElemTy != srcElemTy)
+    return op->emitOpError("expects src and dst to have the same element type");
+  if (failed(verifyAsyncFlatContiguous1DGMViewLike(op, dst, "dst")) ||
+      failed(verifyAsyncFlatContiguous1DGMViewLike(op, src, "src")))
+    return failure();
+  if (getShapeVec(dst.getType()) != getShapeVec(src.getType()))
+    return op->emitOpError("expects src and dst to have the same static shape");
+  return success();
+}
+
+LogicalResult TPutAsyncOp::verify() {
+  return verifyAsyncTransferOp(getOperation(), getDst(), getSrc());
+}
+
+LogicalResult TGetAsyncOp::verify() {
+  return verifyAsyncTransferOp(getOperation(), getDst(), getSrc());
+}
+
 LogicalResult AicInitializePipeOp::verify() {
   return verifyFrontendInitCommon(*this, FunctionKernelKind::Cube, "cube");
 }
@@ -9491,6 +9691,48 @@ LogicalResult TFreeOp::verify() {
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
   return verifySplitAttr(getOperation(), getSplit());
+}
+
+void BuildAsyncSessionOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getScratchMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getWorkspaceMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void TPutAsyncOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void TGetAsyncOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void WaitAsyncEventOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getEventMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void TestAsyncEventOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getEventMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
 }
 
 void InitializeL2G2LPipeOp::getEffects(

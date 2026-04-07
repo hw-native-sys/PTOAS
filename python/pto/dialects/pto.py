@@ -31,6 +31,8 @@ except Exception:
 
 register_dialect = _pto_mod.register_dialect
 PtrType = _pto_mod.PtrType
+AsyncSessionType = _pto_mod.AsyncSessionType
+AsyncEventType = _pto_mod.AsyncEventType
 TensorViewType = _pto_mod.TensorViewType
 PartitionTensorViewType = _pto_mod.PartitionTensorViewType
 TileType = _pto_mod.TileType
@@ -69,6 +71,8 @@ __all__ = [
 
     # Types
     "PtrType",
+    "AsyncSessionType",
+    "AsyncEventType",
     "TensorViewType",
     "PartitionTensorViewType",
     "TileType",

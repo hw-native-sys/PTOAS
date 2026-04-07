@@ -1479,6 +1479,110 @@ def ImportReservedBufferOp : PTO_Op<"import_reserved_buffer"> {
 // TPUSH/TPOP Pipe Communication Ops
 //===----------------------------------------------------------------------===//
 
+def BuildAsyncSessionOp : PTO_Op<"build_async_session", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Build an async DMA session handle for TPUT_ASYNC/TGET_ASYNC";
+
+  let arguments = (ins
+      TileBufOrMemRef:$scratch,
+      ScalarPtrOrMemRef:$workspace,
+      OptionalAttr<I32Attr>:$sync_id,
+      OptionalAttr<I64Attr>:$block_bytes,
+      OptionalAttr<I64Attr>:$comm_block_offset,
+      OptionalAttr<I32Attr>:$queue_num,
+      OptionalAttr<I64Attr>:$channel_group_idx
+  );
+
+  let results = (outs AsyncSessionType:$session);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $scratch `,` $workspace `:` qualified(type($scratch)) `,` type($workspace) `)`
+    attr-dict `->` qualified(type($session))
+  }];
+}
+
+def TPutAsyncOp : PTO_Op<"tput_async", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Asynchronous remote write from local GM to remote GM";
+
+  let arguments = (ins
+      PTODpsType:$dst,
+      PTODpsType:$src,
+      AsyncSessionType:$session
+  );
+
+  let results = (outs AsyncEventType:$event);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $dst `,` $src `,` $session `:`
+        type($dst) `,` type($src) `,` qualified(type($session)) `)`
+    attr-dict `->` qualified(type($event))
+  }];
+}
+
+def TGetAsyncOp : PTO_Op<"tget_async", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Asynchronous remote read from remote GM to local GM";
+
+  let arguments = (ins
+      PTODpsType:$dst,
+      PTODpsType:$src,
+      AsyncSessionType:$session
+  );
+
+  let results = (outs AsyncEventType:$event);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $dst `,` $src `,` $session `:`
+        type($dst) `,` type($src) `,` qualified(type($session)) `)`
+    attr-dict `->` qualified(type($event))
+  }];
+}
+
+def WaitAsyncEventOp : PTO_Op<"wait_async_event", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Block until an async DMA event completes";
+
+  let arguments = (ins
+      AsyncEventType:$event,
+      AsyncSessionType:$session
+  );
+
+  let results = (outs I1:$completed);
+
+  let assemblyFormat = [{
+    `(` $event `,` $session `:`
+        qualified(type($event)) `,` qualified(type($session)) `)`
+    attr-dict `->` type($completed)
+  }];
+}
+
+def TestAsyncEventOp : PTO_Op<"test_async_event", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Non-blocking completion test for an async DMA event";
+
+  let arguments = (ins
+      AsyncEventType:$event,
+      AsyncSessionType:$session
+  );
+
+  let results = (outs I1:$completed);
+
+  let assemblyFormat = [{
+    `(` $event `,` $session `:`
+        qualified(type($event)) `,` qualified(type($session)) `)`
+    attr-dict `->` type($completed)
+  }];
+}
+
 def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {

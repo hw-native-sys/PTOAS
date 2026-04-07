@@ -232,6 +232,16 @@ while IFS= read -r -d '' cpp; do
   testcase="${testcase%-pto}"
   testcase="${testcase%_pto}"
 
+  # AsyncComm smoke sample issues async remote DMA against plain local buffers.
+  # In board-runtime STAGE=run this can trigger invalid MPU access on single-rank
+  # execution, so skip it in runtime stage.
+  if [[ "${STAGE}" == "run" && "${testcase}" == "async_comm" ]]; then
+    skip_count=$((skip_count + 1))
+    printf "%s\tSKIP\t%s\truntime skip: async_comm\n" "${testcase}" "${STAGE}" >> "${RESULTS_TSV}"
+    log "SKIP: ${testcase} (runtime skip)"
+    continue
+  fi
+
   if [[ -n "${RUN_ONLY_CASES_NORM}" ]] && ! list_contains "${RUN_ONLY_CASES_NORM}" "${testcase}"; then
     continue
   fi

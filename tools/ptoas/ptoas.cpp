@@ -372,6 +372,17 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
   }
 }
 
+static void rewriteAsyncEventMarkers(std::string &cpp) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__ASYNC_EVENT_WAIT", "Wait", /*expectedNumArgs=*/2);
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__ASYNC_EVENT_TEST", "Test", /*expectedNumArgs=*/2);
+  }
+}
+
 // --------------------------------------------------------------------------
 // EmitC cleanup: drop empty emitc.expression ops.
 //
@@ -1194,6 +1205,7 @@ int main(int argc, char **argv) {
   }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
+  rewriteAsyncEventMarkers(cppOutput);
   rewritePtrScalarMarkers(cppOutput);
   rewriteEventIdArrayMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
