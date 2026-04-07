@@ -272,7 +272,8 @@ process_one_dir() {
       continue
     fi
     if [[ ( "$base" == "test_tmov_col_major_16x1_align_a5" || \
-            "$base" == "test_tmov_row_major_1x16_control_a5" ) && \
+            "$base" == "test_tmov_row_major_1x16_control_a5" || \
+            "$base" == "rmsnorm_incore_0" ) && \
           "${target_arch_lc}" != "a5" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
       continue
@@ -321,10 +322,11 @@ process_one_dir() {
     decoded_pto="${out_subdir}/${base}-roundtrip.pto"
     local sample_use_ptobc_roundtrip="$use_ptobc_roundtrip"
     # TODO(ptobc): alloc_tile addr operand is required by ptoas level3 for
-    # these A5 TMOV repro/control samples, but ptobc v0 currently rejects this
+    # these A5 repro/control samples, but ptobc v0 currently rejects this
     # form with "operand count mismatch for op: pto.alloc_tile".
     if [[ "$base" == "test_tmov_col_major_16x1_align_a5" || \
-          "$base" == "test_tmov_row_major_1x16_control_a5" ]]; then
+          "$base" == "test_tmov_row_major_1x16_control_a5" || \
+          "$base" == "rmsnorm_incore_0" ]]; then
       sample_use_ptobc_roundtrip=0
     fi
     if [[ $sample_use_ptobc_roundtrip -eq 1 ]]; then
@@ -964,7 +966,8 @@ PY
       esac
       base="$(basename "$f" .pto)"
       if [[ ( "$base" == "test_tmov_col_major_16x1_align_a5" || \
-              "$base" == "test_tmov_row_major_1x16_control_a5" ) && \
+              "$base" == "test_tmov_row_major_1x16_control_a5" || \
+              "$base" == "rmsnorm_incore_0" ) && \
             "${target_arch_lc}" != "a5" ]]; then
         echo -e "${A}(${base}.pto)\tSKIP\trequires --pto-arch=a5"
         continue
@@ -979,7 +982,8 @@ PY
       # yet supported by ptobc roundtrip; re-enable once ptobc catches up.
       if [[ "$base" == "test_if_else_tile_result" || \
             "$base" == "test_tmov_col_major_16x1_align_a5" || \
-            "$base" == "test_tmov_row_major_1x16_control_a5" ]]; then
+            "$base" == "test_tmov_row_major_1x16_control_a5" || \
+            "$base" == "rmsnorm_incore_0" ]]; then
         sample_use_ptobc_roundtrip=0
       fi
 
