@@ -319,7 +319,15 @@ process_one_dir() {
     local pto_input="$mlir"
     ptobc_file="${out_subdir}/${base}.ptobc"
     decoded_pto="${out_subdir}/${base}-roundtrip.pto"
-    if [[ $use_ptobc_roundtrip -eq 1 ]]; then
+    local sample_use_ptobc_roundtrip="$use_ptobc_roundtrip"
+    # TODO(ptobc): alloc_tile addr operand is required by ptoas level3 for
+    # these A5 TMOV repro/control samples, but ptobc v0 currently rejects this
+    # form with "operand count mismatch for op: pto.alloc_tile".
+    if [[ "$base" == "test_tmov_col_major_16x1_align_a5" || \
+          "$base" == "test_tmov_row_major_1x16_control_a5" ]]; then
+      sample_use_ptobc_roundtrip=0
+    fi
+    if [[ $sample_use_ptobc_roundtrip -eq 1 ]]; then
       # Allow generic escape for ops that are not yet in the compact v0 opcode table.
       if ! PTOBC_ALLOW_GENERIC=1 "$ptobc" encode "$mlir" -o "$ptobc_file" >/dev/null 2>&1; then
         if [[ $expect_fail -eq 1 ]]; then
@@ -961,11 +969,11 @@ PY
       cpp="${out_subdir}/${base}.cpp"
       local sample_use_ptobc_roundtrip="$use_ptobc_roundtrip"
 
-      # TODO(ptobc): decode of this regression currently fails with
-      # "operand value_id out of range" when scf.if returns tile-like values.
-      # Keep ptoas regression coverage here, and re-enable roundtrip once
-      # ptobc supports this pattern.
-      if [[ "$base" == "test_if_else_tile_result" ]]; then
+      # TODO(ptobc): Keep ptoas regression coverage for patterns that are not
+      # yet supported by ptobc roundtrip; re-enable once ptobc catches up.
+      if [[ "$base" == "test_if_else_tile_result" || \
+            "$base" == "test_tmov_col_major_16x1_align_a5" || \
+            "$base" == "test_tmov_row_major_1x16_control_a5" ]]; then
         sample_use_ptobc_roundtrip=0
       fi
 
