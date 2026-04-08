@@ -1,0 +1,45 @@
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module {
+  // Safe case: only singleton axes are moved. This should canonicalize
+  // [1, 16, 1, 16] -> [1, 1, 16, 16] before 5D right-align, so emitted
+  // GlobalTensor shape becomes <1, 1, 1, 16, 16>.
+  func.func @issue453_singleton_axis_reorder_positive(%src: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c256 = arith.constant 256 : index
+
+    %tv = pto.make_tensor_view %src, shape = [%c1, %c16, %c1, %c16], strides = [%c256, %c16, %c16, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?x?x?xf16>
+    %sv = pto.partition_view %tv, offsets = [%c0, %c0, %c0, %c0], sizes = [%c1, %c16, %c1, %c16] : !pto.tensor_view<?x?x?x?xf16> -> !pto.partition_tensor_view<1x16x1x16xf16>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tload ins(%sv : !pto.partition_tensor_view<1x16x1x16xf16>)
+              outs(%tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+
+  // Unsafe case: three non-singleton axes (2,16,16). Reordering is not legal
+  // and must not happen.
+  func.func @issue453_singleton_axis_reorder_negative(%src: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %c256 = arith.constant 256 : index
+
+    %tv = pto.make_tensor_view %src, shape = [%c2, %c16, %c1, %c16], strides = [%c256, %c16, %c16, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?x?x?xf16>
+    %sv = pto.partition_view %tv, offsets = [%c0, %c0, %c0, %c0], sizes = [%c2, %c16, %c1, %c16] : !pto.tensor_view<?x?x?x?xf16> -> !pto.partition_tensor_view<2x16x1x16xf16>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=16, v_row=32, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tload ins(%sv : !pto.partition_tensor_view<2x16x1x16xf16>)
+              outs(%tile : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=16, v_row=32, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}
+
+// A5-LABEL: AICORE void issue453_singleton_axis_reorder_positive(
+// A5: GlobalTensor<half, pto::Shape<1, 1, 1, 16, 16>
+// A5-NOT: GlobalTensor<half, pto::Shape<1, 1, 16, 1, 16>
+
+// A5-LABEL: AICORE void issue453_singleton_axis_reorder_negative(
+// A5: GlobalTensor<half, pto::Shape<1, 2, 16, 1, 16>
+// A5-NOT: GlobalTensor<half, pto::Shape<1, 1, 2, 16, 16>
