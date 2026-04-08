@@ -3283,6 +3283,72 @@ pto.tsqrt ins(%a : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
+##### `pto.ttri` - Fill Triangular Tile Region
+
+**Summary:** Fills a VEC tile using the PTO-ISA `TTRI` triangular pattern.
+
+**Semantics:**
+
+```
+TTRI(dst, diagonal)
+```
+
+`upperOrLower=0` selects the lower-triangular form and `upperOrLower=1`
+selects the upper-triangular form. The exact per-element fill pattern follows
+the target PTO-ISA implementation.
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `diagonal` | integer SSA value | Runtime diagonal selector |
+| `dst` | `pto.tile_buf` | Destination vector tile |
+
+**Attributes:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `upperOrLower` | `I32Attr` (default: `0`) | `0` for lower triangular, `1` for upper triangular |
+
+**Results:** None. Writes into `dst` via DPS pattern.
+
+**Assembly Format:**
+
+```mlir
+pto.ttri ins(%diag {upperOrLower = 1 : i32} : i32)
+         outs(%dst : !pto.tile_buf<...>)
+```
+
+**Constraints & Verification:**
+
+- `dst` must be a VEC tile (`loc=vec`) whose valid shape stays within the static tile shape.
+- `dst` must use `blayout=row_major`.
+- `diagonal` must have an integer type.
+- `upperOrLower` must be either `0` or `1`.
+- Supported element types:
+  - A2/A3: `f16`, `f32`, `i16`, `i32`, `u16`, `u32`
+  - A5: `f16`, `f32`, `bf16`, `i8`, `i16`, `i32`, `u8`, `u16`, `u32`
+
+**Hardware Mapping:**
+
+- Executes on the **Vector pipeline** (`PIPE_V`)
+
+**Basic Example:**
+
+```mlir
+pto.ttri ins(%diag : i32)
+         outs(%lower : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
+               v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+               fractal=512, pad=0>)
+
+pto.ttri ins(%diag {upperOrLower = 1 : i32} : i32)
+         outs(%upper : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
+               v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+               fractal=512, pad=0>)
+```
+
+---
+
 ##### `pto.trsqrt` - Elementwise Reciprocal Square Root
 
 **Summary:** Computes the reciprocal square root for every element.

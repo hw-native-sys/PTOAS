@@ -2490,6 +2490,35 @@ def TCIOp : PTO_TOp<"tci", [
   }];
 }
 
+def TTriOp : PTO_TOp<"ttri", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Generate a lower/upper triangular mask tile";
+
+  let arguments = (ins
+    AnyInteger:$diagonal,
+    PTODpsType:$dst,
+    DefaultValuedAttr<I32Attr, "0">:$upperOrLower
+  );
+  let results = (outs);
+
+  let assemblyFormat = [{
+    `ins` `(` $diagonal
+    attr-dict
+    `:` type($diagonal) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+  }];
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
 def TCmpOp : PTO_TOp<"tcmp", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,

@@ -2841,6 +2841,42 @@ LogicalResult pto::TCIOp::verify() {
 
   return success();
 }
+
+LogicalResult pto::TTriOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+
+  Type dstTy = getDst().getType();
+  if (failed(verifyVecTileCommon(*this, dstTy, "dst")))
+    return failure();
+
+  auto diagonalTy = getDiagonal().getType().dyn_cast<IntegerType>();
+  if (!diagonalTy)
+    return emitOpError("expects diagonal to be an integer operand");
+
+  int32_t upperOrLower = getUpperOrLower();
+  if (upperOrLower != 0 && upperOrLower != 1)
+    return emitOpError("expects upperOrLower to be 0 (lower) or 1 (upper)");
+
+  Type elemTy = getElemTy(dstTy);
+  return dispatchVerifierByArch(
+      getOperation(),
+      [&]() -> LogicalResult {
+        if (!isSupportedVecElemType(elemTy, /*allowBf16=*/false,
+                                    /*allowInt8=*/false))
+          return emitOpError()
+                 << "expects A2/A3 dst element type to be f16/f32/i16/i32/u16/u32";
+        return success();
+      },
+      [&]() -> LogicalResult {
+        if (!isSupportedVecElemType(elemTy, /*allowBf16=*/true,
+                                    /*allowInt8=*/true))
+          return emitOpError()
+                 << "expects A5 dst element type to be f16/f32/bf16/i8/i16/i32/u8/u16/u32";
+        return success();
+      });
+}
+
 LogicalResult pto::TCmpOp::verify() {
   auto verifyA2A3 = [&]() -> LogicalResult {
     Type t0 = getSrc0().getType();
@@ -8870,6 +8906,12 @@ PTO_DEFINE_UNARY_EFFECTS(TAndSOp, getSrcMutable(), getDstMutable())
 
 // TCI: Write(dst) (generates sequence)
 void TCIOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// TTRI: Write(dst) (generates triangular mask)
+void TTriOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getDstMutable());
 }
