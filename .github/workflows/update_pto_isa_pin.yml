@@ -1,3 +1,11 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
 name: Update pto-isa pin
 
 on:
@@ -28,7 +36,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
           token: ${{ env.AUTOMATION_TOKEN }}
 
       - name: Setup Python
@@ -46,18 +55,26 @@ jobs:
           echo "pto_isa_commit=${sha}" >> "${GITHUB_OUTPUT}"
           echo "pto_isa_short=${sha:0:12}" >> "${GITHUB_OUTPUT}"
 
-      - name: Create draft pull request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ env.AUTOMATION_TOKEN }}
-          base: main
-          branch: automation/weekly-pto-isa-pin
-          delete-branch: true
-          draft: true
-          title: "chore(ci): bump pto-isa pin to ${{ steps.update.outputs.pto_isa_short }}"
-          commit-message: "chore(ci): bump pto-isa pin to ${{ steps.update.outputs.pto_isa_short }}"
-          body: |
-            Weekly update of the pinned `pto-isa` commit used by CI and the Docker image.
+      - name: Commit pinned pto-isa update
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .github/workflows/ci.yml docker/Dockerfile; then
+            echo "pto-isa pin already up to date."
+            echo "created_commit=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
 
-            - repo: `https://gitcode.com/cann/pto-isa.git`
-            - commit: `${{ steps.update.outputs.pto_isa_commit }}`
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/ci.yml docker/Dockerfile
+          git commit -m "chore(ci): bump pto-isa pin to ${{ steps.update.outputs.pto_isa_short }}"
+          echo "created_commit=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Push pinned pto-isa update
+        if: steps.commit.outputs.created_commit == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:${{ github.event.repository.default_branch }}
