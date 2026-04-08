@@ -10,4 +10,5 @@ Notes:
   `qwen3_decode_layer_incore_10`, `qwen3_decode_layer_incore_13`,
   `qwen3_decode_layer_incore_14`.
 - This sample directory vendors only those direct `ptoas` regression inputs.
-- No custom `golden.py` or `compare.py` is included here: these grouped mixed kernels depend on orchestration-managed peer buffers and loop-carried context, so per-kernel numerical validation is not a drop-in replacement for the full PyPTO runtime flow.
+- `test/npu_validation/scripts/generate_testcase.py` now wraps the paired `_aic`/`_aiv` entrypoints into a standalone mixed-kernel launch wrapper for board validation.
+- Custom `golden.py` assets cover these 5 cases as standalone mixed-kernel regression tests on A5.

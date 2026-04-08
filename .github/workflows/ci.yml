@@ -33,7 +33,7 @@ on:
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
         type: string
-        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp,decode_attention_incore_0,decode_attention_incore_1,decode_attention_incore_2,decode_attention_incore_3,decode_attention_incore_4,decode_attention_incore_5,decode_attention_incore_6,decode_attention_incore_7,decode_attention_incore_8,decode_attention_incore_9,decode_attention_incore_10,decode_attention_incore_11,decode_attention_incore_12"
+        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp"
       run_only_cases:
         description: "Comma/space separated testcase names to run (empty = run all)"
         type: string
@@ -261,14 +261,7 @@ jobs:
       # Temporary CI gate: skip cases that still error/flap on the remote NPU.
       # Update this list as we fix the underlying issues.
       DEFAULT_SKIP_CASES: >-
-        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp,
-        decode_attention_incore_0,decode_attention_incore_1,
-        decode_attention_incore_2,decode_attention_incore_3,
-        decode_attention_incore_4,decode_attention_incore_5,
-        decode_attention_incore_6,decode_attention_incore_7,
-        decode_attention_incore_8,decode_attention_incore_9,
-        decode_attention_incore_10,decode_attention_incore_11,
-        decode_attention_incore_12
+        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp
     steps:
       - name: Resolve validation parameters
         shell: bash
@@ -300,7 +293,7 @@ jobs:
           # suite (RUN_ONLY_CASES is empty), skip the non-matching variant based
           # on SOC_VERSION to keep the remote validation portable.
           A3_ONLY_CASES="partition5d,partition5d_dynamic,mrgsort,tmatmulk_autosync"
-          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5"
+          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5,qwen3_decode_layer_incore_1,qwen3_decode_layer_incore_2,qwen3_decode_layer_incore_10,qwen3_decode_layer_incore_13,qwen3_decode_layer_incore_14"
 
           sv_lc="$(printf '%s' "${SOC_VERSION}" | tr '[:upper:]' '[:lower:]')"
           is_a5=0
