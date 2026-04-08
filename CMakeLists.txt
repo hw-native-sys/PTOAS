@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 cmake_minimum_required(VERSION 3.20.0)
-project(ptoas VERSION 0.24)
+project(ptoas VERSION 0.25)
 
 set(PTOAS_RELEASE_VERSION_OVERRIDE ""
     CACHE STRING "Override the version printed by ptoas --version")
