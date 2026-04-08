@@ -11,4 +11,4 @@ Notes:
   `qwen3_decode_layer_incore_14`.
 - This sample directory vendors only those direct `ptoas` regression inputs.
 - `test/npu_validation/scripts/generate_testcase.py` now wraps the paired `_aic`/`_aiv` entrypoints into a standalone mixed-kernel launch wrapper for board validation.
-- Custom `golden.py` assets cover these 5 cases as standalone mixed-kernel regression tests on A5.
+- Custom golden assets follow the normal sample convention and live beside the `.pto` files as `<case>_golden.py`.
