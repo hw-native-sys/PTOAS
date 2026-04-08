@@ -37,15 +37,33 @@ static pto::EventAttr getEventAttr(Builder &builder, int id) {
   return pto::EventAttr::get(builder.getContext(), odsEventVal);
 }
  
+static bool IsSameSyncSignature(const SyncOperation *existing,
+                                const SyncOperation *candidate) {
+  if (existing->GetType() != candidate->GetType())
+    return false;
+  if (existing->GetActualSrcPipe() != candidate->GetActualSrcPipe())
+    return false;
+  if (existing->GetActualDstPipe() != candidate->GetActualDstPipe())
+    return false;
+  if (candidate->isSyncSetType() || candidate->isSyncWaitType())
+    return existing->eventIds == candidate->eventIds;
+  return true;
+}
+
 static bool IsSyncExist(const SyncOps &list, SyncOperation *newSync) {
+  // Tombstone entries are soft-deleted and should never participate in
+  // deduplication; otherwise they can shadow a later live sync with
+  // the same signature.
+  if (newSync->uselessSync)
+    return true;
+
   for (auto *existing : list) {
-    if (existing == newSync) return true;
-    if (existing->GetType() != newSync->GetType()) continue;
-    if (existing->GetActualSrcPipe() != newSync->GetActualSrcPipe()) continue;
-    if (existing->GetActualDstPipe() != newSync->GetActualDstPipe()) continue;
-    if (newSync->isSyncSetType() || newSync->isSyncWaitType()) {
-       if (existing->eventIds != newSync->eventIds) continue;
-    }
+    if (existing == newSync)
+      return true;
+    if (existing->uselessSync)
+      continue;
+    if (!IsSameSyncSignature(existing, newSync))
+      continue;
     return true;
   }
   return false;
@@ -53,6 +71,8 @@ static bool IsSyncExist(const SyncOps &list, SyncOperation *newSync) {
  
 static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
   for (auto *sync : srcList) {
+    if (sync->uselessSync)
+      continue;
     if (!IsSyncExist(dstList, sync)) {
       dstList.push_back(sync);
     }

@@ -6,16 +6,26 @@
 // 2. The loop head must wait on the same primed events.
 // 3. The kernel tail must still drain the outstanding M/MTE1 + FIX/M events
 //    before the auto tail barrier helper runs.
+// 4. The second independent loop must keep its loop-head waits *inside* loop
+//    after preheat sets are emitted.
 //
+// CHECK-LABEL: tri_inv_block2x2_fp16(
 // CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
 // CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
-// CHECK: for (size_t
+// CHECK-NEXT: for (size_t
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
 // CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
-// CHECK-NEXT: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID2);
-// CHECK-NEXT: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID6);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID4);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
+// CHECK-NEXT: for (size_t
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
 // CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
 
 module {

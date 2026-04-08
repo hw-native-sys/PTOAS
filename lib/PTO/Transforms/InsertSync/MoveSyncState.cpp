@@ -200,6 +200,14 @@ void MoveSyncState::PlanMoveOutWaitSync(
     newPipeBefore.push_back(s);
     return;
   }
+
+  // Loop-carried wait must stay in the loop body; hoisting it to loop-head
+  // can break the per-iteration handshake when later passes rewrite IDs.
+  if (s->GetForEndIndex().has_value() &&
+      static_cast<unsigned>(s->GetForEndIndex().value()) == pair.second) {
+    newPipeBefore.push_back(s);
+    return;
+  }
  
   auto &syncPair = syncOperations_[s->GetSyncIndex()];
   checkCondition(!syncPair.empty(), "expected syncPair not to be empty");
@@ -229,6 +237,14 @@ void MoveSyncState::PlanMoveOutSetSync(
   
   if (s->GetType() != SyncOperation::TYPE::SET_EVENT &&
       s->GetType() != SyncOperation::TYPE::SYNC_BLOCK_SET) {
+    newPipeAfter.push_back(s);
+    return;
+  }
+
+  // Loop-carried set participates in the loop head/tail schedule and must not
+  // be sunk out of the loop by local motion rules.
+  if (s->GetForEndIndex().has_value() &&
+      static_cast<unsigned>(s->GetForEndIndex().value()) == pair.second) {
     newPipeAfter.push_back(s);
     return;
   }
