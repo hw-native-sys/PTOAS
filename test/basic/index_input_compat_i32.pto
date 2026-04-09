@@ -1,0 +1,70 @@
+// RUN: ptoas %s | FileCheck %s
+
+module {
+  func.func @index_input_compat_i32(%src: !pto.ptr<f32>, %vr: i32, %vc: i32,
+                                    %lp: i32, %off: i32) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+
+    %view = pto.make_tensor_view %src,
+            shape = [%c32, %c32],
+            strides = [%c32, %c1]
+            : !pto.tensor_view<32x32xf32>
+    %part = pto.partition_view %view,
+            offsets = [%c0, %c0],
+            sizes = [%c32, %c32]
+           : !pto.tensor_view<32x32xf32>
+             -> !pto.partition_tensor_view<32x32xf32>
+
+    %tile = pto.alloc_tile valid_row = %vr valid_col = %vc
+            : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                            blayout=row_major, slayout=none_box, fractal=512, pad=0>, i32
+    pto.tload ins(%part : !pto.partition_tensor_view<32x32xf32>)
+             outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             left_padding_num = %lp : i32
+
+    %scalar = pto.tgetval ins(%tile, %off : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                                                          blayout=row_major, slayout=none_box, fractal=512, pad=0>, i32)
+              outs : f32
+    pto.tsetval ins(%off, %scalar : i32, f32)
+               outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    pto.set_validshape %tile, %vr, %vc
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>, i32
+    return
+  }
+
+  func.func @index_input_compat_i32_extract_insert() {
+    %c0_i32 = arith.constant 0 : i32
+    %src_mat = pto.alloc_tile
+      : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %dst_left = pto.alloc_tile
+      : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.textract ins(%src_mat, %c0_i32, %c0_i32
+                     : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                                     blayout=row_major, slayout=col_major, fractal=512, pad=0>, i32, i32)
+                outs(%dst_left
+                     : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32,
+                                     blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+
+    %src_vec = memref.alloc() : memref<32x32xf16, #pto.address_space<vec>>
+    %dst_vec = memref.alloc() : memref<32x32xf16, #pto.address_space<vec>>
+    pto.tinsert ins(%src_vec, %c0_i32, %c0_i32 : memref<32x32xf16, #pto.address_space<vec>>, i32, i32)
+               outs(%dst_vec : memref<32x32xf16, #pto.address_space<vec>>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void index_input_compat_i32(
+// CHECK: [[TILE:v[0-9]+]].GetValue(
+// CHECK: [[TILE]].SetValue(
+// CHECK: [[TILE]].SetValidShape(
+// CHECK-LABEL: AICORE void index_input_compat_i32_extract_insert(
+// CHECK: TEXTRACT(
+// CHECK: TINSERT(

@@ -639,6 +639,8 @@ struct PTOViewToMemrefPass
         // 5. 获取 Config (保持不变)
         auto configAttr = tbTy.getConfigAttr();
         if (!configAttr) configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+        Value bindVRow = vRow ? ensureIndex(rewriter, loc, vRow, op) : Value();
+        Value bindVCol = vCol ? ensureIndex(rewriter, loc, vCol, op) : Value();
 
         // 6. If alloc_tile provides an explicit address, keep the original
         // pointer_cast lowering intact and additionally rebind through
@@ -647,8 +649,7 @@ struct PTOViewToMemrefPass
         // unified anchor EmitC uses to recover tile_buf information.
         if (Value addr = op.getAddr()) {
           auto pc = rewriter.create<pto::PointerCastOp>(
-              loc, targetType, ValueRange{addr}, vRow ? vRow : Value(),
-              vCol ? vCol : Value(), configAttr);
+              loc, targetType, ValueRange{addr}, bindVRow, bindVCol, configAttr);
           markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
           auto bindOp = rewriter.create<pto::BindTileOp>(
               loc, targetType, pc.getResult(), vRow ? vRow : Value(),
@@ -666,8 +667,7 @@ struct PTOViewToMemrefPass
 
         // BindTileOp 的 Builder 会自动处理空的 Value，将其视为静态维度
         auto bindOp = rewriter.create<pto::BindTileOp>(
-            loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
-            configAttr);
+            loc, targetType, alloc, bindVRow, bindVCol, configAttr);
         markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
 
         rewriter.replaceOp(op, bindOp.getResult());
@@ -838,7 +838,7 @@ struct PTOViewToMemrefPass
         if (!mrTy)
           continue; // leave it to later passes if it hasn't been lowered yet
 
-        Value dimIdx = op.getDimIndex();
+        Value dimIdx = ensureIndex(rewriter, loc, op.getDimIndex(), op);
         Value dim = rewriter.create<memref::DimOp>(loc, view, dimIdx);
         rewriter.replaceOp(op, dim);
       }
@@ -1347,7 +1347,15 @@ struct PTOViewToMemrefPass
           Value dst = op->getOperand(1);
 
           auto newOp =
-              rewriter.create<pto::TLoadOp>(op.getLoc(), TypeRange{}, src, dst);
+              rewriter.create<pto::TLoadOp>(op.getLoc(), TypeRange{},
+                                            src,
+                                            dst,
+                                            op.getPadModeAttr(),
+                                            op.getPadValue(),
+                                            op.getLeftPaddingNum(),
+                                            op.getRightPaddingNum(),
+                                            op.getInitOutBuffer(),
+                                            op.getInitCondition());
           newOp->setAttrs(op->getAttrs());
           rewriter.replaceOp(op, newOp->getResults());
       }
@@ -2271,10 +2279,12 @@ struct PTOViewToMemrefPass
         Value dst = op.getDst();
 
         auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto indexRowTy = dyn_cast<IndexType>(indexRow.getType());
-        auto indexColTy = dyn_cast<IndexType>(indexCol.getType());
         auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !indexRowTy || !indexColTy || !dstTy) {
+        bool rowTyOk = indexRow.getType().isIndex() ||
+                       indexRow.getType().isSignlessInteger(32);
+        bool colTyOk = indexCol.getType().isIndex() ||
+                       indexCol.getType().isSignlessInteger(32);
+        if (!srcTy || !dstTy || !rowTyOk || !colTyOk) {
           op.emitError("ins/outs are not correct yet");
           signalPassFailure();
           return;
