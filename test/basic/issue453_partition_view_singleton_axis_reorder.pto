@@ -35,6 +35,22 @@ module {
     return
   }
 
+  // Safe case (DN): same singleton-axis movement is legal for DN layout and
+  // should still canonicalize before ND/DN->NZ-like tload lowering.
+  func.func @issue453_singleton_axis_reorder_positive_dn(%src: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c256 = arith.constant 256 : index
+
+    %tv = pto.make_tensor_view %src, shape = [%c1, %c16, %c1, %c16], strides = [%c256, %c16, %c16, %c1] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?x?x?xf16>
+    %sv = pto.partition_view %tv, offsets = [%c0, %c0, %c0, %c0], sizes = [%c1, %c16, %c1, %c16] : !pto.tensor_view<?x?x?x?xf16> -> !pto.partition_tensor_view<1x16x1x16xf16>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tload ins(%sv : !pto.partition_tensor_view<1x16x1x16xf16>)
+              outs(%tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+
   // Guard case #1: ND->ND tload (non NZ-like tile config). Reordering should
   // stay disabled even when singleton-axis movement would be legal.
   func.func @issue453_singleton_axis_no_reorder_nd_to_nd_tload(%src: !pto.ptr<f16>) {
@@ -75,6 +91,11 @@ module {
 // A5-LABEL: AICORE void issue453_singleton_axis_reorder_negative(
 // A5: GlobalTensor<half, pto::Shape<1, 2, 16, 1, 16>
 // A5-NOT: GlobalTensor<half, pto::Shape<1, 1, 2, 16, 16>
+
+// A5-LABEL: AICORE void issue453_singleton_axis_reorder_positive_dn(
+// A5: GlobalTensor<half, pto::Shape<1, 1, 1, 16, 16>
+// A5: pto::Layout::DN
+// A5-NOT: GlobalTensor<half, pto::Shape<1, 1, 16, 1, 16>
 
 // A5-LABEL: AICORE void issue453_singleton_axis_no_reorder_nd_to_nd_tload(
 // A5: GlobalTensor<half, pto::Shape<1, 1, 16, 1, 16>

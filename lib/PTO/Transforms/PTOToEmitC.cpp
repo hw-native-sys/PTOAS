@@ -142,140 +142,6 @@ resolveLayoutForGlobalTensor(Operation *anchor, Value basePtr) {
   return resolveLayoutFromValueChain(basePtr);
 }
 
-static std::optional<pto::TileBufConfigAttr>
-resolveTileConfigFromValueChain(Value v) {
-  v = peelUnrealized(v);
-  while (Operation *def = v.getDefiningOp()) {
-    if (auto bind = dyn_cast<pto::BindTileOp>(def))
-      return bind.getConfigAttr();
-    if (auto cast = dyn_cast<pto::PointerCastOp>(def)) {
-      if (auto cfg = cast.getConfig())
-        return *cfg;
-      return std::nullopt;
-    }
-    if (auto mcast = dyn_cast<memref::CastOp>(def)) {
-      v = peelUnrealized(mcast.getSource());
-      continue;
-    }
-    if (auto sv = dyn_cast<memref::SubViewOp>(def)) {
-      v = peelUnrealized(sv.getSource());
-      continue;
-    }
-    if (auto unrealized = dyn_cast<UnrealizedConversionCastOp>(def)) {
-      if (unrealized->getNumOperands() == 0)
-        break;
-      v = peelUnrealized(unrealized.getOperand(0));
-      continue;
-    }
-    break;
-  }
-  return std::nullopt;
-}
-
-static bool isNZLikeTileConfig(pto::TileBufConfigAttr configAttr) {
-  int32_t blVal = 0;
-  if (auto bl = dyn_cast<BLayoutAttr>(configAttr.getBLayout()))
-    blVal = static_cast<int32_t>(bl.getValue());
-
-  int32_t slVal = 0;
-  if (auto sl = dyn_cast<SLayoutAttr>(configAttr.getSLayout()))
-    slVal = static_cast<int32_t>(sl.getValue());
-
-  int32_t fractal = 0;
-  if (auto fr = dyn_cast<IntegerAttr>(configAttr.getSFractalSize()))
-    fractal = fr.getInt();
-
-  // pto-isa NZ-like tile predicate:
-  //   !isRowMajor && SFractal == RowMajor && SFractalSize == 512
-  return blVal == static_cast<int32_t>(BLayout::ColMajor) &&
-         slVal == static_cast<int32_t>(SLayout::RowMajor) && fractal == 512;
-}
-
-static bool tracesBackThroughViewCasts(Value v, Value target) {
-  Value cur = peelUnrealized(v);
-  for (int guard = 0; guard < 32; ++guard) {
-    if (cur == target)
-      return true;
-    Operation *def = cur.getDefiningOp();
-    if (!def)
-      return false;
-    if (auto mcast = dyn_cast<memref::CastOp>(def)) {
-      cur = peelUnrealized(mcast.getSource());
-      continue;
-    }
-    if (auto unrealized = dyn_cast<UnrealizedConversionCastOp>(def)) {
-      if (unrealized->getNumOperands() == 0)
-        return false;
-      cur = peelUnrealized(unrealized.getOperand(0));
-      continue;
-    }
-    return false;
-  }
-  return false;
-}
-
-static void collectUsersThroughViewCasts(Value v,
-                                         SmallVectorImpl<Operation *> &out) {
-  auto walk = [&](auto &&self, Value cur) -> void {
-    for (Operation *u : cur.getUsers()) {
-      if (auto unrealized = dyn_cast<UnrealizedConversionCastOp>(u)) {
-        for (Value r : unrealized.getResults())
-          self(self, r);
-        continue;
-      }
-      if (auto mcast = dyn_cast<memref::CastOp>(u)) {
-        self(self, mcast.getResult());
-        continue;
-      }
-      bool seen = false;
-      for (Operation *old : out) {
-        if (old == u) {
-          seen = true;
-          break;
-        }
-      }
-      if (!seen)
-        out.push_back(u);
-    }
-  };
-  walk(walk, v);
-}
-
-static bool isNdDnToNzLikeTLoad(pto::TLoadOp load) {
-  if (!load.getDst())
-    return false;
-
-  auto gtLayout =
-      resolveLayoutForGlobalTensor(load.getOperation(), load.getSrc());
-  if (!gtLayout ||
-      (*gtLayout != mlir::pto::Layout::ND &&
-       *gtLayout != mlir::pto::Layout::DN))
-    return false;
-
-  auto tileCfg = resolveTileConfigFromValueChain(load.getDst());
-  if (!tileCfg)
-    return false;
-  return isNZLikeTileConfig(*tileCfg);
-}
-
-static bool shouldCanonicalizeSubviewForNdDnToNz(memref::SubViewOp sv) {
-  SmallVector<Operation *, 8> users;
-  collectUsersThroughViewCasts(sv.getResult(), users);
-  bool sawTarget = false;
-
-  for (Operation *user : users) {
-    auto load = dyn_cast<pto::TLoadOp>(user);
-    if (!load)
-      return false;
-    if (!tracesBackThroughViewCasts(load.getSrc(), sv.getResult()))
-      continue;
-    if (!isNdDnToNzLikeTLoad(load))
-      return false;
-    sawTarget = true;
-  }
-  return sawTarget;
-}
-
 static std::string layoutToEmitCString(mlir::pto::Layout layout) {
   switch (layout) {
   case mlir::pto::Layout::ND:
@@ -2998,11 +2864,9 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // 2. 生成 Shape 模板参数，之后会右对齐有效维度并补齐到 5 维（高维填 1）
     SmallVector<std::string> shapeParamsVec;
     SmallVector<Value> sizeValues; // 每个维度对应的运行时 size（统一为 unsigned）
-    SmallVector<bool> staticSingletonDims; // 可静态证明为 1 的维度
     auto resShape = resTy.getShape();
     auto mixedSizes = op.getMixedSizes();
     sizeValues.reserve(rank);
-    staticSingletonDims.reserve(rank);
     for (int i = 0; i < resTy.getRank(); ++i) {
       if (resShape[i] == ShapedType::kDynamic) {
         shapeParamsVec.push_back("-1");
@@ -3015,13 +2879,6 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       else
         sizeValues.push_back(
             mkU32(resShape[i] == ShapedType::kDynamic ? 1 : resShape[i]));
-
-      std::optional<int64_t> staticDim;
-      if (i < (int)mixedSizes.size())
-        staticDim = extractStaticInt(mixedSizes[i]);
-      if (!staticDim && resShape[i] != ShapedType::kDynamic)
-        staticDim = resShape[i];
-      staticSingletonDims.push_back(staticDim && *staticDim == 1);
     }
 
     // 3. 生成 Stride 模板参数 + 运行时 stride 值（考虑 subview step）
@@ -3060,54 +2917,59 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
             rewriter.create<emitc::MulOp>(loc, u32Ty, srcV, stepV));
     }
 
-    // 3.0 对可证明安全的分区视图做 singleton 轴前移：
-    // 仅允许 size==1 的轴跨越其它轴，保证地址集合不变；动态轴视为非 singleton，不重排。
-    const bool needCanonicalize = shouldCanonicalizeSubviewForNdDnToNz(op);
-    if (needCanonicalize && rank > 2) {
-      int nonSingletonCount = 0;
-      for (bool isSingleton : staticSingletonDims) {
-        if (!isSingleton)
-          ++nonSingletonCount;
-      }
-      if (nonSingletonCount <= 2) {
-        SmallVector<unsigned, 8> permutation;
-        permutation.reserve(rank);
-        for (int i = 0; i < rank; ++i) {
-          if (staticSingletonDims[i])
-            permutation.push_back(i);
-        }
-        for (int i = 0; i < rank; ++i) {
-          if (!staticSingletonDims[i])
-            permutation.push_back(i);
-        }
-
-        bool changed = false;
-        for (int i = 0; i < rank; ++i) {
-          if (permutation[i] != static_cast<unsigned>(i)) {
-            changed = true;
-            break;
+    // 3.0 应用前置 canonicalize pass 预计算的 singleton 轴重排。
+    if (rank > 2) {
+      if (auto permAttr = op->getAttrOfType<DenseI64ArrayAttr>(
+              "pto.singleton_axis_permutation")) {
+        if (static_cast<int>(permAttr.size()) == rank) {
+          SmallVector<unsigned, 8> permutation;
+          permutation.reserve(rank);
+          SmallVector<char, 8> seen(rank, 0);
+          bool validPermutation = true;
+          for (int64_t idx64 : permAttr.asArrayRef()) {
+            if (idx64 < 0 || idx64 >= rank) {
+              validPermutation = false;
+              break;
+            }
+            unsigned idx = static_cast<unsigned>(idx64);
+            if (seen[idx]) {
+              validPermutation = false;
+              break;
+            }
+            seen[idx] = 1;
+            permutation.push_back(idx);
           }
-        }
 
-        if (changed) {
-          SmallVector<std::string> reorderedShape;
-          SmallVector<Value> reorderedSizes;
-          SmallVector<std::string> reorderedStrides;
-          SmallVector<Value> reorderedStrideValues;
-          reorderedShape.reserve(rank);
-          reorderedSizes.reserve(rank);
-          reorderedStrides.reserve(rank);
-          reorderedStrideValues.reserve(rank);
-          for (unsigned idx : permutation) {
-            reorderedShape.push_back(shapeParamsVec[idx]);
-            reorderedSizes.push_back(sizeValues[idx]);
-            reorderedStrides.push_back(dummyStrideVec[idx]);
-            reorderedStrideValues.push_back(strideValues[idx]);
+          if (validPermutation) {
+            bool changed = false;
+            for (int i = 0; i < rank; ++i) {
+              if (permutation[i] != static_cast<unsigned>(i)) {
+                changed = true;
+                break;
+              }
+            }
+
+            if (changed) {
+              SmallVector<std::string> reorderedShape;
+              SmallVector<Value> reorderedSizes;
+              SmallVector<std::string> reorderedStrides;
+              SmallVector<Value> reorderedStrideValues;
+              reorderedShape.reserve(rank);
+              reorderedSizes.reserve(rank);
+              reorderedStrides.reserve(rank);
+              reorderedStrideValues.reserve(rank);
+              for (unsigned idx : permutation) {
+                reorderedShape.push_back(shapeParamsVec[idx]);
+                reorderedSizes.push_back(sizeValues[idx]);
+                reorderedStrides.push_back(dummyStrideVec[idx]);
+                reorderedStrideValues.push_back(strideValues[idx]);
+              }
+              shapeParamsVec = std::move(reorderedShape);
+              sizeValues = std::move(reorderedSizes);
+              dummyStrideVec = std::move(reorderedStrides);
+              strideValues = std::move(reorderedStrideValues);
+            }
           }
-          shapeParamsVec = std::move(reorderedShape);
-          sizeValues = std::move(reorderedSizes);
-          dummyStrideVec = std::move(reorderedStrides);
-          strideValues = std::move(reorderedStrideValues);
         }
       }
     }

@@ -61,6 +61,7 @@ createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 std::unique_ptr<Pass> createPTORemoveRedundantBarrierPass();
 std::unique_ptr<Pass> createPTOViewToMemrefPass();
 std::unique_ptr<Pass> createInferPTOLayoutPass();
+std::unique_ptr<Pass> createPTOCanonicalizeSubviewForTLoadPass();
 // Declare register function
 void registerPTOPasses();
 
