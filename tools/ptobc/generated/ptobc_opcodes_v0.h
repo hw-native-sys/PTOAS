@@ -156,7 +156,8 @@ inline constexpr OpInfo kOpTable[] = {
   {0x106F, "pto.txors", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x1070, "pto.wait_event", 0, 0x00, 0x00, 0, 0, 0, 0x02},
   {0x1071, "pto.tprint", 0, 0x00, 0x00, 1, 0, 0, 0x00},
-  {0x1072, "pto.subset", 0, 0x01, 0x02, 0, 1, 0, 0x00},
+  // 0x1072 decode canonical name is `pto.subview` (subset -> subview rename).
+  {0x1072, "pto.subview", 0, 0x01, 0x02, 0, 1, 0, 0x00},
   {0x1073, "pto.trowexpanddiv", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x1074, "pto.trowexpandmul", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x2000, "arith.addi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
@@ -321,7 +322,8 @@ inline std::optional<uint16_t> lookupOpcodeByName(llvm::StringRef name) {
     .Case("pto.txors", 0x106F)
     .Case("pto.wait_event", 0x1070)
     .Case("pto.tprint", 0x1071)
-    .Case("pto.subset", 0x1072)
+    .Case("pto.subset", 0x1072)   // Backward-compatible textual alias.
+    .Case("pto.subview", 0x1072)  // Canonical textual spelling.
     .Case("pto.trowexpanddiv", 0x1073)
     .Case("pto.trowexpandmul", 0x1074)
     .Case("scf.for", 0x4000)
@@ -472,7 +474,8 @@ inline std::optional<OpcodeAndVariant> lookupOpcodeAndVariantByFullName(llvm::St
     .Case("pto.txors", OpcodeAndVariant{0x106F, 0, 0})
     .Case("pto.wait_event", OpcodeAndVariant{0x1070, 0, 0})
     .Case("pto.tprint", OpcodeAndVariant{0x1071, 0, 0})
-    .Case("pto.subset", OpcodeAndVariant{0x1072, 0, 0})
+    .Case("pto.subset", OpcodeAndVariant{0x1072, 0, 0})   // Backward alias.
+    .Case("pto.subview", OpcodeAndVariant{0x1072, 0, 0})  // Canonical name.
     .Case("pto.trowexpanddiv", OpcodeAndVariant{0x1073, 0, 0})
     .Case("pto.trowexpandmul", OpcodeAndVariant{0x1074, 0, 0})
     .Case("scf.for", OpcodeAndVariant{0x4000, 0, 0})
