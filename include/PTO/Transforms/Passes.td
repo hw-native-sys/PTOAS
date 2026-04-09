@@ -57,6 +57,23 @@ def InferPTOLayout : Pass<"pto-infer-layout", "func::FuncOp"> {
   let dependentDialects = ["pto::PTODialect", "arith::ArithDialect"];
 }
 
+def PTOCanonicalizeSubviewForTLoad
+    : Pass<"pto-canonicalize-subview-for-tload", "func::FuncOp"> {
+  let summary = "Canonicalize singleton-axis subviews for ND/DN->NZ-like tload";
+  let description = [{
+    Marks memref.subview operations with a safe singleton-axis permutation when:
+    - all effective consumers are pto.tload
+    - source GlobalTensor layout is ND or DN
+    - destination tile config is NZ-like
+
+    The permutation only moves statically-singleton axes before non-singleton
+    axes and only when the subview has at most two non-singleton dimensions.
+    EmitC lowering consumes this marker to avoid ND2NZ static-shape assertion.
+  }];
+  let constructor = "mlir::pto::createPTOCanonicalizeSubviewForTLoadPass()";
+  let dependentDialects = ["pto::PTODialect", "memref::MemRefDialect"];
+}
+
 
 def InferPTOMemScope : Pass<"pto-infer-mem-scope"> {
   let summary = "Infer memory scope for PTO Ops";

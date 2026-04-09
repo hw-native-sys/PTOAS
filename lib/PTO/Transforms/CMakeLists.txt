@@ -38,6 +38,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncCodegen.cpp
   LoweringSyncToPipe.cpp
   PTOVerifyTFreePass.cpp
+  PTOCanonicalizeSubviewForTLoad.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/PTO

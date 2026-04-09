@@ -2917,6 +2917,63 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
             rewriter.create<emitc::MulOp>(loc, u32Ty, srcV, stepV));
     }
 
+    // 3.0 应用前置 canonicalize pass 预计算的 singleton 轴重排。
+    if (rank > 2) {
+      if (auto permAttr = op->getAttrOfType<DenseI64ArrayAttr>(
+              "pto.singleton_axis_permutation")) {
+        if (static_cast<int>(permAttr.size()) == rank) {
+          SmallVector<unsigned, 8> permutation;
+          permutation.reserve(rank);
+          SmallVector<char, 8> seen(rank, 0);
+          bool validPermutation = true;
+          for (int64_t idx64 : permAttr.asArrayRef()) {
+            if (idx64 < 0 || idx64 >= rank) {
+              validPermutation = false;
+              break;
+            }
+            unsigned idx = static_cast<unsigned>(idx64);
+            if (seen[idx]) {
+              validPermutation = false;
+              break;
+            }
+            seen[idx] = 1;
+            permutation.push_back(idx);
+          }
+
+          if (validPermutation) {
+            bool changed = false;
+            for (int i = 0; i < rank; ++i) {
+              if (permutation[i] != static_cast<unsigned>(i)) {
+                changed = true;
+                break;
+              }
+            }
+
+            if (changed) {
+              SmallVector<std::string> reorderedShape;
+              SmallVector<Value> reorderedSizes;
+              SmallVector<std::string> reorderedStrides;
+              SmallVector<Value> reorderedStrideValues;
+              reorderedShape.reserve(rank);
+              reorderedSizes.reserve(rank);
+              reorderedStrides.reserve(rank);
+              reorderedStrideValues.reserve(rank);
+              for (unsigned idx : permutation) {
+                reorderedShape.push_back(shapeParamsVec[idx]);
+                reorderedSizes.push_back(sizeValues[idx]);
+                reorderedStrides.push_back(dummyStrideVec[idx]);
+                reorderedStrideValues.push_back(strideValues[idx]);
+              }
+              shapeParamsVec = std::move(reorderedShape);
+              sizeValues = std::move(reorderedSizes);
+              dummyStrideVec = std::move(reorderedStrides);
+              strideValues = std::move(reorderedStrideValues);
+            }
+          }
+        }
+      }
+    }
+
     // 3.1 右对齐到 5 维：shape 补 1；已有维度继承原 stride；
     //      被补出来的高维按“紧密升维”规则连续推导：stride[i] = shape[i+1] * stride[i+1]
     SmallVector<std::string, 5> finalShape(5, "1");
