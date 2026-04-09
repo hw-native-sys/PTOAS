@@ -106,6 +106,7 @@ def AddPtrOp : PTO_Op<"addptr", [
 //===----------------------------------------------------------------------===//
 
 def LoadScalarOp : PTO_Op<"load_scalar", [
+    OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Load a single scalar element from a pointer at offset.";
@@ -122,9 +123,14 @@ def LoadScalarOp : PTO_Op<"load_scalar", [
   let assemblyFormat = [{
     $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
   }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
 def StoreScalarOp : PTO_Op<"store_scalar", [
+    OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Store a single scalar element to a pointer at offset.";
@@ -141,6 +147,10 @@ def StoreScalarOp : PTO_Op<"store_scalar", [
 
   let assemblyFormat = [{
     $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
 }
 

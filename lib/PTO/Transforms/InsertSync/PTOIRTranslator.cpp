@@ -20,6 +20,8 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Matchers.h"
+#include <algorithm>
+#include <limits>
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
  
@@ -28,18 +30,41 @@
 using namespace mlir;
 using namespace mlir::pto;
  
+static int64_t getElementSizeInBytes(Type elemType) {
+  if (auto intTy = dyn_cast<IntegerType>(elemType)) {
+    return std::max<int64_t>(1, intTy.getWidth() / 8);
+  }
+  if (auto floatTy = dyn_cast<FloatType>(elemType)) {
+    return std::max<int64_t>(1, floatTy.getWidth() / 8);
+  }
+  if (isa<IndexType>(elemType)) {
+    return 8;
+  }
+  return 1;
+}
+
 // [辅助函数] 尝试从 Operation 中计算相对于 Source 的字节偏移量和新大小
 // 返回值: pair<offsetInBytes, sizeInBytes>
 // 如果无法计算静态值，返回 {-1, -1} 表示这是动态的
 static std::pair<int64_t, int64_t> getStaticOffsetAndSize(Operation *op, Value src) {
-  auto srcType = dyn_cast<MemRefType>(src.getType());
-  if (!srcType) return {0, 0};
-  
-  int64_t elemSize = srcType.getElementType().getIntOrFloatBitWidth() / 8;
-  if (elemSize == 0) elemSize = 1;
+  Type srcElemType = nullptr;
+  if (auto srcType = dyn_cast<MemRefType>(src.getType())) {
+    srcElemType = srcType.getElementType();
+  } else if (auto ptrType = dyn_cast<pto::PtrType>(src.getType())) {
+    srcElemType = ptrType.getElementType();
+  } else {
+    return {0, 0};
+  }
+
+  const int64_t elemSize = getElementSizeInBytes(srcElemType);
  
   // === Case 1: memref.subview ===
   if (auto subView = dyn_cast<memref::SubViewOp>(op)) {
+    auto srcType = dyn_cast<MemRefType>(src.getType());
+    if (!srcType) {
+      return {-1, -1};
+    }
+
     int64_t baseOffset;
     SmallVector<int64_t, 4> strides;
     if (failed(mlir::getStridesAndOffset(srcType, strides, baseOffset))) {
@@ -84,6 +109,15 @@ static std::pair<int64_t, int64_t> getStaticOffsetAndSize(Operation *op, Value s
     }
     return {staticOffsets[0] * elemSize, 0}; 
   }
+
+  // === Case 3: pto.addptr ===
+  if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
+    llvm::APInt apIntValue;
+    if (!matchPattern(addPtrOp.getOffset(), m_ConstantInt(&apIntValue))) {
+      return {-1, -1};
+    }
+    return {apIntValue.getSExtValue() * elemSize, 0};
+  }
  
   return {0, 0};
 }
@@ -92,6 +126,7 @@ static std::pair<int64_t, int64_t> getStaticOffsetAndSize(Operation *op, Value s
 // 1. 构建入口
 // ============================================================================
 void PTOIRTranslator::Build() {
+  scalarAccessMemInfoPool_.clear();
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
   RecursionIR(&funcRegion);
@@ -155,6 +190,9 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     } 
     else if (auto bindTileOp = dyn_cast<pto::BindTileOp>(op)) {
       UpdateAliasBufferInfo(bindTileOp.getResult(), bindTileOp.getSource());
+    }
+    else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
+      UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
     }
     else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
       UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
@@ -356,28 +394,34 @@ void PTOIRTranslator::UpdatePTOOpInfo(Operation *op) {
  
   SmallVector<const BaseMemInfo *> defVec;
   SmallVector<const BaseMemInfo *> useVec;
- 
-  // 2. [关键] 使用 MemoryEffects 接口自动获取读写依赖
-  if (auto memEffect = dyn_cast<MemoryEffectOpInterface>(op)) {
-     SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> effects;
-     memEffect.getEffects(effects);
-     
-     for (auto &effect : effects) {
-       Value val = effect.getValue();
-       if (!val) continue;
- 
-       // 只有当 Value 在我们的 BufferMap 中有记录时，才视为有效依赖
-       // (过滤掉比如 Loop Iterator 或其他标量)
-       if (isa<MemoryEffects::Read>(effect.getEffect())) {
-          UpdateDefUseVec({val}, useVec);
-       } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
-          UpdateDefUseVec({val}, defVec);
-       }
-     }
+
+  // 2. scalar 走访问级建模，其余 op 继续走通用 MemoryEffects 路径。
+  if (auto loadScalar = dyn_cast<pto::LoadScalarOp>(op)) {
+    UpdateScalarDefUseVec(loadScalar.getPtr(), loadScalar.getOffset(),
+                          loadScalar.getValue().getType(), useVec);
+  } else if (auto storeScalar = dyn_cast<pto::StoreScalarOp>(op)) {
+    UpdateScalarDefUseVec(storeScalar.getPtr(), storeScalar.getOffset(),
+                          storeScalar.getValue().getType(), defVec);
+  } else if (auto memEffect = dyn_cast<MemoryEffectOpInterface>(op)) {
+    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> effects;
+    memEffect.getEffects(effects);
+
+    for (auto &effect : effects) {
+      Value val = effect.getValue();
+      if (!val) continue;
+
+      // 只有当 Value 在我们的 BufferMap 中有记录时，才视为有效依赖
+      // (过滤掉比如 Loop Iterator 或其他标量)
+      if (isa<MemoryEffects::Read>(effect.getEffect())) {
+        UpdateDefUseVec({val}, useVec);
+      } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        UpdateDefUseVec({val}, defVec);
+      }
+    }
   } else {
     // 如果算子有 Pipe 属性但没实现 MemoryEffects，这是一个定义错误
     // 我们可以打印个 Warning 或者保持为空 (认为无副作用)
-    LLVM_DEBUG(llvm::dbgs() << "Warning: Op " << op->getName() 
+    LLVM_DEBUG(llvm::dbgs() << "Warning: Op " << op->getName()
                             << " has Pipe but no MemoryEffects interface.\n");
   }
  
@@ -553,28 +597,42 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
   if (!buffer2MemInfoMap_.contains(source)) return;
  
   int64_t deltaOffset = 0;
-  int64_t newSize = -1; 
+  int64_t newSize = -1;
+  bool hasUnknownAliasRange = false;
  
   if (auto op = result.getDefiningOp()) {
     auto info = getStaticOffsetAndSize(op, source);
-    if (info.first != -1) {
-        deltaOffset = info.first;
-        if (info.second > 0) newSize = info.second;
-    } 
+    if (info.first == -1) {
+      hasUnknownAliasRange = true;
+    } else {
+      deltaOffset = info.first;
+      if (info.second > 0) newSize = info.second;
+    }
   }
  
   auto &resultMemInfoVec = buffer2MemInfoMap_[result];
   
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {
     auto newInfo = parentInfo->clone(result);
- 
-    if (!newInfo->baseAddresses.empty()) {
-        newInfo->baseAddresses[0] += deltaOffset;
+    bool unknownRange = parentInfo->unknownRange || hasUnknownAliasRange;
+
+    if (unknownRange) {
+      // Dynamic pointer arithmetic cannot be modeled precisely here.
+      // Keep root/scope aliasing and preserve unknown-range state across
+      // descendant aliases to avoid dropping real dependencies.
+      newInfo->unknownRange = true;
+      newInfo->baseAddresses.clear();
+      newInfo->allocateSize = 0;
     } else {
+      newInfo->unknownRange = false;
+      if (!newInfo->baseAddresses.empty()) {
+        newInfo->baseAddresses[0] += deltaOffset;
+      } else {
         newInfo->baseAddresses.push_back(deltaOffset);
+      }
     }
- 
-    if (newSize > 0) {
+
+    if (!unknownRange && newSize > 0) {
         newInfo->allocateSize = newSize;
     }
  
@@ -633,6 +691,68 @@ void PTOIRTranslator::UpdateDefUseVec(ValueRange values, SmallVector<const BaseM
         vec.push_back(memInfo.get());
       }
     }
+  }
+}
+
+void PTOIRTranslator::UpdateScalarDefUseVec(
+    Value ptr, Value offset, Type scalarType,
+    SmallVector<const BaseMemInfo *> &vec) {
+  if (!ptr) return;
+
+  if (!buffer2MemInfoMap_.contains(ptr)) {
+    // 保留历史行为：当 ptr 未建模时退回指针级依赖。
+    UpdateDefUseVec({ptr}, vec);
+    return;
+  }
+
+  const uint64_t elemBytes =
+      static_cast<uint64_t>(std::max<int64_t>(1, getElementSizeInBytes(scalarType)));
+
+  bool hasPreciseOffset = false;
+  uint64_t offsetBytes = 0;
+  llvm::APInt offsetApInt;
+  if (matchPattern(offset, m_ConstantInt(&offsetApInt)) &&
+      !offsetApInt.isNegative() && offsetApInt.getActiveBits() <= 64) {
+    const uint64_t offsetElems = offsetApInt.getZExtValue();
+    const unsigned __int128 wideOffsetBytes =
+        static_cast<unsigned __int128>(offsetElems) * elemBytes;
+    if (wideOffsetBytes <= std::numeric_limits<uint64_t>::max()) {
+      hasPreciseOffset = true;
+      offsetBytes = static_cast<uint64_t>(wideOffsetBytes);
+    }
+  }
+
+  for (auto &parentInfo : buffer2MemInfoMap_[ptr]) {
+    auto sliceInfo = parentInfo->clone(ptr);
+    bool unknownRange = parentInfo->unknownRange || !hasPreciseOffset;
+
+    if (!unknownRange) {
+      if (sliceInfo->baseAddresses.empty()) {
+        unknownRange = true;
+      } else {
+        for (uint64_t baseAddr : sliceInfo->baseAddresses) {
+          if (offsetBytes > std::numeric_limits<uint64_t>::max() - baseAddr) {
+            unknownRange = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (unknownRange) {
+      sliceInfo->unknownRange = true;
+      sliceInfo->baseAddresses.clear();
+      sliceInfo->allocateSize = 0;
+    } else {
+      sliceInfo->unknownRange = false;
+      for (uint64_t &baseAddr : sliceInfo->baseAddresses) {
+        baseAddr += offsetBytes;
+      }
+      sliceInfo->allocateSize = elemBytes;
+    }
+
+    scalarAccessMemInfoPool_.emplace_back(std::move(sliceInfo));
+    vec.push_back(scalarAccessMemInfoPool_.back().get());
   }
 }
  

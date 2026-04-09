@@ -1,0 +1,37 @@
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @test_scalar_disjoint_range(
+      %src: memref<1024xf32, #pto.address_space<gm>>,
+      %dst: memref<1024xf32, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0_i64 = arith.constant 0 : i64
+    %f1 = arith.constant 1.000000e+00 : f32
+
+    %src_dma = memref.subview %src[0] [128] [1]
+        : memref<1024xf32, #pto.address_space<gm>>
+          to memref<128xf32, strided<[1]>, #pto.address_space<gm>>
+    %dst_dma = memref.subview %dst[0] [128] [1]
+        : memref<1024xf32, #pto.address_space<gm>>
+          to memref<128xf32, strided<[1]>, #pto.address_space<gm>>
+
+    %src_scalar = memref.subview %src[512] [8] [1]
+        : memref<1024xf32, #pto.address_space<gm>>
+          to memref<8xf32, strided<[1], offset: 512>, #pto.address_space<gm>>
+    %dst_scalar = memref.subview %dst[512] [8] [1]
+        : memref<1024xf32, #pto.address_space<gm>>
+          to memref<8xf32, strided<[1], offset: 512>, #pto.address_space<gm>>
+
+    %ub = pto.pointer_cast(%c0_i64) : memref<128xf32, #pto.address_space<vec>>
+
+    pto.tload ins(%src_dma : memref<128xf32, strided<[1]>, #pto.address_space<gm>>)
+             outs(%ub : memref<128xf32, #pto.address_space<vec>>)
+
+    pto.store_scalar %f1, %src_scalar[%c0] : memref<8xf32, strided<[1], offset: 512>, #pto.address_space<gm>>, f32
+    %loaded = pto.load_scalar %dst_scalar[%c0] : memref<8xf32, strided<[1], offset: 512>, #pto.address_space<gm>> -> f32
+    pto.store_scalar %loaded, %dst_scalar[%c1] : memref<8xf32, strided<[1], offset: 512>, #pto.address_space<gm>>, f32
+
+    pto.tstore ins(%ub : memref<128xf32, #pto.address_space<vec>>)
+              outs(%dst_dma : memref<128xf32, strided<[1]>, #pto.address_space<gm>>)
+    return
+  }
+}

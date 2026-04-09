@@ -86,9 +86,11 @@ enum class TCoreType {
 struct BaseMemInfo {
   BaseMemInfo(
       Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
-      SmallVector<uint64_t> baseAddresses, uint64_t allocateSize)
+      SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
+      bool unknownRange = false)
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
-        baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize) {}
+        baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
+        unknownRange(unknownRange) {}
  
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
   Value baseBuffer;
@@ -98,6 +100,8 @@ struct BaseMemInfo {
   pto::AddressSpace scope;
   SmallVector<uint64_t> baseAddresses; // 用于 Offset 分析
   uint64_t allocateSize;
+  // True means alias range is unknown and must be treated conservatively.
+  bool unknownRange{false};
  
   bool areVectorEqual(const SmallVector<uint64_t>& vec1,
                       const SmallVector<uint64_t>& vec2) const {
@@ -112,6 +116,7 @@ struct BaseMemInfo {
     if (!areVectorEqual(baseAddresses, other.baseAddresses)) return false;
     if (rootBuffer != other.rootBuffer) return false;
     if (scope != other.scope) return false;
+    if (unknownRange != other.unknownRange) return false;
     // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
     // 但为了保持原有逻辑，先保留。重点是 rootBuffer 必须一致。
     if (allocateSize != other.allocateSize) return false;
@@ -121,12 +126,14 @@ struct BaseMemInfo {
  
   std::unique_ptr<BaseMemInfo> clone() const {
     return std::make_unique<BaseMemInfo>(
-        baseBuffer, rootBuffer, scope, baseAddresses, allocateSize);
+        baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
+        unknownRange);
   }
- 
+
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
-        cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize);
+        cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
+        unknownRange);
   }
 };
  
