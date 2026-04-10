@@ -1,0 +1,24 @@
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync %s | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend950"} {
+  func.func @identity_tmov_pointer_cast_diff_addr_keep_a5(
+      %src: memref<1x64xf16, #pto.address_space<gm>>,
+      %dst: memref<1x64xf16, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : i64
+    %c64 = arith.constant 64 : i64
+
+    %src_buf = pto.pointer_cast(%c0) : memref<1x64xf16, #pto.address_space<vec>>
+    %dst_buf = pto.pointer_cast(%c64) : memref<1x64xf16, #pto.address_space<vec>>
+
+    pto.tload ins(%src : memref<1x64xf16, #pto.address_space<gm>>)
+              outs(%src_buf : memref<1x64xf16, #pto.address_space<vec>>)
+    pto.tmov ins(%src_buf : memref<1x64xf16, #pto.address_space<vec>>)
+             outs(%dst_buf : memref<1x64xf16, #pto.address_space<vec>>)
+    pto.tstore ins(%dst_buf : memref<1x64xf16, #pto.address_space<vec>>)
+               outs(%dst : memref<1x64xf16, #pto.address_space<gm>>)
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void identity_tmov_pointer_cast_diff_addr_keep_a5(
+// CHECK: TMOV(

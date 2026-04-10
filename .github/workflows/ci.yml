@@ -215,6 +215,19 @@ jobs:
           export PTOAS_OUT_DIR="${PAYLOAD_DIR}/test/samples"
           bash test/samples/runop.sh --enablebc all
 
+      - name: Run issue828 branch-fixed basic pto regressions
+        shell: bash
+        env:
+          PTOAS_BIN: ${{ github.workspace }}/build/tools/ptoas/ptoas
+        run: |
+          set -euo pipefail
+          for case in \
+            test/basic/issue828_softmax_rescale_incore_1_a5_if.pto \
+            test/basic/issue828_softmax_rescale_incore_1_a5_else.pto; do
+            "${PTOAS_BIN}" --pto-level=level3 --pto-arch=a5 --enable-insert-sync "${case}" >/dev/null
+            "${PTOAS_BIN}" --pto-level=level3 --pto-arch=a5 --enable-insert-sync --disable-identity-tmov-cleanup "${case}" >/dev/null
+          done
+
       - name: Build payload artifact
         if: >-
           ${{

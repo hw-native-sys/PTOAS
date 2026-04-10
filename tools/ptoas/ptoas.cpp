@@ -183,6 +183,11 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+static llvm::cl::opt<bool> disableIdentityTMovCleanup(
+    "disable-identity-tmov-cleanup",
+    llvm::cl::desc("Disable A5 identity tmov cleanup pass before auto sync"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> disableInferLayout(
     "disable-infer-layout",
     llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
@@ -1153,8 +1158,13 @@ int main(int argc, char **argv) {
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
 
   // Conditionally add Sync pass based on flag.
-  if (enableInsertSync)
+  if (enableInsertSync) {
+    if (!disableIdentityTMovCleanup) {
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pto::createPTORemoveIdentityTMovPass());
+    }
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
+  }
 
   pm.addPass(createCSEPass());
   if (arch == "a3") {

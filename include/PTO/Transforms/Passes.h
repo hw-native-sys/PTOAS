@@ -38,6 +38,7 @@ std::unique_ptr<Pass> createPTOLowerFrontendPipeOpsPass();
 std::unique_ptr<Pass> createPTOResolveReservedBuffersPass();
 std::unique_ptr<Pass> createPTOWrapFunctionsInSectionsPass();
 std::unique_ptr<Pass> createPTOVerifyTFreePass();
+std::unique_ptr<Pass> createPTORemoveIdentityTMovPass();
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();

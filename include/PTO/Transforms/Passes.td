@@ -38,6 +38,23 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTORemoveIdentityTMov : Pass<"pto-remove-identity-tmov", "func::FuncOp"> {
+  let summary = "Remove identity pto.tmov before auto-sync on A5";
+  let description = [{
+    Erases provably-identity `pto.tmov` operations on A5 before
+    `pto-insert-sync`. Besides `src == dst`, this also handles distinct SSA
+    values when alias analysis proves source and destination have the exact same
+    address range and type/layout. `memref.reinterpret_cast` views are treated
+    conservatively (not elided), and when roots differ the pass requires
+    concrete-equal root addresses. Dynamic/unknown address cases are not
+    removed.
+  }];
+  let constructor = "mlir::pto::createPTORemoveIdentityTMovPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   let summary = "Convert Ops from other dialects to PTO Ops";
   let constructor = "mlir::pto::createConvertToPTOOpPass()";

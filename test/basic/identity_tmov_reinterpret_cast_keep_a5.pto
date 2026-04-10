@@ -1,0 +1,26 @@
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync %s | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend950"} {
+  func.func @identity_tmov_reinterpret_cast_keep_a5(
+      %src: memref<1x64xf16, #pto.address_space<gm>>,
+      %dst: memref<1x64xf16, #pto.address_space<gm>>) {
+    %ub = memref.alloc() : memref<64xf16, #pto.address_space<vec>>
+    %v0 = memref.reinterpret_cast %ub to offset: [0], sizes: [1, 64], strides: [64, 1]
+      : memref<64xf16, #pto.address_space<vec>>
+      to memref<?x?xf16, strided<[?, ?], offset: ?>, #pto.address_space<vec>>
+    %v1 = memref.reinterpret_cast %ub to offset: [0], sizes: [1, 64], strides: [1, 64]
+      : memref<64xf16, #pto.address_space<vec>>
+      to memref<?x?xf16, strided<[?, ?], offset: ?>, #pto.address_space<vec>>
+
+    pto.tload ins(%src : memref<1x64xf16, #pto.address_space<gm>>)
+              outs(%v0 : memref<?x?xf16, strided<[?, ?], offset: ?>, #pto.address_space<vec>>)
+    pto.tmov ins(%v0 : memref<?x?xf16, strided<[?, ?], offset: ?>, #pto.address_space<vec>>)
+             outs(%v1 : memref<?x?xf16, strided<[?, ?], offset: ?>, #pto.address_space<vec>>)
+    pto.tstore ins(%v1 : memref<?x?xf16, strided<[?, ?], offset: ?>, #pto.address_space<vec>>)
+               outs(%dst : memref<1x64xf16, #pto.address_space<gm>>)
+    return
+  }
+}
+
+// CHECK-LABEL: __global__ AICORE void identity_tmov_reinterpret_cast_keep_a5(
+// CHECK: TMOV(
