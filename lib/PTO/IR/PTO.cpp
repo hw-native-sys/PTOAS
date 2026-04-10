@@ -10305,7 +10305,7 @@ void TPutOp::getEffects(
         &effects) {
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
-  addEffect(effects, &getPingMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPingMutable(), MemoryEffects::Write::get());
 }
 
 void TGetOp::getEffects(
