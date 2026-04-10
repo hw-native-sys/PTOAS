@@ -120,6 +120,11 @@ if(BUILD_TESTING)
 endif()
 
 # =========================================================
+# 4.2 Lit tests
+# =========================================================
+add_subdirectory(test/lit)
+
+# =========================================================
 # 5. 安装配置 (生成PTOASConfig.cmake)
 # 将 include/PTO目录下的头文件安装到 <prefix>/include/PTO
 install(DIRECTORY include/PTO
