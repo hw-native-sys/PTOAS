@@ -310,17 +310,41 @@ PTO micro Instruction source programs are not restricted to `pto` operations alo
 - `scf`: structured control flow used to model counted loops, conditional regions, loop-carried state, and break-like control around PTO compute and data-movement ops.
 - Shared dialect ops remain in standard MLIR form so that PTO analyses and backend passes can reason about control flow and scalar state without re-encoding them as PTO-specific instructions.
 
-### Runtime Query Operations
+### BlockDim Query Operations
 
-PTO micro Instruction also provides scalar runtime-query ops for inspecting the
-current execution instance. These ops are pure, have no side effects, and may
-be used in ordinary scalar control-flow or address computation.
+These ops expose the current kernel instance's execution coordinates to scalar code. They are the PTO-level equivalent of runtime queries such as `GetBlockIdx()` and `GetBlockNum()` in kernel programming models.
+
+Use them when the same kernel body is launched across multiple blocks or subblocks and each execution instance must figure out which slice of the global workload it owns.
+
+A common pattern is:
+
+- split the full input/output tensor into `block_num` disjoint block-sized regions
+- let each block compute its own starting offset from `block_idx`
+- within one block, further tile the local region and drive the tile loop with ordinary scalar `arith` / `scf` ops
+
+For example, if a tensor is split evenly across 8 blocks and each block handles `block_length = 2048` elements, then block `b` owns the global range `[b * block_length, (b + 1) * block_length)`. The per-block GM base pointer can be formed by adding `block_idx * block_length` elements to the original base pointer.
+
+At the PTO micro Instruction level, these runtime-query ops are pure scalar producers. They do not perform data movement, do not allocate memory, and do not by themselves create tiling or double buffering. Instead, they provide the scalar values used by surrounding address computation and structured control flow.
+
+#### Example: block-level data partitioning
+
+```mlir
+%block = pto.get_block_idx
+%block_num = pto.get_block_num
+%block_len = arith.constant 2048 : index
+%base = arith.index_cast %block : i64 to index
+%offset = arith.muli %base, %block_len : index
+%block_in = pto.addptr %gm_in, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+%block_out = pto.addptr %gm_out, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+```
+
+In this pattern, all blocks execute the same kernel body, but each block sees a different `%block` value and therefore computes a different GM window.
 
 #### `pto.get_block_idx`
 
 - **syntax:** `%block = pto.get_block_idx`
 - **result:** `i64`
-- **semantics:** Return the current block ID.
+- **semantics:** Return the current block ID in the range `[0, pto.get_block_num())`.
 
 ```c
 block = block_idx();
@@ -330,7 +354,7 @@ block = block_idx();
 
 - **syntax:** `%subblock = pto.get_subblock_idx`
 - **result:** `i64`
-- **semantics:** Return the current vector subblock ID.
+- **semantics:** Return the current subblock ID in the range `[0, pto.get_subblock_num())`.
 
 ```c
 subblock = subblock_idx();
@@ -340,8 +364,7 @@ subblock = subblock_idx();
 
 - **syntax:** `%block_num = pto.get_block_num`
 - **result:** `i64`
-- **semantics:** Return the total number of launched blocks visible to the
-  current kernel instance.
+- **semantics:** Return the total number of launched blocks visible to the current kernel instance.
 
 ```c
 block_num = block_num();
@@ -351,8 +374,7 @@ block_num = block_num();
 
 - **syntax:** `%subblock_num = pto.get_subblock_num`
 - **result:** `i64`
-- **semantics:** Return the number of vector subblocks visible to the current
-  execution instance.
+- **semantics:** Return the total number of visible subblocks for the current execution instance.
 
 ```c
 subblock_num = subblock_num();

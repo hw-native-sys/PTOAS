@@ -121,12 +121,6 @@ as `32 -> 16` or `16 -> 32` style conversions.
   - Use for width-changing conversions that select the even or odd half of the
     destination packing layout.
 
-### A5 Supported Forms
-
-The forms below are expressed in PTO surface syntax. Source/target type
-combinations not listed here should not currently be assumed to be supported
-on A5.
-
 #### Float To Int
 
 - `%dst = pto.vcvt %src, %mask {rnd, sat, part} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<32xsi64>`
