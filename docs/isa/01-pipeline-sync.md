@@ -155,25 +155,38 @@ With `get_buf`/`rls_buf`:
 
 ### 2. No Loop Peeling for Complex Dependencies
 
-For nested loops or non-1:1 producer-consumer ratios (e.g., 1 producer : N consumers, or complex control flow), `set_flag`/`wait_flag` requires manual **loop peeling** to handle boundary conditions:
+For non-1:1 producer-consumer ratios (e.g., 1 MTE2 load : N Vector compute slices), `set_flag`/`wait_flag` requires **peeling the set_flag outside the loop**:
 
 ```mlir
-// set_flag/wait_flag: must peel first/last iterations for correct signal counts
-// Iteration 0: special case (no previous consumer)
-// Iteration N-1: special case (no next producer)
-// Each boundary needs explicit handling
+// set_flag/wait_flag: 1 MTE2 load, 8 Vector computes on slices
+// MTE2 loads large tile once
+pto.copy_gm_to_ubuf %gm_ptr, %ub_tile, ...
+pto.set_flag["PIPE_MTE2", "PIPE_V", "EVT_TILE_READY"]  // ◀ MUST be outside loop
+
+// Vector consumes in 8 slices — but wait_flag can only fire ONCE
+pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVT_TILE_READY"] // ◀ MUST peel before loop
+scf.for %slice = %c0 to %c8 step %c1 {
+  // compute on %ub_tile[%slice]
+  // Cannot put wait_flag here — would deadlock on iteration 1+
+}
 ```
 
-With `get_buf`/`rls_buf`, the acquire/release protocol handles all boundaries automatically:
+With `get_buf`/`rls_buf`, acquire/release can stay **inside or outside** the loop — both work:
 
 ```mlir
-// get_buf/rls_buf: uniform loop body, no peeling
-scf.for %i = %c0 to %N step %c1 {
-  pto.get_buf %bufid, "PIPE_X"   // blocks if buffer in use
-  // ... work ...
-  pto.rls_buf %bufid, "PIPE_X"   // signals completion
+// get_buf/rls_buf: same 1:8 pattern, but more flexible
+// MTE2 loads large tile
+pto.get_buf "PIPE_MTE2", %bufid_tile, %c0 : i64, i64
+pto.copy_gm_to_ubuf %gm_ptr, %ub_tile, ...
+pto.rls_buf "PIPE_MTE2", %bufid_tile, %c0 : i64, i64
+
+// Vector can acquire once outside, or acquire/release per slice — both correct
+pto.get_buf "PIPE_V", %bufid_tile, %c0 : i64, i64  // acquire once
+scf.for %slice = %c0 to %c8 step %c1 {
+  // compute on %ub_tile[%slice]
 }
-// Works correctly for any loop structure or dependency pattern
+pto.rls_buf "PIPE_V", %bufid_tile, %c0 : i64, i64  // release once
+// No peeling required — get_buf blocks until MTE2's rls_buf completes
 ```
 
 ### 3. Simpler Mental Model
