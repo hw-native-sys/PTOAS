@@ -197,8 +197,8 @@ pto.set_flag["PIPE_MTE3", "PIPE_V", "EVT_OUT_REV_0"]
 pto.set_flag["PIPE_MTE3", "PIPE_V", "EVT_OUT_REV_1"]
 
 scf.for %i = ... {
-  // 8 set_flag + 8 wait_flag inside loop
-  // Must track {IN,OUT} × {FWD,REV} × {0,1} = 8 event IDs
+  // 4 set_flag + 4 wait_flag inside loop
+  // Must track 4 IDs: 2 pipe-pair directions × 2 ping/pong buffers
 }
 
 // AFTER loop: drain 4 signals
