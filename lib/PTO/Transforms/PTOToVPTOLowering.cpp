@@ -4817,8 +4817,10 @@ LogicalResult lowerTCVT(TCvtOp op, PatternRewriter &rewriter) {
   case VPTOCvtLoweringKind::Vtrc: {
     auto loaded =
         rewriter.create<pto::VldsOp>(op.getLoc(), srcVecType, srcBuffer, offset, StringAttr());
+    Value mask = buildAllPredicateMask(rewriter, op.getLoc(), dstElementType);
     Value converted = rewriter.create<pto::VtrcOp>(op.getLoc(), dstVecType,
-                                                    loaded.getResult(), *roundMode);
+                                                    loaded.getResult(), mask,
+                                                    *roundMode);
     rewriter.create<pto::VstsOp>(
         op.getLoc(), converted, dstBuffer, offset, StringAttr(),
         buildAllPredicateMask(rewriter, op.getLoc(), dstElementType));

@@ -581,8 +581,6 @@ def PTO_VexpOp : PTO_UnaryVecOp<"vexp">;
 def PTO_VlnOp : PTO_UnaryVecOp<"vln">;
 def PTO_VsqrtOp : PTO_UnaryVecOp<"vsqrt">;
 def PTO_VnegOp : PTO_UnaryVecOp<"vneg">;
-def PTO_VrsqrtOp : PTO_UnaryVecOp<"vrsqrt">;
-def PTO_VrecOp : PTO_UnaryVecOp<"vrec">;
 def PTO_VreluOp : PTO_UnaryVecOp<"vrelu">;
 def PTO_VnotOp : PTO_UnaryVecOp<"vnot">;
 def PTO_VcaddOp : PTO_UnaryVecOp<"vcadd">;
@@ -610,8 +608,6 @@ class PTO_BinaryVecOp<string mnemonic> : PTO_Op<mnemonic, [Pure]> {
 
 def PTO_VaddOp : PTO_BinaryVecOp<"vadd">;
 def PTO_VsubOp : PTO_BinaryVecOp<"vsub">;
-def PTO_VsaddOp : PTO_BinaryVecOp<"vsadd">;
-def PTO_VssubOp : PTO_BinaryVecOp<"vssub">;
 def PTO_VmulOp : PTO_BinaryVecOp<"vmul">;
 def PTO_VdivOp : PTO_BinaryVecOp<"vdiv">;
 def PTO_VmaxOp : PTO_BinaryVecOp<"vmax">;
@@ -693,9 +689,6 @@ def PTO_VsubcsOp : PTO_Op<"vsubcs", [Pure]> {
     $lhs `,` $rhs `,` $carry_in `,` $mask attr-dict `:` type($lhs) `,` type($rhs) `,` type($carry_in) `,` type($mask) `->` type($result) `,` type($carry)
   }];
 }
-
-def PTO_VbcntOp : PTO_UnaryVecOp<"vbcnt">;
-def PTO_VclsOp : PTO_UnaryVecOp<"vcls">;
 
 def PTO_VshlOp : PTO_BinaryVecOp<"vshl">;
 def PTO_VshrOp : PTO_BinaryVecOp<"vshr">;
@@ -811,6 +804,7 @@ class PTO_VecScalarMaskedOp<string mnemonic> : PTO_Op<mnemonic, [Pure]> {
 def PTO_VtrcOp : PTO_Op<"vtrc", [Pure]> {
   let arguments = (ins
     PTO_VectorType:$input,
+    PTO_MaskTypeConstraint:$mask,
     StrAttr:$round_mode
   );
   let results = (outs PTO_VectorType:$result);
@@ -943,7 +937,6 @@ def PTO_Vgather2BcOp : PTO_Op<"vgather2_bc", [
 
 def PTO_VmulsOp : PTO_VecScalarMaskedOp<"vmuls">;
 def PTO_VaddsOp : PTO_VecScalarMaskedOp<"vadds">;
-def PTO_VsaddsOp : PTO_VecScalarMaskedOp<"vsadds">;
 def PTO_VmaxsOp : PTO_VecScalarMaskedOp<"vmaxs">;
 def PTO_VminsOp : PTO_VecScalarMaskedOp<"vmins">;
 def PTO_VlreluOp : PTO_VecScalarMaskedOp<"vlrelu">;
@@ -1068,21 +1061,6 @@ def PTO_VselrOp : PTO_Op<"vselr", [Pure]> {
 
   let assemblyFormat = [{
     $src0 `,` $src1 attr-dict `:` type($src0) `,` type($src1) `->` type($result)
-  }];
-}
-
-def PTO_VslideOp : PTO_Op<"vslide", [Pure]> {
-  let arguments = (ins
-    PTO_VectorType:$src0,
-    PTO_VectorType:$src1,
-    I16:$amt
-  );
-  let results = (outs PTO_VectorType:$result);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $src0 `,` $src1 `,` $amt attr-dict `:` type($src0) `,` type($src1) `,` type($amt) `->` type($result)
   }];
 }
 

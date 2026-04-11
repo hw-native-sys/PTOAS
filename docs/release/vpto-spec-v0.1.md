@@ -3470,7 +3470,7 @@ For conversions that change width (e.g., f32→f16), use even/odd parts and comb
 
 #### `pto.vtrc`
 
-- **syntax:** `%result = pto.vtrc %input, "ROUND_MODE" : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vtrc %input, %mask, "ROUND_MODE" : !pto.vreg<NxT>, !pto.mask<BW> -> !pto.vreg<NxT>`
 - **semantics:** Truncate/round float to integer-valued float (stays in float type).
 
 ```c
@@ -3479,19 +3479,21 @@ for (int i = 0; i < N; i++)
 ```
 
 - **inputs:**
-  `%input` is the floating-point source vector and `ROUND_MODE` selects the
-  truncation/rounding rule.
+  `%input` is the floating-point source vector, `%mask` selects active lanes,
+  and `ROUND_MODE` selects the truncation/rounding rule.
 - **outputs:**
   `%result` is still a floating-point vector, but each active lane now carries
   an integer-valued floating-point result.
 - **constraints and limitations:**
-  This op does not change the element type. `ROUND_O` is supported for avoiding
-  double-rounding errors during staged conversions.
+  This op does not change the element type. `T` must be `f16`, `f32`, or
+  `bf16`. `ROUND_MODE` must be one of `ROUND_R`, `ROUND_A`, `ROUND_F`,
+  `ROUND_C`, or `ROUND_Z`. `BW` must match the element width: `b16` for
+  `f16`/`bf16`, `b32` for `f32`.
 
 **Example:**
 ```mlir
 // Round to nearest integer, keep as float
-%rounded = pto.vtrc %input, "ROUND_R" : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%rounded = pto.vtrc %input, %mask, "ROUND_R" : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // input:  [1.4, 2.6, -1.5, 3.0]
 // output: [1.0, 3.0, -2.0, 3.0]
 ```
@@ -3512,7 +3514,7 @@ for (int i = 0; i < N; i++)
     : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
 
 // Floor for integer division
-%floored = pto.vtrc %ratio, "ROUND_F" : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%floored = pto.vtrc %ratio, %mask, "ROUND_F" : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 %int_div = pto.vcvt %floored {round_mode = "ROUND_Z"}
     : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
 ```

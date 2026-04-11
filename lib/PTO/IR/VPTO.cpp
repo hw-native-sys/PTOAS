@@ -140,6 +140,11 @@ static std::optional<StringRef> getVdupMaskGranularity(Type elementType) {
   return std::nullopt;
 }
 
+static bool isSupportedVtrcRoundMode(StringRef mode) {
+  return mode == "R" || mode == "A" || mode == "F" || mode == "C" ||
+         mode == "Z";
+}
+
 static bool isStoreAlignProducer(Operation *op) {
   return isa<InitAlignOp, PstuOp, VstusOp, VsturOp>(op);
 }
@@ -1770,17 +1775,6 @@ static LogicalResult verifyVecScalarOpLike(OpTy op) {
 }
 
 template <typename OpTy>
-static LogicalResult verifySignedSaturatingVecScalarOpLike(OpTy op) {
-  if (failed(verifyElementwiseVecScalarOpLike(op)))
-    return failure();
-  auto inputType = cast<VRegType>(op.getInput().getType());
-  auto elemType = dyn_cast<IntegerType>(inputType.getElementType());
-  if (!elemType || elemType.isUnsigned() || elemType.getWidth() != 16)
-    return op.emitOpError("requires s16 vector element type");
-  return success();
-}
-
-template <typename OpTy>
 static LogicalResult verifyVecScalarMaskedOpLike(OpTy op) {
   if (failed(verifyElementwiseVecScalarOpLike(op)))
     return failure();
@@ -1821,11 +1815,6 @@ static LogicalResult verifyCarryVecOpWithInput(CarryWithInputOp op) {
 
 LogicalResult VmulsOp::verify() { return verifyVecScalarMaskedOpLike(*this); }
 LogicalResult VaddsOp::verify() { return verifyVecScalarMaskedOpLike(*this); }
-LogicalResult VsaddsOp::verify() {
-  if (failed(verifySignedSaturatingVecScalarOpLike(*this)))
-    return failure();
-  return verifyMaskTypeLike(*this, getMask().getType(), "mask type");
-}
 LogicalResult VmaxsOp::verify() { return verifyVecScalarMaskedOpLike(*this); }
 LogicalResult VminsOp::verify() { return verifyVecScalarMaskedOpLike(*this); }
 LogicalResult VlreluOp::verify() { return verifyVecScalarMaskedOpLike(*this); }
@@ -1891,34 +1880,8 @@ LogicalResult VexpOp::verify() { return verifyUnaryVecOp(*this); }
 LogicalResult VlnOp::verify() { return verifyUnaryVecOp(*this); }
 LogicalResult VsqrtOp::verify() { return verifyUnaryVecOp(*this); }
 LogicalResult VnegOp::verify() { return verifyUnaryVecOp(*this); }
-LogicalResult VrsqrtOp::verify() {
-  if (failed(verifyUnaryVecOp(*this)))
-    return failure();
-  auto inputType = cast<VRegType>(getInput().getType());
-  Type elemType = inputType.getElementType();
-  if (!elemType.isF16() && !elemType.isF32())
-    return emitOpError("requires f16 or f32 vector element type");
-  return success();
-}
-LogicalResult VrecOp::verify() { return verifyUnaryVecOp(*this); }
 LogicalResult VreluOp::verify() { return verifyUnaryVecOp(*this); }
 LogicalResult VnotOp::verify() { return verifyUnaryVecOp(*this); }
-LogicalResult VbcntOp::verify() {
-  if (failed(verifyUnaryVecOp(*this)))
-    return failure();
-  auto inputType = cast<VRegType>(getInput().getType());
-  if (!isa<IntegerType>(inputType.getElementType()))
-    return emitOpError("requires integer vector element type");
-  return success();
-}
-LogicalResult VclsOp::verify() {
-  if (failed(verifyUnaryVecOp(*this)))
-    return failure();
-  auto inputType = cast<VRegType>(getInput().getType());
-  if (!isa<IntegerType>(inputType.getElementType()))
-    return emitOpError("requires integer vector element type");
-  return success();
-}
 
 template <typename BinaryOp>
 static LogicalResult verifyBinaryVecOp(BinaryOp op) {
@@ -1936,25 +1899,8 @@ static LogicalResult verifyBinaryVecOp(BinaryOp op) {
   return success();
 }
 
-template <typename BinaryOp>
-static LogicalResult verifySignedSaturatingBinaryVecOp(BinaryOp op) {
-  if (failed(verifyBinaryVecOp(op)))
-    return failure();
-  auto lhsType = cast<VRegType>(op.getLhs().getType());
-  auto elemType = dyn_cast<IntegerType>(lhsType.getElementType());
-  if (!elemType || elemType.isUnsigned() || elemType.getWidth() != 16)
-    return op.emitOpError("requires s16 vector element type");
-  return success();
-}
-
 LogicalResult VaddOp::verify() { return verifyBinaryVecOp(*this); }
 LogicalResult VsubOp::verify() { return verifyBinaryVecOp(*this); }
-LogicalResult VsaddOp::verify() {
-  return verifySignedSaturatingBinaryVecOp(*this);
-}
-LogicalResult VssubOp::verify() {
-  return verifySignedSaturatingBinaryVecOp(*this);
-}
 LogicalResult VmulOp::verify() { return verifyBinaryVecOp(*this); }
 LogicalResult VdivOp::verify() { return verifyBinaryVecOp(*this); }
 LogicalResult VandOp::verify() { return verifyBinaryVecOp(*this); }
@@ -2081,17 +2027,6 @@ LogicalResult VselOp::verify() {
 LogicalResult VselrOp::verify() { return verifyLaneSelectOp(*this); }
 LogicalResult Vselrv2Op::verify() { return verifyLaneSelectOp(*this); }
 
-LogicalResult VslideOp::verify() {
-  if (failed(verifyVRegTypeLike(*this, getSrc0().getType(), "src0 type")) ||
-      failed(verifyVRegTypeLike(*this, getSrc1().getType(), "src1 type")) ||
-      failed(verifyVRegTypeLike(*this, getResult().getType(), "result type")))
-    return failure();
-  if (getSrc0().getType() != getSrc1().getType() ||
-      getSrc0().getType() != getResult().getType())
-    return emitOpError("requires src0, src1, and result to share one vector type");
-  return success();
-}
-
 LogicalResult VsqzOp::verify() { return verifyUnaryVecOp(*this); }
 
 LogicalResult VusqzOp::verify() {
@@ -2203,39 +2138,44 @@ LogicalResult VcmpsOp::verify() {
 
 ParseResult VtrcOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand input;
+  OpAsmParser::UnresolvedOperand mask;
   std::string roundModeToken;
   NamedAttrList attrs;
-  Type inputType, resultType;
+  Type inputType, maskType, resultType;
 
   if (parser.parseOperand(input) || parser.parseComma() ||
+      parser.parseOperand(mask) || parser.parseComma() ||
       parser.parseKeywordOrString(&roundModeToken) ||
       parser.parseOptionalAttrDict(attrs) ||
-      parser.parseColonType(inputType) || parser.parseArrow() ||
+      parser.parseColonType(inputType) || parser.parseComma() ||
+      parser.parseType(maskType) || parser.parseArrow() ||
       parser.parseType(resultType))
     return failure();
 
   auto normalized = normalizeRoundModeToken(roundModeToken);
-  if (!normalized)
+  if (!normalized || !isSupportedVtrcRoundMode(*normalized))
     return parser.emitError(parser.getCurrentLocation())
-           << "round mode must be one of R/A/F/C/Z/O or "
-              "ROUND_R/ROUND_A/ROUND_F/ROUND_C/ROUND_Z/ROUND_O";
+           << "round mode must be one of R/A/F/C/Z or "
+              "ROUND_R/ROUND_A/ROUND_F/ROUND_C/ROUND_Z";
 
   attrs.set("round_mode", parser.getBuilder().getStringAttr(*normalized));
   result.addAttributes(attrs);
-  if (parser.resolveOperand(input, inputType, result.operands))
+  if (parser.resolveOperand(input, inputType, result.operands) ||
+      parser.resolveOperand(mask, maskType, result.operands))
     return failure();
   result.addTypes(resultType);
   return success();
 }
 
 void VtrcOp::print(OpAsmPrinter &printer) {
-  printer << ' ' << getInput() << ", ";
+  printer << ' ' << getInput() << ", " << getMask() << ", ";
   Builder builder(getContext());
   auto normalized = normalizeRoundModeToken(getRoundMode());
   printer.printAttributeWithoutType(
       builder.getStringAttr(normalized.value_or(getRoundMode())));
   printer.printOptionalAttrDict((*this)->getAttrs(), {"round_mode"});
-  printer << " : " << getInput().getType() << " -> " << getResult().getType();
+  printer << " : " << getInput().getType() << ", " << getMask().getType()
+          << " -> " << getResult().getType();
 }
 
 LogicalResult VtrcOp::verify() {
@@ -2243,10 +2183,23 @@ LogicalResult VtrcOp::verify() {
   auto resultType = dyn_cast<VRegType>(getResult().getType());
   if (!inputType || !resultType)
     return emitOpError("input and result must be !pto.vreg<...>");
+  if (failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")))
+    return failure();
   if (inputType != resultType)
     return emitOpError("requires input and result to have identical vreg type");
-  if (!normalizeRoundModeToken(getRoundMode()))
-    return emitOpError("round mode must be one of R/A/F/C/Z/O");
+  auto elemType = inputType.getElementType();
+  if (!(elemType.isF16() || elemType.isF32() || elemType.isBF16()))
+    return emitOpError("requires f16/f32/bf16 vector element type");
+  auto expectedGranularity = getVdupMaskGranularity(elemType);
+  if (!expectedGranularity)
+    return emitOpError("requires element type with supported predicate granularity");
+  if (failed(verifyMaskTypeWithGranularityLike(*this, getMask().getType(),
+                                               "mask type",
+                                               *expectedGranularity)))
+    return failure();
+  auto normalized = normalizeRoundModeToken(getRoundMode());
+  if (!normalized || !isSupportedVtrcRoundMode(*normalized))
+    return emitOpError("round mode must be one of R/A/F/C/Z");
   return success();
 }
 

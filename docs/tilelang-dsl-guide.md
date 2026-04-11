@@ -2494,20 +2494,22 @@ Operations for rearranging data within vectors.
 
 Type conversion and specialized operations.
 
-#### `pto.vtrc(vec: VRegType, mask: MaskType) -> VRegType`
+#### `pto.vtrc(vec: VRegType, mask: MaskType, rnd: str) -> VRegType`
 
-**Description**: Truncate vector elements.
+**Description**: Truncate/round floating-point vector elements to integer-valued
+floating-point results under an explicit predicate mask.
 
 **Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `vec` | `VRegType` | Input vector |
-| `mask` | `MaskType` | Predicate mask |
+| `mask` | `MaskType` | Predicate mask; granularity must match element width |
+| `rnd` | `str` | Round mode: `R`, `A`, `F`, `C`, or `Z` |
 
 **Returns**:
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `result` | `VRegType` | Truncated vector |
+| `result` | `VRegType` | Rounded result with the same floating-point element type |
 
 #### `pto.vcvt(vec: VRegType, to_type: Type, mask: MaskType) -> VRegType`
 
