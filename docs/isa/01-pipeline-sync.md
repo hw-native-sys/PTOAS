@@ -446,8 +446,8 @@ scf.for %i = %c0 to %N step %c1 {
 | Aspect | `set_flag` / `wait_flag` | `get_buf` / `rls_buf` |
 |--------|--------------------------|------------------------|
 | Dependency model | Explicit event signals | Implicit via buffer acquire/release |
-| IDs per pipe-pair | **8** = 2 buffers × 2 dirs × 2 (fwd+rev) | 1 fwd + 1 rev per buffer (shared global pool) |
-| Total HW IDs | 8 per pipe-pair, grows with buffers | **32 global** across all pipes |
+| IDs per pipe-pair | 2 IDs per buffer: 1 for forward (e.g., MTE2→V) + 1 for reverse (V→MTE2) | **1 ID per buffer** (handles both directions automatically) |
+| Total HW IDs | **8 per pipe-pair** (hardware limit) | **32 global** across all pipes |
 | Reverse (WAR) deps | Extra `set_flag`/`wait_flag` pair per buffer | Handled automatically |
 | Pre-loop setup | `set_flag` to prime each reverse dep | **None** |
 | Post-loop teardown | `wait_flag` to drain all primed signals | **None** |
