@@ -71,15 +71,20 @@ Element type constraints are operation-specific:
 
 In addition, memory layout and address space do not change the element type semantics; they only affect placement and access patterns.
 
-### 2.2 `!pto.ptr<elementType>`
+### 2.2 `!pto.ptr<elementType[, memorySpace]>`
 
-A pointer to global memory.
+A typed pointer. `memorySpace` is optional and defaults to `gm`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `elementType` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element type pointed to |
+| `memorySpace` | `gm` or `ub` | Pointer address space alias (`gm` -> global memory, `ub` -> vector/UB memory) |
 
-**Syntax:** `!pto.ptr<f16>`
+**Syntax:** `!pto.ptr<f16>` or `!pto.ptr<f16, ub>`
+
+Pointer conversions are modeled explicitly with [`pto.castptr`](#ptocastptr).
+Between two `!pto.ptr` types, casts are only legal when both pointers stay in
+the same PTO memory space.
 
 ---
 
@@ -301,6 +306,38 @@ result = ptr + offset   // offset is in elements, not bytes
 ```mlir
 %ptr_off = pto.addptr %base, %offset : !pto.ptr<f32> -> !pto.ptr<f32>
 ```
+
+##### `pto.castptr` - Explicit Pointer Cast
+
+**Summary:** Performs an explicit cast between integer addresses and `!pto.ptr`,
+or between two `!pto.ptr` types.
+
+**Semantics:**
+
+```mlir
+%p0 = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+%p1 = pto.castptr %p0 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
+%addr2 = pto.castptr %p1 : !pto.ptr<i8, ub> -> i64
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `input` | `integer` or `!pto.ptr<...>` | Source value to cast |
+
+**Results:** `integer` or `!pto.ptr<...>`
+
+**Constraints & Verification:**
+
+- Integer-to-integer casts are rejected; use normal integer cast ops instead
+- Pointer-to-pointer casts are only legal when source and destination stay in
+  the same PTO memory space (`gm` or `ub`)
+- The operation is pure (no side effects)
+
+**Hardware Mapping:**
+
+- No hardware pipeline (representation conversion only)
 
 ##### `pto.make_tensor_view` - Create Tensor View
 

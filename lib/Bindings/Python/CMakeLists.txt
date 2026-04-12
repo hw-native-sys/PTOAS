@@ -39,6 +39,7 @@ target_link_libraries(_pto PRIVATE
   MLIRSupport
   MLIRArithDialect
   MLIRMemRefDialect
+  MLIRSCFDialect
   MLIRDestinationStyleOpInterface
   MLIRInferTypeOpInterface
   MLIRSideEffectInterfaces
@@ -47,6 +48,7 @@ target_link_libraries(_pto PRIVATE
   MLIRLoopLikeInterface
   MLIRViewLikeInterface
   MLIRFunctionInterfaces
+  MLIRLLVMDialect
 )
 
 # 关键：放到 mlir/_mlir_libs 下（匹配 MLIR dialect python 的 import 习惯）
