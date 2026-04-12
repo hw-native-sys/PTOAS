@@ -398,7 +398,7 @@ static Type convertPTOTypeToMemRef(Type t) {
   // 1. 处理 !pto.ptr<T>
   if (auto pty = dyn_cast<mlir::pto::PtrType>(t)) {
     return MemRefType::get({ShapedType::kDynamic}, pty.getElementType(),
-                           MemRefLayoutAttrInterface(), Attribute());
+                           MemRefLayoutAttrInterface(), pty.getMemorySpace());
   }
   
   // 2. 处理 !pto.tile_buf<...>

@@ -7,9 +7,12 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/VPTOLowering.h"
+#include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllPasses.h"
@@ -42,6 +45,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include <string>
 
 using namespace mlir;
@@ -205,10 +209,85 @@ static llvm::cl::opt<std::string> ptoBuildLevel(
     llvm::cl::value_desc("level1|level2|level3"),
     llvm::cl::init("level2"));
 
+static llvm::cl::opt<std::string> ptoBackend(
+    "pto-backend",
+    llvm::cl::desc("Final PTOAS backend: emitc or vpto (default: emitc)"),
+    llvm::cl::value_desc("emitc|vpto"), llvm::cl::init("emitc"));
+
+static llvm::cl::opt<bool> emitVPTO(
+    "emit-vpto",
+    llvm::cl::desc("Write final post-pass VPTO IR to -o"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> vptoPrintIR(
+    "vpto-print-ir",
+    llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> vptoLoweringStrategy(
+    "vpto-lowering-strategy",
+    llvm::cl::desc("VPTO vector lowering strategy: post-update or no-post-update"),
+    llvm::cl::value_desc("post-update|no-post-update"),
+    llvm::cl::init("post-update"));
+
+static llvm::cl::opt<bool> dumpVPTOIR(
+    "dump-vpto-ir",
+    llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> ptoPrintSeamIR(
+    "pto-print-seam-ir",
+    llvm::cl::desc("Print shared pre-backend seam IR to stderr"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> ptoSeamIRFile(
+    "pto-seam-ir-file",
+    llvm::cl::desc("Write shared pre-backend seam IR to a file"),
+    llvm::cl::value_desc("path"),
+    llvm::cl::init(""));
+
+static llvm::cl::opt<bool> vptoPrintIntrinsics(
+    "vpto-print-intrinsics",
+    llvm::cl::desc("Print VPTO intrinsic selection decisions to stderr"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> vptoEmitHIVMOfficialLLVM(
+    "vpto-emit-hivm-llvm",
+    llvm::cl::desc("After lowering to VPTO IR, emit textual LLVM/HIVM via "
+                   "the official LLVM dialect export path"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> vptoEmitHIVMOfficialBitcode(
+    "vpto-emit-hivm-bc",
+    llvm::cl::desc("After lowering to VPTO IR, emit LLVM bitcode via the "
+                   "official LLVM dialect export path"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> vptoAllowUnresolved(
+    "vpto-allow-unresolved",
+    llvm::cl::desc("Emit explicit unresolved VPTO comments instead of failing"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> vptoUnresolvedReport(
+    "vpto-unresolved-report",
+    llvm::cl::desc("Write unresolved VPTO mappings to a sidecar report"),
+    llvm::cl::value_desc("path"), llvm::cl::init(""));
+
+static llvm::cl::opt<std::string> hivmUnresolvedReport(
+    "hivm-unresolved-report",
+    llvm::cl::desc("Write unresolved HIVM mappings to a sidecar report"),
+    llvm::cl::value_desc("path"),
+    llvm::cl::init(""));
+
 enum class PTOBuildLevel {
   Level1,
   Level2,
   Level3,
+};
+
+enum class PTOBackend {
+  EmitC,
+  VPTO,
 };
 
 static PTOBuildLevel defaultBuildLevel() {
@@ -252,6 +331,94 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
       s == "setwait_mte3_to_s_event0") {
     normalized = kAutoSyncTailPolicyMte3ToSEvent0.str();
     return true;
+  }
+  return false;
+}
+
+static bool parseBackend(llvm::StringRef backendStr, PTOBackend &out) {
+  std::string s = backendStr.str();
+  for (char &c : s)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (s == "emitc") {
+    out = PTOBackend::EmitC;
+    return true;
+  }
+  if (s == "vpto") {
+    out = PTOBackend::VPTO;
+    return true;
+  }
+  return false;
+}
+
+static LogicalResult emitSharedPreBackendSeamIR(ModuleOp module,
+                                                llvm::StringRef outputPath) {
+  if (outputPath.empty())
+    return success();
+
+  if (outputPath == "-") {
+    module->print(llvm::outs());
+    llvm::outs() << "\n";
+    llvm::outs().flush();
+    return success();
+  }
+
+  std::error_code ec;
+  llvm::ToolOutputFile outputFile(outputPath, ec, llvm::sys::fs::OF_None);
+  if (ec) {
+    llvm::errs() << "Error: failed to open seam IR file '" << outputPath
+                 << "': " << ec.message() << "\n";
+    return failure();
+  }
+
+  module->print(outputFile.os());
+  outputFile.os() << "\n";
+  outputFile.keep();
+  return success();
+}
+
+static bool containsVPTOOpPrefix(llvm::StringRef line,
+                                 llvm::StringRef opPrefix) {
+  size_t searchFrom = 0;
+  while (searchFrom < line.size()) {
+    size_t pos = line.find(opPrefix, searchFrom);
+    if (pos == llvm::StringRef::npos)
+      return false;
+
+    if (pos == 0)
+      return true;
+
+    unsigned char before = static_cast<unsigned char>(line[pos - 1]);
+    if (std::isspace(before) || before == '(' || before == '=' ||
+        before == ',')
+      return true;
+
+    searchFrom = pos + 1;
+  }
+  return false;
+}
+
+static bool containsVPTOIR(llvm::StringRef input) {
+  llvm::StringRef rest = input;
+  while (!rest.empty()) {
+    auto split = rest.split('\n');
+    llvm::StringRef line = split.first.trim();
+    if (!line.starts_with("//") &&
+        (line.contains("!pto.vec<") || line.contains("!pto.mask") ||
+         line.contains("!pto.align") ||
+         containsVPTOOpPrefix(line, "pto.copy_") ||
+         containsVPTOOpPrefix(line, "pto.set_loop") ||
+         containsVPTOOpPrefix(line, "pto.v") ||
+         containsVPTOOpPrefix(line, "pto.plt_") ||
+         containsVPTOOpPrefix(line, "pto.pset_") ||
+         containsVPTOOpPrefix(line, "pto.psts") ||
+         containsVPTOOpPrefix(line, "pto.pdintlv_") ||
+         containsVPTOOpPrefix(line, "pto.set_flag") ||
+         containsVPTOOpPrefix(line, "pto.wait_flag") ||
+         containsVPTOOpPrefix(line, "pto.pipe_barrier") ||
+         containsVPTOOpPrefix(line, "pto.get_buf") ||
+         containsVPTOOpPrefix(line, "pto.rls_buf")))
+      return true;
+    rest = split.second;
   }
   return false;
 }
@@ -928,6 +1095,85 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
   cpp.swap(out);
 }
 
+static LogicalResult prepareVPTOForEmission(ModuleOp module) {
+  if (failed(convertVPTOEmissionBoundaryToPtr(module, &llvm::errs()))) {
+    llvm::errs() << "Error: VPTO emission boundary canonicalization failed.\n";
+    return failure();
+  }
+
+  PassManager prepPM(module->getContext());
+  prepPM.enableVerifier();
+  prepPM.addNestedPass<func::FuncOp>(createPTOVPTOExpandBridgeOpsPass());
+  prepPM.addPass(createCSEPass());
+  prepPM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
+  if (failed(prepPM.run(module))) {
+    llvm::errs() << "Error: VPTO emission preparation failed.\n";
+    return failure();
+  }
+
+  return success();
+}
+
+static LogicalResult lowerPTOToVPTOBackend(ModuleOp module) {
+  PassManager backendPM(module.getContext());
+  backendPM.addPass(pto::createLowerPTOToVPTOPass());
+  backendPM.addPass(mlir::createCSEPass());
+  if (failed(backendPM.run(module))) {
+    llvm::errs() << "Error: backend lowering pass execution failed.\n";
+    return failure();
+  }
+  return success();
+}
+
+static pto::VPTOEmissionOptions buildVPTOEmissionOptions() {
+  pto::VPTOEmissionOptions options;
+  options.dumpVPTOIR = false;
+  options.printIntrinsicSelections = vptoPrintIntrinsics;
+  options.allowUnresolved = vptoAllowUnresolved;
+  options.unresolvedReportPath =
+      !hivmUnresolvedReport.empty() ? hivmUnresolvedReport : vptoUnresolvedReport;
+  options.targetTriple = "hiipu64-hisilicon-cce";
+  options.march = "dav-c310-vec";
+  options.aicoreArch = "dav-c310-vec";
+  options.defaultTargetCPU = "dav-c310-vec";
+  options.defaultTargetFeatures =
+      "+ATOMIC,+ArchV130,+AregRedefinable,+ArithmeticBf16,+AtomicForB8 ,"
+      "+F8e4m3,+F8e5m2,+F8e8m0,+FFTSBlk,+Fp4e1m2x2,+Fp4e2m1x2,+LDExtRefine,"
+      "+MOVX8,+SPR7bits,+SyncV,+dav-c310-vec";
+  return options;
+}
+
+static int emitPreparedVPTOBackendResult(ModuleOp module,
+                                         llvm::ToolOutputFile &outputFile) {
+  if (emitVPTO || (!vptoEmitHIVMOfficialLLVM && !vptoEmitHIVMOfficialBitcode)) {
+    module.print(outputFile.os());
+    outputFile.os() << "\n";
+    outputFile.keep();
+    return 0;
+  }
+
+  pto::VPTOEmissionOptions options = buildVPTOEmissionOptions();
+  LogicalResult emissionStatus =
+      vptoEmitHIVMOfficialBitcode
+          ? pto::translateVPTOModuleToLLVMBitcode(module, outputFile.os(),
+                                                  options, llvm::errs())
+          : pto::translateVPTOModuleToLLVMText(module, outputFile.os(),
+                                               options, llvm::errs());
+  if (failed(emissionStatus)) {
+    llvm::errs() << "Error: Failed to emit VPTO text.\n";
+    return 1;
+  }
+  outputFile.keep();
+  return 0;
+}
+
+static int emitVPTOBackendResult(ModuleOp module,
+                                 llvm::ToolOutputFile &outputFile) {
+  if (failed(prepareVPTOForEmission(module)))
+    return 1;
+  return emitPreparedVPTOBackendResult(module, outputFile);
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect>();
@@ -963,6 +1209,36 @@ int main(int argc, char **argv) {
   // Parse command line options
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
 
+  PTOBackend effectiveBackend = PTOBackend::EmitC;
+  if (!parseBackend(ptoBackend, effectiveBackend)) {
+    llvm::errs() << "Error: invalid --pto-backend='" << ptoBackend
+                 << "'. Expected 'emitc' or 'vpto'.\n";
+    return 1;
+  }
+
+  if (vptoEmitHIVMOfficialLLVM && vptoEmitHIVMOfficialBitcode) {
+    llvm::errs() << "Error: --vpto-emit-hivm-llvm and --vpto-emit-hivm-bc "
+                    "cannot be used together.\n";
+    return 1;
+  }
+
+  if (emitVPTO &&
+      (vptoEmitHIVMOfficialLLVM || vptoEmitHIVMOfficialBitcode)) {
+    llvm::errs() << "Error: --emit-vpto cannot be used together with HIVM "
+                    "emission flags.\n";
+    return 1;
+  }
+
+  if (effectiveBackend != PTOBackend::VPTO &&
+      (vptoEmitHIVMOfficialLLVM || vptoEmitHIVMOfficialBitcode || emitVPTO ||
+       vptoPrintIntrinsics || vptoAllowUnresolved ||
+       !vptoUnresolvedReport.empty() || !hivmUnresolvedReport.empty() ||
+       ptoPrintSeamIR || !ptoSeamIRFile.empty())) {
+    llvm::errs() << "Error: VPTO-specific flags require "
+                    "--pto-backend=vpto.\n";
+    return 1;
+  }
+
   // Read whole input first (so we can auto-detect .ptobc by magic).
   auto fileOrErr = llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
   if (!fileOrErr) {
@@ -987,6 +1263,8 @@ int main(int argc, char **argv) {
   OwningOpRef<ModuleOp> module;
   llvm::StringRef buf = (*fileOrErr)->getBuffer();
   const bool isPTOBC = (buf.size() >= 6 && std::memcmp(buf.data(), "PTOBC\0", 6) == 0);
+  const bool inputIsVPTOIR = containsVPTOIR(buf);
+
   auto normalizeArch = [](llvm::StringRef archValue) {
     std::string normalized = archValue.str();
     for (char &c : normalized)
@@ -1130,6 +1408,16 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (effectiveBackend == PTOBackend::VPTO && inputIsVPTOIR) {
+    if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
+      llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
+                      "the input is already VPTO IR.\n";
+      return 1;
+    }
+
+    return emitVPTOBackendResult(*module, outputFile);
+  }
+
   // Main PassManager
   PassManager pm(&context);
   
@@ -1157,6 +1445,28 @@ int main(int argc, char **argv) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
 
   pm.addPass(createCSEPass());
+
+  module->getOperation()->setAttr("pto.target_arch",
+                                  mlir::StringAttr::get(&context, arch));
+
+  if (effectiveBackend == PTOBackend::VPTO) {
+    if (failed(pm.run(*module))) {
+      llvm::errs() << "Error: Pass execution failed.\n";
+      return 1;
+    }
+
+    if (ptoPrintSeamIR) {
+      module->print(llvm::errs());
+      llvm::errs() << "\n";
+    }
+    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile)))
+      return 1;
+
+    if (failed(lowerPTOToVPTOBackend(*module)))
+      return 1;
+    return emitVPTOBackendResult(*module, outputFile);
+  }
+
   if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
   } else {

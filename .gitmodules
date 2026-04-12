@@ -1,0 +1,3 @@
+[submodule "3rdparty/PTO-Gym"]
+	path = 3rdparty/PTO-Gym
+	url = git@github.com:PTO-ISA/PTO-Gym.git

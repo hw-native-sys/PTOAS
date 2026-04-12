@@ -64,6 +64,11 @@ dist/
 /remote_npu_validation_results*.tsv
 /npu_validation/
 test/samples/**/npu_validation/
+!test/samples/**/npu_validation/
+test/samples/**/npu_validation/*
+!test/samples/**/npu_validation/golden.py
+!test/samples/**/npu_validation/*/
+!test/samples/**/npu_validation/*/golden.py
 /tmp_gen*
 
 # IDE/editor

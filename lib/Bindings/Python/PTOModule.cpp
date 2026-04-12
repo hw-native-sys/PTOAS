@@ -520,20 +520,34 @@ PYBIND11_MODULE(_pto, m) {
         [](MlirType type) -> bool { return mlirPTOTypeIsAPtrType(type); })
         .def_classmethod(
             "get",
-            [](py::object cls, MlirType elementType,
+            [](py::object cls, MlirType elementType, py::object memorySpace,
                MlirContext context) -> py::object {
                 MlirContext ctx = context;
                 if (!ctx.ptr)
                     ctx = mlirTypeGetContext(elementType);
-                MlirType t = mlirPTOPtrTypeGet(ctx, elementType);
+                MlirType t = {nullptr};
+                if (memorySpace.is_none()) {
+                  t = mlirPTOPtrTypeGet(ctx, elementType);
+                } else {
+                  MlirAttribute memorySpaceAttr =
+                      py::cast<MlirAttribute>(memorySpace);
+                  t = mlirPTOPtrTypeGetWithMemorySpace(ctx, elementType,
+                                                       memorySpaceAttr);
+                }
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("element_type"),
+            py::arg("memory_space") = py::none(),
             py::arg("context") = py::none())
         .def_property_readonly(
             "element_type",
             [](MlirType self) -> MlirType {
                 return mlirPTOPtrTypeGetElementType(self);
+            })
+        .def_property_readonly(
+            "memory_space",
+            [](MlirType self) -> MlirAttribute {
+                return mlirPTOPtrTypeGetMemorySpace(self);
             });
 
     mlir_type_subclass(
