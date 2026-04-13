@@ -1,0 +1,44 @@
+module attributes {"pto.device-spec" = "Ascend310B"} {
+  func.func @cube_func(%left: memref<64xf32, #pto.address_space<gm>>,
+                       %right: memref<256xf32, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c256 = arith.constant 256 : index
+    pto.aic_initialize_pipe 4, 1
+    %left_l1 = pto.reserve_buffer "cube" [1] { slot_size = 256 } : !pto.async_buffer<core="cube", direction="in", slots=1, slot_size=256>
+    %right_l1 = pto.reserve_buffer "cube" [1] { slot_size = 256 } : !pto.async_buffer<core="cube", direction="in", slots=1, slot_size=256>
+    %acc_l0c = pto.reserve_buffer "cube" [4] { slot_size = 1024 } : !pto.async_buffer<core="cube", direction="out", slots=4, slot_size=1024>
+    scf.for %i = %c0 to %c4 step %c1 {
+      %left_tile = pto.tload ins(%left[%c0] : memref<64xf32, #pto.address_space<gm>>) : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %offset = arith.muli %i, %c64 : index
+      %right_tile = pto.tload ins(%right[%offset] : memref<256xf32, #pto.address_space<gm>>) : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %left_tile_l0a = pto.tmov ins(%left_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(!pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+      %right_tile_l0b = pto.tmov ins(%right_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(!pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      %acc_tile = pto.alloc_tile valid_row = %c16 valid_col = %c16 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+      pto.tmatmul ins(%left_tile_l0a, %right_tile_l0b : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%acc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      pto.set_validshape %acc_tile, %c8, %c16 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+      pto.tpush_to_aiv ins(%acc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%acc_l0c : !pto.async_buffer<core="cube", direction="out", slots=4, slot_size=1024>) { split = 0 : index }
+    }
+    return
+  }
+
+  func.func @vec_func() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    pto.aiv_initialize_pipe 1, 4
+    %vec_l0c = pto.reserve_buffer "vector" [4] { slot_size = 1024 } : !pto.async_buffer<core="vector", direction="in", slots=4, slot_size=1024>
+    scf.for %i = %c0 to %c4 step %c1 {
+      %vec_tile = pto.tpop_from_aic ins(%vec_l0c : !pto.async_buffer<core="vector", direction="in", slots=4, slot_size=1024>) { split = 0 : index } : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %vec_print = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tmov ins(%vec_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%vec_print : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tprint ins(%vec_print : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tfree_from_aic ins(%vec_l0c : !pto.async_buffer<core="vector", direction="in", slots=4, slot_size=1024>)
+    }
+    return
+  }
+}
