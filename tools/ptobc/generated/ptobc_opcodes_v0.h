@@ -155,6 +155,15 @@ inline constexpr OpInfo kOpTable[] = {
   {0x1073, "pto.trowexpanddiv", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x1074, "pto.trowexpandmul", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x1075, "pto.tpack", 0, 0x00, 0x00, 2, 0, 0, 0x00},
+  {0x1076, "pto.tput", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x1077, "pto.tget", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x1078, "pto.tnotify", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x1079, "pto.twait", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x107A, "pto.ttest", 0, 0x01, 0x02, 0, 1, 0, 0x00},
+  {0x107B, "pto.tbroadcast", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x107C, "pto.comm_tgather", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x107D, "pto.comm_tscatter", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x107E, "pto.treduce", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x2000, "arith.addi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x2001, "arith.ceildivsi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x2002, "arith.cmpi", 0, 0x01, 0x00, 2, 1, 0, 0x01},
@@ -320,6 +329,15 @@ inline std::optional<uint16_t> lookupOpcodeByName(llvm::StringRef name) {
     .Case("pto.subset", 0x1072)
     .Case("pto.trowexpanddiv", 0x1073)
     .Case("pto.trowexpandmul", 0x1074)
+    .Case("pto.tput", 0x1076)
+    .Case("pto.tget", 0x1077)
+    .Case("pto.tnotify", 0x1078)
+    .Case("pto.twait", 0x1079)
+    .Case("pto.ttest", 0x107A)
+    .Case("pto.tbroadcast", 0x107B)
+    .Case("pto.comm_tgather", 0x107C)
+    .Case("pto.comm_tscatter", 0x107D)
+    .Case("pto.treduce", 0x107E)
     .Case("scf.for", 0x4000)
     .Case("scf.if", 0x4001)
     .Case("scf.yield", 0x4002)
@@ -471,6 +489,15 @@ inline std::optional<OpcodeAndVariant> lookupOpcodeAndVariantByFullName(llvm::St
     .Case("pto.subset", OpcodeAndVariant{0x1072, 0, 0})
     .Case("pto.trowexpanddiv", OpcodeAndVariant{0x1073, 0, 0})
     .Case("pto.trowexpandmul", OpcodeAndVariant{0x1074, 0, 0})
+    .Case("pto.tput", OpcodeAndVariant{0x1076, 0, 0})
+    .Case("pto.tget", OpcodeAndVariant{0x1077, 0, 0})
+    .Case("pto.tnotify", OpcodeAndVariant{0x1078, 0, 0})
+    .Case("pto.twait", OpcodeAndVariant{0x1079, 0, 0})
+    .Case("pto.ttest", OpcodeAndVariant{0x107A, 0, 0})
+    .Case("pto.tbroadcast", OpcodeAndVariant{0x107B, 0, 0})
+    .Case("pto.comm_tgather", OpcodeAndVariant{0x107C, 0, 0})
+    .Case("pto.comm_tscatter", OpcodeAndVariant{0x107D, 0, 0})
+    .Case("pto.treduce", OpcodeAndVariant{0x107E, 0, 0})
     .Case("scf.for", OpcodeAndVariant{0x4000, 0, 0})
     .Case("scf.if", OpcodeAndVariant{0x4001, 0, 0})
     .Case("scf.yield", OpcodeAndVariant{0x4002, 0, 0})

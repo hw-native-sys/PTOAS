@@ -1,0 +1,39 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+
+module {
+  func.func @comm_collective_basic(%dst_ptr: !pto.ptr<f32>, %src_ptr: !pto.ptr<f32>, %peer0_ptr: !pto.ptr<f32>, %peer1_ptr: !pto.ptr<f32>, %peer2_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %peer0_view = pto.make_tensor_view %peer0_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %peer1_view = pto.make_tensor_view %peer1_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %peer2_view = pto.make_tensor_view %peer2_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %dst = pto.partition_view %dst_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %src = pto.partition_view %src_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %peer0 = pto.partition_view %peer0_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %peer1 = pto.partition_view %peer1_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %peer2 = pto.partition_view %peer2_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %ping = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %pong = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %acc = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    "pto.tbroadcast"(%src, %ping, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 0, 3>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.tbroadcast"(%src, %ping, %pong, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 1, 3>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.comm_tgather"(%dst, %ping, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 0, 3>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.comm_tgather"(%dst, %ping, %pong, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 1, 3>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.comm_tscatter"(%src, %ping, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 0, 3>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.comm_tscatter"(%src, %ping, %pong, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 1, 3>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.treduce"(%dst, %acc, %ping, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 1, 0, 3>, reduceOp = #pto<reduce_op sum>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    "pto.treduce"(%dst, %acc, %ping, %pong, %peer0, %peer1, %peer2) <{operandSegmentSizes = array<i32: 1, 1, 1, 1, 3>, reduceOp = #pto<reduce_op max>, root = 1 : i32}> : (!pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>) -> ()
+    return
+  }
+}
+
+// A3: pto::comm::ParallelGroup
+// A3: pto::comm::TBROADCAST(
+// A3: pto::comm::TGATHER(
+// A3: pto::comm::TSCATTER(
+// A3: pto::comm::TREDUCE(
+// A3: pto::comm::ReduceOp::Sum
+// A3: pto::comm::ReduceOp::Max

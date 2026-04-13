@@ -153,6 +153,31 @@ PYBIND11_MODULE(_pto, m) {
       .value("NormalRelu", mlir::pto::ReluPreMode::NormalRelu)
       .export_values();
 
+    py::enum_<mlir::pto::AtomicType>(m, "AtomicType")
+      .value("AtomicNone", mlir::pto::AtomicType::AtomicNone)
+      .value("AtomicAdd", mlir::pto::AtomicType::AtomicAdd)
+      .export_values();
+
+    py::enum_<mlir::pto::NotifyOp>(m, "NotifyOp")
+      .value("AtomicAdd", mlir::pto::NotifyOp::AtomicAdd)
+      .value("Set", mlir::pto::NotifyOp::Set)
+      .export_values();
+
+    py::enum_<mlir::pto::WaitCmp>(m, "WaitCmp")
+      .value("EQ", mlir::pto::WaitCmp::EQ)
+      .value("NE", mlir::pto::WaitCmp::NE)
+      .value("GT", mlir::pto::WaitCmp::GT)
+      .value("GE", mlir::pto::WaitCmp::GE)
+      .value("LT", mlir::pto::WaitCmp::LT)
+      .value("LE", mlir::pto::WaitCmp::LE)
+      .export_values();
+
+    py::enum_<mlir::pto::ReduceOp>(m, "ReduceOp")
+      .value("Sum", mlir::pto::ReduceOp::Sum)
+      .value("Max", mlir::pto::ReduceOp::Max)
+      .value("Min", mlir::pto::ReduceOp::Min)
+      .export_values();
+
     py::enum_<mlir::pto::SyncOpType>(m, "SyncOpType")
       .value("TLOAD", mlir::pto::SyncOpType::TLOAD)
       .value("TSTORE_ACC", mlir::pto::SyncOpType::TSTORE_ACC)
@@ -262,6 +287,58 @@ PYBIND11_MODULE(_pto, m) {
             "get",
             [](py::object cls, mlir::pto::ReluPreMode value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOReluPreModeAttrGet(ctx, static_cast<int32_t>(value));
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls(a);
+            },
+            py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+
+    mlir_attribute_subclass(m, "AtomicTypeAttr",
+                            [](MlirAttribute a) -> bool {
+                            return mlirPTOAttrIsAAtomicTypeAttr(a);
+                            })
+        .def_classmethod(
+            "get",
+            [](py::object cls, mlir::pto::AtomicType value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOAtomicTypeAttrGet(ctx, static_cast<int32_t>(value));
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls(a);
+            },
+            py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+
+    mlir_attribute_subclass(m, "NotifyOpAttr",
+                            [](MlirAttribute a) -> bool {
+                            return mlirPTOAttrIsANotifyOpAttr(a);
+                            })
+        .def_classmethod(
+            "get",
+            [](py::object cls, mlir::pto::NotifyOp value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTONotifyOpAttrGet(ctx, static_cast<int32_t>(value));
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls(a);
+            },
+            py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+
+    mlir_attribute_subclass(m, "WaitCmpAttr",
+                            [](MlirAttribute a) -> bool {
+                            return mlirPTOAttrIsAWaitCmpAttr(a);
+                            })
+        .def_classmethod(
+            "get",
+            [](py::object cls, mlir::pto::WaitCmp value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOWaitCmpAttrGet(ctx, static_cast<int32_t>(value));
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls(a);
+            },
+            py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+
+    mlir_attribute_subclass(m, "ReduceOpAttr",
+                            [](MlirAttribute a) -> bool {
+                            return mlirPTOAttrIsAReduceOpAttr(a);
+                            })
+        .def_classmethod(
+            "get",
+            [](py::object cls, mlir::pto::ReduceOp value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOReduceOpAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) return py::none();
             return cls(a);
             },

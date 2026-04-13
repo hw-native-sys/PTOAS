@@ -1,0 +1,33 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+
+module {
+  func.func @comm_p2p_basic(%dst_ptr: !pto.ptr<f32>, %src_ptr: !pto.ptr<f32>, %signal_ptr: !pto.ptr<i32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c7_i32 = arith.constant 7 : i32
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c128], strides = [%c1] : !pto.tensor_view<128xf32>
+    %signal_view = pto.make_tensor_view %signal_ptr, shape = [%c1], strides = [%c1] : !pto.tensor_view<1xi32>
+    %dst = pto.partition_view %dst_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %src = pto.partition_view %src_view, offsets = [%c0], sizes = [%c128] : !pto.tensor_view<128xf32> -> !pto.partition_tensor_view<128xf32>
+    %signal = pto.partition_view %signal_view, offsets = [%c0], sizes = [%c1] : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    %ping = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %pong = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    "pto.tput"(%dst, %src, %ping) <{atomicType = #pto<atomic_type atomic_none>}> : (!pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> ()
+    "pto.tput"(%dst, %src, %ping, %pong) <{atomicType = #pto<atomic_type atomic_add>}> : (!pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> ()
+    "pto.tget"(%dst, %src, %ping) : (!pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> ()
+    "pto.tget"(%dst, %src, %ping, %pong) : (!pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) -> ()
+    "pto.tnotify"(%signal, %c7_i32) <{notifyOp = #pto<notify_op set>}> : (!pto.partition_tensor_view<1xi32>, i32) -> ()
+    "pto.twait"(%signal, %c7_i32) <{cmp = #pto<wait_cmp ge>}> : (!pto.partition_tensor_view<1xi32>, i32) -> ()
+    %tested = "pto.ttest"(%signal, %c7_i32) <{cmp = #pto<wait_cmp eq>}> : (!pto.partition_tensor_view<1xi32>, i32) -> i1
+    return
+  }
+}
+
+// A3: pto::comm::TPUT(
+// A3: pto::comm::TPUT<pto::AtomicType::AtomicAdd>(
+// A3: pto::comm::TGET(
+// A3: pto::comm::TNOTIFY(
+// A3: pto::comm::TWAIT(
+// A3: pto::comm::TTEST(

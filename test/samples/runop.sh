@@ -862,6 +862,46 @@ PY
       fi
     fi
 
+    if [[ "$base" == "comm_p2p" ]]; then
+      for pat in \
+        "pto::comm::TPUT(" \
+        "pto::comm::TGET(" \
+        "pto::comm::TNOTIFY(" \
+        "pto::comm::TWAIT(" \
+        "pto::comm::TTEST("; do
+        if ! grep -Fq "$pat" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing $pat lowering"
+          overall=1
+          continue 2
+        fi
+      done
+      if ! grep -Fq "pto::AtomicType::AtomicAdd" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing atomic-add TPUT lowering"
+        overall=1
+        continue
+      fi
+    fi
+
+    if [[ "$base" == "comm_collective" ]]; then
+      for pat in \
+        "pto::comm::ParallelGroup" \
+        "pto::comm::TBROADCAST(" \
+        "pto::comm::TGATHER(" \
+        "pto::comm::TSCATTER(" \
+        "pto::comm::TREDUCE("; do
+        if ! grep -Fq "$pat" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing $pat lowering"
+          overall=1
+          continue 2
+        fi
+      done
+      if ! grep -Fq "pto::comm::ReduceOp::Sum" "$cpp" || ! grep -Fq "pto::comm::ReduceOp::Max" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing reduce-op enum lowering"
+        overall=1
+        continue
+      fi
+    fi
+
 	    # Regression guard for Issue #190:
 	    # Infer layout for a 2D column-vector view (16 x 1) should prefer DN.
 	    if [[ "$base" == "tensor_view_infer_layout_dn" ]]; then

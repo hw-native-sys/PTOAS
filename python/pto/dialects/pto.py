@@ -52,6 +52,14 @@ AccToVecMode = _pto_mod.AccToVecMode
 AccToVecModeAttr = _pto_mod.AccToVecModeAttr
 ReluPreMode = _pto_mod.ReluPreMode
 ReluPreModeAttr = _pto_mod.ReluPreModeAttr
+AtomicType = _pto_mod.AtomicType
+AtomicTypeAttr = _pto_mod.AtomicTypeAttr
+NotifyOp = _pto_mod.NotifyOp
+NotifyOpAttr = _pto_mod.NotifyOpAttr
+WaitCmp = _pto_mod.WaitCmp
+WaitCmpAttr = _pto_mod.WaitCmpAttr
+ReduceOp = _pto_mod.ReduceOp
+ReduceOpAttr = _pto_mod.ReduceOpAttr
 RoundMode = _pto_mod.RoundMode
 RoundModeAttr = _pto_mod.RoundModeAttr
 CmpMode = _pto_mod.CmpMode
@@ -88,6 +96,10 @@ __all__ = [
     "CompactMode", "CompactModeAttr",
     "AccToVecMode", "AccToVecModeAttr",
     "ReluPreMode", "ReluPreModeAttr",
+    "AtomicType", "AtomicTypeAttr",
+    "NotifyOp", "NotifyOpAttr",
+    "WaitCmp", "WaitCmpAttr",
+    "ReduceOp", "ReduceOpAttr",
     "RoundMode", "RoundModeAttr",
     "CmpMode", "CmpModeAttr",
     "PIPE", "PipeAttr",

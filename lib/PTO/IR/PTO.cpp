@@ -2047,6 +2047,92 @@ static LogicalResult verifyAsyncFlatContiguous1DGMViewLike(Operation *op,
   return success();
 }
 
+static bool isCommGlobalLikeType(Type ty) {
+  if (auto memTy = dyn_cast<MemRefType>(ty))
+    return isGmAddressSpaceAttr(memTy.getMemorySpace());
+  return isa<pto::TensorViewType, pto::PartitionTensorViewType>(ty);
+}
+
+static LogicalResult verifyCommGlobalLike(Operation *op, Value value,
+                                          StringRef name) {
+  Type ty = value.getType();
+  if (!isCommGlobalLikeType(ty))
+    return op->emitOpError() << "expects " << name
+                             << " to be a GM memref/tensor_view/partition_view";
+
+  SmallVector<int64_t, 4> shape = getShapeVec(ty);
+  if (shape.empty())
+    return op->emitOpError() << "expects " << name << " to have rank >= 1";
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic || dim <= 0)
+      return op->emitOpError() << "expects " << name
+                               << " to have a positive static shape";
+  }
+  return success();
+}
+
+static LogicalResult verifyCommSignalLike(Operation *op, Value value,
+                                          StringRef name) {
+  if (failed(verifyCommGlobalLike(op, value, name)))
+    return failure();
+  Type elemTy = getElemTy(value.getType());
+  if (!elemTy || !elemTy.isSignlessInteger(32))
+    return op->emitOpError() << "expects " << name
+                             << " element type to be i32";
+  return success();
+}
+
+static LogicalResult verifyCommStagingTileLike(Operation *op, Value value,
+                                               StringRef name) {
+  Type ty = value.getType();
+  if (!isa<pto::TileBufType, MemRefType>(ty))
+    return op->emitOpError() << "expects " << name
+                             << " to be a tile_buf or memref tile";
+  auto as = getPTOMemorySpaceEnum(ty);
+  if (!as || *as != pto::AddressSpace::VEC)
+    return op->emitOpError() << "expects " << name
+                             << " to be in vec address space";
+  SmallVector<int64_t, 4> shape = getShapeVec(ty);
+  if (shape.empty())
+    return op->emitOpError() << "expects " << name << " to have rank >= 1";
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic || dim <= 0)
+      return op->emitOpError() << "expects " << name
+                               << " to have a positive static shape";
+  }
+  return success();
+}
+
+static LogicalResult verifyCommGlobalGroup(Operation *op, ValueRange group,
+                                           StringRef name) {
+  if (group.empty())
+    return op->emitOpError() << "expects at least one " << name << " operand";
+  Type groupTy = group.front().getType();
+  for (auto it : llvm::enumerate(group)) {
+    if (failed(verifyCommGlobalLike(op, it.value(),
+                                    (name + "[" + Twine(it.index()) + "]").str())))
+      return failure();
+    if (it.value().getType() != groupTy)
+      return op->emitOpError() << "expects all " << name
+                               << " operands to have identical types";
+  }
+  return success();
+}
+
+static LogicalResult verifyCommPingPongSameType(Operation *op, Value ping,
+                                                Value pong, StringRef pingName,
+                                                StringRef pongName) {
+  if (!pong)
+    return success();
+  if (failed(verifyCommStagingTileLike(op, ping, pingName)) ||
+      failed(verifyCommStagingTileLike(op, pong, pongName)))
+    return failure();
+  if (ping.getType() != pong.getType())
+    return op->emitOpError() << "expects " << pingName << " and " << pongName
+                             << " to have identical types";
+  return success();
+}
+
 static std::optional<uint64_t> getStaticByteSize(Type ty) {
   SmallVector<int64_t, 4> shape = getShapeVec(ty);
   if (shape.empty())
@@ -9911,6 +9997,150 @@ LogicalResult TGetAsyncOp::verify() {
   return verifyAsyncTransferOp(getOperation(), getDst(), getSrc());
 }
 
+LogicalResult TPutOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommGlobalLike(*this, getDst(), "dst")) ||
+      failed(verifyCommGlobalLike(*this, getSrc(), "src")) ||
+      failed(verifyCommStagingTileLike(*this, getPing(), "ping")) ||
+      failed(verifyCommPingPongSameType(*this, getPing(), getPong(), "ping",
+                                        "pong")))
+    return failure();
+  if (getElemTy(getDst().getType()) != getElemTy(getSrc().getType()))
+    return emitOpError("expects src and dst to have the same element type");
+  if (getShapeVec(getDst().getType()) != getShapeVec(getSrc().getType()))
+    return emitOpError("expects src and dst to have the same static shape");
+  if (getElemTy(getPing().getType()) != getElemTy(getSrc().getType()))
+    return emitOpError("expects staging tile element type to match src/dst");
+  return success();
+}
+
+LogicalResult TGetOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommGlobalLike(*this, getDst(), "dst")) ||
+      failed(verifyCommGlobalLike(*this, getSrc(), "src")) ||
+      failed(verifyCommStagingTileLike(*this, getPing(), "ping")) ||
+      failed(verifyCommPingPongSameType(*this, getPing(), getPong(), "ping",
+                                        "pong")))
+    return failure();
+  if (getElemTy(getDst().getType()) != getElemTy(getSrc().getType()))
+    return emitOpError("expects src and dst to have the same element type");
+  if (getShapeVec(getDst().getType()) != getShapeVec(getSrc().getType()))
+    return emitOpError("expects src and dst to have the same static shape");
+  if (getElemTy(getPing().getType()) != getElemTy(getSrc().getType()))
+    return emitOpError("expects staging tile element type to match src/dst");
+  return success();
+}
+
+LogicalResult TNotifyOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommSignalLike(*this, getSignal(), "signal")))
+    return failure();
+  auto valueTy = dyn_cast<IntegerType>(getValue().getType());
+  if (!valueTy || valueTy.getWidth() != 32)
+    return emitOpError("expects value to be i32");
+  return success();
+}
+
+LogicalResult TWaitOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommSignalLike(*this, getSignal(), "signal")))
+    return failure();
+  auto cmpTy = dyn_cast<IntegerType>(getCmpValue().getType());
+  if (!cmpTy || cmpTy.getWidth() != 32)
+    return emitOpError("expects cmp_value to be i32");
+  return success();
+}
+
+LogicalResult TTestOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommSignalLike(*this, getSignal(), "signal")))
+    return failure();
+  auto cmpTy = dyn_cast<IntegerType>(getCmpValue().getType());
+  if (!cmpTy || cmpTy.getWidth() != 32)
+    return emitOpError("expects cmp_value to be i32");
+  return success();
+}
+
+LogicalResult TBroadcastOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommGlobalLike(*this, getSrc(), "src")) ||
+      failed(verifyCommStagingTileLike(*this, getPing(), "ping")) ||
+      failed(verifyCommPingPongSameType(*this, getPing(), getPong(), "ping",
+                                        "pong")) ||
+      failed(verifyCommGlobalGroup(*this, getGroup(), "group")))
+    return failure();
+  if (getRoot() >= static_cast<uint32_t>(getGroup().size()))
+    return emitOpError("expects root to index into group operands");
+  if (getSrc().getType() != getGroup().front().getType())
+    return emitOpError("expects src type to match group member type");
+  if (getElemTy(getPing().getType()) != getElemTy(getSrc().getType()))
+    return emitOpError("expects staging tile element type to match src");
+  return success();
+}
+
+LogicalResult CommTGatherOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommGlobalLike(*this, getDst(), "dst")) ||
+      failed(verifyCommStagingTileLike(*this, getPing(), "ping")) ||
+      failed(verifyCommPingPongSameType(*this, getPing(), getPong(), "ping",
+                                        "pong")) ||
+      failed(verifyCommGlobalGroup(*this, getGroup(), "group")))
+    return failure();
+  if (getRoot() >= static_cast<uint32_t>(getGroup().size()))
+    return emitOpError("expects root to index into group operands");
+  if (getElemTy(getDst().getType()) != getElemTy(getGroup().front().getType()))
+    return emitOpError("expects dst element type to match group member type");
+  if (getElemTy(getPing().getType()) != getElemTy(getDst().getType()))
+    return emitOpError("expects staging tile element type to match dst");
+  return success();
+}
+
+LogicalResult CommTScatterOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommGlobalLike(*this, getSrc(), "src")) ||
+      failed(verifyCommStagingTileLike(*this, getPing(), "ping")) ||
+      failed(verifyCommPingPongSameType(*this, getPing(), getPong(), "ping",
+                                        "pong")) ||
+      failed(verifyCommGlobalGroup(*this, getGroup(), "group")))
+    return failure();
+  if (getRoot() >= static_cast<uint32_t>(getGroup().size()))
+    return emitOpError("expects root to index into group operands");
+  if (getElemTy(getSrc().getType()) != getElemTy(getGroup().front().getType()))
+    return emitOpError("expects src element type to match group member type");
+  if (getElemTy(getPing().getType()) != getElemTy(getSrc().getType()))
+    return emitOpError("expects staging tile element type to match src");
+  return success();
+}
+
+LogicalResult TReduceOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (failed(verifyCommGlobalLike(*this, getDst(), "dst")) ||
+      failed(verifyCommStagingTileLike(*this, getAcc(), "acc")) ||
+      failed(verifyCommStagingTileLike(*this, getRecvPing(), "recv_ping")) ||
+      failed(verifyCommPingPongSameType(*this, getRecvPing(), getRecvPong(),
+                                        "recv_ping", "recv_pong")) ||
+      failed(verifyCommGlobalGroup(*this, getGroup(), "group")))
+    return failure();
+  if (getRoot() >= static_cast<uint32_t>(getGroup().size()))
+    return emitOpError("expects root to index into group operands");
+  if (getElemTy(getDst().getType()) != getElemTy(getGroup().front().getType()))
+    return emitOpError("expects dst element type to match group member type");
+  if (getAcc().getType() != getRecvPing().getType())
+    return emitOpError("expects acc and recv_ping to have identical types");
+  if (getElemTy(getAcc().getType()) != getElemTy(getDst().getType()))
+    return emitOpError("expects accumulator/receive tiles to match dst element type");
+  return success();
+}
+
 LogicalResult AicInitializePipeOp::verify() {
   return verifyFrontendInitCommon(*this, FunctionKernelKind::Cube, "cube");
 }
@@ -10045,6 +10275,83 @@ void TGetAsyncOp::getEffects(
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
   addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void TPutOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPingMutable(), MemoryEffects::Write::get());
+}
+
+void TGetOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPingMutable(), MemoryEffects::Write::get());
+}
+
+void TNotifyOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getSignalMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getValueMutable(), MemoryEffects::Read::get());
+}
+
+void TWaitOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getSignalMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getCmpValueMutable(), MemoryEffects::Read::get());
+}
+
+void TTestOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getSignalMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getCmpValueMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void TBroadcastOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPingMutable(), MemoryEffects::Write::get());
+  if (getPong()) {
+    auto pongRange = getPongMutable();
+    if (auto it = pongRange.begin(); it != pongRange.end())
+      addEffect(effects, &*it, MemoryEffects::Write::get());
+  }
+}
+
+void CommTGatherOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getPingMutable(), MemoryEffects::Write::get());
+}
+
+void CommTScatterOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPingMutable(), MemoryEffects::Write::get());
+  if (getPong()) {
+    auto pongRange = getPongMutable();
+    if (auto it = pongRange.begin(); it != pongRange.end())
+      addEffect(effects, &*it, MemoryEffects::Write::get());
+  }
+}
+
+void TReduceOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getAccMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRecvPingMutable(), MemoryEffects::Read::get());
 }
 
 void WaitAsyncEventOp::getEffects(

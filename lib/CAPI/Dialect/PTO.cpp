@@ -585,6 +585,66 @@ int32_t mlirPTOReluPreModeAttrGetValue(MlirAttribute attr) {
   return static_cast<int32_t>(a.getValue());
 }
 
+bool mlirPTOAttrIsAAtomicTypeAttr(MlirAttribute attr) {
+  return unwrap(attr).isa<mlir::pto::AtomicTypeAttr>();
+}
+
+MlirAttribute mlirPTOAtomicTypeAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  return wrap(mlir::pto::AtomicTypeAttr::get(
+      c, static_cast<mlir::pto::AtomicType>(value)));
+}
+
+int32_t mlirPTOAtomicTypeAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::AtomicTypeAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
+bool mlirPTOAttrIsANotifyOpAttr(MlirAttribute attr) {
+  return unwrap(attr).isa<mlir::pto::NotifyOpAttr>();
+}
+
+MlirAttribute mlirPTONotifyOpAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  return wrap(mlir::pto::NotifyOpAttr::get(
+      c, static_cast<mlir::pto::NotifyOp>(value)));
+}
+
+int32_t mlirPTONotifyOpAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::NotifyOpAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
+bool mlirPTOAttrIsAWaitCmpAttr(MlirAttribute attr) {
+  return unwrap(attr).isa<mlir::pto::WaitCmpAttr>();
+}
+
+MlirAttribute mlirPTOWaitCmpAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  return wrap(mlir::pto::WaitCmpAttr::get(
+      c, static_cast<mlir::pto::WaitCmp>(value)));
+}
+
+int32_t mlirPTOWaitCmpAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::WaitCmpAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
+bool mlirPTOAttrIsAReduceOpAttr(MlirAttribute attr) {
+  return unwrap(attr).isa<mlir::pto::ReduceOpAttr>();
+}
+
+MlirAttribute mlirPTOReduceOpAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  return wrap(mlir::pto::ReduceOpAttr::get(
+      c, static_cast<mlir::pto::ReduceOp>(value)));
+}
+
+int32_t mlirPTOReduceOpAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::ReduceOpAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
 MlirAttribute mlirPTOTileBufConfigAttrGet(MlirContext ctx,
                                           MlirAttribute bLayout,
                                           MlirAttribute sLayout,

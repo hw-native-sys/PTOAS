@@ -394,6 +394,41 @@ def PTO_AtomicTypeAttr : EnumAttr<PTO_Dialect, PTO_AtomicTypeEnum, "atomic_type"
   let summary = "TSTORE atomic type attribute";
 }
 
+def PTO_NotifyOpEnum : PTO_I32Enum<
+  "NotifyOp", "PTO communication notify op", [
+    I32EnumAttrCase<"AtomicAdd", 0, "atomic_add">,
+    I32EnumAttrCase<"Set", 1, "set">
+  ]>;
+
+def PTO_NotifyOpAttr : EnumAttr<PTO_Dialect, PTO_NotifyOpEnum, "notify_op"> {
+  let summary = "communication notify operation attribute";
+}
+
+def PTO_WaitCmpEnum : PTO_I32Enum<
+  "WaitCmp", "PTO communication wait/test compare", [
+    I32EnumAttrCase<"EQ", 0, "eq">,
+    I32EnumAttrCase<"NE", 1, "ne">,
+    I32EnumAttrCase<"GT", 2, "gt">,
+    I32EnumAttrCase<"GE", 3, "ge">,
+    I32EnumAttrCase<"LT", 4, "lt">,
+    I32EnumAttrCase<"LE", 5, "le">
+  ]>;
+
+def PTO_WaitCmpAttr : EnumAttr<PTO_Dialect, PTO_WaitCmpEnum, "wait_cmp"> {
+  let summary = "communication wait/test comparison attribute";
+}
+
+def PTO_ReduceOpEnum : PTO_I32Enum<
+  "ReduceOp", "PTO communication reduce operation", [
+    I32EnumAttrCase<"Sum", 0, "sum">,
+    I32EnumAttrCase<"Max", 1, "max">,
+    I32EnumAttrCase<"Min", 2, "min">
+  ]>;
+
+def PTO_ReduceOpAttr : EnumAttr<PTO_Dialect, PTO_ReduceOpEnum, "reduce_op"> {
+  let summary = "communication reduce operation attribute";
+}
+
 def PTO_ReluPreModeEnum : PTO_I32Enum<
   "ReluPreMode", "PTO TSTORE relu pre mode", [
     I32EnumAttrCase<"NoRelu", 0, "no_relu">,

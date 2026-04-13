@@ -5252,6 +5252,367 @@ struct PTOAsyncEventToEmitC : public OpConversionPattern<AsyncEventOp> {
   std::string callee;
 };
 
+static FailureOr<Value> buildCommGlobalTensorValue(
+    ConversionPatternRewriter &rewriter, Location loc, Value originalValue,
+    Value emittedValue, Operation *anchor) {
+  Value value = peelUnrealized(emittedValue);
+  if (isEmitCGlobalTensorLikeType(value.getType()))
+    return value;
+
+  auto memTy = dyn_cast<MemRefType>(originalValue.getType());
+  if (!memTy)
+    return failure();
+
+  Value gt = buildGlobalTensorFromMemref(rewriter, loc, value, memTy, anchor);
+  if (!gt)
+    return failure();
+  return gt;
+}
+
+static FailureOr<Value> buildCommTileValue(ConversionPatternRewriter &rewriter,
+                                           Location loc, Value originalValue,
+                                           Value emittedValue) {
+  Value value = peelUnrealized(emittedValue);
+  if (auto opaqueTy = dyn_cast<emitc::OpaqueType>(value.getType())) {
+    StringRef typeStr = opaqueTy.getValue();
+    if (typeStr.contains("Tile<") || typeStr.contains("ConvTile<"))
+      return value;
+  }
+  return buildAsyncScratchTileValue(rewriter, loc, originalValue, emittedValue);
+}
+
+static std::string notifyOpTok(pto::NotifyOp op) {
+  switch (op) {
+  case pto::NotifyOp::AtomicAdd:
+    return "pto::comm::NotifyOp::AtomicAdd";
+  case pto::NotifyOp::Set:
+    return "pto::comm::NotifyOp::Set";
+  }
+  return "pto::comm::NotifyOp::Set";
+}
+
+static std::string waitCmpTok(pto::WaitCmp cmp) {
+  switch (cmp) {
+  case pto::WaitCmp::EQ:
+    return "pto::comm::WaitCmp::EQ";
+  case pto::WaitCmp::NE:
+    return "pto::comm::WaitCmp::NE";
+  case pto::WaitCmp::GT:
+    return "pto::comm::WaitCmp::GT";
+  case pto::WaitCmp::GE:
+    return "pto::comm::WaitCmp::GE";
+  case pto::WaitCmp::LT:
+    return "pto::comm::WaitCmp::LT";
+  case pto::WaitCmp::LE:
+    return "pto::comm::WaitCmp::LE";
+  }
+  return "pto::comm::WaitCmp::EQ";
+}
+
+static std::string reduceOpTok(pto::ReduceOp op) {
+  switch (op) {
+  case pto::ReduceOp::Sum:
+    return "pto::comm::ReduceOp::Sum";
+  case pto::ReduceOp::Max:
+    return "pto::comm::ReduceOp::Max";
+  case pto::ReduceOp::Min:
+    return "pto::comm::ReduceOp::Min";
+  }
+  return "pto::comm::ReduceOp::Sum";
+}
+
+template <typename OpTy>
+static FailureOr<SmallVector<Value>> buildCommGroupGlobalTensors(
+    ConversionPatternRewriter &rewriter, Location loc, OpTy op,
+    ValueRange originalGroup, ValueRange emittedGroup) {
+  SmallVector<Value> groupGTs;
+  groupGTs.reserve(originalGroup.size());
+  for (auto [orig, emitted] : llvm::zip(originalGroup, emittedGroup)) {
+    FailureOr<Value> gt =
+        buildCommGlobalTensorValue(rewriter, loc, orig, emitted, op.getOperation());
+    if (failed(gt))
+      return failure();
+    groupGTs.push_back(*gt);
+  }
+  return groupGTs;
+}
+
+template <typename CollectiveOp>
+struct PTOCommCollectiveToEmitC : public OpConversionPattern<CollectiveOp> {
+  using OpConversionPattern<CollectiveOp>::OpConversionPattern;
+
+  explicit PTOCommCollectiveToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                                    StringRef apiName)
+      : OpConversionPattern<CollectiveOp>(typeConverter, ctx),
+        apiName(apiName.str()) {}
+
+  LogicalResult matchAndRewrite(CollectiveOp op, typename CollectiveOp::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto *ctx = rewriter.getContext();
+    Location loc = op.getLoc();
+
+    SmallVector<Value> operands;
+    std::string lambda = "([&](";
+
+    auto appendParam = [&](StringRef name) {
+      if (lambda.back() != '(')
+        lambda += ", ";
+      lambda += "auto &";
+      lambda += name.str();
+    };
+
+    auto appendOperand = [&](Value value, StringRef name) {
+      appendParam(name);
+      operands.push_back(value);
+    };
+
+    auto buildPong = [&](Value original, Value emitted, StringRef name) -> FailureOr<Value> {
+      if (!original)
+        return failure();
+      return buildCommTileValue(rewriter, loc, original, emitted);
+    };
+
+    if constexpr (std::is_same_v<CollectiveOp, pto::TBroadcastOp>) {
+      FailureOr<Value> srcGT =
+          buildCommGlobalTensorValue(rewriter, loc, op.getSrc(), adaptor.getSrc(),
+                                     op.getOperation());
+      FailureOr<Value> pingTile =
+          buildCommTileValue(rewriter, loc, op.getPing(), adaptor.getPing());
+      auto groupGTs =
+          buildCommGroupGlobalTensors(rewriter, loc, op, op.getGroup(), adaptor.getGroup());
+      if (failed(srcGT) || failed(pingTile) || failed(groupGTs))
+        return rewriter.notifyMatchFailure(op, "failed to materialize broadcast operands");
+      appendOperand(*srcGT, "__src");
+      appendOperand(*pingTile, "__ping");
+      if (op.getPong()) {
+        FailureOr<Value> pongTile =
+            buildPong(op.getPong(), adaptor.getPong(), "__pong");
+        if (failed(pongTile))
+          return rewriter.notifyMatchFailure(op, "failed to materialize pong tile");
+        appendOperand(*pongTile, "__pong");
+      }
+      for (size_t i = 0; i < groupGTs->size(); ++i)
+        appendOperand((*groupGTs)[i], ("__g" + Twine(i)).str());
+      lambda += ") { ";
+      lambda += "using __GT = std::decay_t<decltype(__g0)>; __GT __group[] = {";
+      for (size_t i = 0; i < groupGTs->size(); ++i) {
+        if (i)
+          lambda += ", ";
+        lambda += "__g" + std::to_string(i);
+      }
+      lambda += "}; auto __pg = pto::comm::ParallelGroup<__GT>::Create(__group, ";
+      lambda += std::to_string(groupGTs->size()) + ", " + std::to_string(op.getRoot());
+      lambda += "); pto::comm::TBROADCAST(__pg, __src, __ping";
+      if (op.getPong())
+        lambda += ", __pong";
+      lambda += "); })";
+    } else if constexpr (std::is_same_v<CollectiveOp, pto::CommTGatherOp>) {
+      FailureOr<Value> dstGT =
+          buildCommGlobalTensorValue(rewriter, loc, op.getDst(), adaptor.getDst(),
+                                     op.getOperation());
+      FailureOr<Value> pingTile =
+          buildCommTileValue(rewriter, loc, op.getPing(), adaptor.getPing());
+      auto groupGTs =
+          buildCommGroupGlobalTensors(rewriter, loc, op, op.getGroup(), adaptor.getGroup());
+      if (failed(dstGT) || failed(pingTile) || failed(groupGTs))
+        return rewriter.notifyMatchFailure(op, "failed to materialize gather operands");
+      appendOperand(*dstGT, "__dst");
+      appendOperand(*pingTile, "__ping");
+      if (op.getPong()) {
+        FailureOr<Value> pongTile =
+            buildPong(op.getPong(), adaptor.getPong(), "__pong");
+        if (failed(pongTile))
+          return rewriter.notifyMatchFailure(op, "failed to materialize pong tile");
+        appendOperand(*pongTile, "__pong");
+      }
+      for (size_t i = 0; i < groupGTs->size(); ++i)
+        appendOperand((*groupGTs)[i], ("__g" + Twine(i)).str());
+      lambda += ") { using __GT = std::decay_t<decltype(__g0)>; __GT __group[] = {";
+      for (size_t i = 0; i < groupGTs->size(); ++i) {
+        if (i)
+          lambda += ", ";
+        lambda += "__g" + std::to_string(i);
+      }
+      lambda += "}; auto __pg = pto::comm::ParallelGroup<__GT>::Create(__group, ";
+      lambda += std::to_string(groupGTs->size()) + ", " + std::to_string(op.getRoot());
+      lambda += "); pto::comm::TGATHER(__pg, __dst, __ping";
+      if (op.getPong())
+        lambda += ", __pong";
+      lambda += "); })";
+    } else if constexpr (std::is_same_v<CollectiveOp, pto::CommTScatterOp>) {
+      FailureOr<Value> srcGT =
+          buildCommGlobalTensorValue(rewriter, loc, op.getSrc(), adaptor.getSrc(),
+                                     op.getOperation());
+      FailureOr<Value> pingTile =
+          buildCommTileValue(rewriter, loc, op.getPing(), adaptor.getPing());
+      auto groupGTs =
+          buildCommGroupGlobalTensors(rewriter, loc, op, op.getGroup(), adaptor.getGroup());
+      if (failed(srcGT) || failed(pingTile) || failed(groupGTs))
+        return rewriter.notifyMatchFailure(op, "failed to materialize scatter operands");
+      appendOperand(*srcGT, "__src");
+      appendOperand(*pingTile, "__ping");
+      if (op.getPong()) {
+        FailureOr<Value> pongTile =
+            buildPong(op.getPong(), adaptor.getPong(), "__pong");
+        if (failed(pongTile))
+          return rewriter.notifyMatchFailure(op, "failed to materialize pong tile");
+        appendOperand(*pongTile, "__pong");
+      }
+      for (size_t i = 0; i < groupGTs->size(); ++i)
+        appendOperand((*groupGTs)[i], ("__g" + Twine(i)).str());
+      lambda += ") { using __GT = std::decay_t<decltype(__g0)>; __GT __group[] = {";
+      for (size_t i = 0; i < groupGTs->size(); ++i) {
+        if (i)
+          lambda += ", ";
+        lambda += "__g" + std::to_string(i);
+      }
+      lambda += "}; auto __pg = pto::comm::ParallelGroup<__GT>::Create(__group, ";
+      lambda += std::to_string(groupGTs->size()) + ", " + std::to_string(op.getRoot());
+      lambda += "); pto::comm::TSCATTER(__pg, __src, __ping";
+      if (op.getPong())
+        lambda += ", __pong";
+      lambda += "); })";
+    } else {
+      FailureOr<Value> dstGT =
+          buildCommGlobalTensorValue(rewriter, loc, op.getDst(), adaptor.getDst(),
+                                     op.getOperation());
+      FailureOr<Value> accTile =
+          buildCommTileValue(rewriter, loc, op.getAcc(), adaptor.getAcc());
+      FailureOr<Value> recvPing =
+          buildCommTileValue(rewriter, loc, op.getRecvPing(), adaptor.getRecvPing());
+      auto groupGTs =
+          buildCommGroupGlobalTensors(rewriter, loc, op, op.getGroup(), adaptor.getGroup());
+      if (failed(dstGT) || failed(accTile) || failed(recvPing) || failed(groupGTs))
+        return rewriter.notifyMatchFailure(op, "failed to materialize reduce operands");
+      appendOperand(*dstGT, "__dst");
+      appendOperand(*accTile, "__acc");
+      appendOperand(*recvPing, "__recv_ping");
+      if (op.getRecvPong()) {
+        FailureOr<Value> recvPong =
+            buildPong(op.getRecvPong(), adaptor.getRecvPong(), "__recv_pong");
+        if (failed(recvPong))
+          return rewriter.notifyMatchFailure(op, "failed to materialize recv_pong");
+        appendOperand(*recvPong, "__recv_pong");
+      }
+      for (size_t i = 0; i < groupGTs->size(); ++i)
+        appendOperand((*groupGTs)[i], ("__g" + Twine(i)).str());
+      lambda += ") { using __GT = std::decay_t<decltype(__g0)>; __GT __group[] = {";
+      for (size_t i = 0; i < groupGTs->size(); ++i) {
+        if (i)
+          lambda += ", ";
+        lambda += "__g" + std::to_string(i);
+      }
+      lambda += "}; auto __pg = pto::comm::ParallelGroup<__GT>::Create(__group, ";
+      lambda += std::to_string(groupGTs->size()) + ", " + std::to_string(op.getRoot());
+      lambda += "); pto::comm::TREDUCE(__pg, __dst, __acc, __recv_ping";
+      if (op.getRecvPong())
+        lambda += ", __recv_pong";
+      lambda += ", " + reduceOpTok(op.getReduceOp()) + "); })";
+    }
+
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, lambda, ArrayAttr{},
+                                         ArrayAttr{}, operands);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+  std::string apiName;
+};
+
+template <typename OpTy>
+struct PTOP2PCommToEmitC : public OpConversionPattern<OpTy> {
+  using OpConversionPattern<OpTy>::OpConversionPattern;
+
+  explicit PTOP2PCommToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                             StringRef callee)
+      : OpConversionPattern<OpTy>(typeConverter, ctx), callee(callee.str()) {}
+
+  LogicalResult matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    FailureOr<Value> dstGT =
+        buildCommGlobalTensorValue(rewriter, op.getLoc(), op.getDst(), adaptor.getDst(),
+                                   op.getOperation());
+    FailureOr<Value> srcGT =
+        buildCommGlobalTensorValue(rewriter, op.getLoc(), op.getSrc(), adaptor.getSrc(),
+                                   op.getOperation());
+    FailureOr<Value> pingTile =
+        buildCommTileValue(rewriter, op.getLoc(), op.getPing(), adaptor.getPing());
+    if (failed(dstGT) || failed(srcGT) || failed(pingTile))
+      return rewriter.notifyMatchFailure(op, "failed to materialize p2p operands");
+
+    SmallVector<Value> operands{*dstGT, *srcGT, *pingTile};
+    std::string actualCallee = callee;
+    if constexpr (std::is_same_v<OpTy, pto::TPutOp>) {
+      if (op.getAtomicType() == pto::AtomicType::AtomicAdd)
+        actualCallee = "pto::comm::TPUT<pto::AtomicType::AtomicAdd>";
+    }
+    if (op.getPong()) {
+      FailureOr<Value> pongTile =
+          buildCommTileValue(rewriter, op.getLoc(), op.getPong(), adaptor.getPong());
+      if (failed(pongTile))
+        return rewriter.notifyMatchFailure(op, "failed to materialize pong tile");
+      operands.push_back(*pongTile);
+    }
+
+    rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, actualCallee,
+                                         ArrayAttr{}, ArrayAttr{}, operands);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+  std::string callee;
+};
+
+template <typename SignalOp>
+struct PTOSignalCommToEmitC : public OpConversionPattern<SignalOp> {
+  using OpConversionPattern<SignalOp>::OpConversionPattern;
+
+  explicit PTOSignalCommToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                                StringRef callee)
+      : OpConversionPattern<SignalOp>(typeConverter, ctx),
+        callee(callee.str()) {}
+
+  LogicalResult matchAndRewrite(SignalOp op, typename SignalOp::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    FailureOr<Value> signalGT = buildCommGlobalTensorValue(
+        rewriter, op.getLoc(), op.getSignal(), adaptor.getSignal(), op.getOperation());
+    if (failed(signalGT))
+      return rewriter.notifyMatchFailure(op, "failed to materialize signal operand");
+
+    if constexpr (std::is_same_v<SignalOp, pto::TNotifyOp>) {
+      std::string actualCallee =
+          "([&](auto &__signal, auto __value){ pto::comm::TNOTIFY(__signal, __value, " +
+          notifyOpTok(op.getNotifyOp()) + "); })";
+      SmallVector<Value> operands{*signalGT, peelUnrealized(adaptor.getValue())};
+      rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, actualCallee,
+                                           ArrayAttr{}, ArrayAttr{}, operands);
+      rewriter.eraseOp(op);
+    } else {
+      SmallVector<Value> operands{*signalGT, peelUnrealized(adaptor.getCmpValue())};
+      if constexpr (std::is_same_v<SignalOp, pto::TTestOp>) {
+        Type resultTy = this->getTypeConverter()->convertType(op.getResult().getType());
+        if (!resultTy)
+          return rewriter.notifyMatchFailure(op, "failed to convert ttest result type");
+        std::string actualCallee =
+            "([&](auto &__signal, auto __cmp){ return pto::comm::TTEST(__signal, __cmp, " +
+            waitCmpTok(op.getCmp()) + "); })";
+        rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+            op, TypeRange{resultTy}, actualCallee, ArrayAttr{}, ArrayAttr{}, operands);
+      } else {
+        std::string actualCallee =
+            "([&](auto &__signal, auto __cmp){ pto::comm::TWAIT(__signal, __cmp, " +
+            waitCmpTok(op.getCmp()) + "); })";
+        rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, actualCallee,
+                                             ArrayAttr{}, ArrayAttr{}, operands);
+        rewriter.eraseOp(op);
+      }
+    }
+    return success();
+  }
+
+  std::string callee;
+};
+
 struct PTODeclareTileMemRefToEmitC
     : public OpConversionPattern<mlir::pto::DeclareTileMemRefOp> {
   using OpConversionPattern<
@@ -9712,6 +10073,24 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOAsyncTransferToEmitC<pto::TGetAsyncOp>>(
       typeConverter, ctx,
       "pto::comm::TGET_ASYNC<pto::comm::DmaEngine::SDMA>");
+  patterns.add<PTOP2PCommToEmitC<pto::TPutOp>>(typeConverter, ctx,
+                                               "pto::comm::TPUT");
+  patterns.add<PTOP2PCommToEmitC<pto::TGetOp>>(typeConverter, ctx,
+                                               "pto::comm::TGET");
+  patterns.add<PTOSignalCommToEmitC<pto::TNotifyOp>>(typeConverter, ctx,
+                                                     "([&](auto &__signal, auto __value){ pto::comm::TNOTIFY(__signal, __value, ");
+  patterns.add<PTOSignalCommToEmitC<pto::TWaitOp>>(typeConverter, ctx,
+                                                   "([&](auto &__signal, auto __cmp){ pto::comm::TWAIT(__signal, __cmp, ");
+  patterns.add<PTOSignalCommToEmitC<pto::TTestOp>>(typeConverter, ctx,
+                                                   "([&](auto &__signal, auto __cmp){ return pto::comm::TTEST(__signal, __cmp, ");
+  patterns.add<PTOCommCollectiveToEmitC<pto::TBroadcastOp>>(typeConverter, ctx,
+                                                            "TBROADCAST");
+  patterns.add<PTOCommCollectiveToEmitC<pto::CommTGatherOp>>(typeConverter, ctx,
+                                                             "TGATHER");
+  patterns.add<PTOCommCollectiveToEmitC<pto::CommTScatterOp>>(typeConverter, ctx,
+                                                              "TSCATTER");
+  patterns.add<PTOCommCollectiveToEmitC<pto::TReduceOp>>(typeConverter, ctx,
+                                                         "TREDUCE");
   patterns.add<PTOAsyncEventToEmitC<pto::WaitAsyncEventOp>>(
       typeConverter, ctx, "PTOAS__ASYNC_EVENT_WAIT");
   patterns.add<PTOAsyncEventToEmitC<pto::TestAsyncEventOp>>(
