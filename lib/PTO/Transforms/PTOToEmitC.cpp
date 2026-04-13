@@ -6139,6 +6139,29 @@ struct PTOColMaxToEmitC : public OpConversionPattern<pto::TColMaxOp> {
     return success();
   }
 };
+
+struct PTOColArgMaxToEmitC : public OpConversionPattern<pto::TColArgMaxOp> {
+  using OpConversionPattern<pto::TColArgMaxOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TColArgMaxOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value tmp = peelUnrealized(adaptor.getTmp());
+    Value dst = peelUnrealized(adaptor.getDst());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TCOLARGMAX",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{dst, src, tmp});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct PTOColMinToEmitC : public OpConversionPattern<pto::TColMinOp> {
   using OpConversionPattern<pto::TColMinOp>::OpConversionPattern;
 
@@ -6161,6 +6184,29 @@ struct PTOColMinToEmitC : public OpConversionPattern<pto::TColMinOp> {
     return success();
   }
 };
+
+struct PTOColArgMinToEmitC : public OpConversionPattern<pto::TColArgMinOp> {
+  using OpConversionPattern<pto::TColArgMinOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TColArgMinOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value tmp = peelUnrealized(adaptor.getTmp());
+    Value dst = peelUnrealized(adaptor.getDst());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TCOLARGMIN",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{dst, src, tmp});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct PTOColSumToEmitC : public OpConversionPattern<pto::TColSumOp> {
   using OpConversionPattern<pto::TColSumOp>::OpConversionPattern;
 
@@ -9797,7 +9843,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<ArithBitcastToEmitC>(typeConverter, ctx);
   patterns.add<PTOAddSToTADDS>(typeConverter, ctx);
   patterns.add<PTOColExpandToEmitC>(typeConverter, ctx);
+  patterns.add<PTOColArgMaxToEmitC>(typeConverter, ctx);
   patterns.add<PTOColMaxToEmitC>(typeConverter, ctx);
+  patterns.add<PTOColArgMinToEmitC>(typeConverter, ctx);
   patterns.add<PTOMinToEmitC>(typeConverter, ctx);
   patterns.add<PTOTLoadToTLOAD>(typeConverter, ctx);
   patterns.add<PTOTPrefetchToTPREFETCH>(typeConverter, ctx);

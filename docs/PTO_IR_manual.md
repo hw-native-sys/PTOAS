@@ -3796,7 +3796,9 @@ Reduce along rows or columns of a tile. All execute on the **Vector pipeline** (
 | `pto.trowargmin` | `dst[i,0] = argmin_j src[i,j]` (requires tmp) |
 | `pto.tcolsum` | `dst[0,j] = sum_i src[i,j]` (requires tmp, optional isBinary) |
 | `pto.tcolmax` | `dst[0,j] = max_i src[i,j]` |
+| `pto.tcolargmax` | `dst[0,j] = argmax_i src[i,j]` (requires tmp) |
 | `pto.tcolmin` | `dst[0,j] = min_i src[i,j]` |
+| `pto.tcolargmin` | `dst[0,j] = argmin_i src[i,j]` (requires tmp) |
 | `pto.thistogram` | `dst[i, idx[i,0]] = histogram_update(dst[i, idx[i,0]], src[i,:])` (A5 only) |
 
 ---
@@ -4343,6 +4345,70 @@ pto.tcolmax ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
+##### `pto.tcolargmax` - Column-wise ArgMax Reduction
+
+**Summary:** Reduces each column to the row index of its maximum element. Requires a temporary buffer.
+
+**Semantics:**
+
+```
+For each column j:
+    dst[0, j] = argmax over i of src[i, j]
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `src` | `pto.tile_buf` | Source tile buffer |
+| `tmp` | `pto.tile_buf` | Temporary buffer with the same shape/type as `src` |
+| `dst` | `pto.tile_buf` | Destination tile buffer containing column-wise indices |
+
+**Results:** None. Writes into `dst` via DPS pattern.
+
+**Assembly Format:**
+
+```
+pto.tcolargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
+               outs(<dst> : <dst_type>)
+```
+
+**Constraints & Verification:**
+
+- **Implementation checks (A2A3)**
+  - `src`, `tmp`, and `dst` must use `loc=vec`.
+  - All tiles must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`).
+  - `tmp` must have the same shape, valid shape, and element type as `src`.
+  - `src` element type must be `f16` or `f32`.
+  - `dst` element type must be `i32` or `ui32`.
+  - Runtime valid checks:
+    - `src valid row != 0` and `src valid column != 0`
+    - `dst valid row == 1`
+    - `src valid column == dst valid column`
+- **Implementation checks (A5)**
+  - Same constraints as A2/A3.
+
+**Hardware Mapping:**
+
+- Executes on the **Vector pipeline** (`PIPE_V`)
+- Operates on data in the **VEC (UB)** memory space
+
+**Basic Example:**
+
+```mlir
+pto.tcolargmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32,
+                   v_row=16, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>,
+                   !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32,
+                   v_row=16, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>)
+               outs(%dst : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+                   v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>)
+```
+
+---
+
 ##### `pto.tcolmin` - Column-wise Min Reduction
 
 **Summary:** Reduces each column by taking the minimum across rows.
@@ -4396,6 +4462,70 @@ pto.tcolmin ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
             outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16,
                 v_row=1, v_col=16, blayout=row_major, slayout=none_box,
                 fractal=512, pad=0>)
+```
+
+---
+
+##### `pto.tcolargmin` - Column-wise ArgMin Reduction
+
+**Summary:** Reduces each column to the row index of its minimum element. Requires a temporary buffer.
+
+**Semantics:**
+
+```
+For each column j:
+    dst[0, j] = argmin over i of src[i, j]
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `src` | `pto.tile_buf` | Source tile buffer |
+| `tmp` | `pto.tile_buf` | Temporary buffer with the same shape/type as `src` |
+| `dst` | `pto.tile_buf` | Destination tile buffer containing column-wise indices |
+
+**Results:** None. Writes into `dst` via DPS pattern.
+
+**Assembly Format:**
+
+```
+pto.tcolargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
+               outs(<dst> : <dst_type>)
+```
+
+**Constraints & Verification:**
+
+- **Implementation checks (A2A3)**
+  - `src`, `tmp`, and `dst` must use `loc=vec`.
+  - All tiles must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`).
+  - `tmp` must have the same shape, valid shape, and element type as `src`.
+  - `src` element type must be `f16` or `f32`.
+  - `dst` element type must be `i32` or `ui32`.
+  - Runtime valid checks:
+    - `src valid row != 0` and `src valid column != 0`
+    - `dst valid row == 1`
+    - `src valid column == dst valid column`
+- **Implementation checks (A5)**
+  - Same constraints as A2/A3.
+
+**Hardware Mapping:**
+
+- Executes on the **Vector pipeline** (`PIPE_V`)
+- Operates on data in the **VEC (UB)** memory space
+
+**Basic Example:**
+
+```mlir
+pto.tcolargmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32,
+                   v_row=16, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>,
+                   !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32,
+                   v_row=16, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>)
+               outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                   v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>)
 ```
 
 ---
