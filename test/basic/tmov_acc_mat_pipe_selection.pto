@@ -32,14 +32,8 @@ module attributes {"pto.device-spec" = "Ascend950"} {
 }
 
 // CHECK-LABEL: __global__ AICORE void tmov_acc_mat_pipeline(
-// CHECK-NOT: set_flag(PIPE_M, PIPE_FIX
-// CHECK-NOT: wait_flag(PIPE_M, PIPE_FIX
-// CHECK-NOT: set_flag(PIPE_FIX, PIPE_MTE1
-// CHECK-NOT: wait_flag(PIPE_FIX, PIPE_MTE1
-// CHECK-NOT: set_flag(PIPE_MTE1, PIPE_M
-// CHECK-NOT: wait_flag(PIPE_MTE1, PIPE_M
-// CHECK: pipe_barrier(PIPE_ALL);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
 // CHECK: TMOV(
-// CHECK: pipe_barrier(PIPE_ALL);
-// CHECK: TMATMUL(
-// CHECK: pipe_barrier(PIPE_ALL);
+// CHECK: set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
+// CHECK: wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
