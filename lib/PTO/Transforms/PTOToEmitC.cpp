@@ -414,6 +414,7 @@ static Value emitCCast(ConversionPatternRewriter &rewriter, Location loc,
 static Value castSignlessIntToUnsignedSameWidth(ConversionPatternRewriter &rewriter,
                                                 Location loc, Value v,
                                                 unsigned bitWidth);
+static bool needsA5NoSplitVectorGuard(Operation *op);
 
 static FailureOr<std::string> getTileSplitToken(int64_t split) {
   switch (split) {
@@ -2546,6 +2547,9 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
       emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({"AICORE"}));
     }
 
+    std::optional<StringRef> kernelKindMacro = getKernelKindMacro(op);
+    bool needsNoSplitGuard = needsA5NoSplitVectorGuard(op.getOperation());
+
     // Inline the original body, then convert region/block argument types to
     // match the converted signature (also covers CFG blocks introduced by
     // pre-lowering, e.g. scf.while -> cf.br/cf.cond_br).
@@ -2559,8 +2563,6 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
     if (failed(rewriter.convertRegionTypes(&emitcFunc.getBody(),
                                            *getTypeConverter(), &entryConv)))
       return failure();
-
-    std::optional<StringRef> kernelKindMacro = getKernelKindMacro(op);
 
     // Preserve the existing function prologue shape. `kernel_kind` functions are
     // emitted with the same macro guard/reset sequence that used to come from
@@ -2576,6 +2578,9 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
           rewriter.create<emitc::VerbatimOp>(op.getLoc(), "set_mask_norm();");
           rewriter.create<emitc::VerbatimOp>(op.getLoc(),
                                              "set_vector_mask(-1, -1);");
+          if (needsNoSplitGuard)
+            rewriter.create<emitc::VerbatimOp>(
+                op.getLoc(), "if (get_subblockid() == 0) {");
         }
       }
     }
@@ -2583,6 +2588,8 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
     if (kernelKindMacro) {
       Block &lastBlock = emitcFunc.getBody().back();
       rewriter.setInsertionPoint(lastBlock.getTerminator());
+      if (*kernelKindMacro == "__DAV_VEC__" && needsNoSplitGuard)
+        rewriter.create<emitc::VerbatimOp>(op.getLoc(), "}");
       std::string endMacro = "#endif // " + kernelKindMacro->str() + "\n";
       rewriter.create<emitc::VerbatimOp>(op.getLoc(), endMacro);
     }
@@ -9287,6 +9294,68 @@ public:
 //===----------------------------------------------------------------------===//
 // Section Op Lowering
 //===----------------------------------------------------------------------===//
+static bool isA5NoSplitPipeOp(Operation *op) {
+  if (auto tpush = dyn_cast<pto::TPushOp>(op))
+    return tpush.getSplit() == 0;
+  if (auto tpop = dyn_cast<pto::TPopOp>(op))
+    return tpop.getSplit() == 0;
+  if (auto tfree = dyn_cast<pto::TFreeOp>(op))
+    return tfree.getSplit() == 0;
+  if (auto tpush = dyn_cast<pto::TPushToAivOp>(op))
+    return tpush.getSplit() == 0;
+  if (auto tpush = dyn_cast<pto::TPushToAicOp>(op))
+    return tpush.getSplit() == 0;
+  if (auto tpop = dyn_cast<pto::TPopFromAicOp>(op))
+    return tpop.getSplit() == 0;
+  if (auto tpop = dyn_cast<pto::TPopFromAivOp>(op))
+    return tpop.getSplit() == 0;
+  if (auto tfree = dyn_cast<pto::TFreeFromAicOp>(op))
+    return tfree.getSplit() == 0;
+  if (auto tfree = dyn_cast<pto::TFreeFromAivOp>(op))
+    return tfree.getSplit() == 0;
+  return false;
+}
+
+static bool hasExplicitSubblockControl(Operation *op) {
+  bool hasControl = false;
+  op->walk([&](Operation *nested) {
+    if (isa<pto::GetSubBlockIdxOp, pto::GetSubBlockNumOp>(nested)) {
+      hasControl = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return hasControl;
+}
+
+static bool needsA5NoSplitVectorGuard(Operation *op) {
+  auto arch = getTargetArch(op);
+  if (arch != PTOArch::A5)
+    return false;
+  bool isVectorScope = isa<pto::SectionVectorOp>(op);
+  if (auto func = dyn_cast<func::FuncOp>(op)) {
+    if (auto kernelKindAttr =
+            func->getAttrOfType<FunctionKernelKindAttr>(
+                FunctionKernelKindAttr::name)) {
+      isVectorScope =
+          kernelKindAttr.getKernelKind() == FunctionKernelKind::Vector;
+    }
+  }
+  if (!isVectorScope)
+    return false;
+  if (hasExplicitSubblockControl(op))
+    return false;
+
+  bool hasNoSplitPipe = false;
+  op->walk([&](Operation *nested) {
+    if (!isA5NoSplitPipeOp(nested))
+      return WalkResult::advance();
+    hasNoSplitPipe = true;
+    return WalkResult::interrupt();
+  });
+  return hasNoSplitPipe;
+}
+
 template <typename SectionOpTy>
 struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
   using OpConversionPattern<SectionOpTy>::OpConversionPattern;
@@ -9303,6 +9372,7 @@ struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
   matchAndRewrite(SectionOpTy op, typename SectionOpTy::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
+    bool needsNoSplitGuard = needsA5NoSplitVectorGuard(op.getOperation());
 
     std::string startMacro = "\n#if defined(" + getMacroName() + ")";
     rewriter.create<emitc::VerbatimOp>(loc, startMacro);
@@ -9315,10 +9385,18 @@ struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
       rewriter.create<emitc::VerbatimOp>(loc, "set_vector_mask(-1, -1);");
     }
 
+    if (needsNoSplitGuard) {
+      rewriter.create<emitc::VerbatimOp>(
+          loc, "if (get_subblockid() == 0) {");
+    }
+
     Block &innerBlock = op.getBody().front();
     if (!innerBlock.empty()) {
       rewriter.inlineBlockBefore(&innerBlock, op.getOperation(), ValueRange{});
     }
+
+    if (needsNoSplitGuard)
+      rewriter.create<emitc::VerbatimOp>(loc, "}");
 
     std::string endMacro = "#endif // " + getMacroName() + "\n";
     rewriter.create<emitc::VerbatimOp>(loc, endMacro);

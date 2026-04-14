@@ -1,0 +1,30 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @qwen3_decode_layer_incore_8(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>, %arg2: !pto.ptr<f32>, %arg3: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %c0i = arith.constant 0 : i64
+  %c16384 = arith.constant 16384 : i64
+  %c524288 = arith.constant 524288 : index
+  %c128 = arith.constant 128 : index
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %c64 = arith.constant 64 : index
+  %c0 = arith.constant 0 : index
+  %k_cache__rv_v4_view = pto.make_tensor_view %arg0, shape = [%c128, %c524288], strides = [%c1, %c128] {layout = #pto.layout<dn>}: !pto.tensor_view<?x?xbf16>
+  %q_padded__rv_v2_view = pto.make_tensor_view %arg1, shape = [%c16, %c128], strides = [%c128, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xbf16>
+  %ret0__out_view = pto.make_tensor_view %arg2, shape = [%c16, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf32>
+  %k_tile__tile = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+  %k_cache__rv_v4_pview = pto.partition_view %k_cache__rv_v4_view, offsets = [%c0, %arg3], sizes = [%c128, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<128x64xbf16>
+  pto.tload ins(%k_cache__rv_v4_pview : !pto.partition_tensor_view<128x64xbf16>) outs(%k_tile__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+  %lhs_mat = pto.alloc_tile addr = %c16384 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+  %q_padded__rv_v2_pview = pto.partition_view %q_padded__rv_v2_view, offsets = [%c0, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x128xbf16>
+  pto.tload ins(%q_padded__rv_v2_pview : !pto.partition_tensor_view<16x128xbf16>) outs(%lhs_mat : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+  %lhs_mat_Left = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+  pto.tmov ins(%lhs_mat : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%lhs_mat_Left : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+  %k_tile__tile_Right = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=right, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+  pto.tmov ins(%k_tile__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%k_tile__tile_Right : !pto.tile_buf<loc=right, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+  %raw_scores_pad__tile = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+  pto.tmatmul ins(%lhs_mat_Left, %k_tile__tile_Right : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%raw_scores_pad__tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+  %ret0__out_pview = pto.partition_view %ret0__out_view, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x64xf32>
+  pto.tstore ins(%raw_scores_pad__tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%ret0__out_pview : !pto.partition_tensor_view<16x64xf32>)
+  return
+  }
+}

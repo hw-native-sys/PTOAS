@@ -288,12 +288,15 @@ jobs:
             fi
           fi
 
-          # Some validation samples have A3 vs A5 variants due to stricter
-          # pto-isa static checks on Ascend950 (A5). When running the full test
-          # suite (RUN_ONLY_CASES is empty), skip the non-matching variant based
-          # on SOC_VERSION to keep the remote validation portable.
+          # Some validation samples are arch-specific due to stricter pto-isa
+          # static checks and A5-only tile layouts. Always skip the
+          # non-matching variant based on SOC_VERSION, even for explicit
+          # RUN_ONLY_CASES requests, so remote validation does not try to force
+          # A5-only cases through an A3 flow or vice versa.
           A3_ONLY_CASES="partition5d,partition5d_dynamic,mrgsort,tmatmulk_autosync"
-          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5,tpack"
+          QWEN3_TILELET_A5_ONLY_CASES="$(printf 'qwen3_decode_layer_incore_%s,' {0..19})"
+          QWEN3_TILELET_A5_ONLY_CASES="${QWEN3_TILELET_A5_ONLY_CASES%,}"
+          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5,tpack,${QWEN3_TILELET_A5_ONLY_CASES}"
 
           sv_lc="$(printf '%s' "${SOC_VERSION}" | tr '[:upper:]' '[:lower:]')"
           is_a5=0
@@ -301,12 +304,10 @@ jobs:
             is_a5=1
           fi
 
-          if [[ -z "${RUN_ONLY_CASES}" ]]; then
-            if [[ ${is_a5} -eq 1 ]]; then
-              SKIP_CASES="${SKIP_CASES:+${SKIP_CASES},}${A3_ONLY_CASES}"
-            else
-              SKIP_CASES="${SKIP_CASES:+${SKIP_CASES},}${A5_ONLY_CASES}"
-            fi
+          if [[ ${is_a5} -eq 1 ]]; then
+            SKIP_CASES="${SKIP_CASES:+${SKIP_CASES},}${A3_ONLY_CASES}"
+          else
+            SKIP_CASES="${SKIP_CASES:+${SKIP_CASES},}${A5_ONLY_CASES}"
           fi
 
           echo "STAGE=${STAGE}" >> "${GITHUB_ENV}"

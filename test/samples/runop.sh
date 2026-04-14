@@ -19,7 +19,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
 PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
-PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync}"
+PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync Qwen3Tilelet}"
 ENABLE_BC=0
 
 usage() {
@@ -36,7 +36,7 @@ Env:
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
   PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
-  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync)
+  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync Qwen3Tilelet)
 
 Flags:
   --enablebc  # enable: python -> .pto -> ptobc -> .pto -> ptoas
@@ -153,6 +153,13 @@ process_one_dir() {
   if [[ "${ENABLE_BC}" == "1" ]]; then
     use_ptobc_roundtrip=1
   fi
+  # Qwen3 tilelet kernels currently serve as direct ptoas compile-regression
+  # coverage. Default them to A5/level3 lowering when the caller does not
+  # provide an explicit arch, and skip them entirely when the caller forces an
+  # A3 lowering path because the samples use A5-only matmul tile layouts.
+  if [[ "$A" == "Qwen3Tilelet" ]]; then
+    use_ptobc_roundtrip=0
+  fi
   local -a ptoas_flags=()
   if [[ -n "${PTOAS_FLAGS}" ]]; then
     # shellcheck disable=SC2206
@@ -172,15 +179,33 @@ process_one_dir() {
   fi
 
   local target_arch="a3"
+  local has_pto_arch_override=0
+  local has_pto_level_override=0
   if ((${#ptoas_flags[@]})); then
     for ((idx=0; idx<${#ptoas_flags[@]}; ++idx)); do
       if [[ "${ptoas_flags[idx]}" == "--pto-arch" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
         target_arch="${ptoas_flags[idx + 1]}"
+        has_pto_arch_override=1
       elif [[ "${ptoas_flags[idx]}" == --pto-arch=* ]]; then
         target_arch="${ptoas_flags[idx]#--pto-arch=}"
+        has_pto_arch_override=1
+      elif [[ "${ptoas_flags[idx]}" == "--pto-level" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
+        has_pto_level_override=1
+      elif [[ "${ptoas_flags[idx]}" == --pto-level=* ]]; then
+        has_pto_level_override=1
       fi
     done
   fi
+  if [[ "$A" == "Qwen3Tilelet" ]]; then
+    if [[ $has_pto_arch_override -eq 0 ]]; then
+      ptoas_flags+=(--pto-arch a5)
+      target_arch="a5"
+    fi
+    if [[ $has_pto_level_override -eq 0 ]]; then
+      ptoas_flags+=(--pto-level=level3)
+    fi
+  fi
+
   local target_arch_lc
   target_arch_lc="$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')"
   local expected_vec_barrier="pipe_barrier(PIPE_V)"
@@ -208,6 +233,17 @@ process_one_dir() {
   fi
   if [[ ! -d "$dir" ]]; then
     echo -e "${A}\tSKIP\tMissing dir: $dir"
+    return 0
+  fi
+  if [[ "$A" == "Qwen3Tilelet" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
+    local qwen_case
+    for qwen_case in "$dir"/*.pto; do
+      [[ -f "$qwen_case" ]] || continue
+      case "$qwen_case" in
+        *-pto-ir.pto) continue ;;
+      esac
+      echo -e "${A}($(basename "$qwen_case"))\tSKIP\trequires --pto-arch=a5"
+    done
     return 0
   fi
 
@@ -1018,6 +1054,9 @@ PY
       ptobc_file="${out_subdir}/${base}.ptobc"
       decoded_pto="${out_subdir}/${base}-roundtrip.pto"
       cpp="${out_subdir}/${base}.cpp"
+      if [[ "$A" == "Qwen3Tilelet" ]]; then
+        cpp="${out_subdir}/${base}-pto.cpp"
+      fi
       local sample_use_ptobc_roundtrip="$use_ptobc_roundtrip"
 
       # TODO(ptobc): Keep ptoas regression coverage for patterns that are not
@@ -1029,7 +1068,6 @@ PY
             "$base" == "rmsnorm_incore_0" ]]; then
         sample_use_ptobc_roundtrip=0
       fi
-
       if [[ $sample_use_ptobc_roundtrip -eq 1 ]]; then
         # Allow generic escape for ops that are not yet in the compact v0 opcode table.
         if ! PTOBC_ALLOW_GENERIC=1 "$ptobc" encode "$f" -o "$ptobc_file" >/dev/null 2>&1; then

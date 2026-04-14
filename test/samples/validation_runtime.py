@@ -96,6 +96,43 @@ def is_a5_soc() -> bool:
     return '950' in sv or 'a5' in sv or '910_95' in sv
 
 
+def bf16_to_float32(values: np.ndarray) -> np.ndarray:
+    values_u16 = np.asarray(values, dtype=np.uint16)
+    return (values_u16.astype(np.uint32) << 16).view(np.float32)
+
+
+def float32_to_bf16(values: np.ndarray) -> np.ndarray:
+    values_f32 = np.asarray(values, dtype=np.float32)
+    bits = values_f32.view(np.uint32)
+    round_bias = np.uint32(0x7FFF) + ((bits >> 16) & np.uint32(1))
+    return ((bits + round_bias) >> 16).astype(np.uint16)
+
+
+def load_strided_2d(buffer, *, offset: int, rows: int, cols: int, row_stride: int) -> np.ndarray:
+    flat = np.asarray(buffer).reshape(-1)
+    tile = np.empty((rows, cols), dtype=flat.dtype)
+    for row in range(rows):
+        start = offset + row * row_stride
+        stop = start + cols
+        if stop > flat.size:
+            raise ValueError(f'strided load out of bounds: [{start}:{stop}] > {flat.size}')
+        tile[row, :] = flat[start:stop]
+    return tile
+
+
+def store_strided_2d(buffer, tile, *, offset: int, row_stride: int):
+    flat = np.asarray(buffer).reshape(-1)
+    tile_arr = np.asarray(tile)
+    rows, cols = tile_arr.shape
+    for row in range(rows):
+        start = offset + row * row_stride
+        stop = start + cols
+        if stop > flat.size:
+            raise ValueError(f'strided store out of bounds: [{start}:{stop}] > {flat.size}')
+        flat[start:stop] = tile_arr[row]
+    return flat
+
+
 def float_values(generator, count: int, *, style: str) -> np.ndarray:
     if style == 'signed':
         values = generator.uniform(-3.0, 3.0, size=count).astype(np.float32)

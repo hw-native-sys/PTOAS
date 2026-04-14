@@ -1,0 +1,36 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @qwen3_decode_layer_incore_19(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<bf16>, %arg2: !pto.ptr<f32>, %arg3: index, %arg4: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0i = arith.constant 0 : i64
+  %c8192 = arith.constant 8192 : i64
+  %c16384 = arith.constant 16384 : i64
+  %c16 = arith.constant 16 : index
+  %2 = arith.constant 8192 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %c4 = arith.constant 4 : index
+    %c128 = arith.constant 128 : index
+  %down_proj_tile__rv_v5_view = pto.make_tensor_view %arg0, shape = [%c16, %2], strides = [%2, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf32>
+  %out__co_l0_iter_v3_view = pto.make_tensor_view %arg1, shape = [%c16, %2], strides = [%2, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xbf16>
+  %resid1_tile__co_l0_rv_v4_view = pto.make_tensor_view %arg2, shape = [%c16, %2], strides = [%2, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf32>
+  scf.for %ob__ci_idx_v0 = %c0 to %c4 step %c1 {
+    %3 = arith.muli %arg4, %c4 : index
+    %4 = arith.addi %3, %ob__ci_idx_v0 : index
+    %5 = arith.muli %4, %c1 : index
+    %6 = arith.addi %c0, %5 : index
+    %7 = arith.muli %6, %c128 : index
+    %t__tile = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %down_proj_tile__rv_v5_pview = pto.partition_view %down_proj_tile__rv_v5_view, offsets = [%c0, %7], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+    pto.tload ins(%down_proj_tile__rv_v5_pview : !pto.partition_tensor_view<16x128xf32>) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %0 = pto.alloc_tile addr = %c8192 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %resid1_tile__co_l0_rv_v4_pview = pto.partition_view %resid1_tile__co_l0_rv_v4_view, offsets = [%c0, %7], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+    pto.tload ins(%resid1_tile__co_l0_rv_v4_pview : !pto.partition_tensor_view<16x128xf32>) outs(%0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %down_acc__tile = pto.alloc_tile addr = %c0i : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tadd ins(%t__tile, %0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%down_acc__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %1 = pto.alloc_tile addr = %c16384 : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcvt ins(%down_acc__tile{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%1 : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %out__co_l1_iter_v3_pview = pto.partition_view %out__co_l0_iter_v3_view, offsets = [%arg3, %7], sizes = [%c16, %c128] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x128xbf16>
+    pto.tstore ins(%1 : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out__co_l1_iter_v3_pview : !pto.partition_tensor_view<16x128xbf16>)
+  }
+  return
+  }
+}
