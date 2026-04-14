@@ -36,6 +36,26 @@ static pto::EventAttr getEventAttr(Builder &builder, int id) {
   auto odsEventVal = static_cast<pto::EVENT>(id);
   return pto::EventAttr::get(builder.getContext(), odsEventVal);
 }
+
+static bool isA5LowLevelSyncPipeLegal(PipelineType pipe) {
+  switch (pipe) {
+  case PipelineType::PIPE_S:
+  case PipelineType::PIPE_V:
+  case PipelineType::PIPE_MTE2:
+  case PipelineType::PIPE_MTE3:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static bool shouldUseA5BarrierFallback(func::FuncOp func,
+                                       const SyncOperation *sync) {
+  if (!isTargetArchA5(func.getOperation()))
+    return false;
+  return !isA5LowLevelSyncPipeLegal(sync->GetActualSrcPipe()) ||
+         !isA5LowLevelSyncPipeLegal(sync->GetActualDstPipe());
+}
  
 static bool IsSameSyncSignature(const SyncOperation *existing,
                                 const SyncOperation *candidate) {
@@ -335,6 +355,17 @@ void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
                                                  Operation *op,
                                                  SyncOperation *sync,
                                                  bool beforeInsert) {
+  if (shouldUseA5BarrierFallback(func_, sync)) {
+    auto pipeAllAttr = getPipeAttr(rewriter, PipelineType::PIPE_ALL);
+    if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>()) {
+      rewriter.setInsertionPoint(op);
+    } else {
+      rewriter.setInsertionPointAfter(op);
+    }
+    rewriter.create<pto::BarrierOp>(op->getLoc(), pipeAllAttr);
+    return;
+  }
+
   // [Fix] Terminator 强制前置插入
   if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>()) {
       rewriter.setInsertionPoint(op);
@@ -357,6 +388,17 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 Operation *op,
                                                 SyncOperation *sync,
                                                 bool beforeInsert) {
+  if (shouldUseA5BarrierFallback(func_, sync)) {
+    auto pipeAllAttr = getPipeAttr(rewriter, PipelineType::PIPE_ALL);
+    if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>()) {
+      rewriter.setInsertionPoint(op);
+    } else {
+      rewriter.setInsertionPointAfter(op);
+    }
+    rewriter.create<pto::BarrierOp>(op->getLoc(), pipeAllAttr);
+    return;
+  }
+
   // 注意：GetBufferSelected 可能需要在插入 Set/Wait 之前调用，以确保 SSA 顺序
   // 但这里只是获取 Value，不影响 InsertionPoint 的设定
   Value bufferSelected = GetBufferSelected(rewriter, op, sync);
