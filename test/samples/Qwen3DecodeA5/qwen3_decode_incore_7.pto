@@ -1,0 +1,60 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @qwen3_decode_incore_7(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<bf16>, %arg3: index, %arg4: index, %arg5: index, %arg6: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c2048_i64 = arith.constant 2048 : i64
+  %c1024_index = arith.constant 1024 : index
+  %c64_index = arith.constant 64 : index
+  %c1_index = arith.constant 1 : index
+  %c128_index = arith.constant 128 : index
+  %c524288_index = arith.constant 524288 : index
+  %c0_index = arith.constant 0 : index
+  %c32768_index = arith.constant 32768 : index
+  %c4096_index = arith.constant 4096 : index
+  %c16_index = arith.constant 16 : index
+  %all_exp_padded__co_l0_rv_v1_view = pto.make_tensor_view %arg0, shape = [%c1024_index, %c64_index], strides = [%c64_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xbf16>
+  %all_oi_tmp__co_l0_iter_v1_view = pto.make_tensor_view %arg1, shape = [%c1024_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf32>
+  %v_cache__co_l0_rv_v3_view = pto.make_tensor_view %arg2, shape = [%c524288_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xbf16>
+  scf.for %sb__ci_idx_v0 = %c0_index to %c64_index step %c1_index {
+    %0 = arith.muli %arg6, %c64_index : index
+    %1 = arith.addi %0, %sb__ci_idx_v0 : index
+    %2 = arith.cmpi slt, %1, %arg4 : index
+    %all_oi_tmp__cg_rv_v1 = scf.if %2 -> (!pto.tensor_view<?x?xf32>) {
+      %3 = arith.muli %arg6, %c64_index : index
+      %4 = arith.addi %3, %sb__ci_idx_v0 : index
+      %5 = arith.muli %4, %c64_index : index
+      %6 = arith.muli %arg3, %c32768_index : index
+      %7 = arith.muli %arg5, %c4096_index : index
+      %8 = arith.addi %6, %7 : index
+      %9 = arith.addi %8, %5 : index
+      %exp_tile__tile = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      %10 = arith.muli %arg6, %c64_index : index
+      %11 = arith.addi %10, %sb__ci_idx_v0 : index
+      %12 = arith.muli %11, %c1_index : index
+      %13 = arith.addi %c0_index, %12 : index
+      %14 = arith.muli %13, %c16_index : index
+      %all_exp_padded__co_l0_rv_v1_pview = pto.partition_view %all_exp_padded__co_l0_rv_v1_view, offsets = [%14, %c0_index], sizes = [%c16_index, %c64_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x64xbf16>
+      pto.tload ins(%all_exp_padded__co_l0_rv_v1_pview : !pto.partition_tensor_view<16x64xbf16>) outs(%exp_tile__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      %v_tile__tile = pto.alloc_tile addr = %c2048_i64 : !pto.tile_buf<loc=mat, dtype=bf16, rows=64, cols=128, v_row=64, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      %v_cache__co_l0_rv_v3_pview = pto.partition_view %v_cache__co_l0_rv_v3_view, offsets = [%9, %c0_index], sizes = [%c64_index, %c128_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<64x128xbf16>
+      pto.tload ins(%v_cache__co_l0_rv_v3_pview : !pto.partition_tensor_view<64x128xbf16>) outs(%v_tile__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=64, cols=128, v_row=64, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      %exp_tile__tile_Left = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      pto.tmov ins(%exp_tile__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%exp_tile__tile_Left : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      %v_tile__tile_Right = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=right, dtype=bf16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+      pto.tmov ins(%v_tile__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=64, cols=128, v_row=64, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%v_tile__tile_Right : !pto.tile_buf<loc=right, dtype=bf16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      %oi_tmp__tile = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+      pto.tmatmul ins(%exp_tile__tile_Left, %v_tile__tile_Right : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=64, v_row=16, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=bf16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%oi_tmp__tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      %15 = arith.muli %arg6, %c64_index : index
+      %16 = arith.addi %15, %sb__ci_idx_v0 : index
+      %17 = arith.muli %16, %c1_index : index
+      %18 = arith.addi %c0_index, %17 : index
+      %19 = arith.muli %18, %c16_index : index
+      %all_oi_tmp__co_l1_iter_v1_pview = pto.partition_view %all_oi_tmp__co_l0_iter_v1_view, offsets = [%19, %c0_index], sizes = [%c16_index, %c128_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+      pto.tstore ins(%oi_tmp__tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%all_oi_tmp__co_l1_iter_v1_pview : !pto.partition_tensor_view<16x128xf32>)
+      scf.yield %all_oi_tmp__co_l0_iter_v1_view : !pto.tensor_view<?x?xf32>
+    } else {
+      scf.yield %all_oi_tmp__co_l0_iter_v1_view : !pto.tensor_view<?x?xf32>
+    }
+  }
+  return
+  }
+}

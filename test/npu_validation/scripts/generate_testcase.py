@@ -93,6 +93,53 @@ CASE_INT_SCALAR_DEFAULTS = {
         "v4": 1,
         "v5": 64,
     },
+    "qwen3_decode_incore_4": {
+        "v11": 1,
+        "v12": 0,
+        "v13": 1,
+    },
+    "qwen3_decode_incore_5": {
+        "v4": 1,
+        "v5": 1,
+        "v6": 1,
+        "v7": 0,
+    },
+    "qwen3_decode_incore_6": {
+        "v5": 1,
+        "v6": 1,
+        "v7": 0,
+    },
+    "qwen3_decode_incore_7": {
+        "v4": 1,
+        "v5": 1,
+        "v6": 1,
+        "v7": 0,
+    },
+    "qwen3_decode_incore_8": {
+        "v5": 2,
+        "v6": 1,
+    },
+    "qwen3_decode_incore_9": {
+        "v4": 1,
+        "v5": 64,
+    },
+    "qwen3_decode_incore_10": {
+        "v4": 1,
+        "v5": 64,
+    },
+    "qwen3_decode_incore_12": {
+        "v4": 256,
+    },
+    "qwen3_decode_incore_13": {
+        "v4": 256,
+    },
+    "qwen3_decode_incore_15": {
+        "v4": 128,
+    },
+    "qwen3_decode_incore_16": {
+        "v4": 1,
+        "v5": 128,
+    },
 }
 
 CASE_POINTER_COUNT_MINIMUMS = {
@@ -876,6 +923,11 @@ def _copy_asset_if_needed(src: Path, dst: Path):
     if src.resolve() == dst.resolve():
         return
     shutil.copy2(src, dst)
+
+
+def _copy_custom_golden_helpers(sample_root: Path, output_dir: Path):
+    for helper in sample_root.glob("*_golden_*.py"):
+        _copy_asset_if_needed(helper, output_dir / helper.name)
 
 
 def _replace_includes(text: str) -> str:
@@ -1937,8 +1989,10 @@ def generate_testcase(
     else:
         golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
         golden_dst.write_text(golden_py, encoding="utf-8")
-    if (custom_golden is not None or custom_compare is not None) and shared_validation_runtime.is_file():
-        _copy_asset_if_needed(shared_validation_runtime, output_dir / "validation_runtime.py")
+    if custom_golden is not None or custom_compare is not None:
+        _copy_custom_golden_helpers(sample_root, output_dir)
+        if shared_validation_runtime.is_file():
+            _copy_asset_if_needed(shared_validation_runtime, output_dir / "validation_runtime.py")
 
     # Emit the kernel source, optionally injecting a packed-predicate preload to
     # make TCMP/TCMPS outputs deterministic for byte-wise compares.
