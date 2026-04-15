@@ -8,7 +8,7 @@
 
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
-from mlir.ir import F16Type, IndexType
+from mlir.ir import F32Type, IndexType
 
 
 def build():
@@ -18,40 +18,37 @@ def build():
         with Location.unknown(ctx):
             m = Module.create()
 
-            f16 = F16Type.get(ctx)
+            f32 = F32Type.get(ctx)
             idx = IndexType.get(ctx)
 
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
-            sl = pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx)
+            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
 
-            # Boxed layout: innerRows=16, innerCols=32/2=16 (f16).
-            # Invalid subset: column offset not aligned (offC=8).
-            tile_ty = pto.TileBufType.get([32, 32], f16, vec, [32, 32], cfg, ctx)
+            tile_8x128 = pto.TileBufType.get([8, 128], f32, vec, [8, 128], cfg, ctx)
 
             fn_ty = func.FunctionType.get([], [])
             with InsertionPoint(m.body):
-                fn = func.FuncOp("subset_invalid_boxed", fn_ty)
+                fn = func.FuncOp("subview_tsubs_demo", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
                 c0 = arith.ConstantOp(idx, 0).result
-                c8 = arith.ConstantOp(idx, 8).result
+                scale = arith.ConstantOp(f32, 1.0).result
 
-                t0 = pto.AllocTileOp(tile_ty).result
-                # Expect verifier failure: offC=8 not multiple of innerCols=16.
-                _bad = pto.SubsetOp(t0, [c0, c8], sizes=[16, 16]).result
+                workspace = pto.AllocTileOp(tile_8x128).result
+                sub0 = pto.SubViewOp(workspace, [c0, c0], sizes=[8, 64]).result
+
+                # Use subview as both src and dst to ensure tile lowering is preserved.
+                pto.TSubSOp(sub0, scale, sub0)
 
                 func.ReturnOp([])
 
-            ok = m.operation.verify()
-            if ok:
-                return m
-            # Expected failure for invalid subset; make python exit non-zero.
-            raise SystemExit(1)
+            m.operation.verify()
+            return m
 
 
 if __name__ == "__main__":

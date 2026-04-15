@@ -3529,6 +3529,8 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     auto *ctx = rewriter.getContext();
     auto selfType = mlir::cast<MemRefType>(op.getType());
     ArrayRef<int64_t> shape = selfType.getShape();
+    int64_t physRows = shape.size() > 0 ? shape[0] : ShapedType::kDynamic;
+    int64_t physCols = shape.size() > 1 ? shape[1] : ShapedType::kDynamic;
     Type elemType = selfType.getElementType();
     
     // 1. 推导 Tile Role
@@ -3542,10 +3544,10 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         return (dim == ShapedType::kDynamic) ? std::string(symbol) : std::to_string(dim);
     };
 
-    if (role == TileRole::Left) dimStr = dimToString(shape[0], "M") + ", " + dimToString(shape[1], "K");
-    else if (role == TileRole::Right) dimStr = dimToString(shape[0], "K") + ", " + dimToString(shape[1], "N");
-    else if (role == TileRole::Bias) dimStr = "1, " + dimToString(shape[1], "N");
-    else dimStr = dimToString(shape[0], "M") + ", " + dimToString(shape[1], "N");
+    if (role == TileRole::Left) dimStr = dimToString(physRows, "M") + ", " + dimToString(physCols, "K");
+    else if (role == TileRole::Right) dimStr = dimToString(physRows, "K") + ", " + dimToString(physCols, "N");
+    else if (role == TileRole::Bias) dimStr = "1, " + dimToString(physCols, "N");
+    else dimStr = dimToString(physRows, "M") + ", " + dimToString(physCols, "N");
 
     // 3. Role Token
     const char *roleTok = "TileType::Vec";
@@ -3639,9 +3641,9 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
       vcolTok = "-1";
       useConstructor = true;
       constructorArgs.push_back(
-          makeCtorDimValue(vRowEmitC, rowIsConst ? cRow : shape[0]));
+          makeCtorDimValue(vRowEmitC, rowIsConst ? cRow : physRows));
       constructorArgs.push_back(
-          makeCtorDimValue(vColEmitC, colIsConst ? cCol : shape[1]));
+          makeCtorDimValue(vColEmitC, colIsConst ? cCol : physCols));
     } else {
       if (rowIsConst) {
         vrowTok = std::to_string(cRow);
@@ -3650,7 +3652,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         rowIsDynamic = true;
         useConstructor = true;
       } else {
-        vrowTok = std::to_string(shape[0]);
+        vrowTok = std::to_string(physRows);
       }
 
       if (colIsConst) {
@@ -3660,7 +3662,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         colIsDynamic = true;
         useConstructor = true;
       } else {
-        vcolTok = std::to_string(shape[1]);
+        vcolTok = std::to_string(physCols);
       }
 
       if (useConstructor) {
@@ -8909,6 +8911,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     auto *ctx = rewriter.getContext();
     auto configAttr = op.getConfigAttr();
     auto viewSemantics = op->getAttrOfType<StringAttr>("pto.view_semantics");
+    bool isSubView = viewSemantics && viewSemantics.getValue() == "subview";
 
     auto peelAllCasts = [](Value v) {
       while (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
@@ -9190,6 +9193,25 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       return success();
     }
 
+    // Subview origins are kept distinct from generic tile rebinding:
+    // even when source/destination C++ tile types match, subview may carry
+    // shifted base address semantics and should materialize a fresh handle.
+    if (isSubView) {
+      FailureOr<TileBuildSpec> tileSpec = buildTileSpec();
+      if (failed(tileSpec))
+        return failure();
+      Value dstTile = buildTileValue(*tileSpec);
+      FailureOr<Value> addr = buildIntegralAddress(tileCandidate);
+      if (failed(addr))
+        return failure();
+
+      rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                           ArrayAttr{}, ArrayAttr{},
+                                           ValueRange{dstTile, *addr});
+      rewriter.replaceOp(op, dstTile);
+      return success();
+    }
+
     // Generic tile-to-tile rebind path: preserve the same backing storage and
     // rebuild a sibling tile with updated metadata/valid dims.
     if (isTileLike(tileCandidate)) {
@@ -9237,6 +9259,8 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     auto newCast = rewriter.create<pto::PointerCastOp>(
         loc, op.getType(), physAddrs, vRow ? vRow : Value(),
         vCol ? vCol : Value(), configAttr);
+    if (viewSemantics)
+      newCast->setAttr("pto.view_semantics", viewSemantics);
     if (op->hasAttr(kForceDynamicValidShapeAttrName))
       newCast->setAttr(kForceDynamicValidShapeAttrName,
                        op->getAttr(kForceDynamicValidShapeAttrName));

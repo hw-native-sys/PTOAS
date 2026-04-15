@@ -1,0 +1,27 @@
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+module {
+  func.func @subview_dynamic_offset_static_valid_regression(
+      %arg0: index,
+      %dst: memref<1x64xf32, #pto.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %off = arith.muli %arg0, %c64 : index
+
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    // Regression for issue #249:
+    // dynamic col offset must not force inferred valid_col to '?' when result
+    // type explicitly declares static valid_col=64.
+    %sub = pto.subview %tile[%c0, %off] sizes [1, 64] :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tstore ins(%sub : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%dst : memref<1x64xf32, #pto.address_space<gm>>)
+    return
+  }
+}
+
+// CHECK: func.func @subview_dynamic_offset_static_valid_regression
+// CHECK: Tile<TileType::Vec, float, 8, 64, BLayout::RowMajor, 1, 64, SLayout::NoneBox, 512, PadValue::Null>

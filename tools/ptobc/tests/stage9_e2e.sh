@@ -27,7 +27,6 @@ mkdir -p "${OUT_DIR}"
 should_skip_roundtrip() {
   local path="$1"
   case "$path" in
-    */test/samples/Subset/Subset.pto) return 0 ;;
     */test/samples/Complex/mix_kernel.pto) return 0 ;;
     */test/samples/SCF/scf_for_break_like.pto) return 0 ;;
     */test/samples/SCF/scf_while_break.pto) return 0 ;;

@@ -151,7 +151,7 @@ inline constexpr OpInfo kOpTable[] = {
   {0x106F, "pto.txors", 0, 0x00, 0x00, 4, 0, 0, 0x00},
   {0x1070, "pto.wait_event", 0, 0x00, 0x00, 0, 0, 0, 0x02},
   {0x1071, "pto.tprint", 0, 0x00, 0x00, 1, 0, 0, 0x00},
-  {0x1072, "pto.subset", 0, 0x01, 0x02, 0, 1, 0, 0x00},
+  {0x1072, "pto.subview", 0, 0x01, 0x02, 0, 1, 0, 0x00},
   {0x1073, "pto.trowexpanddiv", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x1074, "pto.trowexpandmul", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x1075, "pto.tpack", 0, 0x00, 0x00, 2, 0, 0, 0x00},
@@ -324,7 +324,7 @@ inline std::optional<uint16_t> lookupOpcodeByName(llvm::StringRef name) {
     .Case("pto.txors", 0x106F)
     .Case("pto.wait_event", 0x1070)
     .Case("pto.tprint", 0x1071)
-    .Case("pto.subset", 0x1072)
+    .Case("pto.subview", 0x1072)
     .Case("pto.trowexpanddiv", 0x1073)
     .Case("pto.trowexpandmul", 0x1074)
     .Case("pto.tpack", 0x1075)
@@ -483,7 +483,7 @@ inline std::optional<OpcodeAndVariant> lookupOpcodeAndVariantByFullName(llvm::St
     .Case("pto.txors", OpcodeAndVariant{0x106F, 0, 0})
     .Case("pto.wait_event", OpcodeAndVariant{0x1070, 0, 0})
     .Case("pto.tprint", OpcodeAndVariant{0x1071, 0, 0})
-    .Case("pto.subset", OpcodeAndVariant{0x1072, 0, 0})
+    .Case("pto.subview", OpcodeAndVariant{0x1072, 0, 0})
     .Case("pto.trowexpanddiv", OpcodeAndVariant{0x1073, 0, 0})
     .Case("pto.trowexpandmul", OpcodeAndVariant{0x1074, 0, 0})
     .Case("pto.tpack", OpcodeAndVariant{0x1075, 0, 0})

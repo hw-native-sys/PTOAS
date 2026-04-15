@@ -31,7 +31,7 @@ ROUNDTRIP="${OUT_DIR}/recent_ops_v0_roundtrip.roundtrip.pto"
 "${PTOBC_BIN}" encode "${IN}" -o "${BC}"
 "${PTOBC_BIN}" decode "${BC}" -o "${ROUNDTRIP}"
 
-grep -F "pto.subset " "${ROUNDTRIP}" >/dev/null
+grep -F "pto.subview " "${ROUNDTRIP}" >/dev/null
 grep -F "pto.tprint ins(" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.trowexpanddiv ins(" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.trowexpandmul ins(" "${ROUNDTRIP}" >/dev/null
