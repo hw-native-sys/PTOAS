@@ -955,12 +955,12 @@ PY
 
     if [[ "$base" == "fillpad_inplace" ]]; then
       if ! grep -Fq "TFILLPAD_INPLACE(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_INPLACE() lowering for aliased pto.tfillpad"
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_INPLACE() lowering for pto.tfillpad_inplace"
         overall=1
         continue
       fi
       if grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad alias path should not lower via TFILLPAD_EXPAND()"
+        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad_inplace should not lower via TFILLPAD_EXPAND()"
         overall=1
         continue
       fi

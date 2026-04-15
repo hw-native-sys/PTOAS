@@ -49,7 +49,7 @@ def build():
 
                 tile = pto.AllocTileOp(tile_ty).result
                 pto.TLoadOp(None, sv0, tile)
-                pto.TFillPadOp(tile, tile)
+                pto.TFillPadInplaceOp(tile, tile)
                 pto.TStoreOp(None, tile, sv1)
                 func.ReturnOp([])
 

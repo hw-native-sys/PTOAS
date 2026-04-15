@@ -2314,6 +2314,32 @@ struct PTOViewToMemrefPass
             dst);
       }
 
+      SmallVector<mlir::pto::TFillPadInplaceOp, 8> fillpadInplaceOps;
+      func.walk(
+          [&](mlir::pto::TFillPadInplaceOp op) { fillpadInplaceOps.push_back(op); });
+
+      for (auto op : fillpadInplaceOps) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src = op.getSrc();
+        Value dst = op.getDst();
+
+        auto srcTy = dyn_cast<MemRefType>(src.getType());
+        auto dstTy = dyn_cast<MemRefType>(dst.getType());
+        if (!srcTy || !dstTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::TFillPadInplaceOp>(
+            op,
+            TypeRange{},
+            src,
+            dst);
+      }
+
       // --- TSetValOp [Dst, Offset, Val] ---
       // Lower tile-world scalar write to memref-world SETVAL DPS op.
       SmallVector<mlir::pto::TSetValOp, 8> tsetvalops;

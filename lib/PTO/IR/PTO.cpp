@@ -4537,6 +4537,11 @@ mlir::LogicalResult mlir::pto::TFillPadExpandOp::verify() {
                             /*allowDstExpand=*/true, "tfillpad_expand");
 }
 
+mlir::LogicalResult mlir::pto::TFillPadInplaceOp::verify() {
+  return verifyTFillPadLike(getOperation(), getSrc().getType(), getDst().getType(),
+                            /*allowDstExpand=*/false, "tfillpad_inplace");
+}
+
 
 llvm::LogicalResult mlir::pto::TGatherOp::verify() {
   auto isSupportedGatherElemTypeA5Index = [&](Type ty) -> bool {
@@ -9788,6 +9793,7 @@ void TInsertFPOp::getEffects(
 
 PTO_DEFINE_UNARY_EFFECTS(TFillPadOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TFillPadExpandOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TFillPadInplaceOp, getSrcMutable(), getDstMutable())
 
 void TGatherOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
