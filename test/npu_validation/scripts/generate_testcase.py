@@ -906,7 +906,9 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     #
     # IMPORTANT: the default arch depends on the Ascend SoC.
     has_mix_macros = "__DAV_CUBE__" in kernel_text and "__DAV_VEC__" in kernel_text
+    has_flag_sync = "set_flag(" in kernel_text or "wait_flag(" in kernel_text
     has_intra_block_sync = "set_intra_block(" in kernel_text or "wait_intra_block(" in kernel_text
+    has_mixed_section_sync = has_mix_macros and (has_flag_sync or has_intra_block_sync)
     cube_markers = (
         "TileType::Mat",
         "TileType::Left",
@@ -926,15 +928,16 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
 
     sv = (soc_version or "").lower()
     if "950" in sv or "a5" in sv:
-        # Only inter-core mixed kernels (with intra-block sync intrinsics)
-        # require true mix arch. Generic sectioned kernels should keep vec arch.
-        if has_mix_macros and has_intra_block_sync:
+        # Sectioned kernels that synchronize across DAV cube/vector regions
+        # need PTO-ISA's mixed-kernel compile mode so the toolchain chooses
+        # the correct pipe restrictions and DAV macro ownership.
+        if has_mixed_section_sync:
             return "dav-c310"
         # Ascend950 (A5) uses A5 instruction set. pto-isa examples build A5
         # kernels with dav-c310-{vec|cube}.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
     if "910b" in sv:
-        if has_mix_macros and has_intra_block_sync:
+        if has_mixed_section_sync:
             return "dav-c310"
         # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
@@ -1402,7 +1405,9 @@ def generate_testcase(
     has_packed_pred_mask = re.search(r"\bTCMPS?\s*\(", raw_kernel_for_analysis) is not None
     has_dav_cube = "__DAV_CUBE__" in raw_kernel
     has_dav_vec = "__DAV_VEC__" in raw_kernel
+    has_flag_sync = "set_flag(" in raw_kernel or "wait_flag(" in raw_kernel
     has_intra_block_sync = "set_intra_block(" in raw_kernel or "wait_intra_block(" in raw_kernel
+    has_mixed_section_sync = has_dav_cube and has_dav_vec and (has_flag_sync or has_intra_block_sync)
 
     is_mixed_kernel = kernel_info["kind"] == "mixed"
 
@@ -1414,10 +1419,10 @@ def generate_testcase(
             else:
                 aicore_arch = "dav-c220"
         # Sectioned kernels contain `#if defined(__DAV_CUBE__)` / `__DAV_VEC__`
-        # blocks. For inter-core-style mixed kernels (with intra-block sync),
-        # align to PTO-ISA mix-kernel compile mode (`dav-c310`) so the
-        # toolchain owns DAV macro definition.
-        elif has_dav_cube and has_dav_vec and has_intra_block_sync:
+        # blocks. If they also carry explicit pipe synchronization, align to
+        # PTO-ISA mix-kernel compile mode (`dav-c310`) so the toolchain owns
+        # DAV macro definition and pipe legality checks.
+        elif has_mixed_section_sync:
             sv = (soc_version or "").lower()
             if "950" in sv or "a5" in sv:
                 aicore_arch = "dav-c310"
