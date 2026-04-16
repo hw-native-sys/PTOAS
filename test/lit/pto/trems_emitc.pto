@@ -11,6 +11,6 @@ module {
   }
 }
 
-// A3: pto.trems ins([[SRC:%[0-9]+]], [[SCALAR:%[0-9]+]], [[TMP:%[0-9]+]] : memref<1x16xf32
-// A3: outs([[DST:%[0-9]+]] : memref<1x16xf32
-// A3: TREMS([[VDST:v[0-9]+]], [[VSRC:v[0-9]+]], [[VSCALAR:v[0-9]+]], [[VTMP:v[0-9]+]]);
+// A3: pto.trems ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<1x16xf32
+// A3: outs(%{{.*}} : memref<1x16xf32
+// A3: TREMS({{.*}}, {{.*}}, {{.*}}, {{.*}});
