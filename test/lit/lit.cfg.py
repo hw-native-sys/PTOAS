@@ -28,10 +28,10 @@ config.test_source_root = os.path.dirname(__file__)
 
 # test_exec_root: The root path where tests should be run.
 config.test_exec_root = os.path.join(config.ptoir_obj_root, 'test/lit')
+config.ptoir_tools_dir = os.path.join(config.ptoir_obj_root, 'tools/ptoas')
 
 config.substitutions.append(('%PATH%', config.environment['PATH']))
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
-config.substitutions.append(('%mlir_lib_dir', config.mlir_lib_dir))
 
 llvm_config.with_system_environment(
     ['HOME', 'INCLUDE', 'LIB', 'TMP', 'TEMP'])
@@ -42,10 +42,6 @@ llvm_config.use_default_substitutions()
 # subdirectories contain auxiliary inputs for various tests in their parent
 # directories.
 config.excludes = ['Inputs', 'Examples', 'CMakeLists.txt', 'README.txt', 'LICENSE.txt']
-
-# test_exec_root: The root path where tests should be run.
-config.test_exec_root = os.path.join(config.ptoir_obj_root, 'test/lit')
-config.ptoir_tools_dir = os.path.join(config.ptoir_obj_root, 'tools/ptoas')
 
 # Tweak the PATH to include the tools dir.
 llvm_config.with_environment('PATH', config.llvm_tools_dir, append_path=True)
