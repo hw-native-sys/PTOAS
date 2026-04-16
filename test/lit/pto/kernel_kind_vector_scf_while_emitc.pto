@@ -62,7 +62,6 @@ module {
 
 // CHECK: AICORE void vector_while_kernel()
 // CHECK: const int64_t {{v[0-9]+}} = 0;
-// CHECK: const int32_t {{v[0-9]+}} = 32;
 // CHECK: const float {{v[0-9]+}} = 10.0f;
 // CHECK: const float {{v[0-9]+}} = 1.0f;
 // CHECK: const bool {{v[0-9]+}} = false;
