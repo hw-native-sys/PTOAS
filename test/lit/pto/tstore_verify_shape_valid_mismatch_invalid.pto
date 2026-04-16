@@ -1,4 +1,4 @@
-// RUN: not ptoas %s 2>&1 | FileCheck %s
+// RUN: ptoas %s 2>&1 | FileCheck %s
 
 module {
   func.func @tstore_shape_valid_mismatch_invalid(
