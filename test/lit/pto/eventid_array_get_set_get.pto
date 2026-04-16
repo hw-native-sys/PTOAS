@@ -19,10 +19,8 @@ module {
 // CHECK-LABEL: __global__ AICORE void eventid_array_get_set_get() {
 // CHECK: PTOAS_EventIdArray<4> [[ARR:v[0-9]+]];
 // CHECK: [[ARR]][{{v[0-9]+}}] = {{v[0-9]+}};
-// CHECK: int32_t [[FIRST:v[0-9]+]] = [[ARR]][{{v[0-9]+}}];
 // CHECK: [[ARR]][{{v[0-9]+}}] = {{v[0-9]+}};
-// CHECK: int32_t [[SECOND:v[0-9]+]] = [[ARR]][{{v[0-9]+}}];
-// CHECK: event_t {{v[0-9]+}} = (event_t) [[FIRST]];
-// CHECK: set_flag(PIPE_MTE2, PIPE_MTE3, {{v[0-9]+}});
-// CHECK: event_t {{v[0-9]+}} = (event_t) [[SECOND]];
-// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE3, {{v[0-9]+}});
+// CHECK: event_t [[FIRST:v[0-9]+]] = (event_t) [[ARR]][{{v[0-9]+}}];
+// CHECK: set_flag(PIPE_MTE2, PIPE_MTE3, [[FIRST]]);
+// CHECK: event_t [[SECOND:v[0-9]+]] = (event_t) [[ARR]][{{v[0-9]+}}];
+// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE3, [[SECOND]]);
