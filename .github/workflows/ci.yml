@@ -201,6 +201,10 @@ jobs:
           ninja -C build ptobc
           ninja -C build install
 
+      - name: Run lit tests
+        shell: bash
+        run: ninja -C build check-pto
+
       - name: Run sample tests (py -> pto -> cpp)
         shell: bash
         env:
