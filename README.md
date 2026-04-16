@@ -195,16 +195,16 @@ export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PTO_SOURCE_DIR/build/tools/ptobc:
 
 ```bash
 # 解析并打印 PTO IR
-ptoas test/basic/empty_func.pto
+ptoas test/lit/pto/empty_func.pto
 
 # 运行 AutoSyncInsert Pass
-ptoas test/basic/empty_func.pto --enable-insert-sync -o outputfile.cpp
+ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
 
 # 指定目标硬件架构（A3 / A5）
-ptoas test/basic/empty_func.pto --pto-arch=a5 -o outputfile.cpp
+ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 
 # 指定构建 Level（level3 会禁用 PlanMemory/InsertSync）
-ptoas test/basic/empty_func.pto --pto-level=level3 -o outputfile.cpp
+ptoas test/lit/pto/empty_func.pto --pto-level=level3 -o outputfile.cpp
 
 # 查看当前 ptoas release 版本号
 ptoas --version
