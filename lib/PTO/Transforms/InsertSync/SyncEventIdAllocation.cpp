@@ -260,8 +260,7 @@ SmallVector<bool> SyncEventIdAllocation::GetEventIdIdleStatus(SyncOperation *syn
 SmallVector<bool> SyncEventIdAllocation::GetEventPool(const SyncOperation *sync,
                                                       size_t eventIdNum) {
   SmallVector<bool> eventIdPool(eventIdNum, true);
-  if (sync->GetSyncIndex() >= syncOperations_.size())
-    return eventIdPool;
+  assert(sync->GetSyncIndex() < syncOperations_.size());
   auto &syncPair = syncOperations_[sync->GetSyncIndex()];
   auto *setFlag = syncPair[0].get();
   auto *waitFlag = syncPair[1].get();
@@ -270,8 +269,8 @@ SmallVector<bool> SyncEventIdAllocation::GetEventPool(const SyncOperation *sync,
     if (reallocatedPipePair.count(ScopePair(sync))) {
       auto *ptr = dyn_cast<LoopInstanceElement>(
           syncIR_[setFlag->GetForEndIndex().value()].get());
-      if (ptr)
-        FindUseEventID(ptr->beginId, ptr->endId, setFlag, eventIdPool);
+      assert(ptr != nullptr);
+      FindUseEventID(ptr->beginId, ptr->endId, setFlag, eventIdPool);
     } else {
       FindUseEventID(0, syncIR_.size() - 1, setFlag, eventIdPool);
     }
@@ -305,8 +304,7 @@ void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,
                                            const SyncOperation *s,
                                            SmallVector<bool> &eventId) {
   const auto eventIdSize = eventId.size();
-  if (begin >= end)
-    return;
+  assert(begin < end);
   int scopePair = ScopePair(s);
   eventCyclePool.try_emplace(scopePair, EventCyclePool(eventIdSize));
   EventCyclePool &seqPool = eventCyclePool[scopePair];
@@ -327,8 +325,7 @@ void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,
 bool SyncEventIdAllocation::CheckSyncLifeCycleConflict(
     SmallVector<unsigned int> &syncLifeCycle, unsigned int begin,
     unsigned int end, SmallVector<bool> &eventId, unsigned i) const {
-  if ((syncLifeCycle.size() & 0x1) != 0)
-    return true;
+  assert((syncLifeCycle.size() & 0x1) == 0 && "sync_life_cycle error.");
   if (syncLifeCycle[0] <= begin) {
     return true; // Conflict!
   }
@@ -348,10 +345,7 @@ void SyncEventIdAllocation::UpdateEventId(
         eventId[index] = false; // Conflict
       }
     } else if (j == syncLifeCycle.size() - 1) {
-      if ((j & 0x1) == 0) {
-        eventId[index] = false;
-        break;
-      }
+      assert((j & 0x1) == 1);
       if (syncLifeCycle[j] >= end) {
         break; // Safe
       } else {
@@ -363,8 +357,7 @@ void SyncEventIdAllocation::UpdateEventId(
  
 void SyncEventIdAllocation::SetEventPool(const SyncOperation *sync,
                                          unsigned eventId) {
-  if (sync->GetSyncIndex() >= syncOperations_.size())
-    return;
+  assert(sync->GetSyncIndex() < syncOperations_.size());
   auto &syncPair = syncOperations_[sync->GetSyncIndex()];
   
   // [Fix] 遍历组内所有 SyncOperation，为它们统一分配 Event ID
@@ -383,8 +376,8 @@ void SyncEventIdAllocation::SetEventPool(const SyncOperation *sync,
     if (reallocatedPipePair.count(ScopePair(sync))) {
       auto *ptr = dyn_cast<LoopInstanceElement>(
           syncIR_[setFlag->GetForEndIndex().value()].get());
-      if (ptr)
-        SetUseEventID(ptr->beginId, ptr->endId, setFlag.get(), eventId);
+      assert(ptr != nullptr);
+      SetUseEventID(ptr->beginId, ptr->endId, setFlag.get(), eventId);
     } else {
       SetUseEventID(0, syncIR_.size(), setFlag.get(), eventId);
     }
@@ -424,19 +417,13 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
   if (reallocatedPipePair.count(ScopePair(setFlag))) {
     auto *ptr = dyn_cast<LoopInstanceElement>(
         syncIR_[setFlag->GetForEndIndex().value()].get());
-    if (ptr) {
-      syncFront->SetSyncIRIndex(ptr->beginId);
-      syncEnd->SetSyncIRIndex(ptr->endId);
-      syncFront->reallocatedLoopHeadTailSync = true;
-      syncEnd->reallocatedLoopHeadTailSync = true;
-      syncIR_[ptr->beginId]->pipeBefore.push_back(syncFront.get());
-      syncIR_[ptr->endId]->pipeAfter.push_back(syncEnd.get());
-    } else {
-      syncFront->SetSyncIRIndex(0);
-      syncEnd->SetSyncIRIndex(syncIR_.size() - 1);
-      syncIR_[0]->pipeBefore.push_back(syncFront.get());
-      syncIR_[syncIR_.size() - 1]->pipeAfter.push_back(syncEnd.get());
-    }
+    assert(ptr != nullptr);
+    syncFront->SetSyncIRIndex(ptr->beginId);
+    syncEnd->SetSyncIRIndex(ptr->endId);
+    syncFront->reallocatedLoopHeadTailSync = true;
+    syncEnd->reallocatedLoopHeadTailSync = true;
+    syncIR_[ptr->beginId]->pipeBefore.push_back(syncFront.get());
+    syncIR_[ptr->endId]->pipeAfter.push_back(syncEnd.get());
   } else {
     syncFront->SetSyncIRIndex(0);
     syncEnd->SetSyncIRIndex(syncIR_.size() - 1);
@@ -456,8 +443,7 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
 void SyncEventIdAllocation::SetUseEventID(unsigned int begin, unsigned int end,
                                           const SyncOperation *setFlag,
                                           unsigned int eventId) {
-  if (begin >= end)
-    return;
+  assert(begin < end);
   int scopePair = ScopePair(setFlag);
   const size_t poolSize =
       getEventIdPoolSize(setFlag, reservedBlockSyncEventIdNum);
@@ -670,8 +656,7 @@ void SyncEventIdAllocation::IgnoreBackHeadAndTailSync() {
 }
  
 bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
-  if (sync->isBarrierType())
-    return false;
+  assert(!sync->isBarrierType());
   auto &syncPair = syncOperations_[sync->GetSyncIndex()];
   SyncOperation *setSync = syncPair[0].get();
   SyncOperation *waitSync = syncPair[1].get();

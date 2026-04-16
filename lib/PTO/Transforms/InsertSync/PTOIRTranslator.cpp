@@ -428,8 +428,7 @@ void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
     llvm::report_fatal_error("failed to build loop sync IR node");
   
   if (!forOp.getInitArgs().empty()) {
-    if (forOp.getInitArgs().size() != forOp.getRegionIterArgs().size())
-      return;
+    assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
     for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
       UpdateAliasBufferInfo(forOp.getRegionIterArgs()[i], arg);
     }
@@ -537,8 +536,7 @@ void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
   auto *parentOp = yieldOp->getParentOp();
   if (!parentOp || isa<scf::WhileOp>(parentOp)) return;
  
-  if (parentOp->getResults().size() != yieldOp->getOpOperands().size())
-    return;
+  assert(parentOp->getResults().size() == yieldOp->getOpOperands().size());
   for (auto [yieldVal, resultVal] : llvm::zip(yieldOp->getOpOperands(), parentOp->getResults())) {
     UpdateAliasBufferInfo(resultVal, yieldVal.get());
   }
