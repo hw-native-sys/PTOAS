@@ -31,5 +31,5 @@ module {
 // CHECK-DAG: %c0_i64 = arith.constant 0 : i64
 // CHECK-DAG: %c8192_i64 = arith.constant 8192 : i64
 // CHECK-DAG: pto.pointer_cast(%c0_i64) : memref<16x16x16xf16, #pto.address_space<{{vec|ub}}>>
-// CHECK-DAG: pto.pointer_cast(%c8192_i64) : memref<16x16x16xf16, #pto.address_space<{{vec|ub}}>>
+// CHECK-DAG: pto.pointer_cast(%c8192_i64) {{.*}} : memref<16x16x16xf16, #pto.address_space<{{vec|ub}}>>
 
