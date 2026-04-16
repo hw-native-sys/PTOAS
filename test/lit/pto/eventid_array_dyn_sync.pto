@@ -14,10 +14,10 @@ module {
 }
 
 // CHECK-LABEL: __global__ AICORE void eventid_array_dyn_sync() {
+// CHECK: const int32_t {{v[0-9]+}} = 0;
 // CHECK: PTOAS_EventIdArray<4> {{v[0-9]+}};
 // CHECK: {{v[0-9]+}}[{{v[0-9]+}}] = {{v[0-9]+}};
-// CHECK: int32_t {{v[0-9]+}} = {{v[0-9]+}}[{{v[0-9]+}}];
-// CHECK: event_t {{v[0-9]+}} = (event_t) {{v[0-9]+}};
+// CHECK: event_t {{v[0-9]+}} = (event_t) {{v[0-9]+}}[{{v[0-9]+}}];
 // CHECK: set_flag(PIPE_MTE2, PIPE_MTE3, {{v[0-9]+}});
-// CHECK: event_t {{v[0-9]+}} = (event_t) {{v[0-9]+}};
+// CHECK: event_t {{v[0-9]+}} = (event_t) {{v[0-9]+}}[{{v[0-9]+}}];
 // CHECK: wait_flag(PIPE_MTE2, PIPE_MTE3, {{v[0-9]+}});
