@@ -1,0 +1,46 @@
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s 2>&1 | FileCheck %s
+
+module {
+  func.func @cube_kernel(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c2048 = arith.constant 2048 : index
+    %c0_i32 = arith.constant 0 : i32
+    %0 = pto.get_block_idx
+    %1 = arith.index_cast %0 : i64 to index
+    %2 = arith.muli %1, %c2048 : index
+    %3 = pto.addptr %arg0, %2 : <f32> -> <f32>
+    %4 = pto.import_reserved_buffer{name = "c2v_fifo", peer_func = @vector_kernel} -> i32
+    pto.aic_initialize_pipe{dir_mask = 1, slot_size = 1024} (gm_slot_buffer = %3 : !pto.ptr<f32>, c2v_consumer_buf = %4 : i32, v2c_consumer_buf = %c0_i32 : i32)
+    return
+  }
+
+  func.func @vector_kernel(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c2048 = arith.constant 2048 : index
+    %c0_i32 = arith.constant 0 : i32
+    %0 = pto.get_block_idx
+    %1 = arith.index_cast %0 : i64 to index
+    %2 = arith.muli %1, %c2048 : index
+    %3 = pto.addptr %arg0, %2 : <f32> -> <f32>
+    %4 = pto.reserve_buffer{name = "c2v_fifo", size = 8192, location = <vec>, auto = true} -> i32
+    pto.aiv_initialize_pipe{dir_mask = 1, slot_size = 1024} (gm_slot_buffer = %3 : !pto.ptr<f32>, c2v_consumer_buf = %4 : i32, v2c_consumer_buf = %c0_i32 : i32)
+    pto.tfree_from_aic{split = 1}
+    return
+  }
+
+  func.func @call_both(%arg0: memref<256xi64>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<f32>, %arg3: !pto.ptr<f32>) attributes {pto.entry} {
+    pto.set_ffts %arg0 : memref<256xi64>
+    call @cube_kernel(%arg1, %arg2) : (!pto.ptr<f32>, !pto.ptr<f32>) -> ()
+    call @vector_kernel(%arg1, %arg3) : (!pto.ptr<f32>, !pto.ptr<f32>) -> ()
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void cube_kernel(__gm__ float* {{v[0-9]+}}, __gm__ float* {{v[0-9]+}})
+// CHECK: int64_t {{v[0-9]+}} = get_block_idx();
+// CHECK: __gm__ float* {{v[0-9]+}} = {{v[0-9]+}} + {{v[0-9]+}};
+// CHECK: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_C2V, 1024, 8, 8>(
+
+// CHECK-LABEL: AICORE void vector_kernel(__gm__ float* {{v[0-9]+}}, __gm__ float* {{v[0-9]+}})
+// CHECK: int64_t {{v[0-9]+}} = get_block_idx();
+// CHECK: __gm__ float* {{v[0-9]+}} = {{v[0-9]+}} + {{v[0-9]+}};
+// CHECK: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_C2V, 1024, 8, 8>(
+// CHECK-NOT: pto.addptr

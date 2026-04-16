@@ -904,6 +904,59 @@ struct PTOViewToMemrefPass
         }
       }
 
+      // ------------------------------------------------------------------
+      // Stage 1.75: Fold addptr used by initialize_l2g2l_pipe(gm_addr).
+      // This keeps IR well-typed after function arguments are rewritten from
+      // !pto.ptr<T> to memref<?xT>.
+      // ------------------------------------------------------------------
+      bool foldedPipeInitAddPtr = true;
+      while (foldedPipeInitAddPtr) {
+        foldedPipeInitAddPtr = false;
+        SmallVector<mlir::pto::AddPtrOp, 8> addPtrsForPipeInit;
+        func.walk([&](mlir::pto::AddPtrOp op) {
+          bool eligible = !op->use_empty();
+          for (Operation *user : op->getUsers()) {
+            auto init = dyn_cast<mlir::pto::InitializeL2G2LPipeOp>(user);
+            if (!init || init.getGmAddr() != op.getResult()) {
+              eligible = false;
+              break;
+            }
+          }
+          if (eligible)
+            addPtrsForPipeInit.push_back(op);
+        });
+
+        for (auto op : addPtrsForPipeInit) {
+          IRRewriter rewriter(ctx);
+          rewriter.setInsertionPoint(op);
+          Location loc = op.getLoc();
+
+          Value base = op.getPtr();
+          Value totalOffset = ensureIndex(rewriter, loc, op.getOffset(), op);
+          while (auto add = base.getDefiningOp<mlir::pto::AddPtrOp>()) {
+            Value off = ensureIndex(rewriter, loc, add.getOffset(), add);
+            totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
+            base = add.getPtr();
+          }
+
+          auto baseMrTy = dyn_cast<MemRefType>(base.getType());
+          if (!baseMrTy || baseMrTy.getRank() != 1)
+            continue;
+
+          int64_t dyn = ShapedType::kDynamic;
+          auto layout = StridedLayoutAttr::get(ctx, dyn, {dyn});
+          auto targetTy = MemRefType::get({dyn}, baseMrTy.getElementType(), layout,
+                                          baseMrTy.getMemorySpace());
+          SmallVector<OpFoldResult, 1> sizes{rewriter.getIndexAttr(1)};
+          SmallVector<OpFoldResult, 1> strides{rewriter.getIndexAttr(1)};
+          auto rc = rewriter.create<memref::ReinterpretCastOp>(
+              loc, targetTy, base, OpFoldResult(totalOffset), sizes, strides);
+          rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
+          rewriter.replaceOp(op, rc.getResult());
+          foldedPipeInitAddPtr = true;
+        }
+      }
+
       // Clean up: addptr should be folded into make_tensor_view.
       SmallVector<Operation *, 8> addPtrs;
       func.walk([&](mlir::pto::AddPtrOp op) { addPtrs.push_back(op.getOperation()); });
@@ -923,7 +976,7 @@ struct PTOViewToMemrefPass
       for (auto *op : addPtrs) {
         if (!op)
           continue;
-        op->emitError("addptr must feed make_tensor_view or load/store_scalar for lowering");
+        op->emitError("addptr must feed make_tensor_view,  initialize_l2g2l_pipe(gm_addr) or load/store_scalar for lowering");
         signalPassFailure();
         return;
       }
