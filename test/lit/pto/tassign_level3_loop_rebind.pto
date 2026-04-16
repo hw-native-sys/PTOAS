@@ -35,7 +35,7 @@ module {
 }
 
 // CHECK-LABEL: __global__ AICORE void tassign_loop_rebind() {
-// CHECK: Tile<TileType::Vec, half, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> [[T:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, half, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[T:v[0-9]+]];
 // CHECK: for (
 // CHECK: TASSIGN([[T]],
 // CHECK: TPRINT([[T]]);
