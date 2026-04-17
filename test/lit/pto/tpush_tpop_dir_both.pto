@@ -1,5 +1,7 @@
 // Test DIR_BOTH (dir_mask=3) lowering to single TPipe
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
 module {
+// CHECK-LABEL: func.func @cube_bidir(
   func.func @cube_bidir(
       %gm_a: !pto.ptr<f32>,
       %gm_b: !pto.ptr<f32>)
