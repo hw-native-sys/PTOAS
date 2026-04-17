@@ -1,3 +1,5 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
 module attributes {"pto.device-spec" = "Ascend910B3"} {
   func.func @tquant_sym_run(%src_ptr: !pto.ptr<f32>, %fp_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<i8>)
       attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -29,7 +31,8 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
 
     return
   }
-
+// A3-LABEL: func.func @tquant_asym_run({{.*}}) attributes {{.*}} {
+// A5-LABEL: func.func @tquant_asym_run({{.*}}) attributes {{.*}} {
   func.func @tquant_asym_run(%src_ptr: !pto.ptr<f32>, %fp_ptr: !pto.ptr<f32>, %offset_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<ui8>)
       attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0  = arith.constant 0 : index
