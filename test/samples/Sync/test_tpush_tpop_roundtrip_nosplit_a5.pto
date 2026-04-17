@@ -1,3 +1,4 @@
+// RUN: ptoas --pto-arch a5 %s
 module {
   func.func @test_tpush_tpop_roundtrip_nosplit_a5(
       %gm_src: !pto.ptr<f32>,
