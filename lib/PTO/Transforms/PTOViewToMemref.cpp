@@ -2929,10 +2929,10 @@ struct PTOViewToMemrefPass
         Value dst = op.getDst();
 
         auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto scalarTy = dyn_cast<FloatType>(scalar.getType());
         auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !scalarTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
+        bool scalarIsScalar = isa<IntegerType, FloatType>(scalar.getType());
+        if (!srcTy || !scalarIsScalar || !dstTy) {
+          op.emitError("expects src/dst to be memref and scalar to be integer/float");
           signalPassFailure();
           return;
         }
@@ -2985,10 +2985,10 @@ struct PTOViewToMemrefPass
         Value dst = op.getDst();
 
         auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto scalarTy = dyn_cast<FloatType>(scalar.getType());
         auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !scalarTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
+        bool scalarIsScalar = isa<IntegerType, FloatType>(scalar.getType());
+        if (!srcTy || !scalarIsScalar || !dstTy) {
+          op.emitError("expects src/dst to be memref and scalar to be integer/float");
           signalPassFailure();
           return;
         }
