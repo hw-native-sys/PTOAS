@@ -15,17 +15,21 @@ module {
 }
 
 // A3-LABEL: AICORE void async_put_get(
-// A3: Tile<TileType::Vec, int8_t, 1, 256, BLayout::RowMajor, 1, 256, SLayout::NoneBox, 512, PadValue::Null> [[SCRATCH:v[0-9]+]];
+// A3: Tile<TileType::Vec, int8_t, 1, 256, BLayout::RowMajor, 1, 256, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SCRATCH:v[0-9]+]];
 // A3: TASSIGN([[SCRATCH]], [[SCRATCH_ADDR:v[0-9]+]]);
 // A3: pto::comm::AsyncSession [[SESSION:v[0-9]+]];
 // A3: pto::comm::sdma::SdmaBaseConfig [[CFG:v[0-9]+]] = {32768ULL, 0ULL, 1u};
 // A3: pto::comm::BuildAsyncSession<pto::comm::DmaEngine::SDMA>([[SCRATCH]], {{.*}}, [[SESSION]], {{.*}}, [[CFG]], {{.*}});
-// A3: pto::Shape<1, 1, 1, 1, 128> [[SHAPE0:v[0-9]+]] = pto::Shape<1, 1, 1, 1, 128>();
-// A3: pto::Stride<128, 128, 128, 128, 1> [[STRIDE0:v[0-9]+]] = pto::Stride<128, 128, 128, 128, 1>();
-// A3: GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND> [[GT0:v[0-9]+]] = GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND>({{.*}}, [[SHAPE0]], [[STRIDE0]]);
-// A3: pto::Shape<1, 1, 1, 1, 128> [[SHAPE1:v[0-9]+]] = pto::Shape<1, 1, 1, 1, 128>();
-// A3: pto::Stride<128, 128, 128, 128, 1> [[STRIDE1:v[0-9]+]] = pto::Stride<128, 128, 128, 128, 1>();
-// A3: GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND> [[GT1:v[0-9]+]] = GlobalTensor<float, pto::Shape<1, 1, 1, 1, 128>, pto::Stride<128, 128, 128, 128, 1>, pto::Layout::ND>({{.*}}, [[SHAPE1]], [[STRIDE1]]);
+// A3: using [[SHAPETY:.*]] = pto::Shape<1, 1, 1, 1, 128>;
+// A3: using [[STRIDETY:.*]] = pto::Stride<128, 128, 128, 128, 1>;
+// A3: constexpr pto::Layout [[LAYOUT:.*]] = pto::Layout::ND;
+// A3: [[SHAPETY]] [[SHAPE0:v[0-9]+]] = [[SHAPETY]]();
+// A3: [[STRIDETY]] [[STRIDE0:v[0-9]+]] = [[STRIDETY]]();
+// A3: using [[GLTNSRTY:.*]] = GlobalTensor<float, [[SHAPETY]], [[STRIDETY]], [[LAYOUT]]>;
+// A3: [[GLTNSRTY]] [[GT0:v[0-9]+]] = [[GLTNSRTY]]({{.*}}, [[SHAPE0]], [[STRIDE0]]);
+// A3: [[SHAPETY]] [[SHAPE1:v[0-9]+]] = [[SHAPETY]]();
+// A3: [[STRIDETY]] [[STRIDE1:v[0-9]+]] = [[STRIDETY]]();
+// A3: [[GLTNSRTY]] [[GT1:v[0-9]+]] = [[GLTNSRTY]]({{.*}}, [[SHAPE1]], [[STRIDE1]]);
 // A3: pto::comm::AsyncEvent [[PUT_EVT:v[0-9]+]] = pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::SDMA>(
 // A3: pto::comm::AsyncEvent [[GET_EVT:v[0-9]+]] = pto::comm::TGET_ASYNC<pto::comm::DmaEngine::SDMA>(
 // A3: bool [[PUT_DONE:v[0-9]+]] = [[PUT_EVT]].Wait([[SESSION]]);

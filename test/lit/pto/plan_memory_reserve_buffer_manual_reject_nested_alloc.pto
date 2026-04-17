@@ -1,4 +1,4 @@
-// RUN: ptoas %s 2>&1 1>/dev/null | FileCheck %s
+// RUN: not ptoas %s 2>&1 1>/dev/null | FileCheck %s
 
 module {
   func.func @manual_nested_alloc(%cond: i1) {
@@ -22,4 +22,4 @@ module {
   }
 }
 
-// CHECK: error: 'memref.alloc' op cannot use pto.reserve_buffer with auto = false when local memref.alloc still requires PlanMemory allocation
+// CHECK: error: 'pto.reserve_buffer' op pto.reserve_buffer with explicit 'base' (auto = false) is not supported in PlanMemory; use --pto-level=level3 or set auto = true

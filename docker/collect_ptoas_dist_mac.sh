@@ -330,7 +330,7 @@ else
 fi
 env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH \
   "${PTOAS_DIST_DIR}/ptoas" \
-  "${PTO_SOURCE_DIR}/test/basic/kernel_kind_vector_scf_while_emitc.pto" \
+  "${PTO_SOURCE_DIR}/test/lit/pto/kernel_kind_vector_scf_while_emitc.pto" \
   >/dev/null
 
 echo ""

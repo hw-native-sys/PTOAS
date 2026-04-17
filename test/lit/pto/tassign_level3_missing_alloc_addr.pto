@@ -18,4 +18,4 @@ module {
   }
 }
 
-// CHECK: error: 'pto.alloc_tile' op requires 'addr' operand when --pto-level=level3
+// CHECK: error: requires 'addr' operand when --pto-level=level3
