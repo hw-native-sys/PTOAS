@@ -32,6 +32,7 @@
 本设计的目标如下：
 
 - 对前端提供\*\_initialize_pipe/tpush_to_\*/tpop_from_\*/tfree_from_\*IR接口。
+- 为解决单个 function 内多条 cross-core pipe 的需求，前端通过编译期属性 `id` 显式绑定 initialize 与对应的数据传输 op。
 - 在 PTOAS 内部统一为 pipe/tpush/tpop/tfree 指令，便于复用已有 pass。
 - 支持 A2/A3 与 A5 两个平台使用同一套前端接口。
 - 定义consumer slot buffer的分配地址与producer之间的匹配关系，并传播。
@@ -48,6 +49,7 @@
 
 ```mlir
 pto.aic_initialize_pipe(
+    ID,
     DIR_MASK,
     SLOT_SIZE,
     GM_SLOT_BUFFER,
@@ -59,6 +61,7 @@ pto.aic_initialize_pipe(
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
+| `ID` | 编译期整数常量 | 当前 function 内的 pipe 标识，同一 function 内必须唯一 |
 | `DIR_MASK` | 编译期整数常量 | `1`、`2` 或 `3` |
 | `SLOT_SIZE` | 编译期整数常量 | 单 slot 字节数，定义为切分前完整 tile 字节数 |
 | `GM_SLOT_BUFFER` | `!pto.ptr<T>` 或空值 | A2/A3 路径使用的 GM 指针，A5 路径为空 |
@@ -75,6 +78,7 @@ pto.aic_initialize_pipe(
 
 ```mlir
 pto.aiv_initialize_pipe(
+    ID,
     DIR_MASK,
     SLOT_SIZE,
     GM_SLOT_BUFFER,
@@ -89,7 +93,7 @@ pto.aiv_initialize_pipe(
 #### `pto.tpush_to_aiv`
 
 ```mlir
-pto.tpush_to_aiv(%tile) { split = 0 }
+pto.tpush_to_aiv(%tile) { id = 0, split = 0 }
 ```
 
 - 仅出现在 Cube kernel 中
@@ -98,7 +102,7 @@ pto.tpush_to_aiv(%tile) { split = 0 }
 #### `pto.tpush_to_aic`
 
 ```mlir
-pto.tpush_to_aic(%tile) { split = 0 }
+pto.tpush_to_aic(%tile) { id = 0, split = 0 }
 ```
 
 - 仅出现在 Vector kernel 中
@@ -107,7 +111,7 @@ pto.tpush_to_aic(%tile) { split = 0 }
 #### `pto.tpop_from_aic`
 
 ```mlir
-%tile = pto.tpop_from_aic { split = 0 } -> !pto.tile_buf<...>
+%tile = pto.tpop_from_aic { id = 0, split = 0 } -> !pto.tile_buf<...>
 ```
 
 - 仅出现在 Vector kernel 中
@@ -116,7 +120,7 @@ pto.tpush_to_aic(%tile) { split = 0 }
 #### `pto.tpop_from_aiv`
 
 ```mlir
-%tile = pto.tpop_from_aiv { split = 0 } -> !pto.tile_buf<...>
+%tile = pto.tpop_from_aiv { id = 0, split = 0 } -> !pto.tile_buf<...>
 ```
 
 - 仅出现在 Cube kernel 中
@@ -125,7 +129,7 @@ pto.tpush_to_aic(%tile) { split = 0 }
 #### `pto.tfree_from_aic`
 
 ```mlir
-pto.tfree_from_aic { split = 0 }
+pto.tfree_from_aic { id = 0, split = 0 }
 ```
 
 - 仅出现在 Vector kernel 中
@@ -134,14 +138,15 @@ pto.tfree_from_aic { split = 0 }
 #### `pto.tfree_from_aiv`
 
 ```mlir
-pto.tfree_from_aiv { split = 0 }
+pto.tfree_from_aiv { id = 0, split = 0 }
 ```
 
 - 仅出现在 Cube kernel 中
 - 表示 V2C 方向 consumer free
 
-以上前端数据传输接口中的 `split` 均为编译期常量属性，不是运行时 SSA operand。
+以上前端数据传输接口中的 `id` 与 `split` 均为编译期常量属性，不是运行时 SSA operand。
 
+- `id` 用于在当前 function 内显式选择对应的 `initialize_pipe`
 - 取值使用 `TileSplitAxis` 枚举语义：`0/1/2` 分别对应 `TILE_NO_SPLIT`、`TILE_UP_DOWN`、`TILE_LEFT_RIGHT`
 - lowering 到 PTOAS 内部 IR 时，`split` 继续以属性形式保留
 
@@ -188,7 +193,7 @@ pto.tfree_from_aiv { split = 0 }
 - 结果类型为 `i32`
 - 结果值表示该 buffer 当前可用的基址
 - 当前可用基址可来自显式 `base`，也可来自 plan memory 回填后的解析地址
-- 在当前约束下，每个函数最多一条 `reserve_buffer`
+- 同一 function 内允许存在多条 `reserve_buffer`，但 `name` 必须唯一
 - 编译路径与 `auto` 的合法组合只有两种：
   - 启用 local address planning：`auto = true`，且不带 `base`
   - 跳过 local address planning：`auto = false`，且显式提供 `base`
@@ -215,29 +220,32 @@ pto.tfree_from_aiv { split = 0 }
 
 - 结果类型为 `i32`
 - 结果值表示从 peer `reserve_buffer` 导入的已解析基址
+- 同一 function 内允许存在多条 `import_reserved_buffer`，但 `(name, peer_func)` 必须唯一
 
 ### 3.5 前端层约束
 
 > **约束来源说明**：以下约束是当前软件方案的设计选择，而非硬件限制。
-> 当前 `tpush_to_aic` / `tpush_to_aiv` / `tpop_from_aic` / `tpop_from_aiv` /
-> `tfree_from_aic` / `tfree_from_aiv` 等前端接口上不携带 pipe 参数，因此在
-> lowering 时只能将函数内的所有 push/pop/free 绑定到同一条 pipe。这决定了每个
-> 函数最多只能存在一条初始化语句（即一条 pipe）。如果后续需要支持多条 pipe 并行
-> 通信，前端接口方案需要重新设计（例如在 push/pop/free 上显式引用 pipe handle）。
+> 为解决一个 function 内多条 cross-core pipe 的需求，前端数据传输接口增加编译期
+> `id` 属性。`id` 只在当前 function 内有效，用于把 `tpush/tpop/tfree` 显式绑定到
+> 对应的 `initialize_pipe`；前端仍不暴露 `!pto.pipe` SSA handle。
 
 前端 IR 需满足以下约束：
 
-- 每个 Cube function 最多一条 `pto.aic_initialize_pipe`
-- 每个 Vector function 最多一条 `pto.aiv_initialize_pipe`
-- 每个函数内最多一条 C2V 逻辑 pipe 和一条 V2C 逻辑 pipe
-- 每个函数最多一条 `reserve_buffer`
-- 每个函数最多一条 `import_reserved_buffer`
+- 每个 function 内允许存在多条 `pto.aic_initialize_pipe` / `pto.aiv_initialize_pipe`
+- `id` 必须是编译期常量
+- `id` 在同一 function 内对 `initialize_pipe` 唯一
+- 每条 `tpush/tpop/tfree` 的 `id` 必须在同一 function 内匹配到恰好一条 `initialize_pipe`
+- `tpush_to_aiv` / `tpop_from_aic` / `tfree_from_aic` 的 `id` 必须指向 `dir_mask = 1` 或 `3`
+- `tpush_to_aic` / `tpop_from_aiv` / `tfree_from_aiv` 的 `id` 必须指向 `dir_mask = 2` 或 `3`
+- 每个 function 可存在多条 `reserve_buffer`
+- 每个 function 可存在多条 `import_reserved_buffer`
 - `DIR_MASK` 只允许 `1`、`2`、`3`
 - `SLOT_SIZE > 0`
 - `reserve_buffer.size == SLOT_SIZE * SLOT_NUM`
 - C2V consumer 的 `reserve_buffer.location` 必须是 `VEC`
 - V2C consumer 的 `reserve_buffer.location` 必须是 `MAT`
 - `reserve_buffer.name` 在本函数内必须唯一
+- `import_reserved_buffer` 的 `(name, peer_func)` 在本函数内必须唯一
 - op 级约束：`reserve_buffer.auto = false` 时必须提供 `base`
 - op 级约束：`reserve_buffer.auto = true` 时必须不提供 `base`
 - 启用 local address planning 的编译流程：`reserve_buffer` 只允许 `auto = true`
@@ -252,6 +260,11 @@ pto.tfree_from_aiv { split = 0 }
 
 - C2V：Cube producer -> Vector consumer
 - V2C：Vector producer -> Cube consumer
+
+在前端层，一条逻辑 pipe 由 `function + id + direction` 唯一标识：
+
+- 当 `DIR_MASK = 1` 或 `2` 时，一个 `id` 对应一条单向逻辑 pipe
+- 当 `DIR_MASK = 3` 时，一个 `id` 对应一条物理 DIR_BOTH pipe，并同时覆盖 C2V 与 V2C 两个逻辑方向
 
 `DIR_MASK=3` 表示前端一个同时包含 C2V 和 V2C 的初始化请求。在 PTOAS lowering
 后，生成单条 `dir_mask = 3` 的 DIR_BOTH 内部 pipe，同时承载 C2V 和 V2C 双向
@@ -443,10 +456,12 @@ pto.tfree(%pipe) { split = 0 }
 
 - `pto.aic_initialize_pipe` 和 `pto.aiv_initialize_pipe` lower 为 `pto.initialize_l2g2l_pipe`
 - 若前端未提供更具体信息，lowering 默认补上 `local_slot_num = slot_num`
+- 每条 frontend `initialize_pipe` 独立 lower 成一条内部 pipe，并在 lowering 阶段建立 `id -> pipe` 的绑定映射
 
 #### A5
 
 - `pto.aic_initialize_pipe` 和 `pto.aiv_initialize_pipe` lower 为 `pto.initialize_l2l_pipe`
+- 每条 frontend `initialize_pipe` 独立 lower 成一条内部 pipe，并在 lowering 阶段建立 `id -> pipe` 的绑定映射
 
 ### 6.2 `DIR_MASK=1/2`
 
@@ -466,22 +481,27 @@ pto.tfree(%pipe) { split = 0 }
 - `local_addr` = `C2V_CONSUMER_BUF`
 - `peer_local_addr` = `V2C_CONSUMER_BUF`
 
-`FrontendPipeHandles` 中 `c2vPipe` 和 `v2cPipe` 指向同一个 pipe Value。
+同一 `id` 下的 C2V/V2C 方向前端数据传输 op，在 lowering 后共享这条 DIR_BOTH 内部 pipe。
 
 ### 6.4 前端数据传输 op 与内部 pipe 的绑定
 
-绑定规则固定如下：
+绑定规则分两步：
 
-| 前端 op | 所在函数 | 方向 | 使用的内部 pipe |
+1. 在同一 function 内，按 `id` 找到唯一匹配的 frontend `initialize_pipe`
+2. 使用该 init lowering 产生的内部 pipe 作为 `tpush/tpop/tfree` 的 `pipe` operand
+
+方向约束如下：
+
+| 前端 op | 所在函数 | 方向 | `id` 匹配到的 init 需要满足 |
 |---|---|---|---|
-| `tpush_to_aiv` | Cube | C2V | `c2vPipe` |
-| `tpop_from_aic` | Vector | C2V | `c2vPipe` |
-| `tfree_from_aic` | Vector | C2V | `c2vPipe` |
-| `tpush_to_aic` | Vector | V2C | `v2cPipe` |
+| `tpush_to_aiv` | Cube | C2V | `dir_mask = 1` 或 `3` |
+| `tpop_from_aic` | Vector | C2V | `dir_mask = 1` 或 `3` |
+| `tfree_from_aic` | Vector | C2V | `dir_mask = 1` 或 `3` |
+| `tpush_to_aic` | Vector | V2C | `dir_mask = 2` 或 `3` |
+| `tpop_from_aiv` | Cube | V2C | `dir_mask = 2` 或 `3` |
+| `tfree_from_aiv` | Cube | V2C | `dir_mask = 2` 或 `3` |
 
-当 `DIR_MASK=3` 时，`c2vPipe` 和 `v2cPipe` 指向同一个 DIR_BOTH pipe，下游 TPUSH/TPOP/TFREE 只关心 pipe handle 是否存在，不关心是否是同一个。
-| `tpop_from_aiv` | Cube | V2C | `dir_mask = 2` |
-| `tfree_from_aiv` | Cube | V2C | `dir_mask = 2` |
+当 `DIR_MASK = 3` 时，同一 `id` 的双向前端数据传输 op 共享同一个 DIR_BOTH 内部 pipe。
 
 ### 6.5 数据传输 op lowering
 
@@ -571,14 +591,15 @@ pto.tfree(%pipe) { split = 0 }
 
 1. 先按现有逻辑完成普通 local buffer 的 `MemPlan`
 2. 再收集该地址空间内已经分配完成的 local 区间
-3. 在剩余空洞中按地址空间对齐要求寻找一段可容纳 `reserve_buffer.size` 的连续区间
-4. 将该区间起始地址回填为这条唯一 `reserve_buffer` 的 `base`
+3. 按函数内出现顺序收集该地址空间下的所有 `reserve_buffer`
+4. 依次在剩余空洞中按地址空间对齐要求寻找一段可容纳当前 `reserve_buffer.size` 的连续区间
+5. 将该区间起始地址回填为当前 `reserve_buffer` 的 `base`，并将该区间视为新的已占用范围
 
 即：
 
 - 普通 `memref.alloc` / tile buffer 等 local 内存仍先由既有 `MemPlan` 按原逻辑分配
 - `reserve_buffer` 不参与普通 local buffer 的 inplace / reuse 规划
-- `reserve_buffer` 在普通 local buffer 分配完成后，再作为独立的一段连续 local 区间进行 hole 分配
+- 多条 `reserve_buffer` 在普通 local buffer 分配完成后，再按稳定顺序逐条作为独立连续 local 区间进行 hole 分配
 - `reserve_buffer` 不保证位于地址空间起始地址，也不保证形成预留前缀；其语义仅为“在该地址空间中为 consumer slot buffer 找到一段对齐且连续的可用地址”
 - 若整体容量足够但 `MemPlan` 结果将空间打散，导致不存在满足大小和对齐要求的连续空洞，则 `reserve_buffer` 分配失败并报错
 
@@ -639,6 +660,7 @@ pass 在模块级按两步执行：
 
 其中第一步的实现方式是：
 
+- frontend `id` 只负责 function 内部的 init/data-op 绑定；跨 function 的 peer 配对仍由 `reserve_buffer` / `import_reserved_buffer` 的名字与方向决定
 - 遍历模块内所有 `pto.initialize_l2l_pipe` / `pto.initialize_l2g2l_pipe`
 - 对每条 init op 的每个地址操作数，以”函数 + reserve 名字 + 方向”构建 PipePeerKey 并归入逻辑 pipe 分组：
   - `dir_mask = 1/2`：只有 `local_addr`，方向即 `dir_mask`
@@ -647,9 +669,7 @@ pass 在模块级按两步执行：
 - 若某条 init 未显式提供 `flag_base`，则其 `local_addr` 必须来自 `reserve_buffer` 或 `import_reserved_buffer`
 - 对每个逻辑 pipe 分组，要求必须形成完整 peer init pair：恰好两条 init，且分别来自 peer 两侧函数；若 peer 信息不完整则直接报错
 - 在同一组内，若任一侧已显式提供 `flag_base`，则该值作为该组最终值；若两侧显式值冲突则报错
-- 若同组两侧都未显式提供 `flag_base`，则按默认规则回填：
-  - 单向场景：`flag_base = 0`
-  - 双向场景：C2V 组 `flag_base = 0`，V2C 组 `flag_base = 2`
+- 若同组两侧都未显式提供 `flag_base`，则由 flag 分配器为该逻辑 pipe 分组分配一段与其他分组不重叠的 flag 区间
 - “双向场景”指同一对 peer 函数之间同时存在 C2V 和 V2C 两个逻辑 pipe 分组；DIR_BOTH 的一条物理 pipe 天然产生这两个分组
 - 完成分组决策后，将最终 `flag_base` 回填到该组内所有尚未显式填写的 init op，保证 peer 两侧一致
 
@@ -695,24 +715,23 @@ pass 在模块级按两步执行：
 
 ### 8.2 单向场景
 
-当前规划中，当 `DIR_MASK = 1` 或 `2` 且函数内仅有该唯一逻辑 pipe 时，可采用：
+对于每个单向逻辑 pipe 分组（`DIR_MASK = 1` 或 `2`）：
 
-- 该方向唯一逻辑 pipe 的 `flag_base = 0`
-- 该 pipe 占用逻辑 flag 对：`0` 和 `1`
+- 为该组分配一对与其他 pipe 分组不重叠的逻辑 flag：`flag_base` 与 `flag_base + 1`
+- peer 两侧同组 init op 必须共享同一个 `flag_base`
+- 同一 function 内若存在多条单向逻辑 pipe，这些分组的 flag 区间不能重叠
 
 ### 8.3 双向场景
 
-当前规划中，当 `DIR_MASK = 3`（DIR_BOTH）时，虽然物理上只有一条 pipe，但 resolve pass 将其拆为两个逻辑方向分别分配 `flag_base`：
+当 `DIR_MASK = 3`（DIR_BOTH）时，虽然物理上只有一条 pipe，但 resolve pass 将其拆为两个逻辑方向分别分配 flag：
 
-- C2V 方向：`flag_base = 0`
-- V2C 方向：`flag_base = 2`
+- C2V 方向使用一对逻辑 flag：`flag_base` 与 `flag_base + 1`
+- V2C 方向使用紧随其后的另一对逻辑 flag：`flag_base + 2` 与 `flag_base + 3`
 
-因此双向固定占用两组逻辑 flag：
+对于单条 DIR_BOTH pipe，内部 init op 上记录的是这条物理 pipe 的起始 `flag_base`。因此：
 
-- C2V：`0` / `1`
-- V2C：`2` / `3`
-
-对于单条 DIR_BOTH pipe，最终 `flag_base` 取 C2V 方向的值（`0`），底层 pto-isa `TPipe<flagBase, Direction::DIR_BOTH, ...>` 会自动管理两个方向的 flag 对。
+- 一条 DIR_BOTH pipe 固定占用连续的 4 个逻辑 flag
+- 多条 DIR_BOTH pipe 之间的 4-flag 区间不能重叠
 
 ### 8.4 与地址传播的关系
 
@@ -728,13 +747,16 @@ pass 在模块级按两步执行：
 
 前端 verifier 负责检查：
 
-- 每个函数 init op 数量是否合法
-- 每个函数 `reserve_buffer` / `import_reserved_buffer` 数量是否合法
+- `id` 是否是合法的编译期常量
+- `initialize_pipe.id` 在同一 function 内是否唯一
+- 每条 `tpush/tpop/tfree` 的 `id` 是否能在同一 function 内匹配到恰好一条 `initialize_pipe`
+- `id` 与方向是否匹配
 - `DIR_MASK` 取值是否合法
 - `SLOT_SIZE > 0`
 - `reserve_buffer.size == SLOT_SIZE * SLOT_NUM`
 - `reserve_buffer.location` 与 consumer 函数类型匹配
 - `reserve_buffer.name` 在函数内唯一
+- `import_reserved_buffer` 的 `(name, peer_func)` 在函数内唯一
 - `reserve_buffer.auto = false` 时必须带 `base`
 - `reserve_buffer.auto = true` 时必须不带 `base`
 - driver / pipeline 级约束：启用规划的编译流程只接受 `auto = true`
@@ -867,8 +889,8 @@ InsertSync 只依赖：
 
 其中：
 
-- lowering pass 负责拆分 `DIR_MASK=3`、绑定方向与 pipe
-- 启用规划的编译流程中，plan memory 先按既有逻辑规划普通 local buffer，再为 `reserve_buffer` 在目标地址空间中分配 hole
+- lowering pass 负责按 `id` 绑定前端数据传输 op 与对应 init，并保留 `DIR_MASK=3` 的单条 DIR_BOTH pipe 语义
+- 启用规划的编译流程中，plan memory 先按既有逻辑规划普通 local buffer，再为同一地址空间下的多条 `reserve_buffer` 依次分配 hole
 - 跳过规划的编译流程中，不运行 plan memory；`reserve_buffer.base` 必须已由前端给定
 - 地址传播 pass 负责 `import_reserved_buffer` 常量替换与 peer pipe 的 `flag_base` 对齐
 - EmitC 只负责将内部 `initialize_l2l_pipe` / `initialize_l2g2l_pipe` / `tpush` / `tpop` / `tfree` 及其属性透传到底层
