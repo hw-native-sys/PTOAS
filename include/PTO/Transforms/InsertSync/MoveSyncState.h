@@ -60,6 +60,14 @@ private:
  
   void PlanMoveOutSetSync(SyncOps &newPipeAfter, SyncOperation *s,
                           const std::pair<unsigned int, unsigned int> pair);
+
+  // Branch-predicate guard: sync motion must stay within the same effective
+  // execution predicate as its dependency anchor.
+  SmallVector<int, 8> GetBranchPredicateKey(unsigned int syncIRIndex) const;
+  bool HasSameBranchPredicate(unsigned int lhsIndex,
+                              unsigned int rhsIndex) const;
+  bool CanMoveToPredicateCompatibleAnchor(const SyncOperation *sync,
+                                          unsigned int targetIndex) const;
 };
  
 } // namespace pto
