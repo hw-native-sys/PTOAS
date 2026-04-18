@@ -39,6 +39,8 @@ static pto::EventAttr getEventAttr(Builder &builder, int id) {
  
 static bool IsSameSyncSignature(const SyncOperation *existing,
                                 const SyncOperation *candidate) {
+  if (existing->isAutoSyncTailBarrier != candidate->isAutoSyncTailBarrier)
+    return false;
   if (existing->GetType() != candidate->GetType())
     return false;
   if (existing->GetActualSrcPipe() != candidate->GetActualSrcPipe())
@@ -262,8 +264,9 @@ void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
   }
 
   // Compiler-inserted tail clean barrier must be anchored at function tail.
-  if (sync->GetActualSrcPipe() == PipelineType::PIPE_ALL &&
-      sync->GetActualDstPipe() == PipelineType::PIPE_ALL) {
+  // Other PIPE_ALL barriers are real syncs and must stay at their analysis
+  // anchor.
+  if (sync->isAutoSyncTailBarrier) {
     pendingAutoSyncTailBarrier_ = true;
     return;
   }
@@ -317,15 +320,14 @@ void SyncCodegen::AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter) {
   if (returns.empty())
     return;
 
+  auto ret = returns.front();
   auto pipeAllAttr = getPipeAttr(rewriter, PipelineType::PIPE_ALL);
-  for (auto ret : returns) {
-    rewriter.setInsertionPoint(ret);
-    auto barrier = rewriter.create<pto::BarrierOp>(ret.getLoc(), pipeAllAttr);
-    barrier->setAttr("pto.auto_sync_tail_barrier", rewriter.getUnitAttr());
-    if (auto hintAttr =
-            func_->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint")) {
-      barrier->setAttr("pto.auto_sync_tail_hint", hintAttr);
-    }
+  rewriter.setInsertionPoint(ret);
+  auto barrier = rewriter.create<pto::BarrierOp>(ret.getLoc(), pipeAllAttr);
+  barrier->setAttr("pto.auto_sync_tail_barrier", rewriter.getUnitAttr());
+  if (auto hintAttr =
+          func_->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint")) {
+    barrier->setAttr("pto.auto_sync_tail_hint", hintAttr);
   }
 
   pendingAutoSyncTailBarrier_ = false;

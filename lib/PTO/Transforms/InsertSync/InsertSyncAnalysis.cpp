@@ -491,6 +491,7 @@ void InsertSyncAnalysis::InsertLastPipeAll() {
     auto barrierOp = std::make_unique<SyncOperation>(
         SyncOperation::TYPE::PIPE_BARRIER, PipelineType::PIPE_ALL,
         PipelineType::PIPE_ALL, syncIndex_, element->GetIndex(), std::nullopt);
+    barrierOp->isAutoSyncTailBarrier = true;
 
     SyncOperation *barrierRawPtr = barrierOp.get();
     SmallVector<std::unique_ptr<SyncOperation>> syncGroup;

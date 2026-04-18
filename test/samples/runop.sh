@@ -524,6 +524,41 @@ process_one_dir() {
       fi
     fi
 
+    # Auto-sync tail clean must be a single function epilogue call. In
+    # particular, it must not be anchored after the last SyncIR pipe op if
+    # non-pipe materialization code is emitted later.
+    if [[ "$base" == "test_auto_sync_tail_return_anchor" ]]; then
+      if ! "$python" - "$cpp" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], "r", encoding="utf-8").read()
+calls = [
+    match
+    for match in re.finditer(
+        r"^\s{2,}ptoas_auto_sync_tail\([\s\S]*?\);",
+        text,
+        re.MULTILINE,
+    )
+]
+if len(calls) != 1:
+    sys.exit(1)
+tail_pos = calls[0].start()
+if any(match.start() > tail_pos for match in re.finditer(r"\] = ", text)):
+    sys.exit(1)
+tail = text[calls[0].end():]
+match = re.search(r"\S.*", tail)
+if not match:
+    sys.exit(1)
+sys.exit(0 if match.group(0).strip() == "return;" else 1)
+PY
+      then
+        echo -e "${A}(${base}.py)\tFAIL\tptoas_auto_sync_tail must occur exactly once immediately before return"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard: Python unified low-level sync API should dispatch to
     # both static and dynamic event-id forms.
     if [[ "$base" == "test_set_wait_unified_api" ]]; then

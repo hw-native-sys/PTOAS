@@ -158,6 +158,8 @@ public:
   // producer/consumer chains that happen to share the same pipe pair.
   SmallVector<Value> depRootBuffers;
   bool uselessSync{false};
+  // Marks the final compiler tail-clean barrier inserted by InsertLastPipeAll.
+  bool isAutoSyncTailBarrier{false};
   int eventIdNum{1};
   Value lowestCommonAncestorBuffer{nullptr};
   int reuseCntForWiden{0};
@@ -169,9 +171,9 @@ public:
   SyncOperation(TYPE type, pto::PipelineType srcPipe, pto::PipelineType dstPipe,
                 unsigned kSyncIndex, unsigned syncIRIndex,
                 std::optional<int> forEndIndex, bool isComp = false)
-      : eventIds({}), type_(type), srcPipe_(srcPipe), dstPipe_(dstPipe),
-        kSyncIndex_(kSyncIndex), syncIRIndex_(syncIRIndex),
-        forEndIndex_(forEndIndex), isCompensation(isComp) {};
+      : isCompensation(isComp), eventIds({}), type_(type), srcPipe_(srcPipe),
+        dstPipe_(dstPipe), kSyncIndex_(kSyncIndex),
+        syncIRIndex_(syncIRIndex), forEndIndex_(forEndIndex) {};
  
   ~SyncOperation() = default;
  
