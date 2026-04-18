@@ -320,14 +320,15 @@ void SyncCodegen::AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter) {
   if (returns.empty())
     return;
 
-  auto ret = returns.front();
   auto pipeAllAttr = getPipeAttr(rewriter, PipelineType::PIPE_ALL);
-  rewriter.setInsertionPoint(ret);
-  auto barrier = rewriter.create<pto::BarrierOp>(ret.getLoc(), pipeAllAttr);
-  barrier->setAttr("pto.auto_sync_tail_barrier", rewriter.getUnitAttr());
-  if (auto hintAttr =
-          func_->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint")) {
-    barrier->setAttr("pto.auto_sync_tail_hint", hintAttr);
+  for (auto ret : returns) {
+    rewriter.setInsertionPoint(ret);
+    auto barrier = rewriter.create<pto::BarrierOp>(ret.getLoc(), pipeAllAttr);
+    barrier->setAttr("pto.auto_sync_tail_barrier", rewriter.getUnitAttr());
+    if (auto hintAttr =
+            func_->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint")) {
+      barrier->setAttr("pto.auto_sync_tail_hint", hintAttr);
+    }
   }
 
   pendingAutoSyncTailBarrier_ = false;

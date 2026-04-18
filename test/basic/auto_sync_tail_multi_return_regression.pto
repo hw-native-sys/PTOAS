@@ -1,0 +1,58 @@
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s 2>/dev/null | FileCheck %s
+//
+// Regression guard for PR #513 review issue:
+// - a function may exit through multiple CFG return blocks;
+// - compiler-inserted auto tail clean must be emitted on every return path;
+// - this sample has exactly two exits, so the concrete expectation here is
+//   "two exits -> two tail-clean calls", not a fixed global rule of "always two".
+//
+// CHECK-LABEL: __global__ AICORE void test_auto_sync_tail_multi_return(
+// CHECK: if ({{.*}}) {
+// CHECK: goto [[RET_TRUE:label[0-9]+]];
+// CHECK: } else {
+// CHECK: goto [[RET_FALSE:label[0-9]+]];
+// CHECK: }
+// CHECK: [[RET_TRUE]]:
+// CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CHECK-NEXT: return;
+// CHECK: [[RET_FALSE]]:
+// CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CHECK-NEXT: return;
+// CHECK-COUNT-2: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CHECK-COUNT-2: return;
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @test_auto_sync_tail_multi_return(%input: memref<?xf32>,
+                                              %output: memref<?xf32>,
+                                              %cond: i1) {
+    %scale = arith.constant 2.000000e+00 : f32
+    %c4096_i64 = arith.constant 4096 : i64
+    %c32 = arith.constant 32 : index
+    %c1 = arith.constant 1 : index
+    %c0_i64 = arith.constant 0 : i64
+
+    cf.cond_br %cond, ^bb1, ^bb2
+  ^bb1:
+    %input_view = memref.reinterpret_cast %input to offset: [0], sizes: [%c32, %c32], strides: [%c32, %c1] {layout = #pto.layout<nd>} : memref<?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+    %output_view = memref.reinterpret_cast %output to offset: [0], sizes: [%c32, %c32], strides: [%c32, %c1] {layout = #pto.layout<nd>} : memref<?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+    %input_tile = memref.subview %input_view[0, 0] [32, 32] [1, 1] {layout = #pto.layout<nd>} : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<32x32xf32, strided<[?, ?], offset: ?>>
+    %output_tile = memref.subview %output_view[0, 0] [32, 32] [1, 1] {layout = #pto.layout<nd>} : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<32x32xf32, strided<[?, ?], offset: ?>>
+    %ptr0 = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<32x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+    %tile0 = pto.bind_tile %ptr0, %c32, %c32 {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<32x32xf32, strided<[32, 1]>, #pto.address_space<vec>> -> memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+    pto.tload ins(%input_tile : memref<32x32xf32, strided<[?, ?], offset: ?>>) outs(%tile0 : memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    pto.tstore ins(%tile0 : memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>) outs(%output_tile : memref<32x32xf32, strided<[?, ?], offset: ?>>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    return
+
+  ^bb2:
+    %input_view_2 = memref.reinterpret_cast %input to offset: [0], sizes: [%c32, %c32], strides: [%c32, %c1] {layout = #pto.layout<nd>} : memref<?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+    %output_view_2 = memref.reinterpret_cast %output to offset: [0], sizes: [%c32, %c32], strides: [%c32, %c1] {layout = #pto.layout<nd>} : memref<?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+    %input_tile_2 = memref.subview %input_view_2[0, 0] [32, 32] [1, 1] {layout = #pto.layout<nd>} : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<32x32xf32, strided<[?, ?], offset: ?>>
+    %output_tile_2 = memref.subview %output_view_2[0, 0] [32, 32] [1, 1] {layout = #pto.layout<nd>} : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<32x32xf32, strided<[?, ?], offset: ?>>
+    %ptr1 = pto.pointer_cast(%c4096_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<32x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+    %tile1 = pto.bind_tile %ptr1, %c32, %c32 {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<32x32xf32, strided<[32, 1]>, #pto.address_space<vec>> -> memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+    pto.tload ins(%input_tile_2 : memref<32x32xf32, strided<[?, ?], offset: ?>>) outs(%tile1 : memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    pto.tmuls ins(%tile1, %scale : memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>, f32) outs(%tile1 : memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>)
+    pto.tstore ins(%tile1 : memref<32x32xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>) outs(%output_tile_2 : memref<32x32xf32, strided<[?, ?], offset: ?>>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    return
+  }
+}
