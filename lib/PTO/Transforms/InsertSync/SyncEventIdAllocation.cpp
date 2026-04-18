@@ -417,22 +417,24 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
   syncFront->eventIds.push_back(eventId);
   syncEnd->eventIds.push_back(eventId);
  
-  if (reallocatedPipePair.count(ScopePair(setFlag))) {
-    auto *ptr = dyn_cast<LoopInstanceElement>(
-        syncIR_[setFlag->GetForEndIndex().value()].get());
-    assert(ptr != nullptr);
-    syncFront->SetSyncIRIndex(ptr->beginId);
-    syncEnd->SetSyncIRIndex(ptr->endId);
-    syncFront->reallocatedLoopHeadTailSync = true;
-    syncEnd->reallocatedLoopHeadTailSync = true;
-    syncIR_[ptr->beginId]->pipeBefore.push_back(syncFront.get());
-    syncIR_[ptr->endId]->pipeAfter.push_back(syncEnd.get());
-  } else {
-    syncFront->SetSyncIRIndex(0);
-    syncEnd->SetSyncIRIndex(syncIR_.size() - 1);
-    syncIR_[0]->pipeBefore.push_back(syncFront.get());
-    syncIR_[syncIR_.size() - 1]->pipeAfter.push_back(syncEnd.get());
-  }
+  auto *ptr = dyn_cast<LoopInstanceElement>(
+      syncIR_[setFlag->GetForEndIndex().value()].get());
+  assert(ptr != nullptr);
+
+  // Keep loop-carried head/tail syncs scoped to their owning loop.
+  // Hoisting them to function entry/exit can make them execute even when an
+  // enclosing branch is not taken, which is both noisy and semantically risky.
+  syncFront->SetSyncIRIndex(ptr->beginId);
+  syncEnd->SetSyncIRIndex(ptr->endId);
+
+  // Preserve historical marker semantics: this flag is only used by the
+  // reallocation fallback path.
+  bool markAsReallocatedHeadTail = reallocatedPipePair.count(ScopePair(setFlag));
+  syncFront->reallocatedLoopHeadTailSync = markAsReallocatedHeadTail;
+  syncEnd->reallocatedLoopHeadTailSync = markAsReallocatedHeadTail;
+
+  syncIR_[ptr->beginId]->pipeBefore.push_back(syncFront.get());
+  syncIR_[ptr->endId]->pipeAfter.push_back(syncEnd.get());
  
   insertedBackwardSync.insert(syncFront.get());
   insertedBackwardSync.insert(syncEnd.get());
