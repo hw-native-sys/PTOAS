@@ -18,6 +18,80 @@
  
 using namespace mlir;
 using namespace mlir::pto;
+
+SmallVector<int, 8>
+MoveSyncState::GetBranchPredicateKey(unsigned int syncIRIndex) const {
+  SmallVector<int, 8> key;
+  if (syncIRIndex >= syncIR_.size()) {
+    return key;
+  }
+
+  for (const auto &element : syncIR_) {
+    auto *branch = dyn_cast<BranchInstanceElement>(element.get());
+    if (!branch || branch->getBranchKind() != KindOfBranch::IF_BEGIN) {
+      continue;
+    }
+    if (!(branch->beginId < branch->endId)) {
+      continue;
+    }
+    if (syncIRIndex <= branch->beginId || syncIRIndex >= branch->endId) {
+      continue;
+    }
+
+    // Encode each enclosing if's side into a stable token:
+    //   token*4+0 => then-side
+    //   token*4+1 => else-side
+    //   token*4+2 => else-boundary marker
+    const int token = static_cast<int>(branch->beginId) + 1;
+    if (syncIRIndex < branch->branchId) {
+      key.push_back(token * 4 + 0);
+    } else if (syncIRIndex > branch->branchId) {
+      key.push_back(token * 4 + 1);
+    } else {
+      key.push_back(token * 4 + 2);
+    }
+  }
+  return key;
+}
+
+bool MoveSyncState::HasSameBranchPredicate(unsigned int lhsIndex,
+                                           unsigned int rhsIndex) const {
+  if (lhsIndex >= syncIR_.size() || rhsIndex >= syncIR_.size()) {
+    return false;
+  }
+  return GetBranchPredicateKey(lhsIndex) == GetBranchPredicateKey(rhsIndex);
+}
+
+bool MoveSyncState::CanMoveToPredicateCompatibleAnchor(
+    const SyncOperation *sync, unsigned int targetIndex) const {
+  if (!sync || targetIndex >= syncIR_.size()) {
+    return false;
+  }
+
+  // Prefer matching against the peer set/wait's execution predicate.
+  const auto syncIndex = sync->GetSyncIndex();
+  if (syncIndex < syncOperations_.size()) {
+    const auto &syncPair = syncOperations_[syncIndex];
+    if (syncPair.size() >= 2) {
+      const SyncOperation *peer = nullptr;
+      if (sync->isSyncSetType()) {
+        peer = syncPair[1].get();
+      } else if (sync->isSyncWaitType()) {
+        peer = syncPair[0].get();
+      }
+      if (peer && peer->GetSyncIRIndex() < syncIR_.size()) {
+        return HasSameBranchPredicate(peer->GetSyncIRIndex(), targetIndex);
+      }
+    }
+  }
+
+  // Fallback for barrier-like syncs where only dep anchor is available.
+  const unsigned depIndex = sync->GetDepSyncIRIndex();
+  if (depIndex >= syncIR_.size()) {
+    return false;
+  }
+  return HasSameBranchPredicate(depIndex, targetIndex);
+}
  
 void MoveSyncState::Run() {
   MoveOutBranchSync();
@@ -108,6 +182,10 @@ void MoveSyncState::PlanMoveOutIfWaitSync(
   // 那么这个 Wait 可以被提至 If 之前 (bound.first)
   if ((setSync->GetSyncIRIndex() >= pair.second) ||
       (setSync->GetSyncIRIndex() <= pair.first)) {
+    if (!CanMoveToPredicateCompatibleAnchor(s, bound.first)) {
+      newPipeBefore.push_back(s);
+      return;
+    }
     
     // [Optimization]: Hoist Wait out of If
     checkSyncIRIndex(syncIR_, bound.first);
@@ -140,6 +218,10 @@ void MoveSyncState::PlanMoveOutIfSetSync(
   // 那么这个 Set 可以沉降到 If 之后 (bound.second)
   if ((waitSync->GetSyncIRIndex() >= pair.second) ||
       (waitSync->GetSyncIRIndex() <= pair.first)) {
+    if (!CanMoveToPredicateCompatibleAnchor(s, bound.second)) {
+      newPipeAfter.push_back(s);
+      return;
+    }
     
     // [Optimization]: Sink Set out of If
     checkSyncIRIndex(syncIR_, bound.second);
@@ -218,6 +300,10 @@ void MoveSyncState::PlanMoveOutWaitSync(
   // 可以将 Wait 提至 Loop Begin 之前
   if ((setSync->GetSyncIRIndex() > pair.second) ||
       (setSync->GetSyncIRIndex() < pair.first)) {
+    if (!CanMoveToPredicateCompatibleAnchor(s, pair.first)) {
+      newPipeBefore.push_back(s);
+      return;
+    }
     
     // [Optimization]: Hoist Wait out of Loop
     checkSyncIRIndex(syncIR_, pair.first);
@@ -258,6 +344,10 @@ void MoveSyncState::PlanMoveOutSetSync(
   // 可以将 Set 沉降到 Loop End 之后
   if ((waitSync->GetSyncIRIndex() > pair.second) ||
       (waitSync->GetSyncIRIndex() < pair.first)) {
+    if (!CanMoveToPredicateCompatibleAnchor(s, pair.second)) {
+      newPipeAfter.push_back(s);
+      return;
+    }
     
     // [Optimization]: Sink Set out of Loop
     checkSyncIRIndex(syncIR_, pair.second);
