@@ -3147,7 +3147,8 @@ def TColSumOp : PTO_TOp<"tcolsum", [
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
     ::mlir::MutableOperandRange getDpsInitsMutable() {
-      return ::mlir::MutableOperandRange(getOperation(), 1, getOperation()->getNumOperands());
+      return ::mlir::MutableOperandRange(getOperation(), 1,
+                                         getOperation()->getNumOperands() - 1);
     }
   }];
 }

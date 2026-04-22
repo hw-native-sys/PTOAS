@@ -14,14 +14,17 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "AllocToPointerCast.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -184,6 +187,72 @@ struct OccupiedByteRange {
   int64_t begin = 0;
   int64_t end = 0;
 };
+
+static Operation *getStableSortRoot(Operation *anchorOp) {
+  if (!anchorOp) {
+    return nullptr;
+  }
+  if (func::FuncOp func = anchorOp->getParentOfType<func::FuncOp>()) {
+    return func.getOperation();
+  }
+  Operation *root = anchorOp;
+  while (root->getParentOp()) {
+    root = root->getParentOp();
+  }
+  return root;
+}
+
+static SmallVector<Value> sortValuesDeterministically(ArrayRef<Value> values,
+                                                      Operation *anchorOp) {
+  SmallVector<Value> sorted(values.begin(), values.end());
+  if (sorted.size() <= 1) {
+    return sorted;
+  }
+  Operation *root = getStableSortRoot(anchorOp);
+  if (!root) {
+    llvm::sort(sorted, [](Value lhs, Value rhs) {
+      return lhs.getAsOpaquePointer() < rhs.getAsOpaquePointer();
+    });
+  } else {
+    AsmState state(root);
+    DenseMap<Value, std::string> cache;
+    auto getName = [&](Value value) -> StringRef {
+      auto iter = cache.find(value);
+      if (iter != cache.end()) {
+        return iter->second;
+      }
+      std::string key;
+      llvm::raw_string_ostream os(key);
+      value.printAsOperand(os, state);
+      os.flush();
+      auto [inserted, _] = cache.try_emplace(value, std::move(key));
+      return inserted->second;
+    };
+    llvm::sort(sorted, [&](Value lhs, Value rhs) {
+      StringRef lhsName = getName(lhs);
+      StringRef rhsName = getName(rhs);
+      if (lhsName != rhsName) {
+        return lhsName < rhsName;
+      }
+      return lhs.getAsOpaquePointer() < rhs.getAsOpaquePointer();
+    });
+  }
+  sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+  return sorted;
+}
+
+static SmallVector<pto::AddressSpace>
+getSortedAddressSpaces(const DenseMap<pto::AddressSpace, StorageEntry *> &m) {
+  SmallVector<pto::AddressSpace> spaces;
+  spaces.reserve(m.size());
+  for (const auto &it : m) {
+    spaces.push_back(it.first);
+  }
+  llvm::sort(spaces, [](pto::AddressSpace lhs, pto::AddressSpace rhs) {
+    return static_cast<int>(lhs) < static_cast<int>(rhs);
+  });
+  return spaces;
+}
 
 static LogicalResult assignAutoReserveBufferBase(
     ReserveBufferPlan &plan,
@@ -485,28 +554,28 @@ void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, Liveness live) {
 
 SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(scf::ForOp forOp,
                                                              Liveness live) {
-  SmallVector<Value> allocBeforeLoopBuffers;
+  SetVector<Value> allocBeforeLoopBuffers;
   const auto *liveBlockInfo = live.getLiveness(forOp->getBlock());
   auto currentLiveValues =
       liveBlockInfo->currentlyLiveValues(forOp.getOperation());
   if (currentLiveValues.empty()) {
-    return allocBeforeLoopBuffers;
+    return {};
   }
-  // The gen buffer of the same operation must ensure the order of priority.
-  SetVector<Value> currentLiveValuesOrder;
-  for (auto buffer : currentLiveValues) {
-    currentLiveValuesOrder.insert(buffer);
-  }
-  for (const Value &operand : currentLiveValuesOrder) {
+  SmallVector<Value> orderedLiveValues = sortValuesDeterministically(
+      llvm::to_vector(currentLiveValues), forOp.getOperation());
+  for (const Value &operand : orderedLiveValues) {
     auto aliasBuffers = GetAliasBuffers(operand);
     aliasBuffers.insert(operand);
-    for (auto Buffer : aliasBuffers) {
+    SmallVector<Value> orderedAliases = sortValuesDeterministically(
+        llvm::to_vector(aliasBuffers), forOp.getOperation());
+    for (Value Buffer : orderedAliases) {
       auto iter = buffer2status.find(Buffer);
       if (iter != buffer2status.end())
-        allocBeforeLoopBuffers.push_back(Buffer);
+        allocBeforeLoopBuffers.insert(Buffer);
     }
   }
-  return allocBeforeLoopBuffers;
+  return sortValuesDeterministically(llvm::to_vector(allocBeforeLoopBuffers),
+                                     forOp.getOperation());
 }
 
 LogicalResult
@@ -549,14 +618,23 @@ void MemLivenessAnalysis::UpdateBufferAlias(Value buffer, Value aliasBuffer,
       Union(GetAliasBuffers(aliasBuffer), GetAliasBuffers(buffer));
   unionAliasSet.insert(buffer);
   unionAliasSet.insert(aliasBuffer);
+  Operation *anchorOp =
+      buffer.getDefiningOp() ? buffer.getDefiningOp() : aliasBuffer.getDefiningOp();
+  SmallVector<Value> orderedUnion =
+      sortValuesDeterministically(llvm::to_vector(unionAliasSet), anchorOp);
 
   // update alias map info for each buffer
   // e.g. if A alias B, C alias D, now update:
   // A alias B,C,D; B alias A,C,D; C alias A,B,D; D alias A,B,C
-  for (auto buf : unionAliasSet) {
+  for (Value buf : orderedUnion) {
     // remove buf self from union alias set
-    auto clonedAliasSet = unionAliasSet;
-    clonedAliasSet.remove(buf);
+    SetVector<Value> clonedAliasSet;
+    for (Value alias : orderedUnion) {
+      if (alias == buf) {
+        continue;
+      }
+      clonedAliasSet.insert(alias);
+    }
 
     buffer2AliasVec[buf] = clonedAliasSet;
   }
@@ -613,10 +691,14 @@ void MemLivenessAnalysis::UpdateOpGenInfo(OpInfo *opInfo,
   if (results.empty()) {
     return;
   }
-  for (Value operand : results) {
+  SmallVector<Value> orderedResults =
+      sortValuesDeterministically(llvm::to_vector(results), opInfo->operation);
+  for (Value operand : orderedResults) {
     auto aliasBuffers = GetAliasBuffers(operand);
     aliasBuffers.insert(operand);
-    for (auto buffer : aliasBuffers) {
+    SmallVector<Value> orderedAliases = sortValuesDeterministically(
+        llvm::to_vector(aliasBuffers), opInfo->operation);
+    for (Value buffer : orderedAliases) {
       UpdateOperandGenInfo(opInfo, buffer);
     }
   }
@@ -643,9 +725,9 @@ void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
   if (currentLiveValues.empty()) {
     return;
   }
-  SetVector<Value> liveValues(currentLiveValues.begin(),
-                              currentLiveValues.end());
-  for (const Value &operand : liveValues) {
+  SmallVector<Value> orderedLiveValues = sortValuesDeterministically(
+      llvm::to_vector(currentLiveValues), opInfo->operation);
+  for (const Value &operand : orderedLiveValues) {
     UpdateOpKillInfo(opInfo, operand, live);
   }
 }
@@ -654,10 +736,12 @@ void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
                                            Liveness live) {
   auto aliasBuffers = GetAliasBuffers(operand);
   aliasBuffers.insert(operand);
-  for (Value aliasBuffer : aliasBuffers) {
+  SmallVector<Value> orderedAliases =
+      sortValuesDeterministically(llvm::to_vector(aliasBuffers), opInfo->operation);
+  for (Value aliasBuffer : orderedAliases) {
     auto iterBuffer = buffer2status.find(aliasBuffer);
     if (iterBuffer == buffer2status.end())
-      return;
+      continue;
     if (iterBuffer->second == BufferStatus::GENED &&
         IsInSameBlock(iterBuffer->first.getDefiningOp(), opInfo->operation) &&
         AllDeadAfter(opInfo->operation, aliasBuffers, live)) {
@@ -740,14 +824,18 @@ void MemLivenessAnalysis::GenerateBufferLife() {
       continue;
     }
     // Time given to buffer start.
-    for (const Value &genBuffer : it->second.gen) {
+    SmallVector<Value> orderedGen =
+        sortValuesDeterministically(it->second.gen, linearOperation[i]->operation);
+    for (const Value &genBuffer : orderedGen) {
       std::unique_ptr<BufferLife> bufferLife =
           std::make_unique<BufferLife>(genBuffer);
       bufferLife->allocTime = scopeTime;
       buffer2Life[genBuffer] = std::move(bufferLife);
     }
     // Time given to buffer end.
-    for (const Value &killBuffer : it->second.kill) {
+    SmallVector<Value> orderedKill =
+        sortValuesDeterministically(it->second.kill, linearOperation[i]->operation);
+    for (const Value &killBuffer : orderedKill) {
       auto iter = buffer2Life.find(killBuffer);
       if (iter == buffer2Life.end())
         llvm::report_fatal_error("buffer lifetime killed before generation");
@@ -785,26 +873,32 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
                      inplacePairList.end());
   for (auto &operationSeq : linearOperation) {
     auto it = genKillMap.find(operationSeq.get());
-    if (it == genKillMap.end())
+    if (it == genKillMap.end()) {
       continue;
+    }
     if (hasTouchOp[operationSeq->operation]) {
       continue;
+    }
+    SmallVector<Value> orderedGen =
+        sortValuesDeterministically(it->second.gen, operationSeq->operation);
+    SmallVector<Value> orderedKill =
+        sortValuesDeterministically(it->second.kill, operationSeq->operation);
+    for (const Value &genBuffer : orderedGen) {
+      auto genBufferIter = bufferInfos.find(genBuffer);
+      if (genBufferIter == bufferInfos.end()) {
+        llvm::report_fatal_error("gen buffer missing from buffer info map");
       }
-      for (const Value &genBuffer : it->second.gen) {
-        auto genBufferIter = bufferInfos.find(genBuffer);
-        if (genBufferIter == bufferInfos.end())
-          llvm::report_fatal_error("gen buffer missing from buffer info map");
-        if (genBufferIter->second.ignoreInplace) {
+      if (genBufferIter->second.ignoreInplace) {
+        continue;
+      }
+      for (const Value &killBuffer : orderedKill) {
+        auto killBufferIter = bufferInfos.find(killBuffer);
+        if (killBufferIter == bufferInfos.end()) {
+          llvm::report_fatal_error("kill buffer missing from buffer info map");
+        }
+        if (killBufferIter->second.ignoreInplace) {
           continue;
         }
-        for (const Value &killBuffer : it->second.kill) {
-          auto killBufferIter = bufferInfos.find(killBuffer);
-          if (killBufferIter == bufferInfos.end())
-            llvm::report_fatal_error("kill buffer missing from buffer info map");
-          if (killBufferIter->second.ignoreInplace) {
-            continue;
-        }
-
         bool bufferSizeMatch =
             killBufferIter->second.constBits >= genBufferIter->second.constBits;
         bool isResuableOp = IsReusePTOOp(it->first->operation);
@@ -841,8 +935,8 @@ bool MemPlan::RecordOverflowIfAny() {
     return false;
   }
 
-  for (auto &it : memscope2rootStorageEntry) {
-    auto *rootStorageEntry = it.second;
+  for (AddressSpace space : getSortedAddressSpaces(memscope2rootStorageEntry)) {
+    auto *rootStorageEntry = memscope2rootStorageEntry.lookup(space);
     if (!rootStorageEntry) {
       continue;
     }
@@ -864,8 +958,8 @@ bool MemPlan::RecordOverflowIfAny() {
 }
 
 bool MemPlan::HasSemanticConflict(const StorageEntry *entry,
-                                  const BufferLifeVec &bufferLives) const {
-  if (!entry || semanticConflictPairs.empty() || bufferLives.empty())
+                                  ArrayRef<Value> otherBuffers) const {
+  if (!entry || semanticConflictPairs.empty() || otherBuffers.empty())
     return false;
 
   auto containsPair = [&](Value lhs, Value rhs) {
@@ -875,10 +969,7 @@ bool MemPlan::HasSemanticConflict(const StorageEntry *entry,
   };
 
   for (Value entryBuffer : entry->inplaceBuffers) {
-    for (const auto &life : bufferLives) {
-      if (!life)
-        continue;
-      Value otherBuffer = life->buffer;
+    for (Value otherBuffer : otherBuffers) {
       if (!otherBuffer || entryBuffer == otherBuffer)
         continue;
       if (containsPair(entryBuffer, otherBuffer))
@@ -918,7 +1009,9 @@ void MemPlan::GenerateStorageEntry() {
     auto it = genKillMap.find(operation.get());
     if (it == genKillMap.end())
       continue;
-    for (const Value &genBuffer : it->second.gen) {
+    SmallVector<Value> orderedGen =
+        sortValuesDeterministically(it->second.gen, operation->operation);
+    for (const Value &genBuffer : orderedGen) {
       auto iter = bufferInfos.find(genBuffer);
       if (iter == bufferInfos.end()) {
         continue;
@@ -965,7 +1058,9 @@ void MemPlan::ValidateParameters(std::unique_ptr<StorageEntry> &e) const {
 
 void MemPlan::UpdateBuffer2Offsets() {
   for (auto &e : StorageEntryVec) {
-    for (Value &buffer : e->inplaceBuffers) {
+    SmallVector<Value> orderedBuffers =
+        sortValuesDeterministically(e->inplaceBuffers, func_.getOperation());
+    for (Value buffer : orderedBuffers) {
       // MultiBuffer can cause multiple addrs.
       buffer2Offsets[buffer].push_back(
           (e->bitsOffset + kBitsToByte - 1) / kBitsToByte);
@@ -981,12 +1076,51 @@ void MemPlan::UpdateMultiBufferReuseExtraOffset() {
     return;
   }
 
+  SmallVector<StorageEntry *> relationEntries;
+  relationEntries.reserve(pingEntry2RelationPongEntry.size());
   for (auto &relationEntry : pingEntry2RelationPongEntry) {
-    for (Value &buffer : relationEntry.second->inplaceBuffers) {
+    relationEntries.push_back(relationEntry.second.get());
+  }
+  llvm::sort(relationEntries, [this](StorageEntry *lhs, StorageEntry *rhs) {
+    if (lhs->bitsOffset != rhs->bitsOffset) {
+      return lhs->bitsOffset < rhs->bitsOffset;
+    }
+    SmallVector<Value> lhsBuffers =
+        sortValuesDeterministically(lhs->inplaceBuffers, func_.getOperation());
+    SmallVector<Value> rhsBuffers =
+        sortValuesDeterministically(rhs->inplaceBuffers, func_.getOperation());
+    if (lhsBuffers.empty() != rhsBuffers.empty()) {
+      return lhsBuffers.empty();
+    }
+    if (!lhsBuffers.empty() && lhsBuffers.front() != rhsBuffers.front()) {
+      SmallVector<Value> pairOrder = sortValuesDeterministically(
+          {lhsBuffers.front(), rhsBuffers.front()}, func_.getOperation());
+      return pairOrder.front() == lhsBuffers.front();
+    }
+    if (lhs->alignedConstBits != rhs->alignedConstBits) {
+      return lhs->alignedConstBits < rhs->alignedConstBits;
+    }
+    auto minLifeAlloc = [](const StorageEntry *entry) {
+      int64_t minAlloc = std::numeric_limits<int64_t>::max();
+      for (const auto &life : entry->bufferLifeVec) {
+        minAlloc = std::min(minAlloc, life->allocTime);
+      }
+      return minAlloc;
+    };
+    int64_t lhsMinAlloc = minLifeAlloc(lhs);
+    int64_t rhsMinAlloc = minLifeAlloc(rhs);
+    if (lhsMinAlloc != rhsMinAlloc) {
+      return lhsMinAlloc < rhsMinAlloc;
+    }
+    return lhs->bufferLifeVec.size() < rhs->bufferLifeVec.size();
+  });
+  for (StorageEntry *relationEntry : relationEntries) {
+    SmallVector<Value> orderedBuffers =
+        sortValuesDeterministically(relationEntry->inplaceBuffers, func_.getOperation());
+    for (Value buffer : orderedBuffers) {
       // MultiBuffer can cause multiple addrs.
       buffer2Offsets[buffer].push_back(
-          (relationEntry.second->bitsOffset + kBitsToByte - 1) /
-          kBitsToByte);
+          (relationEntry->bitsOffset + kBitsToByte - 1) / kBitsToByte);
     }
   }
 }
@@ -1052,8 +1186,15 @@ PlanStatus MemPlan::PlanWorkSpaceMemAddress() {
 }
 
 PlanStatus MemPlan::PlanMemOffsetOfWholeWorkSpace() {
+  SmallVector<Value> workspaceArgs;
+  workspaceArgs.reserve(workSpaceArg2rootStorageEntry.size());
   for (auto &it : workSpaceArg2rootStorageEntry) {
-    StorageEntry *rootStorageEntry = it.second;
+    workspaceArgs.push_back(it.first);
+  }
+  workspaceArgs =
+      sortValuesDeterministically(workspaceArgs, func_.getOperation());
+  for (Value workspaceArg : workspaceArgs) {
+    StorageEntry *rootStorageEntry = workSpaceArg2rootStorageEntry.lookup(workspaceArg);
     if (!enableGlobalReuse) {
       GlobalWorkspaceNoReuse(rootStorageEntry);
       continue;
@@ -1155,16 +1296,17 @@ void MemPlan::MergeSameScopeSE() {
   }
 
   // set bufferScope2RequiredSize for all StorageEntry
-  for (auto &rootStorageEntry : memscope2rootStorageEntry) {
-    auto bufferSpaceInfo = GetBufferSpaceInfo(rootStorageEntry.first);
-    size_t accumulateSize = AlignUp(rootStorageEntry.second->bufInfo->constBits,
+  for (AddressSpace space : getSortedAddressSpaces(memscope2rootStorageEntry)) {
+    StorageEntry *rootStorageEntry = memscope2rootStorageEntry.lookup(space);
+    auto bufferSpaceInfo = GetBufferSpaceInfo(space);
+    size_t accumulateSize = AlignUp(rootStorageEntry->bufInfo->constBits,
                                     bufferSpaceInfo.first);
-    for (auto &childrenStorageEntry : rootStorageEntry.second->mergedChildren) {
+    for (auto &childrenStorageEntry : rootStorageEntry->mergedChildren) {
       size_t curStorageSize = AlignUp(childrenStorageEntry->bufInfo->constBits,
                                       bufferSpaceInfo.first);
       accumulateSize = accumulateSize + curStorageSize;
     }
-    bufferScope2RequiredSize[rootStorageEntry.first] = accumulateSize;
+    bufferScope2RequiredSize[space] = accumulateSize;
   }
 }
 
@@ -1211,8 +1353,8 @@ void MemPlan::PlanMemAddressForLevel0(
 
 PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
   // Start plan
-  for (auto &it : memscope2rootStorageEntry) {
-    StorageEntry *rootStorageEntry = it.second;
+  for (AddressSpace space : getSortedAddressSpaces(memscope2rootStorageEntry)) {
+    StorageEntry *rootStorageEntry = memscope2rootStorageEntry.lookup(space);
     // get the buffer info for a given scope.
     auto bufferSpaceInfo =
         GetBufferSpaceInfo(rootStorageEntry->bufInfo->bufferScope);
@@ -1625,7 +1767,7 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
                                       const StorageEntry *e) const {
   if ((r.firstMemBound->offset + r.allExtent > offset) &&
       (r.firstMemBound->offset < offset + e->alignedConstBits)) {
-    if (HasSemanticConflict(e, r.firstMemBound->bufferLifeVec))
+    if (HasSemanticConflict(e, r.firstMemBound->boundBuffers))
       return true;
     DenseMap<ValuePair, BufferLife> intersection =
         GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec);
@@ -1733,15 +1875,23 @@ void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
     // origin outline
     BufferLifeVec life(e->bufferLifeVec.begin(), e->bufferLifeVec.end());
     MergeBufferLife(start, end, life);
+    SmallVector<Value> boundBuffers = e->inplaceBuffers;
+    for (auto it = start; it != end; ++it) {
+      boundBuffers.insert(boundBuffers.end(), (*it)->boundBuffers.begin(),
+                          (*it)->boundBuffers.end());
+    }
+    boundBuffers =
+        sortValuesDeterministically(boundBuffers, e->bufInfo->operation);
     splitBound.emplace_back(std::make_shared<MemoryBound>(
-        life, e->bitsOffset, e->alignedConstBits, e));
+        life, e->bitsOffset, e->alignedConstBits, e, std::move(boundBuffers)));
   }
 
   // insert tail memory bound
   if (res > 0) {
     bound = std::make_shared<MemoryBound>(last->bufferLifeVec,
                                           last->offset + last->extent - res,
-                                          res, last->lastStorageEntry);
+                                          res, last->lastStorageEntry,
+                                          last->boundBuffers);
     end = outline.insert(end, bound);
   }
   // insert split e memory bound
@@ -1775,6 +1925,11 @@ void MemPlan::AddMemBoundInSectionalWay(
                 (*iter)->bufferLifeVec.end());
     // merge the buffer life
     MergeBufferVec(life);
+    SmallVector<Value> boundBuffers = e->inplaceBuffers;
+    boundBuffers.insert(boundBuffers.end(), (*iter)->boundBuffers.begin(),
+                        (*iter)->boundBuffers.end());
+    boundBuffers =
+        sortValuesDeterministically(boundBuffers, e->bufInfo->operation);
     // get the extent
     uint64_t size = 0;
     if (std::distance(start, iter) == std::distance(start, end) - 1) {
@@ -1784,7 +1939,8 @@ void MemPlan::AddMemBoundInSectionalWay(
       size = (*iter)->extent;
     }
     splitBound.emplace_back(
-        std::make_shared<MemoryBound>(life, (*iter)->offset, size, e));
+        std::make_shared<MemoryBound>(life, (*iter)->offset, size, e,
+                                      std::move(boundBuffers)));
   }
 }
 
@@ -1839,7 +1995,7 @@ bool MemPlan::IsSamePlanAsLastRollBack(uint64_t allocOffset, int curChildIdx,
 inline bool
 MemPlan::VerifyConflictStage0(StorageEntry *e,
                               const std::shared_ptr<MemoryBound> &last) {
-  if (HasSemanticConflict(e, last->bufferLifeVec))
+  if (HasSemanticConflict(e, last->boundBuffers))
     return true;
   // level_0: offset = 0, offset means life distance
   DenseMap<ValuePair, BufferLife> intersection =
@@ -2149,9 +2305,6 @@ void PlanMemoryPass::runOnOperation() {
       return signalPassFailure();
     }
   }
-  llvm::errs() << "end PTO plan Mem!\n";
-  auto op = getOperation();
-  op->dump();
 }
 
 std::unique_ptr<Pass>

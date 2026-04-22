@@ -160,9 +160,10 @@ struct StorageEntry {
 };
 
 struct MemoryBound {
-  MemoryBound(BufferLifeVec life, uint64_t o, uint64_t e, const StorageEntry *s)
+  MemoryBound(BufferLifeVec life, uint64_t o, uint64_t e, const StorageEntry *s,
+              SmallVector<Value> buffers = {})
       : bufferLifeVec(std::move(life)), offset(o), extent(e),
-        lastStorageEntry(s) {}
+        lastStorageEntry(s), boundBuffers(std::move(buffers)) {}
   /// collection of buffer plan and free time which use this Memory
   BufferLifeVec bufferLifeVec;
   /// offset of tagged memory
@@ -171,6 +172,8 @@ struct MemoryBound {
   uint64_t extent;
   /// always record storage entry of last plan
   const StorageEntry *lastStorageEntry;
+  /// all buffers that have occupied this bound (for semantic conflict checks)
+  SmallVector<Value> boundBuffers;
 };
 using MemBoundList = std::list<std::shared_ptr<MemoryBound>>;
 using MemBoundListConstIter = MemBoundList::const_iterator;
@@ -627,7 +630,7 @@ private:
   GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
 
   bool HasSemanticConflict(const StorageEntry *entry,
-                           const BufferLifeVec &bufferLives) const;
+                           ArrayRef<Value> otherBuffers) const;
 
   /// Reorder and make the storage entries of ping and pong continuous.
   void
