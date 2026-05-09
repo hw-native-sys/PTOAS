@@ -1,0 +1,66 @@
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+
+// Verify that `local_slot_num` is accepted on the gm_slot_tensor (address-based)
+// form of pto.aic_initialize_pipe / pto.aiv_initialize_pipe and that it flows
+// through to the lowered TPipe<..., LocalSlotNum, ...> template instantiation.
+//
+// Without an override, ptoas keeps the current default of LocalSlotNum=SlotNum.
+// With local_slot_num=2, the lowered TPipe must use 2, which matches the
+// `LocalSlotNum=2` template default in
+// `include/pto/npu/a2a3/TPush.hpp` and the manual flash-attention kernel in
+// `kernels/manual/common/flash_atten/fa_performance_kernel.cpp`.
+
+module {
+  func.func @cube_kernel(
+      %gm_slot_buffer : !pto.ptr<f32>,
+      %src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=1024, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+    pto.aic_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024, local_slot_num = 2}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+
+    %entry = pto.talloc_to_aiv {id = 0, split = 0}
+      -> !pto.tensor_view<16x16xf32>
+    %entry_partition = pto.partition_view %entry,
+      offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tstore ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=1024, pad=0>)
+               outs(%entry_partition : !pto.partition_tensor_view<16x16xf32>)
+    pto.tpush_to_aiv(%entry : !pto.tensor_view<16x16xf32>) {id = 0, split = 0}
+    func.return
+  }
+
+  func.func @vector_kernel(
+      %gm_slot_buffer : !pto.ptr<f32>,
+      %dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=1024, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024, local_slot_num = 2}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+
+    %entry = pto.tpop_from_aic {id = 0, split = 0}
+      -> !pto.tensor_view<16x16xf32>
+    %entry_partition = pto.partition_view %entry,
+      offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%entry_partition : !pto.partition_tensor_view<16x16xf32>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=1024, pad=0>)
+    pto.tfree_from_aic(%entry : !pto.tensor_view<16x16xf32>) {id = 0, split = 0}
+    func.return
+  }
+}
+
+// CHECK-LABEL: AICORE void cube_kernel
+// CHECK: TPipe<0, Direction::DIR_C2V, 1024, 8, 2,
+// CHECK-LABEL: AICORE void vector_kernel
+// CHECK: TPipe<0, Direction::DIR_C2V, 1024, 8, 2,

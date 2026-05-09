@@ -10677,9 +10677,17 @@ static LogicalResult verifyFrontendInitCommon(InitOpT op,
           "globaltensor pipe init expects only 'gm_slot_tensor' and no "
           "'gm_slot_buffer', 'c2v_consumer_buf', or 'v2c_consumer_buf'");
     }
-    if (op.getLocalSlotNumAttr())
-      return op.emitOpError(
-          "globaltensor pipe init does not use 'local_slot_num'");
+    if (auto localSlotNumAttr = op.getLocalSlotNumAttr()) {
+      int32_t localSlotNum = localSlotNumAttr.getInt();
+      if (localSlotNum <= 0)
+        return op.emitOpError("expects 'local_slot_num' to be greater than 0");
+      int32_t loweredSlotNum = dirMask == 3 ? 4 : 8;
+      if (localSlotNum > loweredSlotNum) {
+        return op.emitOpError()
+               << "expects 'local_slot_num' to be less than or equal to "
+               << loweredSlotNum << " for dir_mask = " << static_cast<int>(dirMask);
+      }
+    }
     if (getTargetArch(op.getOperation()) == PTOArch::A5) {
       return op.emitOpError(
           "globaltensor pipe entries are supported for a2/a3 l2g2l pipes");
@@ -11437,12 +11445,24 @@ LogicalResult InitializeL2G2LPipeOp::verify() {
                                  : std::nullopt)))
     return failure();
 
+  bool hasGmSlotTensor =
+      getGmAddr() && isa<TensorViewType>(getGmAddr().getType());
+
   if (!getLocalAddr()) {
     if (getPeerLocalAddr())
       return emitOpError("'peer_local_addr' requires 'local_addr'");
-    if (getLocalSlotNumAttr())
+    if (getLocalSlotNumAttr() && !hasGmSlotTensor)
       return emitOpError(
-          "'local_slot_num' is only allowed when 'local_addr' is present");
+          "'local_slot_num' is only allowed when 'local_addr' is present "
+          "or the pipe init uses a globaltensor slot");
+    if (auto localSlotNumAttr = getLocalSlotNumAttr()) {
+      int32_t localSlotNum = localSlotNumAttr.getInt();
+      if (localSlotNum <= 0)
+        return emitOpError("expects 'local_slot_num' to be greater than 0");
+      if (static_cast<uint32_t>(localSlotNum) > getSlotNum())
+        return emitOpError(
+            "expects 'local_slot_num' to be less than or equal to slot_num");
+    }
     return success();
   }
 

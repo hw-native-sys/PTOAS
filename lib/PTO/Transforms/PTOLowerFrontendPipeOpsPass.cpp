@@ -126,9 +126,9 @@ static FailureOr<Value> createFrontendPipe(InitOpT initOp, IRRewriter &rewriter,
           "globaltensor pipe entries are supported for a2/a3 l2g2l pipes");
 
     auto pipe = rewriter.create<InitializeL2G2LPipeOp>(
-        loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr, IntegerAttr{},
-        IntegerAttr{}, noSplitAttr, initOp.getGmSlotTensor(), Value{},
-        Value{});
+        loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr,
+        initOp.getLocalSlotNumAttr(), IntegerAttr{}, noSplitAttr,
+        initOp.getGmSlotTensor(), Value{}, Value{});
     propagateFrontendIdAttr(initOp, pipe.getOperation(), rewriter);
     return pipe.getPipe();
   }
