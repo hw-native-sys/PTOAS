@@ -7816,7 +7816,8 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
       return success();
     }
 
-    // Case 2: compare-based TGATHER<DstT, SrcT, CDstT, TmpT, CmpMode::GT, offset>(...)
+    // Case 2: compare-based TGATHER<DstT, SrcT, TmpT, CDstT, CmpMode::GT>(
+    //            dst, src0, kValue, tmp, cdst, offset)
     if (Value cdst = adaptor.getCdst()) {
       cdst = peelUnrealized(cdst);
       Value tmp = peelUnrealized(adaptor.getTmp());
@@ -7834,20 +7835,21 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
       int64_t offset = 0;
       if (auto offsetAttr = op.getOffsetAttr())
         offset = offsetAttr.getInt();
+      auto i32Ty = emitc::OpaqueType::get(ctx, "int32_t");
+      Value offsetVal = makeEmitCIntConstant(rewriter, loc, i32Ty, offset);
 
       auto targs = rewriter.getArrayAttr({
           emitc::OpaqueAttr::get(ctx, *dstTokOr),
           emitc::OpaqueAttr::get(ctx, *srcTokOr),
-          emitc::OpaqueAttr::get(ctx, *cdstTokOr),
           emitc::OpaqueAttr::get(ctx, *tmpTokOr),
+          emitc::OpaqueAttr::get(ctx, *cdstTokOr),
           emitc::OpaqueAttr::get(ctx, cmpTok),
-          emitc::OpaqueAttr::get(ctx, std::to_string(offset)),
       });
 
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TGATHER",
           /*args=*/ArrayAttr{}, /*templateArgs=*/targs,
-          /*operands=*/ValueRange{dst, src0, kValue, cdst, tmp});
+          /*operands=*/ValueRange{dst, src0, kValue, tmp, cdst, offsetVal});
 
       rewriter.eraseOp(op);
       return success();
