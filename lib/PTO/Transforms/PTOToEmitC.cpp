@@ -530,6 +530,165 @@ static std::optional<std::string> getEmitCTileTypeString(pto::TileBufType type) 
          tileBufCompactToken(configAttr) + ">";
 }
 
+struct Img2colConfigData {
+  int64_t fmapH = 0;
+  int64_t fmapW = 0;
+  int64_t padL = 0;
+  int64_t padR = 0;
+  int64_t padT = 0;
+  int64_t padB = 0;
+  int64_t strideH = 1;
+  int64_t strideW = 1;
+  int64_t dilationH = 1;
+  int64_t dilationW = 1;
+  int64_t filterH = 1;
+  int64_t filterW = 1;
+  int64_t channelSize = 0;
+  int64_t dstStride = 0;
+  int64_t dstMPosition = 0;
+  int64_t repeatStride = 0;
+  int64_t repeatTime = 0;
+  int64_t repeatMode = 0;
+  int64_t transpose = 0;
+};
+
+static std::optional<int64_t> getImg2colConfigInt(DictionaryAttr dict,
+                                                  StringRef key) {
+  if (!dict)
+    return std::nullopt;
+  if (auto attr = dyn_cast_or_null<IntegerAttr>(dict.get(key)))
+    return attr.getInt();
+  return std::nullopt;
+}
+
+static std::optional<pto::TileBufConfigAttr>
+resolveTileBufConfigFromValue(Value value) {
+  value = peelUnrealized(value);
+  while (Operation *def = value.getDefiningOp()) {
+    if (auto bind = dyn_cast<pto::BindTileOp>(def)) {
+      if (auto config = bind.getConfigAttr())
+        return config;
+      value = peelUnrealized(bind.getSource());
+      continue;
+    }
+    if (auto cast = dyn_cast<pto::PointerCastOp>(def)) {
+      if (auto config = cast.getConfig())
+        return *config;
+      break;
+    }
+    if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
+      value = peelUnrealized(subview.getSource());
+      continue;
+    }
+    if (auto reinterpret = dyn_cast<memref::ReinterpretCastOp>(def)) {
+      value = peelUnrealized(reinterpret.getSource());
+      continue;
+    }
+    if (auto cast = dyn_cast<memref::CastOp>(def)) {
+      value = peelUnrealized(cast.getSource());
+      continue;
+    }
+    if (auto unrealized = dyn_cast<UnrealizedConversionCastOp>(def)) {
+      if (unrealized->getNumOperands() == 0)
+        break;
+      value = peelUnrealized(unrealized.getOperand(0));
+      continue;
+    }
+    break;
+  }
+
+  if (auto tileTy = dyn_cast<pto::TileBufType>(value.getType()))
+    return tileTy.getConfigAttr();
+  return std::nullopt;
+}
+
+static std::optional<Img2colConfigData>
+getImg2colConfigData(pto::TileBufConfigAttr configAttr) {
+  if (!configAttr)
+    return std::nullopt;
+  auto dict = configAttr.getImg2colConfigDict();
+  if (!dict)
+    return std::nullopt;
+
+  auto getRequired = [&](StringRef key, int64_t fallback = 0)
+      -> std::optional<int64_t> {
+    if (auto value = getImg2colConfigInt(dict, key))
+      return value;
+    return fallback;
+  };
+
+  Img2colConfigData data;
+  auto fmapH = getRequired("fmap_h");
+  auto fmapW = getRequired("fmap_w");
+  auto channelSize = getRequired("channel_size");
+  auto repeatStride = getRequired("repeat_stride");
+  auto repeatTime = getRequired("repeat_time");
+  auto repeatMode = getRequired("repeat_mode");
+  auto dstStride = getRequired("dst_stride");
+  if (!fmapH || !fmapW || !channelSize || !repeatStride || !repeatTime ||
+      !repeatMode || !dstStride)
+    return std::nullopt;
+
+  data.fmapH = *fmapH;
+  data.fmapW = *fmapW;
+  data.padL = getRequired("pad_l", 0).value_or(0);
+  data.padR = getRequired("pad_r", 0).value_or(0);
+  data.padT = getRequired("pad_t", 0).value_or(0);
+  data.padB = getRequired("pad_b", 0).value_or(0);
+  data.strideH = getRequired("stride_h", 1).value_or(1);
+  data.strideW = getRequired("stride_w", 1).value_or(1);
+  data.dilationH = getRequired("dilation_h", 1).value_or(1);
+  data.dilationW = getRequired("dilation_w", 1).value_or(1);
+  data.filterH = getRequired("filter_h", 1).value_or(1);
+  data.filterW = getRequired("filter_w", 1).value_or(1);
+  data.channelSize = *channelSize;
+  data.dstStride = *dstStride;
+  data.dstMPosition = getRequired("dst_m_position", 0).value_or(0);
+  data.repeatStride = *repeatStride;
+  data.repeatTime = *repeatTime;
+  data.repeatMode = *repeatMode;
+  data.transpose = getRequired("transpose", 0).value_or(0);
+  return data;
+}
+
+static std::optional<Img2colConfigData> getImg2colConfigData(Value value) {
+  auto configAttr = resolveTileBufConfigFromValue(value);
+  if (!configAttr)
+    return std::nullopt;
+  return getImg2colConfigData(*configAttr);
+}
+
+static pto::SetFmatrixMode getImg2colMode(Attribute modeAttr) {
+  if (auto attr = dyn_cast_or_null<pto::SetFmatrixModeAttr>(modeAttr))
+    return attr.getValue();
+  return pto::SetFmatrixMode::FMATRIX_A_MANUAL;
+}
+
+static bool isImg2colBMode(pto::SetFmatrixMode mode) {
+  return mode == pto::SetFmatrixMode::FMATRIX_B_AUTO ||
+         mode == pto::SetFmatrixMode::FMATRIX_B_MANUAL;
+}
+
+static StringRef img2colModeToken(pto::SetFmatrixMode mode) {
+  switch (mode) {
+  case pto::SetFmatrixMode::FMATRIX_A_AUTO:
+    return "SetFmatrixMode::FMATRIX_A_AUTO";
+  case pto::SetFmatrixMode::FMATRIX_B_AUTO:
+    return "SetFmatrixMode::FMATRIX_B_AUTO";
+  case pto::SetFmatrixMode::FMATRIX_A_MANUAL:
+    return "SetFmatrixMode::FMATRIX_A_MANUAL";
+  case pto::SetFmatrixMode::FMATRIX_B_MANUAL:
+    return "SetFmatrixMode::FMATRIX_B_MANUAL";
+  }
+  llvm_unreachable("unknown img2col mode");
+}
+
+static ArrayAttr buildImg2colUseBTemplateArgs(ConversionPatternRewriter &rewriter,
+                                              bool useB) {
+  return rewriter.getArrayAttr(
+      {emitc::OpaqueAttr::get(rewriter.getContext(), useB ? "true" : "false")});
+}
+
 //===----------------------------------------------------------------------===//
 // Type Converter
 //===----------------------------------------------------------------------===//
@@ -3809,6 +3968,8 @@ static std::string tileBufSLayoutToken(pto::TileBufConfigAttr configAttr) {
     int32_t slVal = static_cast<int32_t>(slAttr.getValue());
     slTok = (slVal == 1) ? "SLayout::RowMajor"
                          : (slVal == 2) ? "SLayout::ColMajor"
+                         : (slVal == 3) ? "SLayout::NC1HWC0"
+                         : (slVal == 4) ? "SLayout::NDC1HWC0"
                                         : "SLayout::NoneBox";
   }
   return slTok;
@@ -4126,7 +4287,11 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         if (auto attr = dyn_cast<SLayoutAttr>(config.getSLayout()))
             slVal = static_cast<int32_t>(attr.getValue());
 
-        std::string slStr = (slVal == 1) ? "SLayout::RowMajor" : (slVal == 2) ? "SLayout::ColMajor" : "SLayout::NoneBox";
+        std::string slStr = (slVal == 1) ? "SLayout::RowMajor"
+                            : (slVal == 2) ? "SLayout::ColMajor"
+                            : (slVal == 3) ? "SLayout::NC1HWC0"
+                            : (slVal == 4) ? "SLayout::NDC1HWC0"
+                                           : "SLayout::NoneBox";
 
         int32_t frVal = 0;
         if (auto attr = dyn_cast<IntegerAttr>(config.getSFractalSize())) frVal = attr.getInt();
@@ -8549,6 +8714,155 @@ struct PTOInsertFPToEmitC : public OpConversionPattern<pto::TInsertFPOp> {
     return success();
   }
 };
+
+static LogicalResult emitTImg2colFmatrix(ConversionPatternRewriter &rewriter,
+                                         Location loc, Value srcValue,
+                                         bool useB) {
+  auto config = getImg2colConfigData(srcValue);
+  if (!config)
+    return failure();
+
+  MLIRContext *ctx = rewriter.getContext();
+  auto i32Ty = emitc::OpaqueType::get(ctx, "int32_t");
+  SmallVector<Value, 6> fmatrixArgs{
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->fmapH),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->fmapW),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->padL),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->padR),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->padT),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->padB)};
+  auto templateArgs = buildImg2colUseBTemplateArgs(rewriter, useB);
+  rewriter.create<emitc::CallOpaqueOp>(
+      loc, TypeRange{}, "PTOAS__TIMG2COL_SET_FMATRIX", ArrayAttr{},
+      templateArgs, ValueRange{fmatrixArgs});
+  return success();
+}
+
+static LogicalResult emitTImg2colPadding(ConversionPatternRewriter &rewriter,
+                                         Location loc, Value srcValue,
+                                         bool useB) {
+  auto configAttr = resolveTileBufConfigFromValue(srcValue);
+  if (!configAttr)
+    return failure();
+  Type elemTy = srcValue.getType();
+  if (auto tb = dyn_cast<pto::TileBufType>(elemTy))
+    elemTy = tb.getElementType();
+  else if (auto mr = dyn_cast<MemRefType>(elemTy))
+    elemTy = mr.getElementType();
+  else
+    return failure();
+
+  MLIRContext *ctx = rewriter.getContext();
+  auto padAttr = dyn_cast<pto::PadValueAttr>((*configAttr).getPad());
+  if (padAttr && padAttr.getValue() == pto::PadValue::Zero) {
+    auto templateArgs = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, getEmitCScalarTypeToken(elemTy)),
+        emitc::OpaqueAttr::get(ctx, useB ? "true" : "false")
+    });
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{},
+                                         "PTOAS__TIMG2COL_SET_PADDING_ZERO",
+                                         ArrayAttr{}, templateArgs,
+                                         ValueRange{});
+  }
+  return success();
+}
+
+static LogicalResult emitTImg2colRpt(ConversionPatternRewriter &rewriter,
+                                     Location loc, Value srcValue,
+                                     bool useB) {
+  auto config = getImg2colConfigData(srcValue);
+  if (!config)
+    return failure();
+
+  MLIRContext *ctx = rewriter.getContext();
+  auto i32Ty = emitc::OpaqueType::get(ctx, "int32_t");
+  SmallVector<Value, 5> repeatArgs{
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->repeatStride),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->repeatTime),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->repeatMode),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->dstStride),
+      makeEmitCIntConstant(rewriter, loc, i32Ty, config->dstMPosition)};
+  auto templateArgs = buildImg2colUseBTemplateArgs(rewriter, useB);
+  rewriter.create<emitc::CallOpaqueOp>(
+      loc, TypeRange{}, "PTOAS__TIMG2COL_SET_RPT", ArrayAttr{}, templateArgs,
+      ValueRange{repeatArgs});
+  return success();
+}
+
+struct PTOTSetFmatrixToEmitC : public OpConversionPattern<pto::TSetFmatrixOp> {
+  using OpConversionPattern<pto::TSetFmatrixOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TSetFmatrixOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto mode = getImg2colMode(op.getFmatrixModeAttr());
+    if (failed(emitTImg2colFmatrix(rewriter, op.getLoc(), op.getConfig(),
+                                   isImg2colBMode(mode))))
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct PTOTSetImg2colPaddingToEmitC
+    : public OpConversionPattern<pto::TSetImg2colPaddingOp> {
+  using OpConversionPattern<pto::TSetImg2colPaddingOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TSetImg2colPaddingOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto mode = getImg2colMode(op.getFmatrixModeAttr());
+    if (failed(emitTImg2colPadding(rewriter, op.getLoc(), op.getConfig(),
+                                   isImg2colBMode(mode))))
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct PTOTSetImg2colRptToEmitC
+    : public OpConversionPattern<pto::TSetImg2colRptOp> {
+  using OpConversionPattern<pto::TSetImg2colRptOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TSetImg2colRptOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto mode = getImg2colMode(op.getFmatrixModeAttr());
+    if (failed(emitTImg2colRpt(rewriter, op.getLoc(), op.getConfig(),
+                               isImg2colBMode(mode))))
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct PTOTImg2colToEmitC : public OpConversionPattern<pto::TImg2colOp> {
+  using OpConversionPattern<pto::TImg2colOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TImg2colOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value dst = peelUnrealized(adaptor.getDst());
+    auto mode = getImg2colMode(op.getFmatrixModeAttr());
+
+    auto srcTy = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+    auto dstTy = dyn_cast<pto::TileBufType>(op.getDst().getType());
+    if (!srcTy || !dstTy)
+      return failure();
+    ArrayAttr templateArgs = rewriter.getArrayAttr(
+        {emitc::OpaqueAttr::get(rewriter.getContext(),
+                                getEmitCTileTypeString(dstTy).value_or("")),
+         emitc::OpaqueAttr::get(rewriter.getContext(),
+                                getEmitCTileTypeString(srcTy).value_or("")),
+         emitc::OpaqueAttr::get(rewriter.getContext(), img2colModeToken(mode))});
+    auto i32Ty = emitc::OpaqueType::get(rewriter.getContext(), "uint16_t");
+    Value posM = makeEmitCIntConstant(rewriter, op.getLoc(), i32Ty, op.getPosM());
+    Value posK = makeEmitCIntConstant(rewriter, op.getLoc(), i32Ty, op.getPosK());
+    rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TIMG2COL",
+                                         ArrayAttr{}, templateArgs,
+                                         ValueRange{dst, src, posM, posK});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // pto.tfillpad lowering -> TFILLPAD(dst, src)
 //===----------------------------------------------------------------------===//
@@ -11132,13 +11446,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         }
       }
 
-      std::string slTok = "SLayout::NoneBox";
-      if (auto slAttr = dyn_cast<SLayoutAttr>(configAttr.getSLayout())) {
-        int32_t slVal = static_cast<int32_t>(slAttr.getValue());
-        slTok = (slVal == 1) ? "SLayout::RowMajor"
-                             : (slVal == 2) ? "SLayout::ColMajor"
-                                            : "SLayout::NoneBox";
-      }
+      std::string slTok = tileBufSLayoutToken(configAttr);
 
       int32_t fractal = 512;
       if (auto frAttr = dyn_cast<IntegerAttr>(configAttr.getSFractalSize()))
@@ -12566,6 +12874,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOPartAddToEmitC>(typeConverter, ctx);
   patterns.add<PTOExtractToEmitC, PTOExtractFPToEmitC, PTOInsertToEmitC,
                PTOInsertFPToEmitC>(typeConverter, ctx);
+  patterns.add<PTOTSetFmatrixToEmitC, PTOTSetImg2colPaddingToEmitC,
+               PTOTSetImg2colRptToEmitC, PTOTImg2colToEmitC>(typeConverter,
+                                                              ctx);
   patterns.add<PTOFillPadToEmitC, PTOFillPadInplaceToEmitC, PTOFillPadExpandToEmitC>(
       typeConverter, ctx);
   patterns.add<PTOGatherToEmitC>(typeConverter, ctx);
@@ -12811,6 +13122,7 @@ struct EmitPTOManualPass
         bool needsTRandomHelper = false;
         bool needsGlobalTensorDataHelper = false;
         bool needsCommInclude = false;
+        bool needsImg2colHelper = false;
         mop.walk([&](Operation *op) {
           if (isa<mlir::pto::DeclareEventIdArrayOp>(op))
             needsEventIdArrayHelper = true;
@@ -12818,6 +13130,9 @@ struct EmitPTOManualPass
             needsTRandomHelper = true;
           if (isa<mlir::pto::PartitionViewOp>(op))
             needsGlobalTensorDataHelper = true;
+          if (isa<mlir::pto::TSetFmatrixOp, mlir::pto::TSetImg2colPaddingOp,
+                  mlir::pto::TSetImg2colRptOp, mlir::pto::TImg2colOp>(op))
+            needsImg2colHelper = true;
           if (isa<mlir::pto::BuildAsyncSessionOp, mlir::pto::TPutAsyncOp,
                   mlir::pto::TGetAsyncOp, mlir::pto::TPrefetchAsyncOp,
                   mlir::pto::WaitAsyncEventOp, mlir::pto::TestAsyncEventOp,
@@ -12880,6 +13195,62 @@ static AICORE inline void PTOAS__TRANDOM(
   TRandomKey key = {key0, key1};
   TRandomCounter counter = {counter0, counter1, counter2, counter3};
   TRANDOM<Rounds>(dst, key, counter);
+}
+)cpp"));
+        }
+        if (needsImg2colHelper) {
+	      builder.create<emitc::VerbatimOp>(
+	          loc, builder.getStringAttr(R"cpp(
+template <typename T, bool UseB = false>
+static AICORE inline void PTOAS__TIMG2COL_SET_PADDING_ZERO() {
+  if constexpr (UseB) {
+    set_padding_b(static_cast<T>(0));
+  } else {
+    set_padding(static_cast<T>(0));
+  }
+}
+
+template <bool UseB = false>
+static AICORE inline void PTOAS__TIMG2COL_SET_FMATRIX(
+    int32_t fmapH, int32_t fmapW, int32_t padL, int32_t padR, int32_t padT,
+    int32_t padB) {
+  uint64_t fmatrixReg = 0;
+  constexpr uint32_t l1ShiftBit = 16;
+  fmatrixReg |= uint64_t(fmapW & 0xFFFF);
+  fmatrixReg |= uint64_t(fmapH & 0xFFFF) << l1ShiftBit;
+
+  constexpr uint32_t padListShiftBit = 8;
+  constexpr uint32_t padListShiftBase = 32;
+  fmatrixReg |= uint64_t(padL & 0xFF) << padListShiftBase;
+  fmatrixReg |= uint64_t(padR & 0xFF) << (padListShiftBase + padListShiftBit);
+  fmatrixReg |= uint64_t(padT & 0xFF) << (padListShiftBase + padListShiftBit * 2);
+  fmatrixReg |= uint64_t(padB & 0xFF) << (padListShiftBase + padListShiftBit * 3);
+  if constexpr (UseB) {
+    set_fmatrix_b(fmatrixReg);
+  } else {
+    set_fmatrix(fmatrixReg);
+  }
+}
+
+template <bool UseB = false>
+static AICORE inline void PTOAS__TIMG2COL_SET_RPT(
+    int32_t repeatStride, int32_t repeatTime, int32_t repeatMode,
+    int32_t dstStride, int32_t dstMposition) {
+  uint64_t rptConfig = 0;
+  constexpr uint32_t repeatTimeShiftBit = 16;
+  constexpr uint32_t repeatModeShiftBit = 24;
+  constexpr uint32_t dstStrideShiftBit = 32;
+  constexpr uint32_t dstMpositionShiftBit = 48;
+  rptConfig |= uint64_t(repeatStride);
+  rptConfig |= uint64_t(repeatTime) << repeatTimeShiftBit;
+  rptConfig |= uint64_t(repeatMode) << repeatModeShiftBit;
+  rptConfig |= uint64_t(dstStride) << dstStrideShiftBit;
+  rptConfig |= uint64_t(dstMposition) << dstMpositionShiftBit;
+  if constexpr (UseB) {
+    set_l3d_rpt_b(rptConfig);
+  } else {
+    set_l3d_rpt(rptConfig);
+  }
 }
 )cpp"));
         }

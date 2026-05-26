@@ -69,6 +69,8 @@ SLayout = _pto_mod.SLayout
 SLayoutAttr = _pto_mod.SLayoutAttr
 PadValue = _pto_mod.PadValue
 PadValueAttr = _pto_mod.PadValueAttr
+SetFmatrixMode = _pto_mod.SetFmatrixMode
+SetFmatrixModeAttr = _pto_mod.SetFmatrixModeAttr
 CompactMode = _pto_mod.CompactMode
 CompactModeAttr = _pto_mod.CompactModeAttr
 AccToVecMode = _pto_mod.AccToVecMode
@@ -125,6 +127,8 @@ __all__ = [
     "SLayoutAttr",
     "PadValue",
     "PadValueAttr",
+    "SetFmatrixMode",
+    "SetFmatrixModeAttr",
     "CompactMode",
     "CompactModeAttr",
     "AccToVecMode",
@@ -159,6 +163,7 @@ __all__ = [
     "QuantTypeAttr",
     "TileBufConfigAttr",
     "TileConfig",
+    "make_img2col_config",
     # High-level sync helpers
     "record_event",
     "wait_event",
@@ -629,6 +634,61 @@ class TileConfig:
     fractalABSize = 512
     fractalCSize = 1024
     fractalMxSize = 32
+
+
+def make_img2col_config(
+    *,
+    fmap_h,
+    fmap_w,
+    pad_l=0,
+    pad_r=0,
+    pad_t=0,
+    pad_b=0,
+    stride_h=1,
+    stride_w=1,
+    dilation_h=1,
+    dilation_w=1,
+    filter_h=1,
+    filter_w=1,
+    channel_size,
+    dst_stride,
+    dst_m_position=0,
+    repeat_stride,
+    repeat_time,
+    repeat_mode,
+    transpose=0,
+    context=None,
+):
+    ctx = context if context is not None else _ods_ir.Context.current
+    i64 = _ods_ir.IntegerType.get_signless(64, ctx)
+
+    def _i64(value):
+        return _ods_ir.IntegerAttr.get(i64, int(value))
+
+    return _ods_ir.DictAttr.get(
+        {
+            "fmap_h": _i64(fmap_h),
+            "fmap_w": _i64(fmap_w),
+            "pad_l": _i64(pad_l),
+            "pad_r": _i64(pad_r),
+            "pad_t": _i64(pad_t),
+            "pad_b": _i64(pad_b),
+            "stride_h": _i64(stride_h),
+            "stride_w": _i64(stride_w),
+            "dilation_h": _i64(dilation_h),
+            "dilation_w": _i64(dilation_w),
+            "filter_h": _i64(filter_h),
+            "filter_w": _i64(filter_w),
+            "channel_size": _i64(channel_size),
+            "dst_stride": _i64(dst_stride),
+            "dst_m_position": _i64(dst_m_position),
+            "repeat_stride": _i64(repeat_stride),
+            "repeat_time": _i64(repeat_time),
+            "repeat_mode": _i64(repeat_mode),
+            "transpose": _i64(transpose),
+        },
+        context=ctx,
+    )
 
 
 _PARTITION_VIEW_UNSET = object()

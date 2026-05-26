@@ -4240,6 +4240,106 @@ def TFillPadOp : PTO_TOp<"tfillpad", [
   }];
 }
 
+def TSetFmatrixOp : PTO_TOp<"tsetfmatrix", [
+  OpPipeInterface
+]> {
+  let summary = "Program the img2col fmatrix state from tile metadata";
+
+  let arguments = (ins
+    PTODpsType:$config,
+    OptionalAttr<PTO_SetFmatrixModeAttr>:$fmatrixMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $config attr-dict `:` qualified(type($config))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
+  }];
+}
+
+def TSetImg2colPaddingOp : PTO_TOp<"tset_img2col_padding", [
+  OpPipeInterface
+]> {
+  let summary = "Program the img2col padding value from tile metadata";
+
+  let arguments = (ins
+    PTODpsType:$config,
+    OptionalAttr<PTO_SetFmatrixModeAttr>:$fmatrixMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $config attr-dict `:` qualified(type($config))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
+  }];
+}
+
+def TSetImg2colRptOp : PTO_TOp<"tset_img2col_rpt", [
+  OpPipeInterface
+]> {
+  let summary = "Program the img2col repeat state from tile metadata";
+
+  let arguments = (ins
+    PTODpsType:$config,
+    OptionalAttr<PTO_SetFmatrixModeAttr>:$fmatrixMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $config attr-dict `:` qualified(type($config))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
+  }];
+}
+
+def TImg2colOp : PTO_TOp<"timg2col", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Perform img2col from MAT source into LEFT destination";
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$dst,
+    DefaultValuedAttr<I32Attr, "0">:$posM,
+    DefaultValuedAttr<I32Attr, "0">:$posK,
+    OptionalAttr<PTO_SetFmatrixModeAttr>:$fmatrixMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins`  `(` $src `:` qualified(type($src)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
 def TFillPadExpandOp : PTO_TOp<"tfillpad_expand", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,

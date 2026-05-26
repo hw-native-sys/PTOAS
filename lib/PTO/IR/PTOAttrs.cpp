@@ -29,7 +29,10 @@ constexpr int32_t kFractalSize1024 = 1024;
 constexpr int32_t kBLayoutRowMajor = static_cast<int32_t>(BLayout::RowMajor);
 constexpr int32_t kBLayoutColMajor = static_cast<int32_t>(BLayout::ColMajor);
 constexpr int32_t kSLayoutNoneBox = static_cast<int32_t>(SLayout::NoneBox);
+constexpr int32_t kSLayoutRowMajor = static_cast<int32_t>(SLayout::RowMajor);
 constexpr int32_t kSLayoutColMajor = static_cast<int32_t>(SLayout::ColMajor);
+constexpr int32_t kSLayoutNC1HWC0 = static_cast<int32_t>(SLayout::NC1HWC0);
+constexpr int32_t kSLayoutNDC1HWC0 = static_cast<int32_t>(SLayout::NDC1HWC0);
 constexpr int32_t kPadValueNull = static_cast<int32_t>(PadValue::Null);
 constexpr int32_t kPadValueMin = static_cast<int32_t>(PadValue::Min);
 constexpr int32_t kCompactModeNull = static_cast<int32_t>(CompactMode::Null);
@@ -45,7 +48,8 @@ TileBufConfigAttr TileBufConfigAttr::getDefault(MLIRContext *ctx) {
   PadValueAttr pv = PadValueAttr::get(ctx, PadValue::Null);
   CompactModeAttr compact = CompactModeAttr::get(ctx, CompactMode::Null);
   IntegerAttr sz = b.getI32IntegerAttr(kFractalSize512);
-  return TileBufConfigAttr::get(ctx, bl, sl, sz, pv, compact);
+  return TileBufConfigAttr::get(ctx, bl, sl, sz, pv, compact,
+                                Attribute());
 }
 
 bool TileBufConfigAttr::isDefault() const {
@@ -54,7 +58,17 @@ bool TileBufConfigAttr::isDefault() const {
          getSLayout() == d.getSLayout() &&
          getSFractalSize() == d.getSFractalSize() &&
          getPad() == d.getPad() &&
-         getCompactMode() == d.getCompactMode();
+         getCompactMode() == d.getCompactMode() &&
+         getImg2colConfig() == d.getImg2colConfig();
+}
+
+DictionaryAttr TileBufConfigAttr::getImg2colConfigDict() const {
+  return mlir::dyn_cast_or_null<DictionaryAttr>(getImg2colConfig());
+}
+
+bool TileBufConfigAttr::hasImg2colConfig() const {
+  auto dict = getImg2colConfigDict();
+  return dict && !dict.empty();
 }
 
 static int32_t getLayoutInt(Attribute a, int32_t def) {
@@ -71,7 +85,8 @@ LogicalResult TileBufConfigAttr::verify(function_ref<InFlightDiagnostic()> emitE
                                        Attribute sLayout,
                                        IntegerAttr sFractalSize,
                                        Attribute pad,
-                                       Attribute compactMode) {
+                                       Attribute compactMode,
+                                       Attribute img2colConfig) {
   if (!bLayout || (!mlir::isa<BLayoutAttr>(bLayout) && !mlir::isa<IntegerAttr>(bLayout)))
     return emitError() << "blayout must be BLayoutAttr or i32 integer attr", failure();
   if (!sLayout || (!mlir::isa<SLayoutAttr>(sLayout) && !mlir::isa<IntegerAttr>(sLayout)))
@@ -96,7 +111,7 @@ LogicalResult TileBufConfigAttr::verify(function_ref<InFlightDiagnostic()> emitE
     return emitError() << "unsupported blayout value: " << blv, failure();
 
   int32_t slv = getLayoutInt(sLayout, -1);
-  if (slv < kSLayoutNoneBox || slv > kSLayoutColMajor)
+  if (slv < kSLayoutNoneBox || slv > kSLayoutNDC1HWC0)
     return emitError() << "unsupported slayout value: " << slv, failure();
 
   int32_t pvv = getLayoutInt(pad, -1);
@@ -106,6 +121,21 @@ LogicalResult TileBufConfigAttr::verify(function_ref<InFlightDiagnostic()> emitE
   int32_t cmv = getLayoutInt(compactMode, -1);
   if (cmv < kCompactModeNull || cmv > kCompactModeRowPlusOne)
     return emitError() << "unsupported compact_mode value: " << cmv, failure();
+
+  if (img2colConfig) {
+    auto dict = mlir::dyn_cast<DictionaryAttr>(img2colConfig);
+    if (!dict) {
+      emitError() << "img2col_config must be a dictionary attribute";
+      return failure();
+    }
+    for (NamedAttribute named : dict) {
+      if (!mlir::isa<IntegerAttr>(named.getValue())) {
+        emitError() << "img2col_config field '" << named.getName()
+                    << "' must be an integer attribute";
+        return failure();
+      }
+    }
+  }
 
   return success();
 }
@@ -141,11 +171,13 @@ Attribute TileBufConfigAttr::parse(AsmParser &p, Type) {
   IntegerAttr sz = def.getSFractalSize();
   PadValueAttr pv = def.getPad();
   CompactModeAttr compact = def.getCompactMode();
+  Attribute img2colConfig = def.getImg2colConfig();
 
   if (p.parseLess()) return {};
 
   if (succeeded(p.parseOptionalGreater()))
-    return TileBufConfigAttr::get(ctx, bl, sl, sz, pv, compact);
+    return TileBufConfigAttr::get(ctx, bl, sl, sz, pv, compact,
+                                  img2colConfig);
 
   bool parsedGreater = false;
   while (!parsedGreater) {
@@ -177,6 +209,8 @@ Attribute TileBufConfigAttr::parse(AsmParser &p, Type) {
       if (p.parseAttribute(a)) return {};
       compact = toCompactModeAttr(ctx, a);
       if (!compact) return {};
+    } else if (key == "img2col_config") {
+      if (p.parseAttribute(img2colConfig)) return {};
     } else {
       p.emitError(p.getCurrentLocation(), "unknown key in tile_buf_config: ") << key;
       return {};
@@ -188,7 +222,7 @@ Attribute TileBufConfigAttr::parse(AsmParser &p, Type) {
     if (p.parseComma()) return {};
   }
 
-  return TileBufConfigAttr::get(ctx, bl, sl, sz, pv, compact);
+  return TileBufConfigAttr::get(ctx, bl, sl, sz, pv, compact, img2colConfig);
 }
 
 void TileBufConfigAttr::print(AsmPrinter &p) const {
@@ -198,5 +232,7 @@ void TileBufConfigAttr::print(AsmPrinter &p) const {
   p << ", s_fractal_size=" << (int32_t)getSFractalSize().getInt();
   p << ", pad=" << getPad();
   p << ", compact=" << getCompactMode();
+  if (auto dict = getImg2colConfigDict())
+    p << ", img2col_config=" << dict;
   p << ">";
 }

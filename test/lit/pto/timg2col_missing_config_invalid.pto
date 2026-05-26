@@ -1,0 +1,13 @@
+// RUN: not ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+
+module {
+  func.func @timg2col_missing_config() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = pto.declare_tile -> !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0>
+    %dst = pto.declare_tile -> !pto.tile_buf<left, 16x144xf16, slayout=row_major>
+    pto.timg2col ins(%src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0>)
+                 outs(%dst : !pto.tile_buf<left, 16x144xf16, slayout=row_major>)
+    return
+  }
+}
+
+// CHECK: error: expects src to carry img2col_config metadata

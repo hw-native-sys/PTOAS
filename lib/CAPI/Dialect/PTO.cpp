@@ -618,6 +618,21 @@ int32_t mlirPTOCompactModeAttrGetValue(MlirAttribute attr) {
   return static_cast<int32_t>(a.getValue());
 }
 
+bool mlirPTOAttrIsASetFmatrixModeAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::SetFmatrixModeAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOSetFmatrixModeAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  return wrap(mlir::pto::SetFmatrixModeAttr::get(
+      c, static_cast<mlir::pto::SetFmatrixMode>(value)));
+}
+
+int32_t mlirPTOSetFmatrixModeAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::SetFmatrixModeAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
 bool mlirPTOAttrIsAAccToVecModeAttr(MlirAttribute attr) {
   return mlir::isa<mlir::pto::AccToVecModeAttr>(unwrap(attr));
 }
@@ -723,6 +738,15 @@ MlirAttribute mlirPTOTileBufConfigAttrGet(MlirContext ctx,
 MlirAttribute mlirPTOTileBufConfigAttrGetWithCompactMode(
     MlirContext ctx, MlirAttribute bLayout, MlirAttribute sLayout,
     MlirAttribute sFractalSize, MlirAttribute pad, MlirAttribute compactMode) {
+  return mlirPTOTileBufConfigAttrGetWithImg2colConfig(
+      ctx, bLayout, sLayout, sFractalSize, pad, compactMode,
+      MlirAttribute{nullptr});
+}
+
+MlirAttribute mlirPTOTileBufConfigAttrGetWithImg2colConfig(
+    MlirContext ctx, MlirAttribute bLayout, MlirAttribute sLayout,
+    MlirAttribute sFractalSize, MlirAttribute pad, MlirAttribute compactMode,
+    MlirAttribute img2colConfig) {
   auto *c = unwrap(ctx);
   auto blA = toBLayoutAttr(c, unwrap(bLayout));
   auto slA = toSLayoutAttr(c, unwrap(sLayout));
@@ -735,7 +759,8 @@ MlirAttribute mlirPTOTileBufConfigAttrGetWithCompactMode(
   if (!sz || !sz.getType().isInteger(kI32BitWidth))
     return MlirAttribute{nullptr};
 
-  return wrap(mlir::pto::TileBufConfigAttr::get(c, blA, slA, sz, pvA, cmA));
+  return wrap(mlir::pto::TileBufConfigAttr::get(
+      c, blA, slA, sz, pvA, cmA, unwrap(img2colConfig)));
 }
 
 MlirType mlirPTOGMTypeGet(MlirContext ctx, intptr_t rank, const int64_t *shape,

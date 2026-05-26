@@ -103,13 +103,21 @@ static void bindPTOModule(pybind11::module &m) {
     py::enum_<mlir::pto::SLayout>(m, "SLayout")
     .value("NoneBox", mlir::pto::SLayout::NoneBox)
     .value("RowMajor", mlir::pto::SLayout::RowMajor)
-    .value("ColMajor", mlir::pto::SLayout::ColMajor);
+    .value("ColMajor", mlir::pto::SLayout::ColMajor)
+    .value("NC1HWC0", mlir::pto::SLayout::NC1HWC0)
+    .value("NDC1HWC0", mlir::pto::SLayout::NDC1HWC0);
 
     py::enum_<mlir::pto::PadValue>(m, "PadValue")
     .value("Null", mlir::pto::PadValue::Null)
     .value("Zero", mlir::pto::PadValue::Zero)
     .value("Max", mlir::pto::PadValue::Max)
     .value("Min", mlir::pto::PadValue::Min);
+
+    py::enum_<mlir::pto::SetFmatrixMode>(m, "SetFmatrixMode")
+    .value("FMATRIX_A_AUTO", mlir::pto::SetFmatrixMode::FMATRIX_A_AUTO)
+    .value("FMATRIX_B_AUTO", mlir::pto::SetFmatrixMode::FMATRIX_B_AUTO)
+    .value("FMATRIX_A_MANUAL", mlir::pto::SetFmatrixMode::FMATRIX_A_MANUAL)
+    .value("FMATRIX_B_MANUAL", mlir::pto::SetFmatrixMode::FMATRIX_B_MANUAL);
 
     py::enum_<mlir::pto::CompactMode>(m, "CompactMode")
     .value("Null", mlir::pto::CompactMode::Null)
@@ -285,6 +293,33 @@ static void bindPTOModule(pybind11::module &m) {
             return cls(a);
             },
             py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+
+    mlir_attribute_subclass(m, "SetFmatrixModeAttr",
+                            [](MlirAttribute a) -> bool {
+                            return mlirPTOAttrIsASetFmatrixModeAttr(a);
+                            })
+        .def_classmethod(
+            "get",
+            [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+            int32_t v = 0;
+            if (py::isinstance<py::int_>(value)) {
+              v = value.cast<int32_t>();
+            } else if (py::hasattr(value, "value")) {
+              v = value.attr("value").cast<int32_t>();
+            } else {
+              throw std::runtime_error(
+                  "SetFmatrixModeAttr.get expects int or SetFmatrixMode enum");
+            }
+            MlirAttribute a = mlirPTOSetFmatrixModeAttrGet(ctx, v);
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls.attr("__call__")(a);
+            },
+            py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+        .def_property_readonly(
+            "value",
+            [](MlirAttribute self) -> int32_t {
+            return mlirPTOSetFmatrixModeAttrGetValue(self);
+            });
 
     mlir_attribute_subclass(m, "AccToVecModeAttr",
                             [](MlirAttribute a) -> bool {
@@ -846,11 +881,13 @@ static void bindPTOModule(pybind11::module &m) {
                 int32_t s_fractal_size,
                 MlirAttribute pad,
                 MlirContext ctx,
-                py::object compactModeObj) -> py::object {
+                py::object compactModeObj,
+                py::object img2colConfigObj) -> py::object {
                 MlirType i32 = mlirIntegerTypeGet(ctx, 32);
                 MlirAttribute sz = mlirIntegerAttrGet(i32, s_fractal_size);
                 MlirAttribute compactMode = mlirPTOCompactModeAttrGet(
                     ctx, static_cast<int32_t>(mlir::pto::CompactMode::Null));
+                MlirAttribute img2colConfig = MlirAttribute{nullptr};
                 if (!compactModeObj.is_none()) {
                   if (py::isinstance<py::int_>(compactModeObj)) {
                     compactMode = mlirPTOCompactModeAttrGet(
@@ -862,8 +899,12 @@ static void bindPTOModule(pybind11::module &m) {
                     compactMode = compactModeObj.cast<MlirAttribute>();
                   }
                 }
-                MlirAttribute a = mlirPTOTileBufConfigAttrGetWithCompactMode(
-                    ctx, blayout, slayout, sz, pad, compactMode);
+                if (!img2colConfigObj.is_none())
+                  img2colConfig = img2colConfigObj.cast<MlirAttribute>();
+                MlirAttribute a =
+                    mlirPTOTileBufConfigAttrGetWithImg2colConfig(
+                        ctx, blayout, slayout, sz, pad, compactMode,
+                        img2colConfig);
                 if (mlirAttributeIsNull(a)) return py::none();
                 return cls(a);
             },
@@ -873,7 +914,8 @@ static void bindPTOModule(pybind11::module &m) {
             py::arg("s_fractal_size"),
             py::arg("pad"),
             py::arg("context") = py::none(),
-            py::arg("compact_mode") = py::none());
+            py::arg("compact_mode") = py::none(),
+            py::arg("img2col_config") = py::none());
 
     // ---- TileBufType ----
     mlir_type_subclass(m, "TileBufType",

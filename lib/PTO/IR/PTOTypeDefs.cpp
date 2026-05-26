@@ -210,6 +210,12 @@ mlir::Attribute TileBufType::getPadValueAttr() const { return getConfigAttr().ge
 mlir::Attribute TileBufType::getCompactModeAttr() const {
   return getConfigAttr().getCompactMode();
 }
+mlir::DictionaryAttr TileBufType::getImg2colConfigAttr() const {
+  return getConfigAttr().getImg2colConfigDict();
+}
+bool TileBufType::hasImg2colConfig() const {
+  return getConfigAttr().hasImg2colConfig();
+}
 
 // ✅ numeric getters（可选）
 int32_t TileBufType::getSFractalSizeI32() const {
@@ -254,7 +260,121 @@ struct ParsedTileBufFields {
   int64_t fractal = 0;
   uint32_t padInt = 0;
   uint32_t compactInt = 0;
+  bool hasImg2colConfig = false;
+  int64_t fmapH = 0;
+  int64_t fmapW = 0;
+  int64_t padL = 0;
+  int64_t padR = 0;
+  int64_t padT = 0;
+  int64_t padB = 0;
+  int64_t strideH = 1;
+  int64_t strideW = 1;
+  int64_t dilationH = 1;
+  int64_t dilationW = 1;
+  int64_t filterH = 1;
+  int64_t filterW = 1;
+  int64_t channelSize = 0;
+  int64_t dstStride = 0;
+  int64_t dstMPosition = 0;
+  int64_t repeatStride = 0;
+  int64_t repeatTime = 0;
+  int64_t repeatMode = 0;
+  int64_t transpose = 0;
 };
+
+static LogicalResult parseTileBufImg2colField(AsmParser &parser, StringRef key,
+                                              ParsedTileBufFields &fields) {
+  int64_t value = 0;
+  if (failed(parser.parseInteger(value)))
+    return failure();
+  fields.hasImg2colConfig = true;
+
+  if (key == "fmap_h")
+    fields.fmapH = value;
+  else if (key == "fmap_w")
+    fields.fmapW = value;
+  else if (key == "pad_l")
+    fields.padL = value;
+  else if (key == "pad_r")
+    fields.padR = value;
+  else if (key == "pad_t")
+    fields.padT = value;
+  else if (key == "pad_b")
+    fields.padB = value;
+  else if (key == "stride_h")
+    fields.strideH = value;
+  else if (key == "stride_w")
+    fields.strideW = value;
+  else if (key == "dilation_h")
+    fields.dilationH = value;
+  else if (key == "dilation_w")
+    fields.dilationW = value;
+  else if (key == "filter_h")
+    fields.filterH = value;
+  else if (key == "filter_w")
+    fields.filterW = value;
+  else if (key == "channel_size")
+    fields.channelSize = value;
+  else if (key == "dst_stride")
+    fields.dstStride = value;
+  else if (key == "dst_m_position")
+    fields.dstMPosition = value;
+  else if (key == "repeat_stride")
+    fields.repeatStride = value;
+  else if (key == "repeat_time")
+    fields.repeatTime = value;
+  else if (key == "repeat_mode")
+    fields.repeatMode = value;
+  else if (key == "transpose")
+    fields.transpose = value;
+  else
+    return failure();
+
+  return success();
+}
+
+static bool isTileBufImg2colKey(StringRef key) {
+  return key == "fmap_h" || key == "fmap_w" || key == "pad_l" ||
+         key == "pad_r" || key == "pad_t" || key == "pad_b" ||
+         key == "stride_h" || key == "stride_w" || key == "dilation_h" ||
+         key == "dilation_w" || key == "filter_h" || key == "filter_w" ||
+         key == "channel_size" || key == "dst_stride" ||
+         key == "dst_m_position" || key == "repeat_stride" ||
+         key == "repeat_time" || key == "repeat_mode" || key == "transpose";
+}
+
+static DictionaryAttr buildImg2colConfigAttr(MLIRContext *ctx,
+                                             const ParsedTileBufFields &fields) {
+  if (!fields.hasImg2colConfig)
+    return {};
+
+  Builder b(ctx);
+  NamedAttrList attrs;
+  auto i64 = [&](StringRef name, int64_t value) {
+    attrs.set(name, b.getI64IntegerAttr(value));
+  };
+
+  i64("fmap_h", fields.fmapH);
+  i64("fmap_w", fields.fmapW);
+  i64("pad_l", fields.padL);
+  i64("pad_r", fields.padR);
+  i64("pad_t", fields.padT);
+  i64("pad_b", fields.padB);
+  i64("stride_h", fields.strideH);
+  i64("stride_w", fields.strideW);
+  i64("dilation_h", fields.dilationH);
+  i64("dilation_w", fields.dilationW);
+  i64("filter_h", fields.filterH);
+  i64("filter_w", fields.filterW);
+  i64("channel_size", fields.channelSize);
+  i64("dst_stride", fields.dstStride);
+  i64("dst_m_position", fields.dstMPosition);
+  i64("repeat_stride", fields.repeatStride);
+  i64("repeat_time", fields.repeatTime);
+  i64("repeat_mode", fields.repeatMode);
+  i64("transpose", fields.transpose);
+  return DictionaryAttr::get(ctx, attrs);
+}
 
 static LogicalResult parseTileBufUInt32Value(AsmParser &parser, StringRef key,
                                              uint32_t &value) {
@@ -292,6 +412,20 @@ static LogicalResult parseLegacyTileBufFields(AsmParser &parser,
   }
 
   return success();
+}
+
+static LogicalResult parseLegacyOptionalTileBufField(AsmParser &parser,
+                                                     StringRef key,
+                                                     ParsedTileBufFields &fields) {
+  if (key == "compact")
+    return parseTileBufUInt32Value(parser, key, fields.compactInt);
+  if (isTileBufImg2colKey(key))
+    return parseTileBufImg2colField(parser, key, fields);
+
+  parser.emitError(parser.getCurrentLocation(),
+                   "unknown key in tile_buf legacy syntax: ")
+      << key;
+  return failure();
 }
 
 static LogicalResult parseCompactTileBufFields(AsmParser &parser,
@@ -430,6 +564,12 @@ static LogicalResult parseCompactTileBufFields(AsmParser &parser,
       continue;
     }
 
+    if (isTileBufImg2colKey(key)) {
+      if (failed(parseTileBufImg2colField(parser, key, fields)))
+        return failure();
+      continue;
+    }
+
     parser.emitError(parser.getCurrentLocation(),
                      "unknown key in tile_buf compact syntax: ")
         << key;
@@ -489,8 +629,9 @@ static Type buildTileBufType(AsmParser &parser,
   auto padAttr = PadValueAttr::get(ctx, pv.value());
   auto compactAttr = CompactModeAttr::get(ctx, compact.value());
   auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr,
-                                    compactAttr);
+  auto cfg = TileBufConfigAttr::get(
+      ctx, blAttr, slAttr, fractalAttr, padAttr, compactAttr,
+      buildImg2colConfigAttr(ctx, fields));
 
   TileBufShape shape{fields.rows, fields.cols};
   TileBufShape validShape{fields.vrow, fields.vcol};
@@ -523,10 +664,13 @@ Type TileBufType::parse(AsmParser &parser) {
       return Type();
   }
 
-  if (isLegacySyntax && succeeded(parser.parseOptionalComma())) {
-    if (failed(parseTileBufKeyEq(parser, "compact")) ||
-        failed(parseTileBufUInt32Value(parser, "compact", fields.compactInt))) {
-      return Type();
+  if (isLegacySyntax) {
+    while (succeeded(parser.parseOptionalComma())) {
+      StringRef key;
+      if (failed(parser.parseKeyword(&key)) || failed(parser.parseEqual()))
+        return Type();
+      if (failed(parseLegacyOptionalTileBufField(parser, key, fields)))
+        return Type();
     }
   }
 
@@ -609,6 +753,7 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
   auto defaultPad = llvm::dyn_cast<PadValueAttr>(defaultCfg.getPad());
   auto defaultCompact =
       llvm::dyn_cast<CompactModeAttr>(defaultCfg.getCompactMode());
+  auto img2colConfig = cfg.getImg2colConfigDict();
 
   auto vs = getValidShape();
   int64_t vrow = rows;
@@ -654,6 +799,32 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     printer << ", pad=" << stringifyLocFromPad(cfg.getPad());
   if (printCompact)
     printer << ", compact=" << stringifyCompactModeInt(cfg.getCompactMode());
+  if (img2colConfig) {
+    auto printImg2col = [&](StringRef key) {
+      if (auto value =
+              mlir::dyn_cast_or_null<IntegerAttr>(img2colConfig.get(key)))
+        printer << ", " << key << "=" << value.getInt();
+    };
+    printImg2col("fmap_h");
+    printImg2col("fmap_w");
+    printImg2col("pad_l");
+    printImg2col("pad_r");
+    printImg2col("pad_t");
+    printImg2col("pad_b");
+    printImg2col("stride_h");
+    printImg2col("stride_w");
+    printImg2col("dilation_h");
+    printImg2col("dilation_w");
+    printImg2col("filter_h");
+    printImg2col("filter_w");
+    printImg2col("channel_size");
+    printImg2col("dst_stride");
+    printImg2col("dst_m_position");
+    printImg2col("repeat_stride");
+    printImg2col("repeat_time");
+    printImg2col("repeat_mode");
+    printImg2col("transpose");
+  }
 
   printer << ">";
 }

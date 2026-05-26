@@ -1470,6 +1470,20 @@ static LogicalResult verifyTileBufLayoutConstraints(Operation *op,
                              << " to have concrete tile layout attributes";
   constexpr int64_t kAlignedBytes = 32;
 
+  if (slayout == static_cast<int32_t>(SLayout::NC1HWC0) ||
+      slayout == static_cast<int32_t>(SLayout::NDC1HWC0)) {
+    auto loc = getPTOMemorySpaceEnum(tb);
+    if (!loc || *loc != pto::AddressSpace::MAT)
+      return op->emitOpError()
+             << "expects " << name
+             << " nc1hwc0/ndc1hwc0 tiles to use MAT memory space";
+    if (!tb.hasImg2colConfig())
+      return op->emitOpError()
+             << "expects " << name
+             << " nc1hwc0/ndc1hwc0 tiles to carry img2col_config metadata";
+    return success();
+  }
+
   auto checkByteAlignment = [&](int64_t dim, StringRef layoutName,
                                 StringRef byteExpr) -> LogicalResult {
     if (dim == ShapedType::kDynamic)
@@ -1539,6 +1553,84 @@ static LogicalResult verifyTileBufLayoutConstraints(Operation *op,
            << "), but got " << cols;
 
   return success();
+}
+
+static std::optional<int64_t> getImg2colIntField(DictionaryAttr dict,
+                                                 StringRef key) {
+  if (!dict)
+    return std::nullopt;
+  auto attr = dyn_cast_or_null<IntegerAttr>(dict.get(key));
+  if (!attr)
+    return std::nullopt;
+  return attr.getInt();
+}
+
+static LogicalResult verifyImg2colConfigLike(Operation *op, Type ty,
+                                             StringRef name) {
+  auto tb = dyn_cast<pto::TileBufType>(ty);
+  if (!tb)
+    return op->emitError("expects img2col config operand to be a tile_buf");
+  auto dict = tb.getImg2colConfigAttr();
+  if (!dict)
+    return op->emitError() << "expects " << name
+                           << " to carry img2col_config metadata";
+  if (tb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NC1HWC0) &&
+      tb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NDC1HWC0))
+    return op->emitError() << "expects " << name
+                           << " slayout to be nc1hwc0 or ndc1hwc0";
+  if (tb.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor))
+    return op->emitError() << "expects " << name
+                           << " b_layout to be row_major";
+
+  auto requirePositive = [&](StringRef key) -> LogicalResult {
+    auto value = getImg2colIntField(dict, key);
+    if (!value.has_value() || *value <= 0)
+      return op->emitError() << "expects " << name << " img2col_config." << key
+                             << " to be a positive integer";
+    return success();
+  };
+  auto requireNonNegative = [&](StringRef key) -> LogicalResult {
+    auto value = getImg2colIntField(dict, key);
+    if (!value.has_value() || *value < 0)
+      return op->emitError() << "expects " << name << " img2col_config." << key
+                             << " to be a non-negative integer";
+    return success();
+  };
+  auto requireBoolLike = [&](StringRef key) -> LogicalResult {
+    auto value = getImg2colIntField(dict, key);
+    if (!value.has_value() || (*value != 0 && *value != 1))
+      return op->emitError() << "expects " << name << " img2col_config." << key
+                             << " to be 0 or 1";
+    return success();
+  };
+
+  if (failed(requirePositive("fmap_h")) || failed(requirePositive("fmap_w")) ||
+      failed(requirePositive("stride_h")) ||
+      failed(requirePositive("stride_w")) ||
+      failed(requirePositive("dilation_h")) ||
+      failed(requirePositive("dilation_w")) ||
+      failed(requirePositive("filter_h")) ||
+      failed(requirePositive("filter_w")) ||
+      failed(requirePositive("channel_size")) ||
+      failed(requireNonNegative("dst_stride")) ||
+      failed(requireNonNegative("dst_m_position")) ||
+      failed(requireNonNegative("repeat_stride")) ||
+      failed(requireNonNegative("repeat_time")) ||
+      failed(requireNonNegative("repeat_mode")) ||
+      failed(requireBoolLike("transpose")))
+    return failure();
+
+  return success();
+}
+
+static bool isSupportedTImg2colElemType(Type ty) {
+  if (ty.isF16() || ty.isBF16() || ty.isF32())
+    return true;
+  auto intTy = dyn_cast<IntegerType>(ty);
+  if (!intTy)
+    return false;
+  unsigned width = intTy.getWidth();
+  return width == 8 || width == 16 || width == 32;
 }
 
 [[maybe_unused]] static bool isSupportedLoadStoreElemTypeA2A3(Type ty) {
@@ -6027,6 +6119,80 @@ mlir::LogicalResult mlir::pto::TFillPadExpandOp::verify() {
 mlir::LogicalResult mlir::pto::TFillPadInplaceOp::verify() {
   return verifyTFillPadLike(getOperation(), getSrc().getType(), getDst().getType(),
                             /*allowDstExpand=*/false, "tfillpad_inplace");
+}
+
+static LogicalResult verifyTImg2colConfigOp(Operation *op, Type configTy,
+                                            StringRef name) {
+  if (getVerifierTargetArch(op) != VerifierTargetArch::A5)
+    return op->emitError("expects A5 img2col configuration ops");
+  if (failed(verifyImg2colConfigLike(op, configTy, name)))
+    return failure();
+
+  auto loc = getPTOMemorySpaceEnum(configTy);
+  if (!loc || *loc != pto::AddressSpace::MAT)
+    return op->emitError() << "expects " << name
+                           << " to use loc=mat for img2col configuration";
+
+  auto tb = cast<pto::TileBufType>(configTy);
+  if (tb.getPadValueI32() != static_cast<int32_t>(pto::PadValue::Null) &&
+      tb.getPadValueI32() != static_cast<int32_t>(pto::PadValue::Zero))
+    return op->emitError()
+           << "expects img2col padding mode to be null or zero for now";
+
+  return success();
+}
+
+LogicalResult mlir::pto::TSetFmatrixOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
+}
+
+LogicalResult mlir::pto::TSetImg2colPaddingOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
+}
+
+LogicalResult mlir::pto::TSetImg2colRptOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
+}
+
+LogicalResult mlir::pto::TImg2colOp::verify() {
+  if (shouldBypassDecodedMemrefVerifier(getOperation()))
+    return success();
+  if (getVerifierTargetArch(getOperation()) != VerifierTargetArch::A5)
+    return emitOpError("expects A5 timg2col");
+
+  auto srcTb = dyn_cast<pto::TileBufType>(getSrc().getType());
+  auto dstTb = dyn_cast<pto::TileBufType>(getDst().getType());
+  if (!srcTb || !dstTb)
+    return emitOpError("expects src/dst to be tile_buf types");
+
+  if (failed(verifyImg2colConfigLike(getOperation(), srcTb, "src")))
+    return failure();
+
+  auto srcLoc = getPTOMemorySpaceEnum(srcTb);
+  auto dstLoc = getPTOMemorySpaceEnum(dstTb);
+  if (!srcLoc || *srcLoc != pto::AddressSpace::MAT)
+    return emitOpError("expects src to use loc=mat");
+  if (!dstLoc || *dstLoc != pto::AddressSpace::LEFT)
+    return emitOpError("expects dst to use loc=left");
+  if (dstTb.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::ColMajor))
+    return emitOpError("expects dst b_layout to be col_major");
+
+  if (srcTb.getElementType() != dstTb.getElementType())
+    return emitOpError("expects src/dst element types to match");
+  if (!isSupportedTImg2colElemType(srcTb.getElementType()))
+    return emitOpError(
+        "expects src/dst element types to be i8/i16/i32/f16/bf16/f32");
+
+  if (dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::RowMajor))
+    return emitOpError("expects dst slayout to be row_major");
+
+  return success();
 }
 
 
@@ -11381,6 +11547,12 @@ void TPrintOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
   PTO_ADD_WRITE(getSrcMutable());
+}
+
+void TImg2colOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
 #undef PTO_DEFINE_TERNARY_EFFECTS

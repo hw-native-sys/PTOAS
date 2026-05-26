@@ -702,7 +702,9 @@ def PTO_BLayoutAttr : PTO_Attr<"BLayout", "blayout"> {
 def PTO_SLayout_Enum : PTO_I32Enum<"SLayout", "Secondary layout", [
   I32EnumAttrCase<"NoneBox",  0, "none_box">,
   I32EnumAttrCase<"RowMajor", 1, "row_major">,
-  I32EnumAttrCase<"ColMajor", 2, "col_major">
+  I32EnumAttrCase<"ColMajor", 2, "col_major">,
+  I32EnumAttrCase<"NC1HWC0",  3, "nc1hwc0">,
+  I32EnumAttrCase<"NDC1HWC0", 4, "ndc1hwc0">
   ]>;
 
 def PTO_SLayoutAttr : PTO_Attr<"SLayout", "slayout"> {
@@ -733,6 +735,18 @@ def PTO_CompactModeAttr : PTO_Attr<"CompactMode", "compact_mode"> {
   let assemblyFormat = "`<` params `>`";
 }
 
+def PTO_SetFmatrixMode_Enum : PTO_I32Enum<"SetFmatrixMode", "Img2col fmatrix programming mode", [
+  I32EnumAttrCase<"FMATRIX_A_AUTO", 0, "fmatrix_a_auto">,
+  I32EnumAttrCase<"FMATRIX_B_AUTO", 1, "fmatrix_b_auto">,
+  I32EnumAttrCase<"FMATRIX_A_MANUAL", 2, "fmatrix_a_manual">,
+  I32EnumAttrCase<"FMATRIX_B_MANUAL", 3, "fmatrix_b_manual">
+  ]>;
+
+def PTO_SetFmatrixModeAttr : PTO_Attr<"SetFmatrixMode", "set_fmatrix_mode"> {
+  let parameters = (ins EnumParameter<PTO_SetFmatrixMode_Enum>:$value);
+  let assemblyFormat = "`<` params `>`";
+}
+
 // ---------- tile_buf_config (NO b_fractal / s_fractal) ----------
 def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   let mnemonic = "tile_buf_config";
@@ -741,7 +755,8 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
     "SLayoutAttr":$sLayout,
     "mlir::IntegerAttr":$sFractalSize, // i32
     "PadValueAttr":$pad,
-    "CompactModeAttr":$compactMode
+    "CompactModeAttr":$compactMode,
+    "mlir::Attribute":$img2colConfig
   );
 
   let hasCustomAssemblyFormat = 1;
@@ -753,19 +768,33 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
       "mlir::IntegerAttr":$sFractalSize,
       "PadValueAttr":$pad,
       "CompactModeAttr":$compactMode
+    ), [{
+      return Base::get($_ctxt, bLayout, sLayout, sFractalSize, pad, compactMode,
+                       mlir::Attribute());
+    }]>,
+    AttrBuilder<(ins
+      "BLayoutAttr":$bLayout,
+      "SLayoutAttr":$sLayout,
+      "mlir::IntegerAttr":$sFractalSize,
+      "PadValueAttr":$pad,
+      "CompactModeAttr":$compactMode,
+      "mlir::Attribute":$img2colConfig
     )>
   ];
 
   let extraClassDeclaration = [{
     static TileBufConfigAttr getDefault(MLIRContext *ctx);
     bool isDefault() const;
+    mlir::DictionaryAttr getImg2colConfigDict() const;
+    bool hasImg2colConfig() const;
 
     static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
                                 mlir::Attribute bLayout,
                                 mlir::Attribute sLayout,
                                 mlir::IntegerAttr sFractalSize,
                                 mlir::Attribute pad,
-                                mlir::Attribute compactMode);
+                                mlir::Attribute compactMode,
+                                mlir::Attribute img2colConfig);
   }];
 }
 
