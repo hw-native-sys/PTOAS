@@ -6142,19 +6142,19 @@ static LogicalResult verifyTImg2colConfigOp(Operation *op, Type configTy,
   return success();
 }
 
-LogicalResult mlir::pto::TSetFmatrixOp::verify() {
+LogicalResult mlir::pto::SetImg2colFmatrixOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();
   return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
 }
 
-LogicalResult mlir::pto::TSetImg2colPaddingOp::verify() {
+LogicalResult mlir::pto::SetImg2colPaddingOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();
   return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
 }
 
-LogicalResult mlir::pto::TSetImg2colRptOp::verify() {
+LogicalResult mlir::pto::SetImg2colRepeatOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();
   return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");

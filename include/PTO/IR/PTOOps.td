@@ -4240,7 +4240,7 @@ def TFillPadOp : PTO_TOp<"tfillpad", [
   }];
 }
 
-def TSetFmatrixOp : PTO_TOp<"tsetfmatrix", [
+def SetImg2colFmatrixOp : PTO_Op<"set_img2col_fmatrix", [
   OpPipeInterface
 ]> {
   let summary = "Program the img2col fmatrix state from tile metadata";
@@ -4263,7 +4263,7 @@ def TSetFmatrixOp : PTO_TOp<"tsetfmatrix", [
   }];
 }
 
-def TSetImg2colPaddingOp : PTO_TOp<"tset_img2col_padding", [
+def SetImg2colPaddingOp : PTO_Op<"set_img2col_padding", [
   OpPipeInterface
 ]> {
   let summary = "Program the img2col padding value from tile metadata";
@@ -4286,7 +4286,7 @@ def TSetImg2colPaddingOp : PTO_TOp<"tset_img2col_padding", [
   }];
 }
 
-def TSetImg2colRptOp : PTO_TOp<"tset_img2col_rpt", [
+def SetImg2colRepeatOp : PTO_Op<"set_img2col_repeat", [
   OpPipeInterface
 ]> {
   let summary = "Program the img2col repeat state from tile metadata";

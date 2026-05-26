@@ -7437,7 +7437,7 @@ pto.tfillpad_inplace ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols
 
 ---
 
-##### `pto.tsetfmatrix` - Program Img2col Fmatrix State
+##### `pto.set_img2col_fmatrix` - Program Img2col Fmatrix State
 
 **Summary:** Programs the img2col fmatrix register from ConvTile-like MAT tile metadata.
 
@@ -7465,22 +7465,22 @@ pto.tfillpad_inplace ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols
 **Basic Example:**
 
 ```mlir
-pto.tsetfmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=1, pad_t=1, pad_b=1, stride_h=1, stride_w=1, dilation_h=1, dilation_w=1, filter_h=3, filter_w=3, channel_size=16, dst_stride=16, repeat_stride=16, repeat_time=4, repeat_mode=0>
+pto.set_img2col_fmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=1, pad_t=1, pad_b=1, stride_h=1, stride_w=1, dilation_h=1, dilation_w=1, filter_h=3, filter_w=3, channel_size=16, dst_stride=16, repeat_stride=16, repeat_time=4, repeat_mode=0>
 ```
 
 ---
 
-##### `pto.tset_img2col_padding` - Program Img2col Padding State
+##### `pto.set_img2col_padding` - Program Img2col Padding State
 
 **Summary:** Programs the img2col padding register from ConvTile-like MAT tile metadata.
 
-**Arguments:** Same as `pto.tsetfmatrix`.
+**Arguments:** Same as `pto.set_img2col_fmatrix`.
 
 **Results:** None.
 
 **Constraints & Verification:**
 
-- Same structural constraints as `pto.tsetfmatrix`.
+- Same structural constraints as `pto.set_img2col_fmatrix`.
 - Current PTOAS implementation accepts `pad=null` and `pad=zero`; `pad=zero` lowers to `set_padding(0)` / `set_padding_b(0)`.
 
 **Hardware Mapping:**
@@ -7490,15 +7490,15 @@ pto.tsetfmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fma
 
 ---
 
-##### `pto.tset_img2col_rpt` - Program Img2col Repeat State
+##### `pto.set_img2col_repeat` - Program Img2col Repeat State
 
 **Summary:** Programs the img2col repeat register from ConvTile-like MAT tile metadata.
 
-**Arguments:** Same as `pto.tsetfmatrix`.
+**Arguments:** Same as `pto.set_img2col_fmatrix`.
 
 **Results:** None.
 
-**Constraints & Verification:** Same structural constraints as `pto.tsetfmatrix`.
+**Constraints & Verification:** Same structural constraints as `pto.set_img2col_fmatrix`.
 
 **Hardware Mapping:**
 

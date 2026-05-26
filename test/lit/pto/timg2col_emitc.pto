@@ -3,9 +3,9 @@
 module {
   func.func @timg2col_setup_only() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %src = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.tsetfmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.tset_img2col_padding %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.tset_img2col_rpt %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
+    pto.set_img2col_fmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
+    pto.set_img2col_padding %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
+    pto.set_img2col_repeat %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
     return
   }
 
