@@ -121,7 +121,7 @@ static FailureOr<Value> createFrontendPipe(InitOpT initOp, IRRewriter &rewriter,
   auto noSplitAttr = initOp.getNosplitAttr();
 
   if (initOp.getGmSlotTensor()) {
-    if (arch == PTOArch::A5)
+    if (arch == PTOArch::A5 || arch == PTOArch::Kirin9030)
       return initOp.emitOpError(
           "globaltensor pipe entries are supported for a2/a3 l2g2l pipes");
 
@@ -133,7 +133,7 @@ static FailureOr<Value> createFrontendPipe(InitOpT initOp, IRRewriter &rewriter,
     return pipe.getPipe();
   }
 
-  if (arch == PTOArch::A5) {
+  if (arch == PTOArch::A5 || arch == PTOArch::Kirin9030) {
     if (!localAddr)
       return initOp.emitOpError(
           "requires local consumer buffer operands when lowering to a5");

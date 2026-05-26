@@ -86,6 +86,7 @@ bool isScalarPtrOrMemRef(Type type);
 enum class PTOArch {
   A3,
   A5,
+  Kirin9030,
 };
 
 /// Resolve the effective PTO target architecture from module-level IR state.
@@ -93,13 +94,16 @@ PTOArch getTargetArch(ModuleOp module);
 PTOArch getTargetArch(Operation *op);
 bool isTargetArchA3(ModuleOp module);
 bool isTargetArchA5(ModuleOp module);
+bool isTargetArchKirin9030(ModuleOp module);
 bool isTargetArchA3(Operation *op);
 bool isTargetArchA5(Operation *op);
+bool isTargetArchKirin9030(Operation *op);
 
 enum class PTOParserTargetArch {
   Unspecified,
   A3,
   A5,
+  Kirin9030,
 };
 
 void setPTOParserTargetArch(MLIRContext *context, PTOParserTargetArch arch);

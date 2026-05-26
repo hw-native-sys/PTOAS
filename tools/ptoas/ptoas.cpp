@@ -1251,16 +1251,16 @@ int main(int argc, char **argv) {
 
   std::string arch = normalizeArch(ptoTargetArch);
   if (cliArchSpecified) {
-    if (arch != "a3" && arch != "a5") {
+    if (arch != "a3" && arch != "a5" && arch != "kirin9030") {
       llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
-                   << "'. Expected 'a3' or 'a5'.\n";
+                   << "'. Expected 'a3', 'a5', or 'kirin9030'.\n";
       return 1;
     }
   } else if (!isPTOBC) {
     if (auto detectedArch = detectTextualModuleArch(buf))
       arch = *detectedArch;
   }
-  if (arch != "a3" && arch != "a5")
+  if (arch != "a3" && arch != "a5" && arch != "kirin9030")
     arch = "a3";
 
   if (isPTOBC) {
@@ -1286,7 +1286,8 @@ int main(int argc, char **argv) {
     sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
     pto::ScopedPTOParserTargetArch scopedParserArch(
         &context, arch == "a5" ? pto::PTOParserTargetArch::A5
-                               : pto::PTOParserTargetArch::A3);
+               : arch == "kirin9030" ? pto::PTOParserTargetArch::Kirin9030
+                                     : pto::PTOParserTargetArch::A3);
     module = parseSourceFile<ModuleOp>(sourceMgr, &context);
     if (!module) {
       llvm::errs() << "Error: Failed to parse MLIR.\n";
@@ -1463,8 +1464,10 @@ int main(int argc, char **argv) {
   pm.addPass(createCSEPass());
   if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
-  } else {
+  } else if (arch == "a5") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
+  } else if (arch == "kirin9030") {
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::Kirin9030));
   }
   pm.addPass(emitc::createFormExpressionsPass());
   pm.addPass(mlir::createCSEPass());

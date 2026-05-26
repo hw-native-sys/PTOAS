@@ -90,6 +90,7 @@ static std::optional<pto::AddressSpace> getPTOMemorySpaceEnum(Type ty);
 enum class VerifierTargetArch {
   A2A3,
   A5,
+  Kirin9030,
 };
 static VerifierTargetArch getVerifierTargetArch(Operation *op);
 static std::optional<StringRef> getVerifierArchName(Operation *op);
@@ -256,6 +257,8 @@ PTOArch mlir::pto::getTargetArch(ModuleOp module) {
   auto arch = module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName);
   if (arch && arch.getValue().equals_insensitive("a5"))
     return PTOArch::A5;
+  if (arch && arch.getValue().equals_insensitive("kirin9030"))
+    return PTOArch::Kirin9030;
   return PTOArch::A3;
 }
 
@@ -273,12 +276,20 @@ bool mlir::pto::isTargetArchA5(ModuleOp module) {
   return getTargetArch(module) == PTOArch::A5;
 }
 
+bool mlir::pto::isTargetArchKirin9030(ModuleOp module) {
+  return getTargetArch(module) == PTOArch::Kirin9030;
+}
+
 bool mlir::pto::isTargetArchA3(Operation *op) {
   return getTargetArch(op) == PTOArch::A3;
 }
 
 bool mlir::pto::isTargetArchA5(Operation *op) {
   return getTargetArch(op) == PTOArch::A5;
+}
+
+bool mlir::pto::isTargetArchKirin9030(Operation *op) {
+  return getTargetArch(op) == PTOArch::Kirin9030;
 }
 
 static llvm::TypeSize getOneByteTypeSize() {
@@ -332,13 +343,18 @@ uint64_t mlir::pto::F4E2M1x2Type::getPreferredAlignment(
 
 static VerifierTargetArch getVerifierTargetArch(Operation *op) {
   if (auto archName = getVerifierArchName(op)) {
-    return archName->equals_insensitive("a5") ? VerifierTargetArch::A5
-                            : VerifierTargetArch::A2A3;
+    if (archName->equals_insensitive("a5"))
+      return VerifierTargetArch::A5;
+    if (archName->equals_insensitive("kirin9030"))
+      return VerifierTargetArch::Kirin9030;
+    return VerifierTargetArch::A2A3;
   }
 
   switch (getPTOParserTargetArch(op ? op->getContext() : nullptr)) {
   case PTOParserTargetArch::A5:
     return VerifierTargetArch::A5;
+  case PTOParserTargetArch::Kirin9030:
+    return VerifierTargetArch::Kirin9030;
   case PTOParserTargetArch::A3:
   case PTOParserTargetArch::Unspecified:
     return VerifierTargetArch::A2A3;
@@ -385,6 +401,9 @@ static LogicalResult dispatchVerifierByArch(Operation *op, FnA2A3 &&verifyA2A3,
   case VerifierTargetArch::A2A3:
     return verifyA2A3();
   case VerifierTargetArch::A5:
+    return verifyA5();
+  case VerifierTargetArch::Kirin9030:
+    // Kirin9030 reuses A5 instruction implementations and shares verification.
     return verifyA5();
   }
   return failure();
@@ -2538,6 +2557,7 @@ LogicalResult TPrefetchOp::verify() {
   case VerifierTargetArch::A2A3:
     return verifyA2A3();
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyA5();
   }
   return failure();
@@ -3797,12 +3817,12 @@ static LogicalResult verifyArithmeticElemTypeForArch(
     bool allowBf16OnA5, StringRef a2a3Error, StringRef a5Error) {
   bool supported = elemTy.isInteger(32) || elemTy.isInteger(16) ||
                    elemTy.isF16() || elemTy.isF32();
-  if (targetArch == PTOArch::A5)
+  if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
     supported = supported || (allowInt8OnA5 && elemTy.isInteger(8)) ||
                 (allowBf16OnA5 && elemTy.isBF16());
   if (supported)
     return success();
-  return op->emitOpError(targetArch == PTOArch::A5 ? a5Error : a2a3Error);
+  return op->emitOpError((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) ? a5Error : a2a3Error);
 }
 
 static LogicalResult verifyArithmeticBinaryTileOpWithArchDispatch(
@@ -3851,12 +3871,12 @@ static LogicalResult verifyTColReductionElemTypeForArch(
     bool allowBf16OnA5, StringRef a2a3Error, StringRef a5Error) {
   bool ok = elemTy.isF16() || elemTy.isF32() || elemTy.isInteger(16) ||
             elemTy.isInteger(32);
-  if (targetArch == PTOArch::A5)
+  if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
     ok = ok || (allowInt8OnA5 && elemTy.isInteger(8)) ||
          (allowBf16OnA5 && elemTy.isBF16());
   if (ok)
     return success();
-  return op->emitOpError(targetArch == PTOArch::A5 ? a5Error : a2a3Error);
+  return op->emitOpError((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) ? a5Error : a2a3Error);
 }
 
 static LogicalResult verifyTColReductionOpWithArchDispatch(
@@ -3949,6 +3969,7 @@ static LogicalResult verifyVecTileCommon(Operation *op, Type ty, StringRef name)
   case VerifierTargetArch::A2A3:
     return verifyVecTileCommonA2A3(op, ty, name);
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyVecTileCommonA5(op, ty, name);
   }
   return failure();
@@ -3989,6 +4010,7 @@ static LogicalResult verifyAccTileCommon(Operation *op, Type ty, StringRef name)
   case VerifierTargetArch::A2A3:
     return verifyAccTileCommonA2A3(op, ty, name);
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyAccTileCommonA5(op, ty, name);
   }
   return failure();
@@ -4062,6 +4084,7 @@ static LogicalResult verifyMatTileOperands(Operation *op, Type lhsTy, Type rhsTy
   case VerifierTargetArch::A2A3:
     return verifyMatTileOperandsA2A3(op, lhsTy, rhsTy, dstTy);
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyMatTileOperandsA5(op, lhsTy, rhsTy, dstTy);
   }
   return failure();
@@ -4116,6 +4139,7 @@ static LogicalResult verifyGemvTileOperands(Operation *op, Type lhsTy, Type rhsT
   case VerifierTargetArch::A2A3:
     return verifyGemvTileOperandsA2A3(op, lhsTy, rhsTy, dstTy);
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyGemvTileOperandsA5(op, lhsTy, rhsTy, dstTy);
   }
   return failure();
@@ -4157,6 +4181,7 @@ static LogicalResult verifyMatBiasTile(Operation *op, Type biasTy, Type dstTy,
   case VerifierTargetArch::A2A3:
     return verifyMatBiasTileA2A3(op, biasTy, dstTy, requireFloatBias);
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyMatBiasTileA5(op, biasTy, dstTy, requireFloatBias);
   }
   return failure();
@@ -4164,7 +4189,8 @@ static LogicalResult verifyMatBiasTile(Operation *op, Type biasTy, Type dstTy,
 
 static LogicalResult verifyMatmulTypeTriple(Operation *op, Type lhsElemTy,
                                             Type rhsElemTy, Type dstElemTy) {
-  bool isA5 = getVerifierTargetArch(op) == VerifierTargetArch::A5;
+  auto arch = getVerifierTargetArch(op);
+  bool isA5 = arch == VerifierTargetArch::A5 || arch == VerifierTargetArch::Kirin9030;
   auto isInt8 = [](Type ty) {
     return ty.isInteger(8);
   };
@@ -4824,13 +4850,13 @@ static LogicalResult verifyTColExpandBinaryLikeOp(Operation *op, Type t0, Type t
       return false;
     if (elemTy.isInteger(16) || elemTy.isInteger(32))
       return true;
-    return targetArch == PTOArch::A5 && elemTy.isInteger(8);
+    return (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) && elemTy.isInteger(8);
   };
   if (!isSupportedElem(e0) || !isSupportedElem(e1) || !isSupportedElem(ed)) {
     if (!allowIntegerTypes)
       return op->emitOpError() << "expects " << opName
                                << " element type to be f16 or f32";
-    if (targetArch == PTOArch::A5)
+    if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
       return op->emitOpError() << "expects A5 " << opName
                                << " element type to be i8/i16/i32/f16/f32";
     return op->emitOpError() << "expects A2/A3 " << opName
@@ -4881,7 +4907,7 @@ LogicalResult pto::TColExpandAddOp::verify() {
 }
 LogicalResult pto::TColExpandDivOp::verify() {
   auto verifyByArch = [&](PTOArch targetArch) -> LogicalResult {
-    bool allowIntegerTypes = (targetArch == PTOArch::A5);
+    bool allowIntegerTypes = (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030);
     return verifyTColExpandBinaryLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         targetArch, "tcolexpanddiv",
@@ -5249,7 +5275,7 @@ mlir::LogicalResult mlir::pto::TDivSOp::verify() {
         !(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() ||
           elem.isF32()))
       return emitOpError("expects A2/A3 tdivs element type to be i32/i16/f16/f32");
-    if (targetArch == PTOArch::A5 &&
+    if ((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) &&
         !(elem.isInteger(32) || elem.isInteger(16) || elem.isInteger(8) ||
           elem.isF16() || elem.isF32()))
       return emitOpError("expects A5 tdivs element type to be i32/i16/i8/f16/f32");
@@ -7638,7 +7664,7 @@ static LogicalResult verifyTPartArgOpCommon(Operation *op, Type src0Ty,
 
   Type elem = *dataElemOr;
   PTOArch arch = getTargetArch(op);
-  if (arch == PTOArch::A5) {
+  if (arch == PTOArch::A5 || arch == PTOArch::Kirin9030) {
     if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isInteger(8) ||
           elem.isF16() || elem.isBF16() || elem.isF32()))
       return op->emitOpError() << "expects A5 " << opName
@@ -8642,10 +8668,10 @@ mlir::LogicalResult mlir::pto::TRowExpandDivOp::verify() {
     Type elem = *elemOr;
     bool supported =
         elem.isF16() || elem.isF32() ||
-        (targetArch == PTOArch::A5 &&
+        ((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) &&
          (elem.isInteger(8) || elem.isInteger(16) || elem.isInteger(32)));
     if (!supported) {
-      if (targetArch == PTOArch::A5)
+      if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
         return emitOpError(
             "expects A5 trowexpanddiv element type to be i8/i16/i32/f16/f32");
       return emitOpError("expects element type to be f16 or f32");
@@ -8671,9 +8697,9 @@ mlir::LogicalResult mlir::pto::TRowExpandMulOp::verify() {
     Type elem = *elemOr;
     bool supported = elem.isF16() || elem.isF32() || elem.isInteger(16) ||
                      elem.isInteger(32) ||
-                     (targetArch == PTOArch::A5 && elem.isInteger(8));
+                     ((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) && elem.isInteger(8));
     if (!supported) {
-      if (targetArch == PTOArch::A5)
+      if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
         return emitOpError(
             "expects A5 trowexpandmul element type to be i8/i16/i32/f16/f32");
       return emitOpError(
@@ -8700,9 +8726,9 @@ mlir::LogicalResult mlir::pto::TRowExpandSubOp::verify() {
     Type elem = *elemOr;
     bool supported = elem.isF16() || elem.isF32() || elem.isInteger(16) ||
                      elem.isInteger(32) ||
-                     (targetArch == PTOArch::A5 && elem.isInteger(8));
+                     ((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) && elem.isInteger(8));
     if (!supported) {
-      if (targetArch == PTOArch::A5)
+      if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
         return emitOpError(
             "expects A5 trowexpandsub element type to be i8/i16/i32/f16/f32");
       return emitOpError(
@@ -8737,9 +8763,9 @@ mlir::LogicalResult mlir::pto::TRowExpandAddOp::verify() {
     Type elem = getElemTy(src0Ty);
     bool supported = elem.isF16() || elem.isF32() || elem.isInteger(16) ||
                      elem.isInteger(32) ||
-                     (targetArch == PTOArch::A5 && elem.isInteger(8));
+                     ((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) && elem.isInteger(8));
     if (!supported) {
-      if (targetArch == PTOArch::A5)
+      if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
         return emitOpError(
             "expects A5 trowexpandadd element type to be i8/i16/i32/f16/f32");
       return emitOpError(
@@ -8794,12 +8820,12 @@ static LogicalResult verifyTRowExpandReduceLikeOp(Operation *op, Type src0Ty,
   bool supported = elem.isF16() || elem.isF32() ||
                    (allowIntegerTypes &&
                     (elem.isInteger(16) || elem.isInteger(32) ||
-                     (targetArch == PTOArch::A5 && elem.isInteger(8))));
+                     ((targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030) && elem.isInteger(8))));
   if (!supported) {
     if (!allowIntegerTypes)
       return op->emitOpError() << "expects " << opName
                                << " element type to be f16 or f32";
-    if (targetArch == PTOArch::A5)
+    if (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030)
       return op->emitOpError() << "expects A5 " << opName
                                << " element type to be i8/i16/i32/f16/f32";
     return op->emitOpError() << "expects A2/A3 " << opName
@@ -8884,7 +8910,7 @@ static LogicalResult verifyTRowExpandReduceLikeOp(Operation *op, Type src0Ty,
                                      targetArch == PTOArch::A3);
   };
 
-  if (hasTmp && targetArch == PTOArch::A5)
+  if (hasTmp && (targetArch == PTOArch::A5 || targetArch == PTOArch::Kirin9030))
     return op->emitOpError("expects A5 form to omit tmp");
 
   if (src0MatchesDst) {
@@ -9470,6 +9496,7 @@ mlir::LogicalResult mlir::pto::TStoreFPOp::verify() {
   case VerifierTargetArch::A2A3:
     return verifyA2A3();
   case VerifierTargetArch::A5:
+  case VerifierTargetArch::Kirin9030:
     return verifyA5();
   }
   return failure();
@@ -11004,10 +11031,11 @@ void TPReluOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrc0Mutable());
   PTO_ADD_READ(getSrc1Mutable());
-  // A5 pto-isa TPRELU implementation does not consume tmp; modeling tmp as a
-  // write-only scratch on A5 incorrectly inflates local-memory planning and
+  // A5/Kirin9030 pto-isa TPRELU implementation does not consume tmp; modeling tmp as a
+  // write-only scratch on A5/Kirin9030 incorrectly inflates local-memory planning and
   // can trigger false vec-overflow diagnostics.
-  if (getTargetArch(getOperation()) != PTOArch::A5)
+  if (getTargetArch(getOperation()) != PTOArch::A5 &&
+      getTargetArch(getOperation()) != PTOArch::Kirin9030)
     PTO_ADD_WRITE(getTmpMutable());
   PTO_ADD_WRITE(getDstMutable());
 }
@@ -11116,10 +11144,11 @@ void TRowMaxOp::getEffects(
 void TRowArgMaxOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
-  // A5 lowering does not consume tmp for TROWARGMAX; modeling tmp as a
+  // A5/Kirin9030 lowering does not consume tmp for TROWARGMAX; modeling tmp as a
   // scratch write inflates local-memory planning and can trigger false
   // vec-overflow diagnostics, mirroring the fixed A5 TPRELU issue.
-  if (getTargetArch(getOperation()) != PTOArch::A5)
+  if (getTargetArch(getOperation()) != PTOArch::A5 &&
+      getTargetArch(getOperation()) != PTOArch::Kirin9030)
     PTO_ADD_WRITE(getTmpMutable());
   PTO_ADD_WRITE(getDstMutable());
 }
@@ -11134,10 +11163,11 @@ void TRowMinOp::getEffects(
 void TRowArgMinOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
-  // A5 lowering does not consume tmp for TROWARGMIN; modeling tmp as a
+  // A5/Kirin9030 lowering does not consume tmp for TROWARGMIN; modeling tmp as a
   // scratch write inflates local-memory planning and can trigger false
   // vec-overflow diagnostics, mirroring the fixed A5 TPRELU issue.
-  if (getTargetArch(getOperation()) != PTOArch::A5)
+  if (getTargetArch(getOperation()) != PTOArch::A5 &&
+      getTargetArch(getOperation()) != PTOArch::Kirin9030)
     PTO_ADD_WRITE(getTmpMutable());
   PTO_ADD_WRITE(getDstMutable());
 }
@@ -11722,7 +11752,8 @@ static LogicalResult verifyFrontendInitCommon(InitOpT op,
     if (op.getLocalSlotNumAttr())
       return op.emitOpError(
           "globaltensor pipe init does not use 'local_slot_num'");
-    if (getTargetArch(op.getOperation()) == PTOArch::A5) {
+    if (getTargetArch(op.getOperation()) == PTOArch::A5 ||
+        getTargetArch(op.getOperation()) == PTOArch::Kirin9030) {
       return op.emitOpError(
           "globaltensor pipe entries are supported for a2/a3 l2g2l pipes");
     }
