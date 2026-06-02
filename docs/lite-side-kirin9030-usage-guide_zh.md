@@ -134,7 +134,7 @@ bisheng -c -O3 -g -x cce -std=c++17 \
     --cce-aicore-arch=dav-l311 \
     -I<pto-isa源码路径>/include \
     -mllvm -cce-aicore-jump-expand=true \
-    -cce-aicore-function-stack-size=16384 \
+    -mllvm -cce-aicore-function-stack-size=16384 \
     -mllvm -cce-aicore-record-overflow=false \
     -mllvm -cce-aicore-addr-transform \
     -mllvm -cce-aicore-dcci-insert-for-scalar=false \
@@ -193,7 +193,7 @@ bisheng -c -O3 -g -x cce -std=c++17 \
     --cce-aicore-arch=dav-l311 \
     -I<pto-isa源码路径>/include \
     -mllvm -cce-aicore-jump-expand=true \
-    -cce-aicore-function-stack-size=16384 \
+    -mllvm -cce-aicore-function-stack-size=16384 \
     -mllvm -cce-aicore-record-overflow=false \
     -mllvm -cce-aicore-addr-transform \
     -mllvm -cce-aicore-dcci-insert-for-scalar=false \
