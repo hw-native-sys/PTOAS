@@ -3,9 +3,9 @@
 module {
   func.func @timg2col_frontend_lowering() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %src = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, slayout=ndc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.set_img2col_fmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=ndc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.set_img2col_padding %src : !pto.tile_buf<mat, 16x32xf16, slayout=ndc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.set_img2col_repeat %src : !pto.tile_buf<mat, 16x32xf16, slayout=ndc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
+    %dst = pto.alloc_tile : !pto.tile_buf<left, 16x144xf16, slayout=row_major>
+    pto.timg2col ins(%src : !pto.tile_buf<mat, 16x32xf16, slayout=ndc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>)
+                 outs(%dst : !pto.tile_buf<left, 16x144xf16, slayout=row_major>)
     return
   }
 }
@@ -15,6 +15,6 @@ module {
 // CHECK: img2col_config={channel_size = 16 : i64
 // CHECK: repeat_time = 4 : i64
 // CHECK: stride_w = 2 : i64
-// CHECK: pto.set_img2col_fmatrix %{{.*}} : memref<16x32xf16
-// CHECK: pto.set_img2col_padding %{{.*}} : memref<16x32xf16
-// CHECK: pto.set_img2col_repeat %{{.*}} : memref<16x32xf16
+// CHECK: pto.timg2col
+// CHECK-SAME: ins(%{{.*}} : memref<16x32xf16
+// CHECK-SAME: outs(%{{.*}} : memref<16x144xf16

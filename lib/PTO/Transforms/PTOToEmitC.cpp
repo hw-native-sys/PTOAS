@@ -8789,51 +8789,6 @@ static LogicalResult emitTImg2colRpt(ConversionPatternRewriter &rewriter,
   return success();
 }
 
-struct PTOSetImg2colFmatrixToEmitC
-    : public OpConversionPattern<pto::SetImg2colFmatrixOp> {
-  using OpConversionPattern<pto::SetImg2colFmatrixOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::SetImg2colFmatrixOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto mode = getImg2colMode(op.getFmatrixModeAttr());
-    if (failed(emitTImg2colFmatrix(rewriter, op.getLoc(), op.getConfig(),
-                                   isImg2colBMode(mode))))
-      return failure();
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-struct PTOSetImg2colPaddingToEmitC
-    : public OpConversionPattern<pto::SetImg2colPaddingOp> {
-  using OpConversionPattern<pto::SetImg2colPaddingOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::SetImg2colPaddingOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto mode = getImg2colMode(op.getFmatrixModeAttr());
-    if (failed(emitTImg2colPadding(rewriter, op.getLoc(), op.getConfig(),
-                                   isImg2colBMode(mode))))
-      return failure();
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-struct PTOSetImg2colRepeatToEmitC
-    : public OpConversionPattern<pto::SetImg2colRepeatOp> {
-  using OpConversionPattern<pto::SetImg2colRepeatOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::SetImg2colRepeatOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto mode = getImg2colMode(op.getFmatrixModeAttr());
-    if (failed(emitTImg2colRpt(rewriter, op.getLoc(), op.getConfig(),
-                               isImg2colBMode(mode))))
-      return failure();
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
 struct PTOTImg2colToEmitC : public OpConversionPattern<pto::TImg2colOp> {
   using OpConversionPattern<pto::TImg2colOp>::OpConversionPattern;
 
@@ -8842,10 +8797,17 @@ struct PTOTImg2colToEmitC : public OpConversionPattern<pto::TImg2colOp> {
     Value src = peelUnrealized(adaptor.getSrc());
     Value dst = peelUnrealized(adaptor.getDst());
     auto mode = getImg2colMode(op.getFmatrixModeAttr());
+    bool useB = isImg2colBMode(mode);
 
     auto srcTy = dyn_cast<pto::TileBufType>(op.getSrc().getType());
     auto dstTy = dyn_cast<pto::TileBufType>(op.getDst().getType());
     if (!srcTy || !dstTy)
+      return failure();
+    if (failed(emitTImg2colFmatrix(rewriter, op.getLoc(), op.getSrc(), useB)))
+      return failure();
+    if (failed(emitTImg2colPadding(rewriter, op.getLoc(), op.getSrc(), useB)))
+      return failure();
+    if (failed(emitTImg2colRpt(rewriter, op.getLoc(), op.getSrc(), useB)))
       return failure();
     ArrayAttr templateArgs = rewriter.getArrayAttr(
         {emitc::OpaqueAttr::get(rewriter.getContext(),
@@ -12875,9 +12837,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOPartAddToEmitC>(typeConverter, ctx);
   patterns.add<PTOExtractToEmitC, PTOExtractFPToEmitC, PTOInsertToEmitC,
                PTOInsertFPToEmitC>(typeConverter, ctx);
-  patterns.add<PTOSetImg2colFmatrixToEmitC, PTOSetImg2colPaddingToEmitC,
-               PTOSetImg2colRepeatToEmitC, PTOTImg2colToEmitC>(typeConverter,
-                                                               ctx);
+  patterns.add<PTOTImg2colToEmitC>(typeConverter, ctx);
   patterns.add<PTOFillPadToEmitC, PTOFillPadInplaceToEmitC, PTOFillPadExpandToEmitC>(
       typeConverter, ctx);
   patterns.add<PTOGatherToEmitC>(typeConverter, ctx);
@@ -13131,9 +13091,7 @@ struct EmitPTOManualPass
             needsTRandomHelper = true;
           if (isa<mlir::pto::PartitionViewOp>(op))
             needsGlobalTensorDataHelper = true;
-          if (isa<mlir::pto::SetImg2colFmatrixOp,
-                  mlir::pto::SetImg2colPaddingOp,
-                  mlir::pto::SetImg2colRepeatOp, mlir::pto::TImg2colOp>(op))
+          if (isa<mlir::pto::TImg2colOp>(op))
             needsImg2colHelper = true;
           if (isa<mlir::pto::BuildAsyncSessionOp, mlir::pto::TPutAsyncOp,
                   mlir::pto::TGetAsyncOp, mlir::pto::TPrefetchAsyncOp,

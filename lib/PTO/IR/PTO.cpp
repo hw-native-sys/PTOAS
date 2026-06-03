@@ -6121,45 +6121,6 @@ mlir::LogicalResult mlir::pto::TFillPadInplaceOp::verify() {
                             /*allowDstExpand=*/false, "tfillpad_inplace");
 }
 
-static LogicalResult verifyTImg2colConfigOp(Operation *op, Type configTy,
-                                            StringRef name) {
-  if (getVerifierTargetArch(op) != VerifierTargetArch::A5)
-    return op->emitError("expects A5 img2col configuration ops");
-  if (failed(verifyImg2colConfigLike(op, configTy, name)))
-    return failure();
-
-  auto loc = getPTOMemorySpaceEnum(configTy);
-  if (!loc || *loc != pto::AddressSpace::MAT)
-    return op->emitError() << "expects " << name
-                           << " to use loc=mat for img2col configuration";
-
-  auto tb = cast<pto::TileBufType>(configTy);
-  if (tb.getPadValueI32() != static_cast<int32_t>(pto::PadValue::Null) &&
-      tb.getPadValueI32() != static_cast<int32_t>(pto::PadValue::Zero))
-    return op->emitError()
-           << "expects img2col padding mode to be null or zero for now";
-
-  return success();
-}
-
-LogicalResult mlir::pto::SetImg2colFmatrixOp::verify() {
-  if (shouldBypassDecodedMemrefVerifier(getOperation()))
-    return success();
-  return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
-}
-
-LogicalResult mlir::pto::SetImg2colPaddingOp::verify() {
-  if (shouldBypassDecodedMemrefVerifier(getOperation()))
-    return success();
-  return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
-}
-
-LogicalResult mlir::pto::SetImg2colRepeatOp::verify() {
-  if (shouldBypassDecodedMemrefVerifier(getOperation()))
-    return success();
-  return verifyTImg2colConfigOp(getOperation(), getConfig().getType(), "config");
-}
-
 LogicalResult mlir::pto::TImg2colOp::verify() {
   if (shouldBypassDecodedMemrefVerifier(getOperation()))
     return success();

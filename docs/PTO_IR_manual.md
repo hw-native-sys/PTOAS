@@ -7437,76 +7437,6 @@ pto.tfillpad_inplace ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols
 
 ---
 
-##### `pto.set_img2col_fmatrix` - Program Img2col Fmatrix State
-
-**Summary:** Programs the img2col fmatrix register from ConvTile-like MAT tile metadata.
-
-**Arguments:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `config` | `pto.tile_buf` | MAT tile with `slayout=nc1hwc0` or `ndc1hwc0` and img2col metadata |
-
-**Results:** None.
-
-**Constraints & Verification:**
-
-- A5 only.
-- `config.loc` must be `mat`.
-- `config.blayout` must be `row_major`.
-- `config.slayout` must be `nc1hwc0` or `ndc1hwc0`.
-- `config` must carry img2col metadata (`fmap_*`, `pad_*`, `stride_*`, `dilation_*`, `filter_*`, `channel_size`, `dst_stride`, `repeat_*`, `transpose`).
-
-**Hardware Mapping:**
-
-- EmitC lowers to `set_fmatrix` / `set_fmatrix_b` via a helper wrapper.
-- Executes on the **FIX pipeline** (`PIPE_FIX`).
-
-**Basic Example:**
-
-```mlir
-pto.set_img2col_fmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=1, pad_t=1, pad_b=1, stride_h=1, stride_w=1, dilation_h=1, dilation_w=1, filter_h=3, filter_w=3, channel_size=16, dst_stride=16, repeat_stride=16, repeat_time=4, repeat_mode=0>
-```
-
----
-
-##### `pto.set_img2col_padding` - Program Img2col Padding State
-
-**Summary:** Programs the img2col padding register from ConvTile-like MAT tile metadata.
-
-**Arguments:** Same as `pto.set_img2col_fmatrix`.
-
-**Results:** None.
-
-**Constraints & Verification:**
-
-- Same structural constraints as `pto.set_img2col_fmatrix`.
-- Current PTOAS implementation accepts `pad=null` and `pad=zero`; `pad=zero` lowers to `set_padding(0)` / `set_padding_b(0)`.
-
-**Hardware Mapping:**
-
-- EmitC lowers to `set_padding` / `set_padding_b` via a helper wrapper.
-- Executes on the **FIX pipeline** (`PIPE_FIX`).
-
----
-
-##### `pto.set_img2col_repeat` - Program Img2col Repeat State
-
-**Summary:** Programs the img2col repeat register from ConvTile-like MAT tile metadata.
-
-**Arguments:** Same as `pto.set_img2col_fmatrix`.
-
-**Results:** None.
-
-**Constraints & Verification:** Same structural constraints as `pto.set_img2col_fmatrix`.
-
-**Hardware Mapping:**
-
-- EmitC lowers to `set_l3d_rpt` / `set_l3d_rpt_b` via a helper wrapper.
-- Executes on the **FIX pipeline** (`PIPE_FIX`).
-
----
-
 ##### `pto.timg2col` - Convert ConvTile to Left Tile
 
 **Summary:** Performs the img2col transform from a ConvTile-like MAT tile into a LEFT tile suitable for cube/matmul consumption.
@@ -7535,6 +7465,7 @@ pto.set_img2col_fmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pa
 **Hardware Mapping:**
 
 - EmitC lowers to `TIMG2COL<dstTile, srcTile, SetFmatrixMode>(dst, src, posM, posK)`.
+- EmitC internally programs the A5 fmatrix, padding, and repeat state from `src` `img2col_config` immediately before emitting `TIMG2COL`.
 - The actual hardware instruction is `img2colv2_cbuf_to_ca`.
 - Executes on the **MTE1 pipeline** (`PIPE_MTE1`).
 

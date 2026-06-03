@@ -1,14 +1,6 @@
 // RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
 
 module {
-  func.func @timg2col_setup_only() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-    %src = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.set_img2col_fmatrix %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.set_img2col_padding %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    pto.set_img2col_repeat %src : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=2, pad_t=3, pad_b=4, stride_h=1, stride_w=2, dilation_h=1, dilation_w=2, filter_h=3, filter_w=5, channel_size=16, dst_stride=32, repeat_stride=48, repeat_time=4, repeat_mode=1>
-    return
-  }
-
   func.func @timg2col_basic() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %src = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, slayout=nc1hwc0, pad=1, fmap_h=8, fmap_w=8, pad_l=1, pad_r=1, pad_t=1, pad_b=1, stride_h=1, stride_w=1, dilation_h=1, dilation_w=1, filter_h=3, filter_w=3, channel_size=16, dst_stride=16, repeat_stride=16, repeat_time=4, repeat_mode=0>
     %dst = pto.alloc_tile : !pto.tile_buf<left, 16x144xf16, slayout=row_major>
@@ -21,11 +13,10 @@ module {
 // CHECK: static AICORE inline void PTOAS__TIMG2COL_SET_PADDING_ZERO()
 // CHECK: static AICORE inline void PTOAS__TIMG2COL_SET_FMATRIX(
 // CHECK: static AICORE inline void PTOAS__TIMG2COL_SET_RPT(
-// CHECK-LABEL: AICORE void timg2col_setup_only(
+// CHECK-LABEL: AICORE void timg2col_basic(
+// CHECK: Tile<TileType::Mat, half, 16, 32, BLayout::RowMajor, 16, 32, SLayout::NC1HWC0, 512, PadValue::Zero, CompactMode::Null>
 // CHECK: PTOAS__TIMG2COL_SET_FMATRIX<false>(
 // CHECK: PTOAS__TIMG2COL_SET_PADDING_ZERO<half, false>()
 // CHECK: PTOAS__TIMG2COL_SET_RPT<false>(
-// CHECK-LABEL: AICORE void timg2col_basic(
-// CHECK: Tile<TileType::Mat, half, 16, 32, BLayout::RowMajor, 16, 32, SLayout::NC1HWC0, 512, PadValue::Zero, CompactMode::Null>
 // CHECK: TIMG2COL<
 // CHECK: SetFmatrixMode::FMATRIX_A_MANUAL
