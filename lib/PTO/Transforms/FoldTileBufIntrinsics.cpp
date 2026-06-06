@@ -74,8 +74,38 @@ struct TileHandleInfo {
   pto::TileBufConfigAttr config;
 };
 
+// Walk through value-conversion casts that preserve the underlying producer.
+// ExpandTileOp / PTOInlineLibCall and other passes may wrap tile_buf values in
+// UnrealizedConversionCastOp / arith.index_cast / memref.cast when bridging
+// tile_buf parameter types. These wrappers must not defeat anchor recovery.
+static Value unwrapBridgingCasts(Value v) {
+  while (v) {
+    Operation *defOp = v.getDefiningOp();
+    if (!defOp)
+      break;
+    if (auto cast = dyn_cast<UnrealizedConversionCastOp>(defOp)) {
+      if (cast.getNumOperands() == 1 && cast.getNumResults() == 1) {
+        v = cast.getOperand(0);
+        continue;
+      }
+      break;
+    }
+    if (auto cast = dyn_cast<arith::IndexCastOp>(defOp)) {
+      v = cast.getIn();
+      continue;
+    }
+    if (auto cast = dyn_cast<memref::CastOp>(defOp)) {
+      v = cast.getSource();
+      continue;
+    }
+    break;
+  }
+  return v;
+}
+
 static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
                                                        Operation *user) {
+  tileBuf = unwrapBridgingCasts(tileBuf);
   if (auto alloc = tileBuf.getDefiningOp<pto::AllocTileOp>()) {
     auto tileTy = dyn_cast<pto::TileBufType>(alloc.getResult().getType());
     if (!tileTy) {

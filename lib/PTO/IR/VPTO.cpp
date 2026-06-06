@@ -1817,7 +1817,8 @@ static ParseResult parseRequiredOperandWithComma(
     OpAsmParser &parser, OpAsmParser::UnresolvedOperand &operand) {
   if (parser.parseOperand(operand))
     return failure();
-  return parser.parseComma();
+  (void)parser.parseOptionalComma();
+  return success();
 }
 
 static ParseResult parseDmaTripleGroup(
@@ -2627,10 +2628,10 @@ static ParseResult parseStructuredAccStoreClauses(
         return success();
     }
     StringRef keyword;
-    if (parser.parseKeyword(&keyword)) {
+    if (parser.parseOptionalKeyword(&keyword)) {
       if (!seenClause)
         return success();
-      return failure();
+      return parser.emitError(parser.getCurrentLocation(), "expected valid keyword");
     }
     seenClause = true;
 

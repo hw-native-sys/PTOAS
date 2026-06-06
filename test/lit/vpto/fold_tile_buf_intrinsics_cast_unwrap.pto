@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression test: FoldTileBufIntrinsics must unwrap value-cast bridges
+// (UnrealizedConversionCastOp) that wrap a pto.alloc_tile result before
+// reaching pto.tile_buf_addr / pto.tile_valid_rows / pto.tile_valid_cols.
+//
+// Such wrappers can be inserted by ExpandTileOp::bridgeOperandToType when
+// the PTO-source tile_buf type isn't byte-identical to the canonical
+// template parameter type. FoldTileBufIntrinsics must still see through
+// them to recover the alloc_tile anchor.
+//
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto %s -o /dev/null
+//
+// Success = ptoas exits 0 (no FoldTileBufIntrinsics error).
+// The output VPTO must contain neither unresolved tile-buf intrinsics
+// nor the bridging cast that would have blocked resolution.
+//
+// Negative checks — these would otherwise trip FoldTileBufIntrinsics:
+// CHECK-NOT: pto.tile_buf_addr
+// CHECK-NOT: pto.tile_valid_rows
+// CHECK-NOT: pto.tile_valid_cols
+// CHECK-NOT: builtin.unrealized_conversion_cast
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @cast_unwrap_tile_buf_addr(%out: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c0_i64 = arith.constant 0 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %tile = pto.alloc_tile addr = %c0_i64
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    %bridged = builtin.unrealized_conversion_cast %tile
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+        to !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    %addr = pto.tile_buf_addr %bridged
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+        -> !pto.ptr<f32, l0c>
+
+    // Use %addr so the chain can't be DCE'd.
+    pto.mte_l0c_gm %addr, %out, %c16_i64, %c16_i64, %c16_i64, %c16_i64, %c0_i64, %c0_i64, nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64
+
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @cast_unwrap_valid_shape(%out: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c0_i64 = arith.constant 0 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %tile = pto.alloc_tile addr = %c0_i64
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    %bridged = builtin.unrealized_conversion_cast %tile
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+        to !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    %rows = pto.tile_valid_rows %bridged
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024> -> index
+    %cols = pto.tile_valid_cols %bridged
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024> -> index
+
+    %rows_i64 = arith.index_cast %rows : index to i64
+    %cols_i64 = arith.index_cast %cols : index to i64
+
+    %addr = pto.tile_buf_addr %bridged
+      : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+        -> !pto.ptr<f32, l0c>
+
+    // Use rows/cols to prevent DCE.
+    pto.mte_l0c_gm %addr, %out, %rows_i64, %cols_i64, %c16_i64, %c16_i64, %c0_i64, %c0_i64, nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64
+
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

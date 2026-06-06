@@ -1130,4 +1130,18 @@ def PTO_QuantTypeAttr : EnumAttr<PTO_Dialect, PTO_QuantTypeEnum, "quant_type"> {
   let summary = "quantization type attribute";
 }
 
+//===----------------------------------------------------------------------===//
+// TInsertMode (tinsert FP split mode for A5)
+//===----------------------------------------------------------------------===//
+
+def PTO_TInsertMode_Enum : PTO_I32Enum<"TInsertMode", "TINSERT split mode (A5)", [
+  I32EnumAttrCase<"SPLIT2", 2, "split2">,
+  I32EnumAttrCase<"SPLIT4", 3, "split4">
+]>;
+
+def PTO_TInsertModeAttr : PTO_Attr<"TInsertMode", "tinsert_mode"> {
+  let parameters = (ins EnumParameter<PTO_TInsertMode_Enum>:$value);
+  let assemblyFormat = "`<` params `>`";
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOATTRS

@@ -5783,6 +5783,7 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
+static bool isA5VectorPreQuantTypePair(Type srcElem, Type dstElem);
 mlir::LogicalResult mlir::pto::TInsertOp::verify() {
   auto isColMajorRowMajorNZ = [&](pto::TileBufType ty) -> bool {
     return ty.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) &&
@@ -5801,6 +5802,9 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
   };
   auto isA2A3VecInsertElemType = [&](Type ty) -> bool {
     return ty.isInteger(8) || ty.isF16() || ty.isBF16() || ty.isF32();
+  };
+  auto getSpace = [](Type ty) -> std::optional<pto::AddressSpace> {
+    return getPTOMemorySpaceEnum(ty);
   };
   auto verifyCommon = [&]() -> FailureOr<std::tuple<Type, Type, pto::TileBufType,
                                                     pto::TileBufType, Type, Type,
@@ -5828,12 +5832,79 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
     return std::make_tuple(srcTy, dstTy, srcTb, dstTb, srcElem, dstElem,
                            srcSpace, dstSpace);
   };
+  // Shared validation for optional operands and attributes.
+  auto verifyOptionalArgs = [&](const std::optional<pto::AddressSpace> &srcSpace,
+                                const std::optional<pto::AddressSpace> &dstSpace,
+                                bool isA5) -> LogicalResult {
+    const bool hasFp = static_cast<bool>(getFp());
+    const bool hasPreQuantScalar = static_cast<bool>(getPreQuantScalar());
+    const bool hasAccToVecMode = static_cast<bool>(getAccToVecModeAttr());
+    const bool hasInsertMode = static_cast<bool>(getTinsertModeAttr());
+    const bool reluNonDefault = getReluPreMode() != pto::ReluPreMode::NoRelu;
+
+    if (hasFp && hasPreQuantScalar)
+      return emitOpError("fp and preQuantScalar are mutually exclusive");
+
+    // fp tile is only valid with Acc source.
+    if (hasFp) {
+      if (!srcSpace || *srcSpace != pto::AddressSpace::ACC)
+        return emitOpError("fp is only valid with src loc=acc");
+      auto fpTy = getFp().getType();
+      auto fpTb = dyn_cast<pto::TileBufType>(fpTy);
+      if (!fpTb) return emitOpError("expects fp to be !pto.tile_buf");
+      auto fpSpace = getSpace(fpTy);
+      if (!fpSpace || *fpSpace != pto::AddressSpace::SCALING)
+        return emitOpError("expects fp to be loc=scaling");
+    }
+
+    // preQuantScalar is only valid with Acc source.
+    if (hasPreQuantScalar) {
+      if (!srcSpace || *srcSpace != pto::AddressSpace::ACC)
+        return emitOpError("preQuantScalar is only valid with src loc=acc");
+    }
+
+    // reluPreMode is only valid with Acc source.
+    if (reluNonDefault) {
+      if (!srcSpace || *srcSpace != pto::AddressSpace::ACC)
+        return emitOpError("reluPreMode is only valid with src loc=acc");
+    }
+
+    // accToVecMode is only valid with Acc->Vec (A5 only).
+    if (hasAccToVecMode) {
+      if (!isA5)
+        return emitOpError("accToVecMode is only supported on A5");
+      if (!srcSpace || !dstSpace ||
+          *srcSpace != pto::AddressSpace::ACC ||
+          *dstSpace != pto::AddressSpace::VEC)
+        return emitOpError("accToVecMode is only valid with src=acc, dst=vec");
+    }
+
+    // tinsertMode (SPLIT2/SPLIT4) is only valid with Vec(NZ)->Mat on A5.
+    if (hasInsertMode) {
+      if (!isA5)
+        return emitOpError("tinsertMode is only supported on A5");
+      if (!srcSpace || !dstSpace ||
+          *srcSpace != pto::AddressSpace::VEC ||
+          *dstSpace != pto::AddressSpace::MAT)
+        return emitOpError(
+            "tinsertMode (SPLIT2/SPLIT4) is only valid with src=vec, dst=mat");
+      auto srcTb = dyn_cast<pto::TileBufType>(getSrc().getType());
+      if (!srcTb || !isColMajorRowMajorNZ(srcTb))
+        return emitOpError(
+            "tinsertMode (SPLIT2/SPLIT4) requires src NZ layout "
+            "(blayout=col_major, slayout=row_major)");
+    }
+
+    return success();
+  };
   auto verifyA2A3 = [&]() -> LogicalResult {
     auto common = verifyCommon();
     if (failed(common))
       return failure();
     auto [srcTy, dstTy, srcTb, dstTb, srcElem, dstElem, srcSpace, dstSpace] =
         *common;
+    if (failed(verifyOptionalArgs(srcSpace, dstSpace, /*isA5=*/false)))
+      return failure();
     if (srcSpace && dstSpace && *srcSpace == pto::AddressSpace::VEC &&
         *dstSpace == pto::AddressSpace::VEC) {
       if (srcElem != dstElem || !isA2A3VecInsertElemType(srcElem))
@@ -5865,6 +5936,8 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
         *common;
     if (!srcSpace || !dstSpace)
       return emitOpError("expects A5 tinsert src/dst to have explicit loc");
+    if (failed(verifyOptionalArgs(srcSpace, dstSpace, /*isA5=*/true)))
+      return failure();
 
     // A5 regular acc->mat path.
     if (*srcSpace == pto::AddressSpace::ACC && *dstSpace == pto::AddressSpace::MAT) {
@@ -5872,13 +5945,49 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
         return emitOpError("expects A5 acc->mat tinsert src to use blayout=col_major and slayout=row_major");
       if (!isColMajorRowMajorNZ(dstTb))
         return emitOpError("expects A5 acc->mat tinsert dst to use blayout=col_major and slayout=row_major");
-      bool okTypes = (srcElem.isF32() &&
-                      (dstElem.isF16() || dstElem.isBF16() || dstElem.isF32())) ||
-                     (srcElem.isInteger(32) && dstElem.isInteger(32));
+      const bool hasQuant = static_cast<bool>(getFp()) ||
+                            static_cast<bool>(getPreQuantScalar());
+      bool okTypes;
+      if (hasQuant) {
+        // With fp/scalar quantization, allow wider dst types (i8/fp8/f16/bf16/f32).
+        okTypes = isA5VectorPreQuantTypePair(srcElem, dstElem);
+      } else {
+        okTypes = (srcElem.isF32() &&
+                   (dstElem.isF16() || dstElem.isBF16() || dstElem.isF32())) ||
+                  (srcElem.isInteger(32) && dstElem.isInteger(32));
+      }
       if (!okTypes)
         return emitOpError(
             "expects A5 acc->mat tinsert element types to be "
-            "(src=f32,dst=f16/bf16/f32) or (src=i32,dst=i32)");
+            "(src=f32,dst=f16/bf16/f32) or (src=i32,dst=i32)"
+            + (hasQuant ? std::string("; with fp/scalar: (src=f32,dst=i8/fp8/f16/bf16/f32) or (src=i32,dst=i8/f16/bf16)") : std::string()));
+      return success();
+    }
+
+    // A5 acc->vec path.
+    if (*srcSpace == pto::AddressSpace::ACC && *dstSpace == pto::AddressSpace::VEC) {
+      if (!isColMajorRowMajorNZ(srcTb))
+        return emitOpError("expects A5 acc->vec tinsert src to use blayout=col_major and slayout=row_major");
+      bool dstIsND = isRowMajorNoneBoxND(dstTb);
+      bool dstIsNZ = isColMajorRowMajorNZ(dstTb);
+      if (!dstIsND && !dstIsNZ)
+        return emitOpError(
+            "expects A5 acc->vec tinsert dst to use ND(row_major/none_box) or NZ(col_major/row_major) layout");
+      const bool hasQuant = static_cast<bool>(getFp()) ||
+                            static_cast<bool>(getPreQuantScalar());
+      bool okTypes;
+      if (hasQuant) {
+        okTypes = isA5VectorPreQuantTypePair(srcElem, dstElem);
+      } else {
+        okTypes = (srcElem.isF32() &&
+                   (dstElem.isF16() || dstElem.isBF16() || dstElem.isF32())) ||
+                  (srcElem.isInteger(32) && dstElem.isInteger(32));
+      }
+      if (!okTypes)
+        return emitOpError(
+            "expects A5 acc->vec tinsert element types to be "
+            "(src=f32,dst=f16/bf16/f32) or (src=i32,dst=i32)"
+            + (hasQuant ? std::string("; with fp/scalar: (src=f32,dst=i8/fp8/f16/bf16/f32) or (src=i32,dst=i8/f16/bf16)") : std::string()));
       return success();
     }
 
@@ -5898,12 +6007,21 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
       return success();
     }
 
-    // A5 vec->vec path (PR561 ND_VEC).
+    // A5 vec->vec path: supports ND->ND and NZ->NZ.
     if (*srcSpace == pto::AddressSpace::VEC && *dstSpace == pto::AddressSpace::VEC) {
-      if (!isRowMajorNoneBoxND(srcTb) || !isRowMajorNoneBoxND(dstTb))
+      bool srcIsND = isRowMajorNoneBoxND(srcTb);
+      bool dstIsND = isRowMajorNoneBoxND(dstTb);
+      bool srcIsNZ = isColMajorRowMajorNZ(srcTb);
+      bool dstIsNZ = isColMajorRowMajorNZ(dstTb);
+      if (srcIsND && dstIsND) {
+        // ND->ND path
+      } else if (srcIsNZ && dstIsNZ) {
+        // NZ->NZ path
+      } else {
         return emitOpError(
-            "expects A5 vec->vec tinsert src/dst to use ND layout "
-            "(blayout=row_major, slayout=none_box)");
+            "expects A5 vec->vec tinsert src/dst layouts to match: "
+            "both ND(row_major/none_box) or both NZ(col_major/row_major)");
+      }
       if (srcElem != dstElem || !isA5SupportedVecElemType(srcElem))
         return emitOpError(
             "expects A5 vec->vec tinsert src/dst to have same supported dtype "
@@ -5913,7 +6031,7 @@ mlir::LogicalResult mlir::pto::TInsertOp::verify() {
 
     return emitOpError(
         "expects A5 tinsert to use a supported src/dst loc pair: "
-        "acc->mat, vec->mat, or vec->vec");
+        "acc->mat, acc->vec, vec->mat, or vec->vec");
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
@@ -6059,7 +6177,7 @@ mlir::LogicalResult mlir::pto::TExtractFPOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TInsertFPOp::verify() {
-  auto verifyCommon = [&]() -> FailureOr<std::tuple<Type, Type, Type, pto::TileBufType,
+  auto verifyCommon = [&](bool isA5) -> FailureOr<std::tuple<Type, Type, Type, pto::TileBufType,
                                                     pto::TileBufType, pto::TileBufType,
                                                     pto::AddressSpace, pto::AddressSpace,
                                                     pto::AddressSpace>> {
@@ -6090,17 +6208,24 @@ mlir::LogicalResult mlir::pto::TInsertFPOp::verify() {
       return emitOpError("expects src to use loc=acc");
     if (*fpSpace != pto::AddressSpace::SCALING)
       return emitOpError("expects fp to use loc=scaling");
-    if (*dstSpace != pto::AddressSpace::MAT)
-      return emitOpError("expects dst to use loc=mat");
+    // A2/A3: only acc->mat; A5: acc->mat or acc->vec.
+    if (*dstSpace != pto::AddressSpace::MAT &&
+        !(isA5 && *dstSpace == pto::AddressSpace::VEC))
+      return emitOpError("expects dst to use loc=mat" +
+                         (isA5 ? StringRef(" or loc=vec (A5)") : StringRef("")));
     if (!isColMajorRowMajorNZTileBuf(srcTb))
       return emitOpError("expects src to use blayout=col_major and slayout=row_major");
-    if (!isColMajorRowMajorNZTileBuf(dstTb))
-      return emitOpError("expects dst to use blayout=col_major and slayout=row_major");
+    if (*dstSpace == pto::AddressSpace::MAT && !isColMajorRowMajorNZTileBuf(dstTb))
+      return emitOpError("expects dst (mat) to use blayout=col_major and slayout=row_major");
+    // accToVecMode is only valid when dst=vec.
+    if (static_cast<bool>(getAccToVecModeAttr()) &&
+        *dstSpace != pto::AddressSpace::VEC)
+      return emitOpError("accToVecMode is only valid with dst=vec");
     return std::make_tuple(srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, *srcSpace,
                            *fpSpace, *dstSpace);
   };
   auto verifyA2A3 = [&]() -> LogicalResult {
-    auto common = verifyCommon();
+    auto common = verifyCommon(/*isA5=*/false);
     if (failed(common))
       return failure();
     auto [srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, srcSpace, fpSpace, dstSpace] =
@@ -6122,7 +6247,7 @@ mlir::LogicalResult mlir::pto::TInsertFPOp::verify() {
     return success();
   };
   auto verifyA5 = [&]() -> LogicalResult {
-    auto common = verifyCommon();
+    auto common = verifyCommon(/*isA5=*/true);
     if (failed(common))
       return failure();
     auto [srcTy, fpTy, dstTy, srcTb, fpTb, dstTb, srcSpace, fpSpace, dstSpace] =
@@ -11747,8 +11872,11 @@ void TExtractOp::getEffects(
 // TINSERT: Read(src) -> Write(dst)
 void TInsertOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrcMutable());
-  PTO_ADD_WRITE(getDstMutable());
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  auto fpRange = getFpMutable();
+  if (!fpRange.empty())
+    addEffect(effects, &*fpRange.begin(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
 // TEXTRACT_FP: Read(src), Read(fp) -> Write(dst)
