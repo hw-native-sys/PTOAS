@@ -110,6 +110,8 @@ endfunction()
 # --------------------------------------------------------------------------
 set(ALL_TESTCASES
     tadd
+    tinsert
+    tinsert_vec
     tsub
     tmul
     tdiv

@@ -1,0 +1,57 @@
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+
+module attributes {"pto.target_arch" = "a5"} {
+  // A5: acc->vec with default (SingleModeVec0, NoRelu) -- no template args.
+  // CHECK-LABEL: AICORE void tinsert_acc_vec_default(
+  // CHECK: TINSERT(
+  // CHECK-NOT: ReluPreMode::
+  // CHECK-NOT: AccToVecMode::
+  // CHECK-NOT: TInsertMode::
+  func.func @tinsert_acc_vec_default() {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+               outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  // A5: acc->vec with ReLU.
+  // CHECK-LABEL: AICORE void tinsert_acc_vec_relu(
+  // CHECK: TINSERT<{{.*}}, ReluPreMode::NormalRelu>(
+  func.func @tinsert_acc_vec_relu() {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+               outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               {reluPreMode = #pto<relu_pre_mode normal_relu>}
+    return
+  }
+
+  // A5: acc->vec with AccToVecMode + ReLU.
+  // CHECK-LABEL: AICORE void tinsert_acc_vec_splitm(
+  // CHECK: TINSERT<{{.*}}, {{.*}}AccToVecMode::DualModeSplitM, ReluPreMode::NormalRelu>(
+  func.func @tinsert_acc_vec_splitm() {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+               outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               {accToVecMode = #pto.acc_to_vec_mode<dual_mode_split_m>, reluPreMode = #pto<relu_pre_mode normal_relu>}
+    return
+  }
+
+  // A5: acc->mat with ReLU (cast quantization).
+  // CHECK-LABEL: AICORE void tinsert_acc_mat_relu(
+  // CHECK: TINSERT<{{.*}}, ReluPreMode::NormalRelu>(
+  func.func @tinsert_acc_mat_relu() {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+               outs(%dst : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+               {reluPreMode = #pto<relu_pre_mode normal_relu>}
+    return
+  }
+}
