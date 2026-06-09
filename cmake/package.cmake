@@ -103,9 +103,15 @@ install(FILES ${CMAKE_BINARY_DIR}/lib/CAPI/Dialect/CMakeFiles/obj.PTOCAPI.dir/PT
     COMPONENT pto-as
 )
 
+if(CMAKE_BUILD_TYPE)
+    string(TOLOWER "${CMAKE_BUILD_TYPE}" PTOAS_TARGETS_CONFIG_SUFFIX)
+else()
+    set(PTOAS_TARGETS_CONFIG_SUFFIX "noconfig")
+endif()
+
 install(FILES
     ${CMAKE_INSTALL_PREFIX}/lib/cmake/PTOAS/PTOASTargets.cmake
-    ${CMAKE_INSTALL_PREFIX}/lib/cmake/PTOAS/PTOASTargets-noconfig.cmake
+    ${CMAKE_INSTALL_PREFIX}/lib/cmake/PTOAS/PTOASTargets-${PTOAS_TARGETS_CONFIG_SUFFIX}.cmake
     ${CMAKE_INSTALL_PREFIX}/lib/cmake/PTOAS/PTOASConfig.cmake
     DESTINATION lib/cmake/PTOAS
     ${INSTALL_OPTIONAL}
@@ -124,6 +130,13 @@ set(PTOAS_PACKAGE_STAGE_DIR
     ${CMAKE_BINARY_DIR}/package_runtime/tools/ptoas)
 
 install(FILES ${PTOAS_PACKAGE_STAGE_DIR}/bin/ptoas
+    DESTINATION tools/ptoas/bin
+    ${INSTALL_OPTIONAL}
+    COMPONENT pto-as
+    PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
+)
+
+install(FILES ${PTOAS_PACKAGE_STAGE_DIR}/bin/ptoas.real
     DESTINATION tools/ptoas/bin
     ${INSTALL_OPTIONAL}
     COMPONENT pto-as

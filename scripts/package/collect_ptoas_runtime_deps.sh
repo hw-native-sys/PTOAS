@@ -20,6 +20,7 @@ BUILD_ROOT="$(cd "$1" && pwd -P)"
 SOURCE_BINARY="$2"
 STAGED_BINARY="$3"
 STAGED_LIB_DIR="$4"
+STAGED_REAL_BINARY="${STAGED_BINARY}.real"
 LLVM_STRIP_BIN="${BUILD_ROOT}/llvm-project/build-shared/bin/llvm-strip"
 LLVM_RUNTIME_LIB_DIR="${BUILD_ROOT}/llvm-project/build-shared/lib"
 declare -a ALLOWED_ROOTS=("${BUILD_ROOT}")
@@ -30,7 +31,7 @@ declare -a ALLOWED_ROOTS=("${BUILD_ROOT}")
 }
 
 mkdir -p "$(dirname "${STAGED_BINARY}")" "${STAGED_LIB_DIR}"
-rm -f "${STAGED_BINARY}"
+rm -f "${STAGED_BINARY}" "${STAGED_REAL_BINARY}"
 find "${STAGED_LIB_DIR}" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
 
 declare -A COPIED_BY_BASENAME=()
@@ -214,8 +215,17 @@ copy_runtime_dep() {
   done < <(ldd "${source_path}" 2>/dev/null | awk '/=> \// {print $3}')
 }
 
-cp "${SOURCE_BINARY}" "${STAGED_BINARY}"
-harden_elf "${STAGED_BINARY}"
+cp "${SOURCE_BINARY}" "${STAGED_REAL_BINARY}"
+harden_elf "${STAGED_REAL_BINARY}"
+chmod +x "${STAGED_REAL_BINARY}"
+
+cat > "${STAGED_BINARY}" <<'EOF'
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LD_LIBRARY_PATH="${SCRIPT_DIR}/../lib:${LD_LIBRARY_PATH:-}"
+exec -a ptoas "${SCRIPT_DIR}/ptoas.real" "$@"
+EOF
+chmod +x "${STAGED_BINARY}"
 
 while read -r dep; do
   [ -n "${dep}" ] || continue

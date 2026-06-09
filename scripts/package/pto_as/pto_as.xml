@@ -28,6 +28,7 @@
     <file_info value="ptoas" copy_type="source" src_path="" dst_path="tools/ptoas" install_path="tools/ptoas">
         <file value="lib" install_mod="550" entity="true"/>
         <file value="ptoas" dst_path="tools/ptoas/bin" install_path="tools/ptoas/bin"/>
+        <file value="ptoas.real" dst_path="tools/ptoas/bin" install_path="tools/ptoas/bin"/>
     </file_info>
     <block_info dependtree="false" dst_path="" block_conf_path="ascend">
         <block name="EngineeringCommon"/>

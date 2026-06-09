@@ -10,24 +10,6 @@
 # This cache file is intended to be passed via `cmake -C ...` so release and
 # delivery builds inherit the same compiler options that codecheck expects.
 
-foreach(_flag_var CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
-  set(_flag_value "${${_flag_var}}")
-  foreach(_hardening_flag
-      -D_FORTIFY_SOURCE=2
-      # `-fstack-protector-strong` does not instrument small interface/helper
-      # shared libraries consistently, which leaves BinScope reporting SP=NO
-      # for some packaged MLIR runtime libraries. Use `-all` to force canaries
-      # across the delivered closure.
-      -fstack-protector-all
-      -ftrapv)
-    if(NOT " ${_flag_value} " MATCHES "(^| )${_hardening_flag}( |$)")
-      string(APPEND _flag_value " ${_hardening_flag}")
-    endif()
-  endforeach()
-  string(STRIP "${_flag_value}" _flag_value)
-  set(${_flag_var} "${_flag_value}" CACHE STRING "Linux hardening flags" FORCE)
-endforeach()
-
 foreach(_flag_var
     CMAKE_EXE_LINKER_FLAGS
     CMAKE_SHARED_LINKER_FLAGS
