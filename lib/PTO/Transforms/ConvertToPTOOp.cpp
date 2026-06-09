@@ -65,15 +65,12 @@ std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
 }
 
 std::pair<std::optional<Operation *>, std::optional<Value>>
-getInitInfo(Operation *op, pto::TLoadOp loadOp) {
-  (void)op;
-  (void)loadOp;
+getInitInfo(const Operation *, pto::TLoadOp) {
   return {std::nullopt, std::nullopt};
 }
 
 std::pair<std::optional<Operation *>, std::optional<Value>>
-getUniqueInitInfo(PatternRewriter &rewriter,
-                  std::optional<memref::AllocOp> maybeAlloc,
+getUniqueInitInfo(PatternRewriter &, std::optional<memref::AllocOp> maybeAlloc,
                   pto::TLoadOp loadOp) {
   if (!maybeAlloc.has_value())
     return {std::nullopt, std::nullopt};

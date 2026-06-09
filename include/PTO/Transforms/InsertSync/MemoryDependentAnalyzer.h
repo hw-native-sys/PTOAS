@@ -27,18 +27,19 @@ public:
   // 检查两组内存信息之间是否存在依赖
   bool DepBetween(const SmallVector<const BaseMemInfo *> &a,
                   const SmallVector<const BaseMemInfo *> &b,
-                  DepBaseMemInfoPairVec &depBaseMemInfosVec);
+                  DepBaseMemInfoPairVec &depBaseMemInfosVec) const;
  
   // 检查两个具体的 MemInfo 是否别名
-  bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b);
+  bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b) const;
  
 private:
-  bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
+  bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
   
-  bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
+  bool isBufferAddressRangeOverlap(const BaseMemInfo *a,
+                                   const BaseMemInfo *b) const;
   
-  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b, 
-                       int aIndex, int bIndex);
+  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b,
+                       int aIndex, int bIndex) const;
 };
  
 } // namespace pto

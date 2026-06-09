@@ -113,7 +113,8 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
   addrs.reserve(offsets.size());
   for (uint64_t offset : offsets) {
     auto constantIntOffsetOp =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), offset, 64);
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), offset,
+                                              kPTOI64BitWidth);
     addrs.push_back(constantIntOffsetOp);
   }
 

@@ -47,7 +47,7 @@ public:
 
 // class UpdateWorkSpaceAllocaOpOffsetPattern
 //     : public OpRewritePattern<bishengir::memref_ext::AllocWorkspaceOp> {
-// public:
+// public
 //   using OpRewritePattern<
 //       bishengir::memref_ext::AllocWorkspaceOp>::OpRewritePattern;
 

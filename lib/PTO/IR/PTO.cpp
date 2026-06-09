@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTODialect.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
 
@@ -106,6 +107,52 @@ using llvm::isa;
 using llvm::succeeded;
 using llvm::success;
 
+namespace {
+constexpr unsigned kSmallVectorInlineCapacity0 = 0;
+constexpr unsigned kSmallVectorInlineCapacity1 = 1;
+constexpr unsigned kSmallVectorInlineCapacity2 = 2;
+constexpr unsigned kSmallVectorInlineCapacity3 = 3;
+constexpr unsigned kSmallVectorInlineCapacity4 = 4;
+constexpr unsigned kSmallVectorInlineCapacity5 = 5;
+constexpr unsigned kSmallVectorInlineCapacity8 = 8;
+constexpr unsigned kSmallVectorInlineCapacity16 = 16;
+constexpr unsigned kSmallVectorInlineCapacity32 = 32;
+constexpr unsigned kPTORowColRank = 2;
+constexpr size_t kTGatherTmpOperandCount = 2;
+constexpr size_t kTGatherMaxExtraInsOperands = 3;
+constexpr size_t kCommFixedOperandCount = 2;
+constexpr int64_t kPTOMatmulDimMin = 1;
+constexpr int64_t kPTOMatmulDimMax = 4095;
+constexpr unsigned kPTOColumnDim = 1;
+constexpr int64_t kPTOMinGatherDstColumns = 256;
+constexpr int64_t kPTOFloat4PackedExpansion = 2;
+constexpr size_t kNumber2 = 2;
+constexpr size_t kNumber3 = 3;
+constexpr size_t kNumber4 = 4;
+constexpr size_t kNumber5 = 5;
+constexpr int64_t kNumber32 = 32;
+constexpr int64_t kNumber64 = 64;
+
+template <typename T>
+using SmallVec0 = SmallVector<T, kSmallVectorInlineCapacity0>;
+template <typename T>
+using SmallVec1 = SmallVector<T, kSmallVectorInlineCapacity1>;
+template <typename T>
+using SmallVec2 = SmallVector<T, kSmallVectorInlineCapacity2>;
+template <typename T>
+using SmallVec3 = SmallVector<T, kSmallVectorInlineCapacity3>;
+template <typename T>
+using SmallVec4 = SmallVector<T, kSmallVectorInlineCapacity4>;
+template <typename T>
+using SmallVec5 = SmallVector<T, kSmallVectorInlineCapacity5>;
+template <typename T>
+using SmallVec8 = SmallVector<T, kSmallVectorInlineCapacity8>;
+template <typename T>
+using SmallVec16 = SmallVector<T, kSmallVectorInlineCapacity16>;
+template <typename T>
+using SmallVec32 = SmallVector<T, kSmallVectorInlineCapacity32>;
+} // namespace
+
 // Forward declarations for custom shape/type printers used by tensor_view and
 // partition_tensor_view.
 namespace mlir {
@@ -170,9 +217,9 @@ static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
                                    Value eventDyn, StringRef pipeAttrName,
                                    StringRef eventIdAttrName);
 static bool isTileLikeType(Type ty);
-static SmallVector<int64_t, 4> getShapeVec(Type ty);
-static SmallVector<int64_t, 4> getValidShapeVec(Type ty);
-static SmallVector<int64_t, 4> getValidShapeVec(Value value);
+static SmallVec4<int64_t> getShapeVec(Type ty);
+static SmallVec4<int64_t> getValidShapeVec(Type ty);
+static SmallVec4<int64_t> getValidShapeVec(Value value);
 static bool isByteIntegerType(Type ty);
 static LogicalResult verifyTileBufCommon(Operation *op, Type ty, StringRef name,
                                          bool allowLowPrecision = false);
@@ -277,16 +324,12 @@ void mlir::pto::PTODialect::initialize() {
                                              mlir::Type &elementType) {
   if (failed(parser.parseLess()))
     return failure();
-
   if (failed(parser.parseDimensionList(shape, /*allowDynamic=*/true)))
     return failure();
-
   if (failed(parser.parseType(elementType)))
     return failure();
-
   if (failed(parser.parseGreater()))
     return failure();
-
   return success();
 }
 
@@ -301,13 +344,10 @@ static int64_t getPTOTypeRank(Type type) {
   // 2. 处理 PTO 自定义类型
   if (auto tvTy = dyn_cast<pto::TensorViewType>(type))
     return tvTy.getRank();
-
   if (auto tileTy = dyn_cast<pto::TileType>(type))
     return tileTy.getRank();
-    
   if (auto tileViewTy = dyn_cast<pto::PartitionTensorViewType>(type))
     return tileViewTy.getRank();
-
   if (auto tileBufTy = dyn_cast<pto::TileBufType>(type))
     return tileBufTy.getRank();
 
@@ -358,52 +398,70 @@ bool mlir::pto::isTargetArchA5(Operation *op) {
 }
 
 static llvm::TypeSize getOneByteTypeSize() {
-  return llvm::TypeSize::getFixed(8);
+  return llvm::TypeSize::getFixed(mlir::pto::kPTOByteBitWidth);
 }
 
 llvm::TypeSize mlir::pto::HiF8Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
   return getOneByteTypeSize();
 }
 
-uint64_t mlir::pto::HiF8Type::getABIAlignment(const DataLayout &,
-                                              DataLayoutEntryListRef) const {
-  return 1;
+uint64_t mlir::pto::HiF8Type::getABIAlignment(
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
+  return kPTOByteSize;
 }
 
 uint64_t mlir::pto::HiF8Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
+  return kPTOByteSize;
 }
 
 llvm::TypeSize mlir::pto::F4E1M2x2Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
   return getOneByteTypeSize();
 }
 
 uint64_t mlir::pto::F4E1M2x2Type::getABIAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
+  return kPTOByteSize;
 }
 
 uint64_t mlir::pto::F4E1M2x2Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
+  return kPTOByteSize;
 }
 
 llvm::TypeSize mlir::pto::F4E2M1x2Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
   return getOneByteTypeSize();
 }
 
 uint64_t mlir::pto::F4E2M1x2Type::getABIAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
+  return kPTOByteSize;
 }
 
 uint64_t mlir::pto::F4E2M1x2Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    const DataLayout &dataLayout, DataLayoutEntryListRef params) const {
+  (void)dataLayout;
+  (void)params;
+  return kPTOByteSize;
 }
 
 static VerifierTargetArch getVerifierTargetArch(Operation *op) {
@@ -444,8 +502,8 @@ static bool shouldBypassDecodedMemrefVerifier(Operation *op) {
   return false;
 }
 
-static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
-  SmallVector<int64_t, 4> canonical;
+static SmallVec4<int64_t> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
+  SmallVec4<int64_t> canonical;
   canonical.reserve(validShape.size());
   for (int64_t dim : validShape)
     canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
@@ -521,140 +579,151 @@ static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
   p.printOptionalAttrDict(op->getAttrs(), {pipeAttrName, eventIdAttrName});
 }
 
-[[maybe_unused]] static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
-  mlir::Type ty;
-
-  mlir::OptionalParseResult opt = parser.parseOptionalType(ty);
-
-  if (opt.has_value()) {         
-    if (failed(*opt))
-      return mlir::Type();       
-    return ty;                    
-  }
-
-
-  llvm::StringRef head;
-  if (failed(parser.parseKeyword(&head)))
-    return mlir::Type();
-
-  mlir::MLIRContext *ctx = parser.getContext();
-
-  auto parseShapeElemForOpParser =
-      [&](llvm::SmallVectorImpl<int64_t> &shape, mlir::Type &elem) -> mlir::LogicalResult {
-        if (failed(parser.parseLess()))
-          return failure();
-        if (failed(parser.parseDimensionList(shape, /*allowDynamic=*/true)))
-          return failure();
-        if (failed(parser.parseType(elem)))
-          return failure();
-        if (failed(parser.parseGreater()))
-          return failure();
-        return success();
-      };
-
-  if (head == "pto.tile_view") {
-    llvm::SmallVector<int64_t, 4> shape;
-    mlir::Type elem;
-    if (failed(parseShapeElemForOpParser(shape, elem)))
-      return mlir::Type();
-    return mlir::pto::PartitionTensorViewType::get(ctx, shape, elem);
-  }
-
-  if (head == "pto.tile") {
-    llvm::SmallVector<int64_t, 4> shape;
-    mlir::Type elem;
-    if (failed(parseShapeElemForOpParser(shape, elem)))
-      return mlir::Type();
-    return mlir::pto::TileType::get(ctx, shape, elem);
-  }
-
-  if (head == "pto.ptr") {
-    if (failed(parser.parseLess()))
-      return mlir::Type();
-    mlir::Type elem;
-    if (failed(parser.parseType(elem)))
-      return mlir::Type();
-    if (succeeded(parser.parseOptionalComma())) {
-      // ptr no longer accepts an address space; consume the attr for recovery.
-      mlir::Attribute memorySpace;
-      (void)parser.parseAttribute(memorySpace);
-      parser.emitError(parser.getCurrentLocation(),
-                       "!pto.ptr no longer accepts address space; use !pto.ptr<elem>");
-      return mlir::Type();
-    }
-    if (failed(parser.parseGreater()))
-      return mlir::Type();
-    return mlir::pto::PtrType::get(ctx, elem);
-  }
-
-  if (head == "pto.tensor_view") {
-    llvm::SmallVector<int64_t, 4> shape;
-    mlir::Type elem;
-    if (failed(parseShapeElemForOpParser(shape, elem)))
-      return mlir::Type();
-    return mlir::pto::TensorViewType::get(ctx, shape, elem);
-  }
-
-  return mlir::Type();
+static LogicalResult parseShapeElemTypeForPTOType(
+    OpAsmParser &parser, SmallVectorImpl<int64_t> &shape, Type &elem) {
+  if (failed(parser.parseLess()))
+    return failure();
+  if (failed(parser.parseDimensionList(shape, /*allowDynamic=*/true)))
+    return failure();
+  if (failed(parser.parseType(elem)))
+    return failure();
+  return parser.parseGreater();
 }
 
-mlir::Type TensorViewType::parse(::mlir::AsmParser &parser) {
-  SmallVector<int64_t, 4> shape;
-  Type elementType;
-  if (failed(parseShapeAndElem(parser, shape, elementType, /*allowDynamic=*/true)))
+static Type parseShapedPTOTypeAllowNoBang(OpAsmParser &parser, StringRef head) {
+  SmallVec4<int64_t> shape;
+  Type elem;
+  if (failed(parseShapeElemTypeForPTOType(parser, shape, elem)))
     return Type();
-  return TensorViewType::get(parser.getContext(), shape, elementType);
+  MLIRContext *ctx = parser.getContext();
+  if (head == "pto.tile_view")
+    return PartitionTensorViewType::get(ctx, shape, elem);
+  if (head == "pto.tile")
+    return TileType::get(ctx, shape, elem);
+  if (head == "pto.tensor_view")
+    return TensorViewType::get(ctx, shape, elem);
+  return Type();
 }
 
-void TensorViewType::print(::mlir::AsmPrinter &printer) const {
-  printShapeAndElem(printer, getShape(), getElementType());
+static Type parsePtrPTOTypeAllowNoBang(OpAsmParser &parser) {
+  if (failed(parser.parseLess()))
+    return Type();
+  Type elem;
+  if (failed(parser.parseType(elem)))
+    return Type();
+  if (succeeded(parser.parseOptionalComma())) {
+    Attribute memorySpace;
+    (void)parser.parseAttribute(memorySpace);
+    parser.emitError(parser.getCurrentLocation(),
+                     "!pto.ptr no longer accepts address space; use !pto.ptr<elem>");
+    return Type();
+  }
+  if (failed(parser.parseGreater()))
+    return Type();
+  return PtrType::get(parser.getContext(), elem);
+}
+
+static Type parseKnownPTOTypeAllowNoBang(OpAsmParser &parser, StringRef head) {
+  if (head == "pto.ptr")
+    return parsePtrPTOTypeAllowNoBang(parser);
+  if (head == "pto.tile_view" || head == "pto.tile" ||
+      head == "pto.tensor_view") {
+    return parseShapedPTOTypeAllowNoBang(parser, head);
+  }
+  return Type();
+}
+
+[[maybe_unused]] static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
+  Type ty;
+  OptionalParseResult opt = parser.parseOptionalType(ty);
+  if (opt.has_value())
+    return failed(*opt) ? Type() : ty;
+
+  StringRef head;
+  if (failed(parser.parseKeyword(&head)))
+    return Type();
+  return parseKnownPTOTypeAllowNoBang(parser, head);
+}
+
+mlir::Type TensorViewType::parse(::mlir::AsmParser &odsParser) {
+  SmallVec4<int64_t> shape;
+  Type elementType;
+  if (failed(
+          parseShapeAndElem(odsParser, shape, elementType, /*allowDynamic=*/true)))
+    return Type();
+  return TensorViewType::get(odsParser.getContext(), shape, elementType);
+}
+
+void TensorViewType::print(::mlir::AsmPrinter &odsPrinter) const {
+  printShapeAndElem(odsPrinter, getShape(), getElementType());
 }
 
 //===----------------------------------------------------------------------===//
-// pto.tdivs custom asm to support both:
+// pto.tdivs custom asm supports both forms below
 //   pto.tdivs ins(%src, %scalar : !pto.tile_buf<...>, f32) outs(%dst : !pto.tile_buf<...>)
 //   pto.tdivs ins(%scalar, %src : f32, !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
 // The operand order in the op follows textual input order.
 //===----------------------------------------------------------------------===//
 
-ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand op0, op1, dst;
-  Type ty0, ty1, dstTy;
-
+static ParseResult parseTDivSClauses(OpAsmParser &parser,
+                                     OpAsmParser::UnresolvedOperand &op0,
+                                     OpAsmParser::UnresolvedOperand &op1,
+                                     OpAsmParser::UnresolvedOperand &dst,
+                                     Type &ty0, Type &ty1, Type &dstTy) {
   if (parser.parseKeyword("ins") || parser.parseLParen() ||
       parser.parseOperand(op0) || parser.parseComma() ||
       parser.parseOperand(op1) || parser.parseColonType(ty0) ||
-      parser.parseComma() || parser.parseType(ty1) || parser.parseRParen())
-    return failure();
-
-  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseComma() || parser.parseType(ty1) || parser.parseRParen() ||
+      parser.parseKeyword("outs") || parser.parseLParen() ||
       parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
-      parser.parseRParen())
+      parser.parseRParen()) {
+    return failure();
+  }
+  return success();
+}
+
+static ParseResult validateTDivSTypes(OpAsmParser &parser, Type ty0, Type ty1,
+                                      Type dstTy) {
+  auto tile0 = dyn_cast<TileBufType>(ty0);
+  auto tile1 = dyn_cast<TileBufType>(ty1);
+  if ((tile0 && tile1) || (!tile0 && !tile1)) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected exactly one tile_buf operand and one scalar operand");
+  }
+  if (!dyn_cast<TileBufType>(dstTy)) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected outs type to be !pto.tile_buf<...>");
+  }
+  return success();
+}
+
+static ParseResult resolveTDivSOperands(OpAsmParser &parser,
+                                        OperationState &result,
+                                        OpAsmParser::UnresolvedOperand &op0,
+                                        OpAsmParser::UnresolvedOperand &op1,
+                                        OpAsmParser::UnresolvedOperand &dst,
+                                        Type ty0, Type ty1, Type dstTy) {
+  if (parser.resolveOperand(op0, ty0, result.operands) ||
+      parser.resolveOperand(op1, ty1, result.operands) ||
+      parser.resolveOperand(dst, dstTy, result.operands)) {
+    return failure();
+  }
+  return success();
+}
+
+ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand op0, op1, dst;
+  Type ty0, ty1, dstTy;
+  if (parseTDivSClauses(parser, op0, op1, dst, ty0, ty1, dstTy))
     return failure();
 
   NamedAttrList attrs;
   if (parser.parseOptionalAttrDict(attrs))
     return failure();
-
-  auto tile0 = dyn_cast<mlir::pto::TileBufType>(ty0);
-  auto tile1 = dyn_cast<mlir::pto::TileBufType>(ty1);
-  if ((tile0 && tile1) || (!tile0 && !tile1))
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected exactly one tile_buf operand and one scalar operand");
-
-  if (!dyn_cast<mlir::pto::TileBufType>(dstTy))
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected outs type to be !pto.tile_buf<...>");
-
-  // Keep textual order so later lowering can distinguish the two APIs by the
-  // first ins operand type.
-  if (parser.resolveOperand(op0, ty0, result.operands) ||
-      parser.resolveOperand(op1, ty1, result.operands))
+  if (validateTDivSTypes(parser, ty0, ty1, dstTy) ||
+      resolveTDivSOperands(parser, result, op0, op1, dst, ty0, ty1, dstTy)) {
     return failure();
-
-  if (parser.resolveOperand(dst, dstTy, result.operands))
-    return failure();
-
+  }
   result.addAttributes(attrs);
   return success();
 }
@@ -670,174 +739,436 @@ void mlir::pto::TDivSOp::print(OpAsmPrinter &p) {
 
 
 //===----------------------------------------------------------------------===//
-// pto.tgather custom asm supports three PTO-ISA forms:
+// pto.tgather custom asm supports the three PTO-ISA forms below
 //   1) index+tmp   : ins(%src, %indices, %tmp : srcTy, indicesTy, tmpTy) outs(%dst : dstTy)
 //   2) compare+tmp : ins(%src, %kValue, %tmp : srcTy, scalarTy, tmpTy)
 //                    outs(%dst, %cdst : dstTy, cdstTy) {cmpMode = #pto.cmp<gt>, offset = 7}
 //   3) mask        : ins(%src, {maskPattern = #pto.mask_pattern<P0101>} : srcTy) outs(%dst : dstTy)
 //===----------------------------------------------------------------------===//
 
-ParseResult mlir::pto::TGatherOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand src, dst, cdst;
-  SmallVector<OpAsmParser::UnresolvedOperand, 3> insOps;
-  SmallVector<Type, 3> insTypes;
-  Type srcTy, dstTy, cdstTy;
+namespace {
+
+struct TGatherParseState {
+  OpAsmParser::UnresolvedOperand src;
+  OpAsmParser::UnresolvedOperand dst;
+  OpAsmParser::UnresolvedOperand cdst;
+  SmallVec3<OpAsmParser::UnresolvedOperand> insOps;
+  SmallVec3<Type> insTypes;
+  Type srcTy;
+  Type dstTy;
+  Type cdstTy;
   bool hasCdst = false;
   bool hasMask = false;
   bool hasIndices = false;
   bool hasTmp = false;
   bool hasKValue = false;
+};
 
-  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+template <typename ParseStateT>
+static ParseResult parseMaskPatternInsClause(OpAsmParser &parser,
+                                             OperationState &result,
+                                             ParseStateT &state) {
+  if (parser.parseKeyword("maskPattern") || parser.parseEqual())
     return failure();
+  Attribute rawMaskAttr;
+  if (parser.parseAttribute(rawMaskAttr) || parser.parseRBrace())
+    return failure();
+  auto mp = llvm::dyn_cast<MaskPatternAttr>(rawMaskAttr);
+  if (!mp) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected #pto.mask_pattern<Pxxxx> for maskPattern");
+  }
+  result.addAttribute("maskPattern", mp);
+  state.hasMask = true;
+  if (parser.parseColonType(state.srcTy) || parser.parseRParen())
+    return failure();
+  return success();
+}
 
+static ParseResult parseTGatherMaskInsClause(OpAsmParser &parser,
+                                             OperationState &result,
+                                             TGatherParseState &state) {
+  return parseMaskPatternInsClause(parser, result, state);
+}
+
+static ParseResult parseTGatherExtraInsClause(OpAsmParser &parser,
+                                              TGatherParseState &state) {
+  OpAsmParser::UnresolvedOperand extra;
+  if (parser.parseOperand(extra))
+    return failure();
+  state.insOps.push_back(extra);
+  while (succeeded(parser.parseOptionalComma())) {
+    if (state.insOps.size() == kTGatherMaxExtraInsOperands) {
+      return parser.emitError(parser.getCurrentLocation(),
+                              "expected at most 3 extra operands in tgather ins(...)");
+    }
+    if (parser.parseOperand(extra))
+      return failure();
+    state.insOps.push_back(extra);
+  }
+  if (parser.parseColon() || parser.parseType(state.srcTy))
+    return failure();
+  for (size_t i = 0; i < state.insOps.size(); ++i) {
+    Type ty;
+    if (parser.parseComma() || parser.parseType(ty))
+      return failure();
+    state.insTypes.push_back(ty);
+  }
+  return parser.parseRParen();
+}
+
+static ParseResult parseTGatherInsClause(OpAsmParser &parser,
+                                         OperationState &result,
+                                         TGatherParseState &state) {
+  if (parser.parseKeyword("ins") || parser.parseLParen() ||
+      parser.parseOperand(state.src)) {
+    return failure();
+  }
   if (!succeeded(parser.parseOptionalComma())) {
     return parser.emitError(parser.getCurrentLocation(),
                             "expected ',' after src operand in ins(...)");
   }
+  if (succeeded(parser.parseOptionalLBrace()))
+    return parseTGatherMaskInsClause(parser, result, state);
+  return parseTGatherExtraInsClause(parser, state);
+}
 
-  if (succeeded(parser.parseOptionalLBrace())) {
-    if (parser.parseKeyword("maskPattern") || parser.parseEqual())
-      return failure();
-
-    Attribute rawMaskAttr;
-    if (parser.parseAttribute(rawMaskAttr) || parser.parseRBrace())
-      return failure();
-
-    auto mp = llvm::dyn_cast<mlir::pto::MaskPatternAttr>(rawMaskAttr);
-    if (!mp) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "expected #pto.mask_pattern<Pxxxx> for maskPattern");
-    }
-
-    result.addAttribute("maskPattern", mp);
-    hasMask = true;
-
-    if (parser.parseColonType(srcTy) || parser.parseRParen())
-      return failure();
-  } else {
-    OpAsmParser::UnresolvedOperand extra;
-    if (parser.parseOperand(extra))
-      return failure();
-    insOps.push_back(extra);
-    while (succeeded(parser.parseOptionalComma())) {
-      if (insOps.size() == 3) {
-        return parser.emitError(parser.getCurrentLocation(),
-                                "expected at most 3 extra operands in tgather ins(...)");
-      }
-      if (parser.parseOperand(extra))
-        return failure();
-      insOps.push_back(extra);
-    }
-
-    if (parser.parseColon() || parser.parseType(srcTy))
-      return failure();
-    for (size_t i = 0; i < insOps.size(); ++i) {
-      Type ty;
-      if (parser.parseComma() || parser.parseType(ty))
-        return failure();
-      insTypes.push_back(ty);
-    }
-    if (parser.parseRParen())
-      return failure();
-  }
-
-  if (parser.parseKeyword("outs") || parser.parseLParen() || parser.parseOperand(dst))
+static ParseResult parseTGatherOutsClause(OpAsmParser &parser,
+                                          TGatherParseState &state) {
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(state.dst))
     return failure();
   if (succeeded(parser.parseOptionalComma())) {
-    if (parser.parseOperand(cdst))
+    if (parser.parseOperand(state.cdst))
       return failure();
-    hasCdst = true;
+    state.hasCdst = true;
   }
-  if (parser.parseColonType(dstTy))
+  if (parser.parseColonType(state.dstTy))
     return failure();
-  if (hasCdst && (parser.parseComma() || parser.parseType(cdstTy)))
+  if (state.hasCdst && (parser.parseComma() || parser.parseType(state.cdstTy)))
     return failure();
-  if (parser.parseRParen())
-    return failure();
+  return parser.parseRParen();
+}
 
-  if (succeeded(parser.parseOptionalKeyword("maskPattern"))) {
-    if (hasMask)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "maskPattern may only be specified once");
-    if (parser.parseEqual())
-      return failure();
-    Attribute rawMaskAttr;
-    if (parser.parseAttribute(rawMaskAttr))
-      return failure();
-    auto mp = llvm::dyn_cast<mlir::pto::MaskPatternAttr>(rawMaskAttr);
-    if (!mp) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "expected #pto.mask_pattern<Pxxxx> for maskPattern");
-    }
-    result.addAttribute("maskPattern", mp);
-    hasMask = true;
+static ParseResult parseOptionalTGatherMaskPattern(OpAsmParser &parser,
+                                                   OperationState &result,
+                                                   TGatherParseState &state) {
+  if (!succeeded(parser.parseOptionalKeyword("maskPattern")))
+    return success();
+  if (state.hasMask) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "maskPattern may only be specified once");
   }
-
-  if (parser.parseOptionalAttrDict(result.attributes))
+  if (parser.parseEqual())
     return failure();
-
-  if (hasMask) {
-    if (!insOps.empty())
-      return parser.emitError(parser.getCurrentLocation(),
-                              "mask-pattern tgather does not take extra ins operands");
-    if (hasCdst)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "mask-pattern tgather expects a single outs operand");
-  } else if (hasCdst) {
-    if (insOps.empty() ||
-        !(mlir::isa<IntegerType>(insTypes.front()) ||
-          mlir::isa<FloatType>(insTypes.front())))
-      return parser.emitError(parser.getCurrentLocation(),
-                              "compare-form tgather expects a scalar kValue operand");
-    hasKValue = true;
-    if (insOps.size() >= 2) {
-      if (!isTileLikeType(insTypes[1]))
-        return parser.emitError(parser.getCurrentLocation(),
-                                "compare-form tgather tmp must be tile-like");
-      hasTmp = true;
-    }
-    if (insOps.size() == 3) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "compare-form tgather expects at most src, kValue, tmp in ins(...)");
-    }
-  } else {
-    if (!insOps.empty() && !isTileLikeType(insTypes.front())) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "index-form tgather expects tile-like indices; "
-                              "compare-form must use outs(dst, cdst)");
-    }
-    if (!insOps.empty()) {
-      hasIndices = true;
-      if (insOps.size() >= 2) {
-        if (!isTileLikeType(insTypes[1]))
-          return parser.emitError(parser.getCurrentLocation(),
-                                  "index-form tgather tmp must be tile-like");
-        hasTmp = true;
-      }
-    }
-    if (insOps.size() == 3) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "index-form tgather expects at most src, indices, tmp in ins(...)");
-    }
+  Attribute rawMaskAttr;
+  if (parser.parseAttribute(rawMaskAttr))
+    return failure();
+  auto mp = llvm::dyn_cast<MaskPatternAttr>(rawMaskAttr);
+  if (!mp) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected #pto.mask_pattern<Pxxxx> for maskPattern");
   }
+  result.addAttribute("maskPattern", mp);
+  state.hasMask = true;
+  return success();
+}
 
-  if (parser.resolveOperand(src, srcTy, result.operands) ||
-      parser.resolveOperand(dst, dstTy, result.operands))
-    return failure();
-  if (hasCdst && parser.resolveOperand(cdst, cdstTy, result.operands))
-    return failure();
-  if (hasIndices && parser.resolveOperand(insOps[0], insTypes[0], result.operands))
-    return failure();
-  if (hasTmp && parser.resolveOperand(insOps[hasIndices ? 1 : 1], insTypes[1], result.operands))
-    return failure();
-  if (hasKValue && parser.resolveOperand(insOps[0], insTypes[0], result.operands))
-    return failure();
+static ParseResult validateTGatherMaskForm(OpAsmParser &parser,
+                                           const TGatherParseState &state) {
+  if (!state.insOps.empty()) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "mask-pattern tgather does not take extra ins operands");
+  }
+  if (state.hasCdst) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "mask-pattern tgather expects a single outs operand");
+  }
+  return success();
+}
 
+static ParseResult validateTGatherCompareForm(OpAsmParser &parser,
+                                              TGatherParseState &state) {
+  if (state.insOps.empty() ||
+      !(isa<IntegerType>(state.insTypes.front()) ||
+        isa<FloatType>(state.insTypes.front()))) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "compare-form tgather expects a scalar kValue operand");
+  }
+  state.hasKValue = true;
+  if (state.insOps.size() >= kTGatherTmpOperandCount) {
+    if (!isTileLikeType(state.insTypes[1])) {
+      return parser.emitError(parser.getCurrentLocation(),
+                              "compare-form tgather tmp must be tile-like");
+    }
+    state.hasTmp = true;
+  }
+  if (state.insOps.size() == kTGatherMaxExtraInsOperands) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "compare-form tgather expects at most src, kValue, tmp in ins(...)");
+  }
+  return success();
+}
+
+static ParseResult validateTGatherIndexForm(OpAsmParser &parser,
+                                            TGatherParseState &state) {
+  if (!state.insOps.empty() && !isTileLikeType(state.insTypes.front())) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "index-form tgather expects tile-like indices; "
+                            "compare-form must use outs(dst, cdst)");
+  }
+  if (state.insOps.empty())
+    return success();
+  state.hasIndices = true;
+  if (state.insOps.size() >= kTGatherTmpOperandCount) {
+    if (!isTileLikeType(state.insTypes[1])) {
+      return parser.emitError(parser.getCurrentLocation(),
+                              "index-form tgather tmp must be tile-like");
+    }
+    state.hasTmp = true;
+  }
+  if (state.insOps.size() == kTGatherMaxExtraInsOperands) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "index-form tgather expects at most src, indices, tmp in ins(...)");
+  }
+  return success();
+}
+
+static ParseResult validateTGatherOperands(OpAsmParser &parser,
+                                           TGatherParseState &state) {
+  if (state.hasMask)
+    return validateTGatherMaskForm(parser, state);
+  if (state.hasCdst)
+    return validateTGatherCompareForm(parser, state);
+  return validateTGatherIndexForm(parser, state);
+}
+
+static ParseResult resolveTGatherOperands(OpAsmParser &parser,
+                                          OperationState &result,
+                                          const TGatherParseState &state) {
+  if (parser.resolveOperand(state.src, state.srcTy, result.operands) ||
+      parser.resolveOperand(state.dst, state.dstTy, result.operands))
+    return failure();
+  if (state.hasCdst &&
+      parser.resolveOperand(state.cdst, state.cdstTy, result.operands)) {
+    return failure();
+  }
+  if ((state.hasIndices || state.hasKValue) &&
+      parser.resolveOperand(state.insOps[0], state.insTypes[0], result.operands)) {
+    return failure();
+  }
+  if (state.hasTmp &&
+      parser.resolveOperand(state.insOps[1], state.insTypes[1], result.operands)) {
+    return failure();
+  }
+  return success();
+}
+
+static void addTGatherSegmentSizes(OpAsmParser &parser, OperationState &result,
+                                   const TGatherParseState &state) {
   result.addAttribute("operandSegmentSizes",
                       parser.getBuilder().getDenseI32ArrayAttr(
-                          {1, 1, hasCdst ? 1 : 0, hasIndices ? 1 : 0,
-                           hasTmp ? 1 : 0, hasKValue ? 1 : 0}));
+                          {1, 1, state.hasCdst ? 1 : 0,
+                           state.hasIndices ? 1 : 0, state.hasTmp ? 1 : 0,
+                           state.hasKValue ? 1 : 0}));
+}
+
+struct TScatterParseState {
+  OpAsmParser::UnresolvedOperand src;
+  OpAsmParser::UnresolvedOperand indexes;
+  OpAsmParser::UnresolvedOperand dst;
+  Type srcTy;
+  Type idxTy;
+  Type dstTy;
+  bool hasMask = false;
+  bool hasIndexes = false;
+};
+
+static ParseResult parseTScatterMaskInsClause(OpAsmParser &parser,
+                                              OperationState &result,
+                                              TScatterParseState &state) {
+  return parseMaskPatternInsClause(parser, result, state);
+}
+
+static ParseResult parseTScatterIndexesInsClause(OpAsmParser &parser,
+                                                 TScatterParseState &state) {
+  if (parser.parseOperand(state.indexes))
+    return failure();
+  state.hasIndexes = true;
+  if (parser.parseColon() || parser.parseType(state.srcTy) || parser.parseComma() ||
+      parser.parseType(state.idxTy)) {
+    return failure();
+  }
+  return parser.parseRParen();
+}
+
+static ParseResult parseTScatterInsClause(OpAsmParser &parser,
+                                          OperationState &result,
+                                          TScatterParseState &state) {
+  if (parser.parseKeyword("ins") || parser.parseLParen() ||
+      parser.parseOperand(state.src)) {
+    return failure();
+  }
+  if (!succeeded(parser.parseOptionalComma())) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected ',' after src operand in ins(...)");
+  }
+  if (succeeded(parser.parseOptionalLBrace()))
+    return parseTScatterMaskInsClause(parser, result, state);
+  return parseTScatterIndexesInsClause(parser, state);
+}
+
+static ParseResult validateTScatterOperands(OpAsmParser &parser,
+                                            const TScatterParseState &state) {
+  if (state.hasMask && state.hasIndexes) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "mask-pattern tscatter does not take indexes");
+  }
+  if (!state.hasMask && !state.hasIndexes) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected indexes operand or maskPattern for tscatter");
+  }
+  return success();
+}
+
+static ParseResult parseCommGroupOperands(
+    OpAsmParser &parser,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &groupOps) {
+  if (parser.parseComma() || parser.parseKeyword("group") || parser.parseLParen())
+    return failure();
+  OpAsmParser::UnresolvedOperand group;
+  if (parser.parseOperand(group))
+    return failure();
+  groupOps.push_back(group);
+  while (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseOperand(group))
+      return failure();
+    groupOps.push_back(group);
+  }
+  return parser.parseRParen();
+}
+
+struct CommRecvClause {
+  OpAsmParser::UnresolvedOperand ping;
+  std::optional<OpAsmParser::UnresolvedOperand> pong;
+  Type pingTy;
+  Type pongTy;
+};
+
+static ParseResult parseCommCollectiveTypes(
+    OpAsmParser &parser, SmallVectorImpl<Type> &fixedTypes,
+    CommRecvClause &recvClause,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &groupOps,
+    SmallVectorImpl<Type> &groupTypes) {
+  if (parser.parseColon())
+    return failure();
+  for (size_t i = 0; i < fixedTypes.size(); ++i) {
+    if (i != 0 && parser.parseComma())
+      return failure();
+    if (parser.parseType(fixedTypes[i]))
+      return failure();
+  }
+  if (parser.parseComma() || parser.parseType(recvClause.pingTy))
+    return failure();
+  if (recvClause.pong && (parser.parseComma() || parser.parseType(recvClause.pongTy)))
+    return failure();
+  for (size_t i = 0; i < groupOps.size(); ++i) {
+    Type groupTy;
+    if (parser.parseComma() || parser.parseType(groupTy))
+      return failure();
+    groupTypes.push_back(groupTy);
+  }
+  return parser.parseRParen();
+}
+
+static ParseResult parseRequiredCommAttrs(OpAsmParser &parser,
+                                          OperationState &result,
+                                          ArrayRef<StringRef> requiredAttrs) {
+  NamedAttrList attrs;
+  if (parser.parseOptionalAttrDict(attrs))
+    return failure();
+  for (StringRef attrName : requiredAttrs) {
+    if (!attrs.get(attrName)) {
+      return parser.emitError(parser.getCurrentLocation())
+             << "expected '" << attrName << "' attribute";
+    }
+  }
+  result.addAttributes(attrs);
+  return success();
+}
+
+static ParseResult resolveCommCollectiveOperands(
+    OpAsmParser &parser, OperationState &result,
+    ArrayRef<OpAsmParser::UnresolvedOperand> fixedOperands,
+    SmallVectorImpl<Type> &fixedTypes, CommRecvClause &recvClause,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &groupOps,
+    SmallVectorImpl<Type> &groupTypes) {
+  for (auto [operand, type] : llvm::zip_equal(fixedOperands, fixedTypes)) {
+    if (parser.resolveOperand(operand, type, result.operands))
+      return failure();
+  }
+  if (parser.resolveOperand(recvClause.ping, recvClause.pingTy, result.operands))
+    return failure();
+  if (recvClause.pong &&
+      parser.resolveOperand(*recvClause.pong, recvClause.pongTy, result.operands)) {
+    return failure();
+  }
+  return parser.resolveOperands(groupOps, groupTypes, parser.getCurrentLocation(),
+                                result.operands);
+}
+
+static void addCommCollectiveSegmentSizes(OpAsmParser &parser,
+                                          OperationState &result,
+                                          ArrayRef<int32_t> prefix,
+                                          size_t groupCount) {
+  SmallVec5<int32_t> segmentSizes(prefix.begin(), prefix.end());
+  segmentSizes.push_back(static_cast<int32_t>(groupCount));
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(segmentSizes));
+}
+
+static ParseResult parsePartitionViewHeader(
+    OpAsmParser &parser, OperationState &result,
+    OpAsmParser::UnresolvedOperand &source,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &offsets,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &sizes, Type &sourceTy) {
+  if (parser.parseOperand(source) || parser.parseComma() ||
+      parser.parseKeyword("offsets") || parser.parseEqual() ||
+      parser.parseLSquare() || parser.parseOperandList(offsets) ||
+      parser.parseRSquare() || parser.parseComma() ||
+      parser.parseKeyword("sizes") || parser.parseEqual() ||
+      parser.parseLSquare() || parser.parseOperandList(sizes) ||
+      parser.parseRSquare() ||
+      parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColonType(sourceTy)) {
+    return failure();
+  }
+  return success();
+}
+
+static void setPartitionViewOperandSegments(OperationState &result,
+                                            size_t offsetsSize,
+                                            size_t sizesSize) {
+  auto &properties =
+      result.getOrAddProperties<mlir::pto::PartitionViewOp::Properties>();
+  llvm::copy(ArrayRef<int32_t>({1, static_cast<int32_t>(offsetsSize),
+                                static_cast<int32_t>(sizesSize)}),
+             properties.operandSegmentSizes.begin());
+}
+
+} // namespace
+
+ParseResult mlir::pto::TGatherOp::parse(OpAsmParser &parser, OperationState &result) {
+  TGatherParseState state;
+  if (parseTGatherInsClause(parser, result, state) ||
+      parseTGatherOutsClause(parser, state) ||
+      parseOptionalTGatherMaskPattern(parser, result, state) ||
+      parser.parseOptionalAttrDict(result.attributes) ||
+      validateTGatherOperands(parser, state) ||
+      resolveTGatherOperands(parser, result, state)) {
+    return failure();
+  }
+  addTGatherSegmentSizes(parser, result, state);
   return success();
 }
 
@@ -871,7 +1202,6 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
   if (getCdst())
     p << ", " << getCdst().getType();
   p << ")";
-
   if (getMaskPatternAttr()) {
     p.printOptionalAttrDict((*this)->getAttrs(),
                             /*elidedAttrs=*/{"maskPattern", "operandSegmentSizes"});
@@ -883,64 +1213,24 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TScatterOp::parse(OpAsmParser &parser,
                                          OperationState &result) {
-  OpAsmParser::UnresolvedOperand src, indexes, dst;
-  Type srcTy, idxTy, dstTy;
-  bool hasMask = false;
-  bool hasIndexes = false;
-
-  if (parser.parseKeyword("ins") || parser.parseLParen() ||
-      parser.parseOperand(src))
+  TScatterParseState state;
+  if (parseTScatterInsClause(parser, result, state) ||
+      parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(state.dst) || parser.parseColonType(state.dstTy) ||
+      parser.parseRParen() || parser.parseOptionalAttrDict(result.attributes)) {
     return failure();
-
-  if (!succeeded(parser.parseOptionalComma()))
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected ',' after src operand in ins(...)");
-
-  if (succeeded(parser.parseOptionalLBrace())) {
-    if (parser.parseKeyword("maskPattern") || parser.parseEqual())
-      return failure();
-    Attribute rawMaskAttr;
-    if (parser.parseAttribute(rawMaskAttr) || parser.parseRBrace())
-      return failure();
-    auto mp = llvm::dyn_cast<mlir::pto::MaskPatternAttr>(rawMaskAttr);
-    if (!mp)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "expected #pto.mask_pattern<Pxxxx> for maskPattern");
-    result.addAttribute("maskPattern", mp);
-    hasMask = true;
-    if (parser.parseColonType(srcTy) || parser.parseRParen())
-      return failure();
-  } else {
-    if (parser.parseOperand(indexes))
-      return failure();
-    hasIndexes = true;
-    if (parser.parseColon() || parser.parseType(srcTy) || parser.parseComma() ||
-        parser.parseType(idxTy) || parser.parseRParen())
-      return failure();
   }
-
-  if (parser.parseKeyword("outs") || parser.parseLParen() ||
-      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
-      parser.parseRParen())
-    return failure();
-
-  if (parser.parseOptionalAttrDict(result.attributes))
-    return failure();
-
   if (result.attributes.get("maskPattern"))
-    hasMask = true;
-
-  if (hasMask && hasIndexes)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "mask-pattern tscatter does not take indexes");
-  if (!hasMask && !hasIndexes)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected indexes operand or maskPattern for tscatter");
-
-  if (parser.resolveOperand(src, srcTy, result.operands) ||
-      parser.resolveOperand(dst, dstTy, result.operands) ||
-      (hasIndexes && parser.resolveOperand(indexes, idxTy, result.operands)))
+    state.hasMask = true;
+  if (validateTScatterOperands(parser, state) ||
+      parser.resolveOperand(state.src, state.srcTy, result.operands) ||
+      parser.resolveOperand(state.dst, state.dstTy, result.operands)) {
     return failure();
+  }
+  if (state.hasIndexes &&
+      parser.resolveOperand(state.indexes, state.idxTy, result.operands)) {
+    return failure();
+  }
   return success();
 }
 
@@ -959,13 +1249,6 @@ void mlir::pto::TScatterOp::print(OpAsmPrinter &p) {
 }
 
 namespace {
-
-struct CommRecvClause {
-  OpAsmParser::UnresolvedOperand ping;
-  std::optional<OpAsmParser::UnresolvedOperand> pong;
-  Type pingTy;
-  Type pongTy;
-};
 
 static ParseResult parseCommRecvClause(OpAsmParser &parser,
                                        CommRecvClause &recvClause) {
@@ -988,75 +1271,16 @@ static ParseResult parseCommCollectiveTail(
     SmallVectorImpl<OpAsmParser::UnresolvedOperand> &groupOps,
     SmallVectorImpl<Type> &groupTypes, ArrayRef<int32_t> operandSegmentsPrefix,
     ArrayRef<StringRef> requiredAttrs) {
-  if (parser.parseComma() || parser.parseKeyword("group") || parser.parseLParen())
+  if (parseCommGroupOperands(parser, groupOps) ||
+      parseCommCollectiveTypes(parser, fixedTypes, recvClause, groupOps,
+                               groupTypes) ||
+      parseRequiredCommAttrs(parser, result, requiredAttrs) ||
+      resolveCommCollectiveOperands(parser, result, fixedOperands, fixedTypes,
+                                    recvClause, groupOps, groupTypes)) {
     return failure();
-
-  OpAsmParser::UnresolvedOperand group;
-  if (parser.parseOperand(group))
-    return failure();
-  groupOps.push_back(group);
-  while (succeeded(parser.parseOptionalComma())) {
-    if (parser.parseOperand(group))
-      return failure();
-    groupOps.push_back(group);
   }
-
-  if (parser.parseRParen())
-    return failure();
-
-  if (parser.parseColon())
-    return failure();
-
-  for (size_t i = 0; i < fixedTypes.size(); ++i) {
-    if (i != 0 && parser.parseComma())
-      return failure();
-    if (parser.parseType(fixedTypes[i]))
-      return failure();
-  }
-  if (parser.parseComma() || parser.parseType(recvClause.pingTy))
-    return failure();
-  if (recvClause.pong) {
-    if (parser.parseComma() || parser.parseType(recvClause.pongTy))
-      return failure();
-  }
-  for (size_t i = 0; i < groupOps.size(); ++i) {
-    Type groupTy;
-    if (parser.parseComma() || parser.parseType(groupTy))
-      return failure();
-    groupTypes.push_back(groupTy);
-  }
-  if (parser.parseRParen())
-    return failure();
-
-  NamedAttrList attrs;
-  if (parser.parseOptionalAttrDict(attrs))
-    return failure();
-  for (StringRef attrName : requiredAttrs) {
-    if (!attrs.get(attrName)) {
-      return parser.emitError(parser.getCurrentLocation())
-             << "expected '" << attrName << "' attribute";
-    }
-  }
-  result.addAttributes(attrs);
-
-  for (auto [operand, type] : llvm::zip_equal(fixedOperands, fixedTypes)) {
-    if (parser.resolveOperand(operand, type, result.operands))
-      return failure();
-  }
-  if (parser.resolveOperand(recvClause.ping, recvClause.pingTy, result.operands))
-    return failure();
-  if (recvClause.pong &&
-      parser.resolveOperand(*recvClause.pong, recvClause.pongTy, result.operands))
-    return failure();
-  if (parser.resolveOperands(groupOps, groupTypes, parser.getCurrentLocation(),
-                             result.operands))
-    return failure();
-
-  SmallVector<int32_t, 5> segmentSizes(operandSegmentsPrefix.begin(),
-                                       operandSegmentsPrefix.end());
-  segmentSizes.push_back(static_cast<int32_t>(groupOps.size()));
-  result.addAttribute("operandSegmentSizes",
-                      parser.getBuilder().getDenseI32ArrayAttr(segmentSizes));
+  addCommCollectiveSegmentSizes(parser, result, operandSegmentsPrefix,
+                                groupOps.size());
   return success();
 }
 
@@ -1084,16 +1308,15 @@ ParseResult mlir::pto::TBroadcastOp::parse(OpAsmParser &parser,
                                            OperationState &result) {
   OpAsmParser::UnresolvedOperand src;
   CommRecvClause recvClause;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
-  SmallVector<Type, 4> groupTypes;
-
+  SmallVec4<OpAsmParser::UnresolvedOperand> groupOps;
+  SmallVec4<Type> groupTypes;
   if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma())
     return failure();
   if (failed(parseCommRecvClause(parser, recvClause)))
     return failure();
 
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{src};
-  SmallVector<Type, 1> fixedTypes(1);
+  SmallVec1<OpAsmParser::UnresolvedOperand> fixedOperands{src};
+  SmallVec1<Type> fixedTypes(1);
   if (failed(parseCommCollectiveTail(parser, result, fixedOperands, fixedTypes,
                                      recvClause, groupOps, groupTypes,
                                      {1, 1, recvClause.pong ? 1 : 0}, {"root"})))
@@ -1119,16 +1342,15 @@ ParseResult mlir::pto::CommTGatherOp::parse(OpAsmParser &parser,
                                             OperationState &result) {
   OpAsmParser::UnresolvedOperand dst;
   CommRecvClause recvClause;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
-  SmallVector<Type, 4> groupTypes;
-
+  SmallVec4<OpAsmParser::UnresolvedOperand> groupOps;
+  SmallVec4<Type> groupTypes;
   if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma())
     return failure();
   if (failed(parseCommRecvClause(parser, recvClause)))
     return failure();
 
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{dst};
-  SmallVector<Type, 1> fixedTypes(1);
+  SmallVec1<OpAsmParser::UnresolvedOperand> fixedOperands{dst};
+  SmallVec1<Type> fixedTypes(1);
   if (failed(parseCommCollectiveTail(
           parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
           groupTypes, {1, 1, recvClause.pong ? 1 : 0},
@@ -1155,16 +1377,15 @@ ParseResult mlir::pto::CommTScatterOp::parse(OpAsmParser &parser,
                                              OperationState &result) {
   OpAsmParser::UnresolvedOperand src;
   CommRecvClause recvClause;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
-  SmallVector<Type, 4> groupTypes;
-
+  SmallVec4<OpAsmParser::UnresolvedOperand> groupOps;
+  SmallVec4<Type> groupTypes;
   if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma())
     return failure();
   if (failed(parseCommRecvClause(parser, recvClause)))
     return failure();
 
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{src};
-  SmallVector<Type, 1> fixedTypes(1);
+  SmallVec1<OpAsmParser::UnresolvedOperand> fixedOperands{src};
+  SmallVec1<Type> fixedTypes(1);
   if (failed(parseCommCollectiveTail(
           parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
           groupTypes, {1, 1, recvClause.pong ? 1 : 0},
@@ -1191,17 +1412,16 @@ ParseResult mlir::pto::TReduceOp::parse(OpAsmParser &parser,
                                         OperationState &result) {
   OpAsmParser::UnresolvedOperand dst, acc;
   CommRecvClause recvClause;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
-  SmallVector<Type, 4> groupTypes;
-
+  SmallVec4<OpAsmParser::UnresolvedOperand> groupOps;
+  SmallVec4<Type> groupTypes;
   if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma() ||
       parser.parseOperand(acc) || parser.parseComma())
     return failure();
   if (failed(parseCommRecvClause(parser, recvClause)))
     return failure();
 
-  SmallVector<OpAsmParser::UnresolvedOperand, 2> fixedOperands{dst, acc};
-  SmallVector<Type, 2> fixedTypes(2);
+  SmallVec2<OpAsmParser::UnresolvedOperand> fixedOperands{dst, acc};
+  SmallVec2<Type> fixedTypes(kCommFixedOperandCount);
   if (failed(parseCommCollectiveTail(
           parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
           groupTypes, {1, 1, 1, recvClause.pong ? 1 : 0},
@@ -1228,8 +1448,8 @@ void mlir::pto::TReduceOp::print(OpAsmPrinter &p) {
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> shapeOps;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> strideOps;
+  SmallVec4<OpAsmParser::UnresolvedOperand> shapeOps;
+  SmallVec4<OpAsmParser::UnresolvedOperand> strideOps;
 
   Type resultTy;
 
@@ -1268,7 +1488,6 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
   Type elemTy = tvTy.getElementType();
 
   Type ptrTy = mlir::pto::PtrType::get(parser.getContext(), elemTy);
-
   // resolve %ptr
   if (parser.resolveOperand(ptr, ptrTy, result.operands))
     return failure();
@@ -1281,9 +1500,9 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
     return failure();
 
   auto segAttr = parser.getBuilder().getDenseI32ArrayAttr(
-      {1, (int32_t)shapeOps.size(), (int32_t)strideOps.size()});
+      {1, static_cast<int32_t>(shapeOps.size()),
+       static_cast<int32_t>(strideOps.size())});
   result.addAttribute("operandSegmentSizes", segAttr);
-
   return success();
 }
 
@@ -1320,11 +1539,10 @@ inferPartitionViewResultTypeFromSizes(mlir::pto::TensorViewType sourceType,
                                       ValueRange sizes) {
   if (!sourceType)
     return failure();
-
-  if ((int64_t)sizes.size() != sourceType.getRank())
+  if (sizes.size() != static_cast<size_t>(sourceType.getRank()))
     return failure();
 
-  SmallVector<int64_t, 4> shape;
+  SmallVec4<int64_t> shape;
   shape.reserve(sizes.size());
   for (Value size : sizes) {
     auto constSize = getConstIndexValue(size);
@@ -1361,22 +1579,13 @@ static ParseResult resolveIndexOperandsToResult(
 ParseResult mlir::pto::PartitionViewOp::parse(OpAsmParser &parser,
                                               OperationState &result) {
   OpAsmParser::UnresolvedOperand source;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> sizes;
+  SmallVec4<OpAsmParser::UnresolvedOperand> offsets;
+  SmallVec4<OpAsmParser::UnresolvedOperand> sizes;
   Type sourceTy;
   Type resultTy;
   bool hasExplicitResultTy = false;
-
-  if (parser.parseOperand(source) || parser.parseComma() ||
-      parser.parseKeyword("offsets") || parser.parseEqual() ||
-      parser.parseLSquare() || parser.parseOperandList(offsets) ||
-      parser.parseRSquare() || parser.parseComma() ||
-      parser.parseKeyword("sizes") || parser.parseEqual() ||
-      parser.parseLSquare() || parser.parseOperandList(sizes) ||
-      parser.parseRSquare() || parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColonType(sourceTy))
+  if (parsePartitionViewHeader(parser, result, source, offsets, sizes, sourceTy))
     return failure();
-
   if (parseOptionalArrowTypeAndResolveSource(parser, result, source, sourceTy,
                                              resultTy, hasExplicitResultTy))
     return failure();
@@ -1384,12 +1593,7 @@ ParseResult mlir::pto::PartitionViewOp::parse(OpAsmParser &parser,
       resolveIndexOperandsToResult(parser, sizes, result))
     return failure();
 
-  auto &properties = result.getOrAddProperties<PartitionViewOp::Properties>();
-  llvm::copy(ArrayRef<int32_t>(
-                 {1, static_cast<int32_t>(offsets.size()),
-                  static_cast<int32_t>(sizes.size())}),
-             properties.operandSegmentSizes.begin());
-
+  setPartitionViewOperandSegments(result, offsets.size(), sizes.size());
   if (hasExplicitResultTy) {
     result.addTypes(resultTy);
     return success();

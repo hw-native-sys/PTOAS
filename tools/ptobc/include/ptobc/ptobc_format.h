@@ -110,6 +110,7 @@ struct PTOBCFile {
 };
 
 // Helpers to read a PTOBC file from disk.
+std::string canonicalizeFilePath(const std::string &path);
 std::vector<uint8_t> readFile(const std::string& path);
 void writeFile(const std::string& path, const std::vector<uint8_t>& data);
 

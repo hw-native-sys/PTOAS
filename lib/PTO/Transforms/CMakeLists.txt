@@ -36,6 +36,7 @@ add_mlir_dialect_library(PTOTransforms
   AllocToPointerCast.cpp
   InferPTOMemScope.cpp
   PTOPlanMemory.cpp
+  PTOPlanMemoryReuse.cpp
   PTORemoveRedundantBarrier.cpp
   InferPTOLayout.cpp
   PTOA5NormalizeTMovPass.cpp

@@ -42,7 +42,8 @@ static TFreeOp findMatchingTFree(TPopOp tpopOp) {
   return {};
 }
 
-static Operation *getTopLevelAncestorInBlock(Operation *op, Block *block) {
+static Operation *getTopLevelAncestorInBlock(Operation *op,
+                                             const Block *block) {
   Operation *current = op;
   while (current && current->getBlock() != block) {
     Region *parentRegion = current->getParentRegion();
@@ -69,7 +70,7 @@ static bool hasSamePipeTPopInRegion(Operation *op, Value pipeHandle,
 }
 
 static LogicalResult verifySingleOutstandingUntil(TPopOp tpopOp,
-                                                  Operation *freeBoundary) {
+                                                  const Operation *freeBoundary) {
   if (!freeBoundary || freeBoundary == tpopOp.getOperation())
     return success();
 

@@ -27,12 +27,8 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
-
-#include <cassert>
 #include <queue>
 #include <set>
-#include <type_traits>
 
 namespace mlir {
 namespace pto {

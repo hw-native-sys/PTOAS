@@ -58,12 +58,13 @@ static FailureOr<std::pair<PIPE, PIPE>> getConcretePipePair(Operation *op,
 }
 
 template <typename HighLevelOp, typename LowLevelOp>
-static LogicalResult lowerEventSyncOp(HighLevelOp op, PatternRewriter &rewriter) {
+static LogicalResult lowerEventSyncOp(HighLevelOp op,
+                                      PatternRewriter *rewriter) {
   auto pipes = getConcretePipePair(op.getOperation(), op.getSrcOpAttr(),
                                    op.getDstOpAttr());
   if (failed(pipes))
     return failure();
-  rewriter.replaceOpWithNewOp<LowLevelOp>(
+  rewriter->replaceOpWithNewOp<LowLevelOp>(
       op, PipeAttr::get(op.getContext(), pipes->first),
       PipeAttr::get(op.getContext(), pipes->second), op.getEventIdAttr());
   return success();
@@ -74,7 +75,7 @@ struct RecordEventLowering : public OpRewritePattern<RecordEventOp> {
 
   LogicalResult matchAndRewrite(RecordEventOp op,
                                 PatternRewriter &rewriter) const override {
-    return lowerEventSyncOp<RecordEventOp, SetFlagOp>(op, rewriter);
+    return lowerEventSyncOp<RecordEventOp, SetFlagOp>(op, &rewriter);
   }
 };
 
@@ -83,7 +84,7 @@ struct WaitEventLowering : public OpRewritePattern<WaitEventOp> {
 
   LogicalResult matchAndRewrite(WaitEventOp op,
                                 PatternRewriter &rewriter) const override {
-    return lowerEventSyncOp<WaitEventOp, WaitFlagOp>(op, rewriter);
+    return lowerEventSyncOp<WaitEventOp, WaitFlagOp>(op, &rewriter);
   }
 };
 

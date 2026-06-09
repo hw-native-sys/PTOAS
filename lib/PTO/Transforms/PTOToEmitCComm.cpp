@@ -30,8 +30,13 @@ using namespace mlir::pto;
 namespace mlir::pto {
 namespace {
 
+#define PTO_CONVERSION_REWRITER_PARAM ConversionPatternRewriter &rewriter
+
 static constexpr llvm::StringLiteral kGlobalTensorStridesAttrName =
     "__pto.globaltensor_strides";
+static constexpr int8_t kPTOFrontendDirMaskC2V = 1;
+static constexpr int8_t kPTOFrontendDirMaskV2C = 2;
+static constexpr int8_t kPTOFrontendDirMaskBidirectional = 3;
 
 struct PTOInitializeL2G2LPipeToEmitC
     : public OpConversionPattern<mlir::pto::InitializeL2G2LPipeOp> {
@@ -61,11 +66,11 @@ struct PTOInitializeL2G2LPipeToEmitC
 
     Value c2vBuf = zero;
     Value v2cBuf = zero;
-    if (op.getDirMask() == 1)
+    if (op.getDirMask() == kPTOFrontendDirMaskC2V)
       c2vBuf = localAddr ? localAddr : zero;
-    else if (op.getDirMask() == 2)
+    else if (op.getDirMask() == kPTOFrontendDirMaskV2C)
       v2cBuf = localAddr ? localAddr : zero;
-    else if (op.getDirMask() == 3) {
+    else if (op.getDirMask() == kPTOFrontendDirMaskBidirectional) {
       if (localAddr) {
         if (!op.getPeerLocalAddr())
           return rewriter.notifyMatchFailure(
@@ -113,11 +118,11 @@ struct PTOInitializeL2LPipeToEmitC
 
     Value c2vBuf = zero;
     Value v2cBuf = zero;
-    if (op.getDirMask() == 1)
+    if (op.getDirMask() == kPTOFrontendDirMaskC2V)
       c2vBuf = localAddr;
-    else if (op.getDirMask() == 2)
+    else if (op.getDirMask() == kPTOFrontendDirMaskV2C)
       v2cBuf = localAddr;
-    else if (op.getDirMask() == 3) {
+    else if (op.getDirMask() == kPTOFrontendDirMaskBidirectional) {
       c2vBuf = localAddr;
       v2cBuf = peelUnrealized(adaptor.getPeerLocalAddr());
     } else
@@ -221,12 +226,13 @@ template <typename AsyncOp>
 struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
   using OpConversionPattern<AsyncOp>::OpConversionPattern;
 
-  explicit PTOAsyncTransferToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOAsyncTransferToEmitC(const TypeConverter &typeConverter,
+                                   MLIRContext *ctx,
                                    StringRef callee)
       : OpConversionPattern<AsyncOp>(typeConverter, ctx), callee(callee.str()) {}
 
   LogicalResult matchAndRewrite(AsyncOp op, typename AsyncOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                ConversionPatternRewriter &rewriter) const override { // NOLINT(readability-non-const-parameter)
     Value dst = peelUnrealized(adaptor.getDst());
     Value src = peelUnrealized(adaptor.getSrc());
     Value dstGT = dst;
@@ -267,14 +273,15 @@ struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
 
 template <typename AsyncEventOp>
 struct PTOAsyncEventToEmitC : public OpConversionPattern<AsyncEventOp> {
-  explicit PTOAsyncEventToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOAsyncEventToEmitC(const TypeConverter &typeConverter,
+                                MLIRContext *ctx,
                                 StringRef callee)
       : OpConversionPattern<AsyncEventOp>(typeConverter, ctx),
         callee(callee.str()) {}
 
   LogicalResult matchAndRewrite(AsyncEventOp op,
                                 typename AsyncEventOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                PTO_CONVERSION_REWRITER_PARAM) const override {
     Type resultTy =
         this->getTypeConverter()->convertType(op.getCompleted().getType());
     if (!resultTy)
@@ -427,7 +434,8 @@ struct PTOCommCollectiveToEmitC : public OpConversionPattern<CollectiveOp> {
     Value parallelGroup;
   };
 
-  explicit PTOCommCollectiveToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOCommCollectiveToEmitC(const TypeConverter &typeConverter,
+                                    MLIRContext *ctx,
                                     StringRef apiName)
       : OpConversionPattern<CollectiveOp>(typeConverter, ctx),
         apiName(apiName.str()) {}
@@ -552,7 +560,7 @@ struct PTOCommCollectiveToEmitC : public OpConversionPattern<CollectiveOp> {
   }
 
   LogicalResult matchAndRewrite(CollectiveOp op, typename CollectiveOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                ConversionPatternRewriter &rewriter) const override { // NOLINT(readability-non-const-parameter)
     if constexpr (std::is_same_v<CollectiveOp, pto::TBroadcastOp>) {
       if (failed(emitBroadcast(op, adaptor, rewriter)))
         return failure();
@@ -577,12 +585,13 @@ template <typename OpTy>
 struct PTOP2PCommToEmitC : public OpConversionPattern<OpTy> {
   using OpConversionPattern<OpTy>::OpConversionPattern;
 
-  explicit PTOP2PCommToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOP2PCommToEmitC(const TypeConverter &typeConverter,
+                             MLIRContext *ctx,
                              StringRef callee)
       : OpConversionPattern<OpTy>(typeConverter, ctx), callee(callee.str()) {}
 
   LogicalResult matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                ConversionPatternRewriter &rewriter) const override { // NOLINT(readability-non-const-parameter)
     FailureOr<Value> dstGT =
         buildCommGlobalTensorValue(rewriter, op.getLoc(), op.getDst(), adaptor.getDst(),
                                    op.getOperation());
@@ -621,13 +630,14 @@ template <typename SignalOp>
 struct PTOSignalCommToEmitC : public OpConversionPattern<SignalOp> {
   using OpConversionPattern<SignalOp>::OpConversionPattern;
 
-  explicit PTOSignalCommToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOSignalCommToEmitC(const TypeConverter &typeConverter,
+                                MLIRContext *ctx,
                                 StringRef callee)
       : OpConversionPattern<SignalOp>(typeConverter, ctx),
         callee(callee.str()) {}
 
   LogicalResult matchAndRewrite(SignalOp op, typename SignalOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                ConversionPatternRewriter &rewriter) const override { // NOLINT(readability-non-const-parameter)
     FailureOr<Value> signalGT = buildCommGlobalTensorValue(
         rewriter, op.getLoc(), op.getSignal(), adaptor.getSignal(), op.getOperation());
     if (failed(signalGT))
@@ -864,6 +874,7 @@ struct PTOLocalArraySetToEmitC
   }
 };
 
+#undef PTO_CONVERSION_REWRITER_PARAM
 
 } // namespace
 

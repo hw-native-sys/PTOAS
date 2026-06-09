@@ -39,25 +39,29 @@ private:
  
 private:
   /// 检查某对同步 (set/wait) 是否被其他同步覆盖（从而变得多余）
-  bool CheckAllSync(SyncOperation *setFlag, SyncOperation *waitFlag);
+  bool CheckAllSync(const SyncOperation *setFlag,
+                    const SyncOperation *waitFlag);
  
   /// 在指定的生命周期范围内 [begin, end] 检查是否存在重复/更紧的同步
   bool CheckRepeatSync(unsigned int begin, unsigned int end,
-                       SmallVector<bool> &syncFinder, SyncOperation *setFlag);
+                       SmallVector<bool> &syncFinder,
+                       const SyncOperation *setFlag);
  
   /// 处理 Branch (If/Else) 结构中的冗余检查
   /// 如果 If 和 Else 分支内都存在覆盖，则整体覆盖
   bool CheckBranchBetween(BranchInstanceElement *branchElement,
-                          SmallVector<bool> syncFinder, SyncOperation *setFlag,
+                          SmallVector<bool> syncFinder,
+                          const SyncOperation *setFlag,
                           unsigned endId, unsigned &i);
  
   /// 处理 Loop 结构中的冗余检查 (当前实现较为保守)
   bool CheckLoopBetween(LoopInstanceElement *loopElement,
-                        SyncOperation *setFlag, unsigned &i);
+                        const SyncOperation *setFlag, unsigned &i) const;
  
   /// 核心判断逻辑：检查遇到的 relatedSync 是否能构成对 setFlag 的覆盖
-  bool CanMatchedSync(SmallVector<bool> &syncFinder, SyncOperation *relatedSync,
-                      SyncOperation *setFlag);
+  bool CanMatchedSync(SmallVector<bool> &syncFinder,
+                      const SyncOperation *relatedSync,
+                      const SyncOperation *setFlag) const;
 };
  
 } // namespace pto

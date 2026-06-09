@@ -49,7 +49,6 @@ void RemoveRedundantSync::Run() {
          auto *syncOp2 = syncPair2.first;
          bool hasLoop1 = syncOp1->GetForEndIndex().has_value();
          bool hasLoop2 = syncOp2->GetForEndIndex().has_value();
-
          if (hasLoop1 && hasLoop2) {
            if (syncOp1->GetForEndIndex().value() != syncOp2->GetForEndIndex().value()) {
              return syncOp1->GetForEndIndex().value() > syncOp2->GetForEndIndex().value();
@@ -58,7 +57,7 @@ void RemoveRedundantSync::Run() {
            }
          }
          if (hasLoop1 || hasLoop2) {
-           return hasLoop1 > hasLoop2;
+           return hasLoop1;
          }
          return syncOp1->GetSyncIndex() > syncOp2->GetSyncIndex();
        });
@@ -94,8 +93,8 @@ void RemoveRedundantSync::Run() {
   }
 }
 
-bool RemoveRedundantSync::CheckAllSync(SyncOperation *setFlag,
-                                       SyncOperation *waitFlag) {
+bool RemoveRedundantSync::CheckAllSync(const SyncOperation *setFlag,
+                                       const SyncOperation *waitFlag) {
   // syncFinder 用于跟踪在当前范围内，哪些 SyncIndex 的 Set 已经被看到了。
   // 如果随后看到了对应的 Wait，说明找到了一对完整的内部同步。
   SmallVector<bool> syncFinder(syncOperations_.size(), false);
@@ -122,7 +121,7 @@ bool RemoveRedundantSync::CheckAllSync(SyncOperation *setFlag,
 
 bool RemoveRedundantSync::CheckRepeatSync(unsigned int begin, unsigned int end,
                                           SmallVector<bool> &syncFinder,
-                                          SyncOperation *setFlag) {
+                                          const SyncOperation *setFlag) {
   checkCondition(begin <= end, "expected begin <= end");
   checkSyncIRIndex(syncIR_, end);
 
@@ -172,7 +171,7 @@ bool RemoveRedundantSync::CheckRepeatSync(unsigned int begin, unsigned int end,
 
 bool RemoveRedundantSync::CheckBranchBetween(
     BranchInstanceElement *branchElement, SmallVector<bool> syncFinder,
-    SyncOperation *setFlag, unsigned endId, unsigned &i) {
+    const SyncOperation *setFlag, unsigned endId, unsigned &i) {
   // 只处理 IF_BEGIN
   if (branchElement->getBranchKind() != KindOfBranch::IF_BEGIN) {
     i = branchElement->endId;
@@ -201,7 +200,6 @@ bool RemoveRedundantSync::CheckBranchBetween(
   if (hasElseBranch) {
     bool coveredInThen = CheckRepeatSync(branchElement->beginId, branchElement->branchId, syncFinder, setFlag);
     bool coveredInElse = CheckRepeatSync(branchElement->branchId, branchElement->endId, syncFinder, setFlag);
-
     if (coveredInThen && coveredInElse) {
       return true;
     }
@@ -214,8 +212,9 @@ bool RemoveRedundantSync::CheckBranchBetween(
 }
 
 bool RemoveRedundantSync::CheckLoopBetween(LoopInstanceElement *loopElement,
-                                           SyncOperation *setFlag,
-                                           unsigned &i) {
+                                           const SyncOperation *setFlag,
+                                           unsigned &i) const {
+  (void)setFlag;
   // 对于循环，保守起见暂时不深入检查内部是否覆盖外部。
   // 因为循环可能执行 0 次，如果循环内有同步，但循环不执行，外部依赖就没法满足。
   // 除非通过 Range Analysis 证明循环至少执行一次，否则这里返回 false 是安全的。
@@ -224,8 +223,8 @@ bool RemoveRedundantSync::CheckLoopBetween(LoopInstanceElement *loopElement,
 }
 
 bool RemoveRedundantSync::CanMatchedSync(SmallVector<bool> &syncFinder,
-                                         SyncOperation *relatedSync,
-                                         SyncOperation *setFlag) {
+                                         const SyncOperation *relatedSync,
+                                         const SyncOperation *setFlag) const {
   // Set/wait flags serialize a pipe pair, not a particular root buffer.  A
   // complete inner pair on the same pipe pair can cover an outer pair even when
   // the memory dependency roots differ.
@@ -235,8 +234,10 @@ bool RemoveRedundantSync::CanMatchedSync(SmallVector<bool> &syncFinder,
 
   // 支持 BlockSync 模式的检查
   if (syncAnalysisMode_ == SyncAnalysisMode::BLOCKSYNC) {
-      isWait |= (relatedSync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT);
-      isSet |= (relatedSync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET);
+      isWait = isWait ||
+               (relatedSync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT);
+      isSet = isSet ||
+              (relatedSync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET);
   }
 
   if (!isWait && !isSet) return false;

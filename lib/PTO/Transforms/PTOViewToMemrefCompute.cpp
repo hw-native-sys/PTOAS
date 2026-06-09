@@ -25,8 +25,10 @@ namespace mlir::pto {
 
 namespace {
 
+constexpr unsigned kComputeInlineCapacity = 8;
+
 template <typename T>
-using DefaultInlineVector = SmallVector<T, 8>;
+using DefaultInlineVector = SmallVector<T, kComputeInlineCapacity>;
 
 constexpr unsigned kThirdOperandIndex = 2;
 constexpr unsigned kFourthOperandIndex = 3;

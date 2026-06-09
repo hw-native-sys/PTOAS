@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -70,6 +65,8 @@ struct PipeInitInfo {
   PipeSplitUsage usage = PipeSplitUsage::Unknown;
   std::optional<bool> explicitNoSplit;
 };
+
+using PipeInitGroups = std::map<PipePeerKey, SmallVector<Operation *>>;
 
 template <typename InitOpT> static Value getPipeResult(InitOpT op) {
   return op.getPipe();
@@ -139,6 +136,75 @@ static std::optional<bool> getUsageNoSplit(PipeSplitUsage usage) {
   return std::nullopt;
 }
 
+static LogicalResult checkExplicitNoSplitConsistency(
+    ArrayRef<PipeInitInfo *> component, std::optional<bool> &explicitNoSplit) {
+  for (PipeInitInfo *info : component) {
+    if (info->usage == PipeSplitUsage::Mixed) {
+      return info->op->emitOpError(
+          "cannot mix 'split = 0' with 'split = 1' or 'split = 2' on the "
+          "same logical pipe");
+    }
+    if (!info->explicitNoSplit)
+      continue;
+    if (explicitNoSplit && *explicitNoSplit != *info->explicitNoSplit) {
+      return info->op->emitOpError(
+          "conflicting explicit 'nosplit' across peer pipe init ops");
+    }
+    explicitNoSplit = info->explicitNoSplit;
+  }
+  return success();
+}
+
+static LogicalResult checkInferredNoSplitConsistency(
+    ArrayRef<PipeInitInfo *> component, std::optional<bool> &inferredNoSplit) {
+  for (PipeInitInfo *info : component) {
+    auto usageNoSplit = getUsageNoSplit(info->usage);
+    if (!usageNoSplit)
+      continue;
+    if (inferredNoSplit && *inferredNoSplit != *usageNoSplit) {
+      return info->op->emitOpError(
+          "conflicting pipe split usage across peer pipe init ops");
+    }
+    inferredNoSplit = *usageNoSplit;
+  }
+  return success();
+}
+
+static LogicalResult checkNoSplitConflictAgainstUsers(
+    ArrayRef<PipeInitInfo *> component, std::optional<bool> explicitNoSplit,
+    std::optional<bool> inferredNoSplit) {
+  if (!(explicitNoSplit && inferredNoSplit) ||
+      *explicitNoSplit == *inferredNoSplit)
+    return success();
+  for (PipeInitInfo *info : component) {
+    if (!info->explicitNoSplit || *info->explicitNoSplit == *inferredNoSplit)
+      continue;
+    if (*info->explicitNoSplit) {
+      return info->op->emitOpError(
+          "explicit 'nosplit = true' conflicts with downstream users that "
+          "require split = 1 or split = 2");
+    }
+    return info->op->emitOpError(
+        "explicit 'nosplit = false' conflicts with downstream users that "
+        "require split = 0");
+  }
+  return success();
+}
+
+static void applyNoSplitAttr(ArrayRef<PipeInitInfo *> component,
+                             BoolAttr noSplitAttr) {
+  for (PipeInitInfo *info : component) {
+    if (auto initOp = dyn_cast<InitializeL2LPipeOp>(info->op)) {
+      if (!initOp.getNosplitAttr())
+        setNoSplitAttr(initOp, noSplitAttr);
+      continue;
+    }
+    auto initOp = cast<InitializeL2G2LPipeOp>(info->op);
+    if (!initOp.getNosplitAttr())
+      setNoSplitAttr(initOp, noSplitAttr);
+  }
+}
+
 static std::string getFuncSymbol(func::FuncOp funcOp) {
   return funcOp.getSymName().str();
 }
@@ -163,64 +229,54 @@ resolveNoSplitComponent(ArrayRef<PipeInitInfo *> component, OpBuilder &builder) 
   std::optional<bool> explicitNoSplit;
   std::optional<bool> inferredNoSplit;
 
-  for (PipeInitInfo *info : component) {
-    if (info->usage == PipeSplitUsage::Mixed) {
-      return info->op->emitOpError(
-          "cannot mix 'split = 0' with 'split = 1' or 'split = 2' on the "
-          "same logical pipe");
-    }
-
-    if (!info->explicitNoSplit)
-      continue;
-    if (explicitNoSplit && *explicitNoSplit != *info->explicitNoSplit) {
-      return info->op->emitOpError(
-          "conflicting explicit 'nosplit' across peer pipe init ops");
-    }
-    explicitNoSplit = info->explicitNoSplit;
-  }
-
-  for (PipeInitInfo *info : component) {
-    auto usageNoSplit = getUsageNoSplit(info->usage);
-    if (!usageNoSplit)
-      continue;
-    if (inferredNoSplit && *inferredNoSplit != *usageNoSplit) {
-      return info->op->emitOpError(
-          "conflicting pipe split usage across peer pipe init ops");
-    }
-    inferredNoSplit = *usageNoSplit;
-  }
-
-  if (explicitNoSplit && inferredNoSplit && *explicitNoSplit != *inferredNoSplit) {
-    for (PipeInitInfo *info : component) {
-      if (!info->explicitNoSplit || *info->explicitNoSplit == *inferredNoSplit)
-        continue;
-      if (*info->explicitNoSplit) {
-        return info->op->emitOpError(
-            "explicit 'nosplit = true' conflicts with downstream users that "
-            "require split = 1 or split = 2");
-      }
-      return info->op->emitOpError(
-          "explicit 'nosplit = false' conflicts with downstream users that "
-          "require split = 0");
-    }
-  }
+  if (failed(checkExplicitNoSplitConsistency(component, explicitNoSplit)) ||
+      failed(checkInferredNoSplitConsistency(component, inferredNoSplit)) ||
+      failed(checkNoSplitConflictAgainstUsers(component, explicitNoSplit,
+                                              inferredNoSplit)))
+    return failure();
 
   bool finalNoSplit =
       explicitNoSplit.value_or(inferredNoSplit.value_or(false));
-  auto noSplitAttr = builder.getBoolAttr(finalNoSplit);
-  for (PipeInitInfo *info : component) {
-    if (auto initOp = dyn_cast<InitializeL2LPipeOp>(info->op)) {
-      if (!initOp.getNosplitAttr())
-        setNoSplitAttr(initOp, noSplitAttr);
-      continue;
-    }
-
-    auto initOp = cast<InitializeL2G2LPipeOp>(info->op);
-    if (!initOp.getNosplitAttr())
-      setNoSplitAttr(initOp, noSplitAttr);
-  }
-
+  applyNoSplitAttr(component, builder.getBoolAttr(finalNoSplit));
   return success();
+}
+
+static void collectPeerAwareAdjacency(
+    const PipeInitGroups &keyedInits,
+    llvm::DenseMap<Operation *, SmallVector<Operation *>> &adjacency) {
+  for (const auto &it : keyedInits) {
+    SmallVector<Operation *> uniqueOps;
+    for (Operation *op : it.second) {
+      if (std::find(uniqueOps.begin(), uniqueOps.end(), op) == uniqueOps.end())
+        uniqueOps.push_back(op);
+    }
+    if (uniqueOps.size() < kMinPeerPipeInitCount)
+      continue;
+    for (size_t i = 0; i < uniqueOps.size(); ++i) {
+      for (size_t j = i + 1; j < uniqueOps.size(); ++j) {
+        adjacency[uniqueOps[i]].push_back(uniqueOps[j]);
+        adjacency[uniqueOps[j]].push_back(uniqueOps[i]);
+      }
+    }
+  }
+}
+
+static SmallVector<PipeInitInfo *> collectPipeComponent(
+    PipeInitInfo &rootInfo,
+    llvm::DenseMap<Operation *, SmallVector<Operation *>> &adjacency,
+    llvm::DenseMap<Operation *, PipeInitInfo *> &infoByOp,
+    llvm::SmallPtrSet<Operation *, kVisitedInitReserveSize> &visited) {
+  SmallVector<Operation *> stack{rootInfo.op};
+  SmallVector<PipeInitInfo *> component;
+  while (!stack.empty()) {
+    Operation *current = stack.pop_back_val();
+    component.push_back(infoByOp[current]);
+    for (Operation *neighbor : adjacency[current]) {
+      if (visited.insert(neighbor).second)
+        stack.push_back(neighbor);
+    }
+  }
+  return component;
 }
 
 struct PTOInferValidatePipeInitPass
@@ -232,7 +288,7 @@ struct PTOInferValidatePipeInitPass
     llvm::DenseMap<Operation *, SmallVector<Operation *>> adjacency;
     std::map<PipePeerKey, SmallVector<Operation *>> keyedInits;
 
-    auto collectInit = [&](auto initOp) {
+    auto collectInit = [&adjacency, &initInfos, &keyedInits](auto initOp) {
       PipeInitInfo &info = initInfos.emplace_back();
       info.op = initOp.getOperation();
       info.funcOp = initOp->template getParentOfType<func::FuncOp>();
@@ -241,7 +297,8 @@ struct PTOInferValidatePipeInitPass
       info.explicitNoSplit = getNoSplitAttr(initOp);
       adjacency[info.op];
 
-      auto recordAddr = [&](Value addr, int8_t effectiveDirMask) {
+      auto recordAddr = [&info, &keyedInits](Value addr,
+                                             int8_t effectiveDirMask) {
         if (!addr)
           return;
         auto key = getPipePeerKey(addr, info.funcOp);
@@ -261,25 +318,12 @@ struct PTOInferValidatePipeInitPass
       recordAddr(getLocalAddrOperand(initOp), info.dirMask);
     };
 
-    moduleOp.walk([&](InitializeL2LPipeOp initOp) { collectInit(initOp); });
-    moduleOp.walk([&](InitializeL2G2LPipeOp initOp) { collectInit(initOp); });
-
-    for (const auto &it : keyedInits) {
-      SmallVector<Operation *> uniqueOps;
-      for (Operation *op : it.second) {
-        if (std::find(uniqueOps.begin(), uniqueOps.end(), op) == uniqueOps.end())
-          uniqueOps.push_back(op);
-      }
-      if (uniqueOps.size() < kMinPeerPipeInitCount)
-        continue;
-
-      for (size_t i = 0; i < uniqueOps.size(); ++i) {
-        for (size_t j = i + 1; j < uniqueOps.size(); ++j) {
-          adjacency[uniqueOps[i]].push_back(uniqueOps[j]);
-          adjacency[uniqueOps[j]].push_back(uniqueOps[i]);
-        }
-      }
-    }
+    moduleOp.walk(
+        [&collectInit](InitializeL2LPipeOp initOp) { collectInit(initOp); });
+    moduleOp.walk([&collectInit](InitializeL2G2LPipeOp initOp) {
+      collectInit(initOp);
+    });
+    collectPeerAwareAdjacency(keyedInits, adjacency);
 
     llvm::DenseMap<Operation *, PipeInitInfo *> infoByOp;
     for (PipeInitInfo &info : initInfos)
@@ -290,18 +334,8 @@ struct PTOInferValidatePipeInitPass
     for (PipeInitInfo &rootInfo : initInfos) {
       if (!visited.insert(rootInfo.op).second)
         continue;
-
-      SmallVector<Operation *> stack{rootInfo.op};
-      SmallVector<PipeInitInfo *> component;
-      while (!stack.empty()) {
-        Operation *current = stack.pop_back_val();
-        component.push_back(infoByOp[current]);
-        for (Operation *neighbor : adjacency[current]) {
-          if (visited.insert(neighbor).second)
-            stack.push_back(neighbor);
-        }
-      }
-
+      SmallVector<PipeInitInfo *> component =
+          collectPipeComponent(rootInfo, adjacency, infoByOp, visited);
       if (failed(resolveNoSplitComponent(component, builder))) {
         signalPassFailure();
         return;

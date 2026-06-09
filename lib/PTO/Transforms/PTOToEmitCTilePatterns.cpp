@@ -10,8 +10,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTOToEmitCInternal.h"
+#include "PTOToEmitCTilePatternCommon.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -26,6 +28,8 @@ using namespace mlir::pto;
 
 namespace mlir::pto {
 namespace {
+
+constexpr size_t kNumber2 = 2;
 
 static LogicalResult lowerTDivSLikeOp(pto::TDivSOp op,
                                       pto::TDivSOp::Adaptor adaptor,
@@ -133,7 +137,7 @@ struct PTOTCIToEmitC : public OpConversionPattern<pto::TCIOp> {
     std::string scalarTok = "int32_t";
     if (auto it = dyn_cast<IntegerType>(op->getOperand(0).getType())) {
       bool isUnsigned = it.isUnsigned();
-      if (it.getWidth() == 16)
+      if (it.getWidth() == kPTOI16BitWidth)
         scalarTok = isUnsigned ? "uint16_t" : "int16_t";
       else
         scalarTok = isUnsigned ? "uint32_t" : "int32_t";
@@ -374,7 +378,7 @@ struct PTOTTriToEmitC : public OpConversionPattern<pto::TTriOp> {
       templateArgs = ArrayAttr{};
     }
 
-    SmallVector<Value, 2> operands{dst, diagonal};
+    SmallVec2<Value> operands{dst, diagonal};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TTRI",
         /*args=*/ArrayAttr{}, /*templateArgs=*/templateArgs, operands);
@@ -649,7 +653,7 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::TCvtOp> {
     Value satModeVal = rewriter.create<emitc::ConstantOp>(
         loc, satModeTy, emitc::OpaqueAttr::get(ctx, satTok));
 
-    SmallVector<Value, 4> operands{dst, src, rmodeVal, satModeVal};
+    SmallVec4<Value> operands{dst, src, rmodeVal, satModeVal};
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TCVT",
@@ -670,7 +674,7 @@ struct PTORandomToEmitC : public OpConversionPattern<pto::TRandomOp> {
     auto *ctx = rewriter.getContext();
 
     Value dst = peelUnrealized(adaptor.getDst());
-    SmallVector<Value, 7> operands{
+    SmallVec7<Value> operands{
         dst,
         peelUnrealized(adaptor.getKey0()),
         peelUnrealized(adaptor.getKey1()),
@@ -963,7 +967,6 @@ struct PTOFillPadExpandToEmitC
 //===----------------------------------------------------------------------===//
 
 [[maybe_unused]] static std::string maskPatternTok(mlir::pto::MaskPatternAttr a) {
-
   auto v = a.getValue(); // enum
   return (std::string("pto::MaskPattern::") + mlir::pto::stringifyMaskPattern(v).str());
 }
@@ -1122,7 +1125,7 @@ struct PTOLogToEmitC : public OpConversionPattern<pto::TLogOp> {
     Value src = peelUnrealized(adaptor.getSrc());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVec2<Value> operands{dst, src};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TLOG",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -1132,8 +1135,6 @@ struct PTOLogToEmitC : public OpConversionPattern<pto::TLogOp> {
     return success();
   }
 };
-
-
 
 //===----------------------------------------------------------------------===//
 // TLRELU lowering to EmitC (PTOConvert.cpp)
@@ -1150,7 +1151,7 @@ struct PTOLogToEmitC : public OpConversionPattern<pto::TLogOp> {
 	    Value slope = peelUnrealized(adaptor.getSlope());
 	    Value dst = peelUnrealized(adaptor.getDst());
 
-            SmallVector<Value, 3> operands{dst, src, slope};
+            SmallVec3<Value> operands{dst, src, slope};
 
 	    rewriter.create<emitc::CallOpaqueOp>(
 	        loc, TypeRange{}, "TLRELU",
@@ -1177,7 +1178,7 @@ struct PTOMaxToEmitC : public OpConversionPattern<pto::TMaxOp> {
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVec3<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TMAX",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -1203,7 +1204,7 @@ struct PTOMaxToEmitC : public OpConversionPattern<pto::TMaxOp> {
 	    Value scalar = peelUnrealized(adaptor.getScalar());
 	    Value dst  = peelUnrealized(adaptor.getDst());
 
-	    SmallVector<Value, 3> operands{dst, src0, scalar};
+	    SmallVec3<Value> operands{dst, src0, scalar};
 	    rewriter.create<emitc::CallOpaqueOp>(
 	        loc, TypeRange{}, "TMAXS",
 	        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -1230,7 +1231,7 @@ struct PTOMinToEmitC : public OpConversionPattern<pto::TMinOp> {
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVec3<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TMIN",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -1260,7 +1261,7 @@ struct PTOMinsToEmitC : public OpConversionPattern<pto::TMinSOp> {
     Value dst = peelUnrealized(adaptor.getDst());
     Value scalar = peelUnrealized(adaptor.getScalar());
 
-    SmallVector<Value, 3> operands{dst, src, scalar};
+    SmallVec3<Value> operands{dst, src, scalar};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TMINS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -1310,7 +1311,6 @@ struct PTOMovToEmitC : public OpConversionPattern<pto::TMovOp> {
     auto modeAttr = op.getAccToVecModeAttr();
     const bool hasMode = static_cast<bool>(modeAttr);
     const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
-
     if (fp) {
       auto fpOT = mlir::dyn_cast<emitc::OpaqueType>(fp.getType());
       if (!fpOT)
@@ -1359,16 +1359,14 @@ struct PTOMovToEmitC : public OpConversionPattern<pto::TMovOp> {
     const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
 
     operands.assign({dst, src});
-    SmallVector<Attribute, 5> templateArgVec{
+    SmallVec5<Attribute> templateArgVec{
         emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
         emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),
     };
     callee = "TMOV";
-
     if (failed(appendTMovFpOrScalarArgs(rewriter, op, fp, preQuantScalar, callee,
                                         operands, templateArgVec)))
       return failure();
-
     if (!hasFp && !hasPreQuant && hasMode) {
       templateArgVec.push_back(
           emitc::OpaqueAttr::get(ctx, modeTok(modeAttr.getValue())));
@@ -1379,7 +1377,7 @@ struct PTOMovToEmitC : public OpConversionPattern<pto::TMovOp> {
           emitc::OpaqueAttr::get(ctx, reluTok(op.getReluPreMode())));
     }
 
-    if (templateArgVec.size() == 2 && !hasFp && !hasPreQuant && !hasMode &&
+    if (templateArgVec.size() == kNumber2 && !hasFp && !hasPreQuant && !hasMode &&
         !reluNonDefault)
       return ArrayAttr{};
     return rewriter.getArrayAttr(templateArgVec);
@@ -1398,7 +1396,7 @@ struct PTOMovToEmitC : public OpConversionPattern<pto::TMovOp> {
     if (op.getPreQuantScalar())
       preQuantScalar = peelUnrealized(adaptor.getPreQuantScalar());
     StringRef callee = "TMOV";
-    SmallVector<Value, 4> operands;
+    SmallVec4<Value> operands;
     FailureOr<ArrayAttr> templateArgs = buildTMovTemplateArgs(
         rewriter, op, src, dst, fp, preQuantScalar, callee, operands);
     if (failed(templateArgs))

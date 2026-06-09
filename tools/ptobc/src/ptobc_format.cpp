@@ -6,17 +6,17 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "ptobc/ptobc_format.h"
 
 #include "ptobc/leb128.h"
 
+#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include <cstring>
-#include <fstream>
 #include <stdexcept>
 
 namespace ptobc {
@@ -29,10 +29,33 @@ constexpr unsigned kU32ThirdByteShift = 2 * kBitsPerByte;
 constexpr unsigned kU32FourthByteShift = 3 * kBitsPerByte;
 constexpr char kPTOBCMagic[] = {'P', 'T', 'O', 'B', 'C', '\0'};
 constexpr size_t kPTOBCMagicSize = sizeof(kPTOBCMagic);
+constexpr unsigned kNumber256 = 256;
+
 } // namespace
 
+std::string canonicalizeFilePath(const std::string &path) {
+  llvm::SmallString<kNumber256> absolutePath(path);
+  if (std::error_code ec = llvm::sys::fs::make_absolute(absolutePath))
+    throw std::runtime_error("Failed to canonicalize path: " + path);
+  llvm::sys::path::remove_dots(absolutePath, /*remove_dot_dot=*/true);
+
+  llvm::SmallString<kNumber256> canonicalPath;
+  if (!llvm::sys::fs::real_path(absolutePath, canonicalPath,
+                                /*expand_tilde=*/true))
+    return std::string(canonicalPath.str());
+
+  llvm::SmallString<kNumber256> parentPath(
+      llvm::sys::path::parent_path(absolutePath));
+  if (std::error_code ec = llvm::sys::fs::real_path(parentPath, canonicalPath,
+                                                    /*expand_tilde=*/true))
+    throw std::runtime_error("Failed to canonicalize path: " + path);
+  llvm::sys::path::append(canonicalPath,
+                          llvm::sys::path::filename(absolutePath));
+  return std::string(canonicalPath.str());
+}
+
 void Buffer::append(const void* p, size_t n) {
-  const uint8_t* b = reinterpret_cast<const uint8_t*>(p);
+  const uint8_t* b = static_cast<const uint8_t*>(p);
   bytes.insert(bytes.end(), b, b + n);
 }
 
@@ -196,16 +219,22 @@ std::vector<uint8_t> PTOBCFile::serialize() const {
 }
 
 std::vector<uint8_t> readFile(const std::string& path) {
-  std::ifstream ifs(path, std::ios::binary);
-  if (!ifs) throw std::runtime_error("Failed to open: " + path);
-  std::vector<uint8_t> buf((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-  return buf;
+  std::string canonicalPath = canonicalizeFilePath(path);
+  auto buffer = llvm::MemoryBuffer::getFile(canonicalPath);
+  if (!buffer)
+    throw std::runtime_error("Failed to open: " + canonicalPath);
+  llvm::StringRef contents = (*buffer)->getBuffer();
+  return std::vector<uint8_t>(contents.begin(), contents.end());
 }
 
 void writeFile(const std::string& path, const std::vector<uint8_t>& data) {
-  std::ofstream ofs(path, std::ios::binary);
-  if (!ofs) throw std::runtime_error("Failed to write: " + path);
-  ofs.write(reinterpret_cast<const char*>(data.data()), data.size());
+  std::string canonicalPath = canonicalizeFilePath(path);
+  std::error_code ec;
+  llvm::raw_fd_ostream ofs(canonicalPath, ec, llvm::sys::fs::OF_None);
+  if (ec)
+    throw std::runtime_error("Failed to write: " + canonicalPath);
+  const void *rawData = static_cast<const void *>(data.data());
+  ofs.write(static_cast<const char *>(rawData), data.size());
 }
 
 } // namespace ptobc

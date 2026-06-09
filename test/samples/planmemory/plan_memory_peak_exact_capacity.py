@@ -12,7 +12,7 @@ module {
   func.func @peak_exact_capacity(%arg0: memref<16x256xf16, #pto.address_space<gm>>,
                                  %arg1: memref<16x256xf16, #pto.address_space<gm>>) {
     // Default UB size is 1572864 bits (196608 bytes). Each buffer here is
-    // 16*16*16*f16 = 8192 bytes. 24 buffers live at once should fit exactly:
+    // 16*16*16*f16 = 8192 bytes. 24 buffers live at once should fit exactly
     //   24 * 8192 = 196608 bytes.
     %u0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %u1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>

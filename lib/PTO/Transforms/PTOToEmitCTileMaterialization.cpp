@@ -31,6 +31,7 @@ namespace {
 
 static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
     "__pto.force_dynamic_valid_shape";
+constexpr size_t kTileRank2D = 2;
 
 static pto::AddressSpace getMemRefAddressSpace(MemRefType memRefTy) {
   if (auto asAttr =
@@ -43,7 +44,7 @@ static pto::AddressSpace getMemRefAddressSpace(MemRefType memRefTy) {
 static int32_t getTileFractalSize(pto::TileBufConfigAttr configAttr) {
   if (auto frAttr = dyn_cast<IntegerAttr>(configAttr.getSFractalSize()))
     return frAttr.getInt();
-  return 512;
+  return kFractalSize512;
 }
 
 static Value createEmitCTileValue(Location loc, Type convertedTy,
@@ -160,7 +161,6 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     bool colIsConst = vCol && getIndexConst(vCol, cCol);
     bool rowIsDynamic = false;
     bool colIsDynamic = false;
-
     if (forceDynamicValid) {
       result.vrowTok = "-1";
       result.vcolTok = "-1";
@@ -176,7 +176,6 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
                              vRow, rowIsConst, cRow, rows, elemTy, blayout, 0);
     configureRegularValidDim(result.vcolTok, colIsDynamic, result.useConstructor,
                              vCol, colIsConst, cCol, cols, elemTy, blayout, 1);
-
     if (result.useConstructor) {
       appendRegularDynamicValidArg(result, rewriter, loc, elemTy, blayout,
                                    vRowEmitC, 0, rowIsDynamic);
@@ -189,7 +188,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
   FailureOr<TileBuildSpec> buildTileSpec(pto::BindTileOp op, OpAdaptor adaptor,
                                          ConversionPatternRewriter &rewriter) const {
     auto resMrTy = dyn_cast<MemRefType>(op.getType());
-    if (!resMrTy || resMrTy.getRank() < 2)
+    if (!resMrTy || resMrTy.getRank() < static_cast<int64_t>(kTileRank2D))
       return failure();
     int64_t rows = resMrTy.getDimSize(0);
     int64_t cols = resMrTy.getDimSize(1);
@@ -330,7 +329,6 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     FailureOr<TileBuildSpec> tileSpec = buildTileSpec(op, adaptor, rewriter);
     if (failed(tileSpec))
       return failure();
-
     if (op.getSource().getDefiningOp<pto::DeclareTileMemRefOp>())
       return rewriteDeclaredTile(op, *tileSpec, rewriter);
 
@@ -344,7 +342,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         isEmitCTileLikeValue(tileCandidate))
       return rewriteReshapeTile(op, tileCandidate, *tileSpec, rewriter);
 
-    // Subview origins are kept distinct from generic tile rebinding:
+    // Subview origins are kept distinct from generic tile rebinding
     // even when source/destination C++ tile types match, subview may carry
     // shifted base address semantics and should materialize a fresh handle.
     if (isSubView)
@@ -438,7 +436,6 @@ createEmitCTileVariable(ConversionPatternRewriter &rewriter, Location loc,
   Type convertedTy = typeConverter->convertType(tileTy);
   if (!convertedTy)
     convertedTy = emitc::OpaqueType::get(rewriter.getContext(), *tileTypeString);
-
   return rewriter
       .create<emitc::VariableOp>(
           loc, convertedTy, emitc::OpaqueAttr::get(rewriter.getContext(), ""))
@@ -512,17 +509,17 @@ struct PTOMaterializeTileToEmitC
     Type elemTy = tileTy.getElementType();
     auto shape = tileTy.getShape();
     auto validShape = tileTy.getValidShape();
-    auto fallbackDim = [&](int dimIdx) {
+    auto fallbackDim = [shape, elemTy, blayout](int dimIdx) {
       return renderTileTemplateDim(shape[dimIdx], elemTy, blayout, dimIdx);
     };
-    auto appendCtorDim = [&](Value emitted, int dimIdx) {
+    auto appendCtorDim = [&constructorArgs, &rewriter, loc, elemTy, blayout,
+                          &fallbackDim](Value emitted, int dimIdx) {
       constructorArgs.push_back(buildTileCtorDimValue(
           rewriter, loc,
           scalePackedTileDynamicDim(rewriter, loc, elemTy, blayout, emitted,
                                     dimIdx),
           fallbackDim(dimIdx)));
     };
-
     if (forceDynamicValid) {
       appendCtorDim(adaptor.getValidRow(), 0);
       appendCtorDim(adaptor.getValidCol(), 1);
@@ -591,7 +588,6 @@ struct PTOMaterializeTileToEmitC
     bool isSubview = viewSemantics && viewSemantics.getValue() == "subview";
     bool sourceIsDeclaredTile =
         op.getSource().getDefiningOp<pto::DeclareTileMemRefOp>();
-
     if (canReuseSourceTile(source, *tileTypeString, isSubview, forceDynamicValid)) {
       rewriter.replaceOp(op, source);
       return success();

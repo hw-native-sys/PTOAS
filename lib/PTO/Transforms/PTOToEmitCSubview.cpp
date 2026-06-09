@@ -12,6 +12,7 @@
 #include "PTOToEmitCInternal.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
@@ -33,6 +34,13 @@ namespace mlir::pto {
 namespace {
 
 enum class Role { A, B, C, Unknown };
+constexpr unsigned kInlineCapacity5 = 5;
+constexpr unsigned kNumber2 = 2;
+constexpr unsigned kNumber4 = 4;
+constexpr unsigned kNumber16 = 16;
+
+template <typename T>
+using SmallVec5 = SmallVector<T, kInlineCapacity5>;
 
 template <typename MatmulLikeOp>
 static std::optional<Role> inferMatmulLikeSubviewRole(MatmulLikeOp op,
@@ -94,10 +102,10 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
   };
 
   struct SubviewStrideShapeInfo {
-    SmallVector<int64_t, 5> finalShape;
-    SmallVector<int64_t, 5> finalStride;
-    SmallVector<Value, 5> finalShapeValues;
-    SmallVector<Value, 5> finalStrideValues;
+    SmallVec5<int64_t> finalShape;
+    SmallVec5<int64_t> finalStride;
+    SmallVec5<Value> finalShapeValues;
+    SmallVec5<Value> finalStrideValues;
   };
 
   struct SubviewTemplateStrideInfo {
@@ -252,7 +260,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto *ctx = rewriter.getContext();
     auto resTy = mlir::cast<MemRefType>(op.getResult().getType());
     Type elemTy = resTy.getElementType();
-    if (!elemTy.isInteger(16))
+    if (!elemTy.isInteger(kPTOI16BitWidth))
       return rewriter.create<emitc::AddOp>(loc, sourcePtr.getType(), sourcePtr,
                                            totalOffset);
 
@@ -359,10 +367,12 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       ArrayRef<Value> strideValues, int64_t rank,
       ConversionPatternRewriter &rewriter, Location loc) {
     Value oneU32 = makeU32Constant(rewriter, loc, u32Ty, 1);
-    result.finalShapeValues.assign(5, oneU32);
-    result.finalStrideValues.assign(5, oneU32);
-    int shift = 5 - rank;
-    for (int i = 0; i < rank && i < 5; ++i) {
+    result.finalShapeValues.assign(kPTOPaddedTensorRank5D, oneU32);
+    result.finalStrideValues.assign(kPTOPaddedTensorRank5D, oneU32);
+    int shift = static_cast<int>(kPTOPaddedTensorRank5D) - rank;
+    for (int i = 0; i < rank &&
+                    i < static_cast<int>(kPTOPaddedTensorRank5D);
+         ++i) {
       result.finalShapeValues[shift + i] = sizeValues[i];
       result.finalStrideValues[shift + i] = strideValues[i];
     }
@@ -385,7 +395,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
   }
 
   SubviewStrideShapeInfo buildSubviewStrideShapeInfo(
-      memref::SubViewOp op, OpAdaptor adaptor, Type u32Ty,
+      memref::SubViewOp op, OpAdaptor, Type u32Ty,
       ArrayRef<OpFoldResult> sourceStrides,
       ConversionPatternRewriter &rewriter) const {
     auto loc = op.getLoc();
@@ -418,26 +428,26 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         llvm::all_of(finalStride, [](int64_t value) { return value != -1; });
 
     int layoutTag = 0;
-    auto elemBytes = 4;
+    auto elemBytes = kPTOWordBytes;
     if (elemTypeStr.find("half") != std::string::npos ||
         elemTypeStr.find("f16") != std::string::npos ||
         elemTypeStr.find("bf16") != std::string::npos) {
-      elemBytes = 2;
+      elemBytes = kPTOHalfWordBytes;
     } else if (elemTypeStr.find("double") != std::string::npos ||
                elemTypeStr.find("f64") != std::string::npos) {
-      elemBytes = 8;
+      elemBytes = kPTODoubleWordBytes;
     }
 
     if (allStatic) {
-      if (finalShape[2] == 16 &&
-          finalShape[2] * finalShape[3] * elemBytes == 512 &&
+      if (finalShape[kNumber2] == kNumber16 &&
+          finalShape[2] * finalShape[3] * elemBytes == kFractalSize512 &&
           finalStride[4] == 1 && finalStride[3] == finalShape[4]) {
-        layoutTag = 2;
+        layoutTag = kNumber2;
       } else {
         bool isCol = finalStride[0] == 1;
-        for (int i = 0; i < 4; ++i)
-          isCol &= (finalStride[i + 1] ==
-                    multiplyOrDynamic(finalStride[i], finalShape[i]));
+        for (int i = 0; i < static_cast<int>(kNumber4); ++i)
+          isCol = isCol && (finalStride[i + 1] ==
+                            multiplyOrDynamic(finalStride[i], finalShape[i]));
         if (isCol)
           layoutTag = 1;
       }
@@ -445,7 +455,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     if (layoutTag == 1)
       return "pto::Layout::DN";
-    if (layoutTag == 2)
+    if (layoutTag == static_cast<int32_t>(kNumber2))
       return "pto::Layout::NZ";
     return "pto::Layout::ND";
   }
@@ -489,7 +499,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
                                               shapeCppType, shapeArgs);
     auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideCppType);
     SmallVector<Value> strideCtorArgs;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < static_cast<int>(kPTOPaddedTensorRank5D); ++i) {
       if (strideShapeInfo.finalStride[i] == -1)
         strideCtorArgs.push_back(strideShapeInfo.finalStrideValues[i]);
     }

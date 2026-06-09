@@ -6,15 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #ifndef MLIR_C_DIALECT_PTO_H
 #define MLIR_C_DIALECT_PTO_H
 
-#include "mlir-c/IR.h" 
+#include "mlir-c/IR.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -162,7 +159,7 @@ typedef enum MlirPTOMaskPattern {
 } MlirPTOMaskPattern;
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGetEnum(MlirContext ctx, MlirPTOMaskPattern value);
 MLIR_CAPI_EXPORTED MlirPTOMaskPattern mlirPTOMaskPatternAttrGetEnumValue(MlirAttribute attr);
-// Legacy raw-int compatibility path for historical PTOAS encodings:
+// Legacy raw-int compatibility path for historical PTOAS encodings
 //   0 -> P0101, 3 -> P0001, 4 -> P1111, 5 -> P1010.
 // Removed legacy-only patterns 1/2 are rejected and return null.
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGetLegacyRaw(MlirContext ctx, int32_t value);

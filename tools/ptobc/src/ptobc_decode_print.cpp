@@ -20,6 +20,7 @@
 #include <mlir/Dialect/SCF/IR/SCF.h>
 
 #include <PTO/IR/PTO.h>
+#include <PTO/IR/PTODialect.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Location.h>
 #include <mlir/IR/Operation.h>
@@ -27,12 +28,13 @@
 #include <mlir/IR/Value.h>
 #include <mlir/Parser/Parser.h>
 
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <climits>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 
@@ -57,6 +59,8 @@ constexpr size_t kPTOBCMagicSize = 6;
 constexpr size_t kPTOBCHeaderSize = 14;
 constexpr size_t kPTOBCVersionOffset = 6;
 constexpr size_t kPTOBCPayloadLengthOffset = 10;
+
+using ValueIdVector = llvm::SmallVector<uint64_t, kValueIdInlineCapacity>;
 
 struct Reader {
   const uint8_t* p;
@@ -110,7 +114,7 @@ static void parseStringsSection(const std::vector<uint8_t>& data, std::vector<st
   for (uint64_t i = 0; i < cnt; ++i) {
     uint64_t len = r.readULEB();
     auto bs = r.readBytes(len);
-    strings.emplace_back(reinterpret_cast<const char*>(bs.data()), bs.size());
+    strings.emplace_back(bs.begin(), bs.end());
   }
   if (r.p != r.end) throw std::runtime_error("trailing bytes in STRINGS");
 }
@@ -298,8 +302,9 @@ struct BuildCtx {
   std::vector<mlir::Value> values;
 
   // Function-global op_id table (preorder DFS).
-  uint64_t* nextOpId = nullptr;
-  std::vector<mlir::Operation*>* opsById = nullptr;
+  uint64_t nextOpId = 0;
+  std::vector<mlir::Operation*> opsById;
+  bool trackOpsById = false;
 };
 
 static mlir::Type getType(BuildCtx& bc, uint64_t tid) {
@@ -364,7 +369,6 @@ static mlir::Attribute buildConstAttr(BuildCtx &bc, uint64_t constId) {
   if (!bc.consts) throw std::runtime_error("constpool not available");
   if (constId >= bc.consts->size()) throw std::runtime_error("const_id out of range");
   const auto &e = (*bc.consts)[constId];
-
   if (e.tag == 0x01) {
     auto ty = getType(bc, e.typeId);
     auto it = mlir::dyn_cast<mlir::IntegerType>(ty);
@@ -377,7 +381,6 @@ static mlir::Attribute buildConstAttr(BuildCtx &bc, uint64_t constId) {
 
   if (e.tag == 0x02)
     return buildFloatConstAttr(bc, e);
-
   if (e.tag == 0x04)
     return buildIntegerConstAttr(bc, e);
 
@@ -391,11 +394,11 @@ static void addAttrDictionary(mlir::OperationState &state,
 }
 
 static void registerDecodedOp(BuildCtx &bc, uint64_t opId, mlir::Operation *op) {
-  if (!bc.opsById)
+  if (!bc.trackOpsById)
     return;
-  if (opId >= bc.opsById->size())
-    bc.opsById->resize(opId + 1, nullptr);
-  (*bc.opsById)[opId] = op;
+  if (opId >= bc.opsById.size())
+    bc.opsById.resize(opId + 1, nullptr);
+  bc.opsById[opId] = op;
 }
 
 static void assignDecodedResults(BuildCtx &bc, size_t resStart,
@@ -457,15 +460,16 @@ static KnownOpImmediates readKnownOpImmediates(Reader &r,
 }
 
 static llvm::SmallVector<uint64_t, kValueIdInlineCapacity>
-readKnownOperandIds(BuildCtx &bc, Reader &r, uint16_t opcode, uint8_t variant,
+readKnownOperandIds(const BuildCtx &, Reader &r, uint16_t opcode,
+                    uint8_t variant,
                     const ptobc::v0::OpInfo &info,
                     const KnownOpImmediates &imms) {
-  auto reorderLegacyIndexedTscatter = [&](llvm::SmallVector<uint64_t, 8> ids) {
+  auto reorderLegacyIndexedTscatter = [opcode](ValueIdVector ids) {
     if (opcode != 0x1056 || ids.size() != 3)
       return ids;
     // Historical v0 indexed tscatter payload is (src, indexes, dst), while the
     // current IR operand order is (src, dst, indexes).
-    return llvm::SmallVector<uint64_t, 8>{ids[0], ids[2], ids[1]};
+    return ValueIdVector{ids[0], ids[2], ids[1]};
   };
   switch (info.operand_mode) {
   case 0x00:
@@ -486,10 +490,9 @@ readKnownOperandIds(BuildCtx &bc, Reader &r, uint16_t opcode, uint8_t variant,
                             size_t(imms.n2)));
   case 0x04:
     return reorderLegacyIndexedTscatter(
-        readValueIds(r, ((imms.optMask & 0x1) ? 1 : 0) +
-                            ((imms.optMask & 0x2) ? 1 : 0)));
+        readValueIds(r, (((imms.optMask & 0x1U) != 0U) ? 1U : 0U) +
+                            (((imms.optMask & 0x2U) != 0U) ? 1U : 0U)));
   default:
-    (void)bc;
     throw std::runtime_error("unknown operand_mode");
   }
 }
@@ -571,6 +574,32 @@ static void addImmediateAttrs(BuildCtx &bc, mlir::OperationState &state,
   }
 }
 
+static llvm::SmallVector<mlir::Type, kResultTypeInlineCapacity>
+readKnownResultTypes(BuildCtx &bc, Reader &r, const ptobc::v0::OpInfo &info,
+                     uint64_t &numResults) {
+  llvm::SmallVector<mlir::Type, kResultTypeInlineCapacity> resultTypes;
+  switch (info.result_type_mode) {
+  case 0x00:
+    resultTypes.reserve(numResults);
+    for (uint64_t i = 0; i < numResults; ++i)
+      resultTypes.push_back(mlir::NoneType::get(bc.ctx));
+    return resultTypes;
+  case 0x01:
+    resultTypes.reserve(numResults);
+    for (uint64_t i = 0; i < numResults; ++i)
+      resultTypes.push_back(getType(bc, r.readULEB()));
+    return resultTypes;
+  case 0x02:
+    numResults = r.readULEB();
+    resultTypes.reserve(numResults);
+    for (uint64_t i = 0; i < numResults; ++i)
+      resultTypes.push_back(getType(bc, r.readULEB()));
+    return resultTypes;
+  default:
+    throw std::runtime_error("unknown result_type_mode");
+  }
+}
+
 static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
                                                mlir::Block &block, uint64_t opId,
                                                uint16_t opcode,
@@ -579,43 +608,25 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
   if (!info)
     throw std::runtime_error("missing opcode schema");
 
-  uint8_t variant = info->has_variant_u8 ? r.readU8() : 0;
+  uint8_t variant = (info->has_variant_u8 != 0) ? r.readU8() : 0;
   KnownOpImmediates imms = readKnownOpImmediates(r, *info);
   auto operandIds = readKnownOperandIds(bc, r, opcode, variant, *info, imms);
   auto operands = materializeOperands(bc, operandIds);
 
   uint64_t numResults = info->num_results;
-  llvm::SmallVector<mlir::Type, kResultTypeInlineCapacity> resultTypes;
-  switch (info->result_type_mode) {
-  case 0x00:
-    resultTypes.reserve(numResults);
-    for (uint64_t i = 0; i < numResults; ++i)
-      resultTypes.push_back(mlir::NoneType::get(bc.ctx));
-    break;
-  case 0x01:
-    resultTypes.reserve(numResults);
-    for (uint64_t i = 0; i < numResults; ++i)
-      resultTypes.push_back(getType(bc, r.readULEB()));
-    break;
-  case 0x02:
-    numResults = r.readULEB();
-    resultTypes.reserve(numResults);
-    for (uint64_t i = 0; i < numResults; ++i)
-      resultTypes.push_back(getType(bc, r.readULEB()));
-    break;
-  default:
-    throw std::runtime_error("unknown result_type_mode");
-  }
+  auto resultTypes = readKnownResultTypes(bc, r, *info, numResults);
 
   const size_t resStart = bc.values.size();
   for (uint64_t i = 0; i < numResults; ++i)
     bc.values.push_back(mlir::Value());
 
-  const char *opNameC = ptobc::v0::fullNameFromOpcodeVariant(opcode, variant);
-  if (!opNameC)
+  std::string opName =
+      ptobc::v0::fullNameFromOpcodeVariant(opcode, variant)
+          ? std::string(ptobc::v0::fullNameFromOpcodeVariant(opcode, variant))
+          : std::string();
+  if (opName.empty())
     throw std::runtime_error("failed to map opcode->name");
-
-  mlir::OperationState state(mlir::UnknownLoc::get(bc.ctx), opNameC);
+  mlir::OperationState state(mlir::UnknownLoc::get(bc.ctx), opName);
   state.addOperands(operands);
   state.addTypes(resultTypes);
   addAttrDictionary(state, getAttrDict(bc, attrId));
@@ -639,11 +650,10 @@ static void buildOpList(BuildCtx& bc, Reader& r, mlir::Block& block) {
 
   for (uint64_t oi = 0; oi < opcnt; ++oi) {
     if (dbg) llvm::errs() << "[ptobc]    op[" << oi << "]...\n";
-    const uint64_t opId = bc.nextOpId ? (*bc.nextOpId)++ : 0;
+    const uint64_t opId = bc.nextOpId++;
 
     uint16_t opcode = r.readU16LE();
     uint64_t attrId = r.readULEB();
-
     if (opcode == kOpcodeGeneric) {
       buildGenericOpFromReader(bc, r, block, opId, attrId);
       continue;
@@ -660,7 +670,7 @@ static void buildRegionInto(BuildCtx& bc, Reader& r, mlir::Region& region) {
 
   for (uint64_t bi = 0; bi < bcnt; ++bi) {
     if (dbg) llvm::errs() << "[ptobc]  block[" << bi << "]...\n";
-    auto* block = new mlir::Block();
+    auto block = std::make_unique<mlir::Block>();
 
     uint64_t nargs = r.readULEB();
     if (dbg) llvm::errs() << "[ptobc]   nargs=" << nargs << "\n";
@@ -672,7 +682,7 @@ static void buildRegionInto(BuildCtx& bc, Reader& r, mlir::Region& region) {
     }
 
     buildOpList(bc, r, *block);
-    region.push_back(block);
+    region.push_back(block.release());
   }
 }
 
@@ -719,7 +729,6 @@ static std::vector<FuncDecl> readFunctionDecls(BuildCtx &bc, Reader &r,
       throw std::runtime_error("bad func name sid");
     if (ftypeId >= bc.types->size())
       throw std::runtime_error("bad func type id");
-
     if (dbg) {
       llvm::errs() << "[ptobc] func[" << i << "]: nameSid=" << nameSid
                    << " ftypeId=" << ftypeId << " flags=" << unsigned(flags)
@@ -751,17 +760,17 @@ static void buildFunctionBody(BuildCtx &bc, Reader &r, mlir::func::FuncOp fn,
   }
 
   bc.values.clear();
-  uint64_t nextOpId = 0;
-  std::vector<mlir::Operation *> opsById;
-  bc.nextOpId = &nextOpId;
-  bc.opsById = &opsById;
+  bc.nextOpId = 0;
+  bc.opsById.clear();
+  bc.trackOpsById = (opsByFuncOut != nullptr);
   buildRegionInto(bc, r, fn.getBody());
   if (dbg) {
     llvm::errs() << "[ptobc] func body built ok: values=" << bc.values.size()
-                 << " ops=" << opsById.size() << "\n";
+                 << " ops=" << bc.opsById.size() << "\n";
   }
   if (opsByFuncOut)
-    opsByFuncOut->push_back(std::move(opsById));
+    opsByFuncOut->push_back(std::move(bc.opsById));
+  bc.trackOpsById = false;
 }
 
 static mlir::ModuleOp decodeToModule(mlir::MLIRContext& ctx,
@@ -776,7 +785,7 @@ static mlir::ModuleOp decodeToModule(mlir::MLIRContext& ctx,
   Reader r{moduleBytes.data(), moduleBytes.data() + moduleBytes.size()};
   std::vector<ConstEntryParsed> consts;
   parseConstPoolSection(constPool, consts);
-  BuildCtx bc{&ctx, &strings, &types, &attrs, &consts, {}, nullptr, nullptr};
+  BuildCtx bc{&ctx, &strings, &types, &attrs, &consts, {}, 0, {}, false};
   uint64_t moduleAttrId = readModuleHeader(r, dbg);
   std::vector<FuncDecl> decls = readFunctionDecls(bc, r, dbg);
 
@@ -883,7 +892,6 @@ decodePTOBCToModule(llvm::ArrayRef<uint8_t> fileBytes, mlir::MLIRContext &ctx) {
 
   std::vector<AttrEntry> attrs;
   parseAttrsSection(d3, strings, attrs);
-
   if (dbg) {
     llvm::errs() << "[ptobc] strings=" << strings.size() << " types=" << types.size() << " attrs=" << attrs.size() << " moduleBytes=" << d6.size() << "\n";
   }
@@ -893,7 +901,6 @@ decodePTOBCToModule(llvm::ArrayRef<uint8_t> fileBytes, mlir::MLIRContext &ctx) {
   (void)ctx.getOrLoadDialect<mlir::arith::ArithDialect>();
   (void)ctx.getOrLoadDialect<mlir::scf::SCFDialect>();
   (void)ctx.getOrLoadDialect<mlir::pto::PTODialect>();
-
   if (dbg) llvm::errs() << "[ptobc] decoding module...\n";
 
   std::vector<std::vector<mlir::Operation*>> opsByFunc;
@@ -902,7 +909,6 @@ decodePTOBCToModule(llvm::ArrayRef<uint8_t> fileBytes, mlir::MLIRContext &ctx) {
   // Apply op locations from DEBUGINFO (best-effort).
   if (dbgInfo)
     applyDebugLocations(ctx, strings, *dbgInfo, opsByFunc);
-
   return module;
 }
 
@@ -922,7 +928,6 @@ void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
   ctx.allowUnregisteredDialects(true);
 
   auto module = decodePTOBCToModule(data, ctx);
-
   if (dbg) llvm::errs() << "[ptobc] decoded module ok; printing...\n";
 
   CanonicalPrintOptions opt;
@@ -931,9 +936,12 @@ void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
   opt.printDebugInfo = (std::getenv("PTOBC_PRINT_LOC") != nullptr);
 
   std::string out = printModuleCanonical(module.get(), opt);
-
   if (dbg) llvm::errs() << "[ptobc] writing output: " << outPath << "\n";
-  std::ofstream ofs(outPath);
+  std::string canonicalOutPath = canonicalizeFilePath(outPath);
+  std::error_code ec;
+  llvm::raw_fd_ostream ofs(canonicalOutPath, ec, llvm::sys::fs::OF_None);
+  if (ec)
+    throw std::runtime_error("Failed to write: " + canonicalOutPath);
   ofs << out;
   if (!out.empty() && out.back() != '\n') ofs << "\n";
 }

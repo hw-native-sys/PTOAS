@@ -95,7 +95,7 @@ void SyncEventIdAllocation::reserveBlockAllEventIds() {
   }
 }
 
-void SyncEventIdAllocation::SetBlockSyncAllEventID(SyncOperation *sync) {
+void SyncEventIdAllocation::SetBlockSyncAllEventID(SyncOperation *sync) const {
   if (sync->syncCoreType == TCoreType::CUBE) {
     sync->eventIds.push_back(kBlockSyncAllCubeEventId);
   } else if (sync->syncCoreType == TCoreType::VECTOR) {
@@ -105,7 +105,7 @@ void SyncEventIdAllocation::SetBlockSyncAllEventID(SyncOperation *sync) {
   }
 }
 
-void SyncEventIdAllocation::AllocateEventId(InstanceElement *e) {
+void SyncEventIdAllocation::AllocateEventId(const InstanceElement *e) {
   for (auto &sync : e->pipeBefore) {
     if (sync->uselessSync) continue;
     if (!sync->eventIds.empty()) continue; // Already allocated
@@ -119,7 +119,8 @@ void SyncEventIdAllocation::AllocateEventId(InstanceElement *e) {
   }
 }
 
-size_t SyncEventIdAllocation::GetCompilerAvailableEventIdNum(const SyncOperation *sync) {
+size_t SyncEventIdAllocation::GetCompilerAvailableEventIdNum(
+    const SyncOperation *sync) const {
   if (sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
       sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
     return kBlockSyncSetWaitEventIdNum - reservedBlockSyncEventIdNum;
@@ -158,7 +159,7 @@ void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
     for (auto &id : canAllocaEventId) {
       SetEventPool(sync, id);
     }
-  } else if (reallocatedPipePair.count(ScopePair(sync)) &&
+  } else if ((reallocatedPipePair.count(ScopePair(sync)) != 0) &&
              (canAllocaEventId.size() < idSize)) {
     // Reallocate strategy: reduce usage to 1
     assert(canAllocaEventId.size() > 0);
@@ -168,8 +169,8 @@ void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
 }
 
 SmallVector<int> SyncEventIdAllocation::UpdateBlockAvailableEventId(
-    SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
-    size_t eventIdNum) {
+    const SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
+    size_t eventIdNum) const {
   SmallVector<int> canAllocaEventId;
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
   for (unsigned id = 0; id < eventIdNum; id++) {
@@ -186,8 +187,8 @@ SmallVector<int> SyncEventIdAllocation::UpdateBlockAvailableEventId(
 }
 
 SmallVector<int> SyncEventIdAllocation::GetAvailableEventId(
-    SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
-    SmallVector<bool> eventIdIdleStatus, size_t eventIdNum) {
+    const SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
+    SmallVector<bool> eventIdIdleStatus, size_t eventIdNum) const {
   SmallVector<int> canAllocaEventId;
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
   if (sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
@@ -236,7 +237,7 @@ SmallVector<bool> SyncEventIdAllocation::GetEventPool(const SyncOperation *sync,
   auto *waitFlag = syncPair[1].get();
 
   if (setFlag->GetForEndIndex().has_value()) {
-    if (reallocatedPipePair.count(ScopePair(sync))) {
+    if (reallocatedPipePair.count(ScopePair(sync)) != 0) {
       auto *ptr = dyn_cast<LoopInstanceElement>(
           syncIR_[setFlag->GetForEndIndex().value()].get());
       assert(ptr != nullptr);
@@ -251,7 +252,7 @@ SmallVector<bool> SyncEventIdAllocation::GetEventPool(const SyncOperation *sync,
   return eventIdPool;
 }
 
-int SyncEventIdAllocation::ScopePair(const SyncOperation *s) {
+int SyncEventIdAllocation::ScopePair(const SyncOperation *s) const {
   if (s->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
       s->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
     return 0;
@@ -343,7 +344,7 @@ void SyncEventIdAllocation::SetEventPool(const SyncOperation *sync,
   auto &waitFlag = syncPair[1];
 
   if (setFlag->GetForEndIndex().has_value()) {
-    if (reallocatedPipePair.count(ScopePair(sync))) {
+    if (reallocatedPipePair.count(ScopePair(sync)) != 0) {
       auto *ptr = dyn_cast<LoopInstanceElement>(
           syncIR_[setFlag->GetForEndIndex().value()].get());
       assert(ptr != nullptr);
@@ -384,7 +385,7 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
   syncFront->eventIds.push_back(eventId);
   syncEnd->eventIds.push_back(eventId);
 
-  if (reallocatedPipePair.count(ScopePair(setFlag))) {
+  if (reallocatedPipePair.count(ScopePair(setFlag)) != 0) {
     auto *ptr = dyn_cast<LoopInstanceElement>(
         syncIR_[setFlag->GetForEndIndex().value()].get());
     assert(ptr != nullptr);
@@ -520,7 +521,8 @@ void SyncEventIdAllocation::ReallocatedEventId() {
   ClearReallocatedBackwardMatchSync();
   for (auto &e : syncIR_) {
     for (auto &sync : e->pipeBefore) {
-      if (!sync->isBarrierType() && reallocatedPipePair.count(ScopePair(sync))) {
+      if (!sync->isBarrierType() &&
+          reallocatedPipePair.count(ScopePair(sync)) != 0) {
         ClearEventId(sync);
         SetEventId(sync);
       }
@@ -540,7 +542,8 @@ void SyncEventIdAllocation::ClearEventId(const SyncOperation *sync) {
 void SyncEventIdAllocation::ClearReallocatedBackwardMatchSync() {
   SyncOps newPipeBefore;
   for (auto &sync : syncIR_[0]->pipeBefore) {
-    if (!(sync->isSyncSetType() && reallocatedPipePair.count(ScopePair(sync)))) {
+    if (!sync->isSyncSetType() ||
+        reallocatedPipePair.count(ScopePair(sync)) == 0) {
       newPipeBefore.push_back(sync);
     }
   }
@@ -548,7 +551,8 @@ void SyncEventIdAllocation::ClearReallocatedBackwardMatchSync() {
 
   SyncOps newPipeAfter;
   for (auto &sync : syncIR_[syncIR_.size() - 1]->pipeAfter) {
-    if (!(sync->isSyncWaitType() && reallocatedPipePair.count(ScopePair(sync)))) {
+    if (!sync->isSyncWaitType() ||
+        reallocatedPipePair.count(ScopePair(sync)) == 0) {
       newPipeAfter.push_back(sync);
     }
   }
@@ -710,9 +714,7 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
         bool canForwardReuse =
             (setSync->GetSyncIRIndex() > setSame->GetSyncIRIndex() &&
              setSync->GetSyncIRIndex() <= waitSame->GetSyncIRIndex());
-
         // ... Backward reuse logic ...
-
         if (canForwardReuse /* || canBackwardReuse */) {
             return setSame; // Simplification: return first valid match
         }

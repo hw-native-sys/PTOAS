@@ -182,6 +182,91 @@ static void dumpMemInfoList(llvm::raw_ostream &os, llvm::StringRef tag,
   os << "]";
 }
 
+static void adjustIndentBeforeElement(const InstanceElement *element,
+                                      int &indent) {
+  if (auto *loop = dyn_cast<LoopInstanceElement>(element)) {
+    if (loop->getLoopKind() == KindOfLoop::LOOP_END)
+      indent = std::max(0, indent - 1);
+  }
+  if (auto *branch = dyn_cast<BranchInstanceElement>(element)) {
+    if (branch->getBranchKind() == KindOfBranch::IF_END ||
+        branch->getBranchKind() == KindOfBranch::ELSE_BEGIN)
+      indent = std::max(0, indent - 1);
+  }
+}
+
+static void adjustIndentAfterElement(const InstanceElement *element,
+                                     int &indent) {
+  if (auto *loop = dyn_cast<LoopInstanceElement>(element)) {
+    if (loop->getLoopKind() == KindOfLoop::LOOP_BEGIN)
+      indent += 1;
+  }
+  if (auto *branch = dyn_cast<BranchInstanceElement>(element)) {
+    if (branch->getBranchKind() == KindOfBranch::IF_BEGIN ||
+        branch->getBranchKind() == KindOfBranch::ELSE_BEGIN)
+      indent += 1;
+  }
+}
+
+static void dumpCompoundMemInfo(llvm::raw_ostream &os,
+                                const CompoundInstanceElement *comp,
+                                unsigned indent, mlir::AsmState *state) {
+  os.indent(indent);
+  dumpMemInfoList(os, "def", comp->defVec, state);
+  os << "\n";
+  os.indent(indent);
+  dumpMemInfoList(os, "use", comp->useVec, state);
+  os << "\n";
+}
+
+static void dumpSyncIRElementHeader(llvm::raw_ostream &os,
+                                    const InstanceElement *element) {
+  switch (element->GetKind()) {
+  case InstanceElement::KindTy::COMPOUND: {
+    auto *comp = cast<CompoundInstanceElement>(element);
+    os << "COMPOUND " << comp->opName.getStringRef() << " ["
+       << getPipelineName(comp->kPipeValue) << "]\n";
+    break;
+  }
+  case InstanceElement::KindTy::LOOP: {
+    auto *loop = cast<LoopInstanceElement>(element);
+    os << "LOOP " << getLoopKindName(loop->getLoopKind())
+       << " (begin=" << loop->beginId << ", end=" << loop->endId << ")\n";
+    break;
+  }
+  case InstanceElement::KindTy::BRANCH: {
+    auto *branch = cast<BranchInstanceElement>(element);
+    os << "BRANCH " << getBranchKindName(branch->getBranchKind())
+       << " (begin=" << branch->beginId << ", branch=" << branch->branchId
+       << ", end=" << branch->endId << ")\n";
+    break;
+  }
+  case InstanceElement::KindTy::PLACE_HOLDER: {
+    auto *placeholder = cast<PlaceHolderInstanceElement>(element);
+    os << "PLACE_HOLDER (parentScopeId=" << placeholder->parentScopeId;
+    if (placeholder->isVirtualElse)
+      os << ", virtualElse";
+    os << ")\n";
+    break;
+  }
+  }
+}
+
+static void dumpSyncOps(llvm::raw_ostream &os, llvm::StringRef prefix,
+                        const SyncOps &ops, unsigned indent,
+                        InsertSyncDumpOptions options) {
+  for (const auto *op : ops) {
+    if (!op)
+      continue;
+    if (op->uselessSync && !options.showUselessSync)
+      continue;
+    os.indent(indent);
+    os << prefix << ": ";
+    dumpSyncOp(os, op, options.showUselessSync);
+    os << "\n";
+  }
+}
+
 static void dumpSyncIR(llvm::raw_ostream &os, const SyncIRs &syncIR,
                        Operation *opForPrinting, InsertSyncDumpOptions options,
                        bool showMemInfo) {
@@ -190,92 +275,92 @@ static void dumpSyncIR(llvm::raw_ostream &os, const SyncIRs &syncIR,
     state.emplace(opForPrinting);
 
   int indent = 0;
-  auto indentBy = [&](int extra = 0) {
+  auto indentBy = [&indent](int extra = 0) {
     return static_cast<unsigned>(std::max(0, indent) * 2 + extra);
   };
 
   for (const auto &e : syncIR) {
     if (!e)
       continue;
-
-    if (auto *loop = dyn_cast<LoopInstanceElement>(e.get())) {
-      if (loop->getLoopKind() == KindOfLoop::LOOP_END)
-        indent = std::max(0, indent - 1);
-    }
-    if (auto *branch = dyn_cast<BranchInstanceElement>(e.get())) {
-      if (branch->getBranchKind() == KindOfBranch::IF_END ||
-          branch->getBranchKind() == KindOfBranch::ELSE_BEGIN)
-        indent = std::max(0, indent - 1);
-    }
+    adjustIndentBeforeElement(e.get(), indent);
 
     os.indent(indentBy());
     os << llvm::formatv("[{0,4}] ", e->GetIndex());
-
-    switch (e->GetKind()) {
-    case InstanceElement::KindTy::COMPOUND: {
-      auto *comp = cast<CompoundInstanceElement>(e.get());
-      os << "COMPOUND " << comp->opName.getStringRef() << " ["
-         << getPipelineName(comp->kPipeValue) << "]";
-      os << "\n";
-      if (showMemInfo) {
-        os.indent(indentBy(kDebugDumpIndentSpaces));
-        dumpMemInfoList(os, "def", comp->defVec, state ? &*state : nullptr);
-        os << "\n";
-        os.indent(indentBy(kDebugDumpIndentSpaces));
-        dumpMemInfoList(os, "use", comp->useVec, state ? &*state : nullptr);
-        os << "\n";
-      }
-      break;
+    dumpSyncIRElementHeader(os, e.get());
+    if (showMemInfo && isa<CompoundInstanceElement>(e.get())) {
+      dumpCompoundMemInfo(os, cast<CompoundInstanceElement>(e.get()),
+                          indentBy(kDebugDumpIndentSpaces),
+                          state ? &*state : nullptr);
     }
-    case InstanceElement::KindTy::LOOP: {
-      auto *loop = cast<LoopInstanceElement>(e.get());
-      os << "LOOP " << getLoopKindName(loop->getLoopKind())
-         << " (begin=" << loop->beginId << ", end=" << loop->endId << ")\n";
-      break;
-    }
-    case InstanceElement::KindTy::BRANCH: {
-      auto *branch = cast<BranchInstanceElement>(e.get());
-      os << "BRANCH " << getBranchKindName(branch->getBranchKind())
-         << " (begin=" << branch->beginId << ", branch=" << branch->branchId
-         << ", end=" << branch->endId << ")\n";
-      break;
-    }
-    case InstanceElement::KindTy::PLACE_HOLDER: {
-      auto *ph = cast<PlaceHolderInstanceElement>(e.get());
-      os << "PLACE_HOLDER (parentScopeId=" << ph->parentScopeId;
-      if (ph->isVirtualElse)
-        os << ", virtualElse";
-      os << ")\n";
-      break;
-    }
-    }
-
-    auto dumpOps = [&](llvm::StringRef prefix, const SyncOps &ops) {
-      for (const auto *op : ops) {
-        if (!op)
-          continue;
-        if (op->uselessSync && !options.showUselessSync)
-          continue;
-        os.indent(indentBy(kDebugDumpIndentSpaces));
-        os << prefix << ": ";
-        dumpSyncOp(os, op, options.showUselessSync);
-        os << "\n";
-      }
-    };
-
-    dumpOps("PRE ", e->pipeBefore);
-    dumpOps("POST", e->pipeAfter);
-
-    if (auto *loop = dyn_cast<LoopInstanceElement>(e.get())) {
-      if (loop->getLoopKind() == KindOfLoop::LOOP_BEGIN)
-        indent += 1;
-    }
-    if (auto *branch = dyn_cast<BranchInstanceElement>(e.get())) {
-      if (branch->getBranchKind() == KindOfBranch::IF_BEGIN ||
-          branch->getBranchKind() == KindOfBranch::ELSE_BEGIN)
-        indent += 1;
-    }
+    dumpSyncOps(os, "PRE ", e->pipeBefore, indentBy(kDebugDumpIndentSpaces),
+                options);
+    dumpSyncOps(os, "POST", e->pipeAfter, indentBy(kDebugDumpIndentSpaces),
+                options);
+    adjustIndentAfterElement(e.get(), indent);
   }
+}
+
+struct SyncOperationStats {
+  unsigned activeOps = 0;
+  unsigned setCnt = 0;
+  unsigned waitCnt = 0;
+  unsigned barrierCnt = 0;
+  unsigned blockSetCnt = 0;
+  unsigned blockWaitCnt = 0;
+  unsigned blockAllCnt = 0;
+};
+
+static void updateSyncOperationStats(const SyncOperation *op,
+                                     SyncOperationStats &stats) {
+  if (!op || op->uselessSync)
+    return;
+  stats.activeOps++;
+  switch (op->GetType()) {
+  case SyncOperation::TYPE::SET_EVENT:
+    stats.setCnt++;
+    break;
+  case SyncOperation::TYPE::WAIT_EVENT:
+    stats.waitCnt++;
+    break;
+  case SyncOperation::TYPE::PIPE_BARRIER:
+  case SyncOperation::TYPE::PIPE_BARRIER_CUBE:
+  case SyncOperation::TYPE::PIPE_BARRIER_VECTOR:
+    stats.barrierCnt++;
+    break;
+  case SyncOperation::TYPE::SYNC_BLOCK_SET:
+    stats.blockSetCnt++;
+    break;
+  case SyncOperation::TYPE::SYNC_BLOCK_WAIT:
+    stats.blockWaitCnt++;
+    break;
+  case SyncOperation::TYPE::SYNC_BLOCK_ALL:
+    stats.blockAllCnt++;
+    break;
+  }
+}
+
+static SyncOperationStats collectSyncOperationStats(
+    const SyncOperations &syncOperations) {
+  SyncOperationStats stats;
+  for (const auto &group : syncOperations) {
+    for (const auto &op : group)
+      updateSyncOperationStats(op.get(), stats);
+  }
+  return stats;
+}
+
+static void dumpInsertSyncPhaseSummary(llvm::raw_ostream &os,
+                                       llvm::StringRef phase,
+                                       const SyncIRs &syncIR,
+                                       const SyncOperations &syncOperations,
+                                       const SyncOperationStats &stats) {
+  os << "\n// === [PTOInsertSync Debug] " << phase << " === //\n";
+  os << llvm::formatv("// nodes={0}, syncGroups={1}, activeOps={2} "
+                      "(set={3}, wait={4}, barrier={5}, blockSet={6}, "
+                      "blockWait={7}, blockAll={8})\n",
+                      syncIR.size(), syncOperations.size(), stats.activeOps,
+                      stats.setCnt, stats.waitCnt, stats.barrierCnt,
+                      stats.blockSetCnt, stats.blockWaitCnt, stats.blockAllCnt);
 }
 
 void mlir::pto::dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR,
@@ -286,48 +371,8 @@ void mlir::pto::dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR
   if (level < static_cast<unsigned>(InsertSyncDebugLevel::Phase))
     return;
 
-  unsigned activeOps = 0;
-  unsigned setCnt = 0, waitCnt = 0, barrierCnt = 0;
-  unsigned blockSetCnt = 0, blockWaitCnt = 0, blockAllCnt = 0;
-  for (const auto &group : syncOperations) {
-    for (const auto &op : group) {
-      if (!op)
-        continue;
-      if (op->uselessSync)
-        continue;
-      activeOps++;
-      switch (op->GetType()) {
-      case SyncOperation::TYPE::SET_EVENT:
-        setCnt++;
-        break;
-      case SyncOperation::TYPE::WAIT_EVENT:
-        waitCnt++;
-        break;
-      case SyncOperation::TYPE::PIPE_BARRIER:
-      case SyncOperation::TYPE::PIPE_BARRIER_CUBE:
-      case SyncOperation::TYPE::PIPE_BARRIER_VECTOR:
-        barrierCnt++;
-        break;
-      case SyncOperation::TYPE::SYNC_BLOCK_SET:
-        blockSetCnt++;
-        break;
-      case SyncOperation::TYPE::SYNC_BLOCK_WAIT:
-        blockWaitCnt++;
-        break;
-      case SyncOperation::TYPE::SYNC_BLOCK_ALL:
-        blockAllCnt++;
-        break;
-      }
-    }
-  }
-
-  os << "\n// === [PTOInsertSync Debug] " << phase << " === //\n";
-  os << llvm::formatv("// nodes={0}, syncGroups={1}, activeOps={2} "
-                      "(set={3}, wait={4}, barrier={5}, blockSet={6}, "
-                      "blockWait={7}, blockAll={8})\n",
-                      syncIR.size(), syncOperations.size(), activeOps, setCnt,
-                      waitCnt, barrierCnt, blockSetCnt, blockWaitCnt,
-                      blockAllCnt);
+  SyncOperationStats stats = collectSyncOperationStats(syncOperations);
+  dumpInsertSyncPhaseSummary(os, phase, syncIR, syncOperations, stats);
 
   if (level < static_cast<unsigned>(InsertSyncDebugLevel::SyncIR)) {
     os << "// ========================================= //\n";

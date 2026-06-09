@@ -23,7 +23,6 @@
 
 namespace mlir {
 namespace pto {
-
 // Value comparator for std::map
 inline bool isLessValue(const Value &a, const Value &b) {
   return a.getImpl() < b.getImpl();
@@ -38,13 +37,13 @@ struct ValueComparator {
 using StableValueOrderMap = DenseMap<Value, uint32_t>;
 
 /// Various states when collecting gen-kill.
-enum BufferStatus { UNDEFFINED = 0, DEFFINED, GENED, KILLED };
+enum class BufferStatus { UNDEFFINED = 0, DEFFINED, GENED, KILLED };
 
 /// Pair of inplace Value.
 using ValuePair = std::pair<Value, Value>;
 
 /// Result status after plan memory.
-enum PlanStatus {
+enum class PlanStatus {
   PLAN_SUCCESS = 0,
   RESTART_NEW_PLAN,
   CONTINUE_PLAN,
@@ -74,9 +73,9 @@ struct BufferInfo {
   /// The type of element in the buffer.
   Type bufferType;
   /// Alias buffer does not participate in inplace.
-  /// e.g :
+  /// e.g
   ///  alloc A
-  ///  for(arg = A) :
+  ///  for(arg = A)
   ///    alloc B
   ///    ...
   ///    alloc C
@@ -274,7 +273,7 @@ public:
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
 
   /// map from operation to its gen and kill buffer.
-  DenseMap<OpInfo *, GenKillEntry> genKillMap;
+  DenseMap<const OpInfo *, GenKillEntry> genKillMap;
 
   /// record the map from the buffer to its number of buffer if it does
   /// multibuffer optimization.
@@ -296,6 +295,30 @@ public:
 
 private:
   void RecursionIR(Region *region, Liveness live);
+
+  std::optional<WalkResult> HandleRecursiveControlFlow(Operation *op,
+                                                       Liveness live);
+
+  bool HandleAliasOnlyOp(Operation *op);
+
+  bool HandleMetadataOnlyOp(Operation *op, OpInfo *curOpInfo, Liveness live);
+
+  bool HandleGenericStoreOp(Operation *op, OpInfo *curOpInfo, Liveness live);
+
+  bool HandleGenericPtoDpsInitOp(Operation *op, OpInfo *curOpInfo,
+                                 Liveness live);
+
+  bool HandleGenericDestinationStyleOp(Operation *op, OpInfo *curOpInfo,
+                                       Liveness live);
+
+  bool HandleGenericAliasOrCallOp(Operation *op, OpInfo *curOpInfo,
+                                  Liveness live);
+
+  bool HandleKnownBufferTouchingGroup(Operation *op, OpInfo *curOpInfo,
+                                      Liveness live);
+
+  bool HandleGenericBufferTouchingOp(Operation *op, OpInfo *curOpInfo,
+                                     Liveness live);
 
   /// Get the buffer used within the loop and defined outside the loop.
   SmallVector<Value> GetLiveBuffersInLoop(scf::ForOp forOp, Liveness live);
@@ -325,17 +348,17 @@ private:
   void UpdateOpBufferInfo(Operation *op, const ValueRange &results);
 
   /// Generate buffer info.
-  BufferInfo GenerateBufferInfo(Operation *op, Value operand);
+  BufferInfo GenerateBufferInfo(Operation *op, Value operand) const;
 
   /// Obtain the buffer info of plan operation.
   BufferInfo GetBufferInfo(Operation *op, Value operand,
-                           pto::AddressSpace bufferScope);
+                           pto::AddressSpace bufferScope) const;
 
   /// Process gen buffer based on the result value of op.
   void UpdateOpGenInfo(OpInfo *opInfo, const ValueRange &results);
 
   /// Update normal operand gen information on buffer.
-  void UpdateOperandGenInfo(OpInfo *opInfo, Value operand);
+  void UpdateOperandGenInfo(const OpInfo *opInfo, Value operand);
 
   /// Update temp buffer for DestinationStyleOpInterface op.
   void UpdateOpTempGenInfo(OpInfo *opInfo);
@@ -345,7 +368,7 @@ private:
                          bool isIgnoreInplace = false);
 
   /// Return the union of set1 and set2.
-  SetVector<Value> Union(SetVector<Value> set1, SetVector<Value> set2);
+  SetVector<Value> Union(SetVector<Value> set1, SetVector<Value> set2) const;
 
   /// Get alias buffer information.
   SetVector<Value> GetAliasBuffers(Value aliasBuffer);
@@ -435,7 +458,7 @@ public:
     buffer2Life = buf2Life;
   }
 
-  inline void SetGenKillMap(DenseMap<OpInfo *, GenKillEntry> gkMap) {
+  inline void SetGenKillMap(DenseMap<const OpInfo *, GenKillEntry> gkMap) {
     genKillMap = gkMap;
   }
 
@@ -495,7 +518,7 @@ private:
   PlanStatus PlanMemOffsetOfWholeWorkSpace();
 
   /// Enable global workspace no reuse.
-  void GlobalWorkspaceNoReuse(StorageEntry *rootStorageEntry);
+  void GlobalWorkspaceNoReuse(StorageEntry *rootStorageEntry) const;
 
   /// Verify that constBits is legal.
   void ValidateParameters(std::unique_ptr<StorageEntry> &e) const;
@@ -533,10 +556,11 @@ private:
 
   /// Assign addresses without reuse.
   void PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
-                               size_t alignUnit);
+                               size_t alignUnit) const;
 
   /// Obtain buffer space size and alignment information.
-  std::pair<size_t, size_t> GetBufferSpaceInfo(pto::AddressSpace &space) const;
+  std::pair<size_t, size_t>
+  GetBufferSpaceInfo(const pto::AddressSpace &space) const;
 
   /// Emit buffer applied failure message.
   void EmitPlanMemoryFailureInfo();
@@ -555,7 +579,7 @@ private:
                             const MemBoundList &outline);
 
   /// spec_level == SPEC_LEVEL_1, pure single can reuse with db.
-  bool VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
+  bool VerifyConflictStage1(MemBoundList &, PlanRecHis &his,
                             StorageEntry *e,
                             const OutlineSectionInfo &outlineInfo,
                             uint64_t &pongOffset);
@@ -578,8 +602,8 @@ private:
                                 const SpecInfo &si) const;
 
   /// spec_level == SPEC_LEVEL_0, life time reuse.
-  inline bool VerifyConflictStage0(StorageEntry *e,
-                                   const std::shared_ptr<MemoryBound> &last);
+  bool VerifyConflictStage0(StorageEntry *e,
+                            const std::shared_ptr<MemoryBound> &last) const;
 
   /// Update the outline information and record history
   void UpdateOutline(MemBoundList &outline, PlanRecHis &his, StorageEntry *e,
@@ -626,7 +650,7 @@ private:
   SmallVector<ValuePair> GenerateInplaceList();
 
   /// the ptoop that can reuse dst address and src address in limited situation
-  bool IsReusePTOOp(Operation *op) const;
+  bool IsReusePTOOp(const Operation *) const;
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
@@ -637,7 +661,8 @@ private:
 
   /// Reorder and make the storage entries of ping and pong continuous.
   void
-  ReorderContinuousPingPongEntry(SmallVector<StorageEntry *> &storageEntryVec);
+  ReorderContinuousPingPongEntry(
+      SmallVector<StorageEntry *> &storageEntryVec) const;
 
   /// Determine if the current buffer life of the Storage Entry conflicts with
   /// the memory that has already been allocated in history.
@@ -657,16 +682,17 @@ private:
   GetMultiRelationPongEntry(const StorageEntry *reuseBoundStorageEntry);
 
   /// Get the innermost for loop of buffer definition.
-  LoopLikeOpInterface GetBufferParentLoop(const SmallVector<Value> &buffers);
+  LoopLikeOpInterface
+  GetBufferParentLoop(const SmallVector<Value> &buffers) const;
 
   /// Report all tensors life time info.
-  void ReportMemLifeDebugInfo(StorageEntry *rootStorageEntry);
+  void ReportMemLifeDebugInfo(const StorageEntry *rootStorageEntry) const;
 
   /// Report tensor life time for debug.
-  void MemLifeDebugInfo(StorageEntry *storageEntry);
+  void MemLifeDebugInfo(const StorageEntry *storageEntry) const;
 
   /// Report tensor which is defined by memref allco.
-  void ReportCurEntryDebugInfo(const StorageEntry *curEntry);
+  void ReportCurEntryDebugInfo(const StorageEntry *curEntry) const;
 
   /// Report tensor allocate info.
   void ReportAllocatedEntryDebugInfo(StorageEntry *rootStorageEntry);
@@ -688,7 +714,7 @@ private:
   DenseMap<Value, uint32_t> buffer2MultiNum;
 
   /// map from operation to its gen and kill buffer.
-  DenseMap<OpInfo *, GenKillEntry> genKillMap;
+  DenseMap<const OpInfo *, GenKillEntry> genKillMap;
 
   /// record all storage entry to be plan address.
   SmallVector<std::unique_ptr<StorageEntry>> StorageEntryVec;
@@ -779,7 +805,6 @@ private:
 
   /// The device's SCALING storage size
   int scalingSpaceSize{0};
-
 };
 } // namespace pto
 } // namespace mlir

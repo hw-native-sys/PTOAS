@@ -22,7 +22,6 @@
 #include <utility>
 
 namespace mlir::pto::syncsolver {
-
 #ifndef ASSERT
 #ifndef NDEBUG
 #define ASSERT(condition) assert(condition)
@@ -37,8 +36,8 @@ namespace mlir::pto::syncsolver {
 class UnitFlagInfoBase {
 public:
   virtual ~UnitFlagInfoBase() = default;
-  void reset() {}
-  void merge(const UnitFlagInfoBase &, bool = true, bool = true) {}
+  virtual void reset() {}
+  void merge(const UnitFlagInfoBase &, bool = true, bool = true) const {}
   bool disabledAsSet() const { return true; }
   bool disabledAsWait() const { return true; }
   llvm::SmallVector<int64_t> getUnitFlagModesAsSet(bool = true) const {
@@ -59,8 +58,8 @@ using Body = std::vector<std::unique_ptr<OperationBase>>;
 
 // Currently gss-code-gen will handle offsetting induction variables for
 // multibuffer-enabled sync pairs, which can be done by create-preload.
-// TODO: move create-preload pass after gss in the PTO compilation pipeline and
-// let it handle preload-offset values.
+// A later pipeline cleanup can move create-preload after gss in the PTO
+// compilation pipeline and let it handle preload-offset values.
 struct EventIdInfo {
   int64_t eventIdNum{0};
   int64_t eventIdRepeatNum{1};
@@ -102,7 +101,6 @@ enum struct OpType {
 std::string getOpTypeStr(OpType opType);
 
 class OperationBase {
-
 public:
   int id{-1};
   const OpType opType;
@@ -124,20 +122,20 @@ public:
   virtual ~OperationBase() = default;
 
   // Return true when op1 and op2 share the same immediate parent operation.
-  static bool sameScope(OperationBase *op1, OperationBase *op2);
+  static bool sameScope(const OperationBase *op1, const OperationBase *op2);
 
   // Compute the depth (levels up to root) of the provided operation.
   int getDepth() const;
 
   // Return the ancestor `dist` levels above this operation.
-  OperationBase *getNthParent(int dist);
+  static OperationBase *getNthParent(OperationBase *op, int dist);
 
   // Given two operations, return the pair of operations directly below their
   // LCA.
   static std::pair<OperationBase *, OperationBase *>
   getLCAPair(OperationBase *op1, OperationBase *op2);
 
-  template <typename TyOp> TyOp *getParentOfType() {
+  template <typename TyOp> TyOp *getParentOfType() const {
     OperationBase *cur = this->parentOp;
     while (cur != nullptr && !isa<TyOp>(cur)) {
       cur = cur->parentOp;
@@ -152,10 +150,10 @@ public:
   static OperationBase *getParentCondition(OperationBase *op);
 
   // Return true if this operation is a strict ancestor of `op`.
-  bool isProperAncestor(OperationBase *op);
+  bool isProperAncestor(const OperationBase *op) const;
 
   // Collect and return all parent operations (walking upwards).
-  llvm::SmallVector<OperationBase *> getAllParents();
+  llvm::SmallVector<OperationBase *> getAllParents() const;
 
   // Human-readable string representation (override in derived classes).
   virtual std::string str(int indent = 0, bool recursive = false) const = 0;
@@ -183,7 +181,6 @@ public:
 };
 
 class Scope : public OperationBase {
-
 public:
   Body body;
   std::optional<int64_t> preloadNum;
@@ -220,7 +217,6 @@ public:
 };
 
 class Loop : public Scope {
-
 private:
 public:
   bool isParallel{false};
@@ -249,7 +245,6 @@ public:
 };
 
 class Condition : public Scope {
-
 private:
 public:
   Scope *trueScope{nullptr};
@@ -452,7 +447,6 @@ public:
 };
 
 class SetFlagOp : public SetWaitOp {
-
 private:
 public:
   SetFlagOp(Operation *op, OperationBase *parentOp,
@@ -474,7 +468,6 @@ public:
 };
 
 class WaitFlagOp : public SetWaitOp {
-
 private:
 public:
   WaitFlagOp(Operation *op, OperationBase *parentOp,
@@ -496,7 +489,6 @@ public:
 };
 
 class BarrierOp : public SyncOp {
-
 public:
   pto::PIPE pipe{pto::PIPE::PIPE_UNASSIGNED};
 

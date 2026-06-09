@@ -48,8 +48,7 @@ static void wrapSingleBlockFuncBody(func::FuncOp funcOp) {
 
   OpBuilder builder(terminator);
   auto sectionOp = builder.create<SectionOpT>(funcOp.getLoc());
-  sectionOp.getBody().push_back(new Block());
-  Block &sectionBlock = sectionOp.getBody().front();
+  Block &sectionBlock = sectionOp.getBody().emplaceBlock();
 
   auto sectionIt = Block::iterator(sectionOp.getOperation());
   sectionBlock.getOperations().splice(sectionBlock.end(),

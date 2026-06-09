@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// TODO: let ptoas auto-insert `__DAV_C220_VEC__` guard without manual editing
+// Manual note: keep the `__DAV_C220_VEC__` guard until ptoas inserts it automatically
 
 #if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)
 #include "pto/common/pto_instr.hpp"

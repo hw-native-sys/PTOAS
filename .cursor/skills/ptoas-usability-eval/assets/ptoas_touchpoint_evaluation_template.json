@@ -1,0 +1,190 @@
+{
+  "evaluation_id": "ptoas-touchpoint-eval-template",
+  "operator_name": "PTOAS",
+  "batch_id": "representative-samples-32",
+  "development_success": false,
+  "test_results": {
+    "level_0": {
+      "label": "L1 文档审阅层",
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "level_1": {
+      "label": "L2 本地最小运行层",
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "level_2": {
+      "label": "L3 Linux compile-only 层",
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "level_3": {
+      "label": "L4 NPU 上板层",
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "passed_count": 0,
+    "total_count": 0,
+    "pass_rate": 0.0
+  },
+  "summary": {
+    "support_score": 5.0,
+    "measured_score": 5.0,
+    "documentation_score": 5.0,
+    "example_score": 5.0,
+    "build_score": 5.0,
+    "debugging_score": 5.0,
+    "efficiency_score": 5.0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  },
+  "documentation_retrieval": {
+    "total_searches": 0,
+    "effective_searches": 0,
+    "effectiveness_rate": 0.0,
+    "tracked_queries": []
+  },
+  "code_examples": {
+    "sampled_case_count": 32,
+    "sampled_cases": [
+      "test/samples/AddPtr",
+      "test/samples/AllocTile",
+      "test/samples/AsyncComm",
+      "test/samples/Bf16",
+      "test/samples/CommSync",
+      "test/samples/Complex",
+      "test/samples/ControlFlow",
+      "test/samples/Cvt",
+      "test/samples/Dequant",
+      "test/samples/DynamicTailMatmul",
+      "test/samples/FFN",
+      "test/samples/FlashAttention",
+      "test/samples/Gather",
+      "test/samples/Gemv",
+      "test/samples/GQA",
+      "test/samples/LayoutInference",
+      "test/samples/MatMul",
+      "test/samples/Mgather",
+      "test/samples/Mscatter",
+      "test/samples/Partition5D",
+      "test/samples/PyPTOIRParser",
+      "test/samples/Quant",
+      "test/samples/Qwen3DecodeA3",
+      "test/samples/Qwen3DecodeA5",
+      "test/samples/Scatter",
+      "test/samples/SetValidShape",
+      "test/samples/Sync",
+      "test/samples/SyncAll",
+      "test/samples/TPrefetch",
+      "test/samples/TPrefetchAsync",
+      "test/samples/TPushTPop",
+      "test/samples/planmemory"
+    ],
+    "modified_examples": 0,
+    "modification_rate": 0.0
+  },
+  "build_configuration": {
+    "config_lines": 0,
+    "macro_count": 0,
+    "macros": []
+  },
+  "functional_testing": {
+    "compile_run_count": 0,
+    "cycles": 0,
+    "sampled_case_count": 32,
+    "sampled_cases": [
+      "test/samples/AddPtr",
+      "test/samples/AllocTile",
+      "test/samples/AsyncComm",
+      "test/samples/Bf16",
+      "test/samples/CommSync",
+      "test/samples/Complex",
+      "test/samples/ControlFlow",
+      "test/samples/Cvt",
+      "test/samples/Dequant",
+      "test/samples/DynamicTailMatmul",
+      "test/samples/FFN",
+      "test/samples/FlashAttention",
+      "test/samples/Gather",
+      "test/samples/Gemv",
+      "test/samples/GQA",
+      "test/samples/LayoutInference",
+      "test/samples/MatMul",
+      "test/samples/Mgather",
+      "test/samples/Mscatter",
+      "test/samples/Partition5D",
+      "test/samples/PyPTOIRParser",
+      "test/samples/Quant",
+      "test/samples/Qwen3DecodeA3",
+      "test/samples/Qwen3DecodeA5",
+      "test/samples/Scatter",
+      "test/samples/SetValidShape",
+      "test/samples/Sync",
+      "test/samples/SyncAll",
+      "test/samples/TPrefetch",
+      "test/samples/TPrefetchAsync",
+      "test/samples/TPushTPop",
+      "test/samples/planmemory"
+    ]
+  },
+  "key_findings": [
+    {
+      "rank": 1,
+      "finding": "This file is a starter template. Replace placeholder scores and counts after actual touchpoint scoring.",
+      "category": "process"
+    },
+    {
+      "rank": 2,
+      "finding": "Representative case pack is preselected from PTOAS samples to cover compile, validation, shape, sync, layout, precision and model-style paths.",
+      "category": "sampling"
+    },
+    {
+      "rank": 3,
+      "finding": "Use real retrieval counts, compile cycles and run outcomes before treating this JSON as a measured report.",
+      "category": "validation"
+    }
+  ],
+  "dimension_tables": {
+    "discoverability": {
+      "doc_search": 5,
+      "navigation_depth": 5,
+      "multi_entry_access": 5,
+      "version_lookup": 5
+    },
+    "consistency": {
+      "document_structure": 5,
+      "concept_alignment": 5,
+      "interface_layering": 5
+    },
+    "accuracy": {
+      "doc_correctness": 5,
+      "version_matrix": 5,
+      "build_signal_accuracy": 5
+    },
+    "completeness": {
+      "document_coverage": 5,
+      "sample_coverage": 5,
+      "tool_coverage": 5,
+      "deliverable_completeness": 5
+    },
+    "learnability": {
+      "progressive_guidance": 5,
+      "cognitive_load": 5,
+      "key_path_visibility": 5
+    },
+    "practicability": {
+      "one_shot_success": 5,
+      "example_reuse": 5,
+      "operation_steps": 5,
+      "deployment_readiness": 5
+    },
+    "debuggability": {
+      "error_context": 5,
+      "remediation_hint": 5,
+      "signal_to_noise": 5
+    }
+  },
+  "evaluated_at": "1970-01-01T00:00:00Z",
+  "report_file": "skills/ptoas-usability-eval/assets/ptoas_touchpoint_evaluation_template.json"
+}

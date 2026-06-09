@@ -10,7 +10,7 @@
 //
 // The pto-isa GlobalTensor ABI expects shape/stride to be represented in a 5D
 // right-aligned form (pad leading dims with 1). We infer ND/DN/NZ with the same
-// 5D view here and attach an optional `layout` attribute to:
+// 5D view here and attach an optional `layout` attribute to
 //   - memref.reinterpret_cast (lowered from pto.make_tensor_view)
 //   - memref.subview          (lowered from pto.partition_view)
 //   - pto.tload / pto.tstore  (for fully-static GM memrefs)
@@ -44,12 +44,10 @@ namespace {
 static constexpr llvm::StringLiteral kLayoutAttrName = "layout";
 static constexpr llvm::StringLiteral kInferredLayoutAttrName =
     "pto.inferred_layout";
-static constexpr unsigned kPaddedLayoutRank = 5;
 static constexpr int64_t kUnitExtent = 1;
 static constexpr int64_t kNZInnerRows = 16;
-static constexpr int64_t kNZFractalBytes = 512;
 
-using LayoutRankVector = SmallVector<int64_t, kPaddedLayoutRank>;
+using LayoutRankVector = SmallVector<int64_t, kPTOPaddedTensorRank5D>;
 
 static std::optional<int64_t> getConstInt(Value v) {
   if (auto c = v.getDefiningOp<arith::ConstantIndexOp>())
@@ -99,25 +97,24 @@ static std::optional<ShapeStride5D> rightAlignTo5D(ArrayRef<int64_t> shape,
                                                    ArrayRef<int64_t> stride) {
   if (shape.size() != stride.size())
     return std::nullopt;
-  if (shape.size() > kPaddedLayoutRank)
+  if (shape.size() > kPTOPaddedTensorRank5D)
     return std::nullopt;
 
   ShapeStride5D out;
-  out.shape.assign(kPaddedLayoutRank, kUnitExtent);
-  out.stride.assign(kPaddedLayoutRank, kUnitExtent);
+  out.shape.assign(kPTOPaddedTensorRank5D, kUnitExtent);
+  out.stride.assign(kPTOPaddedTensorRank5D, kUnitExtent);
 
   const int rank = static_cast<int>(shape.size());
-  const int shift = static_cast<int>(kPaddedLayoutRank) - rank;
+  const int shift = static_cast<int>(kPTOPaddedTensorRank5D) - rank;
   for (int i = 0; i < rank; ++i) {
     out.shape[shift + i] = shape[i];
     out.stride[shift + i] = stride[i];
   }
 
-  // Derive the padded leading strides with the same rule used in EmitC:
+  // Derive the padded leading strides with the same rule used in EmitC
   // stride[i] = shape[i+1] * stride[i+1].
   for (int i = shift - 1; i >= 0; --i)
     out.stride[i] = out.shape[i + 1] * out.stride[i + 1];
-
   return out;
 }
 
@@ -168,7 +165,7 @@ static std::optional<Layout> inferNZLayout(ArrayRef<int64_t> shape,
   int64_t st5 = stride[4];
   bool alignMatch =
       (sh3 == kNZInnerRows) &&
-      (sh3 * sh4 * static_cast<int64_t>(elemBytes) == kNZFractalBytes);
+      (sh3 * sh4 * static_cast<int64_t>(elemBytes) == kFractalSize512);
   bool strideMatch = (st5 == kUnitExtent) && (st4 == sh5);
   if (alignMatch && strideMatch)
     return Layout::NZ;
@@ -188,7 +185,6 @@ static std::optional<Layout> inferLayout5D(ArrayRef<int64_t> shape,
   auto padded = rightAlignTo5D(shape, strides);
   if (!padded)
     return std::nullopt;
-
   if (auto nz = inferNZLayout(padded->shape, padded->stride, elemBytes))
     return nz;
 
@@ -271,7 +267,7 @@ static void verifyOrSetLayoutAttr(Operation *op,
 
 static std::optional<Layout> inferFromStaticMemRefTy(MemRefType mrTy) {
   if (!mrTy.hasStaticShape() || mrTy.getRank() == 0 ||
-      mrTy.getRank() > kPaddedLayoutRank)
+      mrTy.getRank() > kPTOPaddedTensorRank5D)
     return std::nullopt;
   SmallVector<int64_t> strideInts;
   int64_t offset = ShapedType::kDynamic;
@@ -345,7 +341,7 @@ struct LayoutPreference {
 
 static LayoutPreference collectPreferredLayoutFromConsumers(Value tensorView) {
   LayoutPreference result;
-  auto mergePref = [&](std::optional<Layout> candidate) {
+  auto mergePref = [&result](std::optional<Layout> candidate) {
     if (!candidate || (*candidate != Layout::ND && *candidate != Layout::DN))
       return;
     if (!result.preferred) {
@@ -358,11 +354,10 @@ static LayoutPreference collectPreferredLayoutFromConsumers(Value tensorView) {
     }
   };
 
-  auto walkUses = [&](auto &&self, Value v) -> void {
+  auto walkUses = [&mergePref](auto &&self, Value v) -> void {
     for (OpOperand &use : v.getUses()) {
       Operation *owner = use.getOwner();
       unsigned operandIndex = use.getOperandNumber();
-
       if (auto part = dyn_cast<PartitionViewOp>(owner)) {
         if (operandIndex == 0)
           self(self, part.getResult());
@@ -421,7 +416,7 @@ static bool getStaticShapeAndStride(MakeTensorViewOp op,
     return false;
 
   const size_t rank = op.getShape().size();
-  if (rank == 0 || rank > kPaddedLayoutRank)
+  if (rank == 0 || rank > kPTOPaddedTensorRank5D)
     return false;
 
   shape.clear();
@@ -514,7 +509,7 @@ static void inferReinterpretCastLayoutAttr(memref::ReinterpretCastOp op,
     return;
 
   const size_t rank = op.getMixedSizes().size();
-  if (rank == 0 || rank > kPaddedLayoutRank) {
+  if (rank == 0 || rank > kPTOPaddedTensorRank5D) {
     verifyOrSetLayoutAttr(op.getOperation(), std::nullopt, signalFailure);
     return;
   }
@@ -536,84 +531,80 @@ static void inferReinterpretCastLayoutAttr(memref::ReinterpretCastOp op,
                         isMinor2DAmbiguous);
 }
 
+static void inferSubviewLayoutAttr(memref::SubViewOp op) {
+  auto resTy = dyn_cast<MemRefType>(op.getType());
+  if (!resTy || !isGlobalMemRef(resTy))
+    return;
+  if (op->getAttrOfType<LayoutAttr>(kLayoutAttrName))
+    return;
+  if (Operation *def = op.getSource().getDefiningOp()) {
+    if (auto srcLayout = def->getAttrOfType<LayoutAttr>(kLayoutAttrName)) {
+      op->setAttr(kLayoutAttrName, srcLayout);
+      if (auto inferred =
+              def->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
+        op->setAttr(kInferredLayoutAttrName, inferred);
+      }
+      return;
+    }
+  }
+
+  auto srcTy = dyn_cast<MemRefType>(op.getSource().getType());
+  if (!srcTy || !srcTy.hasStaticShape()) {
+    setLayoutAttr(op.getOperation(), Layout::ND, /*inferred=*/true);
+    return;
+  }
+
+  SmallVector<int64_t> strideInts;
+  int64_t offset = ShapedType::kDynamic;
+  if (failed(getStridesAndOffset(srcTy, strideInts, offset)) ||
+      offset == ShapedType::kDynamic ||
+      llvm::any_of(strideInts,
+                   [](int64_t s) { return s == ShapedType::kDynamic; })) {
+    setLayoutAttr(op.getOperation(), Layout::ND, /*inferred=*/true);
+    return;
+  }
+
+  auto inferred = inferLayout5D(srcTy.getShape(), strideInts,
+                                elemByteSize(srcTy.getElementType()));
+  setLayoutAttr(op.getOperation(), inferred.value_or(Layout::ND),
+                /*inferred=*/true);
+}
+
+template <typename SignalFailureFn>
+static void inferMakeTensorLayouts(func::FuncOp func,
+                                   SignalFailureFn signalFailure) {
+  func.walk([&signalFailure](MakeTensorViewOp op) {
+    inferMakeTensorViewLayoutAttr(op, signalFailure);
+  });
+  func.walk([&signalFailure](memref::ReinterpretCastOp op) {
+    inferReinterpretCastLayoutAttr(op, signalFailure);
+  });
+}
+
+static void inferSubviewLayouts(func::FuncOp func) {
+  func.walk([](memref::SubViewOp op) { inferSubviewLayoutAttr(op); });
+}
+
+static void attachLoadStoreLayouts(func::FuncOp func) {
+  func.walk([](pto::TLoadOp op) {
+    attachLoadStoreLayout(op, [](auto load) { return load.getSrc(); },
+                          [](auto load) { return load.getDst(); });
+  });
+  func.walk([](pto::TStoreOp op) {
+    attachLoadStoreLayout(op, [](auto store) { return store.getDst(); },
+                          [](auto store) { return store.getSrc(); });
+  });
+}
+
 struct InferPTOLayoutPass
     : public mlir::pto::impl::InferPTOLayoutBase<InferPTOLayoutPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(InferPTOLayoutPass)
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    // ------------------------------------------------------------------
-    // 1) pto.make_tensor_view (only if it still exists in the pipeline)
-    // ------------------------------------------------------------------
-    func.walk([&](MakeTensorViewOp op) {
-      inferMakeTensorViewLayoutAttr(op, [this] { signalPassFailure(); });
-    });
-
-    // ------------------------------------------------------------------
-    // 2) memref.reinterpret_cast (lowered from make_tensor_view)
-    // ------------------------------------------------------------------
-    func.walk([&](memref::ReinterpretCastOp op) {
-      inferReinterpretCastLayoutAttr(op, [this] { signalPassFailure(); });
-    });
-
-    // ------------------------------------------------------------------
-    // 3) memref.subview: layout is preserved from the source view
-    // ------------------------------------------------------------------
-    func.walk([&](memref::SubViewOp op) {
-      auto resTy = dyn_cast<MemRefType>(op.getType());
-      if (!resTy || !isGlobalMemRef(resTy))
-        return;
-
-      if (op->getAttrOfType<LayoutAttr>(kLayoutAttrName))
-        return;
-
-      if (Operation *def = op.getSource().getDefiningOp()) {
-        if (auto srcLayout = def->getAttrOfType<LayoutAttr>(kLayoutAttrName)) {
-          op->setAttr(kLayoutAttrName, srcLayout);
-          if (auto inferred =
-                  def->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
-            op->setAttr(kInferredLayoutAttrName, inferred);
-          }
-          return;
-        }
-      }
-
-      // Fallback: if source memref type is fully static, infer from it.
-      auto srcTy = dyn_cast<MemRefType>(op.getSource().getType());
-      if (!srcTy || !srcTy.hasStaticShape()) {
-        setLayoutAttr(op.getOperation(), Layout::ND, /*inferred=*/true);
-        return;
-      }
-
-      SmallVector<int64_t> strideInts;
-      int64_t offset = ShapedType::kDynamic;
-      if (failed(getStridesAndOffset(srcTy, strideInts, offset)) ||
-          offset == ShapedType::kDynamic ||
-          llvm::any_of(strideInts,
-                       [](int64_t s) { return s == ShapedType::kDynamic; })) {
-        setLayoutAttr(op.getOperation(), Layout::ND, /*inferred=*/true);
-        return;
-      }
-
-      auto inferred = inferLayout5D(srcTy.getShape(), strideInts,
-                                    elemByteSize(srcTy.getElementType()));
-      setLayoutAttr(op.getOperation(), inferred.value_or(Layout::ND),
-                    /*inferred=*/true);
-    });
-
-    // ------------------------------------------------------------------
-    // 4) pto.tload / pto.tstore: attach layout for static GM memrefs so EmitC
-    //    doesn't need to infer again in buildGlobalTensorFromMemref().
-    // ------------------------------------------------------------------
-    func.walk([&](pto::TLoadOp op) {
-      attachLoadStoreLayout(op, [](auto load) { return load.getSrc(); },
-                            [](auto load) { return load.getDst(); });
-    });
-
-    func.walk([&](pto::TStoreOp op) {
-      attachLoadStoreLayout(op, [](auto store) { return store.getDst(); },
-                            [](auto store) { return store.getSrc(); });
-    });
+    inferMakeTensorLayouts(func, [this] { signalPassFailure(); });
+    inferSubviewLayouts(func);
+    attachLoadStoreLayouts(func);
   }
 };
 

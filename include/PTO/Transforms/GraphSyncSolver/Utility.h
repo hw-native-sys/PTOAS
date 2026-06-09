@@ -12,31 +12,33 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_GRAPHSYNCSOLVER_UTILITY_H
 
 #include "PTO/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include "PTO/Transforms/GraphSyncSolver/UtilityDenseKeys.h"
 
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Location.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
-#include <climits>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <optional>
-#include <pthread.h>
 #include <string>
 
-#define INTRA_CORE_EVENT_ID_NUM (int64_t)8
-#define CROSS_CORE_EVENT_ID_NUM (int64_t)16
-#define TEST_INTRA_CORE_EVENT_ID_NUM (int64_t)8
-#define TEST_CROSS_CORE_EVENT_ID_NUM (int64_t)999
-
 namespace mlir::pto::syncsolver {
+constexpr int64_t kIntraCoreEventIdNum = 8;
+constexpr int64_t kCrossCoreEventIdNum = 16;
+constexpr int64_t kTestIntraCoreEventIdNum = 8;
+constexpr int64_t kTestCrossCoreEventIdNum = 999;
 const int64_t blockAllIntraSyncFlagId1 = 15;
 const int64_t blockAllIntraSyncFlagId2 = 14;
 const int64_t reservedCrossCoreEventIdNum = 2;
 const int64_t reservedIntraCoreEventIdNum = 0;
+constexpr int kConflictPairIndentWidth = 2;
 } // namespace mlir::pto::syncsolver
 
 using SyncMap = llvm::MapVector<
@@ -62,58 +64,7 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
 } // namespace mlir::pto
 
 namespace mlir::pto::syncsolver {
-struct CorePipeInfo {
-  pto::TCoreType coreType{pto::TCoreType::CUBE_OR_VECTOR};
-  pto::PIPE pipe{pto::PIPE::PIPE_UNASSIGNED};
-
-  CorePipeInfo() = default;
-
-  CorePipeInfo(pto::TCoreType coreType, pto::PIPE pipe)
-      : coreType(coreType), pipe(pipe) {}
-
-  CorePipeInfo(std::pair<pto::TCoreType, pto::PIPE> corePipePair)
-      : mlir::pto::syncsolver::CorePipeInfo(corePipePair.first,
-                                             corePipePair.second) {}
-
-  bool operator==(const CorePipeInfo &other) const {
-    return std::tie(coreType, pipe) == std::tie(other.coreType, other.pipe);
-  }
-
-  bool operator!=(const CorePipeInfo &other) const { return !(*this == other); }
-
-  bool operator<(const CorePipeInfo &other) const {
-    return std::tie(coreType, pipe) < std::tie(other.coreType, other.pipe);
-  }
-};
-} // namespace mlir::pto::syncsolver
-
-namespace llvm {
-template <> struct DenseMapInfo<mlir::pto::syncsolver::CorePipeInfo> {
-  using CorePipePairTy = std::pair<mlir::pto::TCoreType, mlir::pto::PIPE>;
-  static inline mlir::pto::syncsolver::CorePipeInfo getEmptyKey() {
-    // Use sentinel values that are guaranteed never to appear as valid keys
-    return DenseMapInfo<CorePipePairTy>::getEmptyKey();
-  }
-  static inline mlir::pto::syncsolver::CorePipeInfo getTombstoneKey() {
-    // Use a different set of sentinel values
-    return DenseMapInfo<CorePipePairTy>::getTombstoneKey();
-  }
-  static unsigned
-  getHashValue(const mlir::pto::syncsolver::CorePipeInfo &val) {
-    // Combine hashes of members
-    return DenseMapInfo<CorePipePairTy>::getHashValue({val.coreType, val.pipe});
-  }
-  static bool isEqual(const mlir::pto::syncsolver::CorePipeInfo &lhs,
-                      const mlir::pto::syncsolver::CorePipeInfo &rhs) {
-    // Use the defined operator==
-    return lhs == rhs;
-  }
-};
-} // namespace llvm
-
-namespace mlir::pto::syncsolver {
-
-enum SyncMode {
+enum class SyncMode {
   INTRA_CORE_SYNC,
   CROSS_CORE_SYNC,
   TEST_INTRA_CORE_MODE,
@@ -212,7 +163,7 @@ public:
   explicit UnitFlagInfo(const UnitFlagInfoBase &other)
       : UnitFlagInfoBase(other) {}
 
-  void reset() {
+  void reset() override {
     UnitFlagInfoBase::reset();
     linkedElementAsSet = nullptr;
     linkedElementAsWait = nullptr;
@@ -249,23 +200,25 @@ struct Occurrence {
         endIndex(endIdx) {}
 
   // Return true if occ1 and occ2 have the same immediate parent occurrence.
-  static bool sameScope(Occurrence *occ1, Occurrence *occ2);
+  static bool sameScope(const Occurrence *occ1, const Occurrence *occ2);
 
   // Return depth (number of ancestors + 1) for the given occurrence.
-  static int getDepth(Occurrence *occ);
+  static int getDepth(const Occurrence *occ);
 
   // Walk up parents to find the first ancestor occurrence associated with 'op'.
-  Occurrence *getParentWithOp(Operation *op, bool assertExists = true);
-  Occurrence *getParentWithOp(OperationBase *op, bool assertExists = true);
+  static Occurrence *getParentWithOp(Occurrence *occ, const Operation *op,
+                                     bool assertExists = true);
+  static Occurrence *getParentWithOp(Occurrence *occ, const OperationBase *op,
+                                     bool assertExists = true);
 
   // Return the ancestor that is `dist` levels above this occurrence.
-  Occurrence *getNthParent(int dist);
+  static Occurrence *getNthParent(Occurrence *occ, int dist);
 
   // Compute/return the pair of sibling occurrences just below their LCA.
   static std::pair<Occurrence *, Occurrence *> getLCAPair(Occurrence *occ1,
                                                           Occurrence *occ2);
 
-  template <typename OpTy> Occurrence *getParentOfType() {
+  template <typename OpTy> Occurrence *getParentOfType() const {
     Occurrence *cur = this->parentOcc;
     while (cur != nullptr && !isa_and_present<OpTy>(cur->op)) {
       cur = cur->parentOcc;
@@ -280,10 +233,10 @@ struct Occurrence {
   static Occurrence *getParentCondition(Occurrence *occ);
 
   // Return true if this occurrence is a strict ancestor of `occ`.
-  bool isProperAncestor(Occurrence *occ);
+  bool isProperAncestor(const Occurrence *occ) const;
 
   // Collect and return all occurrence parents (in upward order).
-  llvm::SmallVector<Occurrence *> getAllParents();
+  llvm::SmallVector<Occurrence *> getAllParents() const;
 
   static Occurrence *getUnlikelyParentCondition(Occurrence *occ);
 };
@@ -291,7 +244,6 @@ struct Occurrence {
 struct EventIdNode;
 
 struct ConflictPair {
-
   static int globalIdCounter;
 
   const int id;
@@ -383,7 +335,7 @@ public:
 private:
   static int globalIdCounter;
   llvm::SmallVector<int64_t> eventIds;
-  llvm::DenseMap<ConflictPair *, int64_t> conflictPairs;
+  llvm::DenseMap<const ConflictPair *, int64_t> conflictPairs;
 
 public:
   EventIdNode(ConflictPair *conflictPair, int64_t eventIdNum,
@@ -401,12 +353,14 @@ public:
     return clonedNode;
   }
 
-  void insertConflictPair(ConflictPair *conflictPair) {
+  void insertConflictPair(const ConflictPair *conflictPair) {
     conflictPairs[conflictPair] += 1;
   }
 
-  void eraseConflictPair(ConflictPair *conflictPair) {
-    if (!(conflictPairs[conflictPair] -= 1)) {
+  void eraseConflictPair(const ConflictPair *conflictPair) {
+    int64_t &conflictPairCount = conflictPairs[conflictPair];
+    conflictPairCount -= 1;
+    if (conflictPairCount == 0) {
       conflictPairs.erase(conflictPair);
     }
   }
@@ -431,8 +385,9 @@ public:
     ret += "]\n";
     if (printConflictPairs) {
       for (auto [conflictPair, frq] : conflictPairs) {
-        assert(frq > 0);
-        ret += std::string(2, ' ') + conflictPair->str() + "\n";
+        ASSERT(frq > 0);
+        ret += std::string(kConflictPairIndentWidth, ' ') +
+               conflictPair->str() + "\n";
       }
     }
     ret.pop_back();
@@ -516,11 +471,11 @@ llvm::FailureOr<std::pair<OpTy, OpTy>> getFirstLastOp(Operation *parentOp) {
     lastOp = op;
     return WalkResult::interrupt();
   });
-  assert(lastOp != nullptr);
+  ASSERT(lastOp != nullptr);
   return std::make_pair(firstOp, lastOp);
 }
 
-bool isEmptyScope(Scope *scope);
+bool isEmptyScope(const Scope *scope);
 
 } // namespace mlir::pto::syncsolver
 

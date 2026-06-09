@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -262,8 +257,8 @@ UNIT_FLAG CompoundInstanceElement::getUnitFlagMode() const {
   return it->second;
 }
 
-Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
-                            OpBuilder &rewriter) {
+static Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
+                                   OpBuilder &rewriter) {
   Value upperBound = forOp.getUpperBound();
   Value lowerBound = forOp.getLowerBound();
   return rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
@@ -271,7 +266,8 @@ Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
 }
 
 std::optional<mlir::Value>
-CompoundInstanceElement::getUnitFlagCond(Location loc, OpBuilder &rewriter) {
+CompoundInstanceElement::getUnitFlagCond(Location loc,
+                                         OpBuilder &rewriter) const {
   OpBuilder::InsertionGuard guard(rewriter);
   SmallVector<Value> conditions;
 

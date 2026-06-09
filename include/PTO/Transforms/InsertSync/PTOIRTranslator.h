@@ -66,6 +66,10 @@ private:
  
   // --- 递归遍历逻辑 ---
   void RecursionIR(Region *region);
+  WalkResult TranslateOperation(Operation *op);
+  std::optional<WalkResult> HandleControlFlowOp(Operation *op);
+  LogicalResult HandleAllocLikeOp(Operation *op, bool &handled);
+  bool HandleAliasLikeOp(Operation *op);
  
   // --- 内存/Alias 分析 ---
   void UpdateKernelArgMemInfo();
@@ -79,6 +83,10 @@ private:
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
   void UpdateMemrefSubViewAliasBufferInfo(memref::SubViewOp op);
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
+  bool CanMaterializeSubviewAliases(Value source) const;
+  void CloneSubviewAliasInfos(Value result, Value source,
+                              ArrayRef<uint64_t> subViewAddresses,
+                              uint64_t segmentSize);
  
   // --- 控制流处理 (SCF) ---
   void UpdateForOpInfo(scf::ForOp forOp);
@@ -92,16 +100,16 @@ private:
   // --- 辅助函数 ---
   
   // 获取 PTO Op 对应的硬件流水线类型
-  PipelineType getOpPipeline(Operation *op);
+  PipelineType getOpPipeline(Operation *op) const;
  
   // 根据 Values 填充 Def/Use 列表
   void UpdateDefUseVec(ValueRange values, SmallVector<const BaseMemInfo *> &vec);
  
   // 调试辅助
-  std::string getPipelineName(PipelineType pipe);
+  std::string getPipelineName(PipelineType pipe) const;
   void printMemInfoList(llvm::raw_ostream &os, 
                         const SmallVector<const BaseMemInfo *> &list, 
-                        AsmState &state);
+                        AsmState &state) const;
 };
  
 } // namespace pto

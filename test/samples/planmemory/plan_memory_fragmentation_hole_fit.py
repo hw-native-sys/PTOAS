@@ -11,7 +11,7 @@ PTO_IR = r"""
 module {
   func.func @fragmentation_hole_fit(%arg0: memref<16x256xf16, #pto.address_space<gm>>,
                                     %arg1: memref<16x256xf16, #pto.address_space<gm>>) {
-    // Force a tight situation:
+    // Force a tight situation
     //   - Keep 23 UB buffers live across the function (23 * 8192 = 188416 B).
     //   - Only 1 UB slot remains. Two short-lived buffers must reuse that slot.
     %k0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>

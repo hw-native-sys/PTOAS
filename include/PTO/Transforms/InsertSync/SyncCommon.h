@@ -364,7 +364,8 @@ public:
   UNIT_FLAG getUnitFlagMode() const;
   
   // PTO 暂时简化，去掉复杂的 UnitFlag 条件生成逻辑，或者稍后在 CPP 中适配
-  std::optional<mlir::Value> getUnitFlagCond(Location loc, OpBuilder &rewriter);
+  std::optional<mlir::Value> getUnitFlagCond(Location loc,
+                                             OpBuilder &rewriter) const;
 };
  
 using SyncIRs = SmallVector<std::unique_ptr<InstanceElement>>;

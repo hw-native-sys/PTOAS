@@ -28,6 +28,14 @@ using namespace mlir::pto;
 namespace mlir::pto {
 namespace {
 
+constexpr unsigned kTemplateTokenInlineCapacity = 4;
+constexpr unsigned kStoreTemplateTokenInlineCapacity = 5;
+constexpr unsigned kTStoreOperandInlineCapacity = 3;
+using TemplateTokenVector = SmallVector<std::string, kTemplateTokenInlineCapacity>;
+using StoreTemplateTokenVector =
+    SmallVector<std::string, kStoreTemplateTokenInlineCapacity>;
+using TStoreOperandVector = SmallVector<Value, kTStoreOperandInlineCapacity>;
+
 static Value materializeKernelSourceArg(ConversionPatternRewriter &rewriter,
                                         Location loc, Operation *anchor,
                                         Value originalSource, Value emittedSource) {
@@ -65,7 +73,6 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
         op.getLoc(), TypeRange{}, "TLOAD",
         ArrayAttr{}, ArrayAttr{},
         ValueRange{dst, srcArg});
-
     if (op->getNumResults() == 1) {
       rewriter.replaceOp(op, dst);
     } else {
@@ -230,7 +237,6 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
     }
     if (!isGlobal)
       return dst;
-
     if (Value gt = buildGlobalTensorFromMemref(rewriter, op.getLoc(), dst, dstMrTy,
                                               op.getOperation()))
       return gt;
@@ -281,7 +287,7 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
     if (failed(toks))
       return failure();
 
-    SmallVector<std::string, 4> templateToks;
+    TemplateTokenVector templateToks;
     if (phaseNonDefault)
       templateToks.push_back(stPhaseTok(phase));
     templateToks.push_back(toks->srcTok);
@@ -299,7 +305,6 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
     const bool phaseNonDefault = phase != pto::STPhase::Unspecified;
     const bool atomicNonDefault = atomicType != pto::AtomicType::AtomicNone;
     const bool reluNonDefault = reluPreMode != pto::ReluPreMode::NoRelu;
-
     if (!hasPreQuantScalar && !reluNonDefault && !atomicNonDefault) {
       if (phaseNonDefault) {
         return buildOpaqueTemplateArgs(rewriter, {stPhaseTok(phase)});
@@ -314,7 +319,7 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
     if (failed(toks))
       return failure();
 
-    SmallVector<std::string, 5> templateToks;
+    StoreTemplateTokenVector templateToks;
     if (phaseNonDefault)
       templateToks.push_back(stPhaseTok(phase));
     templateToks.push_back(toks->srcTok);
@@ -342,7 +347,7 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
     if (failed(targs))
       return failure();
 
-    SmallVector<Value, 3> operands{dstArg, src};
+    TStoreOperandVector operands{dstArg, src};
     if (hasPreQuantScalar)
       operands.push_back(preQuantScalar);
 
@@ -350,7 +355,6 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
         loc, TypeRange{}, "TSTORE",
         /*args=*/ArrayAttr{}, /*templateArgs=*/*targs,
         /*operands=*/operands);
-
     if (op->getNumResults() == 1) {
       rewriter.replaceOp(op, dst);
     } else {
@@ -363,9 +367,8 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
 //===----------------------------------------------------------------------===//
 // pto.matmul_dps lowering (Simplified: No internal copy/sync)
 //===----------------------------------------------------------------------===//
-//
 // Render `pto.tmatmul` as one of three forms depending on the optional
-// `acc_phase` attribute:
+// `acc_phase` attribute value.
 //   * absent / Unspecified  -> `TMATMUL(dst, lhs, rhs)`
 //   * Partial               -> `TMATMUL<AccPhase::Partial>(dst, lhs, rhs)`
 //   * Final                 -> `TMATMUL<AccPhase::Final>(dst, lhs, rhs)`

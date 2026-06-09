@@ -27,10 +27,10 @@ static EventAttr makeEvent(MLIRContext *ctx, int64_t eventId) {
   return EventAttr::get(ctx, static_cast<EVENT>(eventId));
 }
 
-Operation *CodeGenerator::resolveSyncAnchor(OperationBase *opBase) {
+Operation *CodeGenerator::resolveSyncAnchor(const OperationBase *opBase) const {
   if (!opBase)
     return nullptr;
-  if (auto *ph = dyn_cast<PlaceHolder>(opBase)) {
+  if (const auto *ph = dyn_cast<PlaceHolder>(opBase)) {
     if (ph->beforeOp)
       return ph->beforeOp->op;
     if (ph->afterOp)
@@ -111,9 +111,9 @@ void CodeGenerator::emitSyncOp(IRRewriter &rewriter, SyncOp *syncOp) {
   // solver, which is currently force-disabled by SyncSolverOptions ctor.
   // If anyone re-enables it, codegen needs a matching update before this
   // assert can be relaxed.
-  assert(!setWait->checkFirstIter &&
+  ASSERT(!setWait->checkFirstIter &&
          "checkFirstIter wrapping not implemented in codegen");
-  assert(!setWait->checkLastIter &&
+  ASSERT(!setWait->checkLastIter &&
          "checkLastIter wrapping not implemented in codegen");
 
   // One set/wait op per assigned event id. The current solver only assigns

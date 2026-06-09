@@ -33,7 +33,8 @@ public:
   std::unique_ptr<OperationBase> funcIr;
   std::vector<std::unique_ptr<Occurrence>> syncIr;
   llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
-  llvm::DenseMap<OperationBase *, std::vector<Occurrence *>> opAllOccurrences;
+  llvm::DenseMap<const OperationBase *, std::vector<Occurrence *>>
+      opAllOccurrences;
   std::vector<ProcessingOrder> processingOrders;
   llvm::DenseMap<Value, llvm::SmallVector<Value>> blockArgAliases;
 
@@ -59,8 +60,9 @@ private:
 
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
-  void generateProcessingOrders(Loop *loopOp, Occurrence *occ, bool isUseless);
-  void generateProcessingOrders(Scope *scopeOp, Occurrence *occ,
+  void generateProcessingOrders(const Loop *loopOp, Occurrence *occ,
+                                bool isUseless);
+  void generateProcessingOrders(const Scope *scopeOp, Occurrence *occ,
                                 bool isUseless);
   void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs,
                                 bool isUseless);
@@ -71,7 +73,7 @@ private:
                                 Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
 
-  bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2);
+  bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2) const;
 
   void syncIrBuilder(OperationBase *op, Occurrence *parentOcc = nullptr,
                      int depth = 0, bool isUseless = false);
@@ -92,15 +94,22 @@ private:
   std::unique_ptr<OperationBase> getTensorExtractOp(tensor::ExtractOp extractOp,
                                                     OperationBase *parentOp);
 
-  std::unique_ptr<OperationBase> getCallOp(func::CallOp callOp,
-                                           OperationBase *parentOp);
+  std::unique_ptr<OperationBase> getCallOp(func::CallOp,
+                                           const OperationBase *parentOp) const;
 
   void updateBlockArgAliases(Block *block, OperandRange destOperands);
-  bool isUnlikelyCondition(Condition *condOp);
-  bool isParallelLoop(Loop *loopOp);
-  std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
-  std::optional<int64_t> getScopePreloadNum(Scope *scopeOp);
-  std::optional<int64_t> getScopeMaxPreloadNum(Scope *scopeOp);
+  bool isUnlikelyCondition(const Condition *condOp) const;
+  bool isParallelLoop(const Loop *loopOp) const;
+  std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *) const;
+  std::optional<int64_t> getScopePreloadNum(Scope *) const;
+  std::optional<int64_t> getScopeMaxPreloadNum(Scope *) const;
+  Scope *prepareBlockScope(std::unique_ptr<Scope> &scopeOp, Block &block,
+                           bool isFunctionRegion) const;
+  void appendBlockBoundaries(Scope *parScope, Block &block) const;
+  bool handleIfLikeOp(Operation &op, Scope *parScope, bool skipEmptyScopes);
+  bool handleLoopLikeOp(Operation &op, Scope *parScope, bool skipEmptyScopes);
+  bool handleBranchAliasOp(Operation &op);
+  void appendRWOpFromOperation(Operation &op, Scope *parScope);
 };
 
 } // namespace mlir::pto::syncsolver

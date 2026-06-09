@@ -38,10 +38,16 @@ namespace {
 
 static constexpr uint64_t kVectorRegisterSizeInBytes = 256U;
 static constexpr unsigned kPipeVPruneMinRepeat = 16U;
+constexpr size_t kTileRank2D = 2;
+constexpr size_t kNumber2 = 2;
+constexpr unsigned kInlineCapacity2 = 2;
+
+template <typename T>
+using SmallVec2 = SmallVector<T, kInlineCapacity2>;
 
 struct RepeatAccessShape {
-  SmallVector<int64_t, 2> fullShape;
-  SmallVector<int64_t, 2> validShape;
+  SmallVec2<int64_t> fullShape;
+  SmallVec2<int64_t> validShape;
   Type elementType;
 };
 
@@ -49,24 +55,24 @@ static std::optional<RepeatAccessShape> getKnownRepeatAccessShapeFromType(Type t
   if (auto tileTy = dyn_cast<TileBufType>(ty)) {
     ArrayRef<int64_t> fullShape = tileTy.getShape();
     ArrayRef<int64_t> validShape = tileTy.getValidShape();
-    if (fullShape.size() != 2 || validShape.size() != 2) return std::nullopt;
+    if (fullShape.size() != kTileRank2D || validShape.size() != kTileRank2D) return std::nullopt;
     if (fullShape[0] < 0 || fullShape[1] < 0 || validShape[0] < 0 ||
         validShape[1] < 0)
       return std::nullopt;
     if (validShape[0] > fullShape[0] || validShape[1] > fullShape[1])
       return std::nullopt;
     return RepeatAccessShape{
-        SmallVector<int64_t, 2>{fullShape[0], fullShape[1]},
-        SmallVector<int64_t, 2>{validShape[0], validShape[1]},
+        SmallVec2<int64_t>{fullShape[0], fullShape[1]},
+        SmallVec2<int64_t>{validShape[0], validShape[1]},
         tileTy.getElementType()};
   }
 
   if (auto memRefTy = dyn_cast<MemRefType>(ty)) {
-    if (!memRefTy.hasStaticShape() || memRefTy.getRank() != 2)
+    if (!memRefTy.hasStaticShape() || memRefTy.getRank() != static_cast<int64_t>(kTileRank2D))
       return std::nullopt;
     auto shape = memRefTy.getShape();
-    return RepeatAccessShape{SmallVector<int64_t, 2>{shape[0], shape[1]},
-                             SmallVector<int64_t, 2>{shape[0], shape[1]},
+    return RepeatAccessShape{SmallVec2<int64_t>{shape[0], shape[1]},
+                             SmallVec2<int64_t>{shape[0], shape[1]},
                              memRefTy.getElementType()};
   }
 
@@ -84,7 +90,6 @@ static std::optional<RepeatAccessShape> getKnownRepeatAccessShape(Value access) 
   if (!access) return std::nullopt;
   auto shape = getKnownRepeatAccessShapeFromType(access.getType());
   if (!shape) return std::nullopt;
-
   if (auto bind = access.getDefiningOp<BindTileOp>()) {
     auto row = getConstantIndex(bind.getValidRow());
     auto col = getConstantIndex(bind.getValidCol());
@@ -92,7 +97,7 @@ static std::optional<RepeatAccessShape> getKnownRepeatAccessShape(Value access) 
       if (*row < 0 || *col < 0 || *row > shape->fullShape[0] ||
           *col > shape->fullShape[1])
         return std::nullopt;
-      shape->validShape = SmallVector<int64_t, 2>{*row, *col};
+      shape->validShape = SmallVec2<int64_t>{*row, *col};
     } else if (bind.getValidRow() || bind.getValidCol()) {
       return std::nullopt;
     }
@@ -114,7 +119,7 @@ static std::optional<BLayout> getKnownBLayout(Type ty) {
     SmallVector<int64_t> strides;
     int64_t offset = 0;
     if (failed(getStridesAndOffset(memRefTy, strides, offset)) ||
-        strides.size() != 2) {
+        strides.size() != kTileRank2D) {
       return std::nullopt;
     }
     ArrayRef<int64_t> shape = memRefTy.getShape();
@@ -134,7 +139,6 @@ static bool isProvenContiguousAccess(Value access,
   int64_t fullCol = shape.fullShape[1];
   int64_t validRow = shape.validShape[0];
   int64_t validCol = shape.validShape[1];
-
   if (*layout == BLayout::RowMajor)
     return validCol == fullCol || validRow == 1;
   if (*layout == BLayout::ColMajor)
@@ -288,7 +292,6 @@ bool InsertSyncAnalysis::IsNoNeedToInsertSync(
     const CompoundInstanceElement *frontCompound, bool isBackwardDep) const {
   const PipelineType frontPipe = frontCompound->kPipeValue;
   const PipelineType nowPipe = nowCompound->kPipeValue;
-
   if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S) {
     return true;
   }
@@ -322,7 +325,6 @@ void InsertSyncAnalysis::InsertSeqSync(
     unsigned frontIndex = frontPtr->GetIndex();
     assert(frontIndex < syncIR_.size());
     assert(syncIR_[frontIndex] != nullptr);
-
     if (auto *frontCompound =
             dyn_cast<CompoundInstanceElement>(frontPtr.get())) {
       UpdateAlreadySync(syncIR_[frontIndex]->pipeAfter, syncRecordList,
@@ -388,7 +390,6 @@ unsigned InsertSyncAnalysis::InsertBranchSync(
 
     InsertSeqSync(nowCompound, syncElement, static_cast<int>(branchIf),
                   static_cast<int>(branchElse), syncRecordIfList, forEndIndex);
-
     if (branchElement->branchId != branchElement->endId) {
       SyncRecordList syncRecordElseList = syncRecordList;
       InsertSeqSync(nowCompound, syncElement, static_cast<int>(branchElse),
@@ -411,7 +412,7 @@ unsigned InsertSyncAnalysis::InsertBranchSync(
 
 void InsertSyncAnalysis::MergeAlreadySync(
     SyncRecordList &syncRecordList, const SyncRecordList &syncRecordIfList,
-    const SyncRecordList &syncRecordElseList) {
+    const SyncRecordList &syncRecordElseList) const {
   for (size_t bufferIdx = 0; bufferIdx < syncRecordList.size(); bufferIdx++) {
     for (size_t pipeIdx = 0; pipeIdx < kPipeStateSize; pipeIdx++) {
       if (syncRecordIfList[bufferIdx].alreadySync[pipeIdx] &&
@@ -468,18 +469,20 @@ void InsertSyncAnalysis::MemAnalyze(
 }
 
 bool InsertSyncAnalysis::IsMemInfoHasDependency(
-    CompoundInstanceElement *nowCompound,
-    CompoundInstanceElement *frontCompound,
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec) {
-  bool hasDependency = false;
-  hasDependency |= memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->defVec,
-                                          depBaseMemInfosVec);
-  hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->useVec,
-                                          depBaseMemInfosVec);
+  const bool useDefDependency = memAnalyzer_.DepBetween(
+      nowCompound->useVec, frontCompound->defVec, depBaseMemInfosVec);
+  const bool defUseDependency = memAnalyzer_.DepBetween(
+      nowCompound->defVec, frontCompound->useVec, depBaseMemInfosVec);
+  bool defDefDependency = false;
   if (!isTLoadToTLoadWAWExempt(nowCompound, frontCompound)) {
-    hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec,
-                                            depBaseMemInfosVec);
+    defDefDependency = memAnalyzer_.DepBetween(
+        nowCompound->defVec, frontCompound->defVec, depBaseMemInfosVec);
   }
+  bool hasDependency =
+      useDefDependency || defUseDependency || defDefDependency;
 
   // Special hazard: ACC (L0C) read/read cross-pipe ordering.
   //
@@ -518,10 +521,9 @@ bool InsertSyncAnalysis::CanPrunePipeVBarrier(
   // a vector-pipe barrier once the producer repeat is large enough. Keep the
   // check conservative: all dependency pairs for this candidate must describe
   // the exact same access.
-  SmallVector<const BaseMemInfo *, 2> producerAccesses;
+  SmallVec2<const BaseMemInfo *> producerAccesses;
   for (const auto &pair : depBaseMemInfosVec) {
     if (!isSameExactAccess(pair.first, pair.second)) return false;
-
     if (containsExactAccess(nowCompound->useVec, pair.first) &&
         containsExactAccess(frontCompound->defVec, pair.second)) {
       if (!llvm::is_contained(producerAccesses, pair.second))
@@ -544,12 +546,12 @@ bool InsertSyncAnalysis::CanPrunePipeVBarrier(
 }
 
 void InsertSyncAnalysis::InsertSyncOperation(
-    CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec,
     const std::optional<unsigned> &forEndIndex) {
   PipelineType nowPipe = nowCompound->kPipeValue;
   PipelineType frontPipe = frontCompound->kPipeValue;
-
   if (nowPipe == frontPipe) {
     unsigned insertBarrierId = nowCompound->GetIndex();
     auto barrierOp = std::make_unique<SyncOperation>(
@@ -600,8 +602,9 @@ void InsertSyncAnalysis::InsertSyncOperation(
 // ==============================================================================
 
 bool InsertSyncAnalysis::isAlreadySync(
-    CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
-    SyncRecordList &syncRecordList, unsigned recordListIndex) {
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
+    SyncRecordList &syncRecordList, unsigned recordListIndex) const {
   (void)nowCompound;
   const PipelineType frontPipe = frontCompound->kPipeValue;
   if (recordListIndex >= syncRecordList.size()) return false;
@@ -612,7 +615,7 @@ bool InsertSyncAnalysis::isAlreadySync(
 
 void InsertSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
                                            SyncRecordList &syncRecordList,
-                                           const PipelineType nowPipeValue) {
+                                           const PipelineType nowPipeValue) const {
   for (auto *sync : syncVector) {
     for (size_t bufferIdx = 0; bufferIdx < syncRecordList.size(); bufferIdx++) {
       if (bufferIdx == 0 && sync->eventIdNum > 1 &&
@@ -626,7 +629,7 @@ void InsertSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
 
 void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
                                           SyncRecord &syncRecord,
-                                          PipelineType nowPipeValue) {
+                                          PipelineType nowPipeValue) const {
   PipelineType setPipeValue = sync->GetSrcPipe();
   PipelineType waitPipeValue = sync->GetDstPipe();
 
@@ -656,7 +659,6 @@ void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
       recordAlready[static_cast<unsigned>(waitPipeValue)] ||
       (nowPipeValue == waitPipeValue);
   if (!canTransitivelyEliminate) return;
-
   if (recordFinder[sync->GetSyncIndex()] &&
       (sync->GetType() == SyncOperation::TYPE::SET_EVENT ||
        sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET)) {
@@ -670,7 +672,8 @@ void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
 }
 
 void InsertSyncAnalysis::UpdateSyncRecordInfo(
-    CompoundInstanceElement *frontCompound, SyncRecordList &syncRecordList) {
+    const CompoundInstanceElement *frontCompound,
+    SyncRecordList &syncRecordList) const {
   (void)frontCompound;
   assert(!syncOperations_.empty());
   auto &syncPair = syncOperations_.back();
@@ -721,7 +724,7 @@ bool InsertSyncAnalysis::IsMemAllocOp(Operation *op) const {
 }
 
 SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
-    const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+    const DepBaseMemInfoPairVec &depBaseMemInfosVec) const {
   llvm::DenseSet<Value> touchedBuffer;
   SmallVector<Value> result;
   for (auto &pair : depBaseMemInfosVec) {
@@ -739,7 +742,7 @@ SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
 }
 
 int InsertSyncAnalysis::GetEventIdNum(
-    const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+    const DepBaseMemInfoPairVec &depBaseMemInfosVec) const {
   for (const auto &pair : depBaseMemInfosVec) {
     bool isLocalA =
         pair.first && (pair.first->scope == pto::AddressSpace::MAT ||
@@ -747,7 +750,7 @@ int InsertSyncAnalysis::GetEventIdNum(
     bool isLocalB =
         pair.second && (pair.second->scope == pto::AddressSpace::MAT ||
                         pair.second->scope == pto::AddressSpace::VEC);
-    if (isLocalA || isLocalB) return 2;
+    if (isLocalA || isLocalB) return kNumber2;
   }
   return 1;
 }
@@ -767,7 +770,6 @@ bool InsertSyncAnalysis::IsGMHazard(
 
   bool nowWritesGM = hasGM(nowCompound->defVec);
   bool nowReadsGM = hasGM(nowCompound->useVec);
-
   if (frontWritesGM && nowReadsGM) return true;  // RAW
   if (frontReadsGM && nowWritesGM) return true;  // WAR
   if (frontWritesGM && nowWritesGM) return true; // WAW

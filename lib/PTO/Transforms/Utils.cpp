@@ -253,7 +253,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (memorySpaceAttr.value().getAddressSpace() == pto::AddressSpace::GM) {
     return false;
   }
-  if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
+  if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace()) != 0) {
     return true;
   }
   llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");

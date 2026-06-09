@@ -187,7 +187,7 @@ static bool parseConstantLine(const std::string &line, std::string &imm, std::st
 
 static std::string canonicalConstBaseName(const std::string &imm, const std::string &ty) {
   // Build a deterministic `%c...`-style base name derived from the printed immediate.
-  // Examples:
+  // Examples
   //   imm=32 ty=index -> c32
   //   imm=7 ty=i32 -> c7_i32
   //   imm=0x3F800000 ty=f32 -> c0x3F800000_f32
@@ -275,7 +275,6 @@ static std::string canonicalizeSSANames(const std::string &printed) {
   uint64_t nextNonConst = 0;
   for (const auto &old : defs)
     ren.emplace(old, getCanonicalSSAName(lines, old, constCounts, nextNonConst));
-
   return renameSSAInText(printed, ren);
 }
 
@@ -334,7 +333,6 @@ std::string printModuleCanonical(mlir::ModuleOp module,
   llvm::raw_string_ostream os(printed);
   module.getOperation()->print(os, state);
   os.flush();
-
   if (opt.keepMLIRFloatPrinting) {
     return printed;
   }
@@ -350,7 +348,6 @@ std::string printModuleCanonical(mlir::ModuleOp module,
 
   // Canonicalize SSA naming.
   out = canonicalizeSSANames(out);
-
   return out;
 }
 

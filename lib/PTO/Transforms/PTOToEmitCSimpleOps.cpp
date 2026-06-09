@@ -34,7 +34,6 @@ struct PTOGetBlockIdxToEmitC
   LogicalResult
   matchAndRewrite(mlir::pto::GetBlockIdxOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, op.getType(), "get_block_idx", ValueRange{}, ArrayAttr{},
         ArrayAttr{});
@@ -51,7 +50,6 @@ struct PTOGetBlockNumToEmitC
   LogicalResult
   matchAndRewrite(mlir::pto::GetBlockNumOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, op.getType(), "get_block_num", ValueRange{}, ArrayAttr{},
         ArrayAttr{});
@@ -68,7 +66,6 @@ struct PTOGetSubBlockIdxToEmitC
   LogicalResult
   matchAndRewrite(mlir::pto::GetSubBlockIdxOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, op.getType(), "get_subblockid", ValueRange{}, ArrayAttr{},
         ArrayAttr{});
@@ -85,7 +82,6 @@ struct PTOGetSubBlockNumToEmitC
   LogicalResult
   matchAndRewrite(mlir::pto::GetSubBlockNumOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, op.getType(), "get_subblockdim", ValueRange{}, ArrayAttr{},
         ArrayAttr{});
@@ -93,9 +89,6 @@ struct PTOGetSubBlockNumToEmitC
     return success();
   }
 };
-
-
-
 
 struct PTOSetValToSETVAL : public OpConversionPattern<pto::TSetValOp> {
   using OpConversionPattern<pto::TSetValOp>::OpConversionPattern;
@@ -394,8 +387,6 @@ struct PTOStoreScalarToEmitC : public OpConversionPattern<pto::StoreScalarOp> {
 // pto.tabs lowering -> TABS(dst, src)
 //===----------------------------------------------------------------------===//
 
-
-
 struct PTOTAbsToTABS : public OpConversionPattern<pto::TAbsOp> {
   using OpConversionPattern<pto::TAbsOp>::OpConversionPattern;
 
@@ -445,7 +436,6 @@ struct AffineApplyMulConstToEmitC
   LogicalResult matchAndRewrite(affine::AffineApplyOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto map = op.getAffineMap();
-
     if (map.getNumDims() != 0 || map.getNumSymbols() != 1)
       return failure();
 

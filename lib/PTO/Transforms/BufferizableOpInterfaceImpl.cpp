@@ -11,6 +11,7 @@
 
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTODialect.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/DstBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -29,30 +30,37 @@ static LogicalResult bufferizeDestinationStyleOpInterface(
     bool supportMixedTensorBufferMode = true);
 
 template <typename Derived, typename OpTy,
-          bool supportMixedTensorBufferMode = true>
+          bool supportMixedTensorBufferMode = true,
+          bool readOnlyDpsInputs = false>
 struct PTODpsOpInterfaceBase
-    : public DstBufferizableOpInterfaceExternalModel<Derived, OpTy> {
+    : public BufferizableOpInterface::ExternalModel<Derived, OpTy> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    if constexpr (readOnlyDpsInputs)
+      return dpsOp.isDpsInput(&opOperand);
+    return true;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInit(&opOperand);
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    if (dpsOp.isDpsInit(&opOperand))
+      return {{dpsOp.getTiedOpResult(&opOperand), BufferRelation::Equivalent}};
+    return {};
+  }
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
         rewriter, cast<DestinationStyleOpInterface>(op), options,
         supportMixedTensorBufferMode);
-  }
-};
-
-template <typename Derived, typename OpTy>
-struct PTOReadWriteDpsOpInterfaceBase
-    : public PTODpsOpInterfaceBase<Derived, OpTy> {
-  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
-                              const AnalysisState &state) const {
-    auto dpsOp = cast<DestinationStyleOpInterface>(op);
-    return dpsOp.isDpsInput(&opOperand);
-  }
-
-  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
-                               const AnalysisState &state) const {
-    auto dpsOp = cast<DestinationStyleOpInterface>(op);
-    return dpsOp.isDpsInit(&opOperand);
   }
 };
 
@@ -164,22 +172,26 @@ struct PTOMrgSortDpsOpInterface
                                    pto::TMrgSortOp> {};
 
 struct PTOAddOpInterface
-    : public PTOReadWriteDpsOpInterfaceBase<PTOAddOpInterface, pto::TAddOp> {
-  bool bufferizesToElementwiseAccess(Operation *op, const AnalysisState &state,
-                                     ArrayRef<OpOperand *> opOperands) const {
+    : public PTODpsOpInterfaceBase<PTOAddOpInterface, pto::TAddOp,
+                                   /*supportMixedTensorBufferMode=*/true,
+                                   /*readOnlyDpsInputs=*/true> {
+  bool bufferizesToElementwiseAccess(Operation *, const AnalysisState &,
+                                     ArrayRef<OpOperand *>) const {
     return true;
   }
 };
 
 struct PTOMatmulOpInterface
-    : public PTOReadWriteDpsOpInterfaceBase<PTOMatmulOpInterface,
-                                            pto::TMatmulOp> {};
+    : public PTODpsOpInterfaceBase<PTOMatmulOpInterface, pto::TMatmulOp,
+                                   /*supportMixedTensorBufferMode=*/true,
+                                   /*readOnlyDpsInputs=*/true> {};
 
 } // namespace
 
 void mlir::pto::registerBufferizableOpInterfaceExternalModels(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *ctx, pto::PTODialect *dialect) {
+  registry.addExtension(+[](MLIRContext *ctx,
+                            const pto::PTODialect *dialect) {
     TLoadOp::attachInterface<PTOLoadOpInterface>(*ctx);
     TStoreOp::attachInterface<PTOStoreOpInterface>(*ctx);
     TMrgSortOp::attachInterface<PTOMrgSortDpsOpInterface>(*ctx);

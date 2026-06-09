@@ -51,12 +51,12 @@ public:
   void Allocate(uint32_t runNum = 0);
  
 private:
-  void AllocateEventId(InstanceElement *e);
-  size_t GetCompilerAvailableEventIdNum(const SyncOperation *sync);
+  void AllocateEventId(const InstanceElement *e);
+  size_t GetCompilerAvailableEventIdNum(const SyncOperation *sync) const;
   void SetEventId(SyncOperation *sync);
  
   SmallVector<bool> GetEventPool(const SyncOperation *sync, size_t eventIdNum);
-  int ScopePair(const SyncOperation *s);
+  int ScopePair(const SyncOperation *s) const;
   void FindUseEventID(unsigned int begin, unsigned int end,
                       const SyncOperation *s, SmallVector<bool> &eventId);
  
@@ -95,16 +95,17 @@ private:
   void ClearEventId(const SyncOperation *sync);
  
   SmallVector<int>
-  GetAvailableEventId(SyncOperation *sync,
+  GetAvailableEventId(const SyncOperation *sync,
                       SmallVector<bool> eventIdLifetimeAvailableStatus,
-                      SmallVector<bool> eventIdIdleStatus, size_t eventIdNum);
+                      SmallVector<bool> eventIdIdleStatus,
+                      size_t eventIdNum) const;
  
   SmallVector<int>
-  UpdateBlockAvailableEventId(SyncOperation *sync,
+  UpdateBlockAvailableEventId(const SyncOperation *sync,
                               SmallVector<bool> eventIdLifetimeAvailableStatus,
-                              size_t eventIdNum);
+                              size_t eventIdNum) const;
  
-  void SetBlockSyncAllEventID(SyncOperation *sync);
+  void SetBlockSyncAllEventID(SyncOperation *sync) const;
   void IgnoreBackHeadAndTailSync();
   void reserveBlockAllEventIds();
  

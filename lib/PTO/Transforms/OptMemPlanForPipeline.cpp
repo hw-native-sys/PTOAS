@@ -15,7 +15,7 @@ using namespace mlir::detail;
 using namespace mlir::pto;
 
 void OptMemPlanForDma::build(func::FuncOp func) {
-  auto result = func->walk<WalkOrder::PreOrder>([&](Operation *op) {
+  auto result = func->walk<WalkOrder::PreOrder>([this](Operation *op) {
     if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
       UpdateScalarBuffers(loadOp);
     } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
@@ -61,7 +61,7 @@ bool OptMemPlanForDma::BufferPipeConflict(const Value buf1,
   }
 
   if (IsDmaBuffer(buf1) || IsDmaBuffer(buf2)) {
-    // Process the operation of ForOp as follows:
+    // Process the operation of ForOp as follows
     // scf.for %arg4 = %c0 to %c1024 step %c128 ->
     //   alloca %allocA
     //   gm2ub(allocA, gm)
@@ -99,8 +99,8 @@ bool OptMemPlanForDma::IsScalarBuffer(const Value buf) const {
   return false;
 }
 
-void OptMemPlanForDma::UpdateScalarBuffersForLowerToLoops(Operation *op) {
-  for (Value operand : op->getOperands()) {
+void OptMemPlanForDma::UpdateScalarBuffersForLowerToLoops(Operation *operands) {
+  for (Value operand : operands->getOperands()) {
     auto memorySpaceAttr = GetBufferSpaceAttr(operand);
     if (!isLocalBuffer(memorySpaceAttr)) {
       continue;

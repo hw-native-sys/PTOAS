@@ -14,8 +14,6 @@
 #include "PTO/IR/PTO.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
-#include <climits>
-#include <pthread.h>
 
 namespace mlir::pto::syncsolver {
 

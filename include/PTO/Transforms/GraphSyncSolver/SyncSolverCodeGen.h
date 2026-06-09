@@ -46,7 +46,7 @@ public:
   void generateResultOps();
 
 private:
-  Operation *resolveSyncAnchor(OperationBase *opBase);
+  Operation *resolveSyncAnchor(const OperationBase *opBase) const;
   Location resolveSyncLoc(OperationBase *opBase);
   void setInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                          bool insertAfter);

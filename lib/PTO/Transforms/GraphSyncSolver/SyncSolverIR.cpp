@@ -21,6 +21,8 @@ using namespace pto::syncsolver;
 
 namespace mlir::pto::syncsolver {
 
+static constexpr int kStep = 2;
+
 int OperationBase::globalIndex = 0;
 
 static llvm::StringRef stringifyTCoreType(pto::TCoreType coreType) {
@@ -139,7 +141,7 @@ std::string Scope::str(int indent, bool recursive) const {
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
-      ret += op->str(indent + 2, true) + "\n";
+      ret += op->str(indent + kStep, true) + "\n";
     }
     ret += std::string(indent, ' ') + "}";
   }
@@ -161,7 +163,7 @@ std::string Loop::str(int indent, bool recursive) const {
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
-      ret += op->str(indent + 2, true) + "\n";
+      ret += op->str(indent + kStep, true) + "\n";
     }
     ret += std::string(indent, ' ') + "}";
   }
@@ -180,11 +182,13 @@ std::string Condition::str(int indent, bool recursive) const {
     ret += " {\n";
     for (auto &op : body) {
       if (op.get() == getTrueScope()) {
-        ret += std::string(indent + 2, ' ') + "(trueScope)\n";
+        ret += std::string(indent + kStep, ' ') +
+               "(trueScope)\n";
       } else if (op.get() == getFalseScope()) {
-        ret += std::string(indent + 2, ' ') + "(falseScope)\n";
+        ret += std::string(indent + kStep, ' ') +
+               "(falseScope)\n";
       }
-      ret += op->str(indent + 2, true) + "\n";
+      ret += op->str(indent + kStep, true) + "\n";
     }
     ret += std::string(indent, ' ') + "}";
   }
@@ -230,12 +234,12 @@ std::string RWOperation::str(int indent, bool recursive) const {
   }
   ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
          " " + unitFlag + "\n";
-  if (indent) {
+  if (indent != 0) {
     for (auto memInfo : this->readMemInfo) {
-      ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";
+      ret += std::string(indent + kStep, ' ') + "read: " + memInfo.str() + "\n";
     }
     for (auto memInfo : this->writeMemInfo) {
-      ret += std::string(indent + 2, ' ') + "write: " + memInfo.str() + "\n";
+      ret += std::string(indent + kStep, ' ') + "write: " + memInfo.str() + "\n";
     }
   }
   ret.pop_back();
@@ -352,10 +356,10 @@ std::string ConflictPair::str() const {
 
   ret += "\n";
   if (this->op1 != nullptr) {
-    ret += this->op1->str(2, false) + '\n';
+    ret += this->op1->str(kStep, false) + '\n';
   }
   if (this->op2 != nullptr) {
-    ret += this->op2->str(2, false) + '\n';
+    ret += this->op2->str(kStep, false) + '\n';
   }
   // ret += this->opSet->str(0, false) + '\n';
   // ret += this->opWait->str(0, false) + '\n';

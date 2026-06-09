@@ -32,14 +32,22 @@ namespace mlir::pto {
 namespace {
 
 static constexpr unsigned kPTOIndexBitWidth = 32;
+static constexpr int64_t kPTOTileSplitNone = 0;
+static constexpr int64_t kPTOTileSplitUpDown = 1;
+static constexpr int64_t kPTOTileSplitLeftRight = 2;
+static constexpr int8_t kPTOFrontendDirMaskC2V = 1;
+static constexpr int8_t kPTOFrontendDirMaskV2C = 2;
+static constexpr int8_t kPTOFrontendDirMaskBidirectional = 3;
+static constexpr int32_t kPTOFrontendLocalSlotNum = 2;
+static constexpr int64_t kNumber2 = 2;
 
 static FailureOr<std::string> getTileSplitToken(int64_t split) {
   switch (split) {
-  case 0:
+  case kPTOTileSplitNone:
     return std::string("TileSplitAxis::TILE_NO_SPLIT");
-  case 1:
+  case kPTOTileSplitUpDown:
     return std::string("TileSplitAxis::TILE_UP_DOWN");
-  case 2:
+  case kPTOTileSplitLeftRight:
     return std::string("TileSplitAxis::TILE_LEFT_RIGHT");
   default:
     return failure();
@@ -48,17 +56,17 @@ static FailureOr<std::string> getTileSplitToken(int64_t split) {
 
 static FailureOr<std::string>
 getTPipeDirectionToken(bool isL2G2L, int8_t dirMask, PTOArch targetArch) {
-  if (dirMask == 1) {
+  if (dirMask == kPTOFrontendDirMaskC2V) {
     if (isL2G2L && targetArch == PTOArch::A5)
       return std::string("Direction::DIR_C2V_GM");
     return std::string("Direction::DIR_C2V");
   }
-  if (dirMask == 2) {
+  if (dirMask == kPTOFrontendDirMaskV2C) {
     if (isL2G2L && targetArch == PTOArch::A5)
       return std::string("Direction::DIR_V2C_GM");
     return std::string("Direction::DIR_V2C");
   }
-  if (dirMask == 3)
+  if (dirMask == kPTOFrontendDirMaskBidirectional)
     return std::string("Direction::DIR_BOTH");
   return failure();
 }
@@ -104,7 +112,8 @@ FailureOr<std::string> buildTPipeTokenFromInitOp(Operation *op,
     if (failed(dirTok))
       return failure();
     return buildTPipeToken(initOp.getFlagBaseAttr().getInt(), *dirTok,
-                           initOp.getSlotSize(), initOp.getSlotNum(), 2,
+                           initOp.getSlotSize(), initOp.getSlotNum(),
+                           kPTOFrontendLocalSlotNum,
                            initOp.getNosplitAttr() &&
                                initOp.getNosplitAttr().getValue());
   }
@@ -123,8 +132,6 @@ static FailureOr<std::string> getTPipeTokenFromValue(Value pipeHandle,
     return failure();
   return buildTPipeTokenFromInitOp(def, targetArch);
 }
-
-
 
 static FailureOr<std::string> getPipeDataTypeToken(Value value) {
   auto opaqueTy = dyn_cast<emitc::OpaqueType>(value.getType());
@@ -180,8 +187,7 @@ struct PTOTPushToEmitC : public OpConversionPattern<mlir::pto::TPushOp> {
 
   template <typename PipeTileOp, typename AdaptorT>
 static FailureOr<PipeTileRuntimeCall> buildPipeTileRuntimeCall(
-    PipeTileOp op, AdaptorT adaptor, PTOArch targetArch, StringRef calleeBase,
-    ConversionPatternRewriter &rewriter) {
+    PipeTileOp op, AdaptorT adaptor, PTOArch targetArch, StringRef calleeBase) {
     auto pipeTok = getTPipeTokenFromValue(op.getPipeHandle(), targetArch);
     if (failed(pipeTok))
       return failure();
@@ -211,8 +217,7 @@ static FailureOr<PipeTileRuntimeCall> buildPipeTileRuntimeCall(
 
   LogicalResult matchAndRewrite(mlir::pto::TPushOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto call = buildPipeTileRuntimeCall(op, adaptor, targetArch, "TPUSH",
-                                         rewriter);
+    auto call = buildPipeTileRuntimeCall(op, adaptor, targetArch, "TPUSH");
     if (failed(call))
       return rewriter.notifyMatchFailure(op, "failed to resolve pipe token");
     return lowerPipeTileRuntimeCall(op, *call, rewriter);
@@ -230,7 +235,7 @@ struct PTOTPopToEmitC : public OpConversionPattern<mlir::pto::TPopOp> {
   LogicalResult matchAndRewrite(mlir::pto::TPopOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto call = PTOTPushToEmitC::buildPipeTileRuntimeCall(
-        op, adaptor, targetArch, "TPOP", rewriter);
+        op, adaptor, targetArch, "TPOP");
     if (failed(call))
       return rewriter.notifyMatchFailure(op, "failed to resolve pipe token");
     return PTOTPushToEmitC::lowerPipeTileRuntimeCall(op, *call, rewriter);
@@ -305,7 +310,7 @@ static std::string buildReinterpretCastTileTypeString(MemRefType resMrTy,
   std::string elemTok = getEmitCScalarTypeToken(elemTy);
   int64_t rows = 32;
   int64_t cols = 32;
-  if (resMrTy.getRank() >= 2 && resMrTy.hasStaticShape()) {
+  if (resMrTy.getRank() >= kNumber2 && resMrTy.hasStaticShape()) {
     rows = resMrTy.getDimSize(0);
     cols = resMrTy.getDimSize(1);
   }
@@ -322,11 +327,10 @@ static std::string buildReinterpretCastTileTypeString(MemRefType resMrTy,
 }
 
 static Value buildReinterpretCastBaseAddr(ConversionPatternRewriter &rewriter,
-                                          Location loc, MLIRContext *ctx,
-                                          Value source, pto::AddressSpace as,
+                                          Location loc, Value source,
+                                          pto::AddressSpace as,
                                           StringRef elemTok) {
   Value rawPtr = source;
-  (void)ctx;
   if (isEmitCTileLikeValue(source))
     rawPtr = materializeTileDataValue(rewriter, loc, source, as, elemTok);
   return castAddressToU64(rewriter, loc, rawPtr);
@@ -402,7 +406,7 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
 
     auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
     Value baseAddr =
-        buildReinterpretCastBaseAddr(rewriter, loc, ctx, source, as, elemTok);
+        buildReinterpretCastBaseAddr(rewriter, loc, source, as, elemTok);
     Value addr = baseAddr;
     if (offsetVal) {
       Value offU64 = offsetVal;

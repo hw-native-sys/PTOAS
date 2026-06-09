@@ -11,7 +11,7 @@ PTO_IR = r"""
 module {
   func.func @reuse_sequential(%arg0: memref<16x256xf16, #pto.address_space<gm>>,
                               %arg1: memref<16x256xf16, #pto.address_space<gm>>) {
-    // Force reuse:
+    // Force reuse
     // UB capacity (default) is 1572864 bits (196608 bytes). Each buffer here is
     // 16*16*16*f16 = 8192 bytes. Allocating 30 such buffers exceeds UB capacity
     // unless memory reuse is applied.

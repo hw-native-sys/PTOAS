@@ -12,6 +12,7 @@
 #include "PTO/Transforms/GraphSyncSolver/MemInfo.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "../Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -89,18 +90,40 @@ MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs) {
   return memInfo;
 }
 
+static bool haveComparableAddressSpace(const PointerLikeInfo &lhs,
+                                       const PointerLikeInfo &rhs) {
+  return lhs.addressSpace.has_value() && rhs.addressSpace.has_value() &&
+         lhs.addressSpace.value() == rhs.addressSpace.value();
+}
+
+static bool isIgnoredByEventId(std::optional<int64_t> eventIdNum, int64_t i,
+                               int64_t j) {
+  return eventIdNum.has_value() &&
+         (i % eventIdNum.value()) == (j % eventIdNum.value());
+}
+
+static bool offsetsDefinitelySeparated(int64_t offset1, int64_t allocSz1,
+                                       int64_t offset2) {
+  return allocSz1 != ShapedType::kDynamic && offset1 + allocSz1 < offset2 + 1;
+}
+
+static bool doAddressesConflict(int64_t offset1, int64_t allocSz1,
+                                int64_t offset2, int64_t allocSz2) {
+  if (offset1 == ShapedType::kDynamic || offset2 == ShapedType::kDynamic)
+    return true;
+  if (offsetsDefinitelySeparated(offset1, allocSz1, offset2))
+    return false;
+  if (offsetsDefinitelySeparated(offset2, allocSz2, offset1))
+    return false;
+  return true;
+}
+
 bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
                                     const PointerLikeInfo &pointerLikeInfo2,
                                     std::optional<int64_t> lcmLen,
                                     std::optional<int64_t> eventIdNum) {
-  if (!pointerLikeInfo1.addressSpace.has_value() ||
-      !pointerLikeInfo2.addressSpace.has_value()) {
+  if (!haveComparableAddressSpace(pointerLikeInfo1, pointerLikeInfo2))
     return false;
-  }
-  if (pointerLikeInfo1.addressSpace.value() !=
-      pointerLikeInfo2.addressSpace.value()) {
-    return false;
-  }
 
   auto &offsets1 = pointerLikeInfo1.addresses;
   auto &offsets2 = pointerLikeInfo2.addresses;
@@ -116,32 +139,17 @@ bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
 
   for (int64_t i = 0; i < len1; i++) {
     for (int64_t j = 0; j < len2; j++) {
-      if (eventIdNum.has_value()) {
-        if ((i % eventIdNum.value()) == (j % eventIdNum.value())) {
-          continue;
-        }
-      }
+      if (isIgnoredByEventId(eventIdNum, i, j))
+        continue;
 
       auto offset1 = offsets1[i % sz1];
       auto offset2 = offsets2[j % sz2];
-      if (offset1 == ShapedType::kDynamic || offset2 == ShapedType::kDynamic) {
-        return true;
-      }
-
-      assert(pointerLikeInfo1.allocateSize.has_value());
-      assert(pointerLikeInfo2.allocateSize.has_value());
+      ASSERT(pointerLikeInfo1.allocateSize.has_value());
+      ASSERT(pointerLikeInfo2.allocateSize.has_value());
       auto allocSz1 = pointerLikeInfo1.allocateSize.value();
       auto allocSz2 = pointerLikeInfo2.allocateSize.value();
-
-      if ((allocSz1 != ShapedType::kDynamic) &&
-          (offset1 + allocSz1 < offset2 + 1)) {
-        continue;
-      }
-      if ((allocSz2 != ShapedType::kDynamic) &&
-          (offset2 + allocSz2 < offset1 + 1)) {
-        continue;
-      }
-      return true;
+      if (doAddressesConflict(offset1, allocSz1, offset2, allocSz2))
+        return true;
     }
   }
   return false;

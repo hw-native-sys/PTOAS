@@ -48,6 +48,7 @@ constexpr unsigned kFunctionInlineCapacity = 8;
 constexpr unsigned kHexadecimalRadix = 16;
 constexpr unsigned kDecimalRadix = 10;
 constexpr uint8_t kDefaultModuleIndexWidth = 64;
+constexpr unsigned kMaxInlineIntegerImmediateBits = 64;
 constexpr size_t kSegmentedOperandImmediateCount = 3;
 constexpr uint8_t kCmpPredicateEqEncoding = 0;
 constexpr uint8_t kCmpPredicateNeEncoding = 1;
@@ -82,7 +83,7 @@ static mlir::DictionaryAttr stripAttrs(mlir::MLIRContext *ctx,
   if (!dict || dict.empty() || keys.empty())
     return dict;
 
-  llvm::SmallVector<mlir::NamedAttribute, 8> keep;
+  NamedAttributeVector keep;
   keep.reserve(dict.size());
   for (auto na : dict) {
     if (llvm::is_contained(keys, na.getName().getValue()))
@@ -293,6 +294,8 @@ struct Encoder {
     return internConstBits(/*tag=*/0x02, dtypeId, bits);
   }
 
+  uint64_t encodeConstantOpImmediate(mlir::arith::ConstantOp cst);
+
   void resetForFunction(uint64_t fid) {
     funcId = fid;
     nextOpId = 0;
@@ -342,6 +345,51 @@ void Encoder::encodeBlock(mlir::Block& block, Buffer& out) {
   }
 }
 
+static uint8_t encodeCmpIPredicate(mlir::arith::CmpIPredicate predicate) {
+  switch (predicate) {
+  case mlir::arith::CmpIPredicate::eq:
+    return kCmpPredicateEqEncoding;
+  case mlir::arith::CmpIPredicate::ne:
+    return kCmpPredicateNeEncoding;
+  case mlir::arith::CmpIPredicate::slt:
+    return kCmpPredicateSltEncoding;
+  case mlir::arith::CmpIPredicate::sle:
+    return kCmpPredicateSleEncoding;
+  case mlir::arith::CmpIPredicate::sgt:
+    return kCmpPredicateSgtEncoding;
+  case mlir::arith::CmpIPredicate::sge:
+    return kCmpPredicateSgeEncoding;
+  default:
+    throw std::runtime_error(
+        "unsupported arith.cmpi predicate (v0 supports only eq/ne/slt/sle/sgt/sge)");
+  }
+}
+
+uint64_t Encoder::encodeConstantOpImmediate(mlir::arith::ConstantOp cst) {
+  mlir::Attribute attr = cst.getValue();
+  uint64_t typeId = internType(file, cst.getType());
+  if (auto intAttr = llvm::dyn_cast<mlir::IntegerAttr>(attr)) {
+    const llvm::APInt &value = intAttr.getValue();
+    return value.getBitWidth() <= kMaxInlineIntegerImmediateBits
+               ? internConstInt64(typeId, value.getSExtValue())
+               : internConstIntBits(typeId, value);
+  }
+  if (auto floatAttr = llvm::dyn_cast<mlir::FloatAttr>(attr)) {
+    return internConstFloatBits(typeId, floatAttr.getValue().bitcastToAPInt());
+  }
+  throw std::runtime_error(
+      "unsupported arith.constant attribute kind for compact v0");
+}
+
+static void appendListModeAndSizes(Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms,
+                                   size_t firstSize, size_t secondSize) {
+  uint8_t listMode = 0;
+  out.appendU8(listMode);
+  writeULEB128(firstSize, out.bytes);
+  writeULEB128(secondSize, out.bytes);
+  imms.append({listMode, uint64_t(firstSize), uint64_t(secondSize)});
+}
+
 void Encoder::encodeKnownOpImmediates(
     mlir::Operation &op, Buffer &out, const ptobc::v0::OpInfo &info,
     const ptobc::v0::OpcodeAndVariant &variantInfo,
@@ -353,30 +401,7 @@ void Encoder::encodeKnownOpImmediates(
     auto cmp = llvm::dyn_cast<mlir::arith::CmpIOp>(&op);
     if (!cmp)
       throw std::runtime_error("imm_kind=cmpi_pred but op is not arith.cmpi");
-    uint8_t predicate = 0;
-    switch (cmp.getPredicate()) {
-    case mlir::arith::CmpIPredicate::eq:
-      predicate = kCmpPredicateEqEncoding;
-      break;
-    case mlir::arith::CmpIPredicate::ne:
-      predicate = kCmpPredicateNeEncoding;
-      break;
-    case mlir::arith::CmpIPredicate::slt:
-      predicate = kCmpPredicateSltEncoding;
-      break;
-    case mlir::arith::CmpIPredicate::sle:
-      predicate = kCmpPredicateSleEncoding;
-      break;
-    case mlir::arith::CmpIPredicate::sgt:
-      predicate = kCmpPredicateSgtEncoding;
-      break;
-    case mlir::arith::CmpIPredicate::sge:
-      predicate = kCmpPredicateSgeEncoding;
-      break;
-    default:
-      throw std::runtime_error(
-          "unsupported arith.cmpi predicate (v0 supports only eq/ne/slt/sle/sgt/sge)");
-    }
+    uint8_t predicate = encodeCmpIPredicate(cmp.getPredicate());
     out.appendU8(predicate);
     imms.push_back(predicate);
     return;
@@ -400,22 +425,7 @@ void Encoder::encodeKnownOpImmediates(
     auto cst = llvm::dyn_cast<mlir::arith::ConstantOp>(&op);
     if (!cst)
       throw std::runtime_error("imm_kind=const_id but op is not arith.constant");
-
-    mlir::Attribute attr = cst.getValue();
-    uint64_t constId = 0;
-    if (auto intAttr = llvm::dyn_cast<mlir::IntegerAttr>(attr)) {
-      uint64_t typeId = internType(file, cst.getType());
-      const llvm::APInt &value = intAttr.getValue();
-      constId = value.getBitWidth() <= 64 ? internConstInt64(typeId, value.getSExtValue())
-                                          : internConstIntBits(typeId, value);
-    } else if (auto floatAttr = llvm::dyn_cast<mlir::FloatAttr>(attr)) {
-      uint64_t typeId = internType(file, cst.getType());
-      constId = internConstFloatBits(typeId,
-                                     floatAttr.getValue().bitcastToAPInt());
-    } else {
-      throw std::runtime_error(
-          "unsupported arith.constant attribute kind for compact v0");
-    }
+    uint64_t constId = encodeConstantOpImmediate(cst);
     writeULEB128(constId, out.bytes);
     imms.push_back(constId);
     return;
@@ -425,12 +435,8 @@ void Encoder::encodeKnownOpImmediates(
     if (!mtv)
       throw std::runtime_error(
           "imm_kind=make_tensor_view but op is not pto.make_tensor_view");
-    uint8_t listMode = 0;
-    out.appendU8(listMode);
-    writeULEB128(mtv.getShape().size(), out.bytes);
-    writeULEB128(mtv.getStrides().size(), out.bytes);
-    imms.append({listMode, uint64_t(mtv.getShape().size()),
-                 uint64_t(mtv.getStrides().size())});
+    appendListModeAndSizes(out, imms, mtv.getShape().size(),
+                           mtv.getStrides().size());
     return;
   }
   case 0x07: {
@@ -438,12 +444,8 @@ void Encoder::encodeKnownOpImmediates(
     if (!pv)
       throw std::runtime_error(
           "imm_kind=partition_view but op is not pto.partition_view");
-    uint8_t listMode = 0;
-    out.appendU8(listMode);
-    writeULEB128(pv.getOffsets().size(), out.bytes);
-    writeULEB128(pv.getSizes().size(), out.bytes);
-    imms.append({listMode, uint64_t(pv.getOffsets().size()),
-                 uint64_t(pv.getSizes().size())});
+    appendListModeAndSizes(out, imms, pv.getOffsets().size(),
+                           pv.getSizes().size());
     return;
   }
   case 0x08: {
@@ -470,7 +472,7 @@ void Encoder::encodeKnownOpOperands(
     mlir::Operation &op, Buffer &out, const ptobc::v0::OpInfo &info,
     const ptobc::v0::OpcodeAndVariant &variantInfo,
     llvm::ArrayRef<uint64_t> imms) {
-  auto emitOperands = [&](size_t count) {
+  auto emitOperands = [this, &op, &out](size_t count) {
     if (op.getNumOperands() != count) {
       throw std::runtime_error("operand count mismatch for op: " +
                                op.getName().getStringRef().str());
@@ -478,7 +480,8 @@ void Encoder::encodeKnownOpOperands(
     for (auto value : op.getOperands())
       writeULEB128(getValueId(value), out.bytes);
   };
-  auto emitLegacyIndexedTscatterOperands = [&]() {
+  auto emitLegacyIndexedTscatterOperands =
+      [this, &op, &out, &variantInfo]() {
     auto tscatter = llvm::dyn_cast<mlir::pto::TScatterOp>(&op);
     if (!tscatter || tscatter.getMaskPatternAttr() ||
         variantInfo.opcode != 0x1056) {
@@ -488,7 +491,7 @@ void Encoder::encodeKnownOpOperands(
       throw std::runtime_error("operand count mismatch for op: " +
                                op.getName().getStringRef().str());
     }
-    // Preserve the historical v0 wire layout for indexed tscatter:
+    // Preserve the historical v0 wire layout for indexed tscatter
     //   (src, indexes, dst)
     writeULEB128(getValueId(tscatter.getSrc()), out.bytes);
     writeULEB128(getValueId(tscatter.getIndexes()), out.bytes);
@@ -528,7 +531,8 @@ void Encoder::encodeKnownOpOperands(
     if (imms.empty())
       throw std::runtime_error("optmask operands missing immediate");
     uint8_t mask = uint8_t(imms.front());
-    emitOperands(((mask & 0x1) ? 1 : 0) + ((mask & 0x2) ? 1 : 0));
+    emitOperands((((mask & 0x1U) != 0U) ? 1U : 0U) +
+                 (((mask & 0x2U) != 0U) ? 1U : 0U));
     return;
   }
   default:
@@ -546,14 +550,12 @@ void Encoder::encodeKnownOp(mlir::Operation &op, Buffer &out,
   mlir::DictionaryAttr dict = op.getAttrDictionary();
   dict = stripKnownImmediateAttrs(op.getContext(), dict, info);
   writeULEB128(internAttr(file, dict), out.bytes);
-
-  if (info.has_variant_u8)
+  if (info.has_variant_u8 != 0)
     out.appendU8(variantInfo.variant);
 
   WordVector imms;
   encodeKnownOpImmediates(op, out, info, variantInfo, imms);
   encodeKnownOpOperands(op, out, info, variantInfo, imms);
-
   if (info.result_type_mode == 0x01) {
     if (op.getNumResults() != info.num_results) {
       throw std::runtime_error("result count mismatch for op: " +

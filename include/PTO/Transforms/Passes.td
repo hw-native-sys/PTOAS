@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// TODO
+// Pass registration notes
 //
 //===----------------------------------------------------------------------===//
 
@@ -59,7 +59,7 @@ def PTOInjectBarrierAllSync : Pass<"pto-inject-barrier-all-sync", "func::FuncOp"
 
 // Define PTOGraphSyncSolver Pass (graph-based intra-core sync solver).
 // Coexists with PTOInsertSync; selectable via the driver flag
-// `--enable-graph-sync-solver`. Ported from bishengir's GraphSyncSolver core:
+// `--enable-graph-sync-solver`. Ported from bishengir's GraphSyncSolver core
 // hierarchical SyncSolver IR, conflict graph pruning, event-id coloring and
 // barrier fallback, with PTO-specific IR translation and sync op codegen.
 def PTOGraphSyncSolver : Pass<"pto-graph-sync-solver", "func::FuncOp"> {

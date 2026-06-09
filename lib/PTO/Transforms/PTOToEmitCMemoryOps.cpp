@@ -33,6 +33,14 @@ namespace {
 
 static constexpr llvm::StringLiteral kForceDynamicValidShapeAttrName =
     "__pto.force_dynamic_valid_shape";
+constexpr unsigned kInlineCapacity5 = 5;
+constexpr unsigned kInlineCapacity8 = 8;
+constexpr unsigned kNumber10 = 10;
+
+template <typename T>
+using SmallVec5 = SmallVector<T, kInlineCapacity5>;
+template <typename T>
+using SmallVec8 = SmallVector<T, kInlineCapacity8>;
 
 struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
   using OpConversionPattern<pto::PointerCastOp>::OpConversionPattern;
@@ -95,7 +103,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
   }
 
   static TileRole inferRoleFromUsers(pto::PointerCastOp op) {
-    SmallVector<Operation *, 8> users;
+    SmallVec8<Operation *> users;
     collectUserOpsThroughCasts(op.getResult(), users);
     for (Operation *user : users) {
       if (auto mm = dyn_cast<pto::TMatmulOp>(user)) {
@@ -141,7 +149,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     return false;
   }
 
-  static const char *getRoleToken(TileRole role) {
+  static llvm::StringRef getRoleToken(TileRole role) {
     switch (role) {
     case TileRole::Left:
       return "TileType::Left";
@@ -289,7 +297,6 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     bool colIsConst = vCol && isConstant(vCol, cCol);
     bool rowIsDynamic = false;
     bool colIsDynamic = false;
-
     if (forceDynamicValid)
       return buildForcedDynamicValidShapeInfo(
           rewriter, loc, elemType, blayout, shape, vRowEmitC, vColEmitC,
@@ -299,7 +306,6 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
                           cRow, shape[0], elemType, blayout, 0);
     assignRegularValidDim(result, result.vcolTok, colIsDynamic, vCol, colIsConst,
                           cCol, shape[1], elemType, blayout, 1);
-
     if (result.useConstructor) {
       if (rowIsDynamic && vRowEmitC)
         result.constructorArgs.push_back(maybeScaleDynamicValid(
@@ -349,9 +355,11 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     ValidShapeInfo validInfo = buildValidShapeInfo(
         op, adaptor, rewriter, loc, elemType, configStrings.blayout, shape);
     std::string tileTypeStr =
-        std::string("Tile<") + getRoleToken(role) + ", " + elemTypeStr + ", " +
-        dimStr + ", " + configStrings.layoutParams + ", " + validInfo.vrowTok +
-        ", " + validInfo.vcolTok + configStrings.extraParams + ">";
+        (llvm::Twine("Tile<") + getRoleToken(role) + ", " + elemTypeStr +
+         ", " + dimStr + ", " + configStrings.layoutParams + ", " +
+         validInfo.vrowTok + ", " + validInfo.vcolTok +
+         configStrings.extraParams + ">")
+            .str();
 
     auto tileType = emitc::OpaqueType::get(ctx, tileTypeStr);
     Value resultValue =
@@ -405,8 +413,8 @@ static FailureOr<Value> buildGlobalTensorViewFromPointer(
     rowMajorStrides = buildRowMajorStrides(shape);
     effectiveStrides = rowMajorStrides;
   }
-  SmallVector<int64_t, 5> shape5D;
-  SmallVector<int64_t, 5> stride5D;
+  SmallVec5<int64_t> shape5D;
+  SmallVec5<int64_t> stride5D;
   buildGlobalTensorShapeAndStride(shape, effectiveStrides, shape5D, stride5D);
 
   std::string shapeType = "pto::Shape<" + joinIntTemplateParams(shape5D) + ">";
@@ -444,12 +452,12 @@ static bool parseIntegerTemplateList(StringRef token, StringRef marker,
   if (end == StringRef::npos)
     return false;
 
-  SmallVector<StringRef, 8> parts;
+  SmallVec8<StringRef> parts;
   token.slice(pos, end).split(parts, ',');
   values.clear();
   for (StringRef part : parts) {
     int64_t value = 0;
-    if (part.trim().getAsInteger(10, value))
+    if (part.trim().getAsInteger(kNumber10, value))
       return false;
     values.push_back(value);
   }
@@ -461,9 +469,8 @@ static LogicalResult getStaticTensorViewStrides(
     SmallVectorImpl<int64_t> &strides) {
   int64_t rank = sourceType.getRank();
   strides.clear();
-
   if (auto makeView = source.getDefiningOp<pto::MakeTensorViewOp>()) {
-    if ((int64_t)makeView.getStrides().size() != rank)
+    if (static_cast<int64_t>(makeView.getStrides().size()) != rank)
       return failure();
     for (Value strideValue : makeView.getStrides()) {
       auto cst = getStaticIndexLikeValue(strideValue);
@@ -476,11 +483,11 @@ static LogicalResult getStaticTensorViewStrides(
 
   Value src = peelUnrealized(convertedSource);
   if (auto opaqueTy = dyn_cast<emitc::OpaqueType>(src.getType())) {
-    SmallVector<int64_t, 5> stride5D;
+    SmallVec5<int64_t> stride5D;
     StringRef token = opaqueTy.getValue();
     if ((parseIntegerTemplateList(token, "pto::Stride<", stride5D) ||
          parseIntegerTemplateList(token, "Stride<", stride5D)) &&
-        (int64_t)stride5D.size() >= rank) {
+        static_cast<int64_t>(stride5D.size()) >= rank) {
       strides.append(stride5D.end() - rank, stride5D.end());
       return success();
     }
@@ -524,15 +531,15 @@ struct PTOPartitionViewToEmitC
       Value data, int64_t staticLinearOffset,
       ArrayRef<std::pair<Value, int64_t>> dynamicOffsetTerms) {
     auto *ctx = rewriter.getContext();
+    Location loc = op.getLoc();
     Type u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
-    auto makeU32 = [&](int64_t value) {
-      return makeEmitCIntConstant(rewriter, op.getLoc(), u32Ty, value);
+    auto makeU32 = [&rewriter, loc, u32Ty](int64_t value) {
+      return makeEmitCIntConstant(rewriter, loc, u32Ty, value);
     };
-    auto asU32 = [&](Value value) -> Value {
+    auto asU32 = [&rewriter, loc, u32Ty](Value value) -> Value {
       if (value.getType() == u32Ty)
         return value;
-      return rewriter.create<emitc::CastOp>(op.getLoc(), u32Ty, value)
-          .getResult();
+      return rewriter.create<emitc::CastOp>(loc, u32Ty, value).getResult();
     };
 
     Value totalOffset = makeU32(staticLinearOffset);
@@ -603,7 +610,6 @@ struct PTOPartitionViewToEmitC
     if (!srcTy || !resTy)
       return rewriter.notifyMatchFailure(
           op, "expected tensor_view source and partition_tensor_view result");
-
     if (failed(verifyStaticPartitionView(op, srcTy, resTy, rewriter)))
       return failure();
 

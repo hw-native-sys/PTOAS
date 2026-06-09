@@ -31,11 +31,11 @@ int64_t EventIdSolver::getEventIdsNum(bool dontCalcEventIds) {
   if (!dontCalcEventIds) {
     calcEventIds();
   }
-  assert(!needRecalculateEventIds);
+  ASSERT(!needRecalculateEventIds);
   llvm::SmallDenseSet<int64_t> usedEventIds;
   for (auto &node : nodes) {
     auto &eventIds = node->getEventIds();
-    assert(!eventIds.empty());
+    ASSERT(!eventIds.empty());
     usedEventIds.insert(eventIds.begin(), eventIds.end());
   }
   return usedEventIds.size();
@@ -64,17 +64,17 @@ void EventIdSolver::addNode(std::unique_ptr<EventIdNode> node) {
 }
 
 void EventIdSolver::removeNode(EventIdNode *node) {
-  assert(adjList[node].empty());
-  assert(!sumAdjListSizes[node]);
+  ASSERT(adjList[node].empty());
+  ASSERT(sumAdjListSizes[node] == 0);
   adjList.erase(node);
   sumAdjListSizes.erase(node);
-  assert(nodes.back().get() == node);
+  ASSERT(nodes.back().get() == node);
   nodes.pop_back();
 }
 
 void EventIdSolver::insertConflictPair(EventIdNode *node,
                                        ConflictPair *conflictPair) {
-  assert(node != nullptr && conflictPair != nullptr);
+  ASSERT(node != nullptr && conflictPair != nullptr);
   actionsStack.push(
       std::make_unique<ActionInsertConflictPair>(node, conflictPair));
   conflictPair2Node[conflictPair] = node;
@@ -83,13 +83,13 @@ void EventIdSolver::insertConflictPair(EventIdNode *node,
 
 void EventIdSolver::eraseConflictPair(EventIdNode *node,
                                       ConflictPair *conflictPair) {
-  assert(node != nullptr && conflictPair != nullptr);
+  ASSERT(node != nullptr && conflictPair != nullptr);
   conflictPair2Node.erase(conflictPair);
   node->eraseConflictPair(conflictPair);
 }
 
 void EventIdSolver::addEdge(EventIdNode *node1, EventIdNode *node2) {
-  assert(node1 != nullptr && node2 != nullptr);
+  ASSERT(node1 != nullptr && node2 != nullptr);
   LLVM_DEBUG({
     llvm::dbgs() << "add-edge: " << node1->str(false) << ' '
                  << node2->str(false) << '\n';
@@ -98,12 +98,16 @@ void EventIdSolver::addEdge(EventIdNode *node1, EventIdNode *node2) {
     return;
   }
   actionsStack.push(std::make_unique<ActionAddEdge>(node1, node2));
-  if (!adjList[node1][node2]++) {
+  int64_t &node1ToNode2Count = adjList[node1][node2];
+  if (node1ToNode2Count == 0) {
     sumAdjListSizes[node1] += node2->eventIdNum;
   }
-  if (!adjList[node2][node1]++) {
+  node1ToNode2Count += 1;
+  int64_t &node2ToNode1Count = adjList[node2][node1];
+  if (node2ToNode1Count == 0) {
     sumAdjListSizes[node2] += node1->eventIdNum;
   }
+  node2ToNode1Count += 1;
   if (!needRecalculateEventIds) {
     if ((sumAdjListSizes[node1] + node1->eventIdNum > eventIdsNumMax) ||
         (sumAdjListSizes[node2] + node2->eventIdNum > eventIdsNumMax)) {
@@ -113,12 +117,16 @@ void EventIdSolver::addEdge(EventIdNode *node1, EventIdNode *node2) {
 }
 
 void EventIdSolver::removeEdge(EventIdNode *node1, EventIdNode *node2) {
-  assert(node1 != nullptr && node2 != nullptr);
-  if (!(adjList[node1][node2] -= 1)) {
+  ASSERT(node1 != nullptr && node2 != nullptr);
+  int64_t &node1ToNode2Count = adjList[node1][node2];
+  node1ToNode2Count -= 1;
+  if (node1ToNode2Count == 0) {
     adjList[node1].erase(node2);
     sumAdjListSizes[node1] -= node2->eventIdNum;
   }
-  if (!(adjList[node2][node1] -= 1)) {
+  int64_t &node2ToNode1Count = adjList[node2][node1];
+  node2ToNode1Count -= 1;
+  if (node2ToNode1Count == 0) {
     adjList[node2].erase(node1);
     sumAdjListSizes[node2] -= node1->eventIdNum;
   }
@@ -127,7 +135,7 @@ void EventIdSolver::removeEdge(EventIdNode *node1, EventIdNode *node2) {
 void EventIdSolver::assignEventIds(EventIdNode *node,
                                    const llvm::SmallVector<int64_t> &eventIds,
                                    bool pushAction) {
-  assert(node != nullptr);
+  ASSERT(node != nullptr);
   if (node->getEventIds() == eventIds) {
     return;
   }
@@ -150,9 +158,9 @@ void EventIdSolver::assignNeedRecalc(bool newValue, bool pushAction) {
 }
 
 EventIdNode *EventIdSolver::getNode(ConflictPair *conflictPair) {
-  assert(conflictPair != nullptr);
+  ASSERT(conflictPair != nullptr);
   auto it = conflictPair2Node.find(conflictPair);
-  assert(it != conflictPair2Node.end());
+  ASSERT(it != conflictPair2Node.end());
   return it->second;
 }
 
@@ -167,7 +175,7 @@ std::unique_ptr<EventIdSolver> EventIdSolver::clone() {
   for (auto [nodeSrc, nodesDstFrq] : adjList) {
     auto *clonedNodeSrc = mp.at(nodeSrc);
     for (auto [nodeDst, frq] : nodesDstFrq) {
-      assert(frq > 0);
+      ASSERT(frq > 0);
       auto *clonedNodeDst = mp.at(nodeDst);
       clonedEventIdSolver->adjList[clonedNodeSrc][clonedNodeDst] += frq;
     }
@@ -186,8 +194,8 @@ std::unique_ptr<EventIdSolver> EventIdSolver::clone() {
 EventIdNode *EventIdSolver::createNode(ConflictPair *conflictPair,
                                        int64_t eventIdNum,
                                        bool reversePriority) {
-  assert(conflictPair != nullptr);
-  assert(eventIdNum > 0);
+  ASSERT(conflictPair != nullptr);
+  ASSERT(eventIdNum > 0);
   auto node =
       std::make_unique<EventIdNode>(conflictPair, eventIdNum, reversePriority);
   auto *nodePtr = node.get();
@@ -202,7 +210,7 @@ EventIdNode *EventIdSolver::createNode(ConflictPair *conflictPair,
 void EventIdSolver::addConflicts(
     ConflictPair *conflictPairSrc,
     const std::vector<ConflictPair *> &conflictPairsDst) {
-  assert(conflictPairSrc != nullptr);
+  ASSERT(conflictPairSrc != nullptr);
   EventIdNode *node1 = getNode(conflictPairSrc);
   for (auto *conflictPairDst : conflictPairsDst) {
     LLVM_DEBUG({
@@ -216,8 +224,10 @@ void EventIdSolver::addConflicts(
 llvm::SmallVector<int64_t>
 EventIdSolver::getAdjNodesUsedEventIds(EventIdNode *node) {
   llvm::SmallDenseSet<int64_t> usedEventIds;
-  for (auto [otherNode, frq] : adjList[node]) {
-    assert(frq > 0);
+  auto adjIt = adjList.find(node);
+  ASSERT(adjIt != adjList.end());
+  for (auto [otherNode, frq] : adjIt->second) {
+    ASSERT(frq > 0);
     auto &otherEventIds = otherNode->getEventIds();
     usedEventIds.insert(otherEventIds.begin(), otherEventIds.end());
   }
@@ -233,56 +243,66 @@ EventIdSolver::getAdjNodesUsedEventIds(EventIdNode *node) {
   return usedEventIdsVec;
 }
 
+static llvm::SmallVector<int64_t>
+chooseForwardEventIds(ArrayRef<int64_t> usedEventIds, int64_t eventIdNum) {
+  llvm::SmallVector<int64_t> chosenEventIds;
+  int64_t curEventId = 0;
+  auto *it = usedEventIds.begin();
+  while (static_cast<int64_t>(chosenEventIds.size()) < eventIdNum) {
+    while ((it != usedEventIds.end()) && ((*it) < curEventId))
+      ++it;
+    if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
+      ++it;
+    } else {
+      chosenEventIds.push_back(curEventId);
+    }
+    ++curEventId;
+  }
+  return chosenEventIds;
+}
+
+static llvm::SmallVector<int64_t>
+chooseReverseEventIds(ArrayRef<int64_t> usedEventIds, int64_t eventIdNum,
+                      int64_t eventIdMax, int64_t eventIdsNumMax) {
+  llvm::SmallVector<int64_t> chosenEventIds;
+  int64_t curEventId = std::max(eventIdMax, eventIdsNumMax - 1);
+  auto it = usedEventIds.rbegin();
+  while ((curEventId >= 0) &&
+         (static_cast<int64_t>(chosenEventIds.size()) < eventIdNum)) {
+    while ((it != usedEventIds.rend()) && ((*it) > curEventId))
+      ++it;
+    if ((it != usedEventIds.rend()) && ((*it) == curEventId)) {
+      ++it;
+    } else {
+      chosenEventIds.push_back(curEventId);
+    }
+    --curEventId;
+  }
+  std::reverse(chosenEventIds.begin(), chosenEventIds.end());
+  if (int64_t rem = eventIdNum - static_cast<int64_t>(chosenEventIds.size());
+      rem > 0) {
+    for (int64_t i = 0; i < rem; ++i)
+      chosenEventIds.push_back(eventIdMax + i + 1);
+  }
+  return chosenEventIds;
+}
+
 llvm::SmallVector<int64_t>
 EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
-  llvm::SmallVector<int64_t> chosenEventIds;
   llvm::SmallVector<int64_t> usedEventIds = getAdjNodesUsedEventIds(node);
-  if (!node->reversePriority) {
-    int64_t curEventId = 0;
-    auto *it = usedEventIds.begin();
-    while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
-      while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
-        it++;
-      }
-      if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
-        it++;
-      } else {
-        chosenEventIds.push_back(curEventId);
-      }
-      curEventId++;
-    }
-  } else {
-    int64_t curEventId = std::max(eventIdMax, this->eventIdsNumMax - 1);
-    auto it = usedEventIds.rbegin();
-    while ((curEventId >= 0) &&
-           (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum)) {
-      while ((it != usedEventIds.rend()) && ((*it) > curEventId)) {
-        it++;
-      }
-      if ((it != usedEventIds.rend()) && ((*it) == curEventId)) {
-        it++;
-      } else {
-        chosenEventIds.push_back(curEventId);
-      }
-      curEventId--;
-    }
-    std::reverse(chosenEventIds.begin(), chosenEventIds.end());
-    if (int64_t rem =
-            node->eventIdNum - static_cast<int64_t>(chosenEventIds.size());
-        rem > 0) {
-      for (int64_t i = 0; i < rem; i++) {
-        chosenEventIds.push_back(eventIdMax + i + 1);
-      }
-    }
-  }
+  auto chosenEventIds =
+      node->reversePriority
+          ? chooseReverseEventIds(usedEventIds, node->eventIdNum, eventIdMax,
+                                  this->eventIdsNumMax)
+          : chooseForwardEventIds(usedEventIds, node->eventIdNum);
   LLVM_DEBUG({
     llvm::dbgs() << "chosen-event-ids: ";
     for (auto e : chosenEventIds)
       llvm::dbgs() << e << ' ';
     llvm::dbgs() << '\n';
   });
-  assert(node->eventIdNum == static_cast<int64_t>(chosenEventIds.size()));
-  assert(llvm::is_sorted(chosenEventIds));
+  ASSERT(node->eventIdNum == static_cast<int64_t>(chosenEventIds.size()));
+  ASSERT(llvm::is_sorted(chosenEventIds));
   return chosenEventIds;
 }
 
@@ -293,7 +313,7 @@ void EventIdSolver::calcEventIds() {
       return a.first < b.first;
     }
     if (a.second->reversePriority != b.second->reversePriority) {
-      return a.second->reversePriority < b.second->reversePriority;
+      return !a.second->reversePriority && b.second->reversePriority;
     }
     return a.second->id < b.second->id;
   };
@@ -315,7 +335,7 @@ void EventIdSolver::calcEventIds() {
     orderedNodes.emplace_back(node);
     for (auto [adjNode, frq] : adjList[node]) {
       if (nodeValue.contains(adjNode)) {
-        assert(st.count({nodeValue[adjNode], adjNode}));
+        ASSERT(st.count({nodeValue[adjNode], adjNode}));
         st.erase({nodeValue[adjNode], adjNode});
         nodeValue[adjNode] -= node->eventIdNum;
         st.insert({nodeValue[adjNode], adjNode});
@@ -326,7 +346,7 @@ void EventIdSolver::calcEventIds() {
   int64_t eventIdMax = 0;
   for (auto *node : llvm::reverse(orderedNodes)) {
     auto chosenEventIds = getChosenEventIds(node, eventIdMax);
-    assert(!chosenEventIds.empty());
+    ASSERT(!chosenEventIds.empty());
     assignEventIds(node, chosenEventIds);
     eventIdMax = std::max(eventIdMax, chosenEventIds.back());
     LLVM_DEBUG({ llvm::dbgs() << node->str(false) << '\n'; });
@@ -341,7 +361,7 @@ void EventIdSolver::debugPrint() {
     llvm::dbgs() << node->str() << '\n';
     llvm::dbgs() << "adj:";
     for (auto [otherNode, frq] : adjList[node.get()]) {
-      assert(frq > 0);
+      ASSERT(frq > 0);
       llvm::dbgs() << otherNode->id << ", ";
     }
     llvm::dbgs() << "\n";
@@ -369,12 +389,12 @@ void EventIdSolver::undoActions() {
         .Case([this](ActionAssignNeedRecalc *action) {
           assignNeedRecalc(action->oldValue, /*pushAction=*/false);
         })
-        .Default([](Action *action) {
+        .Default([](Action *) {
           llvm_unreachable("EventIdSolver: unhandled action_type.");
         });
   }
   if (!actionsStack.empty()) {
-    assert(actionsStack.top()->actionType == ACTION_TYPE::NONE);
+    ASSERT(actionsStack.top()->actionType == ACTION_TYPE::NONE);
     actionsStack.pop();
   }
 }

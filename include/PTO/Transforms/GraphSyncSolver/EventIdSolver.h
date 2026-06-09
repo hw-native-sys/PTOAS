@@ -21,8 +21,7 @@
 #include <vector>
 
 namespace mlir::pto::syncsolver {
-
-enum ACTION_TYPE {
+enum class ACTION_TYPE {
   NONE,
   ADD_NODE,
   ADD_EDGE,
@@ -53,7 +52,7 @@ class ActionAddNode : public Action {
 public:
   EventIdNode *const node;
   ActionAddNode(EventIdNode *node) : Action(ACTION_TYPE::ADD_NODE), node(node) {
-    assert(node != nullptr);
+    ASSERT(node != nullptr);
   }
   static bool classof(const Action *e) {
     return e->actionType == ACTION_TYPE::ADD_NODE;
@@ -69,7 +68,8 @@ public:
   EventIdNode *const node2;
   ActionAddEdge(EventIdNode *node1, EventIdNode *node2)
       : Action(ACTION_TYPE::ADD_EDGE), node1(node1), node2(node2) {
-    assert(node1 != nullptr && node2 != nullptr);
+    ASSERT(node1 != nullptr);
+    ASSERT(node2 != nullptr);
   }
   static bool classof(const Action *e) {
     return e->actionType == ACTION_TYPE::ADD_EDGE;
@@ -87,7 +87,8 @@ public:
   ActionInsertConflictPair(EventIdNode *node, ConflictPair *conflictPair)
       : Action(ACTION_TYPE::INSERT_CONFLICT_PAIR), node(node),
         conflictPair(conflictPair) {
-    assert(node != nullptr && conflictPair != nullptr);
+    ASSERT(node != nullptr);
+    ASSERT(conflictPair != nullptr);
   }
   static bool classof(const Action *e) {
     return e->actionType == ACTION_TYPE::INSERT_CONFLICT_PAIR;
@@ -108,7 +109,7 @@ public:
                        const llvm::SmallVector<int64_t> &newEventIds)
       : Action(ACTION_TYPE::ASSIGN_EVENT_IDS), node(node),
         oldEventIds(oldEventIds), newEventIds(newEventIds) {
-    assert(node != nullptr);
+    ASSERT(node != nullptr);
   }
   static bool classof(const Action *e) {
     return e->actionType == ACTION_TYPE::ASSIGN_EVENT_IDS;
@@ -151,7 +152,6 @@ public:
 };
 
 class EventIdSolver {
-
 private:
   int64_t eventIdsNumMax{-1};
   bool needRecalculateEventIds{false};

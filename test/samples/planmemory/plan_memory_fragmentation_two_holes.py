@@ -11,7 +11,7 @@ PTO_IR = r"""
 module {
   func.func @fragmentation_two_holes(%arg0: memref<16x256xf16, #pto.address_space<gm>>,
                                      %arg1: memref<16x256xf16, #pto.address_space<gm>>) {
-    // Tight + overlap:
+    // Tight + overlap
     //   - Keep 22 UB buffers live (22 * 8192 = 180224 B), leaving 2 free slots.
     //   - Allocate 2 short-lived buffers with overlapping lifetimes twice.
     // The two free slots are at offsets 22*8192 and 23*8192.

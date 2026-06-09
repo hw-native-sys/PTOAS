@@ -166,7 +166,7 @@ struct InferPTOMemScopePass
 
 private:
   LogicalResult fixDeviceCallSite(func::FuncOp op);
-  [[maybe_unused]] LogicalResult fixHostFuncSignature(func::FuncOp op);
+  [[maybe_unused]] LogicalResult fixHostFuncSignature(func::FuncOp op) const;
 };
 } // namespace
 
@@ -324,7 +324,8 @@ LogicalResult InferPTOMemScopePass::fixDeviceCallSite(func::FuncOp op) {
 /// updated the memref type of the BlockArgument of or the return operation
 /// within the function (if they are updated at all). So we need to use those
 /// information to update the function's type.
-[[maybe_unused]] LogicalResult InferPTOMemScopePass::fixHostFuncSignature(func::FuncOp op) {
+[[maybe_unused]] LogicalResult
+InferPTOMemScopePass::fixHostFuncSignature(func::FuncOp op) const {
   // Skip external host functions because we know nothing about it.
   if (op.isExternal())
     return success();
@@ -342,7 +343,7 @@ LogicalResult InferPTOMemScopePass::fixDeviceCallSite(func::FuncOp op) {
   return success();
 }
 
-LogicalResult inferAndPropagateMemScopeForExternFunc(func::FuncOp op) {
+static LogicalResult inferAndPropagateMemScopeForExternFunc(func::FuncOp op) {
   if (!op.isExternal())
     return failure();
 
@@ -443,17 +444,18 @@ LogicalResult pto::inferAndPropagateMemScopeForGpuFunc(gpu::GPUFuncOp op) {
   return success();
 }
 
-LogicalResult pto::inferAndPropagateUbufMemScope(memref::AllocOp op) {
-  LDBG("Begin infer and propagate memory scope for: " << *op);
-  auto memorySpace = op.getType().getMemorySpace();
+LogicalResult pto::inferAndPropagateUbufMemScope(memref::AllocOp allocOp) {
+  LDBG("Begin infer and propagate memory scope for: " << *allocOp);
+  auto memorySpace = allocOp.getType().getMemorySpace();
   if (memorySpace)
     return success();
 
   MemScopeInferAndPropagateHelper helper;
   auto ubSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::VEC);
-  if (failed(helper.Run(op, ubSpaceAttr))) {
-    return op->emitOpError("Failed to propagate memory scope ub for allocOp");
+      AddressSpaceAttr::get(allocOp->getContext(), pto::AddressSpace::VEC);
+  if (failed(helper.Run(allocOp, ubSpaceAttr))) {
+    return allocOp->emitOpError(
+        "Failed to propagate memory scope ub for allocOp");
   }
   return success();
 }

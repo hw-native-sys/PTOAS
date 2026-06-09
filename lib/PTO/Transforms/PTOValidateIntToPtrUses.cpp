@@ -33,7 +33,7 @@ static bool isAllowedIntToPtrUse(Value ptr, OpOperand &use) {
 }
 
 LogicalResult mlir::pto::validateIntToPtrUses(func::FuncOp func) {
-  WalkResult walkResult = func.walk([&](IntToPtrOp op) -> WalkResult {
+  WalkResult walkResult = func.walk([](IntToPtrOp op) -> WalkResult {
     Value ptr = op.getResult();
     for (OpOperand &use : ptr.getUses()) {
       if (isAllowedIntToPtrUse(ptr, use))

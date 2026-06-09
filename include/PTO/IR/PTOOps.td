@@ -727,7 +727,7 @@ def TStoreOp: PTO_TOp<"tstore", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() {
-      // pto-isa lowers TSTORE differently depending on the source tile domain:
+      // pto-isa lowers TSTORE differently depending on the source tile domain
       //   - ACC (L0C) -> GM uses the FIX pipe (copy_matrix_cc_to_gm).
       //   - VEC/UB and MAT -> GM use the MTE3 pipe.
       //
@@ -2352,7 +2352,6 @@ def TPopOp : PTO_TOp<"tpop", [
         auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
         if (!moduleOp)
           return false;
-
         if (auto arch =
                 moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
           if (arch.getValue().equals_insensitive("a5"))
@@ -2677,7 +2676,6 @@ def MGatherOp : PTO_TOp<"mgather", [
         auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
         if (!moduleOp)
           return false;
-
         if (auto arch =
                 moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
           if (arch.getValue().equals_insensitive("a5"))
@@ -2693,7 +2691,6 @@ def MGatherOp : PTO_TOp<"mgather", [
 
         return false;
       };
-
       return isA5Target() ? ::mlir::pto::PIPE::PIPE_V
                           : ::mlir::pto::PIPE::PIPE_MTE2;
     }
@@ -2857,7 +2854,6 @@ def MScatterOp : PTO_TOp<"mscatter", [
         auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
         if (!moduleOp)
           return false;
-
         if (auto arch =
                 moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
           if (arch.getValue().equals_insensitive("a5"))
@@ -2873,7 +2869,6 @@ def MScatterOp : PTO_TOp<"mscatter", [
 
         return false;
       };
-
       return isA5Target() ? ::mlir::pto::PIPE::PIPE_V
                           : ::mlir::pto::PIPE::PIPE_MTE3;
     }
@@ -3990,7 +3985,7 @@ def TExtractOp : PTO_TOp<"textract", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() {
-      // Align with pto-isa TEXTRACT op classes:
+      // Align with pto-isa TEXTRACT op classes
       //   - TEXTRACT_M2LR : MAT -> LEFT/RIGHT (and scaling-like targets) (MTE1)
       //   - TEXTRACT_V2M  : VEC -> MAT       (FIX)
       //   - TEXTRACT_A2M  : ACC -> MAT       (FIX)
@@ -4021,7 +4016,6 @@ def TExtractOp : PTO_TOp<"textract", [
 
       const auto s = sOpt.value();
       const auto d = dOpt.value();
-
       if (s == ::mlir::pto::AddressSpace::MAT &&
           (d == ::mlir::pto::AddressSpace::LEFT ||
            d == ::mlir::pto::AddressSpace::RIGHT ||
@@ -4105,7 +4099,7 @@ def TInsertOp : PTO_TOp<"tinsert", [
   }];
 
   let extraClassDeclaration = [{
-    // TINSERT runs on different pipes depending on target/path:
+    // TINSERT runs on different pipes depending on target/path
     // - Vec(UB)->Vec(UB): PIPE_V.
     // - A5 Vec(UB)->Mat(L1): PIPE_MTE3 (custom UB->L1 copy path).
     // - Acc->Mat (A2/A3/A5 regular path): PIPE_FIX.
@@ -4114,7 +4108,6 @@ def TInsertOp : PTO_TOp<"tinsert", [
         auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
         if (!moduleOp)
           return false;
-
         if (auto arch =
                 moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
           if (arch.getValue().equals_insensitive("a5"))
@@ -4645,7 +4638,7 @@ def TMulSOp: PTO_TOp<"tmuls", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TNEG TBDPS/tile buffer op)
+// PTOOps.td  (add TNEG tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TNegOp: PTO_TOp<"tneg", [
@@ -4676,7 +4669,7 @@ def TNegOp: PTO_TOp<"tneg", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TNOT TBDPS/tile buffer op)
+// PTOOps.td  (add TNOT tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TNotOp: PTO_TOp<"tnot", [
@@ -4707,7 +4700,7 @@ def TNotOp: PTO_TOp<"tnot", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TOR TBDPS/tile buffer op)
+// PTOOps.td  (add TOR tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TOrOp: PTO_TOp<"tor", [
@@ -4739,7 +4732,7 @@ def TOrOp: PTO_TOp<"tor", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TORS TBDPS/tile buffer op)
+// PTOOps.td  (add TORS tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TOrSOp: PTO_TOp<"tors", [
@@ -4771,7 +4764,7 @@ def TOrSOp: PTO_TOp<"tors", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TPARTADD TBDPS/tile buffer op)
+// PTOOps.td  (add TPARTADD tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TPartAddOp: PTO_TOp<"tpartadd", [
@@ -4803,7 +4796,7 @@ def TPartAddOp: PTO_TOp<"tpartadd", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TPARTMAX TBDPS/tile buffer op)
+// PTOOps.td  (add TPARTMAX tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TPartMaxOp: PTO_TOp<"tpartmax", [
@@ -4835,7 +4828,7 @@ def TPartMaxOp: PTO_TOp<"tpartmax", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TPARTMIN TBDPS/tile buffer op)
+// PTOOps.td  (add TPARTMIN tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TPartMinOp: PTO_TOp<"tpartmin", [
@@ -4941,7 +4934,7 @@ def TPartArgMinOp: PTO_TOp<"tpartargmin", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TPARTMUL TBDPS/tile buffer op)
+// PTOOps.td  (add TPARTMUL tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TPartMulOp: PTO_TOp<"tpartmul", [
@@ -4973,7 +4966,7 @@ def TPartMulOp: PTO_TOp<"tpartmul", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TPRELU TBDPS/tile buffer op)
+// PTOOps.td  (add TPRELU tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TPReluOp: PTO_TOp<"tprelu", [
@@ -5106,7 +5099,7 @@ def TDequantOp : PTO_TOp<"tdequant", [
 }
 
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TRECIP TBDPS/tile buffer op)
+// PTOOps.td  (add TRECIP tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRecipOp: PTO_TOp<"trecip", [
@@ -5137,7 +5130,7 @@ def TRecipOp: PTO_TOp<"trecip", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TRELU TBDPS/tile buffer op)
+// PTOOps.td  (add TRELU tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TReluOp: PTO_TOp<"trelu", [
@@ -5168,7 +5161,7 @@ def TReluOp: PTO_TOp<"trelu", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TREM TBDPS/tile buffer op)
+// PTOOps.td  (add TREM tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRemOp: PTO_TOp<"trem", [
@@ -5201,7 +5194,7 @@ def TRemOp: PTO_TOp<"trem", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TREMS TBDPS/tile buffer op)
+// PTOOps.td  (add TREMS tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRemSOp: PTO_TOp<"trems", [
@@ -5263,7 +5256,7 @@ def TReshapeOp: PTO_TOp<"treshape", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWEXPAND TBDPS/tile buffer op)
+// PTOOps.td  (add TROWEXPAND tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowExpandOp: PTO_TOp<"trowexpand", [
@@ -5294,7 +5287,7 @@ def TRowExpandOp: PTO_TOp<"trowexpand", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWEXPANDDIV TBDPS/tile buffer op)
+// PTOOps.td  (add TROWEXPANDDIV tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowExpandDivOp: PTO_TOp<"trowexpanddiv", [
@@ -5326,7 +5319,7 @@ def TRowExpandDivOp: PTO_TOp<"trowexpanddiv", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWEXPANDMUL TBDPS/tile buffer op)
+// PTOOps.td  (add TROWEXPANDMUL tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowExpandMulOp: PTO_TOp<"trowexpandmul", [
@@ -5358,7 +5351,7 @@ def TRowExpandMulOp: PTO_TOp<"trowexpandmul", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWEXPANDSUB TBDPS/tile buffer op)
+// PTOOps.td  (add TROWEXPANDSUB tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowExpandSubOp: PTO_TOp<"trowexpandsub", [
@@ -5506,7 +5499,7 @@ def TRowExpandMinOp: PTO_TOp<"trowexpandmin", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWMAX TBDPS/tile buffer op)
+// PTOOps.td  (add TROWMAX tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowMaxOp: PTO_TOp<"trowmax", [
@@ -5567,7 +5560,7 @@ def TRowArgMaxOp: PTO_TOp<"trowargmax", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWMIN TBDPS/tile buffer op)
+// PTOOps.td  (add TROWMIN tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowMinOp: PTO_TOp<"trowmin", [
@@ -5628,7 +5621,7 @@ def TRowArgMinOp: PTO_TOp<"trowargmin", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TROWSUM TBDPS/tile buffer op)
+// PTOOps.td  (add TROWSUM tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRowSumOp: PTO_TOp<"trowsum", [
@@ -5689,7 +5682,7 @@ def TRowProdOp: PTO_TOp<"trowprod", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TRSQRT TBDPS/tile buffer op)
+// PTOOps.td  (add TRSQRT tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TRsqrtOp: PTO_TOp<"trsqrt", [
@@ -5716,7 +5709,7 @@ def TRsqrtOp: PTO_TOp<"trsqrt", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSCATTER TBDPS/tile buffer op)
+// PTOOps.td  (add TSCATTER tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TScatterOp: PTO_TOp<"tscatter", [
@@ -5745,7 +5738,7 @@ def TScatterOp: PTO_TOp<"tscatter", [
       if (hasMaskForm())
         return ::mlir::pto::PIPE::PIPE_V;
 
-      // NOTE:
+      // NOTE
       // - On A2/A3, indexed TSCATTER lowers to a scalar UB loop (PIPE_S).
       // - On A5, pto-isa TSCATTER is vector scatter (PIPE_V).
       // We accept either `pto.target_arch=a5` or A5 `pto.device-spec`.
@@ -5753,7 +5746,6 @@ def TScatterOp: PTO_TOp<"tscatter", [
         auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
         if (!moduleOp)
           return false;
-
         if (auto arch =
                 moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
           if (arch.getValue().equals_insensitive("a5"))
@@ -5769,7 +5761,6 @@ def TScatterOp: PTO_TOp<"tscatter", [
 
         return false;
       };
-
       return isA5Target() ? ::mlir::pto::PIPE::PIPE_V
                           : ::mlir::pto::PIPE::PIPE_S;
     }
@@ -5777,7 +5768,7 @@ def TScatterOp: PTO_TOp<"tscatter", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSEL TBDPS/tile buffer op)
+// PTOOps.td  (add TSEL tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSelOp: PTO_TOp<"tsel", [
@@ -5814,7 +5805,7 @@ def TSelOp: PTO_TOp<"tsel", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSELS TBDPS/tile buffer op)
+// PTOOps.td  (add TSELS tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSelSOp: PTO_TOp<"tsels", [
@@ -5851,7 +5842,7 @@ def TSelSOp: PTO_TOp<"tsels", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSHL TBDPS/tile buffer op)
+// PTOOps.td  (add TSHL tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TShlOp: PTO_TOp<"tshl", [
@@ -5883,7 +5874,7 @@ def TShlOp: PTO_TOp<"tshl", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSHR TBDPS/tile buffer op)
+// PTOOps.td  (add TSHR tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TShrOp: PTO_TOp<"tshr", [
@@ -5915,7 +5906,7 @@ def TShrOp: PTO_TOp<"tshr", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSHLS/TSHRS TBDPS: shift-left/right by scalar)
+// PTOOps.td  (add TSHLS/TSHRS tile-buffer DPS: shift-left/right by scalar)
 //===----------------------------------------------------------------------===//
 
 def TShlSOp : PTO_TOp<"tshls", [
@@ -5966,7 +5957,7 @@ def TShrSOp : PTO_TOp<"tshrs", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSORT32 TBDPS/tile buffer op)
+// PTOOps.td  (add TSORT32 tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSort32Op: PTO_TOp<"tsort32", [
@@ -6000,7 +5991,7 @@ def TSort32Op: PTO_TOp<"tsort32", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSQRT TBDPS/tile buffer op)
+// PTOOps.td  (add TSQRT tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSqrtOp: PTO_TOp<"tsqrt", [
@@ -6032,7 +6023,7 @@ def TSqrtOp: PTO_TOp<"tsqrt", [
 }
 
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSTORE_FP TBDPS/tile buffer op)
+// PTOOps.td  (add TSTORE_FP tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TStoreFPOp: PTO_TOp<"tstore_fp", [
@@ -6060,7 +6051,7 @@ def TStoreFPOp: PTO_TOp<"tstore_fp", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSUB TBDPS/tile buffer op)
+// PTOOps.td  (add TSUB tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSubOp: PTO_TOp<"tsub", [
@@ -6092,7 +6083,7 @@ def TSubOp: PTO_TOp<"tsub", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSUBC TBDPS/tile buffer op)
+// PTOOps.td  (add TSUBC tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSubCOp: PTO_TOp<"tsubc", [
@@ -6128,7 +6119,7 @@ def TSubCOp: PTO_TOp<"tsubc", [
 
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSUBS TBDPS/tile buffer op)
+// PTOOps.td  (add TSUBS tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSubSOp: PTO_TOp<"tsubs", [
@@ -6162,7 +6153,7 @@ def TSubSOp: PTO_TOp<"tsubs", [
 
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSUBSC TBDPS/tile buffer op)
+// PTOOps.td  (add TSUBSC tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TSubSCOp: PTO_TOp<"tsubsc", [
@@ -6198,7 +6189,7 @@ def TSubSCOp: PTO_TOp<"tsubsc", [
 }
 
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TXORS TBDPS/tile buffer op)
+// PTOOps.td  (add TXORS tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TXorSOp: PTO_TOp<"txors", [
@@ -6235,7 +6226,7 @@ def TXorSOp: PTO_TOp<"txors", [
 
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TXOR TBDPS/tile buffer op)
+// PTOOps.td  (add TXOR tile-buffer DPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 
 def TXorOp: PTO_TOp<"txor", [

@@ -31,6 +31,7 @@
 // IMPORTANT: include the C++ dialect header that declares PtrType/TensorViewType.
 // This header should itself include the generated PTOTypeDefs.h.inc.
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTODialect.h"
 
 using namespace mlir;
 

@@ -67,6 +67,7 @@ static Type convertPTOTypeToMemRef(Type t);
 constexpr size_t kTileRank2D = 2;
 constexpr size_t kRowDimensionIndex = 0;
 constexpr size_t kColumnDimensionIndex = 1;
+constexpr unsigned kSingleElementInlineCapacity = 1;
 constexpr unsigned kShapeVectorInlineCapacity = 4;
 constexpr unsigned kOperationVectorInlineCapacity = 8;
 
@@ -84,10 +85,6 @@ constexpr int64_t kInnerExtent8 = 8;
 constexpr int64_t kInnerExtent16 = 16;
 constexpr int64_t kInnerExtent32 = 32;
 
-constexpr int32_t kFractalSize32 = 32;
-constexpr int32_t kFractalSize512 = 512;
-constexpr int32_t kFractalSize1024 = 1024;
-
 constexpr int32_t kBLayoutColMajor =
     static_cast<int32_t>(BLayout::ColMajor);
 constexpr int32_t kSLayoutNoneBox =
@@ -104,6 +101,9 @@ using SmallInlineVector = SmallVector<T, kShapeVectorInlineCapacity>;
 
 template <typename T>
 using DefaultInlineVector = SmallVector<T, kOperationVectorInlineCapacity>;
+
+template <typename T>
+using SingleInlineVector = SmallVector<T, kSingleElementInlineCapacity>;
 
 // =============================================================================
 // Helper: Metadata Backtracking (核心机制)
@@ -337,7 +337,7 @@ static bool computeTilePointerStrides(const TileLayoutConfig &config,
                                       TileLayoutInfo &info) {
   int64_t rows = shape[0];
   int64_t cols = shape[1];
-  auto applyCompactToMajorStride = [&](int64_t majorStride) -> int64_t {
+  auto applyCompactToMajorStride = [config](int64_t majorStride) -> int64_t {
     if (config.compactMode == kCompactModeRowPlusOne)
       return majorStride + kInnerExtent1;
     return majorStride;
@@ -404,8 +404,8 @@ static bool tryAssignAffineStride(AffineExpr expr,
   if (!mulExpr || mulExpr.getKind() != AffineExprKind::Mul)
     return false;
 
-  auto assignStride = [&](AffineExpr dimExpr,
-                          AffineExpr constantExpr) -> bool {
+  auto assignStride = [&strides](AffineExpr dimExpr,
+                                 AffineExpr constantExpr) -> bool {
     auto dim = llvm::dyn_cast<AffineDimExpr>(dimExpr);
     auto constant = llvm::dyn_cast<AffineConstantExpr>(constantExpr);
     if (!dim || !constant)
@@ -593,7 +593,7 @@ static Type convertPTOTypeToMemRef(Type t) {
 // result types are not auto-updated by those op-local rewrites.
 static LogicalResult reconcileSCFIfResultTypes(func::FuncOp func) {
   DefaultInlineVector<scf::IfOp> ifOps;
-  func.walk([&](scf::IfOp ifOp) { ifOps.push_back(ifOp); });
+  func.walk([&ifOps](scf::IfOp ifOp) { ifOps.push_back(ifOp); });
 
   for (scf::IfOp ifOp : ifOps) {
     if (ifOp.getNumResults() == 0)
@@ -632,7 +632,7 @@ static LogicalResult reconcileSCFIfResultTypes(func::FuncOp func) {
 
 static LogicalResult reconcileSCFForResultTypes(func::FuncOp func) {
   DefaultInlineVector<scf::ForOp> forOps;
-  func.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
+  func.walk([&forOps](scf::ForOp forOp) { forOps.push_back(forOp); });
 
   for (scf::ForOp forOp : forOps) {
     if (forOp.getNumResults() == 0)
@@ -672,7 +672,7 @@ static LogicalResult reconcileSCFForResultTypes(func::FuncOp func) {
 
 static LogicalResult markLoweredSetValidShapeOps(func::FuncOp func,
                                                  MLIRContext *ctx) {
-  WalkResult result = func.walk([&](mlir::pto::SetValidShapeOp op) {
+  WalkResult result = func.walk([ctx](mlir::pto::SetValidShapeOp op) {
     if (isa<MemRefType>(op.getSource().getType())) {
       if (!lookupConfig(op.getSource())) {
         op.emitError(
@@ -698,122 +698,6 @@ static void markForceDynamicValidShape(Operation *op, bool force,
   op->removeAttr(kForceDynamicValidShapeAttrName);
 }
 
-[[maybe_unused]] static void rewriteFunctionSignature(func::FuncOp func, MLIRContext *ctx) {
-  Block &entry = func.front();
-  auto fnTy = func.getFunctionType();
-
-  SmallVector<Type> newInputs;
-  for (Type type : fnTy.getInputs())
-    newInputs.push_back(convertPTOTypeToMemRef(type));
-
-  SmallVector<Type> newResults;
-  for (Type type : fnTy.getResults())
-    newResults.push_back(convertPTOTypeToMemRef(type));
-
-  for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
-    if (entry.getArgument(i).getType() != newInputs[i])
-      entry.getArgument(i).setType(newInputs[i]);
-  }
-  func.setFunctionType(FunctionType::get(ctx, newInputs, newResults));
-}
-
-[[maybe_unused]] static LogicalResult lowerAllocTileOps(func::FuncOp func, MLIRContext *ctx) {
-  DefaultInlineVector<mlir::pto::AllocTileOp> allocTiles;
-  func.walk([&](mlir::pto::AllocTileOp op) { allocTiles.push_back(op); });
-
-  for (auto op : allocTiles) {
-    IRRewriter rewriter(ctx);
-    rewriter.setInsertionPoint(op);
-    Location loc = op.getLoc();
-
-    auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
-    if (!tbTy)
-      continue;
-
-    SmallInlineVector<int64_t> shape(tbTy.getShape().begin(),
-                                  tbTy.getShape().end());
-    Type elemTy = tbTy.getElementType();
-    SmallVector<int64_t> strides = buildTileMemRefStrides(tbTy);
-
-    auto targetLayout =
-        StridedLayoutAttr::get(ctx, ShapedType::kDynamic, strides);
-    auto targetType =
-        MemRefType::get(shape, elemTy, targetLayout, tbTy.getMemorySpace());
-
-    Value vRow = op.getValidRow();
-    Value vCol = op.getValidCol();
-    materializeStaticValidDims(rewriter, loc, tbTy, vRow, vCol);
-
-    auto configAttr = tbTy.getConfigAttr();
-    if (!configAttr)
-      configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-    if (Value addr = op.getAddr()) {
-      auto pc = rewriter.create<pto::PointerCastOp>(
-          loc, targetType, ValueRange{addr}, vRow ? vRow : Value(),
-          vCol ? vCol : Value(), configAttr);
-      markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
-      auto bindOp = rewriter.create<pto::BindTileOp>(
-          loc, targetType, pc.getResult(), vRow ? vRow : Value(),
-          vCol ? vCol : Value(), configAttr);
-      markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-      rewriter.replaceOp(op, bindOp.getResult());
-      continue;
-    }
-
-    auto allocLayout = StridedLayoutAttr::get(ctx, 0, strides);
-    auto allocType =
-        MemRefType::get(shape, elemTy, allocLayout, tbTy.getMemorySpace());
-    Value alloc = rewriter.create<memref::AllocOp>(loc, allocType);
-    auto bindOp = rewriter.create<pto::BindTileOp>(
-        loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
-        configAttr);
-    markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-    rewriter.replaceOp(op, bindOp.getResult());
-  }
-  return success();
-}
-
-[[maybe_unused]] static LogicalResult lowerDeclareTileOps(func::FuncOp func, MLIRContext *ctx) {
-  DefaultInlineVector<mlir::pto::DeclareTileOp> declaredTiles;
-  func.walk([&](mlir::pto::DeclareTileOp op) { declaredTiles.push_back(op); });
-
-  for (auto op : declaredTiles) {
-    IRRewriter rewriter(ctx);
-    rewriter.setInsertionPoint(op);
-    Location loc = op.getLoc();
-
-    auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getTile().getType());
-    if (!tbTy) {
-      op.emitError("declare_tile result must be tile_buf type");
-      return failure();
-    }
-
-    auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
-    if (!targetType) {
-      op.emitError("failed to convert declare_tile result to memref type");
-      return failure();
-    }
-
-    auto configAttr = tbTy.getConfigAttr();
-    if (!configAttr)
-      configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-    Value vRow;
-    Value vCol;
-    materializeStaticValidDims(rewriter, loc, tbTy, vRow, vCol);
-
-    auto declaredMemRef =
-        rewriter.create<pto::DeclareTileMemRefOp>(loc, targetType);
-    auto bindOp = rewriter.create<pto::BindTileOp>(
-        loc, targetType, declaredMemRef.getResult(), vRow ? vRow : Value(),
-        vCol ? vCol : Value(), configAttr);
-    markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-    rewriter.replaceOp(op, bindOp.getResult());
-  }
-  return success();
-}
-
 static Value castIndexToI64(IRRewriter &rewriter, Location loc, Value value) {
   Type i64Ty = rewriter.getI64Type();
   if (value.getType() == i64Ty)
@@ -824,7 +708,7 @@ static Value castIndexToI64(IRRewriter &rewriter, Location loc, Value value) {
 static FailureOr<Value>
 materializePtrToIntAddPtrAddress(IRRewriter &rewriter, Location loc,
                                  mlir::pto::PtrToIntOp anchor, Value source) {
-  SmallVector<mlir::pto::AddPtrOp, 4> addPtrChain;
+  SmallInlineVector<mlir::pto::AddPtrOp> addPtrChain;
   Value base = source;
   while (auto add = base.getDefiningOp<mlir::pto::AddPtrOp>()) {
     addPtrChain.push_back(add);
@@ -860,9 +744,10 @@ materializePtrToIntAddPtrAddress(IRRewriter &rewriter, Location loc,
     }
 
     Value byteOffset = castIndexToI64(rewriter, loc, add.getOffset());
-    if (elemBytes != 1) {
+    if (elemBytes != kPTOByteSize) {
       Value elemBytesValue =
-          rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
+          rewriter.create<arith::ConstantIntOp>(loc, elemBytes,
+                                                kPTOI64BitWidth);
       byteOffset =
           rewriter.create<arith::MulIOp>(loc, byteOffset, elemBytesValue)
               .getResult();
@@ -876,7 +761,9 @@ materializePtrToIntAddPtrAddress(IRRewriter &rewriter, Location loc,
 
 static LogicalResult lowerIntToPtrOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::IntToPtrOp> intToPtrs;
-  func.walk([&](mlir::pto::IntToPtrOp op) { intToPtrs.push_back(op); });
+  func.walk([&intToPtrs](mlir::pto::IntToPtrOp op) {
+    intToPtrs.push_back(op);
+  });
 
   for (auto op : intToPtrs) {
     if (!isa<mlir::pto::PtrType>(op.getResult().getType()))
@@ -903,7 +790,7 @@ static LogicalResult lowerIntToPtrOps(func::FuncOp func, MLIRContext *ctx) {
 
 static LogicalResult lowerPtrToIntOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::PtrToIntOp> ptrToInts;
-  func.walk([&](mlir::pto::PtrToIntOp op) { ptrToInts.push_back(op); });
+  func.walk([&ptrToInts](mlir::pto::PtrToIntOp op) { ptrToInts.push_back(op); });
 
   for (auto op : ptrToInts) {
     Value source = op.getPtr();
@@ -923,7 +810,7 @@ static LogicalResult lowerPtrToIntOps(func::FuncOp func, MLIRContext *ctx) {
   }
 
   DefaultInlineVector<mlir::pto::PtrToIntOp> remaining;
-  func.walk([&](mlir::pto::PtrToIntOp op) {
+  func.walk([&remaining](mlir::pto::PtrToIntOp op) {
     if (isa<mlir::pto::PtrType>(op.getPtr().getType()))
       remaining.push_back(op);
   });
@@ -935,70 +822,88 @@ static LogicalResult lowerPtrToIntOps(func::FuncOp func, MLIRContext *ctx) {
   return success();
 }
 
+static bool collectMakeTensorViewBaseAndOffset(IRRewriter &rewriter, Location loc,
+                                               Value &baseBuf,
+                                               OpFoldResult &off0) {
+  bool foldedAddPtr = false;
+  Value cur = baseBuf;
+  Value totalOffset;
+  while (auto add = cur.getDefiningOp<mlir::pto::AddPtrOp>()) {
+    foldedAddPtr = true;
+    Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
+    totalOffset =
+        totalOffset ? rewriter.create<arith::AddIOp>(loc, totalOffset, off) : off;
+    cur = add.getOperand(0);
+  }
+  if (cur != baseBuf) {
+    baseBuf = cur;
+    off0 = totalOffset ? OpFoldResult(totalOffset) : off0;
+  }
+  return foldedAddPtr;
+}
+
+static MemRefType getDynamicTensorViewMemRefType(BaseMemRefType baseMr,
+                                                 size_t rank,
+                                                 MLIRContext *ctx) {
+  int64_t dyn = ShapedType::kDynamic;
+  SmallVector<int64_t> dynStrides(rank, dyn);
+  auto layout = StridedLayoutAttr::get(ctx, dyn, dynStrides);
+  SmallVector<int64_t> dynShape(rank, dyn);
+  return MemRefType::get(dynShape, baseMr.getElementType(), layout,
+                         baseMr.getMemorySpace());
+}
+
+static SmallInlineVector<OpFoldResult>
+materializeIndexOperands(IRRewriter &rewriter, Location loc, ValueRange values,
+                         Operation *op) {
+  SmallInlineVector<OpFoldResult> folds;
+  for (Value value : values)
+    folds.push_back(ensureIndex(rewriter, loc, value, op));
+  return folds;
+}
+
+static LogicalResult lowerOneMakeTensorViewOp(mlir::pto::MakeTensorViewOp op,
+                                              MLIRContext *ctx) {
+  IRRewriter rewriter(ctx);
+  rewriter.setInsertionPoint(op);
+  Location loc = op.getLoc();
+  Value baseBuf = op.getOperand(0);
+  OpFoldResult off0 = rewriter.getIndexAttr(0);
+  bool foldedAddPtr =
+      collectMakeTensorViewBaseAndOffset(rewriter, loc, baseBuf, off0);
+  auto baseMr = dyn_cast<BaseMemRefType>(baseBuf.getType());
+  if (!baseMr) {
+    op.emitError("make_tensor_view base must be memref");
+    return failure();
+  }
+  auto mrTy = getDynamicTensorViewMemRefType(baseMr, op.getShape().size(), ctx);
+  auto sizes = materializeIndexOperands(rewriter, loc, op.getShape(), op);
+  auto strides = materializeIndexOperands(rewriter, loc, op.getStrides(), op);
+  auto rc = rewriter.create<memref::ReinterpretCastOp>(loc, mrTy, baseBuf, off0,
+                                                       sizes, strides);
+  if (foldedAddPtr)
+    rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
+  if (auto layoutAttr = op.getLayoutAttr())
+    rc->setAttr("layout", layoutAttr);
+  rewriter.replaceOp(op, rc.getResult());
+  return success();
+}
+
 [[maybe_unused]] static LogicalResult lowerMakeTensorViewOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::MakeTensorViewOp> makeViews;
-  func.walk([&](mlir::pto::MakeTensorViewOp op) { makeViews.push_back(op); });
+  func.walk([&makeViews](mlir::pto::MakeTensorViewOp op) {
+    makeViews.push_back(op);
+  });
 
-  for (auto op : makeViews) {
-    IRRewriter rewriter(ctx);
-    rewriter.setInsertionPoint(op);
-    Location loc = op.getLoc();
-
-    Value baseBuf = op.getOperand(0);
-    OpFoldResult off0 = rewriter.getIndexAttr(0);
-    bool foldedAddPtr = false;
-    {
-      Value cur = baseBuf;
-      Value totalOffset;
-      while (auto add = cur.getDefiningOp<mlir::pto::AddPtrOp>()) {
-        foldedAddPtr = true;
-        Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
-        totalOffset = totalOffset ? rewriter.create<arith::AddIOp>(loc, totalOffset, off)
-                                  : off;
-        cur = add.getOperand(0);
-      }
-      if (cur != baseBuf) {
-        baseBuf = cur;
-        off0 = totalOffset ? OpFoldResult(totalOffset) : off0;
-      }
-    }
-
-    auto baseMr = dyn_cast<BaseMemRefType>(baseBuf.getType());
-    if (!baseMr) {
-      op.emitError("make_tensor_view base must be memref");
+  for (auto op : makeViews)
+    if (failed(lowerOneMakeTensorViewOp(op, ctx)))
       return failure();
-    }
-
-    size_t rank = op.getShape().size();
-    int64_t dyn = ShapedType::kDynamic;
-    SmallVector<int64_t> dynStrides(rank, dyn);
-    auto layout =
-        StridedLayoutAttr::get(ctx, /*offset=*/dyn, /*strides=*/dynStrides);
-    SmallVector<int64_t> dynShape(rank, dyn);
-    auto mrTy = MemRefType::get(dynShape, baseMr.getElementType(), layout,
-                                baseMr.getMemorySpace());
-
-    SmallInlineVector<OpFoldResult> sizes;
-    for (Value value : op.getShape())
-      sizes.push_back(ensureIndex(rewriter, loc, value, op));
-    SmallInlineVector<OpFoldResult> strides;
-    for (Value value : op.getStrides())
-      strides.push_back(ensureIndex(rewriter, loc, value, op));
-
-    auto rc = rewriter.create<memref::ReinterpretCastOp>(loc, mrTy, baseBuf, off0,
-                                                         sizes, strides);
-    if (foldedAddPtr)
-      rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
-    if (auto layoutAttr = op.getLayoutAttr())
-      rc->setAttr("layout", layoutAttr);
-    rewriter.replaceOp(op, rc.getResult());
-  }
   return success();
 }
 
 [[maybe_unused]] static LogicalResult lowerTensorViewDimOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::GetTensorViewDimOp> tvDims;
-  func.walk([&](mlir::pto::GetTensorViewDimOp op) { tvDims.push_back(op); });
+  func.walk([&tvDims](mlir::pto::GetTensorViewDimOp op) { tvDims.push_back(op); });
 
   for (auto op : tvDims) {
     IRRewriter rewriter(ctx);
@@ -1013,43 +918,53 @@ static LogicalResult lowerPtrToIntOps(func::FuncOp func, MLIRContext *ctx) {
   return success();
 }
 
-[[maybe_unused]] static LogicalResult foldAddPtrIntoScalarOps(func::FuncOp func, MLIRContext *ctx) {
+static LogicalResult rewriteLoadScalarAddPtrUses(func::FuncOp func,
+                                                 MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::LoadScalarOp> loadScalars;
-  func.walk([&](mlir::pto::LoadScalarOp op) { loadScalars.push_back(op); });
+  func.walk([&loadScalars](mlir::pto::LoadScalarOp op) {
+    loadScalars.push_back(op);
+  });
   for (auto op : loadScalars) {
     IRRewriter rewriter(ctx);
     rewriter.setInsertionPoint(op);
     Location loc = op.getLoc();
-
     Value base = op.getPtr();
     Value totalOffset = ensureIndex(rewriter, loc, op.getOffset(), op);
-    bool foldedAddPtr = foldAddPtrChainIntoOffset(rewriter, loc, base, totalOffset);
-    if (foldedAddPtr) {
-      auto newOp =
-          rewriter.create<pto::LoadScalarOp>(loc, op.getValue().getType(), base,
-                                             totalOffset);
-      rewriter.replaceOp(op, newOp.getValue());
-    }
+    if (!foldAddPtrChainIntoOffset(rewriter, loc, base, totalOffset))
+      continue;
+    auto newOp = rewriter.create<pto::LoadScalarOp>(loc, op.getValue().getType(),
+                                                    base, totalOffset);
+    rewriter.replaceOp(op, newOp.getValue());
   }
+  return success();
+}
 
+static LogicalResult rewriteStoreScalarAddPtrUses(func::FuncOp func,
+                                                  MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::StoreScalarOp> storeScalars;
-  func.walk([&](mlir::pto::StoreScalarOp op) { storeScalars.push_back(op); });
+  func.walk([&storeScalars](mlir::pto::StoreScalarOp op) {
+    storeScalars.push_back(op);
+  });
   for (auto op : storeScalars) {
     IRRewriter rewriter(ctx);
     rewriter.setInsertionPoint(op);
     Location loc = op.getLoc();
-
     Value base = op.getPtr();
     Value totalOffset = ensureIndex(rewriter, loc, op.getOffset(), op);
-    bool foldedAddPtr = foldAddPtrChainIntoOffset(rewriter, loc, base, totalOffset);
-    if (foldedAddPtr) {
-      rewriter.create<pto::StoreScalarOp>(loc, base, totalOffset, op.getValue());
-      rewriter.eraseOp(op);
-    }
+    if (!foldAddPtrChainIntoOffset(rewriter, loc, base, totalOffset))
+      continue;
+    rewriter.create<pto::StoreScalarOp>(loc, base, totalOffset, op.getValue());
+    rewriter.eraseOp(op);
   }
+  return success();
+}
 
+static LogicalResult cleanupRemainingAddPtrOps(func::FuncOp func,
+                                               llvm::StringRef errorMessage) {
   DefaultInlineVector<Operation *> addPtrs;
-  func.walk([&](mlir::pto::AddPtrOp op) { addPtrs.push_back(op.getOperation()); });
+  func.walk([&addPtrs](mlir::pto::AddPtrOp op) {
+    addPtrs.push_back(op.getOperation());
+  });
   bool changed = true;
   while (changed) {
     changed = false;
@@ -1066,206 +981,292 @@ static LogicalResult lowerPtrToIntOps(func::FuncOp func, MLIRContext *ctx) {
   for (Operation *op : addPtrs) {
     if (!op)
       continue;
-    op->emitError(
-        "addptr must feed make_tensor_view or load/store_scalar for lowering");
+    op->emitError(errorMessage);
     return failure();
   }
   return success();
 }
 
+[[maybe_unused]] static LogicalResult foldAddPtrIntoScalarOps(func::FuncOp func, MLIRContext *ctx) {
+  if (failed(rewriteLoadScalarAddPtrUses(func, ctx)) ||
+      failed(rewriteStoreScalarAddPtrUses(func, ctx)))
+    return failure();
+  return cleanupRemainingAddPtrOps(
+      func, "addptr must feed make_tensor_view or load/store_scalar for lowering");
+}
+
+static void collectPartitionViewSizes(IRRewriter &rewriter, Location loc,
+                                      mlir::pto::PartitionViewOp op,
+                                      SmallVectorImpl<int64_t> &staticSizes,
+                                      SmallVectorImpl<OpFoldResult> &mixedSizes) {
+  for (Value size : op.getSizes()) {
+    IntegerAttr constAttr;
+    bool isStatic = false;
+    if (auto cOp = size.getDefiningOp<arith::ConstantIndexOp>()) {
+      constAttr = rewriter.getIndexAttr(cOp.value());
+      isStatic = true;
+    } else if (auto cInt = size.getDefiningOp<arith::ConstantIntOp>()) {
+      constAttr = rewriter.getIndexAttr(cInt.value());
+      isStatic = true;
+    }
+    if (isStatic) {
+      mixedSizes.push_back(constAttr);
+      staticSizes.push_back(constAttr.getInt());
+      continue;
+    }
+    mixedSizes.push_back(ensureIndex(rewriter, loc, size, op));
+    staticSizes.push_back(ShapedType::kDynamic);
+  }
+}
+
+static SmallVector<OpFoldResult>
+collectPartitionViewOffsets(IRRewriter &rewriter, Location loc,
+                            mlir::pto::PartitionViewOp op) {
+  SmallVector<OpFoldResult> mixedOffsets;
+  for (Value offset : op.getOffsets())
+    appendMixedIndex(rewriter, loc, offset, op, mixedOffsets);
+  return mixedOffsets;
+}
+
+static LogicalResult lowerOnePartitionViewOp(mlir::pto::PartitionViewOp op,
+                                             MLIRContext *ctx) {
+  IRRewriter rewriter(ctx);
+  rewriter.setInsertionPoint(op);
+  Value src = op.getOperand(0);
+  auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+  if (!srcMrTy)
+    return success();
+
+  SmallVector<int64_t> staticSizes;
+  SmallVector<OpFoldResult> mixedSizes;
+  collectPartitionViewSizes(rewriter, op.getLoc(), op, staticSizes, mixedSizes);
+  auto mixedOffsets = collectPartitionViewOffsets(rewriter, op.getLoc(), op);
+
+  int64_t dyn = ShapedType::kDynamic;
+  SmallVector<int64_t> dynStrides(srcMrTy.getRank(), dyn);
+  auto layout = StridedLayoutAttr::get(ctx, dyn, dynStrides);
+  auto resTy = MemRefType::get(staticSizes, srcMrTy.getElementType(), layout,
+                               srcMrTy.getMemorySpace());
+  SmallVector<OpFoldResult> mixedStrides(srcMrTy.getRank(),
+                                         rewriter.getIndexAttr(1));
+  auto sv = rewriter.create<memref::SubViewOp>(
+      op.getLoc(), resTy, src, mixedOffsets, mixedSizes, mixedStrides);
+  if (Operation *srcDef = src.getDefiningOp()) {
+    if (auto layoutAttr = srcDef->getAttrOfType<pto::LayoutAttr>("layout"))
+      sv->setAttr("layout", layoutAttr);
+  }
+  rewriter.replaceOp(op, sv.getResult());
+  return success();
+}
+
 static LogicalResult lowerPartitionViewOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::PartitionViewOp> partitionViews;
-  func.walk([&](mlir::pto::PartitionViewOp op) { partitionViews.push_back(op); });
+  func.walk([&partitionViews](mlir::pto::PartitionViewOp op) {
+    partitionViews.push_back(op);
+  });
+  for (auto op : partitionViews)
+    if (failed(lowerOnePartitionViewOp(op, ctx)))
+      return failure();
+  return success();
+}
 
-  for (auto op : partitionViews) {
-    IRRewriter rewriter(ctx);
-    rewriter.setInsertionPoint(op);
-    Location loc = op.getLoc();
-    Value src = op.getOperand(0);
-    auto srcMrTy = dyn_cast<MemRefType>(src.getType());
-    if (!srcMrTy)
-      continue;
-    int64_t rank = srcMrTy.getRank();
-
-    SmallVector<int64_t> staticSizes;
-    SmallVector<OpFoldResult> mixedSizes;
-    for (Value size : op.getSizes()) {
-      IntegerAttr constAttr;
-      bool isStatic = false;
-      if (auto cOp = size.getDefiningOp<arith::ConstantIndexOp>()) {
-        constAttr = rewriter.getIndexAttr(cOp.value());
-        isStatic = true;
-      } else if (auto cInt = size.getDefiningOp<arith::ConstantIntOp>()) {
-        constAttr = rewriter.getIndexAttr(cInt.value());
-        isStatic = true;
-      }
-
-      if (isStatic) {
-        mixedSizes.push_back(constAttr);
-        staticSizes.push_back(constAttr.getInt());
-      } else {
-        mixedSizes.push_back(ensureIndex(rewriter, loc, size, op));
-        staticSizes.push_back(ShapedType::kDynamic);
-      }
-    }
-
-    SmallVector<OpFoldResult> mixedOffsets;
-    for (Value offset : op.getOffsets()) {
-      appendMixedIndex(rewriter, loc, offset, op, mixedOffsets);
-    }
-
-    int64_t dyn = ShapedType::kDynamic;
-    SmallVector<int64_t> dynStrides(rank, dyn);
-    auto layout = StridedLayoutAttr::get(ctx, dyn, dynStrides);
-    auto resTy = MemRefType::get(staticSizes, srcMrTy.getElementType(), layout,
-                                 srcMrTy.getMemorySpace());
-
-    SmallVector<OpFoldResult> mixedStrides(rank, rewriter.getIndexAttr(1));
-    auto sv = rewriter.create<memref::SubViewOp>(loc, resTy, src, mixedOffsets,
-                                                 mixedSizes, mixedStrides);
-    if (Operation *srcDef = src.getDefiningOp()) {
-      if (auto layoutAttr = srcDef->getAttrOfType<pto::LayoutAttr>("layout"))
-        sv->setAttr("layout", layoutAttr);
-    }
-    rewriter.replaceOp(op, sv.getResult());
+static LogicalResult validateBoxedSubViewRowMajor(mlir::pto::SubViewOp op,
+                                                  ArrayRef<int64_t> staticSizes,
+                                                  ArrayRef<int64_t> srcShape,
+                                                  bool off1Const,
+                                                  int64_t off1) {
+  if (staticSizes[1] != srcShape[1]) {
+    op.emitError("boxed RowMajor subview must keep full cols");
+    return failure();
   }
+  if (!off1Const || off1 != 0) {
+    op.emitError("boxed RowMajor subview requires static col offset = 0");
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult validateBoxedSubViewColMajor(mlir::pto::SubViewOp op,
+                                                  ArrayRef<int64_t> staticSizes,
+                                                  ArrayRef<int64_t> srcShape,
+                                                  bool off0Const,
+                                                  int64_t off0) {
+  if (staticSizes[0] != srcShape[0]) {
+    op.emitError("boxed ColMajor subview must keep full rows");
+    return failure();
+  }
+  if (!off0Const || off0 != 0) {
+    op.emitError("boxed ColMajor subview requires static row offset = 0");
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult validateBoxedSubViewOp(mlir::pto::SubViewOp op,
+                                            TileBufConfigAttr configAttr,
+                                            ArrayRef<int64_t> staticSizes,
+                                            const TileLayoutInfo &layoutInfo,
+                                            MemRefType srcMrTy) {
+  if (staticSizes.size() != kTileRank2D ||
+      op.getOffsets().size() != kTileRank2D) {
+    op.emitError("boxed layout subview expects 2D sizes/offsets");
+    return failure();
+  }
+  if (!checkMultipleOf(op, staticSizes[0], layoutInfo.innerRows, "row size") ||
+      !checkMultipleOf(op, staticSizes[1], layoutInfo.innerCols, "col size")) {
+    return failure();
+  }
+
+  int64_t off0 = 0;
+  int64_t off1 = 0;
+  bool off0Const = getConstIndexValue(op.getOffsets()[0], off0);
+  bool off1Const = getConstIndexValue(op.getOffsets()[1], off1);
+  if (off0Const &&
+      !checkMultipleOf(op, off0, layoutInfo.innerRows, "row offset")) {
+    return failure();
+  }
+  if (off1Const &&
+      !checkMultipleOf(op, off1, layoutInfo.innerCols, "col offset")) {
+    return failure();
+  }
+
+  int32_t bl = 0;
+  (void)readBLayoutI32(configAttr.getBLayout(), bl);
+  auto srcShape = srcMrTy.getShape();
+  if (srcShape.size() != kTileRank2D)
+    return success();
+  if (bl == 0)
+    return validateBoxedSubViewRowMajor(op, staticSizes, srcShape, off1Const, off1);
+  return validateBoxedSubViewColMajor(op, staticSizes, srcShape, off0Const, off0);
+}
+
+static SmallVector<int64_t> getSubviewSourceStrides(MemRefType srcMrTy) {
+  SmallVector<int64_t> srcStrides;
+  int64_t srcOffset = ShapedType::kDynamic;
+  if (failed(getStridesAndOffset(srcMrTy, srcStrides, srcOffset)))
+    srcStrides = computeCompactStrides(srcMrTy.getShape());
+  return srcStrides;
+}
+
+static SmallVector<OpFoldResult>
+collectSubviewOffsets(IRRewriter &rewriter, Location loc,
+                      mlir::pto::SubViewOp op) {
+  SmallVector<OpFoldResult> mixedOffsets;
+  for (Value offset : op.getOffsets())
+    appendMixedIndex(rewriter, loc, offset, op, mixedOffsets);
+  return mixedOffsets;
+}
+
+static SmallVector<int64_t> getSubviewStaticSizes(mlir::pto::SubViewOp op,
+                                                  SmallVectorImpl<OpFoldResult> &mixedSizes,
+                                                  IRRewriter &rewriter) {
+  SmallVector<int64_t> staticSizes;
+  for (Attribute attr : op.getSizes()) {
+    int64_t size = cast<IntegerAttr>(attr).getInt();
+    staticSizes.push_back(size);
+    mixedSizes.push_back(rewriter.getIndexAttr(size));
+  }
+  return staticSizes;
+}
+
+static std::pair<MemRefType, MemRefType>
+getSubviewResultTypes(MLIRContext *ctx, MemRefType srcMrTy,
+                      ArrayRef<int64_t> staticSizes) {
+  auto srcStrides = getSubviewSourceStrides(srcMrTy);
+  auto resultLayout =
+      StridedLayoutAttr::get(ctx, ShapedType::kDynamic, srcStrides);
+  auto resultMemRefType = MemRefType::get(srcMrTy.getShape(),
+                                          srcMrTy.getElementType(),
+                                          resultLayout,
+                                          srcMrTy.getMemorySpace());
+  auto subViewMemRefType = MemRefType::get(staticSizes, srcMrTy.getElementType(),
+                                           resultLayout,
+                                           srcMrTy.getMemorySpace());
+  return {resultMemRefType, subViewMemRefType};
+}
+
+static std::pair<Value, Value>
+getClampedSubviewValidDims(IRRewriter &rewriter, mlir::pto::SubViewOp op,
+                           ArrayRef<int64_t> staticSizes) {
+  Value vRow;
+  Value vCol;
+  if (!staticSizes.empty())
+    vRow = clampSubViewValidDim(rewriter, op.getLoc(), op.getValidRow(),
+                                staticSizes[0], op);
+  if (staticSizes.size() > 1)
+    vCol = clampSubViewValidDim(rewriter, op.getLoc(), op.getValidCol(),
+                                staticSizes[1], op);
+  return {vRow, vCol};
+}
+
+static LogicalResult validateSubViewLayout(mlir::pto::SubViewOp op,
+                                           TileBufConfigAttr configAttr,
+                                           MemRefType srcMrTy,
+                                           ArrayRef<int64_t> staticSizes,
+                                           TileLayoutInfo &layoutInfo) {
+  if (!computeTileLayoutInfo(configAttr, srcMrTy.getElementType(),
+                             srcMrTy.getShape(), layoutInfo)) {
+    op.emitError("unsupported tile layout for pto.subview");
+    return failure();
+  }
+  if (!layoutInfo.boxed)
+    return success();
+  return validateBoxedSubViewOp(op, configAttr, staticSizes, layoutInfo,
+                                srcMrTy);
+}
+
+static LogicalResult lowerOneSubViewOp(mlir::pto::SubViewOp op,
+                                       MLIRContext *ctx) {
+  IRRewriter rewriter(ctx);
+  rewriter.setInsertionPoint(op);
+  auto resultTileTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
+  Value src = op->getOperand(0);
+  auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+  if (!srcMrTy) {
+    op.emitError("pto.subview source must be lowered to memref first");
+    return failure();
+  }
+
+  SmallVector<OpFoldResult> mixedSizes;
+  auto staticSizes = getSubviewStaticSizes(op, mixedSizes, rewriter);
+  auto mixedOffsets = collectSubviewOffsets(rewriter, op.getLoc(), op);
+  auto configAttr = lookupConfig(src);
+  if (!configAttr)
+    configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+
+  TileLayoutInfo layoutInfo;
+  if (failed(validateSubViewLayout(op, configAttr, srcMrTy, staticSizes,
+                                   layoutInfo))) {
+    return failure();
+  }
+
+  auto [resultMemRefType, subViewMemRefType] =
+      getSubviewResultTypes(ctx, srcMrTy, staticSizes);
+  SmallVector<OpFoldResult> mixedStrides(staticSizes.size(),
+                                         rewriter.getIndexAttr(1));
+  auto sv = rewriter.create<memref::SubViewOp>(op.getLoc(), subViewMemRefType,
+                                               src, mixedOffsets, mixedSizes,
+                                               mixedStrides);
+
+  auto [vRow, vCol] = getClampedSubviewValidDims(rewriter, op, staticSizes);
+  auto bindOp = rewriter.create<pto::BindTileOp>(
+      op.getLoc(), resultMemRefType, sv.getResult(), vRow ? vRow : Value(),
+      vCol ? vCol : Value(), configAttr);
+  markForceDynamicValidShape(bindOp,
+                             resultTileTy && resultTileTy.hasDynamicValid(),
+                             ctx);
+  bindOp->setAttr("pto.view_semantics", rewriter.getStringAttr("subview"));
+  rewriter.replaceOp(op, bindOp.getResult());
   return success();
 }
 
 static LogicalResult lowerSubViewOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::SubViewOp> subViews;
-  func.walk([&](mlir::pto::SubViewOp op) { subViews.push_back(op); });
+  func.walk([&subViews](mlir::pto::SubViewOp op) { subViews.push_back(op); });
 
-  for (auto op : subViews) {
-    IRRewriter rewriter(ctx);
-    rewriter.setInsertionPoint(op);
-    Location loc = op.getLoc();
-    auto resultTileTy =
-        dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
-    Value src = op->getOperand(0);
-    auto srcMrTy = dyn_cast<MemRefType>(src.getType());
-    if (!srcMrTy) {
-      op.emitError("pto.subview source must be lowered to memref first");
+  for (auto op : subViews)
+    if (failed(lowerOneSubViewOp(op, ctx)))
       return failure();
-    }
-
-    ArrayAttr sizeAttr = op.getSizes();
-    SmallVector<int64_t> staticSizes;
-    SmallVector<OpFoldResult> mixedSizes;
-    for (Attribute attr : sizeAttr) {
-      int64_t size = cast<IntegerAttr>(attr).getInt();
-      staticSizes.push_back(size);
-      mixedSizes.push_back(rewriter.getIndexAttr(size));
-    }
-
-    SmallVector<OpFoldResult> mixedOffsets;
-    for (Value offset : op.getOffsets()) {
-      appendMixedIndex(rewriter, loc, offset, op, mixedOffsets);
-    }
-
-    auto configAttr = lookupConfig(src);
-    if (!configAttr)
-      configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-    TileLayoutInfo layoutInfo;
-    if (!computeTileLayoutInfo(configAttr, srcMrTy.getElementType(),
-                               srcMrTy.getShape(), layoutInfo)) {
-      op.emitError("unsupported tile layout for pto.subview");
-      return failure();
-    }
-
-    if (layoutInfo.boxed) {
-      if (staticSizes.size() != kTileRank2D ||
-          op.getOffsets().size() != kTileRank2D) {
-        op.emitError("boxed layout subview expects 2D sizes/offsets");
-        return failure();
-      }
-      if (!checkMultipleOf(op, staticSizes[0], layoutInfo.innerRows, "row size") ||
-          !checkMultipleOf(op, staticSizes[1], layoutInfo.innerCols, "col size")) {
-        return failure();
-      }
-
-      int64_t off0 = 0;
-      int64_t off1 = 0;
-      bool off0Const = getConstIndexValue(op.getOffsets()[0], off0);
-      bool off1Const = getConstIndexValue(op.getOffsets()[1], off1);
-      if (off0Const &&
-          !checkMultipleOf(op, off0, layoutInfo.innerRows, "row offset")) {
-        return failure();
-      }
-      if (off1Const &&
-          !checkMultipleOf(op, off1, layoutInfo.innerCols, "col offset")) {
-        return failure();
-      }
-
-      int32_t bl = 0;
-      (void)readBLayoutI32(configAttr.getBLayout(), bl);
-      auto srcShape = srcMrTy.getShape();
-      if (srcShape.size() == 2) {
-        if (bl == 0) {
-          if (staticSizes[1] != srcShape[1]) {
-            op.emitError("boxed RowMajor subview must keep full cols");
-            return failure();
-          }
-          if (!off1Const || off1 != 0) {
-            op.emitError("boxed RowMajor subview requires static col offset = 0");
-            return failure();
-          }
-        } else {
-          if (staticSizes[0] != srcShape[0]) {
-            op.emitError("boxed ColMajor subview must keep full rows");
-            return failure();
-          }
-          if (!off0Const || off0 != 0) {
-            op.emitError("boxed ColMajor subview requires static row offset = 0");
-            return failure();
-          }
-        }
-      }
-    }
-
-    SmallVector<int64_t> srcStrides;
-    int64_t srcOffset = ShapedType::kDynamic;
-    if (failed(getStridesAndOffset(srcMrTy, srcStrides, srcOffset)))
-      srcStrides = computeCompactStrides(srcMrTy.getShape());
-
-    // Keep parent physical shape + strides for bound tile semantics.
-    auto resultLayout =
-        StridedLayoutAttr::get(ctx, ShapedType::kDynamic, srcStrides);
-    auto parentShape = srcMrTy.getShape();
-    auto resultMemRefType =
-        MemRefType::get(parentShape, srcMrTy.getElementType(), resultLayout,
-                        srcMrTy.getMemorySpace());
-
-    // Intermediate memref.subview keeps logical subview size.
-    auto subViewMemRefType =
-        MemRefType::get(staticSizes, srcMrTy.getElementType(), resultLayout,
-                        srcMrTy.getMemorySpace());
-
-    SmallVector<OpFoldResult> mixedStrides(staticSizes.size(),
-                                           rewriter.getIndexAttr(1));
-    auto sv = rewriter.create<memref::SubViewOp>(loc, subViewMemRefType, src,
-                                                 mixedOffsets, mixedSizes,
-                                                 mixedStrides);
-
-    Value vRow;
-    Value vCol;
-    if (!staticSizes.empty())
-      vRow = clampSubViewValidDim(rewriter, loc, op.getValidRow(),
-                                  staticSizes[0], op);
-    if (staticSizes.size() > 1)
-      vCol = clampSubViewValidDim(rewriter, loc, op.getValidCol(),
-                                  staticSizes[1], op);
-
-    auto bindOp = rewriter.create<pto::BindTileOp>(
-        loc, resultMemRefType, sv.getResult(), vRow ? vRow : Value(),
-        vCol ? vCol : Value(), configAttr);
-    markForceDynamicValidShape(bindOp,
-                               resultTileTy && resultTileTy.hasDynamicValid(),
-                               ctx);
-    bindOp->setAttr("pto.view_semantics", rewriter.getStringAttr("subview"));
-    rewriter.replaceOp(op, bindOp.getResult());
-  }
   return success();
 }
 
@@ -1317,7 +1318,7 @@ static Value buildTileBufViewLikeValue(Operation *anchorOp, Value src,
 
 static LogicalResult lowerTileBufViewLikeOps(func::FuncOp func, MLIRContext *ctx) {
   DefaultInlineVector<mlir::pto::TReshapeOp> reshapes;
-  func.walk([&](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
+  func.walk([&reshapes](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
   for (auto op : reshapes) {
     auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
     if (!tbTy) {
@@ -1333,7 +1334,7 @@ static LogicalResult lowerTileBufViewLikeOps(func::FuncOp func, MLIRContext *ctx
   }
 
   DefaultInlineVector<mlir::pto::BitcastOp> bitcasts;
-  func.walk([&](mlir::pto::BitcastOp op) { bitcasts.push_back(op); });
+  func.walk([&bitcasts](mlir::pto::BitcastOp op) { bitcasts.push_back(op); });
   for (auto op : bitcasts) {
     auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
     if (!tbTy) {
@@ -1346,6 +1347,247 @@ static LogicalResult lowerTileBufViewLikeOps(func::FuncOp func, MLIRContext *ctx
       return failure();
     IRRewriter rewriter(ctx);
     rewriter.replaceOp(op, lowered);
+  }
+  return success();
+}
+
+static LogicalResult rewriteFunctionSignature(func::FuncOp func,
+                                              MLIRContext *ctx) {
+  Block &entry = func.front();
+  auto fnTy = func.getFunctionType();
+  SmallVector<Type> newInputs;
+  SmallVector<Type> newResults;
+  for (Type t : fnTy.getInputs())
+    newInputs.push_back(convertPTOTypeToMemRef(t));
+  for (Type t : fnTy.getResults())
+    newResults.push_back(convertPTOTypeToMemRef(t));
+  for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
+    if (entry.getArgument(i).getType() != newInputs[i])
+      entry.getArgument(i).setType(newInputs[i]);
+  }
+  func.setFunctionType(FunctionType::get(ctx, newInputs, newResults));
+  return success();
+}
+
+static SmallVector<int64_t> computeAllocTileStrides(TileBufType tbTy,
+                                                    Type elemTy) {
+  SmallInlineVector<int64_t> shape(tbTy.getShape().begin(), tbTy.getShape().end());
+  SmallVector<int64_t> strides;
+  TileLayoutInfo info;
+  if (computeTileLayoutInfo(tbTy.getConfigAttr(), elemTy, shape, info))
+    return {info.rowStride, info.colStride};
+  strides.resize(shape.size());
+  int64_t s = 1;
+  for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+    strides[i] = s;
+    if (shape[i] != ShapedType::kDynamic)
+      s *= shape[i];
+  }
+  return strides;
+}
+
+static LogicalResult lowerOneAllocTileOp(mlir::pto::AllocTileOp op,
+                                         MLIRContext *ctx) {
+  IRRewriter rewriter(ctx);
+  rewriter.setInsertionPoint(op);
+  auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
+  if (!tbTy)
+    return success();
+
+  SmallInlineVector<int64_t> shape(tbTy.getShape().begin(), tbTy.getShape().end());
+  Type elemTy = tbTy.getElementType();
+  SmallVector<int64_t> strides = computeAllocTileStrides(tbTy, elemTy);
+  auto targetLayout =
+      StridedLayoutAttr::get(ctx, ShapedType::kDynamic, strides);
+  auto targetType =
+      MemRefType::get(shape, elemTy, targetLayout, tbTy.getMemorySpace());
+  Value vRow = op.getValidRow();
+  Value vCol = op.getValidCol();
+  materializeStaticValidDims(rewriter, op.getLoc(), tbTy, vRow, vCol);
+  auto configAttr = tbTy.getConfigAttr();
+  if (!configAttr)
+    configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+  if (Value addr = op.getAddr()) {
+    auto pc = rewriter.create<pto::PointerCastOp>(
+        op.getLoc(), targetType, ValueRange{addr}, vRow ? vRow : Value(),
+        vCol ? vCol : Value(), configAttr);
+    markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
+    auto bindOp = rewriter.create<pto::BindTileOp>(
+        op.getLoc(), targetType, pc.getResult(), vRow ? vRow : Value(),
+        vCol ? vCol : Value(), configAttr);
+    markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
+    rewriter.replaceOp(op, bindOp.getResult());
+    return success();
+  }
+
+  auto allocLayout = StridedLayoutAttr::get(ctx, 0, strides);
+  auto allocType =
+      MemRefType::get(shape, elemTy, allocLayout, tbTy.getMemorySpace());
+  Value alloc = rewriter.create<memref::AllocOp>(op.getLoc(), allocType);
+  auto bindOp = rewriter.create<pto::BindTileOp>(
+      op.getLoc(), targetType, alloc, vRow ? vRow : Value(),
+      vCol ? vCol : Value(), configAttr);
+  markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
+  rewriter.replaceOp(op, bindOp.getResult());
+  return success();
+}
+
+static LogicalResult lowerAllocTileOps(func::FuncOp func, MLIRContext *ctx) {
+  DefaultInlineVector<mlir::pto::AllocTileOp> allocTiles;
+  func.walk([&allocTiles](mlir::pto::AllocTileOp op) { allocTiles.push_back(op); });
+  for (auto op : allocTiles)
+    if (failed(lowerOneAllocTileOp(op, ctx)))
+      return failure();
+  return success();
+}
+
+static LogicalResult lowerOneDeclareTileOp(mlir::pto::DeclareTileOp op,
+                                           MLIRContext *ctx) {
+  IRRewriter rewriter(ctx);
+  rewriter.setInsertionPoint(op);
+  auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getTile().getType());
+  if (!tbTy) {
+    op.emitError("declare_tile result must be tile_buf type");
+    return failure();
+  }
+  auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
+  if (!targetType) {
+    op.emitError("failed to convert declare_tile result to memref type");
+    return failure();
+  }
+  auto configAttr = tbTy.getConfigAttr();
+  if (!configAttr)
+    configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+
+  Value vRow;
+  Value vCol;
+  materializeStaticValidDims(rewriter, op.getLoc(), tbTy, vRow, vCol);
+  auto declaredMemRef =
+      rewriter.create<pto::DeclareTileMemRefOp>(op.getLoc(), targetType);
+  auto bindOp = rewriter.create<pto::BindTileOp>(
+      op.getLoc(), targetType, declaredMemRef.getResult(),
+      vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+  markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
+  rewriter.replaceOp(op, bindOp.getResult());
+  return success();
+}
+
+static LogicalResult lowerDeclareTileOps(func::FuncOp func, MLIRContext *ctx) {
+  DefaultInlineVector<mlir::pto::DeclareTileOp> declaredTiles;
+  func.walk([&declaredTiles](mlir::pto::DeclareTileOp op) {
+    declaredTiles.push_back(op);
+  });
+  for (auto op : declaredTiles)
+    if (failed(lowerOneDeclareTileOp(op, ctx)))
+      return failure();
+  return success();
+}
+
+static LogicalResult normalizeTAssignResultTypes(func::FuncOp func,
+                                                 MLIRContext *ctx) {
+  DefaultInlineVector<mlir::pto::TAssignOp> tassignOps;
+  func.walk([&tassignOps](mlir::pto::TAssignOp op) { tassignOps.push_back(op); });
+  for (auto op : tassignOps) {
+    Type targetTy = op.getTile().getType();
+    if (op.getResult().getType() == targetTy)
+      continue;
+    IRRewriter rewriter(ctx);
+    rewriter.setInsertionPoint(op);
+    auto normalized = rewriter.create<pto::TAssignOp>(
+        op.getLoc(), targetTy, op.getTile(), op.getAddr());
+    rewriter.replaceOp(op, normalized.getResult());
+  }
+  return success();
+}
+
+static LogicalResult lowerPipeInitAddPtrUses(func::FuncOp func,
+                                             MLIRContext *ctx) {
+  bool foldedPipeInitAddPtr = true;
+  while (foldedPipeInitAddPtr) {
+    foldedPipeInitAddPtr = false;
+    DefaultInlineVector<mlir::pto::AddPtrOp> addPtrsForPipeInit;
+    func.walk([&addPtrsForPipeInit](mlir::pto::AddPtrOp op) {
+      bool eligible = !op->use_empty();
+      for (Operation *user : op->getUsers()) {
+        auto init = dyn_cast<mlir::pto::InitializeL2G2LPipeOp>(user);
+        if (!init || init.getGmAddr() != op.getResult()) {
+          eligible = false;
+          break;
+        }
+      }
+      if (eligible)
+        addPtrsForPipeInit.push_back(op);
+    });
+
+    for (auto op : addPtrsForPipeInit) {
+      IRRewriter rewriter(ctx);
+      rewriter.setInsertionPoint(op);
+      Value base = op.getOperand(0);
+      Value totalOffset = ensureIndex(rewriter, op.getLoc(), op.getOperand(1), op);
+      while (auto add = base.getDefiningOp<mlir::pto::AddPtrOp>()) {
+        Value off = ensureIndex(rewriter, op.getLoc(), add.getOperand(1), add);
+        totalOffset = rewriter.create<arith::AddIOp>(op.getLoc(), totalOffset, off);
+        base = add.getOperand(0);
+      }
+      auto baseMrTy = dyn_cast<MemRefType>(base.getType());
+      if (!baseMrTy || baseMrTy.getRank() != 1)
+        continue;
+      int64_t dyn = ShapedType::kDynamic;
+      auto layout = StridedLayoutAttr::get(ctx, dyn, {dyn});
+      auto targetTy = MemRefType::get({dyn}, baseMrTy.getElementType(), layout,
+                                      baseMrTy.getMemorySpace());
+      SingleInlineVector<OpFoldResult> sizes{rewriter.getIndexAttr(1)};
+      SingleInlineVector<OpFoldResult> strides{rewriter.getIndexAttr(1)};
+      auto rc = rewriter.create<memref::ReinterpretCastOp>(
+          op.getLoc(), targetTy, base, OpFoldResult(totalOffset), sizes, strides);
+      rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
+      rewriter.replaceOp(op, rc.getResult());
+      foldedPipeInitAddPtr = true;
+    }
+  }
+  return success();
+}
+
+static LogicalResult finalizeViewLowering(func::FuncOp func, MLIRContext *ctx) {
+  if (failed(lowerViewToMemrefComputeOps(func, ctx)) ||
+      failed(reconcileSCFIfResultTypes(func)) ||
+      failed(reconcileSCFForResultTypes(func)) ||
+      failed(markLoweredSetValidShapeOps(func, ctx))) {
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult lowerViewLikeStages(func::FuncOp func, MLIRContext *ctx) {
+  if (failed(lowerMakeTensorViewOps(func, ctx)) ||
+      failed(lowerTensorViewDimOps(func, ctx)) ||
+      failed(lowerPartitionViewOps(func, ctx)) ||
+      failed(lowerSubViewOps(func, ctx)) ||
+      failed(lowerTileBufViewLikeOps(func, ctx)) ||
+      failed(rewriteLoadScalarAddPtrUses(func, ctx)) ||
+      failed(rewriteStoreScalarAddPtrUses(func, ctx)) ||
+      failed(lowerPipeInitAddPtrUses(func, ctx)) ||
+      failed(cleanupRemainingAddPtrOps(
+          func,
+          "addptr must feed make_tensor_view,  initialize_l2g2l_pipe(gm_addr) "
+          "or load/store_scalar for lowering"))) {
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult lowerFunctionViewToMemref(func::FuncOp func,
+                                               MLIRContext *ctx) {
+  if (failed(validateIntToPtrUses(func)) ||
+      failed(rewriteFunctionSignature(func, ctx)) ||
+      failed(lowerIntToPtrOps(func, ctx)) ||
+      failed(lowerPtrToIntOps(func, ctx)) ||
+      failed(lowerAllocTileOps(func, ctx)) ||
+      failed(lowerDeclareTileOps(func, ctx)) ||
+      failed(normalizeTAssignResultTypes(func, ctx)) ||
+      failed(lowerViewLikeStages(func, ctx)) ||
+      failed(finalizeViewLowering(func, ctx))) {
+    return failure();
   }
   return success();
 }
@@ -1363,495 +1605,14 @@ struct PTOViewToMemrefPass
     MLIRContext *ctx = &getContext();
 
     for (auto func : mod.getOps<func::FuncOp>()) {
-      if (func.isExternal()) continue;
-
-      // ------------------------------------------------------------------
-      // Stage 0: ensure inttoptr values remain scalar-load/store only.
-      // ------------------------------------------------------------------
-      if (failed(validateIntToPtrUses(func))) {
-        signalPassFailure();
-        return;
-      }
-
-      Block &entry = func.front();
-      auto fnTy = func.getFunctionType();
-
-      // ------------------------------------------------------------------
-      // Stage 0.10: Rewrite Function Signature
-      // ------------------------------------------------------------------
-      SmallVector<Type> newInputs;
-      for (Type t : fnTy.getInputs()) newInputs.push_back(convertPTOTypeToMemRef(t));
-
-      SmallVector<Type> newResults;
-      for (Type t : fnTy.getResults()) newResults.push_back(convertPTOTypeToMemRef(t));
-
-      // Update entry block arguments
-      for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
-        if (entry.getArgument(i).getType() != newInputs[i]) {
-            entry.getArgument(i).setType(newInputs[i]);
-        }
-      }
-
-      // Update function type
-      func.setFunctionType(FunctionType::get(ctx, newInputs, newResults));
-
-      // ------------------------------------------------------------------
-      // Stage 0.20: lower pto.inttoptr result types to GM memrefs.
-      // ------------------------------------------------------------------
-      if (failed(lowerIntToPtrOps(func, ctx))) {
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 0.30: materialize pto.ptrtoint(addptr ...) byte offsets.
-      // ------------------------------------------------------------------
-      if (failed(lowerPtrToIntOps(func, ctx))) {
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 0.5: lower pto.alloc_tile -> memref.alloc + pto.bind_tile
-      // ------------------------------------------------------------------
-      DefaultInlineVector<mlir::pto::AllocTileOp> allocTiles;
-      func.walk([&](mlir::pto::AllocTileOp op) { allocTiles.push_back(op); });
-
-      for (auto op : allocTiles) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
-        if (!tbTy) continue;
-
-        // 1. 获取 Shape 和 ElementType
-        SmallInlineVector<int64_t> shape(tbTy.getShape().begin(), tbTy.getShape().end());
-        Type elemTy = tbTy.getElementType();
-
-        // 2. 计算 Strides (layout-aware when possible)
-        SmallVector<int64_t> strides;
-        TileLayoutInfo info;
-        if (computeTileLayoutInfo(tbTy.getConfigAttr(), elemTy, shape, info)) {
-          strides = {info.rowStride, info.colStride};
-        } else {
-          strides.resize(shape.size());
-          int64_t s = 1;
-          for (int i = (int)shape.size() - 1; i >= 0; --i) {
-            strides[i] = s;
-            if (shape[i] != ShapedType::kDynamic) s *= shape[i];
-          }
-        }
-
-        // 3. 构造 [BindTile 输出] 的动态类型 (Offset: ?)
-        // 这必须与 convertPTOTypeToMemRef 返回的类型一致，以便与 Subview 兼容
-        auto targetLayout =
-            StridedLayoutAttr::get(ctx, ShapedType::kDynamic, strides); // offset = ?
-        auto targetType =
-            MemRefType::get(shape, elemTy, targetLayout, tbTy.getMemorySpace());
-
-        // 4. Preserve tile valid dims (v_row / v_col).
-        //
-        // `pto.alloc_tile` encodes the valid shape in the result TileBufType
-        // (e.g. acc tile may be rows=16 but v_row=1). The alloc op itself does
-        // not necessarily carry explicit operands for static valid dims, so we
-        // must materialize them from the type to keep them through
-        // tile_buf -> memref lowering.
-        //
-        // For dynamically valid tiles (validShape == [-1, -1]), preserve the
-        // runtime operands if present.
-        Value vRow = op.getValidRow();
-        Value vCol = op.getValidCol();
-        // TileBuf valid dims use a negative sentinel (e.g. '?' / -1), which is
-        // distinct from MLIR's ShapedType::kDynamic (INT64_MIN). Treat any
-        // negative value as dynamic here.
-        materializeStaticValidDims(rewriter, loc, tbTy, vRow, vCol);
-
-        // 5. 获取 Config (保持不变)
-        auto configAttr = tbTy.getConfigAttr();
-        if (!configAttr) configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-        // 6. If alloc_tile provides an explicit address, keep the original
-        // pointer_cast lowering intact and additionally rebind through
-        // pto.bind_tile. PointerCastOp continues to carry the tile metadata
-        // used by existing lowering paths, while BindTileOp provides the
-        // unified anchor EmitC uses to recover tile_buf information.
-        if (Value addr = op.getAddr()) {
-          auto pc = rewriter.create<pto::PointerCastOp>(
-              loc, targetType, ValueRange{addr}, vRow ? vRow : Value(),
-              vCol ? vCol : Value(), configAttr);
-          markForceDynamicValidShape(pc, tbTy.hasDynamicValid(), ctx);
-          auto bindOp = rewriter.create<pto::BindTileOp>(
-              loc, targetType, pc.getResult(), vRow ? vRow : Value(),
-              vCol ? vCol : Value(), configAttr);
-          markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-          rewriter.replaceOp(op, bindOp.getResult());
-          continue;
-        }
-
-        // 7. Otherwise allocate a concrete memref buffer and bind tile.
-        // memref.alloc 要求明确的 layout，不能是动态 offset。
-        auto allocLayout = StridedLayoutAttr::get(ctx, 0, strides); // offset = 0
-        auto allocType = MemRefType::get(shape, elemTy, allocLayout, tbTy.getMemorySpace());
-        Value alloc = rewriter.create<memref::AllocOp>(loc, allocType);
-
-        // BindTileOp 的 Builder 会自动处理空的 Value，将其视为静态维度
-        auto bindOp = rewriter.create<pto::BindTileOp>(
-            loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
-            configAttr);
-        markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-
-        rewriter.replaceOp(op, bindOp.getResult());
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 0.75: lower pto.declare_tile -> pto.declare_tile_memref +
-      //             pto.bind_tile
-      // ------------------------------------------------------------------
-      DefaultInlineVector<mlir::pto::DeclareTileOp> declaredTiles;
-      func.walk([&](mlir::pto::DeclareTileOp op) { declaredTiles.push_back(op); });
-
-      for (auto op : declaredTiles) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getTile().getType());
-        if (!tbTy) {
-          op.emitError("declare_tile result must be tile_buf type");
-          signalPassFailure();
-          return;
-        }
-
-        auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
-        if (!targetType) {
-          op.emitError("failed to convert declare_tile result to memref type");
-          signalPassFailure();
-          return;
-        }
-
-        auto configAttr = tbTy.getConfigAttr();
-        if (!configAttr)
-          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-        Value vRow;
-        Value vCol;
-        materializeStaticValidDims(rewriter, loc, tbTy, vRow, vCol);
-
-        auto declaredMemRef =
-            rewriter.create<pto::DeclareTileMemRefOp>(loc, targetType);
-        auto bindOp = rewriter.create<pto::BindTileOp>(
-            loc, targetType, declaredMemRef.getResult(),
-            vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
-        markForceDynamicValidShape(bindOp, tbTy.hasDynamicValid(), ctx);
-
-        rewriter.replaceOp(op, bindOp.getResult());
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 0.8: normalize pto.tassign result type to match tile operand
-      // after tile_buf -> memref lowering (required for verifier consistency).
-      // ------------------------------------------------------------------
-      DefaultInlineVector<mlir::pto::TAssignOp> tassignOps;
-      func.walk([&](mlir::pto::TAssignOp op) { tassignOps.push_back(op); });
-      for (auto op : tassignOps) {
-        Type targetTy = op.getTile().getType();
-        if (op.getResult().getType() == targetTy)
-          continue;
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        auto normalized =
-            rewriter.create<pto::TAssignOp>(op.getLoc(), targetTy, op.getTile(),
-                                            op.getAddr());
-        rewriter.replaceOp(op, normalized.getResult());
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1: Lower pto.make_tensor_view -> memref.reinterpret_cast
-      // ------------------------------------------------------------------
-      DefaultInlineVector<mlir::pto::MakeTensorViewOp> makeViews;
-      func.walk([&](mlir::pto::MakeTensorViewOp op) { makeViews.push_back(op); });
-
-      for (auto op : makeViews) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        Value baseBuf = op.getOperand(0);
-        OpFoldResult off0 = rewriter.getIndexAttr(0);
-
-        // Fold pto.addptr chains into the view base to avoid nested reinterpret_cast.
-        bool foldedAddPtr = false;
-        {
-          Value cur = baseBuf;
-          Value totalOffset;
-          while (auto add = cur.getDefiningOp<mlir::pto::AddPtrOp>()) {
-            foldedAddPtr = true;
-            Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
-            if (totalOffset)
-              totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
-            else
-              totalOffset = off;
-            cur = add.getOperand(0);
-          }
-          if (cur != baseBuf) {
-            baseBuf = cur;
-            off0 = totalOffset ? OpFoldResult(totalOffset) : off0;
-          }
-        }
-
-        auto baseMr = dyn_cast<BaseMemRefType>(baseBuf.getType());
-        if (!baseMr) {
-             op.emitError("make_tensor_view base must be memref"); signalPassFailure(); return;
-        }
-
-        // [修复] 获取动态 Rank (根据 shape 输入的数量)
-        size_t rank = op.getShape().size(); 
-
-        // Construct target type with dynamic offset/strides
-        Type elemTy = baseMr.getElementType();
-        int64_t dyn = ShapedType::kDynamic;
-        
-        // [修复] 构建 N 维 Strided Layout
-        // strides 数组长度必须等于 rank
-        SmallVector<int64_t> dynStrides(rank, dyn);
-        auto layout = StridedLayoutAttr::get(ctx, /*offset=*/dyn, /*strides=*/dynStrides);
-        
-        // [修复] 构建 N 维 Shape
-        SmallVector<int64_t> dynShape(rank, dyn);
-        auto mrTy = MemRefType::get(dynShape, elemTy, layout, baseMr.getMemorySpace());
-
-        SmallInlineVector<OpFoldResult> sizes;
-        for (Value v : op.getShape()) sizes.push_back(ensureIndex(rewriter, loc, v, op));
-
-        SmallInlineVector<OpFoldResult> strides;
-        for (Value v : op.getStrides()) strides.push_back(ensureIndex(rewriter, loc, v, op));
-
-        auto rc = rewriter.create<memref::ReinterpretCastOp>(
-            loc, mrTy, baseBuf, off0, sizes, strides);
-        if (foldedAddPtr) {
-          rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
-        }
-        if (auto layoutAttr = op.getLayoutAttr()) {
-          rc->setAttr("layout", layoutAttr);
-        }
-
-        rewriter.replaceOp(op, rc.getResult());
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1.25: Lower pto.get_tensor_view_dim -> memref.dim
-      // ------------------------------------------------------------------
-      DefaultInlineVector<mlir::pto::GetTensorViewDimOp> tvDims;
-      func.walk([&](mlir::pto::GetTensorViewDimOp op) { tvDims.push_back(op); });
-
-      for (auto op : tvDims) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        Value view = op.getTensorView();
-        auto mrTy = dyn_cast<BaseMemRefType>(view.getType());
-        if (!mrTy)
-          continue; // leave it to later passes if it hasn't been lowered yet
-
-        Value dimIdx = op.getDimIndex();
-        Value dim = rewriter.create<memref::DimOp>(loc, view, dimIdx);
-        rewriter.replaceOp(op, dim);
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1.3: Lower pto.partition_view -> memref.subview
-      // ------------------------------------------------------------------
-      if (failed(lowerPartitionViewOps(func, ctx))) {
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1.35: Lower pto.subview -> memref.subview + pto.bind_tile
-      // ------------------------------------------------------------------
-      if (failed(lowerSubViewOps(func, ctx))) {
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1.4: Lower tile_buf view-like ops (treshape/bitcast)
-      // ------------------------------------------------------------------
-      if (failed(lowerTileBufViewLikeOps(func, ctx))) {
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1.5: Fold pto.addptr chains into load/store_scalar.
-      // ------------------------------------------------------------------
-      DefaultInlineVector<mlir::pto::LoadScalarOp> loadScalars;
-      func.walk([&](mlir::pto::LoadScalarOp op) { loadScalars.push_back(op); });
-
-      for (auto op : loadScalars) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        Value base = op.getPtr();
-        Value totalOffset = ensureIndex(rewriter, loc, op.getOffset(), op);
-
-        bool foldedAddPtr = false;
-        while (auto add = base.getDefiningOp<mlir::pto::AddPtrOp>()) {
-          foldedAddPtr = true;
-          Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
-          if (totalOffset)
-            totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
-          else
-            totalOffset = off;
-          base = add.getOperand(0);
-        }
-
-        if (foldedAddPtr) {
-          auto newOp = rewriter.create<pto::LoadScalarOp>(
-              loc, op.getValue().getType(), base, totalOffset);
-          rewriter.replaceOp(op, newOp.getValue());
-        }
-      }
-
-      DefaultInlineVector<mlir::pto::StoreScalarOp> storeScalars;
-      func.walk([&](mlir::pto::StoreScalarOp op) { storeScalars.push_back(op); });
-
-      for (auto op : storeScalars) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        Value base = op.getPtr();
-        Value totalOffset = ensureIndex(rewriter, loc, op.getOffset(), op);
-
-        bool foldedAddPtr = false;
-        while (auto add = base.getDefiningOp<mlir::pto::AddPtrOp>()) {
-          foldedAddPtr = true;
-          Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
-          if (totalOffset)
-            totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
-          else
-            totalOffset = off;
-          base = add.getOperand(0);
-        }
-
-        if (foldedAddPtr) {
-          rewriter.create<pto::StoreScalarOp>(
-              loc, base, totalOffset, op.getValue());
-          rewriter.eraseOp(op);
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 1.75: Fold addptr used by initialize_l2g2l_pipe(gm_addr).
-      // This keeps IR well-typed after function arguments are rewritten from
-      // !pto.ptr<T> to memref<?xT>.
-      // ------------------------------------------------------------------
-      bool foldedPipeInitAddPtr = true;
-      while (foldedPipeInitAddPtr) {
-        foldedPipeInitAddPtr = false;
-        DefaultInlineVector<mlir::pto::AddPtrOp> addPtrsForPipeInit;
-        func.walk([&](mlir::pto::AddPtrOp op) {
-          bool eligible = !op->use_empty();
-          for (Operation *user : op->getUsers()) {
-            auto init = dyn_cast<mlir::pto::InitializeL2G2LPipeOp>(user);
-            if (!init || init.getGmAddr() != op->getResult(0)) {
-              eligible = false;
-              break;
-            }
-          }
-          if (eligible)
-            addPtrsForPipeInit.push_back(op);
-        });
-
-        for (auto op : addPtrsForPipeInit) {
-          IRRewriter rewriter(ctx);
-          rewriter.setInsertionPoint(op);
-          Location loc = op.getLoc();
-
-          Value base = op->getOperand(0);
-          Value totalOffset = ensureIndex(rewriter, loc, op->getOperand(1), op);
-          while (auto add = base.getDefiningOp<mlir::pto::AddPtrOp>()) {
-            Value off = ensureIndex(rewriter, loc, add->getOperand(1), add);
-            totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
-            base = add->getOperand(0);
-          }
-
-          auto baseMrTy = dyn_cast<MemRefType>(base.getType());
-          if (!baseMrTy || baseMrTy.getRank() != 1)
-            continue;
-
-          int64_t dyn = ShapedType::kDynamic;
-          auto layout = StridedLayoutAttr::get(ctx, dyn, {dyn});
-          auto targetTy = MemRefType::get({dyn}, baseMrTy.getElementType(), layout,
-                                          baseMrTy.getMemorySpace());
-          SmallVector<OpFoldResult, 1> sizes{rewriter.getIndexAttr(1)};
-          SmallVector<OpFoldResult, 1> strides{rewriter.getIndexAttr(1)};
-          auto rc = rewriter.create<memref::ReinterpretCastOp>(
-              loc, targetTy, base, OpFoldResult(totalOffset), sizes, strides);
-          rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
-          rewriter.replaceOp(op, rc.getResult());
-          foldedPipeInitAddPtr = true;
-        }
-      }
-
-      // Clean up: addptr should be folded into make_tensor_view.
-      DefaultInlineVector<Operation *> addPtrs;
-      func.walk([&](mlir::pto::AddPtrOp op) { addPtrs.push_back(op.getOperation()); });
-      bool changed = true;
-      while (changed) {
-        changed = false;
-        for (auto &op : addPtrs) {
-          if (!op)
-            continue;
-          if (op->use_empty()) {
-            op->erase();
-            op = nullptr;
-            changed = true;
-          }
-        }
-      }
-      for (auto *op : addPtrs) {
-        if (!op)
-          continue;
-        op->emitError("addptr must feed make_tensor_view,  initialize_l2g2l_pipe(gm_addr) or load/store_scalar for lowering");
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 3: Rewrite Compute Ops
-      // ------------------------------------------------------------------
-      if (failed(lowerViewToMemrefComputeOps(func, ctx))) {
-        signalPassFailure();
-        return;
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 4: Reconcile control-flow result types
-      // ------------------------------------------------------------------
-      if (failed(reconcileSCFIfResultTypes(func))) {
-        signalPassFailure();
-        return;
-      }
-      if (failed(reconcileSCFForResultTypes(func))) {
-        signalPassFailure();
-        return;
-      }
-
-      // Mark memref-form set_validshape only after control-flow result-type
-      // reconciliation. Values such as scf.if results can stay tile_buf until
-      // this late stage.
-      if (failed(markLoweredSetValidShapeOps(func, ctx))) {
+      if (func.isExternal())
+        continue;
+      if (failed(lowerFunctionViewToMemref(func, ctx))) {
         signalPassFailure();
         return;
       }
     }
-    
-    // Debug Output
+
     LLVM_DEBUG(llvm::dbgs() << mod.getOperation());
   }
 };

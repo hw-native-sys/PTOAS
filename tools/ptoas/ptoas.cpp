@@ -63,6 +63,7 @@ constexpr size_t kMarkerCallReserveExtra = 16;
 constexpr size_t kRewriteOutputReserveExtra = 64;
 constexpr size_t kMarkerRewriteMinArgCount = 2;
 constexpr size_t kMarkerRewriteTernaryArgCount = 3;
+constexpr size_t kNumber3 = 3;
 
 using StringRefVector =
     llvm::SmallVector<llvm::StringRef, kStringRefInlineCapacity>;
@@ -73,11 +74,10 @@ static void printPTOASVersion(llvm::raw_ostream &os) {
   os << "ptoas " << PTOAS_RELEASE_VERSION << "\n";
 }
 
-static LogicalResult reorderEmitCFunctions(ModuleOp module) {
-  SmallVector<emitc::FuncOp> declarations;
-  SmallVector<emitc::FuncOp> definitions;
-  llvm::DenseMap<StringAttr, emitc::FuncOp> definitionsByName;
-
+static void collectEmitCFunctions(
+    ModuleOp module, SmallVectorImpl<emitc::FuncOp> &declarations,
+    SmallVectorImpl<emitc::FuncOp> &definitions,
+    llvm::DenseMap<StringAttr, emitc::FuncOp> &definitionsByName) {
   for (auto func : module.getOps<emitc::FuncOp>()) {
     if (func.isDeclaration()) {
       declarations.push_back(func);
@@ -86,9 +86,13 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
     definitions.push_back(func);
     definitionsByName[func.getSymNameAttr()] = func;
   }
+}
 
-  llvm::DenseMap<Operation *, unsigned> indegree;
-  llvm::DenseMap<Operation *, SmallVector<Operation *>> outgoing;
+static LogicalResult buildEmitCFunctionGraph(
+    SmallVectorImpl<emitc::FuncOp> &definitions,
+    llvm::DenseMap<StringAttr, emitc::FuncOp> &definitionsByName,
+    llvm::DenseMap<Operation *, unsigned> &indegree,
+    llvm::DenseMap<Operation *, SmallVector<Operation *>> &outgoing) {
   for (auto func : definitions)
     indegree[func.getOperation()] = 0;
 
@@ -119,7 +123,14 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
                 "emission";
     }
   }
+  return success();
+}
 
+static SmallVector<emitc::FuncOp>
+topologicallySortEmitCDefinitions(
+    SmallVectorImpl<emitc::FuncOp> &definitions,
+    llvm::DenseMap<Operation *, unsigned> &indegree,
+    llvm::DenseMap<Operation *, SmallVector<Operation *>> &outgoing) {
   SmallVector<Operation *> ready;
   for (auto func : definitions) {
     if (indegree[func.getOperation()] == 0)
@@ -130,40 +141,27 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
   while (!ready.empty()) {
     Operation *next = ready.front();
     ready.erase(ready.begin());
-    auto nextFunc = cast<emitc::FuncOp>(next);
-    sortedDefinitions.push_back(nextFunc);
-
+    sortedDefinitions.push_back(cast<emitc::FuncOp>(next));
     for (Operation *user : outgoing[next]) {
       unsigned &userIndegree = indegree[user];
       if (--userIndegree == 0)
         ready.push_back(user);
     }
   }
+  return sortedDefinitions;
+}
 
-  if (sortedDefinitions.size() != definitions.size()) {
-    return module.emitError()
-           << "cyclic function call graph is not supported for EmitC C++ emission";
-  }
-
-  if (declarations.empty() && definitions.size() <= 1)
-    return success();
-
-  SmallVector<emitc::FuncOp> desiredOrder;
-  desiredOrder.append(declarations.begin(), declarations.end());
-  desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
-
-  Block &body = module.getBodyRegion().front();
-  Operation *anchor = nullptr;
+static Operation *findFirstEmitCFunctionAnchor(Block &body) {
   for (Operation &op : body.getOperations()) {
-    if (isa<emitc::FuncOp>(op)) {
-      anchor = &op;
-      break;
-    }
+    if (isa<emitc::FuncOp>(op))
+      return &op;
   }
-  if (!anchor)
-    return success();
+  return nullptr;
+}
 
-  auto advanceAnchor = [&]() {
+static void reorderEmitCFunctionBlock(
+    Block &body, ArrayRef<emitc::FuncOp> desiredOrder, Operation *anchor) {
+  auto advanceAnchor = [&anchor]() {
     while (anchor) {
       anchor = anchor->getNextNode();
       if (!anchor || isa<emitc::FuncOp>(anchor))
@@ -181,7 +179,39 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
     else
       func->moveBefore(&body, body.end());
   }
+}
 
+static LogicalResult reorderEmitCFunctions(ModuleOp module) {
+  SmallVector<emitc::FuncOp> declarations;
+  SmallVector<emitc::FuncOp> definitions;
+  llvm::DenseMap<StringAttr, emitc::FuncOp> definitionsByName;
+  collectEmitCFunctions(module, declarations, definitions, definitionsByName);
+
+  llvm::DenseMap<Operation *, unsigned> indegree;
+  llvm::DenseMap<Operation *, SmallVector<Operation *>> outgoing;
+  if (failed(buildEmitCFunctionGraph(definitions, definitionsByName, indegree,
+                                     outgoing)))
+    return failure();
+
+  SmallVector<emitc::FuncOp> sortedDefinitions =
+      topologicallySortEmitCDefinitions(definitions, indegree, outgoing);
+  if (sortedDefinitions.size() != definitions.size()) {
+    return module.emitError()
+           << "cyclic function call graph is not supported for EmitC C++ emission";
+  }
+
+  if (declarations.empty() && definitions.size() <= 1)
+    return success();
+
+  SmallVector<emitc::FuncOp> desiredOrder;
+  desiredOrder.append(declarations.begin(), declarations.end());
+  desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
+
+  Block &body = module.getBodyRegion().front();
+  Operation *anchor = findFirstEmitCFunctionAnchor(body);
+  if (!anchor)
+    return success();
+  reorderEmitCFunctionBlock(body, desiredOrder, anchor);
   return success();
 }
 
@@ -303,7 +333,7 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
 // --------------------------------------------------------------------------
 // Post-process C++ output: rewrite marker calls into Tile member calls.
 // We emit marker calls in EmitC IR because EmitC currently does not provide a
-// first-class op for member-function invocation. After translation, we rewrite:
+// first-class op for member-function invocation. After translation, we rewrite
 //   PTOAS__TILE_SET_VALUE(dst, offset, val) -> dst.SetValue(offset, val)
 //   PTOAS__TILE_GET_VALUE(src, offset)      -> src.GetValue(offset)
 //   PTOAS__TILE_DATA(obj)                   -> obj.data()
@@ -453,9 +483,9 @@ static void rewriteMarkerCallsToMembers(
   while (changed) {
     changed = false;
     for (const MarkerRewriteSpec &rewrite : rewrites) {
-      changed |= rewriteMarkerCallToMember(cpp, rewrite.marker,
-                                           rewrite.memberName,
-                                           rewrite.expectedNumArgs);
+      const bool markerChanged = rewriteMarkerCallToMember(
+          cpp, rewrite.marker, rewrite.memberName, rewrite.expectedNumArgs);
+      changed = changed || markerChanged;
     }
   }
 }
@@ -503,7 +533,7 @@ static void rewriteAsyncEventMarkers(std::string &cpp) {
 // --------------------------------------------------------------------------
 // EmitC cleanup: drop trivial emitc.expression ops.
 // After FormExpressions + CSE, EmitC expressions can become invalid in two
-// ways:
+// ways
 //   1. the root op is CSE'd away, leaving an empty expression region
 //   2. the region degenerates to `emitc.yield %outer_value`, i.e. the yielded
 //      value is defined outside the expression body
@@ -600,9 +630,9 @@ static void rewriteMarkerCallsToSubscripts(
   while (changed) {
     changed = false;
     for (const MarkerSubscriptRewriteSpec &rewrite : rewrites) {
-      changed |= rewriteMarkerCallToSubscript(cpp, rewrite.marker,
-                                              rewrite.expectedNumArgs,
-                                              rewrite.isStore);
+      const bool markerChanged = rewriteMarkerCallToSubscript(
+          cpp, rewrite.marker, rewrite.expectedNumArgs, rewrite.isStore);
+      changed = changed || markerChanged;
     }
   }
 }
@@ -774,7 +804,6 @@ static bool isLiteralInitializer(llvm::StringRef rhs) {
       R"(^[+-]?0[xX]([0-9A-Fa-f]+\.[0-9A-Fa-f]*|[0-9A-Fa-f]+|\.[0-9A-Fa-f]+)[pP][+-]?[0-9]+[fF]?$)");
   static const llvm::Regex kSpecialFloatLiteral(
       R"(^[+-]?(nan|inf)[fF]?$)");
-
   return kIntLiteral.match(rhs) || kFloatLiteral.match(rhs) ||
          kHexFloatLiteral.match(rhs) || kSpecialFloatLiteral.match(rhs);
 }
@@ -792,6 +821,39 @@ static std::string normalizeConstInitializer(llvm::StringRef type,
   return rhs.str();
 }
 
+static bool isSkippableDeclarationLikeLine(llvm::StringRef body) {
+  return body.starts_with("return") || body.starts_with("goto ") ||
+         body.starts_with("if ") || body.starts_with("if(") ||
+         body.starts_with("switch ") || body.starts_with("switch(") ||
+         body.starts_with("for ") || body.starts_with("for(") ||
+         body.starts_with("while ") || body.starts_with("while(") ||
+         body.starts_with("case ") || body == "default";
+}
+
+static bool splitDeclarationAndInitializer(llvm::StringRef body,
+                                           llvm::StringRef &lhs,
+                                           llvm::StringRef &rhs) {
+  lhs = body;
+  rhs = {};
+  size_t eqPos = body.find('=');
+  if (eqPos == llvm::StringRef::npos)
+    return true;
+  lhs = body.take_front(eqPos).rtrim();
+  rhs = body.drop_front(eqPos + 1).trim();
+  return true;
+}
+
+static bool parseDeclarationNameAndType(llvm::StringRef lhs,
+                                        llvm::StringRef &type,
+                                        llvm::StringRef &name) {
+  size_t lastWs = lhs.find_last_of(" \t");
+  if (lastWs == llvm::StringRef::npos)
+    return false;
+  type = lhs.take_front(lastWs).rtrim();
+  name = lhs.drop_front(lastWs + 1).trim();
+  return true;
+}
+
 static bool parseConstantDeclarationLine(llvm::StringRef line,
                                          ConstantDeclCandidate &candidate,
                                          std::string &valueName) {
@@ -801,27 +863,17 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
     return false;
 
   llvm::StringRef body = trimmed.drop_back().rtrim();
-  if (body.starts_with("return") || body.starts_with("goto ") ||
-      body.starts_with("if ") || body.starts_with("if(") ||
-      body.starts_with("switch ") || body.starts_with("switch(") ||
-      body.starts_with("for ") || body.starts_with("for(") ||
-      body.starts_with("while ") || body.starts_with("while(") ||
-      body.starts_with("case ") || body == "default")
+  if (isSkippableDeclarationLikeLine(body))
     return false;
 
   llvm::StringRef lhs = body;
   llvm::StringRef rhs;
-  if (size_t eqPos = body.find('='); eqPos != llvm::StringRef::npos) {
-    lhs = body.take_front(eqPos).rtrim();
-    rhs = body.drop_front(eqPos + 1).trim();
-  }
+  splitDeclarationAndInitializer(body, lhs, rhs);
 
-  size_t lastWs = lhs.find_last_of(" \t");
-  if (lastWs == llvm::StringRef::npos)
+  llvm::StringRef type;
+  llvm::StringRef name;
+  if (!parseDeclarationNameAndType(lhs, type, name))
     return false;
-
-  llvm::StringRef type = lhs.take_front(lastWs).rtrim();
-  llvm::StringRef name = lhs.drop_front(lastWs + 1).trim();
   if (!isGeneratedValueName(name) || !isConstFoldableScalarType(type))
     return false;
 
@@ -831,7 +883,6 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
   candidate.indent = line.take_front(indentLen).str();
   candidate.type = type.str();
   valueName = name.str();
-
   if (!rhs.empty()) {
     if (!isLiteralInitializer(rhs))
       return false;
@@ -863,63 +914,95 @@ static bool parseGeneratedValueAssignment(llvm::StringRef line,
   return true;
 }
 
-static void rewriteScalarConstantDecls(std::string &cpp) {
-  llvm::SmallVector<std::string, 0> lines;
-  for (llvm::StringRef ref(cpp); !ref.empty(); ref = ref.split('\n').second) {
-    auto split = ref.split('\n');
-    lines.push_back(split.first.str());
+constexpr unsigned kNoInlineCapacity = 0;
+using OutputLineVector = llvm::SmallVector<std::string, kNoInlineCapacity>;
+using EraseLineVector = llvm::SmallVector<bool, kNoInlineCapacity>;
+
+static OutputLineVector splitLines(llvm::StringRef text) {
+  OutputLineVector lines;
+  for (llvm::StringRef ref(text); !ref.empty(); ref = ref.split('\n').second)
+    lines.push_back(ref.split('\n').first.str());
+  return lines;
+}
+
+static void collectConstantDeclCandidates(
+    ArrayRef<std::string> lines, size_t beginLine, size_t endLine,
+    llvm::StringMap<ConstantDeclCandidate> &candidates) {
+  for (size_t i = beginLine; i <= endLine; ++i) {
+    ConstantDeclCandidate candidate;
+    std::string valueName;
+    if (parseConstantDeclarationLine(lines[i], candidate, valueName)) {
+      candidate.declLine = i;
+      candidates[valueName] = std::move(candidate);
+      continue;
+    }
+
+    llvm::StringRef assignedName;
+    llvm::StringRef rhs;
+    if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs))
+      continue;
+    auto it = candidates.find(assignedName);
+    if (it == candidates.end())
+      continue;
+    ConstantDeclCandidate &info = it->second;
+    ++info.assignmentCount;
+    info.assignmentLine = i;
+    info.assignmentRhs = rhs.str();
   }
+}
 
-  llvm::SmallVector<bool, 0> eraseLine(lines.size(), false);
-  auto rewriteSegment = [&](size_t beginLine, size_t endLine) {
+static void rewriteConstantDeclCandidates(
+    llvm::StringMap<ConstantDeclCandidate> &candidates,
+    llvm::SmallVectorImpl<std::string> &lines,
+    llvm::SmallVectorImpl<bool> &eraseLine) {
+  for (auto &entry : candidates) {
+    llvm::StringRef valueName = entry.getKey();
+    ConstantDeclCandidate &info = entry.getValue();
+
+    std::string initializer;
+    if (info.hasInitializer) {
+      if (info.assignmentCount != 0)
+        continue;
+      initializer = info.initializer;
+    } else {
+      if (info.assignmentCount != 1)
+        continue;
+      if (!isLiteralInitializer(info.assignmentRhs))
+        continue;
+      initializer =
+          normalizeConstInitializer(info.type, llvm::StringRef(info.assignmentRhs));
+      eraseLine[info.assignmentLine] = true;
+    }
+
+    lines[info.declLine] = (info.indent + "const " + info.type + " " +
+                            valueName.str() + " = " + initializer + ";");
+  }
+}
+
+static std::string joinRemainingLines(ArrayRef<std::string> lines,
+                                      ArrayRef<bool> eraseLine,
+                                      size_t reserveSize) {
+  std::string out;
+  out.reserve(reserveSize);
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (eraseLine[i])
+      continue;
+    out.append(lines[i]);
+    if (i + 1 != lines.size())
+      out.push_back('\n');
+  }
+  return out;
+}
+
+static void rewriteScalarConstantDecls(std::string &cpp) {
+  OutputLineVector lines = splitLines(cpp);
+
+  EraseLineVector eraseLine(lines.size(), false);
+  auto rewriteSegment = [&lines, &eraseLine](size_t beginLine,
+                                             size_t endLine) {
     llvm::StringMap<ConstantDeclCandidate> candidates;
-
-    for (size_t i = beginLine; i <= endLine; ++i) {
-      ConstantDeclCandidate candidate;
-      std::string valueName;
-      if (parseConstantDeclarationLine(lines[i], candidate, valueName)) {
-        candidate.declLine = i;
-        candidates[valueName] = std::move(candidate);
-        continue;
-      }
-
-      llvm::StringRef assignedName;
-      llvm::StringRef rhs;
-      if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs))
-        continue;
-
-      auto it = candidates.find(assignedName);
-      if (it == candidates.end())
-        continue;
-
-      ConstantDeclCandidate &info = it->second;
-      ++info.assignmentCount;
-      info.assignmentLine = i;
-      info.assignmentRhs = rhs.str();
-    }
-
-    for (auto &entry : candidates) {
-      llvm::StringRef valueName = entry.getKey();
-      ConstantDeclCandidate &info = entry.getValue();
-
-      std::string initializer;
-      if (info.hasInitializer) {
-        if (info.assignmentCount != 0)
-          continue;
-        initializer = info.initializer;
-      } else {
-        if (info.assignmentCount != 1)
-          continue;
-        if (!isLiteralInitializer(info.assignmentRhs))
-          continue;
-        initializer = normalizeConstInitializer(
-            info.type, llvm::StringRef(info.assignmentRhs));
-        eraseLine[info.assignmentLine] = true;
-      }
-
-      lines[info.declLine] = (info.indent + "const " + info.type + " " +
-                              valueName.str() + " = " + initializer + ";");
-    }
+    collectConstantDeclCandidates(lines, beginLine, endLine, candidates);
+    rewriteConstantDeclCandidates(candidates, lines, eraseLine);
   };
 
   int braceDepth = 0;
@@ -939,16 +1022,7 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
       rewriteSegment(segmentStart, i);
   }
 
-  std::string out;
-  out.reserve(cpp.size());
-  for (size_t i = 0; i < lines.size(); ++i) {
-    if (eraseLine[i])
-      continue;
-    out.append(lines[i]);
-    if (i + 1 != lines.size())
-      out.push_back('\n');
-  }
-  cpp.swap(out);
+  cpp = joinRemainingLines(lines, eraseLine, cpp.size());
 }
 
 static bool shouldDeclareVariablesAtTop(ModuleOp module) {
@@ -957,8 +1031,7 @@ static bool shouldDeclareVariablesAtTop(ModuleOp module) {
          llvm::any_of(module.getOps<emitc::FuncOp>(), hasMultiBlockFunc);
 }
 
-int main(int argc, char **argv) {
-  DialectRegistry registry;
+static void registerRequiredDialects(DialectRegistry &registry) {
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::tensor::TensorDialect>();
   registry.insert<mlir::arith::ArithDialect>();
@@ -967,48 +1040,25 @@ int main(int argc, char **argv) {
   registry.insert<mlir::cf::ControlFlowDialect>();
   registry.insert<mlir::bufferization::BufferizationDialect>();
   registry.insert<mlir::scf::SCFDialect>();
-
   registry.insert<mlir::pto::PTODialect>();
   arith::registerBufferizableOpInterfaceExternalModels(registry);
   tensor::registerBufferizableOpInterfaceExternalModels(registry);
   pto::registerBufferizableOpInterfaceExternalModels(registry);
-
   registry.insert<emitc::EmitCDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
+}
 
-  llvm::cl::SetVersionPrinter(printPTOASVersion);
-
-  bool cliArchSpecified = false;
-  for (int i = 1; i < argc; ++i) {
-    llvm::StringRef arg(argv[i]);
-    if (arg == "--pto-arch" || arg.starts_with("--pto-arch=")) {
-      cliArchSpecified = true;
-      break;
-    }
+static bool hasCliPTOArchArgument(llvm::ArrayRef<std::string> args) {
+  for (size_t i = 1; i < args.size(); ++i) {
+    llvm::StringRef arg(args[i]);
+    if (arg == "--pto-arch" || arg.starts_with("--pto-arch="))
+      return true;
   }
+  return false;
+}
 
-  // Register all passes so that --mlir-print-ir-after/before can resolve
-  // pass names like 'cse' at option-parse time.
-  mlir::registerAllPasses();
-  registerPTOPasses();
-
-  // Parse command line options
-  mlir::registerPassManagerCLOptions();
-  llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
-
-  // Read whole input first (so we can auto-detect .ptobc by magic).
-  auto fileOrErr = llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
-  if (!fileOrErr) {
-    llvm::errs() << "Error: Could not open input file: "
-                 << fileOrErr.getError().message() << "\n";
-    return 1;
-  }
-
-  MLIRContext context(registry);
-  // Be tolerant: ptobc decode may materialize ops from dialects that aren't
-  // explicitly registered/loaded in this tool yet.
+static void loadRequiredDialects(MLIRContext &context) {
   context.allowUnregisteredDialects(true);
-
   context.getOrLoadDialect<emitc::EmitCDialect>();
   context.getOrLoadDialect<mlir::pto::PTODialect>();
   context.getOrLoadDialect<func::FuncDialect>();
@@ -1016,92 +1066,88 @@ int main(int argc, char **argv) {
   context.getOrLoadDialect<memref::MemRefDialect>();
   context.getOrLoadDialect<affine::AffineDialect>();
   context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
+}
 
-  OwningOpRef<ModuleOp> module;
-  llvm::StringRef buf = (*fileOrErr)->getBuffer();
-  const bool isPTOBC = (buf.size() >= 6 && std::memcmp(buf.data(), "PTOBC\0", 6) == 0);
-  auto normalizeArch = [](llvm::StringRef archValue) {
-    std::string normalized = archValue.str();
-    for (char &c : normalized)
-      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return normalized;
-  };
-  auto detectTextualModuleArch = [&](llvm::StringRef text) -> std::optional<std::string> {
-    StringRefVector matches;
-    llvm::Regex archRegex(
-        R"ptoarch("?(pto\.target_arch)"?[[:space:]]*=[[:space:]]*"([[:alpha:][:digit:]_]+)")ptoarch");
-    if (!archRegex.match(text, &matches) || matches.size() < 3)
-      return std::nullopt;
-    return normalizeArch(matches[2]);
-  };
+static std::string normalizeArchValue(llvm::StringRef archValue) {
+  std::string normalized = archValue.str();
+  for (char &c : normalized)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return normalized;
+}
 
-  std::string arch = normalizeArch(ptoTargetArch);
+static std::optional<std::string> detectTextualModuleArch(llvm::StringRef text) {
+  StringRefVector matches;
+  llvm::Regex archRegex(
+      R"ptoarch("?(pto\.target_arch)"?[[:space:]]*=[[:space:]]*"([[:alpha:][:digit:]_]+)")ptoarch");
+  if (!archRegex.match(text, &matches) || matches.size() < kNumber3)
+    return std::nullopt;
+  return normalizeArchValue(matches[2]);
+}
+
+static bool isSupportedArch(llvm::StringRef arch) {
+  return arch == "a3" || arch == "a5";
+}
+
+static int resolveEffectiveArch(llvm::StringRef buf, bool isPTOBC,
+                                bool cliArchSpecified, std::string &arch) {
+  arch = normalizeArchValue(ptoTargetArch);
   if (cliArchSpecified) {
-    if (arch != "a3" && arch != "a5") {
+    if (!isSupportedArch(arch)) {
       llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
                    << "'. Expected 'a3' or 'a5'.\n";
       return 1;
     }
-  } else if (!isPTOBC) {
+    return 0;
+  }
+  if (!isPTOBC) {
     if (auto detectedArch = detectTextualModuleArch(buf))
       arch = *detectedArch;
   }
-  if (arch != "a3" && arch != "a5")
+  if (!isSupportedArch(arch))
     arch = "a3";
+  return 0;
+}
 
-  if (isPTOBC) {
-    // Decode PTO bytecode directly into an MLIR module.
-    llvm::ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(buf.data()), buf.size());
+static OwningOpRef<ModuleOp> decodePTOBCModule(llvm::StringRef buf,
+                                               MLIRContext &context) {
+  llvm::ArrayRef<uint8_t> bytes(buf.bytes_begin(), buf.bytes_end());
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
-    try {
-      module = ptobc::decodePTOBCToModule(bytes, context);
-    } catch (...) {
-      llvm::errs() << "Error: Failed to decode PTOBC.\n";
-      return 1;
-    }
+  try {
+    return ptobc::decodePTOBCToModule(bytes, context);
+  } catch (...) {
+    return {};
+  }
 #else
-    module = ptobc::decodePTOBCToModule(bytes, context);
+  return ptobc::decodePTOBCToModule(bytes, context);
 #endif
-    if (!module) {
-      llvm::errs() << "Error: Failed to decode PTOBC.\n";
-      return 1;
-    }
-  } else {
-    // Parse textual MLIR (.pto).
-    llvm::SourceMgr sourceMgr;
-    sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
-    pto::ScopedPTOParserTargetArch scopedParserArch(
-        &context, arch == "a5" ? pto::PTOParserTargetArch::A5
-                               : pto::PTOParserTargetArch::A3);
-    module = parseSourceFile<ModuleOp>(sourceMgr, &context);
-    if (!module) {
-      llvm::errs() << "Error: Failed to parse MLIR.\n";
-      return 1;
-    }
-  }
+}
 
-  // If the CLI explicitly requested an arch, it overrides the input module.
-  // Otherwise, preserve the textual module's arch when present and only fall
-  // back to the effective default.
-  if (cliArchSpecified || !module->getOperation()->hasAttr("pto.target_arch")) {
-    module->getOperation()->setAttr("pto.target_arch",
-                                    mlir::StringAttr::get(&context, arch));
-  }
+static OwningOpRef<ModuleOp>
+parseTextModule(std::unique_ptr<llvm::MemoryBuffer> buffer, MLIRContext &context,
+                llvm::StringRef arch) {
+  llvm::SourceMgr sourceMgr;
+  sourceMgr.AddNewSourceBuffer(std::move(buffer), llvm::SMLoc());
+  pto::ScopedPTOParserTargetArch scopedParserArch(
+      &context, arch == "a5" ? pto::PTOParserTargetArch::A5
+                             : pto::PTOParserTargetArch::A3);
+  return parseSourceFile<ModuleOp>(sourceMgr, &context);
+}
 
-  PTOBuildLevel effectiveLevel = defaultBuildLevel();
-  if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
-    llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
-                 << "'. Expected 'level1', 'level2', or 'level3'.\n";
-    return 1;
-  }
+static OwningOpRef<ModuleOp>
+loadInputModule(std::unique_ptr<llvm::MemoryBuffer> buffer, MLIRContext &context,
+                llvm::StringRef arch, bool isPTOBC) {
+  if (isPTOBC)
+    return decodePTOBCModule(buffer->getBuffer(), context);
+  return parseTextModule(std::move(buffer), context, arch);
+}
 
+static bool normalizeAutoSyncTailHints(ModuleOp module, MLIRContext &context) {
   bool invalidAutoSyncTailHint = false;
   module->walk([&](mlir::func::FuncOp func) {
     auto hintAttr =
         func->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint");
     if (!hintAttr)
       return;
-
     std::string normalizedHint;
     if (!parseAutoSyncTailHint(hintAttr.getValue(), normalizedHint)) {
       func.emitError("invalid pto.auto_sync_tail_hint '")
@@ -1114,24 +1160,27 @@ int main(int argc, char **argv) {
     func->setAttr("pto.auto_sync_tail_hint",
                   mlir::StringAttr::get(&context, normalizedHint));
   });
-  if (invalidAutoSyncTailHint)
-    return 1;
+  return !invalidAutoSyncTailHint;
+}
 
+static bool moduleHasTAssign(ModuleOp module) {
   bool hasTAssign = false;
   module->walk([&](pto::TAssignOp) { hasTAssign = true; });
+  return hasTAssign;
+}
 
+static int validateTAssignAndAutoSyncOptions(PTOBuildLevel effectiveLevel,
+                                             bool hasTAssign) {
   if (hasTAssign && effectiveLevel != PTOBuildLevel::Level3) {
     llvm::errs() << "Error: pto.tassign is only supported when "
                     "--pto-level=level3.\n";
     return 1;
   }
-
   if (hasTAssign && enableInsertSync) {
     llvm::errs() << "Error: pto.tassign requires --enable-insert-sync to be "
                     "disabled.\n";
     return 1;
   }
-
   int enabledAutoSyncModes =
       (enableInsertSync ? 1 : 0) + (enableInjectBarrierAllSync ? 1 : 0) +
       (enableGraphSyncSolver ? 1 : 0);
@@ -1151,7 +1200,11 @@ int main(int argc, char **argv) {
                     "to be disabled.\n";
     return 1;
   }
+  return 0;
+}
 
+static int validateAllocTileAddrMode(ModuleOp module,
+                                     PTOBuildLevel effectiveLevel) {
   if (effectiveLevel == PTOBuildLevel::Level3) {
     bool missing = false;
     module->walk([&](pto::AllocTileOp op) {
@@ -1160,32 +1213,25 @@ int main(int argc, char **argv) {
         missing = true;
       }
     });
-    if (missing)
-      return 1;
-  } else {
-    bool hasAddr = false;
-    module->walk([&](pto::AllocTileOp op) {
-      if (op.getAddr()) {
-        op.emitError(
-            "unexpected 'addr' operand: only supported when --pto-level=level3");
-        hasAddr = true;
-      }
-    });
-    if (hasAddr)
-      return 1;
+    return missing ? 1 : 0;
   }
 
-  // Main PassManager
-  PassManager pm(&context);
+  bool hasAddr = false;
+  module->walk([&](pto::AllocTileOp op) {
+    if (op.getAddr()) {
+      op.emitError(
+          "unexpected 'addr' operand: only supported when --pto-level=level3");
+      hasAddr = true;
+    }
+  });
+  return hasAddr ? 1 : 0;
+}
 
-  if (failed(applyPassManagerCLOptions(pm)))
-    return 1;
-
+static void addCorePipeline(PassManager &pm, PTOBuildLevel effectiveLevel) {
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOAssignDefaultFrontendPipeIdPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOLowerFrontendPipeOpsPass());
-  //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   if (!disableInferLayout)
@@ -1194,7 +1240,6 @@ int main(int argc, char **argv) {
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOValidateIntToPtrUsesPass());
   pm.addPass(pto::createPTOViewToMemrefPass());
-
   if (effectiveLevel != PTOBuildLevel::Level3) {
     PlanMemoryOptions planMemoryOption;
     planMemoryOption.memMode = MemPlanMode::LOCAL_MEM_PLAN;
@@ -1203,79 +1248,76 @@ int main(int argc, char **argv) {
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
+}
 
-  // Conditionally add one automatic synchronization mode. Barrier-all is a
-  // conservative standalone pass; InsertSync and GraphSyncSolver are set/wait
-  // solvers.
-  if (enableInsertSync)
+static void addAutoSyncPipeline(PassManager &pm) {
+  if (enableInsertSync) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
-  else if (enableInjectBarrierAllSync)
+    return;
+  }
+  if (enableInjectBarrierAllSync) {
     pm.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOInjectBarrierAllSyncPass());
-  else if (enableGraphSyncSolver) {
-    PTOGraphSyncSolverOptions graphSyncOpts;
-    graphSyncOpts.eventIdNumMax = graphSyncSolverEventIdMax;
-    pm.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOGraphSyncSolverPass(graphSyncOpts));
+    return;
   }
+  if (!enableGraphSyncSolver)
+    return;
+  PTOGraphSyncSolverOptions graphSyncOpts;
+  graphSyncOpts.eventIdNumMax = graphSyncSolverEventIdMax;
+  pm.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOGraphSyncSolverPass(graphSyncOpts));
+}
 
-
-
-  std::unique_ptr<llvm::ToolOutputFile> outputFile;
-  llvm::raw_ostream *outputOS = &llvm::outs();
-  if (outputFilename != "-") {
-    std::error_code ec;
-    outputFile = std::make_unique<llvm::ToolOutputFile>(
-        outputFilename, ec, llvm::sys::fs::OF_None);
-    if (ec) {
-      llvm::errs() << ec.message() << "\n";
-      return 1;
-    }
-    outputOS = &outputFile->os();
-  }
-
-  if (emitMlirIR) {
-    if (failed(pm.run(*module))) {
-      llvm::errs() << "Error: Pass execution failed.\n";
-      return 1;
-    }
-    module->print(*outputOS);
-    if (outputFile)
-      outputFile->keep();
-    return 0;
-  }
-
+static void addCppEmissionPipeline(PassManager &pm, llvm::StringRef arch) {
   pm.addPass(pto::createPTOMaterializeTileHandlesPass());
   pm.addPass(createCSEPass());
-  if (arch == "a3") {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
-  } else {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
-  }
+  pm.addPass(pto::createEmitPTOManualPass(arch == "a3" ? pto::PTOArch::A3
+                                                       : pto::PTOArch::A5));
   pm.addPass(emitc::createFormExpressionsPass());
   pm.addPass(mlir::createCSEPass());
+}
 
-  if (failed(pm.run(*module))) {
+static int openOutputStream(std::unique_ptr<llvm::ToolOutputFile> &outputFile,
+                            llvm::raw_ostream *&outputOS) {
+  outputOS = &llvm::outs();
+  if (outputFilename == "-")
+    return 0;
+  std::error_code ec;
+  outputFile = std::make_unique<llvm::ToolOutputFile>(
+      outputFilename, ec, llvm::sys::fs::OF_None);
+  if (ec) {
+    llvm::errs() << ec.message() << "\n";
+    return 1;
+  }
+  outputOS = &outputFile->os();
+  return 0;
+}
+
+static int runMlirPipeline(PassManager &pm, ModuleOp module,
+                           llvm::raw_ostream &outputOS,
+                           llvm::ToolOutputFile *outputFile) {
+  if (failed(pm.run(module))) {
     llvm::errs() << "Error: Pass execution failed.\n";
     return 1;
   }
+  module.print(outputOS);
+  if (outputFile)
+    outputFile->keep();
+  return 0;
+}
 
-  dropEmptyEmitCExpressions(module.get());
-  materializeControlFlowOperands(module.get());
-  if (failed(reorderEmitCFunctions(module.get()))) {
+static int emitCppOutput(ModuleOp module, llvm::raw_ostream &outputOS) {
+  dropEmptyEmitCExpressions(module);
+  materializeControlFlowOperands(module);
+  if (failed(reorderEmitCFunctions(module))) {
     llvm::errs() << "Error: Failed to order emitted functions for C++ emission.\n";
     return 1;
   }
-
-  // Emit C++ to string, then post-process, then write to output file.
   std::string cppOutput;
   llvm::raw_string_ostream cppOS(cppOutput);
-  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
-  // multiple blocks, requiring variables to be declared at the top for valid
-  // C++ emission.
-  bool declareVariablesAtTop = shouldDeclareVariablesAtTop(*module);
-  if (failed(emitc::translateToCpp(*module, cppOS,
-                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
+  bool declareVariablesAtTop = shouldDeclareVariablesAtTop(module);
+  if (failed(emitc::translateToCpp(module, cppOS,
+                                   /*declareVariablesAtTop=*/declareVariablesAtTop))) {
     llvm::errs() << "Error: Failed to emit C++.\n";
     return 1;
   }
@@ -1287,12 +1329,86 @@ int main(int argc, char **argv) {
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
   rewriteScalarConstantDecls(cppOutput);
   rewriteHoistedGlobalTensorDecls(cppOutput);
+  outputOS << cppOutput;
+  outputOS.flush();
+  return 0;
+}
 
-  *outputOS << cppOutput;
-  outputOS->flush();
+int main(int argc, char **argv) {
+  DialectRegistry registry;
+  registerRequiredDialects(registry);
+  llvm::cl::SetVersionPrinter(printPTOASVersion);
+  std::vector<std::string> cliArgs;
+  cliArgs.reserve(static_cast<size_t>(argc));
+  for (int i = 0; i < argc; ++i)
+    cliArgs.emplace_back(argv[i]);
+  bool cliArchSpecified = hasCliPTOArchArgument(cliArgs);
+  mlir::registerAllPasses();
+  registerPTOPasses();
+  mlir::registerPassManagerCLOptions();
+  llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
 
+  auto fileOrErr = llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
+  if (!fileOrErr) {
+    llvm::errs() << "Error: Could not open input file: "
+                 << fileOrErr.getError().message() << "\n";
+    return 1;
+  }
+
+  MLIRContext context(registry);
+  loadRequiredDialects(context);
+  std::unique_ptr<llvm::MemoryBuffer> inputBuffer = std::move(*fileOrErr);
+  llvm::StringRef buf = inputBuffer->getBuffer();
+  bool isPTOBC = buf.size() >= 6 && std::memcmp(buf.data(), "PTOBC\0", 6) == 0;
+  std::string arch;
+  if (resolveEffectiveArch(buf, isPTOBC, cliArchSpecified, arch) != 0)
+    return 1;
+
+  OwningOpRef<ModuleOp> module =
+      loadInputModule(std::move(inputBuffer), context, arch, isPTOBC);
+  if (!module) {
+    llvm::errs() << "Error: Failed to "
+                 << (isPTOBC ? "decode PTOBC.\n" : "parse MLIR.\n");
+    return 1;
+  }
+  if (cliArchSpecified || !module->getOperation()->hasAttr("pto.target_arch"))
+    module->getOperation()->setAttr("pto.target_arch",
+                                    mlir::StringAttr::get(&context, arch));
+
+  PTOBuildLevel effectiveLevel = defaultBuildLevel();
+  if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
+    llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
+                 << "'. Expected 'level1', 'level2', or 'level3'.\n";
+    return 1;
+  }
+
+  if (!normalizeAutoSyncTailHints(*module, context))
+    return 1;
+  bool hasTAssign = moduleHasTAssign(*module);
+  if ((validateTAssignAndAutoSyncOptions(effectiveLevel, hasTAssign) != 0) ||
+      (validateAllocTileAddrMode(*module, effectiveLevel) != 0)) {
+    return 1;
+  }
+
+  PassManager pm(&context);
+  if (failed(applyPassManagerCLOptions(pm)))
+    return 1;
+  addCorePipeline(pm, effectiveLevel);
+  addAutoSyncPipeline(pm);
+  std::unique_ptr<llvm::ToolOutputFile> outputFile;
+  llvm::raw_ostream *outputOS = &llvm::outs();
+  if (openOutputStream(outputFile, outputOS) != 0)
+    return 1;
+  if (emitMlirIR)
+    return runMlirPipeline(pm, *module, *outputOS, outputFile.get());
+  addCppEmissionPipeline(pm, arch);
+  if (failed(pm.run(*module))) {
+    llvm::errs() << "Error: Pass execution failed.\n";
+    return 1;
+  }
+  if (emitCppOutput(*module, *outputOS) != 0)
+    return 1;
   if (outputFile)
-    outputFile->keep(); // Success, keep the file
-
+    outputFile->keep();
   return 0;
 }

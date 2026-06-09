@@ -415,7 +415,7 @@ process_one_dir() {
     ptobc_file="${out_subdir}/${base}.ptobc"
     decoded_pto="${out_subdir}/${base}-roundtrip.pto"
     local sample_use_ptobc_roundtrip="$use_ptobc_roundtrip"
-    # TODO(ptobc): alloc_tile addr operand is required by ptoas level3 for
+    # ptobc status: alloc_tile addr operand is required by ptoas level3 for
     # these A5 repro/control samples, but ptobc v0 currently rejects this
     # form with "operand count mismatch for op: pto.alloc_tile".
     #
@@ -1314,7 +1314,7 @@ PY
       fi
       local sample_use_ptobc_roundtrip="$use_ptobc_roundtrip"
 
-      # TODO(ptobc): Keep ptoas regression coverage for patterns that are not
+      # ptobc status: Keep ptoas regression coverage for patterns that are not
       # yet supported by ptobc roundtrip; re-enable once ptobc catches up.
       if [[ "$base" == "test_if_else_tile_result" || \
             "$base" == "test_tmov_col_major_16x1_align_a5" || \

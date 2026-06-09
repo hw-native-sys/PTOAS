@@ -213,7 +213,7 @@ mlir::Attribute TileBufType::getCompactModeAttr() const {
 
 // ✅ numeric getters（可选）
 int32_t TileBufType::getSFractalSizeI32() const {
-  return (int32_t)getConfigAttr().getSFractalSize().getInt();
+  return static_cast<int32_t>(getConfigAttr().getSFractalSize().getInt());
 }
 
 int32_t TileBufType::getBLayoutValueI32() const {
@@ -294,30 +294,27 @@ static LogicalResult parseLegacyTileBufFields(AsmParser &parser,
   return success();
 }
 
-static LogicalResult parseCompactTileBufFields(AsmParser &parser,
-                                               StringRef firstToken,
-                                               ParsedTileBufFields &fields) {
-  fields.locStr = firstToken.str();
-
-  if (failed(parser.parseComma()))
-    return failure();
-
+static LogicalResult parseCompactTileBufShapeAndType(
+    AsmParser &parser, ParsedTileBufFields &fields) {
   TileBufShape shape;
-  if (failed(parser.parseDimensionList(shape, /*allowDynamic=*/false)))
+  if (failed(parser.parseDimensionList(shape, /*allowDynamic=*/false)) ||
+      failed(parser.parseType(fields.dtype))) {
     return failure();
-  if (failed(parser.parseType(fields.dtype)))
-    return failure();
+  }
   if (shape.size() != kTileBufRank2D) {
     parser.emitError(parser.getCurrentLocation(),
                      "tile_buf compact syntax expects exactly two shape dims");
     return failure();
   }
-
   fields.rows = shape[0];
   fields.cols = shape[1];
   fields.vrow = fields.rows;
   fields.vcol = fields.cols;
+  return success();
+}
 
+static LogicalResult initializeCompactTileBufDefaults(
+    AsmParser &parser, ParsedTileBufFields &fields) {
   auto defaultConfig = TileBufConfigAttr::getDefault(parser.getContext());
   auto defaultBLayout = llvm::dyn_cast<BLayoutAttr>(defaultConfig.getBLayout());
   auto defaultSLayout = llvm::dyn_cast<SLayoutAttr>(defaultConfig.getSLayout());
@@ -334,109 +331,156 @@ static LogicalResult parseCompactTileBufFields(AsmParser &parser,
   fields.fractal = defaultConfig.getSFractalSize().getInt();
   fields.padInt = static_cast<uint32_t>(defaultPad.getValue());
   fields.compactInt = static_cast<uint32_t>(defaultCompact.getValue());
+  return success();
+}
 
+struct SeenCompactTileBufKeys {
   bool seenValid = false;
   bool seenBLayout = false;
   bool seenSLayout = false;
   bool seenFractal = false;
   bool seenPad = false;
   bool seenCompact = false;
+};
+
+static LogicalResult markSeenCompactTileBufField(AsmParser &parser,
+                                                 StringRef key, bool &seen) {
+  if (!seen) {
+    seen = true;
+    return success();
+  }
+  parser.emitError(parser.getCurrentLocation(),
+                   "duplicate " + key + " in tile_buf compact syntax");
+  return failure();
+}
+
+static LogicalResult parseCompactTileBufValidField(
+    AsmParser &parser, ParsedTileBufFields &fields,
+    SeenCompactTileBufKeys &seen) {
+  if (seen.seenValid) {
+    parser.emitError(parser.getCurrentLocation(),
+                     "duplicate valid in tile_buf compact syntax");
+    return failure();
+  }
+  seen.seenValid = true;
+  TileBufShape validShape;
+  if (failed(parser.parseDimensionList(validShape, /*allowDynamic=*/true,
+                                       /*withTrailingX=*/false))) {
+    return failure();
+  }
+  if (validShape.size() != kTileBufRank2D) {
+    parser.emitError(parser.getCurrentLocation(),
+                     "tile_buf valid must have exactly two dims");
+    return failure();
+  }
+  fields.vrow = validShape[0];
+  fields.vcol = validShape[1];
+  return success();
+}
+
+static LogicalResult parseCompactTileBufField(AsmParser &parser, StringRef key,
+                                              ParsedTileBufFields &fields,
+                                              SeenCompactTileBufKeys &seen) {
+  if (key == "valid")
+    return parseCompactTileBufValidField(parser, fields, seen);
+  if (key == "blayout") {
+    if (failed(markSeenCompactTileBufField(parser, key, seen.seenBLayout)))
+      return failure();
+    return parser.parseKeywordOrString(&fields.blayoutStr);
+  }
+  if (key == "slayout") {
+    if (failed(markSeenCompactTileBufField(parser, key, seen.seenSLayout)))
+      return failure();
+    return parser.parseKeywordOrString(&fields.slayoutStr);
+  }
+  if (key == "fractal") {
+    if (failed(markSeenCompactTileBufField(parser, key, seen.seenFractal)))
+      return failure();
+    return parser.parseInteger(fields.fractal);
+  }
+  if (key == "pad") {
+    if (failed(markSeenCompactTileBufField(parser, key, seen.seenPad)))
+      return failure();
+    return parseTileBufUInt32Value(parser, key, fields.padInt);
+  }
+  if (key == "compact") {
+    if (failed(markSeenCompactTileBufField(parser, key, seen.seenCompact)))
+      return failure();
+    return parseTileBufUInt32Value(parser, key, fields.compactInt);
+  }
+  parser.emitError(parser.getCurrentLocation(),
+                   "unknown key in tile_buf compact syntax: ")
+      << key;
+  return failure();
+}
+
+static LogicalResult parseCompactTileBufFields(AsmParser &parser,
+                                               StringRef firstToken,
+                                               ParsedTileBufFields &fields) {
+  fields.locStr = firstToken.str();
+
+  if (failed(parser.parseComma()) ||
+      failed(parseCompactTileBufShapeAndType(parser, fields)) ||
+      failed(initializeCompactTileBufDefaults(parser, fields)))
+    return failure();
+  SeenCompactTileBufKeys seen;
 
   while (succeeded(parser.parseOptionalComma())) {
     StringRef key;
     if (failed(parser.parseKeyword(&key)) || failed(parser.parseEqual()))
       return failure();
-
-    if (key == "valid") {
-      if (seenValid) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate valid in tile_buf compact syntax");
-        return failure();
-      }
-      seenValid = true;
-
-      TileBufShape validShape;
-      if (failed(parser.parseDimensionList(validShape, /*allowDynamic=*/true,
-                                           /*withTrailingX=*/false))) {
-        return failure();
-      }
-      if (validShape.size() != kTileBufRank2D) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "tile_buf valid must have exactly two dims");
-        return failure();
-      }
-      fields.vrow = validShape[0];
-      fields.vcol = validShape[1];
-      continue;
-    }
-
-    if (key == "blayout") {
-      if (seenBLayout) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate blayout in tile_buf compact syntax");
-        return failure();
-      }
-      seenBLayout = true;
-      if (failed(parser.parseKeywordOrString(&fields.blayoutStr)))
-        return failure();
-      continue;
-    }
-
-    if (key == "slayout") {
-      if (seenSLayout) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate slayout in tile_buf compact syntax");
-        return failure();
-      }
-      seenSLayout = true;
-      if (failed(parser.parseKeywordOrString(&fields.slayoutStr)))
-        return failure();
-      continue;
-    }
-
-    if (key == "fractal") {
-      if (seenFractal) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate fractal in tile_buf compact syntax");
-        return failure();
-      }
-      seenFractal = true;
-      if (failed(parser.parseInteger(fields.fractal)))
-        return failure();
-      continue;
-    }
-
-    if (key == "pad") {
-      if (seenPad) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate pad in tile_buf compact syntax");
-        return failure();
-      }
-      seenPad = true;
-      if (failed(parseTileBufUInt32Value(parser, key, fields.padInt)))
-        return failure();
-      continue;
-    }
-
-    if (key == "compact") {
-      if (seenCompact) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate compact in tile_buf compact syntax");
-        return failure();
-      }
-      seenCompact = true;
-      if (failed(parseTileBufUInt32Value(parser, key, fields.compactInt)))
-        return failure();
-      continue;
-    }
-
-    parser.emitError(parser.getCurrentLocation(),
-                     "unknown key in tile_buf compact syntax: ")
-        << key;
-    return failure();
+    if (failed(parseCompactTileBufField(parser, key, fields, seen)))
+      return failure();
   }
 
   return success();
+}
+
+static FailureOr<AddressSpace> parseTileBufMemorySpace(AsmParser &parser,
+                                                       StringRef locStr) {
+  auto memorySpace = resolveTileBufMemorySpace(locStr);
+  if (memorySpace.has_value())
+    return *memorySpace;
+  parser.emitError(parser.getNameLoc(), "unknown loc: ") << locStr;
+  return failure();
+}
+
+static FailureOr<TileBufConfigAttr>
+buildParsedTileBufConfig(AsmParser &parser, const ParsedTileBufFields &fields,
+                         AddressSpace memorySpace) {
+  MLIRContext *ctx = parser.getContext();
+  auto bl = symbolizeBLayout(fields.blayoutStr);
+  auto sl = symbolizeSLayout(fields.slayoutStr);
+  auto pv = symbolizePadValue(fields.padInt);
+  auto compact = symbolizeCompactMode(fields.compactInt);
+  if (!bl.has_value()) {
+    parser.emitError(parser.getNameLoc(), "unknown blayout: ")
+        << fields.blayoutStr;
+    return failure();
+  }
+  if (!sl.has_value()) {
+    parser.emitError(parser.getNameLoc(), "unknown slayout: ")
+        << fields.slayoutStr;
+    return failure();
+  }
+  if (!pv.has_value()) {
+    parser.emitError(parser.getNameLoc(), "unknown pad: ") << fields.padInt;
+    return failure();
+  }
+  if (!compact.has_value()) {
+    parser.emitError(parser.getNameLoc(), "unknown compact: ")
+        << fields.compactInt;
+    return failure();
+  }
+
+  BLayout effectiveBLayout =
+      resolveTileBufBLayout(parser.getContext(), memorySpace, bl.value());
+  return TileBufConfigAttr::get(
+      ctx, BLayoutAttr::get(ctx, effectiveBLayout),
+      SLayoutAttr::get(ctx, sl.value()),
+      IntegerAttr::get(IntegerType::get(ctx, kI32BitWidth), fields.fractal),
+      PadValueAttr::get(ctx, pv.value()),
+      CompactModeAttr::get(ctx, compact.value()));
 }
 
 static Type buildTileBufType(AsmParser &parser,
@@ -448,56 +492,20 @@ static Type buildTileBufType(AsmParser &parser,
     return Type();
   }
 
-  auto memorySpace = resolveTileBufMemorySpace(fields.locStr);
-  if (!memorySpace.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown loc: ") << fields.locStr;
+  auto memorySpace = parseTileBufMemorySpace(parser, fields.locStr);
+  if (failed(memorySpace))
     return Type();
-  }
-
-  auto bl = symbolizeBLayout(fields.blayoutStr);
-  auto sl = symbolizeSLayout(fields.slayoutStr);
-  auto pv = symbolizePadValue(fields.padInt);
-  auto compact = symbolizeCompactMode(fields.compactInt);
-  if (!bl.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown blayout: ")
-        << fields.blayoutStr;
+  auto cfg = buildParsedTileBufConfig(parser, fields, *memorySpace);
+  if (failed(cfg))
     return Type();
-  }
-  if (!sl.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown slayout: ")
-        << fields.slayoutStr;
-    return Type();
-  }
-  if (!pv.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown pad: ") << fields.padInt;
-    return Type();
-  }
-  if (!compact.has_value()) {
-    parser.emitError(parser.getNameLoc(), "unknown compact: ")
-        << fields.compactInt;
-    return Type();
-  }
-
-  BLayout effectiveBLayout =
-      resolveTileBufBLayout(parser.getContext(), memorySpace.value(),
-                            bl.value());
-
-  auto blAttr = BLayoutAttr::get(ctx, effectiveBLayout);
-  auto slAttr = SLayoutAttr::get(ctx, sl.value());
-  auto fractalAttr =
-      IntegerAttr::get(IntegerType::get(ctx, kI32BitWidth), fields.fractal);
-  auto padAttr = PadValueAttr::get(ctx, pv.value());
-  auto compactAttr = CompactModeAttr::get(ctx, compact.value());
-  auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr,
-                                    compactAttr);
 
   TileBufShape shape{fields.rows, fields.cols};
   TileBufShape validShape{fields.vrow, fields.vcol};
   auto canonicalValidShape = canonicalizeTileBufValidShape(validShape);
 
-  return TileBufType::get(ctx, shape, fields.dtype, memorySpaceAttr,
-                          llvm::ArrayRef<int64_t>(canonicalValidShape), cfg);
+  return TileBufType::get(
+      ctx, shape, fields.dtype, AddressSpaceAttr::get(ctx, *memorySpace),
+      llvm::ArrayRef<int64_t>(canonicalValidShape), *cfg);
 }
 
 } // namespace
@@ -505,35 +513,36 @@ static Type buildTileBufType(AsmParser &parser,
 // ---- TileBufType custom asm ----
 // !pto.tile_buf<<loc=.., dtype=.., rows=.., cols=.., blayout=.., valid=..x..,
 //                slayout=.., fractal=.., pad=.., compact=..>>
-Type TileBufType::parse(AsmParser &parser) {
-  if (failed(parser.parseLess()))
+Type TileBufType::parse(AsmParser &odsParser) {
+  if (failed(odsParser.parseLess()))
     return Type();
 
   std::string firstToken;
-  if (failed(parser.parseKeywordOrString(&firstToken)))
+  if (failed(odsParser.parseKeywordOrString(&firstToken)))
     return Type();
 
   ParsedTileBufFields fields;
   const bool isLegacySyntax = firstToken == "loc";
   if (isLegacySyntax) {
-    if (failed(parseLegacyTileBufFields(parser, fields)))
+    if (failed(parseLegacyTileBufFields(odsParser, fields)))
       return Type();
   } else {
-    if (failed(parseCompactTileBufFields(parser, firstToken, fields)))
+    if (failed(parseCompactTileBufFields(odsParser, firstToken, fields)))
       return Type();
   }
 
-  if (isLegacySyntax && succeeded(parser.parseOptionalComma())) {
-    if (failed(parseTileBufKeyEq(parser, "compact")) ||
-        failed(parseTileBufUInt32Value(parser, "compact", fields.compactInt))) {
+  if (isLegacySyntax && succeeded(odsParser.parseOptionalComma())) {
+    if (failed(parseTileBufKeyEq(odsParser, "compact")) ||
+        failed(parseTileBufUInt32Value(odsParser, "compact",
+                                       fields.compactInt))) {
       return Type();
     }
   }
 
-  if (failed(parser.parseGreater()))
+  if (failed(odsParser.parseGreater()))
     return Type();
 
-  return buildTileBufType(parser, fields);
+  return buildTileBufType(odsParser, fields);
 }
 
 static llvm::StringRef stringifyLocFromMemorySpace(mlir::Attribute memorySpace) {
@@ -589,71 +598,93 @@ static void printTileBufDim(AsmPrinter &printer, int64_t dim) {
     printer << dim;
 }
 
-void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
-  auto shape = getShape();
-  int64_t rows = shape.size() > 0 ? shape[0] : ShapedType::kDynamic;
-  int64_t cols = shape.size() > 1 ? shape[1] : ShapedType::kDynamic;
+struct TileBufPrintInfo {
+  int64_t rows = ShapedType::kDynamic;
+  int64_t cols = ShapedType::kDynamic;
+  int64_t vrow = ShapedType::kDynamic;
+  int64_t vcol = ShapedType::kDynamic;
+  llvm::StringRef locStr;
+  TileBufConfigAttr cfg;
+  TileBufConfigAttr defaultCfg;
+  BLayoutAttr blayout;
+  SLayoutAttr slayout;
+  PadValueAttr pad;
+  CompactModeAttr compact;
+  BLayoutAttr defaultBLayout;
+  SLayoutAttr defaultSLayout;
+  PadValueAttr defaultPad;
+  CompactModeAttr defaultCompact;
+};
 
-  auto cfg = getConfigAttr();
-  if (!cfg)
-    cfg = mlir::pto::TileBufConfigAttr::getDefault(getContext());
-  auto defaultCfg = TileBufConfigAttr::getDefault(getContext());
-
-  llvm::StringRef locStr = stringifyLocFromMemorySpace(getMemorySpace());
-  auto blayout = llvm::dyn_cast<BLayoutAttr>(cfg.getBLayout());
-  auto slayout = llvm::dyn_cast<SLayoutAttr>(cfg.getSLayout());
-  auto pad = llvm::dyn_cast<PadValueAttr>(cfg.getPad());
-  auto compact = llvm::dyn_cast<CompactModeAttr>(cfg.getCompactMode());
-  auto defaultBLayout = llvm::dyn_cast<BLayoutAttr>(defaultCfg.getBLayout());
-  auto defaultSLayout = llvm::dyn_cast<SLayoutAttr>(defaultCfg.getSLayout());
-  auto defaultPad = llvm::dyn_cast<PadValueAttr>(defaultCfg.getPad());
-  auto defaultCompact =
-      llvm::dyn_cast<CompactModeAttr>(defaultCfg.getCompactMode());
-
-  auto vs = getValidShape();
-  int64_t vrow = rows;
-  int64_t vcol = cols;
+static TileBufPrintInfo buildTileBufPrintInfo(const TileBufType &type) {
+  TileBufPrintInfo info;
+  auto shape = type.getShape();
+  info.rows = shape.size() > 0 ? shape[0] : ShapedType::kDynamic;
+  info.cols = shape.size() > 1 ? shape[1] : ShapedType::kDynamic;
+  info.cfg = type.getConfigAttr();
+  if (!info.cfg)
+    info.cfg = mlir::pto::TileBufConfigAttr::getDefault(type.getContext());
+  info.defaultCfg = TileBufConfigAttr::getDefault(type.getContext());
+  info.locStr = stringifyLocFromMemorySpace(type.getMemorySpace());
+  info.blayout = llvm::dyn_cast<BLayoutAttr>(info.cfg.getBLayout());
+  info.slayout = llvm::dyn_cast<SLayoutAttr>(info.cfg.getSLayout());
+  info.pad = llvm::dyn_cast<PadValueAttr>(info.cfg.getPad());
+  info.compact = llvm::dyn_cast<CompactModeAttr>(info.cfg.getCompactMode());
+  info.defaultBLayout =
+      llvm::dyn_cast<BLayoutAttr>(info.defaultCfg.getBLayout());
+  info.defaultSLayout =
+      llvm::dyn_cast<SLayoutAttr>(info.defaultCfg.getSLayout());
+  info.defaultPad = llvm::dyn_cast<PadValueAttr>(info.defaultCfg.getPad());
+  info.defaultCompact =
+      llvm::dyn_cast<CompactModeAttr>(info.defaultCfg.getCompactMode());
+  auto vs = type.getValidShape();
+  info.vrow = info.rows;
+  info.vcol = info.cols;
   if (vs.size() >= kTileBufRank2D) {
-    vrow = vs[0];
-    vcol = vs[1];
+    info.vrow = vs[0];
+    info.vcol = vs[1];
   }
+  return info;
+}
 
-  const bool printValid = vrow != rows || vcol != cols;
-  const bool printBLayout =
-      blayout && defaultBLayout && blayout.getValue() != defaultBLayout.getValue();
-  const bool printSLayout =
-      slayout && defaultSLayout && slayout.getValue() != defaultSLayout.getValue();
-  const bool printFractal =
-      cfg.getSFractalSize().getInt() != defaultCfg.getSFractalSize().getInt();
-  const bool printPad =
-      pad && defaultPad && pad.getValue() != defaultPad.getValue();
-  const bool printCompact =
-      compact && defaultCompact &&
-      compact.getValue() != defaultCompact.getValue();
-
-  printer << "<" << locStr << ", ";
-  printTileBufDim(printer, rows);
-  printer << "x";
-  printTileBufDim(printer, cols);
-  printer << "x";
-  printer.printType(getElementType());
-
-  if (printValid) {
+static void printOptionalTileBufFields(AsmPrinter &printer,
+                                       const TileBufPrintInfo &info) {
+  if (info.vrow != info.rows || info.vcol != info.cols) {
     printer << ", valid=";
-    printTileBufDim(printer, vrow);
+    printTileBufDim(printer, info.vrow);
     printer << "x";
-    printTileBufDim(printer, vcol);
+    printTileBufDim(printer, info.vcol);
   }
-  if (printBLayout)
-    printer << ", blayout=" << stringifyBLayout(blayout.getValue());
-  if (printSLayout)
-    printer << ", slayout=" << stringifySLayout(slayout.getValue());
-  if (printFractal)
-    printer << ", fractal=" << cfg.getSFractalSize().getInt();
-  if (printPad)
-    printer << ", pad=" << stringifyLocFromPad(cfg.getPad());
-  if (printCompact)
-    printer << ", compact=" << stringifyCompactModeInt(cfg.getCompactMode());
+  if (info.blayout && info.defaultBLayout &&
+      info.blayout.getValue() != info.defaultBLayout.getValue()) {
+    printer << ", blayout=" << stringifyBLayout(info.blayout.getValue());
+  }
+  if (info.slayout && info.defaultSLayout &&
+      info.slayout.getValue() != info.defaultSLayout.getValue()) {
+    printer << ", slayout=" << stringifySLayout(info.slayout.getValue());
+  }
+  if (info.cfg.getSFractalSize().getInt() !=
+      info.defaultCfg.getSFractalSize().getInt()) {
+    printer << ", fractal=" << info.cfg.getSFractalSize().getInt();
+  }
+  if (info.pad && info.defaultPad &&
+      info.pad.getValue() != info.defaultPad.getValue()) {
+    printer << ", pad=" << stringifyLocFromPad(info.cfg.getPad());
+  }
+  if (info.compact && info.defaultCompact &&
+      info.compact.getValue() != info.defaultCompact.getValue()) {
+    printer << ", compact=" << stringifyCompactModeInt(info.cfg.getCompactMode());
+  }
+}
 
-  printer << ">";
+void mlir::pto::TileBufType::print(mlir::AsmPrinter &odsPrinter) const {
+  TileBufPrintInfo info = buildTileBufPrintInfo(*this);
+  odsPrinter << "<" << info.locStr << ", ";
+  printTileBufDim(odsPrinter, info.rows);
+  odsPrinter << "x";
+  printTileBufDim(odsPrinter, info.cols);
+  odsPrinter << "x";
+  odsPrinter.printType(getElementType());
+  printOptionalTileBufFields(odsPrinter, info);
+  odsPrinter << ">";
 }

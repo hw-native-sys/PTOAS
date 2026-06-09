@@ -30,7 +30,11 @@ using namespace mlir;
 namespace mlir::pto {
 namespace {
 
+#define PTO_CONVERSION_REWRITER_PARAM ConversionPatternRewriter &rewriter
+
 static constexpr unsigned kPTOIndexBitWidth = 32;
+static constexpr size_t kNumber2 = 2;
+static constexpr unsigned kNumber32 = 32;
 
 struct SignedDivAdjustOperands {
   Value q0;
@@ -73,7 +77,7 @@ static LogicalResult rewriteI1RightShiftApprox(Operation *op, Location loc,
   return success();
 }
 
-static LogicalResult getScalarIntegerOpInfo(Operation *op, Type opTy,
+static LogicalResult getScalarIntegerOpInfo(Operation *, Type opTy,
                                             const TypeConverter *typeConverter,
                                             unsigned &bitWidth, Type &dstTy) {
   auto intTy = dyn_cast<IntegerType>(opTy);
@@ -129,7 +133,7 @@ static LogicalResult rewriteDirectCastOp(Operation *op, Value in, Type dstTy,
   return success();
 }
 
-static LogicalResult getScalarIntegerCastTypes(Operation *op, Type dstSrcTy,
+static LogicalResult getScalarIntegerCastTypes(Operation *, Type dstSrcTy,
                                                Type inSrcTy,
                                                const TypeConverter *typeConverter,
                                                Type &dstTy,
@@ -173,10 +177,17 @@ struct ArithSimpleBinaryToEmitC : public OpConversionPattern<ArithOp> {
   LogicalResult
   matchAndRewrite(ArithOp op, typename ArithOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    return rewriteSimpleBinary(op, adaptor, &rewriter);
+  }
+
+private:
+  LogicalResult rewriteSimpleBinary(ArithOp op,
+                                    typename ArithOp::Adaptor adaptor,
+                                    ConversionPatternRewriter *rewriter) const {
     Type dstTy = this->getTypeConverter()->convertType(op.getType());
     if (!dstTy)
       return failure();
-    rewriter.replaceOpWithNewOp<EmitCOp>(op, dstTy, adaptor.getOperands());
+    rewriter->replaceOpWithNewOp<EmitCOp>(op, dstTy, adaptor.getOperands());
     return success();
   }
 };
@@ -474,7 +485,7 @@ template <typename CastOp>
 struct ArithCastToEmitC : public OpConversionPattern<CastOp> {
   using OpConversionPattern<CastOp>::OpConversionPattern;
   LogicalResult matchAndRewrite(CastOp op, typename CastOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                PTO_CONVERSION_REWRITER_PARAM) const override {
     Type dstTy = this->getTypeConverter()->convertType(op.getType());
     if (!dstTy)
       return failure();
@@ -482,6 +493,8 @@ struct ArithCastToEmitC : public OpConversionPattern<CastOp> {
     return success();
   }
 };
+
+#undef PTO_CONVERSION_REWRITER_PARAM
 
 struct ArithIndexCastUIToEmitC : public OpConversionPattern<arith::IndexCastUIOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -768,7 +781,7 @@ struct ArithAddUIExtendedToEmitC
     if (failed(getTypeConverter()->convertTypes(op->getResultTypes(),
                                                 newResultTypes)))
       return failure();
-    if (newResultTypes.size() != 2)
+    if (newResultTypes.size() != kNumber2)
       return failure();
 
     Type sumDstTy = newResultTypes[0];
@@ -828,16 +841,18 @@ struct ArithMulExtendedToEmitC : public OpConversionPattern<ArithOp> {
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       newResultTypes)))
       return failure();
-    if (newResultTypes.size() != 2)
+    if (newResultTypes.size() != kNumber2)
       return failure();
 
     Type lowDstTy = newResultTypes[0];
     Type highDstTy = newResultTypes[1];
 
-    Type wideTy = isUnsigned ? (Type)getWiderUnsignedIntOpaqueType(rewriter.getContext(),
-                                                                   bitWidth)
-                             : (Type)getWiderSignedIntOpaqueType(rewriter.getContext(),
-                                                                 bitWidth);
+    Type wideTy =
+        isUnsigned
+            ? static_cast<Type>(
+                  getWiderUnsignedIntOpaqueType(rewriter.getContext(), bitWidth))
+            : static_cast<Type>(
+                  getWiderSignedIntOpaqueType(rewriter.getContext(), bitWidth));
 
     Value lhsWide;
     Value rhsWide;
@@ -1314,7 +1329,7 @@ struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
     }
 
     if (auto floatAttr = dyn_cast_or_null<FloatAttr>(valueAttr)) {
-      SmallString<32> valStr;
+      SmallString<kNumber32> valStr;
       floatAttr.getValue().toString(valStr);
       llvm::StringRef s(valStr);
       // Ensure the literal parses as a floating-point constant in C/C++.

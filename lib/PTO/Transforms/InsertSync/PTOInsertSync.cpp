@@ -117,7 +117,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 4. [NEW] Optimization 2: Remove Redundant Sync
     // 消除由于 Motion 或 Analysis 产生的冗余同步对。
     //
-    // NOTE:
+    // NOTE
     // Current redundancy matching is pipe-pair based and may over-remove
     // set/wait around gather/scatter-like ops on A5, causing runtime mismatch
     // or vector exceptions. Keep correctness-first behavior here by skipping
