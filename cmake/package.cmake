@@ -87,22 +87,6 @@ install(DIRECTORY ${PTOAS_ROOT_DIR}/include/
     PATTERN PTO EXCLUDE
 )
 
-
-install(FILES
-    ${CMAKE_BINARY_DIR}/lib/PTO/IR/libPTOIR.a
-    ${CMAKE_BINARY_DIR}/lib/PTO/Transforms/libPTOTransforms.a
-    ${CMAKE_BINARY_DIR}/lib/CAPI/Dialect/libPTOCAPI.a
-    DESTINATION lib
-    ${INSTALL_OPTIONAL}
-    COMPONENT pto-as
-)
-
-install(FILES ${CMAKE_BINARY_DIR}/lib/CAPI/Dialect/CMakeFiles/obj.PTOCAPI.dir/PTO.cpp.o
-    DESTINATION lib/objects/obj.PTOCAPI
-    ${INSTALL_OPTIONAL}
-    COMPONENT pto-as
-)
-
 if(CMAKE_BUILD_TYPE)
     string(TOLOWER "${CMAKE_BUILD_TYPE}" PTOAS_TARGETS_CONFIG_SUFFIX)
 else()
