@@ -629,7 +629,7 @@ def emit_as_ptr(surface_value):
 
 
 _TILE_TYPE_RE = re.compile(
-    r"!pto\.tile_buf<(?P<space>[^,]+),\s*(?P<shape>.+?)x(?P<elem>[^,x>]+),\s*valid=(?P<valid>[^,>]+)(?:,.*)?>"
+    r"!pto\.tile_buf<(?P<space>[^,]+),\s*(?P<shape>.+?)x(?P<elem>[^,x>]+)(?:,\s*blayout=[^,>]+)?(?:,\s*slayout=[^,>]+)?(?:,\s*valid=(?P<valid>[^,>]+))?(?:,.*)?>"
 )
 
 
@@ -696,10 +696,14 @@ def parse_tile_type_metadata(type_obj):
         None if dim == "?" else int(dim)
         for dim in match.group("shape").split("x")
     ]
-    valid_dims = [
-        None if dim == "?" else int(dim)
-        for dim in match.group("valid").split("x")
-    ]
+    valid_group = match.group("valid")
+    if valid_group:
+        valid_dims = [
+            None if dim == "?" else int(dim)
+            for dim in valid_group.split("x")
+        ]
+    else:
+        valid_dims = list(shape_dims)
     return {
         "memory_space": match.group("space"),
         "shape_dims": tuple(shape_dims),

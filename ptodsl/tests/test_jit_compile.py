@@ -1503,6 +1503,23 @@ def vector_post_update_surface_probe():
     _ = block_base
 
 
+@pto.jit(name="pipe_tile_metadata_probe", target="a5", kernel_kind="vector")
+def pipe_tile_metadata_probe():
+    c2v_buf = pto.reserve_buffer("c2v_fifo", size=8192, location="vec")
+    c2v = pto.pipe.c2v(slot_size=1024, consumer_buf=c2v_buf, id=0)
+    dst_type = pto.alloc_tile(shape=[16, 16], dtype=pto.f32)
+
+    @pto.simd
+    def _inner():
+        c2v.init_simd()
+        fifo_tile = c2v.pop(result_type=dst_type, split=0)
+        # Slicing requires tile shape metadata parsing
+        val = pto.vlds(fifo_tile[0, 0:])
+        c2v.free(split=0)
+
+    _inner()
+
+
 @pto.jit(target="a5")
 def auto_mode_explicit_surface_violation_probe():
     zero_u64 = pto.const(0, dtype=pto.ui64)
@@ -2850,6 +2867,10 @@ def main() -> None:
     expect(', "DS"' in mask_surface_text, "plds(..., dist=pto.PredicateDist.DS) should preserve the documented DIST token")
     expect(', "PK"' in mask_surface_text, "psts(..., dist=pto.PredicateDist.PK) should preserve the documented DIST token")
     expect("pto.init_align" in mask_surface_text, "init_align() should lower to pto.init_align")
+
+    pipe_metadata_text = pipe_tile_metadata_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(pipe_metadata_text, "pipe tile metadata probe")
+    expect("pto.vlds" in pipe_metadata_text, "vlds from a popped tile should lower successfully without shape metadata errors")
 
     launch_handle = block64[1, None]
     expect(callable(launch_handle), "compiled[grid, stream] should return a launch callable")
