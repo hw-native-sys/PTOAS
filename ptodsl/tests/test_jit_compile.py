@@ -1508,6 +1508,8 @@ def pipe_tile_metadata_probe():
     c2v_buf = pto.reserve_buffer("c2v_fifo", size=8192, location="vec")
     c2v = pto.pipe.c2v(slot_size=1024, consumer_buf=c2v_buf, id=0)
     dst_type = pto.alloc_tile(shape=[16, 16], dtype=pto.f32)
+    dst_type_f4e2 = pto.alloc_tile(shape=[16, 32], dtype=pto.f4e2m1x2)
+    dst_type_f4e1 = pto.alloc_tile(shape=[16, 32], dtype=pto.f4e1m2x2)
 
     @pto.simd
     def _inner():
@@ -1515,6 +1517,14 @@ def pipe_tile_metadata_probe():
         fifo_tile = c2v.pop(result_type=dst_type, split=0)
         # Slicing requires tile shape metadata parsing
         val = pto.vlds(fifo_tile[0, 0:])
+        c2v.free(split=0)
+
+        fifo_tile_f4e2 = c2v.pop(result_type=dst_type_f4e2, split=0)
+        _ = fifo_tile_f4e2[0, 0:]
+        c2v.free(split=0)
+
+        fifo_tile_f4e1 = c2v.pop(result_type=dst_type_f4e1, split=0)
+        _ = fifo_tile_f4e1[0, 0:]
         c2v.free(split=0)
 
     _inner()
