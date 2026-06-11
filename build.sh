@@ -113,7 +113,9 @@ harden_package_artifacts() {
     exit 1
   fi
 
-  rm -rf "${build_root}/package_runtime"
+  if [ -n "${build_root}" ] && [ -d "${build_root}/package_runtime" ]; then
+    rm -rf -- "${build_root}/package_runtime"
+  fi
   mkdir -p "${runtime_stage_root}/bin" "${staged_lib_dir}"
 
   bash "${RUNTIME_DEPS_COLLECTOR}"     "${build_root}"     "${ptoas_bin}"     "${staged_bin}"     "${staged_lib_dir}"
@@ -123,7 +125,9 @@ clone_llvm_source() {
   local target_dir="$1"
   local attempt=1
 
-  rm -rf "${target_dir}"
+  if [ -n "${target_dir}" ] && [ -e "${target_dir}" ]; then
+    rm -rf -- "${target_dir}"
+  fi
 
   if [ -d "${CANN_3RD_LIB_PATH}/llvm-19" ]; then
     cp -r "${CANN_3RD_LIB_PATH}/llvm-19" "${target_dir}"
@@ -135,7 +139,9 @@ clone_llvm_source() {
       return 0
     fi
 
-    rm -rf "${target_dir}"
+    if [ -n "${target_dir}" ] && [ -e "${target_dir}" ]; then
+      rm -rf -- "${target_dir}"
+    fi
 
     if [ "${attempt}" -lt "${LLVM_CLONE_RETRY_COUNT}" ]; then
       sleep "${LLVM_CLONE_RETRY_INTERVAL}"
@@ -253,7 +259,11 @@ build_only() {
   prepare_fortify_marker_object "${BASE_PATH}/build/fortify_marker"
 
   cd $LLVM_SOURCE_DIR
-  rm -rf "${LLVM_NATIVE_BUILD_DIR}" "${LLVM_BUILD_DIR}"
+  for llvm_build_dir in "${LLVM_NATIVE_BUILD_DIR}" "${LLVM_BUILD_DIR}"; do
+    if [ -n "${llvm_build_dir}" ] && [ -e "${llvm_build_dir}" ]; then
+      rm -rf -- "${llvm_build_dir}"
+    fi
+  done
 
   build_llvm_host_tools
   configure_llvm_runtime_build
@@ -285,13 +295,17 @@ build_only() {
 
 clean_build() {
   if [ -d "${BUILD_PATH}" ]; then
-    rm -rf ${BUILD_PATH}
+    if [ -n "${BUILD_PATH}" ]; then
+      rm -rf -- "${BUILD_PATH}"
+    fi
   fi
 }
 
 clean_build_out() {
   if [ -d "${BUILD_OUT_PATH}" ]; then
-    rm -rf ${BUILD_OUT_PATH}
+    if [ -n "${BUILD_OUT_PATH}" ]; then
+      rm -rf -- "${BUILD_OUT_PATH}"
+    fi
   fi
 }
 
@@ -313,7 +327,11 @@ package() {
   prepare_fortify_marker_object "${BUILD_PATH}/fortify_marker"
 
   cd $LLVM_SOURCE_DIR
-  rm -rf "${LLVM_NATIVE_BUILD_DIR}" "${LLVM_BUILD_DIR}"
+  for llvm_build_dir in "${LLVM_NATIVE_BUILD_DIR}" "${LLVM_BUILD_DIR}"; do
+    if [ -n "${llvm_build_dir}" ] && [ -e "${llvm_build_dir}" ]; then
+      rm -rf -- "${llvm_build_dir}"
+    fi
+  done
 
   build_llvm_host_tools
   configure_llvm_runtime_build

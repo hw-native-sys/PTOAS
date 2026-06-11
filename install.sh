@@ -170,7 +170,11 @@ have_cmd tar || die "missing required tool: tar"
 have_cmd mktemp || die "missing required tool: mktemp"
 
 tmpdir="$(mktemp -d)"
-cleanup() { rm -rf "$tmpdir"; }
+cleanup() {
+  if [[ -n "$tmpdir" && -e "$tmpdir" ]]; then
+    rm -rf -- "$tmpdir"
+  fi
+}
 trap cleanup EXIT
 
 tarball="${tmpdir}/${ASSET}"
@@ -180,7 +184,9 @@ download_file "$URL" "$tarball"
 if [[ -e "$INSTALL_DIR" ]]; then
   if [[ $FORCE -eq 1 ]]; then
     echo "Removing existing install dir: ${INSTALL_DIR}"
-    rm -rf "$INSTALL_DIR"
+    if [[ -n "$INSTALL_DIR" && -e "$INSTALL_DIR" ]]; then
+      rm -rf -- "$INSTALL_DIR"
+    fi
   else
     die "install dir already exists: ${INSTALL_DIR} (use --force to overwrite)"
   fi
