@@ -12,8 +12,6 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-#define PTO_DEFINE_OP_VERIFY(OpName) LogicalResult OpName::verify()
-
 LogicalResult CommTScatterOp::verify() {
   if (failed(verifyRootedCommTileTransfer(getOperation(), getSrc(), getGroup(),
                                           getRoot(), getPing(), getPong())))
@@ -44,12 +42,14 @@ LogicalResult TReduceOp::verify() {
   return success();
 }
 
-PTO_DEFINE_OP_VERIFY(AicInitializePipeOp) {
-  return verifyFrontendInitCommon(*this, FunctionKernelKind::Cube, "cube");
-}
-
-PTO_DEFINE_OP_VERIFY(AivInitializePipeOp) {
-  return verifyFrontendInitCommon(*this, FunctionKernelKind::Vector, "vector");
+LogicalResult mlir::pto::detail::verifyFrontendInitPipeTrait(Operation *op) {
+  if (auto initOp = dyn_cast<AicInitializePipeOp>(op))
+    return verifyFrontendInitCommon(initOp, FunctionKernelKind::Cube, "cube");
+  if (auto initOp = dyn_cast<AivInitializePipeOp>(op)) {
+    return verifyFrontendInitCommon(initOp, FunctionKernelKind::Vector,
+                                    "vector");
+  }
+  return op->emitOpError("expects frontend initialize pipe op");
 }
 
 LogicalResult TAllocToAivOp::verify() {
@@ -96,17 +96,17 @@ LogicalResult TPushToAicOp::verify() {
                                               getTile().getType());
 }
 
-PTO_DEFINE_OP_VERIFY(TPopFromAicOp) {
-  return verifyFrontendPopOp(*this, FunctionKernelKind::Vector, "vector",
-                             /*expectC2V=*/true);
+LogicalResult mlir::pto::detail::verifyFrontendPopTrait(Operation *op) {
+  if (auto popOp = dyn_cast<TPopFromAicOp>(op)) {
+    return verifyFrontendPopOp(popOp, FunctionKernelKind::Vector, "vector",
+                               /*expectC2V=*/true);
+  }
+  if (auto popOp = dyn_cast<TPopFromAivOp>(op)) {
+    return verifyFrontendPopOp(popOp, FunctionKernelKind::Cube, "cube",
+                               /*expectC2V=*/false);
+  }
+  return op->emitOpError("expects frontend pop op");
 }
-
-PTO_DEFINE_OP_VERIFY(TPopFromAivOp) {
-  return verifyFrontendPopOp(*this, FunctionKernelKind::Cube, "cube",
-                             /*expectC2V=*/false);
-}
-
-#undef PTO_DEFINE_OP_VERIFY
 
 LogicalResult TFreeFromAicOp::verify() {
   if (failed(verifyFrontendSplitOp(getOperation(), FunctionKernelKind::Vector,

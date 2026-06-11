@@ -30,8 +30,6 @@ using namespace mlir::pto;
 namespace mlir::pto {
 namespace {
 
-#define PTO_CONVERSION_REWRITER_PARAM ConversionPatternRewriter &rewriter
-
 static constexpr llvm::StringLiteral kGlobalTensorStridesAttrName =
     "__pto.globaltensor_strides";
 static constexpr int8_t kPTOFrontendDirMaskC2V = 1;
@@ -279,19 +277,22 @@ struct PTOAsyncEventToEmitC : public OpConversionPattern<AsyncEventOp> {
       : OpConversionPattern<AsyncEventOp>(typeConverter, ctx),
         callee(callee.str()) {}
 
-  LogicalResult matchAndRewrite(AsyncEventOp op,
-                                typename AsyncEventOp::Adaptor adaptor,
-                                PTO_CONVERSION_REWRITER_PARAM) const override {
+  LogicalResult match(AsyncEventOp op) const override {
     Type resultTy =
         this->getTypeConverter()->convertType(op.getCompleted().getType());
     if (!resultTy)
-      return rewriter.notifyMatchFailure(op, "failed to convert async event result type");
+      return failure();
+    return success();
+  }
 
+  void rewrite(AsyncEventOp op, typename AsyncEventOp::Adaptor adaptor,
+               ConversionPatternRewriter &rewriter) const override {
+    Type resultTy =
+        this->getTypeConverter()->convertType(op.getCompleted().getType());
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, TypeRange{resultTy}, callee, ArrayAttr{}, ArrayAttr{},
         ValueRange{peelUnrealized(adaptor.getEvent()),
                    peelUnrealized(adaptor.getSession())});
-    return success();
   }
 
   std::string callee;
@@ -873,8 +874,6 @@ struct PTOLocalArraySetToEmitC
     return success();
   }
 };
-
-#undef PTO_CONVERSION_REWRITER_PARAM
 
 } // namespace
 

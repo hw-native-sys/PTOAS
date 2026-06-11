@@ -13,13 +13,25 @@ using namespace mlir;
 using namespace mlir::pto;
 
 static ParseResult parseFrontendInitializePipeOperands(
-    OpAsmParser &parser, FrontendInitOperandState &state) {
+    OpAsmParser &parser,
+    std::optional<OpAsmParser::UnresolvedOperand> &gmSlotBuffer,
+    Type &gmSlotBufferTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &gmSlotTensor,
+    Type &gmSlotTensorTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &c2vConsumerBuf,
+    Type &c2vConsumerBufTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &v2cConsumerBuf,
+    Type &v2cConsumerBufTy) {
+  FrontendInitOperandState state;
   if (parser.parseLParen())
     return failure();
   while (failed(parser.parseOptionalRParen())) {
     StringRef keyword;
     if (parser.parseKeyword(&keyword) || parser.parseEqual() ||
-        failed(parseFrontendInitializePipeOperandClause(parser, keyword, state))) {
+        failed(parseFrontendInitializePipeOperandClause(
+            parser, keyword, gmSlotBuffer, gmSlotBufferTy, gmSlotTensor,
+            gmSlotTensorTy, c2vConsumerBuf, c2vConsumerBufTy, v2cConsumerBuf,
+            v2cConsumerBufTy, state))) {
       return failure();
     }
     if (succeeded(parser.parseOptionalRParen()))
@@ -30,93 +42,87 @@ static ParseResult parseFrontendInitializePipeOperands(
   return success();
 }
 
-static ParseResult resolveFrontendInitializePipeOperands(
-    OpAsmParser &parser, OperationState &result, NamedAttrList &attrs,
-    const FrontendInitOperandState &state) {
-  result.addAttributes(attrs);
-  result.addAttribute(
-      "operandSegmentSizes",
-      parser.getBuilder().getDenseI32ArrayAttr(
-          {state.hasGmSlotBuffer ? 1 : 0, state.hasGmSlotTensor ? 1 : 0,
-           state.hasC2vConsumerBuf ? 1 : 0, state.hasV2cConsumerBuf ? 1 : 0}));
-  if (state.hasGmSlotBuffer &&
-      parser.resolveOperand(state.gmSlotBuffer, state.gmSlotBufferTy,
-                            result.operands))
-    return failure();
-  if (state.hasGmSlotTensor &&
-      parser.resolveOperand(state.gmSlotTensor, state.gmSlotTensorTy,
-                            result.operands))
-    return failure();
-  if (state.hasC2vConsumerBuf &&
-      parser.resolveOperand(state.c2vConsumerBuf, state.c2vConsumerBufTy,
-                            result.operands))
-    return failure();
-  if (state.hasV2cConsumerBuf &&
-      parser.resolveOperand(state.v2cConsumerBuf, state.v2cConsumerBufTy,
-                            result.operands))
-    return failure();
-  return success();
-}
-
-static ParseResult parseFrontendInitializePipeOp(OpAsmParser &parser,
-                                                 OperationState &result) {
-  NamedAttrList attrs;
-  FrontendInitAttrState attrState;
-  FrontendInitOperandState operandState;
-  if (failed(parseFrontendInitializePipeAttrs(parser, attrs, attrState)) ||
-      failed(parseFrontendInitializePipeOperands(parser, operandState)) ||
-      parser.parseOptionalAttrDict(attrs) ||
-      failed(resolveFrontendInitializePipeOperands(parser, result, attrs,
-                                                  operandState))) {
+static ParseResult parseFrontendInitializePipe(
+    OpAsmParser &parser, IntegerAttr &idAttr, IntegerAttr &dirMaskAttr,
+    IntegerAttr &slotSizeAttr, IntegerAttr &localSlotNumAttr,
+    BoolAttr &nosplitAttr,
+    std::optional<OpAsmParser::UnresolvedOperand> &gmSlotBuffer,
+    Type &gmSlotBufferTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &gmSlotTensor,
+    Type &gmSlotTensorTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &c2vConsumerBuf,
+    Type &c2vConsumerBufTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &v2cConsumerBuf,
+    Type &v2cConsumerBufTy) {
+  if (failed(parseFrontendInitializePipeAttrs(
+          parser, idAttr, dirMaskAttr, slotSizeAttr, localSlotNumAttr,
+          nosplitAttr)) ||
+      failed(parseFrontendInitializePipeOperands(
+          parser, gmSlotBuffer, gmSlotBufferTy, gmSlotTensor, gmSlotTensorTy,
+          c2vConsumerBuf, c2vConsumerBufTy, v2cConsumerBuf,
+          v2cConsumerBufTy))) {
     return failure();
   }
   return success();
+}
+
+static void printFrontendInitializePipeAttrClause(OpAsmPrinter &printer,
+                                                  bool &needsComma,
+                                                  StringRef keyword,
+                                                  Attribute attr) {
+  if (needsComma)
+    printer << ", ";
+  printer << keyword << " = " << attr;
+  needsComma = true;
 }
 
 template <typename InitOpT>
-static void printFrontendInitializePipeOp(InitOpT op, OpAsmPrinter &p) {
-  p << " {";
+static void printFrontendInitializePipe(
+    OpAsmPrinter &printer, InitOpT op, IntegerAttr idAttr,
+    IntegerAttr dirMaskAttr, IntegerAttr slotSizeAttr,
+    IntegerAttr localSlotNumAttr, BoolAttr nosplitAttr, Value gmSlotBuffer,
+    Type gmSlotBufferTy, Value gmSlotTensor, Type gmSlotTensorTy,
+    Value c2vConsumerBuf, Type c2vConsumerBufTy, Value v2cConsumerBuf,
+    Type v2cConsumerBufTy) {
+  (void)op;
+  printer << " {";
   bool needsComma = false;
-  auto printClause = [&needsComma, &p](StringRef keyword, auto value) {
-    if (needsComma)
-      p << ", ";
-    p << keyword << " = " << value;
-    needsComma = true;
-  };
+  if (idAttr && idAttr.getValue().getSExtValue() != 0) {
+    printFrontendInitializePipeAttrClause(printer, needsComma, "id", idAttr);
+  }
+  printFrontendInitializePipeAttrClause(printer, needsComma, "dir_mask",
+                                        dirMaskAttr);
+  printFrontendInitializePipeAttrClause(printer, needsComma, "slot_size",
+                                        slotSizeAttr);
+  if (localSlotNumAttr) {
+    printFrontendInitializePipeAttrClause(printer, needsComma,
+                                          "local_slot_num", localSlotNumAttr);
+  }
+  if (nosplitAttr) {
+    printFrontendInitializePipeAttrClause(printer, needsComma, "nosplit",
+                                          nosplitAttr);
+  }
+  printer << "}";
 
-  if (op.getId() != 0)
-    printClause("id", op.getId());
-  printClause("dir_mask", static_cast<int32_t>(op.getDirMask()));
-  printClause("slot_size", op.getSlotSize());
-  if (auto localSlotNumAttr = op.getLocalSlotNumAttr())
-    printClause("local_slot_num", localSlotNumAttr.getInt());
-  if (auto noSplitAttr = op.getNosplitAttr())
-    printClause("nosplit", noSplitAttr.getValue() ? "true" : "false");
-  p << "}";
-
-  p << "(";
+  printer << "(";
   bool needsOperandComma = false;
-  auto printOperandClause = [&needsOperandComma, &p](StringRef keyword,
-                                                     Value value) {
+  auto printOperandClause = [&needsOperandComma,
+                             &printer](StringRef keyword, Value value,
+                                       Type type) {
     if (needsOperandComma)
-      p << ", ";
-    p << keyword << " = " << value << " : " << value.getType();
+      printer << ", ";
+    printer << keyword << " = " << value << " : " << type;
     needsOperandComma = true;
   };
-  if (op.getGmSlotBuffer()) {
-    printOperandClause("gm_slot_buffer", op.getGmSlotBuffer());
-  }
-  if (op.getGmSlotTensor())
-    printOperandClause("gm_slot_tensor", op.getGmSlotTensor());
-  if (op.getC2vConsumerBuf())
-    printOperandClause("c2v_consumer_buf", op.getC2vConsumerBuf());
-  if (op.getV2cConsumerBuf())
-    printOperandClause("v2c_consumer_buf", op.getV2cConsumerBuf());
-  p << ")";
-  p.printOptionalAttrDict(
-      op->getAttrs(),
-      /*elidedAttrs=*/{"id", "dir_mask", "slot_size", "local_slot_num",
-                       "nosplit", "operandSegmentSizes"});
+  if (gmSlotBuffer)
+    printOperandClause("gm_slot_buffer", gmSlotBuffer, gmSlotBufferTy);
+  if (gmSlotTensor)
+    printOperandClause("gm_slot_tensor", gmSlotTensor, gmSlotTensorTy);
+  if (c2vConsumerBuf)
+    printOperandClause("c2v_consumer_buf", c2vConsumerBuf, c2vConsumerBufTy);
+  if (v2cConsumerBuf)
+    printOperandClause("v2c_consumer_buf", v2cConsumerBuf, v2cConsumerBufTy);
+  printer << ")";
 }
 
 static std::optional<uint64_t>

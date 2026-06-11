@@ -30,6 +30,8 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
+#include "PTO/IR/PTOOpTraits.h"
+
 //===----------------------------------------------------------------------===//
 // PTO Dialect
 //===----------------------------------------------------------------------===//

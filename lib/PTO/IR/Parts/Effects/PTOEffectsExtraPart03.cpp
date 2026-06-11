@@ -12,8 +12,6 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-#define PTO_DEFINE_OP_PRINT(OpName) void OpName::print(OpAsmPrinter &p)
-
 template <typename InitOpT>
 static LogicalResult verifyFrontendInitCommon(InitOpT op,
                                               FunctionKernelKind expected,
@@ -53,26 +51,6 @@ static LogicalResult verifyFrontendInitCommon(InitOpT op,
   return verifyFrontendInitLocalPipeForm(op, dirMask, hasC2vConsumerBuf,
                                          hasV2cConsumerBuf);
 }
-
-ParseResult AicInitializePipeOp::parse(OpAsmParser &parser,
-                                       OperationState &result) {
-  return parseFrontendInitializePipeOp(parser, result);
-}
-
-PTO_DEFINE_OP_PRINT(AicInitializePipeOp) {
-  printFrontendInitializePipeOp(*this, p);
-}
-
-ParseResult AivInitializePipeOp::parse(OpAsmParser &parser,
-                                       OperationState &result) {
-  return parseFrontendInitializePipeOp(parser, result);
-}
-
-PTO_DEFINE_OP_PRINT(AivInitializePipeOp) {
-  printFrontendInitializePipeOp(*this, p);
-}
-
-#undef PTO_DEFINE_OP_PRINT
 
 static ReserveBufferOp findReserveBufferByName(func::FuncOp funcOp,
                                                StringRef name) {

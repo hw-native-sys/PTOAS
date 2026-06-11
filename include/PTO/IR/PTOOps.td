@@ -58,6 +58,12 @@ def ScalarPtrOrMemRef :
 def ScalarType :
   AnyTypeOf<[AnySignlessInteger, AnyFloat], "numeric (integer/float)">;
 
+def PTO_FrontendInitPipeVerify :
+  NativeOpTrait<"pto::FrontendInitPipeVerify">;
+
+def PTO_FrontendPopVerify :
+  NativeOpTrait<"pto::FrontendPopVerify">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -1498,7 +1504,8 @@ def SectionVectorOp : PTO_SectionOp<"section.vector">;
 //===----------------------------------------------------------------------===//
 
 def AicInitializePipeOp : PTO_Op<"aic_initialize_pipe",
-                                 [AttrSizedOperandSegments]> {
+                                 [AttrSizedOperandSegments,
+                                  PTO_FrontendInitPipeVerify]> {
   let summary = "Frontend Cube-kernel pipe initialization";
 
   let arguments = (ins
@@ -1514,12 +1521,20 @@ def AicInitializePipeOp : PTO_Op<"aic_initialize_pipe",
   );
 
   let results = (outs);
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = [{
+    custom<FrontendInitializePipe>(
+      $id, $dir_mask, $slot_size, $local_slot_num, $nosplit,
+      $gm_slot_buffer, type($gm_slot_buffer),
+      $gm_slot_tensor, type($gm_slot_tensor),
+      $c2v_consumer_buf, type($c2v_consumer_buf),
+      $v2c_consumer_buf, type($v2c_consumer_buf)
+    ) attr-dict
+  }];
 }
 
 def AivInitializePipeOp : PTO_Op<"aiv_initialize_pipe",
-                                 [AttrSizedOperandSegments]> {
+                                 [AttrSizedOperandSegments,
+                                  PTO_FrontendInitPipeVerify]> {
   let summary = "Frontend Vector-kernel pipe initialization";
 
   let arguments = (ins
@@ -1535,8 +1550,15 @@ def AivInitializePipeOp : PTO_Op<"aiv_initialize_pipe",
   );
 
   let results = (outs);
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = [{
+    custom<FrontendInitializePipe>(
+      $id, $dir_mask, $slot_size, $local_slot_num, $nosplit,
+      $gm_slot_buffer, type($gm_slot_buffer),
+      $gm_slot_tensor, type($gm_slot_tensor),
+      $c2v_consumer_buf, type($c2v_consumer_buf),
+      $v2c_consumer_buf, type($v2c_consumer_buf)
+    ) attr-dict
+  }];
 }
 
 def TAllocToAivOp : PTO_TOp<"talloc_to_aiv"> {
@@ -1609,7 +1631,9 @@ def TPushToAicOp : PTO_TOp<"tpush_to_aic"> {
   }];
 }
 
-def TPopFromAicOp : PTO_TOp<"tpop_from_aic", [AttrSizedOperandSegments]> {
+def TPopFromAicOp : PTO_TOp<"tpop_from_aic",
+                            [AttrSizedOperandSegments,
+                             PTO_FrontendPopVerify]> {
   let summary = "Frontend C2V consumer pop in Vector kernel";
 
   let arguments = (ins
@@ -1620,7 +1644,6 @@ def TPopFromAicOp : PTO_TOp<"tpop_from_aic", [AttrSizedOperandSegments]> {
   );
 
   let results = (outs PTOPipeEntryType:$tile);
-  let hasVerifier = 1;
 
   let assemblyFormat = [{
     (`(` $valid_row^ `,` $valid_col `)`)? `{` (`id` `=` $id^ `,`)? `split` `=` $split `}` attr-dict
@@ -1628,7 +1651,9 @@ def TPopFromAicOp : PTO_TOp<"tpop_from_aic", [AttrSizedOperandSegments]> {
   }];
 }
 
-def TPopFromAivOp : PTO_TOp<"tpop_from_aiv", [AttrSizedOperandSegments]> {
+def TPopFromAivOp : PTO_TOp<"tpop_from_aiv",
+                            [AttrSizedOperandSegments,
+                             PTO_FrontendPopVerify]> {
   let summary = "Frontend V2C consumer pop in Cube kernel";
 
   let arguments = (ins
@@ -1639,7 +1664,6 @@ def TPopFromAivOp : PTO_TOp<"tpop_from_aiv", [AttrSizedOperandSegments]> {
   );
 
   let results = (outs PTOPipeEntryType:$tile);
-  let hasVerifier = 1;
 
   let assemblyFormat = [{
     (`(` $valid_row^ `,` $valid_col `)`)? `{` (`id` `=` $id^ `,`)? `split` `=` $split `}` attr-dict

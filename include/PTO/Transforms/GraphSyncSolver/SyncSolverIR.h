@@ -17,14 +17,13 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
-#include <cassert>
 #include <memory>
 #include <utility>
 
 namespace mlir::pto::syncsolver {
 #ifndef ASSERT
 #ifndef NDEBUG
-#define ASSERT(condition) assert(condition)
+#define ASSERT(condition) (static_cast<bool>(condition) ? (void)0 : __builtin_trap())
 #else
 #define ASSERT(condition) ((void)0)
 #endif

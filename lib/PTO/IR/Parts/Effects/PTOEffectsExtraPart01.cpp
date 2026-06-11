@@ -85,78 +85,80 @@ struct FrontendInitAttrState {
 };
 
 static ParseResult parseFrontendInitI32AttrClause(OpAsmParser &parser,
-                                                  NamedAttrList &attrs,
-                                                  bool &seen, StringRef keyword,
-                                                  StringRef attrName,
+                                                  IntegerAttr &attr,
+                                                  bool &seen,
+                                                  StringRef keyword,
                                                   Type attrType) {
   if (seen) {
     return parser.emitError(parser.getCurrentLocation())
            << "duplicate '" << keyword << "' clause";
   }
-  IntegerAttr valueAttr;
-  if (parser.parseAttribute(valueAttr, attrType, attrName, attrs))
+  if (parser.parseAttribute(attr, attrType))
     return failure();
   seen = true;
   return success();
 }
 
 static ParseResult parseFrontendInitBoolAttrClause(OpAsmParser &parser,
-                                                   NamedAttrList &attrs,
+                                                   BoolAttr &attr,
                                                    bool &seen,
-                                                   StringRef keyword,
-                                                   StringRef attrName) {
+                                                   StringRef keyword) {
   if (seen) {
     return parser.emitError(parser.getCurrentLocation())
            << "duplicate '" << keyword << "' clause";
   }
-  BoolAttr valueAttr;
-  if (parser.parseAttribute(valueAttr, attrName, attrs))
+  if (parser.parseAttribute(attr))
     return failure();
   seen = true;
   return success();
 }
 
 static ParseResult parseFrontendInitializePipeAttrClause(
-    OpAsmParser &parser, StringRef keyword, NamedAttrList &attrs,
+    OpAsmParser &parser, StringRef keyword, IntegerAttr &idAttr,
+    IntegerAttr &dirMaskAttr, IntegerAttr &slotSizeAttr,
+    IntegerAttr &localSlotNumAttr, BoolAttr &nosplitAttr,
     FrontendInitAttrState &state) {
+  Builder &builder = parser.getBuilder();
   if (keyword == "id") {
-    return parseFrontendInitI32AttrClause(parser, attrs, state.sawId, keyword,
-                                          "id",
-                                          parser.getBuilder().getI32Type());
+    return parseFrontendInitI32AttrClause(parser, idAttr, state.sawId, keyword,
+                                          builder.getI32Type());
   }
   if (keyword == "dir_mask") {
-    return parseFrontendInitI32AttrClause(parser, attrs, state.sawDirMask,
-                                          keyword, "dir_mask",
-                                          parser.getBuilder().getI8Type());
+    return parseFrontendInitI32AttrClause(parser, dirMaskAttr,
+                                          state.sawDirMask, keyword,
+                                          builder.getI8Type());
   }
   if (keyword == "slot_size") {
-    return parseFrontendInitI32AttrClause(
-        parser, attrs, state.sawSlotSize, keyword, "slot_size",
-        parser.getBuilder().getI32Type());
+    return parseFrontendInitI32AttrClause(parser, slotSizeAttr,
+                                          state.sawSlotSize, keyword,
+                                          builder.getI32Type());
   }
   if (keyword == "local_slot_num") {
-    return parseFrontendInitI32AttrClause(
-        parser, attrs, state.sawLocalSlotNum, keyword, "local_slot_num",
-        parser.getBuilder().getI32Type());
+    return parseFrontendInitI32AttrClause(parser, localSlotNumAttr,
+                                          state.sawLocalSlotNum, keyword,
+                                          builder.getI32Type());
   }
   if (keyword == "nosplit") {
-    return parseFrontendInitBoolAttrClause(parser, attrs, state.sawNoSplit,
-                                           keyword, "nosplit");
+    return parseFrontendInitBoolAttrClause(parser, nosplitAttr,
+                                           state.sawNoSplit, keyword);
   }
   return parser.emitError(parser.getCurrentLocation())
          << "unexpected keyword '" << keyword << "'";
 }
 
-static ParseResult parseFrontendInitializePipeAttrs(OpAsmParser &parser,
-                                                    NamedAttrList &attrs,
-                                                    FrontendInitAttrState &state) {
+static ParseResult parseFrontendInitializePipeAttrs(
+    OpAsmParser &parser, IntegerAttr &idAttr, IntegerAttr &dirMaskAttr,
+    IntegerAttr &slotSizeAttr, IntegerAttr &localSlotNumAttr,
+    BoolAttr &nosplitAttr) {
+  FrontendInitAttrState state;
   if (parser.parseLBrace())
     return failure();
   while (failed(parser.parseOptionalRBrace())) {
     StringRef keyword;
     if (parser.parseKeyword(&keyword) || parser.parseEqual() ||
-        failed(parseFrontendInitializePipeAttrClause(parser, keyword, attrs,
-                                                     state))) {
+        failed(parseFrontendInitializePipeAttrClause(
+            parser, keyword, idAttr, dirMaskAttr, slotSizeAttr,
+            localSlotNumAttr, nosplitAttr, state))) {
       return failure();
     }
     if (succeeded(parser.parseOptionalRBrace()))
@@ -169,71 +171,59 @@ static ParseResult parseFrontendInitializePipeAttrs(OpAsmParser &parser,
   if (!state.sawSlotSize)
     return parser.emitError(parser.getNameLoc(), "expected 'slot_size' clause");
   if (!state.sawId)
-    attrs.set("id", parser.getBuilder().getI32IntegerAttr(0));
+    idAttr = parser.getBuilder().getI32IntegerAttr(0);
   return success();
 }
 
 struct FrontendInitOperandState {
-  OpAsmParser::UnresolvedOperand gmSlotBuffer;
-  OpAsmParser::UnresolvedOperand gmSlotTensor;
-  OpAsmParser::UnresolvedOperand c2vConsumerBuf;
-  OpAsmParser::UnresolvedOperand v2cConsumerBuf;
-  Type gmSlotBufferTy;
-  Type gmSlotTensorTy;
-  Type c2vConsumerBufTy;
-  Type v2cConsumerBufTy;
   bool hasGmSlotBuffer = false;
   bool hasGmSlotTensor = false;
   bool hasC2vConsumerBuf = false;
   bool hasV2cConsumerBuf = false;
 };
 
+static ParseResult parseFrontendInitializePipeOperandValue(
+    OpAsmParser &parser, StringRef keyword,
+    std::optional<OpAsmParser::UnresolvedOperand> &target, Type &targetTy,
+    bool &seen) {
+  if (seen) {
+    return parser.emitError(parser.getCurrentLocation())
+           << "duplicate '" << keyword << "' operand";
+  }
+  OpAsmParser::UnresolvedOperand operand;
+  if (parser.parseOperand(operand) || parser.parseColonType(targetTy))
+    return failure();
+  target = operand;
+  seen = true;
+  return success();
+}
+
 static ParseResult parseFrontendInitializePipeOperandClause(
-    OpAsmParser &parser, StringRef keyword, FrontendInitOperandState &state) {
-  if (keyword == "gm_slot_buffer") {
-    if (state.hasGmSlotBuffer) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "duplicate 'gm_slot_buffer' operand");
-    }
-    if (parser.parseOperand(state.gmSlotBuffer) ||
-        parser.parseColonType(state.gmSlotBufferTy))
-      return failure();
-    state.hasGmSlotBuffer = true;
-    return success();
-  }
-  if (keyword == "gm_slot_tensor") {
-    if (state.hasGmSlotTensor) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "duplicate 'gm_slot_tensor' operand");
-    }
-    if (parser.parseOperand(state.gmSlotTensor) ||
-        parser.parseColonType(state.gmSlotTensorTy))
-      return failure();
-    state.hasGmSlotTensor = true;
-    return success();
-  }
-  if (keyword == "c2v_consumer_buf") {
-    if (state.hasC2vConsumerBuf) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "duplicate 'c2v_consumer_buf' operand");
-    }
-    if (parser.parseOperand(state.c2vConsumerBuf) ||
-        parser.parseColonType(state.c2vConsumerBufTy))
-      return failure();
-    state.hasC2vConsumerBuf = true;
-    return success();
-  }
-  if (keyword == "v2c_consumer_buf") {
-    if (state.hasV2cConsumerBuf) {
-      return parser.emitError(parser.getCurrentLocation(),
-                              "duplicate 'v2c_consumer_buf' operand");
-    }
-    if (parser.parseOperand(state.v2cConsumerBuf) ||
-        parser.parseColonType(state.v2cConsumerBufTy))
-      return failure();
-    state.hasV2cConsumerBuf = true;
-    return success();
-  }
+    OpAsmParser &parser, StringRef keyword,
+    std::optional<OpAsmParser::UnresolvedOperand> &gmSlotBuffer,
+    Type &gmSlotBufferTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &gmSlotTensor,
+    Type &gmSlotTensorTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &c2vConsumerBuf,
+    Type &c2vConsumerBufTy,
+    std::optional<OpAsmParser::UnresolvedOperand> &v2cConsumerBuf,
+    Type &v2cConsumerBufTy, FrontendInitOperandState &state) {
+  if (keyword == "gm_slot_buffer")
+    return parseFrontendInitializePipeOperandValue(
+        parser, keyword, gmSlotBuffer, gmSlotBufferTy,
+        state.hasGmSlotBuffer);
+  if (keyword == "gm_slot_tensor")
+    return parseFrontendInitializePipeOperandValue(
+        parser, keyword, gmSlotTensor, gmSlotTensorTy,
+        state.hasGmSlotTensor);
+  if (keyword == "c2v_consumer_buf")
+    return parseFrontendInitializePipeOperandValue(
+        parser, keyword, c2vConsumerBuf, c2vConsumerBufTy,
+        state.hasC2vConsumerBuf);
+  if (keyword == "v2c_consumer_buf")
+    return parseFrontendInitializePipeOperandValue(
+        parser, keyword, v2cConsumerBuf, v2cConsumerBufTy,
+        state.hasV2cConsumerBuf);
   return parser.emitError(parser.getCurrentLocation())
          << "unexpected initialize_pipe operand '" << keyword << "'";
 }
