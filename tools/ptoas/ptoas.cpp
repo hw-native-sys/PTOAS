@@ -119,6 +119,7 @@ void mlir::pto::registerPTOASPassesAndCLOptions() {
   mlir::pto::registerPTOInlineLibCall();
   mlir::pto::registerFoldTileBufIntrinsics();
   mlir::pto::registerExpandTileOp();
+  mlir::pto::registerLowerPTOToUBufOps();
   mlir::registerPassManagerCLOptions();
 }
 
@@ -1480,25 +1481,32 @@ static void prepareVPTOForEmission(PassManager &pm) {
 }
 
 static void lowerPTOToVPTOBackend(PassManager &pm, int argc, char **argv) {
-  // TileOp Expand path:
+  auto &kernelModulePM = pm.nest<ModuleOp>();
+
+  // A3: lower tadd → ub.vadd (and future load/store lowering).
+  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+      pto::createLowerPTOToUBufOpsPass());
+
+  // TileOp Expand path (A5 only):
   //   1. ExpandTileOp: instantiate TileLang DSL templates, replace tile ops
   //      with func.call to template functions (tile_buf params)
   //   2. InlineLibCall: inline template function bodies
   //   3. FoldTileBufIntrinsics: fold tile_buf_addr / tile_valid_rows /
   //      tile_valid_cols to concrete memref/constant values
-  auto &kernelModulePM = pm.nest<ModuleOp>();
-  pto::ExpandTileOpOptions expandOpts = resolveExpandTileOpOptions(argc, argv);
-  kernelModulePM.addPass(pto::createExpandTileOpPass(expandOpts));
+  if (ptoTargetArch != "a3") {
+    pto::ExpandTileOpOptions expandOpts = resolveExpandTileOpOptions(argc, argv);
+    kernelModulePM.addPass(pto::createExpandTileOpPass(expandOpts));
 
-  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createFoldTileBufIntrinsicsPass());
-  // FoldTileBufIntrinsics materializes many constant branch conditions.
-  // Clean them up immediately on the TileOp expansion path before the
-  // authoring-stage VPTO verifier and let the existing CSE passes remove the
-  // resulting dead values later in the pipeline.
-  kernelModulePM.addPass(mlir::createSCCPPass());
-  kernelModulePM.addPass(mlir::createCanonicalizerPass());
+    kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+        pto::createFoldTileBufIntrinsicsPass());
+    // FoldTileBufIntrinsics materializes many constant branch conditions.
+    // Clean them up immediately on the TileOp expansion path before the
+    // authoring-stage VPTO verifier and let the existing CSE passes remove the
+    // resulting dead values later in the pipeline.
+    kernelModulePM.addPass(mlir::createSCCPPass());
+    kernelModulePM.addPass(mlir::createCanonicalizerPass());
+  }
 }
 
 static void inlineTilelangHelpersOnVPTOInput(PassManager &pm) {
@@ -1514,6 +1522,10 @@ buildVPTOEmissionOptions(const pto::CANNVersion &cannVersion) {
   options.dumpVPTOIR = false;
   options.targetTriple = "hiipu64-hisilicon-cce";
   options.cannVersion = cannVersion;
+  std::string arch = ptoTargetArch;
+  for (char &c : arch)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  options.march = (arch == "a3") ? "dav-c220-vec" : "dav-c310-vec";
   return options;
 }
 
@@ -1732,28 +1744,32 @@ int mlir::pto::compilePTOASModule(
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
-  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOValidateIntToPtrUsesPass());
+  // A5-only: normalize movs, lower to memref, plan memory.
+  // A3 uses the LowerPTOToUBufOps path instead (pointer-based, no memref).
+  if (ptoTargetArch != "a3") {
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOValidateIntToPtrUsesPass());
 
-  // Keep frontend fusion on tile-native PTO IR and annotate last_use directly
-  // on scheduled block-local spans before the shared mainline lowers tiles.
-  if (enableA5FrontendFusionPath) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createFusionPlanPass());
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkLastUsePass());
+    // Keep frontend fusion on tile-native PTO IR and annotate last_use directly
+    // on scheduled block-local spans before the shared mainline lowers tiles.
+    if (enableA5FrontendFusionPath) {
+      pm.addNestedPass<mlir::func::FuncOp>(pto::createFusionPlanPass());
+      pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
+      pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkLastUsePass());
+    }
+
+    pm.addPass(pto::createPTOViewToMemrefPass());
+
+    if (effectiveLevel != PTOBuildLevel::Level3) {
+      PlanMemoryOptions planMemoryOption;
+      planMemoryOption.memMode = MemPlanMode::LOCAL_MEM_PLAN;
+      planMemoryOption.enableGlobalReuse = false;
+      planMemoryOption.enablePrintMemoryAllocatedSize = false;
+      pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
+    }
+    pm.addPass(pto::createPTOResolveReservedBuffersPass());
   }
-
-  pm.addPass(pto::createPTOViewToMemrefPass());
-
-  if (effectiveLevel != PTOBuildLevel::Level3) {
-    PlanMemoryOptions planMemoryOption;
-    planMemoryOption.memMode = MemPlanMode::LOCAL_MEM_PLAN;
-    planMemoryOption.enableGlobalReuse = false;
-    planMemoryOption.enablePrintMemoryAllocatedSize = false;
-    pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
-  }
-  pm.addPass(pto::createPTOResolveReservedBuffersPass());
 
   // Conditionally add one automatic synchronization mode. Barrier-all is a
   // conservative standalone pass; InsertSync and GraphSyncSolver are set/wait

@@ -1,0 +1,3660 @@
+# A2/A3 Vector Builtin Inventory
+
+## 1. Collection Constraints
+
+- Collection root: `.local/cann`, which is a symlink to `/home/mouliangyu/.local/ascend/beta.1/cann` in this workspace.
+- Architecture scope: A2/A3 vector builtins whose callable C++ form uses memory pointers, not the A5-style `vector_*` value operands, plus the A2/A3 vector mask/control builtins that configure vector execution state.
+- C++ signature source: `.local/cann/tools/tikicpulib/lib/include/stub_fun.h`, filtered to declarations with pointer operands and without any `vector_*` parameter for vector compute builtins; mask/control builtins are included from the same source when they directly affect vector mask or compare-mask state.
+- Builtin-name mapping source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h` and `cce_aicore_intrinsics_3101.h`, using `clang_builtin_alias(__builtin_cce_...)` declarations.
+- Included vector compute signatures must satisfy all of these conditions: function name is a vector builtin wrapper such as `v*` or `vector_dup`; at least one operand is a pointer, usually `__ubuf__ T*`; no operand uses the A5/new-vector `vector_*` types; the wrapper can be mapped to a `__builtin_cce_*` alias in the CCE headers; and direct `__builtin_cce_*` compilation emits a vector `llvm.hivm.*` call.
+- Included mask/control signatures are limited to `set_cmpmask`, `set_mask_count`, `set_mask_norm`, `set_vector_mask`, and `set_vector_mask_dup`; these are listed separately because their operands are mask pointers or scalar `uint64_t` values rather than vector data operands.
+- Excluded entries include all `__clang_cce_vector_intrinsics.h` vector-value builtins, all `vector_*` input/output declarations from `stub_fun.h`, high-level AscendC wrappers, unrelated scalar/system builtins, x86/standard Clang builtins, OPP operator implementations, names without a complete pointer-form or mask/control signature in the scanned files, and wrapper-only stub declarations that ccec rejects as direct builtin calls.
+- Overloads are preserved because the same builtin name can have different pointer element types, scalar operands, packed `uint64_t config` forms, and expanded repeat/stride forms.
+- LLVM intrinsic names were probed by compiling every candidate pointer-form overload with `.local/cann/x86_64-linux/bin/ccec -c -save-temps -xcce`, disassembling the emitted device bitcode with LLVM 15 `llvm-dis`, and extracting actual `call @llvm.hivm.*` targets from the generated probe function body.
+- Probe targets were tried in this order until a vector `llvm.hivm.*` call was captured: `dav-m200-vec`, `dav-m200`, `dav-m300`, `dav-c220-vec`, `dav-c310-vec`, `dav-m210-vec`, `dav-l300-vec`, `dav-l300`, `dav-t300`, `dav-t200`, `dav-t210`, `dav-l310`, `dav-l311`, `dav-l311-eff`, `dav-l510`, `dav-s200`, `dav-c220`, `dav-c310`, `dav-m310`, `dav-m201`, `dav-n350`, `dav-920r1-vec`, `dav-920r1`, `dav-510r2`, `dav-380r1-cube`, `dav-c100`, `dav-l100`, `dav-l100-es`, `dav-l200`, `dav-l210`, `dav-m100`, `dav-s200-es`, `dav-t100`, `dav-t100-es`.
+- LLVM intrinsic-name coverage for vector compute builtins: 200 of 200 builtin names have at least one captured intrinsic name; 929 of 939 candidate pointer-form overload signatures captured an actual vector `llvm.hivm.*` call target; 10 candidate stub declarations were rejected by ccec with `parameters too many` and are excluded as non-bottom-level direct builtin signatures.
+- Mask/control builtin coverage: 5 additional builtin names and 5 complete C++ signatures were probed on `dav-m200-vec`; their IR declarations and actual probe calls are listed in the mask/control section.
+- Parameter packing coverage for vector compute builtins: 12 signatures have packing text copied from CANN `// ->` header comments, 336 signatures are direct already-packed `uint64_t` forms, and 581 signatures have no matching CANN `// ->` packing comment in the scanned headers.
+- `No CANN // -> packing comment found` means no textual packing formula was present in the scanned CANN headers for that exact wrapper parameter list; this document does not infer or synthesize missing formulas from LLVM IR.
+- Inventory count: 205 unique builtin names, 934 verified bottom-level signatures, and 354 unique observed LLVM intrinsic names or declarations.
+
+## 2. Builtin Signatures
+
+- `__builtin_cce_v4dtrans`
+  - LLVM intrinsic names:
+    - `llvm.hivm.V4DTRANS.b16`
+    - `llvm.hivm.V4DTRANS.b32`
+    - `llvm.hivm.V4DTRANS.b8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.V4DTRANS.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.V4DTRANS.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.V4DTRANS.b8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_v4dtrans(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint16_t imageSize, uint16_t nChannel, bool conversionMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `v4dtrans` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_v4dtrans(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_v4dtrans(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint16_t imageSize, uint16_t nChannel, bool conversionMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `v4dtrans` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_v4dtrans(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_v4dtrans(__ubuf__ uint8_t* dst, __ubuf__ uint8_t* src, uint16_t imageSize, uint16_t nChannel, bool conversionMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `v4dtrans` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_v4dtrans(__ubuf__ uint8_t* dst, __ubuf__ uint8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vabs`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VABS.f16`
+    - `llvm.hivm.VABS.f32`
+    - `llvm.hivm.VABS.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VABS.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VABS.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VABS.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vabs(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vabs(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4597): `/* #4160 */ __builtin_cce_vabs(dst, src, ((repeat & 0xff) << 56 | (dstBlockStride & 0xffff) << 0 | (srcBlockStride & 0xffff) << 16 | (dstRepeatStride & 0xff) << 32 | (dstRepeatStride & 0xf00) << 44 | (srcRepeatStride & 0xfff) << 40))`
+    - `void __builtin_cce_vabs(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4597): `/* #4160 */ __builtin_cce_vabs(dst, src, ((repeat & 0xff) << 56 | (dstBlockStride & 0xffff) << 0 | (srcBlockStride & 0xffff) << 16 | (dstRepeatStride & 0xff) << 32 | (dstRepeatStride & 0xf00) << 44 | (srcRepeatStride & 0xfff) << 40))`
+    - `void __builtin_cce_vabs(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vabs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vabs(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vabs(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4597): `/* #4160 */ __builtin_cce_vabs(dst, src, ((repeat & 0xff) << 56 | (dstBlockStride & 0xffff) << 0 | (srcBlockStride & 0xffff) << 16 | (dstRepeatStride & 0xff) << 32 | (dstRepeatStride & 0xf00) << 44 | (srcRepeatStride & 0xfff) << 40))`
+    - `void __builtin_cce_vabs(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4597): `/* #4160 */ __builtin_cce_vabs(dst, src, ((repeat & 0xff) << 56 | (dstBlockStride & 0xffff) << 0 | (srcBlockStride & 0xffff) << 16 | (dstRepeatStride & 0xff) << 32 | (dstRepeatStride & 0xf00) << 44 | (srcRepeatStride & 0xfff) << 40))`
+    - `void __builtin_cce_vabs(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vabs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vabs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vabs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4597): `/* #4160 */ __builtin_cce_vabs(dst, src, ((repeat & 0xff) << 56 | (dstBlockStride & 0xffff) << 0 | (srcBlockStride & 0xffff) << 16 | (dstRepeatStride & 0xff) << 32 | (dstRepeatStride & 0xf00) << 44 | (srcRepeatStride & 0xfff) << 40))`
+    - `void __builtin_cce_vabs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4597): `/* #4160 */ __builtin_cce_vabs(dst, src, ((repeat & 0xff) << 56 | (dstBlockStride & 0xffff) << 0 | (srcBlockStride & 0xffff) << 16 | (dstRepeatStride & 0xff) << 32 | (dstRepeatStride & 0xf00) << 44 | (srcRepeatStride & 0xfff) << 40))`
+    - `void __builtin_cce_vabs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vabs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vadd`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADD.f16`
+    - `llvm.hivm.VADD.f32`
+    - `llvm.hivm.VADD.s16`
+    - `llvm.hivm.VADD.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADD.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VADD.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VADD.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VADD.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vadd(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t repeat);`
+      - Parameter packing: Direct bottom-level form: `repeat` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadd(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadd(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadd(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadd(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vadddeqrelu`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDDEQRELU`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDDEQRELU(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vadddeqrelu(__ubuf__ half* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadddeqrelu(__ubuf__ half* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadddeqrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadddeqrelu(__ubuf__ half* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadddeqrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vaddrelu`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDRELU.f16`
+    - `llvm.hivm.VADDRELU.f32`
+    - `llvm.hivm.VADDRELU.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDRELU.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VADDRELU.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VADDRELU.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vaddrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddrelu(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddrelu(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddrelu(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vaddreluconv_f162s8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDRELUCONV.f162s8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDRELUCONV.f162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vaddreluconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddreluconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddreluconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vaddreluconv_f322f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDRELUCONV.f322f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDRELUCONV.f322f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vaddreluconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddreluconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddreluconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vaddreluconv_s162s8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDRELUCONV.s162s8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDRELUCONV.s162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vaddreluconv_s162s8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddreluconv_s162s8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_s162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddreluconv_s162s8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_s162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vaddreluconv_vdeqs162b8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDRELUCONV.VDEQs162b8`
+    - `llvm.hivm.VADDRELUCONV.VDEQs162b8.1`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDRELUCONV.VDEQs162b8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+    - `declare void @llvm.hivm.VADDRELUCONV.VDEQs162b8.1(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-s200`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vaddreluconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddreluconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4607): `/* #4201 */ __builtin_cce_vaddreluconv_vdeqs162b8(dst, src0, src1, ((repeat & 0xff) << 56 | (dstBlockStride & 0xff) << 0 | (src0BlockStride & 0xff) << 8 | (src1BlockStride & 0xff) << 16 | (dstRepeatStride & 0xff) << 24 | (src0RepeatStride & 0xff) << 32 | (src1RepeatStride & 0xff) << 40), h)`
+    - `void __builtin_cce_vaddreluconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaddreluconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaddreluconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4602): `/* #4202 */ __builtin_cce_vaddreluconv_vdeqs162b8(dst, src0, src1, ((repeat & 0xff) << 56 | (dstBlockStride & 0xff) << 0 | (src0BlockStride & 0xff) << 8 | (src1BlockStride & 0xff) << 16 | (dstRepeatStride & 0xff) << 24 | (src0RepeatStride & 0xff) << 32 | (src1RepeatStride & 0xff) << 40), h)`
+    - `void __builtin_cce_vaddreluconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaddreluconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vadds`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VADDS.f16`
+    - `llvm.hivm.VADDS.f32`
+    - `llvm.hivm.VADDS.s16`
+    - `llvm.hivm.VADDS.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VADDS.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VADDS.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+    - `declare void @llvm.hivm.VADDS.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VADDS.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vadds(__ubuf__ float* dst, __ubuf__ float* src, float a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadds(__ubuf__ float* dst, __ubuf__ float* src, float a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ float* dst, __ubuf__ float* src, float a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ float* dst, __ubuf__ float* src, float a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ half* dst, __ubuf__ half* src, half a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadds(__ubuf__ half* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ half* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ half* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int16_t a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadds(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int16_t a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int16_t a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int16_t a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vadds(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vadds(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vadds` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vand`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VAND.s16`
+    - `llvm.hivm.VAND.u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VAND.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VAND.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vand(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vand(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1StrideBlock, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vand` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vand(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1StrideBlock, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vand` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vand(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vand(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1StrideBlock, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vand` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vand(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1StrideBlock, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vand` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vaxpy`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VAXPY.f16`
+    - `llvm.hivm.VAXPY.f32`
+    - `llvm.hivm.VAXPY.fmix`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VAXPY.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VAXPY.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+    - `declare void @llvm.hivm.VAXPY.fmix(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ float* src, float a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ float* src, float a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ float* src, float a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ float* src, float a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ half* src, half a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ float* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ half* dst, __ubuf__ half* src, half a, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vaxpy(__ubuf__ half* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ half* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vaxpy(__ubuf__ half* dst, __ubuf__ half* src, half a, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vaxpy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vbi`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VBI.f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VBI.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vbi(__ubuf__ half* dst, __ubuf__ uint16_t* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vbi(__ubuf__ half* dst, __ubuf__ uint16_t* src0, __ubuf__ half* src1, uint8_t hRepeat, bool repeatMode, uint16_t dstBlockStride, uint16_t vROffset, uint8_t vRepeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vbi` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vbrcb`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VBRCB.b16`
+    - `llvm.hivm.VBRCB.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VBRCB.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VBRCB.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vbrcb(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint16_t dstBlockStride, uint16_t dstRepeatStride, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vbrcb` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vbrcb(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vbrcb(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint16_t dstBlockStride, uint16_t dstRepeatStride, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vbrcb` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vbrcb(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vbs`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VBS32.V300.f16`
+    - `llvm.hivm.VBS32.V300.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VBS32.V300.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64) #1`
+    - `declare void @llvm.hivm.VBS32.V300.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64) #1`
+  - Probe targets used: `dav-m300`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vbs(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ uint32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vbs(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ uint32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vcadd`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCADD.f16`
+    - `llvm.hivm.VCADD.f16.order`
+    - `llvm.hivm.VCADD.f32`
+    - `llvm.hivm.VCADD.f32.order`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCADD.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCADD.f16.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCADD.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCADD.f32.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcadd(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcadd(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config, bool MASK);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool mode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcadd(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcadd(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config, bool MASK);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool mode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_s162s32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.s162s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.s162s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_s162s32(__ubuf__ int32_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_s162s32(__ubuf__ int32_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_s162s32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_s162u32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.s162u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.s162u32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_s162u32(__ubuf__ uint32_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_s162u32(__ubuf__ uint32_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_s162u32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_s162u8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.s162u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.s162u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_s162u8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_s162u8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_s162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_s322s16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.s322s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.s322s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_s322s16(__ubuf__ int16_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_s322s16(__ubuf__ int16_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_s322s16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_s322u16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.s322u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.s322u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_s322u16(__ubuf__ uint16_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_s322u16(__ubuf__ uint16_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_s322u16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_s322u8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.s322u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.s322u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_s322u8(__ubuf__ uint8_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_s322u8(__ubuf__ uint8_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_s322u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u162s32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u162s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u162s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u162s32(__ubuf__ int32_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u162s32(__ubuf__ int32_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u162s32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u162u32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u162u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u162u32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u162u32(__ubuf__ uint32_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u162u32(__ubuf__ uint32_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u162u32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u162u8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u162u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u162u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u162u8(__ubuf__ uint8_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u162u8(__ubuf__ uint8_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u322s16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u322s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u322s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u322s16(__ubuf__ int16_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u322s16(__ubuf__ int16_t* dst, __ubuf__ uint32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u322s16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u322u16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u322u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u322u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u322u16(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u322u16(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u322u16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u322u8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u322u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u322u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u322u8(__ubuf__ uint8_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u322u8(__ubuf__ uint8_t* dst, __ubuf__ uint32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u322u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u82s16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u82s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u82s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u82s16(__ubuf__ int16_t* dst, __ubuf__ uint8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u82s16(__ubuf__ int16_t* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u82s16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u82s32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u82s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u82s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u82s32(__ubuf__ int32_t* dst, __ubuf__ uint8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u82s32(__ubuf__ int32_t* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u82s32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u82u16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u82u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u82u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u82u16(__ubuf__ uint16_t* dst, __ubuf__ uint8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u82u16(__ubuf__ uint16_t* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u82u16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcbd_u82u32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCBD.u82u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCBD.u82u32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcbd_u82u32(__ubuf__ uint32_t* dst, __ubuf__ uint8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcbd_u82u32(__ubuf__ uint32_t* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcbd_u82u32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcgadd`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCGADD.f16`
+    - `llvm.hivm.VCGADD.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCGADD.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCGADD.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcgadd(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcgadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgadd(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcgadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcgmax`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCGMAX.f16`
+    - `llvm.hivm.VCGMAX.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCGMAX.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCGMAX.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcgmax(__ubuf__ float* dst, __ubuf__ float* src, uint64_t confg);`
+      - Parameter packing: Direct bottom-level form: `confg` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcgmax(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgmax(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgmax(__ubuf__ half* dst, __ubuf__ half* src, uint64_t confg);`
+      - Parameter packing: Direct bottom-level form: `confg` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcgmax(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgmax(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcgmin`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCGMIN.f16`
+    - `llvm.hivm.VCGMIN.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCGMIN.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCGMIN.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcgmin(__ubuf__ float* dst, __ubuf__ float* src, uint64_t confg);`
+      - Parameter packing: Direct bottom-level form: `confg` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcgmin(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgmin(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgmin(__ubuf__ half* dst, __ubuf__ half* src, uint64_t confg);`
+      - Parameter packing: Direct bottom-level form: `confg` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcgmin(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcgmin(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t src0Stride, uint16_t src1Stride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcgmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vci`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCI.f16`
+    - `llvm.hivm.VCI.f32`
+    - `llvm.hivm.VCI.s16`
+    - `llvm.hivm.VCI.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCI.f16(ptr addrspace(6) nocapture writeonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCI.f32(ptr addrspace(6) nocapture writeonly, float, i64) #1`
+    - `declare void @llvm.hivm.VCI.s16(ptr addrspace(6) nocapture writeonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCI.s32(ptr addrspace(6) nocapture writeonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vci(__ubuf__ float* dst, float src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vci(__ubuf__ float* dst, float src, uint8_t repeat, uint16_t dstStride, uint8_t srcStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vci` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vci(__ubuf__ half* dst, half src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vci(__ubuf__ half* dst, half src, uint8_t repeat, uint16_t dstStride, uint8_t srcStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vci` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vci(__ubuf__ int16_t* dst, int16_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vci(__ubuf__ int16_t* dst, int16_t src, uint8_t repeat, uint16_t dstStride, uint8_t srcStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vci` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vci(__ubuf__ int32_t* dst, int32_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vci(__ubuf__ int32_t* dst, int32_t src, uint8_t repeat, uint16_t dstStride, uint8_t srcStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vci` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmax`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMAX.f16`
+    - `llvm.hivm.VCMAX.f16.order`
+    - `llvm.hivm.VCMAX.f16.order.v220`
+    - `llvm.hivm.VCMAX.f32.order`
+    - `llvm.hivm.VCMAX.f32.order.v220`
+    - `llvm.hivm.VCMAX.s16.order`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMAX.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMAX.f16.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMAX.f16.order.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMAX.f32.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMAX.f32.order.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMAX.s16.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmax(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config, Order_t order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmax(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config, bool order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmax(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, Order_t order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmax(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config, Order_t order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config, bool order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, Order_t order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmax(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmax(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config, bool order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmax(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmin`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMIN.f16`
+    - `llvm.hivm.VCMIN.f16.order`
+    - `llvm.hivm.VCMIN.f16.order.v220`
+    - `llvm.hivm.VCMIN.f32.order`
+    - `llvm.hivm.VCMIN.f32.order.v220`
+    - `llvm.hivm.VCMIN.s16.order`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMIN.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMIN.f16.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMIN.f16.order.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMIN.f32.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMIN.f32.order.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCMIN.s16.order(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmin(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config, Order_t order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmin(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config, bool MASK);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmin(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, Order_t order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmin(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool MASK);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config, Order_t order);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config, bool MASK);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, Order_t order);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmin(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool MASK);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmin(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config, bool MASK);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmin(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstRepeatStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool MASK);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmp_eq`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMP.EQ.f16`
+    - `llvm.hivm.VCMP.EQ.f32`
+    - `llvm.hivm.VCMP.EQ.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMP.EQ.f16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.EQ.f32(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.EQ.s16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmp_eq(__ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_eq(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmp_ge`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMP.GE.f16`
+    - `llvm.hivm.VCMP.GE.f32`
+    - `llvm.hivm.VCMP.GE.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMP.GE.f16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.GE.f32(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.GE.s16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmp_ge(__ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ge(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmp_gt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMP.GT.f16`
+    - `llvm.hivm.VCMP.GT.f32`
+    - `llvm.hivm.VCMP.GT.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMP.GT.f16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.GT.f32(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.GT.s16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmp_gt(__ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_gt(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmp_le`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMP.LE.f16`
+    - `llvm.hivm.VCMP.LE.f32`
+    - `llvm.hivm.VCMP.LE.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMP.LE.f16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.LE.f32(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.LE.s16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmp_le(__ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_le(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_le(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_le(__ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_le(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_le(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_le(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_le(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_le(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmp_lt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMP.LT.f16`
+    - `llvm.hivm.VCMP.LT.f32`
+    - `llvm.hivm.VCMP.LT.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMP.LT.f16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.LT.f32(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.LT.s16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmp_lt(__ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_lt(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmp_ne`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMP.NE.f16`
+    - `llvm.hivm.VCMP.NE.f32`
+    - `llvm.hivm.VCMP.NE.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMP.NE.f16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.NE.f32(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMP.NE.s16(ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmp_ne(__ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmp_ne(__ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmp_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpv_eq`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPV.EQ.f16`
+    - `llvm.hivm.VCMPV.EQ.f32`
+    - `llvm.hivm.VCMPV.EQ.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPV.EQ.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.EQ.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.EQ.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpv_eq(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_eq(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_eq(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_eq(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_eq(__ubuf__ uint8_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_eq(__ubuf__ uint8_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpv_ge`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPV.GE.f16`
+    - `llvm.hivm.VCMPV.GE.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPV.GE.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.GE.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpv_ge(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_ge(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_ge(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_ge(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpv_gt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPV.GT.f16`
+    - `llvm.hivm.VCMPV.GT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPV.GT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.GT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpv_gt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_gt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_gt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_gt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpv_le`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPV.LE.f16`
+    - `llvm.hivm.VCMPV.LE.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPV.LE.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.LE.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpv_le(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_le(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_le(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_le(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpv_lt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPV.LT.f16`
+    - `llvm.hivm.VCMPV.LT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPV.LT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.LT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpv_lt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_lt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_lt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_lt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpv_ne`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPV.NE.f16`
+    - `llvm.hivm.VCMPV.NE.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPV.NE.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCMPV.NE.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpv_ne(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_ne(__ubuf__ uint8_t* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpv_ne(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpv_ne(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpv_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpvs_eq`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPVS.EQ.f16`
+    - `llvm.hivm.VCMPVS.EQ.f32`
+    - `llvm.hivm.VCMPVS.EQ.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPVS.EQ.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.EQ.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.EQ.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_eq(__ubuf__ uint8_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t src0BlockStride, uint16_t dstRepeatStride, uint16_t src0RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_eq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpvs_ge`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPVS.GE.f16`
+    - `llvm.hivm.VCMPVS.GE.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPVS.GE.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.GE.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpvs_ge(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_ge(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_ge(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_ge(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_ge(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_ge(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ge` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpvs_gt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPVS.GT.f16`
+    - `llvm.hivm.VCMPVS.GT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPVS.GT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.GT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpvs_gt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_gt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_gt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_gt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_gt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_gt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_gt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpvs_le`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPVS.LE.f16`
+    - `llvm.hivm.VCMPVS.LE.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPVS.LE.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.LE.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpvs_le(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_le(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_le(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_le(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_le(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_le(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_le` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpvs_lt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPVS.LT.f16`
+    - `llvm.hivm.VCMPVS.LT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPVS.LT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.LT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpvs_lt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_lt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_lt(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_lt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_lt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_lt(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_lt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcmpvs_ne`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCMPVS.NE.f16`
+    - `llvm.hivm.VCMPVS.NE.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCMPVS.NE.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VCMPVS.NE.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcmpvs_ne(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_ne(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_ne(__ubuf__ uint8_t* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_ne(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcmpvs_ne(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcmpvs_ne(__ubuf__ uint8_t* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcmpvs_ne` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconcat`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONCAT.f16`
+    - `llvm.hivm.VCONCAT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONCAT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONCAT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconcat(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconcat(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint8_t stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconcat` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconcat(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconcat(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint8_t stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconcat` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_bf162f32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.bf162f32.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.bf162f32.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_bf162f32(__ubuf__ float* dst, __ubuf__ bfloat16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_bf162f32(__ubuf__ float* dst, __ubuf__ bfloat16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_bf162f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_bf162s32a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.bf162s32a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.bf162s32a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_bf162s32a(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_bf162s32a(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_bf162s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_bf162s32c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.bf162s32c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.bf162s32c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_bf162s32c(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_bf162s32c(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_bf162s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_bf162s32f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.bf162s32f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.bf162s32f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_bf162s32f(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_bf162s32f(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_bf162s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_bf162s32r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.bf162s32r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.bf162s32r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_bf162s32r(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_bf162s32r(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_bf162s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_bf162s32z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.bf162s32z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.bf162s32z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_bf162s32z(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_bf162s32z(__ubuf__ int32_t* dst, __ubuf__ bfloat16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_bf162s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_deq`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.DEQ`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.DEQ(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_deq(__ubuf__ half* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deq(__ubuf__ half* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_deq(__ubuf__ half* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deq` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_deqs162b8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.DEQs162s8`
+    - `llvm.hivm.VCONV.DEQs162u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.DEQs162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCONV.DEQs162u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_deqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint64_t config, bool halfBlock);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool halfBlock);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_deqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config, bool halfBlock);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool halfBlock);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_deqs162b8h`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.deq.s162Sc8h.v220`
+    - `llvm.hivm.VCONV.deq.s162Uc8h.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.deq.s162Sc8h.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.deq.s162Uc8h.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_deqs162b8h(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deqs162b8h(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deqs162b8h` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_deqs162b8h(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deqs162b8h(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deqs162b8h` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_deqs162b8l`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.deq.s162Sc8l.v220`
+    - `llvm.hivm.VCONV.deq.s162Uc8l.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.deq.s162Sc8l.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.deq.s162Uc8l.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_deqs162b8l(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deqs162b8l(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deqs162b8l` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_deqs162b8l(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_deqs162b8l(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_deqs162b8l` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162f32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162f32(__ubuf__ float* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162f32(__ubuf__ float* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162f32(__ubuf__ float* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162f32(__ubuf__ float* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s16a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s16a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s16a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s16a(__ubuf__ int16_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s16a(__ubuf__ int16_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s16a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s16c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s16c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s16c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s16c(__ubuf__ int16_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s16c(__ubuf__ int16_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s16c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s16f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s16f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s16f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s16f(__ubuf__ int16_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s16f(__ubuf__ int16_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s16f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s16r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s16r`
+    - `llvm.hivm.VCONV.f162s16r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s16r(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.f162s16r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s16r(__ubuf__ int16_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s16r(__ubuf__ int16_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s16r(__ubuf__ int16_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s16z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s16z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s16z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s16z(__ubuf__ int16_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s16z(__ubuf__ int16_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s32a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s32a`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s32a(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s32a(__ubuf__ int32_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s32a(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32a(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32a(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s32c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s32c`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s32c(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s32c(__ubuf__ int32_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s32c(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32c(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32c(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s32f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s32f`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s32f(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s32f(__ubuf__ int32_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s32f(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32f(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32f(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s32r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s32r`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s32r(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s32r(__ubuf__ int32_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s32r(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32r(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32r(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s32z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s32z`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s32z(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s32z(__ubuf__ int32_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s32z(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32z(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s32z(__ubuf__ int32_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s4`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s4`
+    - `llvm.hivm.VCONV.f162s4.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s4(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.f162s4.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s4(__ubuf__ void* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s4(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s4(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s4a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s4a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s4a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s4a(__ubuf__ void* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s4a(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s4c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s4c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s4c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s4c(__ubuf__ void* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s4c(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s4f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s4f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s4f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s4f(__ubuf__ void* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s4f(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s4r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s4r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s4r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s4r(__ubuf__ void* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s4r(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s4z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s4z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s4z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s4z(__ubuf__ void* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s4z(__ubuf__ void* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s4z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s8a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s8a`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s8a(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s8a(__ubuf__ int8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s8a(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8a(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8a(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s8c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s8c`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s8c(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s8c(__ubuf__ int8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s8c(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8c(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8c(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s8f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s8f`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s8f(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s8f(__ubuf__ int8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s8f(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8f(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8f(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s8r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s8r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s8r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s8r(__ubuf__ int8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s8r(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162s8z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162s8z`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162s8z(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162s8z(__ubuf__ int8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162s8z(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8z(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162s8z(__ubuf__ int8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162s8z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162u8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162u8a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162u8a`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162u8a(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162u8a(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162u8a(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8a(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8a(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162u8c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162u8c`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162u8c(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162u8c(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162u8c(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8c(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8c(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162u8f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162u8f`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162u8f(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162u8f(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162u8f(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8f(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8f(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162u8r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162u8r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162u8r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162u8r(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162u8r(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f162u8z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f162u8z`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f162u8z(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f162u8z(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f162u8z(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8z(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f162u8z(__ubuf__ uint8_t* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f162u8z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322bf16a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322bf16a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322bf16a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322bf16a(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322bf16a(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322bf16a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322bf16c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322bf16c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322bf16c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322bf16c(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322bf16c(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322bf16c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322bf16f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322bf16f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322bf16f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322bf16f(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322bf16f(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322bf16f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322bf16r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322bf16r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322bf16r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322bf16r(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322bf16r(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322bf16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322bf16z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322bf16z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322bf16z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322bf16z(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322bf16z(__ubuf__ bfloat16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322bf16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16a(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16a(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16c(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16c(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16f(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16f(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16o`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16o`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16o(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16o(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16o(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16o` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322f16o(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16o` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322f16o(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16o` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16r(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16r(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f16z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f16z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f16z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f16z(__ubuf__ half* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f16z(__ubuf__ half* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f32a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f32a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f32a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f32a(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f32a(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f32c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f32c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f32c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f32c(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f32c(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f32f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f32f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f32f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f32f(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f32f(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f32r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f32r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f32r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f32r(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f32r(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322f32z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322f32z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322f32z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322f32z(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322f32z(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322f32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s16a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s16a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s16a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s16a(__ubuf__ int16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s16a(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s16c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s16c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s16c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s16c(__ubuf__ int16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s16c(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s16f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s16f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s16f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s16f(__ubuf__ int16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s16f(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s16r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s16r`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s16r(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s16r(__ubuf__ int16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s16r(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s16r(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s16r(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s16z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s16z`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s16z(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s16z(__ubuf__ int16_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s16z(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s16z(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s16z(__ubuf__ int16_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s32a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s32a`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s32a(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s32a(__ubuf__ int32_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s32a(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32a(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32a(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s32c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s32c`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s32c(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s32c(__ubuf__ int32_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s32c(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32c(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32c(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s32f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s32f`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s32f(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s32f(__ubuf__ int32_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s32f(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32f(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32f(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s32r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s32r`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s32r(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s32r(__ubuf__ int32_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s32r(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32r(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32r(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s32z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s32z`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s32z(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s32z(__ubuf__ int32_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s32z(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32z(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_f322s32z(__ubuf__ int32_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s64a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s64a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s64a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s64a(__ubuf__ int64_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s64a(__ubuf__ int64_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s64a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s64c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s64c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s64c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s64c(__ubuf__ int64_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s64c(__ubuf__ int64_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s64c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s64f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s64f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s64f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s64f(__ubuf__ int64_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s64f(__ubuf__ int64_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s64f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s64r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s64r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s64r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s64r(__ubuf__ int64_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s64r(__ubuf__ int64_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s64r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_f322s64z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.f322s64z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.f322s64z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_f322s64z(__ubuf__ int64_t* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_f322s64z(__ubuf__ int64_t* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_f322s64z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f16`
+    - `llvm.hivm.VCONV.s162f16.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.s162f16.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f16(__ubuf__ half* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f16(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_s162f16(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f16a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f16a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f16a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f16a(__ubuf__ half* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f16a(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f16c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f16c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f16c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f16c(__ubuf__ half* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f16c(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f16f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f16f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f16f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f16f(__ubuf__ half* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f16f(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f16r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f16r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f16r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f16r(__ubuf__ half* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f16r(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f16z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f16z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f16z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f16z(__ubuf__ half* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f16z(__ubuf__ half* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f16z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s162f32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s162f32`
+    - `llvm.hivm.VCONV.s162f32.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s162f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.s162f32.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s162f32(__ubuf__ float* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s162f32(__ubuf__ float* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_s162f32(__ubuf__ float* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s162f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322f32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322f32(__ubuf__ float* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322f32(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_s322f32(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_s322f32(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322f32a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322f32a.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322f32a.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322f32a(__ubuf__ float* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322f32a(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322f32c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322f32c.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322f32c.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322f32c(__ubuf__ float* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322f32c(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322f32f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322f32f.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322f32f.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322f32f(__ubuf__ float* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322f32f(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322f32r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322f32r.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322f32r.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322f32r(__ubuf__ float* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322f32r(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322f32z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322f32z.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322f32z.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322f32z(__ubuf__ float* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322f32z(__ubuf__ float* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322f32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322s16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322s16.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322s16.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322s16(__ubuf__ int16_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322s16(__ubuf__ int16_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322s16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s322s64`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s322s64.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s322s64.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s322s64(__ubuf__ int64_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s322s64(__ubuf__ int64_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s322s64` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s42f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s42f16.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s42f16.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s42f16(__ubuf__ half* dst, __ubuf__ void* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s42f16(__ubuf__ half* dst, __ubuf__ void* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s42f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s642f32a`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s642f32a.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s642f32a.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s642f32a(__ubuf__ float* dst, __ubuf__ int64_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s642f32a(__ubuf__ float* dst, __ubuf__ int64_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s642f32a` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s642f32c`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s642f32c.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s642f32c.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s642f32c(__ubuf__ float* dst, __ubuf__ int64_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s642f32c(__ubuf__ float* dst, __ubuf__ int64_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s642f32c` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s642f32f`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s642f32f.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s642f32f.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s642f32f(__ubuf__ float* dst, __ubuf__ int64_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s642f32f(__ubuf__ float* dst, __ubuf__ int64_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s642f32f` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s642f32r`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s642f32r.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s642f32r.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s642f32r(__ubuf__ float* dst, __ubuf__ int64_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s642f32r(__ubuf__ float* dst, __ubuf__ int64_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s642f32r` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s642f32z`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s642f32z.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s642f32z.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s642f32z(__ubuf__ float* dst, __ubuf__ int64_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s642f32z(__ubuf__ float* dst, __ubuf__ int64_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s642f32z` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s642s32`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s642s32.1.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s642s32.1.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s642s32(__ubuf__ int32_t* dst, __ubuf__ int64_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s642s32(__ubuf__ int32_t* dst, __ubuf__ int64_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s642s32` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_s82f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.s82f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.s82f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_s82f16(__ubuf__ half* dst, __ubuf__ int8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_s82f16(__ubuf__ half* dst, __ubuf__ int8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s82f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_s82f16(__ubuf__ half* dst, __ubuf__ int8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s82f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_s82f16(__ubuf__ half* dst, __ubuf__ int8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_s82f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_u82f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.u82f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.u82f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_u82f16(__ubuf__ half* dst, __ubuf__ uint8_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_u82f16(__ubuf__ half* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_u82f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_u82f16(__ubuf__ half* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_u82f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_u82f16(__ubuf__ half* dst, __ubuf__ uint8_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_u82f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_vdeqs162b8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.VDEQs162s8`
+    - `llvm.hivm.VCONV.VDEQs162u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.VDEQs162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VCONV.VDEQs162u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint64_t config, bool halfBlock);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool halfBlock);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config, bool halfBlock);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool halfBlock);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_vdeqs162b8h`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.vdeq.s162Sc8h.v220`
+    - `llvm.hivm.VCONV.vdeq.s162Uc8h.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.vdeq.s162Sc8h.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.vdeq.s162Uc8h.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_vdeqs162b8h(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_vdeqs162b8h(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_vdeqs162b8h` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_vdeqs162b8h(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_vdeqs162b8h(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_vdeqs162b8h` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vconv_vdeqs162b8l`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCONV.vdeq.s162Sc8l.v220`
+    - `llvm.hivm.VCONV.vdeq.s162Uc8l.v220`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCONV.vdeq.s162Sc8l.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCONV.vdeq.s162Uc8l.v220(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vconv_vdeqs162b8l(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_vdeqs162b8l(__ubuf__ int8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_vdeqs162b8l` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vconv_vdeqs162b8l(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vconv_vdeqs162b8l(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vconv_vdeqs162b8l` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcopy`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCOPY.s16`
+    - `llvm.hivm.VCOPY.s32`
+    - `llvm.hivm.VCOPY.u16`
+    - `llvm.hivm.VCOPY.u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCOPY.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCOPY.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCOPY.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCOPY.u32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcopy(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcopy(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstStride, uint16_t srcStride, uint16_t dstRepeatSize, uint16_t srcRepeatSize);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcopy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcopy(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcopy(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstStride, uint16_t srcStride, uint16_t dstRepeatSize, uint16_t srcRepeatSize);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcopy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcopy(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcopy(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstStride, uint16_t srcStride, uint16_t dstRepeatSize, uint16_t srcRepeatSize);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcopy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcopy(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcopy(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t repeat, uint16_t dstStride, uint16_t srcStride, uint16_t dstRepeatSize, uint16_t srcRepeatSize);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcopy` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vcpadd`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VCPADD.f16`
+    - `llvm.hivm.VCPADD.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VCPADD.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VCPADD.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vcpadd(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcpadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcpadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcpadd(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcpadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcpadd(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vcpadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcpadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vcpadd(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vcpadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vdiv`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VDIV.f16`
+    - `llvm.hivm.VDIV.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VDIV.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VDIV.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vdiv(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vdiv(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vdiv` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vdiv(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vdiv` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vdiv(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vdiv(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vdiv` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vdiv(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vdiv` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vdp`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VDP.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VDP.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vdp(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint16_t numPixel, uint8_t numMaxDisparity, uint16_t offsetPixel, uint16_t dynamicAddrRange, bool isBeginPixel, bool isPathReverse, bool pathMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vdp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vdp(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vector_dup`
+  - LLVM intrinsic names:
+    - `llvm.hivm.MOVEV.bf16`
+    - `llvm.hivm.MOVEV.f16`
+    - `llvm.hivm.MOVEV.f32`
+    - `llvm.hivm.MOVEV.s16`
+    - `llvm.hivm.MOVEV.s32`
+    - `llvm.hivm.MOVEV.u16`
+    - `llvm.hivm.MOVEV.u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.MOVEV.bf16(ptr addrspace(6) nocapture writeonly, bfloat, i64) #1`
+    - `declare void @llvm.hivm.MOVEV.f16(ptr addrspace(6) nocapture writeonly, half, i64) #1`
+    - `declare void @llvm.hivm.MOVEV.f32(ptr addrspace(6) nocapture writeonly, float, i64) #1`
+    - `declare void @llvm.hivm.MOVEV.s16(ptr addrspace(6) nocapture writeonly, i64, i64) #1`
+    - `declare void @llvm.hivm.MOVEV.s32(ptr addrspace(6) nocapture writeonly, i64, i64) #1`
+    - `declare void @llvm.hivm.MOVEV.u16(ptr addrspace(6) nocapture writeonly, i64, i64) #1`
+    - `declare void @llvm.hivm.MOVEV.u32(ptr addrspace(6) nocapture writeonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vector_dup(__ubuf__ bfloat16_t* dst, bfloat16_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ bfloat16_t* dst, bfloat16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ float* dst, float src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ float* dst, float src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ float* dst, float src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ float* dst, float src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ half* dst, half src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ half* dst, half src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ half* dst, half src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ half* dst, half src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ int16_t* dst, int16_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ int16_t* dst, int16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ int16_t* dst, int16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ int16_t* dst, int16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ int32_t* dst, int32_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ int32_t* dst, int32_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ int32_t* dst, int32_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ int32_t* dst, int32_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint16_t* dst, uint16_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint16_t* dst, uint16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint16_t* dst, uint16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint16_t* dst, uint16_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint32_t* dst, uint32_t src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint32_t* dst, uint32_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint32_t* dst, uint32_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vector_dup(__ubuf__ uint32_t* dst, uint32_t src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vector_dup` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vexp`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VEXP.f16`
+    - `llvm.hivm.VEXP.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VEXP.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VEXP.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vexp(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vexp(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vexp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vexp(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vexp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vexp(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vexp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vexp(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vexp(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vexp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vexp(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vexp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vexp(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vexp` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vextract`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VEXTRACT.f16`
+    - `llvm.hivm.VEXTRACT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VEXTRACT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VEXTRACT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vextract(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vextract(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint8_t stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vextract` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vextract(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vextract(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint8_t stride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vextract` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vgather`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VGATHER.b16`
+    - `llvm.hivm.VGATHER.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VGATHER.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VGATHER.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vgather(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint32_t offsetAddr, bool repeatStrideMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vgather` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vgather(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint32_t offsetAddr, uint16_t dstRepeatStride, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vgather` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vgather(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vgather(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t offsetAddr, bool repeatStrideMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vgather` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vgather(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t offsetAddr, uint16_t dstRepeatStride, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vgather` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vgather(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vgatherb`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VGATHERB.b16`
+    - `llvm.hivm.VGATHERB.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VGATHERB.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VGATHERB.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vgatherb(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint32_t offsetAddr, uint16_t dstRepeatStride, uint8_t dstBlockStride, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vgatherb` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vgatherb(__ubuf__ uint16_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vgatherb(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t offsetAddr, uint16_t dstRepeatStride, uint8_t dstBlockStride, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vgatherb` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vgatherb(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vld_va_reg`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VLD.VA.REG`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VLD.VA.REG(i64, ptr addrspace(6) nocapture, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vld_va_reg(ub_addr8_t dst, __ubuf__ uint64_t* src, vpart_t config);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vld_va_reg` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vln`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VLN.f16`
+    - `llvm.hivm.VLN.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VLN.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VLN.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vln(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vln(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vln` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vln(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vln` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vln(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vln` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vln(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vln(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vln` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vln(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vln` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vln(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vln` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vlrelu`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VLRELU.f16`
+    - `llvm.hivm.VLRELU.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VLRELU.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VLRELU.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vlrelu(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vlrelu(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t src0BlockStride, uint16_t dstRepeatStride, uint16_t src0RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vlrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vlrelu(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t src0BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vlrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vlrelu(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vlrelu(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t src0BlockStride, uint16_t dstRepeatStride, uint16_t src0RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vlrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vlrelu(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t src0BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vlrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmadd`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMADD.f16`
+    - `llvm.hivm.VMADD.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMADD.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMADD.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmadd(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmadd(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmadd(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmadd(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmadd(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmadd(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmadd` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmaddrelu`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMADDRELU.f16`
+    - `llvm.hivm.VMADDRELU.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMADDRELU.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMADDRELU.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmaddrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmaddrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaddrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaddrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmaddrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaddrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaddrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmax`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMAX.f16`
+    - `llvm.hivm.VMAX.f32`
+    - `llvm.hivm.VMAX.s16`
+    - `llvm.hivm.VMAX.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMAX.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMAX.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMAX.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMAX.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmax(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmax(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmax(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmax(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmax(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmax(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmax` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmaxs`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMAXS.f16`
+    - `llvm.hivm.VMAXS.f32`
+    - `llvm.hivm.VMAXS.s16`
+    - `llvm.hivm.VMAXS.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMAXS.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VMAXS.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+    - `declare void @llvm.hivm.VMAXS.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VMAXS.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmaxs(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmaxs(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmaxs(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmaxs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmaxs(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmaxs(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmaxs` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmin`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMIN.f16`
+    - `llvm.hivm.VMIN.f32`
+    - `llvm.hivm.VMIN.s16`
+    - `llvm.hivm.VMIN.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMIN.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMIN.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMIN.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMIN.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmin(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmin(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmin(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmin(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmin(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmin(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmin` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmins`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMINS.f16`
+    - `llvm.hivm.VMINS.f32`
+    - `llvm.hivm.VMINS.s16`
+    - `llvm.hivm.VMINS.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMINS.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VMINS.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+    - `declare void @llvm.hivm.VMINS.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VMINS.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmins(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmins(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmins(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmins(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmins(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmins(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmins` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmla`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMLA.f16`
+    - `llvm.hivm.VMLA.f32`
+    - `llvm.hivm.VMLA.fmix`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMLA.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMLA.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMLA.fmix(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmla(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmla(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmla` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmla(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmla` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmla(__ubuf__ float* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmla(__ubuf__ float* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmla` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmla(__ubuf__ float* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmla` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmla(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmla(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmla` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmla(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmla` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmrgsort4`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMRGSORT.f16`
+    - `llvm.hivm.VMRGSORT.f16.V300`
+    - `llvm.hivm.VMRGSORT.f32`
+    - `llvm.hivm.VMRGSORT.f32.V300`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMRGSORT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMRGSORT.f16.V300(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VMRGSORT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMRGSORT.f32.V300(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec, dav-m300`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmrgsort4(__ubuf__ float* const arg0, __ubuf__ float** const arg1, uint64_t arg2);`
+      - Parameter packing: Direct bottom-level form: `arg2` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmrgsort4(__ubuf__ float* dst, __ubuf__ float** src, uint8_t repeat, uint16_t regionProposalLi0, uint16_t regionProposalLi1, uint16_t regionProposalLi2, uint16_t regionProposalLi3, bool isAllStored, uint8_t maskSignal);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4637): `/* #5078 */ __builtin_cce_vmrgsort4(dst, src, ((regionProposalLi0 & 0xffff) << 0 | (regionProposalLi1 & 0xffff) << 16 | (regionProposalLi2 & 0xffff) << 32 | (regionProposalLi3 & 0xffff) << 48), ((repeat & 0xff) << 0 | (isAllStored & 0x1) << 12 | (maskSignal & 0xf) << 8))`
+    - `void __builtin_cce_vmrgsort4(__ubuf__ float* dst, __ubuf__ float** src0, uint64_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `src1, config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmrgsort4(__ubuf__ half* const arg0, __ubuf__ half** const arg1, uint64_t arg2);`
+      - Parameter packing: Direct bottom-level form: `arg2` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmrgsort4(__ubuf__ half* dst, __ubuf__ half** src, uint8_t repeat, uint16_t regionProposalLi0, uint16_t regionProposalLi1, uint16_t regionProposalLi2, uint16_t regionProposalLi3, bool isAllStored, uint8_t maskSignal);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4637): `/* #5078 */ __builtin_cce_vmrgsort4(dst, src, ((regionProposalLi0 & 0xffff) << 0 | (regionProposalLi1 & 0xffff) << 16 | (regionProposalLi2 & 0xffff) << 32 | (regionProposalLi3 & 0xffff) << 48), ((repeat & 0xff) << 0 | (isAllStored & 0x1) << 12 | (maskSignal & 0xf) << 8))`
+    - `void __builtin_cce_vmrgsort4(__ubuf__ half* dst, __ubuf__ half** src0, uint64_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `src1, config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vmul`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMUL.f16`
+    - `llvm.hivm.VMUL.f32`
+    - `llvm.hivm.VMUL.s16`
+    - `llvm.hivm.VMUL.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMUL.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMUL.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMUL.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VMUL.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmul(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmul(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmul(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmul(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmul(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmul(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmul` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmulconv_f162s8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMULCONV.f162s8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMULCONV.f162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmulconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmulconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmulconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmulconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmulconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmulconv_f162u8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMULCONV.f162u8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMULCONV.f162u8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmulconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmulconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmulconv_f162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmulconv_f162u8(__ubuf__ uint8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmulconv_f162u8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vmuls`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VMULS.f16`
+    - `llvm.hivm.VMULS.f32`
+    - `llvm.hivm.VMULS.s16`
+    - `llvm.hivm.VMULS.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VMULS.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, half, i64) #1`
+    - `declare void @llvm.hivm.VMULS.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, float, i64) #1`
+    - `declare void @llvm.hivm.VMULS.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VMULS.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vmuls(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmuls(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ float* dst, __ubuf__ float* src0, float src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmuls(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ half* dst, __ubuf__ half* src0, half src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmuls(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, int16_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vmuls(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vmuls(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, int32_t src1, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vmuls` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vnot`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VNOT.s16`
+    - `llvm.hivm.VNOT.u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VNOT.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VNOT.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vnot(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vnot(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vnot` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vnot(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vnot` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vnot(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vnot` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vnot(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vnot(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vnot` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vnot(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vnot` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vnot(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vnot` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vor`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VOR.s16`
+    - `llvm.hivm.VOR.u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VOR.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VOR.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vor(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vor(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vor` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vor(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vor` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vor(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vor(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vor` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vor(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vor` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vpadding`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VPADDING.b16`
+    - `llvm.hivm.VPADDING.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VPADDING.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VPADDING.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vpadding(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vpadding(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, uint8_t padMode, bool padSide);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vpadding` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vpadding(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vpadding(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, uint8_t padMode, bool padSide);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vpadding` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vrec`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VREC.f16`
+    - `llvm.hivm.VREC.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VREC.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VREC.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vrec(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrec(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrec` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrec(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrec` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrec(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrec` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrec(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrec(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrec` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrec(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrec` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrec(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrec` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vreduce`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VREDUCE.b16`
+    - `llvm.hivm.VREDUCE.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VREDUCE.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VREDUCE.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vreduce(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vreduce(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vreduce` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vreduce(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint8_t repeat, uint8_t src0BlockStride, uint8_t patternMode, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vreduce` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vreduce(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src0, __ubuf__ uint32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vreduce(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src0, __ubuf__ uint32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vreduce` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vreduce(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src0, __ubuf__ uint32_t* src1, uint8_t repeat, uint8_t src0BlockStride, uint8_t patternMode, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vreduce` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vreducev2`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VREDUCEv2.b16`
+    - `llvm.hivm.VREDUCEv2.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VREDUCEv2.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VREDUCEv2.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vreducev2(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint16_t repeat, uint8_t src0BlockStride, uint8_t patternMode, uint16_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vreducev2` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vreducev2(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src0, __ubuf__ uint16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vreducev2(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src0, __ubuf__ uint32_t* src1, uint16_t repeat, uint8_t src0BlockStride, uint8_t patternMode, uint16_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vreducev2` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vreducev2(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src0, __ubuf__ uint32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vrelu`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VRELU.f16`
+    - `llvm.hivm.VRELU.f32`
+    - `llvm.hivm.VRELU.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VRELU.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VRELU.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VRELU.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vrelu(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrelu(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrelu(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrelu(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrelu(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vrsqrt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VRSQRT.f16`
+    - `llvm.hivm.VRSQRT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VRSQRT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VRSQRT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vrsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vrsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vrsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vrsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vscatter`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSCATTER.b16`
+    - `llvm.hivm.VSCATTER.b32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSCATTER.b16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSCATTER.b32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vscatter(__ubuf__ uint32_t* dst, __ubuf__ uint16_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vscatter(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+- `__builtin_cce_vsel`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSEL.f16`
+    - `llvm.hivm.VSEL.f16.1`
+    - `llvm.hivm.VSEL.f32`
+    - `llvm.hivm.VSEL.f32.1`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSEL.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSEL.f16.1(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSEL.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSEL.f32.1(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ void* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ void* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ void* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ void* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ void* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ void* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ void* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsel(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ void* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, uint8_t selectMode, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsel` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vshl`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSHL.s16`
+    - `llvm.hivm.VSHL.s32`
+    - `llvm.hivm.VSHL.u16`
+    - `llvm.hivm.VSHL.u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSHL.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VSHL.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VSHL.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+    - `declare void @llvm.hivm.VSHL.u32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vshl(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint32_t shlDistance, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshl(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint32_t shlDistance, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshl(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shlDistance, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshl(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shlDistance, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshl(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshl(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shlDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshl` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vshr`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSHR.s16`
+    - `llvm.hivm.VSHR.s32`
+    - `llvm.hivm.VSHR.u16`
+    - `llvm.hivm.VSHR.u32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSHR.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64, i64) #1`
+    - `declare void @llvm.hivm.VSHR.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64, i64) #1`
+    - `declare void @llvm.hivm.VSHR.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64, i64) #1`
+    - `declare void @llvm.hivm.VSHR.u32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vshr(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int32_t shrDistance, uint64_t config, bool round);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshr(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ int16_t* dst, __ubuf__ int16_t* src, int32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t shrDistance, uint64_t config, bool round);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshr(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ int32_t* dst, __ubuf__ int32_t* src, int32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shrDistance, uint64_t config, bool round);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshr(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shrDistance, uint64_t config, bool round);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vshr(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vshr(__ubuf__ uint32_t* dst, __ubuf__ uint32_t* src, uint32_t shrDistance, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode, bool round);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vshr` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsort`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSORT.f16`
+    - `llvm.hivm.VSORT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSORT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSORT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-t210`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsort(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsort(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsort` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsort(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsort(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsort` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsqrt`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSQRT.f16`
+    - `llvm.hivm.VSQRT.f32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSQRT.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSQRT.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsqrt(__ubuf__ float* dst, __ubuf__ float* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint16_t dstRepeatStride, uint16_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsqrt(__ubuf__ half* dst, __ubuf__ half* src, uint8_t repeat, uint16_t dstBlockStride, uint16_t srcBlockStride, uint8_t dstRepeatStride, uint8_t srcRepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsqrt` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsub`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSUB.f16`
+    - `llvm.hivm.VSUB.f32`
+    - `llvm.hivm.VSUB.s16`
+    - `llvm.hivm.VSUB.s32`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSUB.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSUB.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSUB.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSUB.s32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsub(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsub(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsub(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsub(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsub(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsub(__ubuf__ int32_t* dst, __ubuf__ int32_t* src0, __ubuf__ int32_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsub` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsubrelu`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSUBRELU.f16`
+    - `llvm.hivm.VSUBRELU.f32`
+    - `llvm.hivm.VSUBRELU.s16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSUBRELU.f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSUBRELU.f32(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.VSUBRELU.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsubrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubrelu(__ubuf__ float* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubrelu(__ubuf__ half* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubrelu(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubrelu(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubrelu(__ubuf__ int16_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubrelu` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsubreluconv_f162s8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSUBRELUCONV.f162s8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSUBRELUCONV.f162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsubreluconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubreluconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubreluconv_f162s8(__ubuf__ int8_t* dst, __ubuf__ half* src0, __ubuf__ half* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_f162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsubreluconv_f322f16`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSUBRELUCONV.f322f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSUBRELUCONV.f322f16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsubreluconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubreluconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubreluconv_f322f16(__ubuf__ half* dst, __ubuf__ float* src0, __ubuf__ float* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_f322f16` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsubreluconv_s162s8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSUBRELUCONV.s162s8`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSUBRELUCONV.s162s8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-c220-vec, dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsubreluconv_s162s8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubreluconv_s162s8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_s162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubreluconv_s162s8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_s162s8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vsubreluconv_vdeqs162b8`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VSUBRELUCONV.VDEQs162b8`
+    - `llvm.hivm.VSUBRELUCONV.VDEQs162b8.1`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VSUBRELUCONV.VDEQs162b8(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+    - `declare void @llvm.hivm.VSUBRELUCONV.VDEQs162b8.1(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly, ptr addrspace(6) nocapture, i64, i64) #1`
+  - Probe targets used: `dav-s200`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vsubreluconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubreluconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4657): `/* #5307 */ __builtin_cce_vsubreluconv_vdeqs162b8(dst, src0, src1, ((repeat & 0xff) << 56 | (dstBlockStride & 0xff) << 0 | (src0BlockStride & 0xff) << 8 | (src1BlockStride & 0xff) << 16 | (dstRepeatStride & 0xff) << 24 | (src0RepeatStride & 0xff) << 32 | (src1RepeatStride & 0xff) << 40), h)`
+    - `void __builtin_cce_vsubreluconv_vdeqs162b8(__ubuf__ int8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vsubreluconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint64_t config, bool h);`
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_vsubreluconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool h);`
+      - Parameter packing: Header packing comment (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4652): `/* #5308 */ __builtin_cce_vsubreluconv_vdeqs162b8(dst, src0, src1, ((repeat & 0xff) << 56 | (dstBlockStride & 0xff) << 0 | (src0BlockStride & 0xff) << 8 | (src1BlockStride & 0xff) << 16 | (dstRepeatStride & 0xff) << 24 | (src0RepeatStride & 0xff) << 32 | (src1RepeatStride & 0xff) << 40), h)`
+    - `void __builtin_cce_vsubreluconv_vdeqs162b8(__ubuf__ uint8_t* dst, __ubuf__ int16_t* src0, __ubuf__ int16_t* src1, uint8_t repeat, uint8_t dstBlockStride, uint8_t src0BlockStride, uint8_t src1BlockStride, uint8_t dstRepeatStride, uint8_t src0RepeatStride, uint8_t src1RepeatStride, bool repeatStrideMode, bool strideSizeMode, bool h);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_vtranspose`
+  - LLVM intrinsic names:
+    - `llvm.hivm.VTRANSPOSE.s16`
+    - `llvm.hivm.VTRANSPOSE.u16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.VTRANSPOSE.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly) #1`
+    - `declare void @llvm.hivm.VTRANSPOSE.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly) #1`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ pointer-form signatures:
+    - `void __builtin_cce_vtranspose(__ubuf__ int16_t* dst, __ubuf__ int16_t* src);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vtranspose` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+    - `void __builtin_cce_vtranspose(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src);`
+      - Parameter packing: No CANN `// ->` packing comment found for wrapper `vtranspose` with this parameter list in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_set_cmpmask`
+  - Category: A2/A3 vector mask/control builtin.
+  - C++ wrapper alias: `set_cmpmask` in `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2027`.
+  - Stub signature source: `.local/cann/tools/tikicpulib/lib/include/stub_fun.h:6692`.
+  - LLVM intrinsic names:
+    - `llvm.hivm.SET.CMPMASK`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.CMPMASK(ptr addrspace(6) nocapture readonly) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.CMPMASK(ptr addrspace(6) null)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ mask/control signatures:
+    - `void __builtin_cce_set_cmpmask(__ubuf__ void* src);`
+      - Parameter packing: Direct bottom-level form: `src` is a UB pointer to the compare-mask source; no CANN `// ->` wrapper packing comment was found in `cce_aicore_intrinsics_3101.h`.
+- `__builtin_cce_set_mask_count`
+  - Category: A2/A3 vector mask/control builtin.
+  - C++ wrapper alias: `set_mask_count` in `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:877`.
+  - Stub signature source: `.local/cann/tools/tikicpulib/lib/include/stub_fun.h:6806`.
+  - LLVM intrinsic names:
+    - `llvm.hivm.SET.MASK.COUNT`
+    - `llvm.hivm.GET.CTRL`
+    - `llvm.hivm.SBITSET1`
+    - `llvm.hivm.SET.CTRL`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.MASK.COUNT() #1`
+    - `declare i64 @llvm.hivm.GET.CTRL() #1`
+    - `declare i64 @llvm.hivm.SBITSET1(i64, i64) #2`
+    - `declare void @llvm.hivm.SET.CTRL(i64) #1`
+  - Actual probe calls:
+    - `%1 = call i64 @llvm.hivm.GET.CTRL()`
+    - `%2 = call i64 @llvm.hivm.SBITSET1(i64 %1, i64 56)`
+    - `call void @llvm.hivm.SET.CTRL(i64 %2)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ mask/control signatures:
+    - `void __builtin_cce_set_mask_count();`
+      - Parameter packing: Header wrapper expansion (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4385): `/* #3885 */ __builtin_cce_set_ctrl(/* #3406 */ __builtin_cce_sbitset1(/* #1952 */ __builtin_cce_get_ctrl(), 56))`
+- `__builtin_cce_set_mask_norm`
+  - Category: A2/A3 vector mask/control builtin.
+  - C++ wrapper alias: `set_mask_norm` in `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:879`.
+  - Stub signature source: `.local/cann/tools/tikicpulib/lib/include/stub_fun.h:6807`.
+  - LLVM intrinsic names:
+    - `llvm.hivm.SET.MASK.NORM`
+    - `llvm.hivm.GET.CTRL`
+    - `llvm.hivm.SBITSET0`
+    - `llvm.hivm.SET.CTRL`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.MASK.NORM() #1`
+    - `declare i64 @llvm.hivm.GET.CTRL() #1`
+    - `declare i64 @llvm.hivm.SBITSET0(i64, i64) #2`
+    - `declare void @llvm.hivm.SET.CTRL(i64) #1`
+  - Actual probe calls:
+    - `%1 = call i64 @llvm.hivm.GET.CTRL()`
+    - `%2 = call i64 @llvm.hivm.SBITSET0(i64 %1, i64 56)`
+    - `call void @llvm.hivm.SET.CTRL(i64 %2)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ mask/control signatures:
+    - `void __builtin_cce_set_mask_norm();`
+      - Parameter packing: Header wrapper expansion (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4390): `/* #3885 */ __builtin_cce_set_ctrl(/* #3405 */ __builtin_cce_sbitset0(/* #1952 */ __builtin_cce_get_ctrl(), 56))`
+- `__builtin_cce_set_vector_mask`
+  - Category: A2/A3 vector mask/control builtin.
+  - C++ wrapper alias: `set_vector_mask` in `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:917`.
+  - Stub signature source: `.local/cann/tools/tikicpulib/lib/include/stub_fun.h:6886`.
+  - LLVM intrinsic names:
+    - `llvm.hivm.SET.VECTOR.MASK`
+    - `llvm.hivm.MOVEMASK`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.VECTOR.MASK(i64, i64) #1`
+    - `declare void @llvm.hivm.MOVEMASK(i64, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOVEMASK(i64 1, i64 1)`
+    - `call void @llvm.hivm.MOVEMASK(i64 0, i64 2)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ mask/control signatures:
+    - `void __builtin_cce_set_vector_mask(uint64_t mask1, uint64_t mask0);`
+      - Parameter packing: Header wrapper expansion (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4505-.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4506): `/* #5432 */ movemask(1, mask1); /* #5432 */ movemask(0, mask0)`
+- `__builtin_cce_set_vector_mask_dup`
+  - Category: A2/A3 vector mask/control builtin.
+  - C++ wrapper alias: `set_vector_mask_dup` in `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:919`.
+  - Stub signature source: `.local/cann/tools/tikicpulib/lib/include/stub_fun.h:6887`.
+  - LLVM intrinsic names:
+    - `llvm.hivm.SET.VECTOR.MASK.dup`
+    - `llvm.hivm.MOVEMASK`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.VECTOR.MASK.dup(i64) #1`
+    - `declare void @llvm.hivm.MOVEMASK(i64, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOVEMASK(i64 1, i64 1)`
+    - `call void @llvm.hivm.MOVEMASK(i64 0, i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ mask/control signatures:
+    - `void __builtin_cce_set_vector_mask_dup(uint64_t mask);`
+      - Parameter packing: Header wrapper expansion (.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4511-.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4512): `/* #5432 */ movemask(1, mask); /* #5432 */ movemask(0, mask)`

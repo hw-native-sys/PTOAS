@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test that pto.ub.set_mask is lowered to two llvm.hivm.MOVEMASK calls
+// per CCE expansion: movemask(0, mask0); movemask(1, mask1).
+
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a3 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+
+  func.func @set_mask_full() attributes {pto.aicore} {
+    %cNeg1 = arith.constant -1 : i64
+    pto.ub.set_mask %cNeg1, %cNeg1 : i64, i64
+    return
+  }
+
+  func.func @set_mask_tail() attributes {pto.aicore} {
+    %c16 = arith.constant 16 : i64
+    %c0 = arith.constant 0 : i64
+    pto.ub.set_mask %c0, %c16 : i64, i64
+    return
+  }
+}
+
+// CHECK-LABEL: llvm.func @set_mask_full_mix_aiv
+// Two MOVEMASK calls per set_mask: index 0 then index 1
+// CHECK: llvm.call @llvm.hivm.MOVEMASK({{%.*}}, {{%.*}}) : (i64, i64) -> ()
+// CHECK: llvm.call @llvm.hivm.MOVEMASK({{%.*}}, {{%.*}}) : (i64, i64) -> ()
+
+// CHECK-LABEL: llvm.func @set_mask_tail_mix_aiv
+// CHECK: llvm.call @llvm.hivm.MOVEMASK({{%.*}}, {{%.*}}) : (i64, i64) -> ()
+// CHECK: llvm.call @llvm.hivm.MOVEMASK({{%.*}}, {{%.*}}) : (i64, i64) -> ()

@@ -258,6 +258,18 @@ getTargetCPU(mlir::pto::ObjectEmissionDeviceTarget target) {
   llvm_unreachable("unknown object emission device target");
 }
 
+static std::string resolveTargetCPU(llvm::Module &module,
+                                    mlir::pto::ObjectEmissionDeviceTarget fallback) {
+  for (llvm::Function &f : module) {
+    if (f.hasFnAttribute("target-cpu")) {
+      std::string cpu = f.getFnAttribute("target-cpu").getValueAsString().str();
+      if (!cpu.empty())
+        return cpu;
+    }
+  }
+  return getTargetCPU(fallback).str();
+}
+
 class VPTOFatobjArtifacts {
 public:
   explicit VPTOFatobjArtifacts(mlir::pto::TempFileRegistry &tempFiles)
@@ -911,9 +923,12 @@ mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
     return failure();
   if (failed(writeLLVMModule(module, llPath, diagOS)))
     return failure();
-  return compileLLVMToDeviceObject(llPath, outObjPath,
-                                   ObjectEmissionDeviceTarget::Vector,
-                                   toolchain, stderrPath, diagOS);
+  return compileDeviceLLVMToObject(llPath, outObjPath,
+                                   resolveTargetCPU(module,
+                                                    ObjectEmissionDeviceTarget::Vector),
+                                   toolchain.bishengPath, stderrPath, diagOS)
+             ? success()
+             : failure();
 }
 
 mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
@@ -927,9 +942,12 @@ mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
     return failure();
   if (failed(writeLLVMModule(module, llPath, diagOS)))
     return failure();
-  return compileLLVMToDeviceObject(llPath, outObjPath,
-                                   ObjectEmissionDeviceTarget::Cube,
-                                   toolchain, stderrPath, diagOS);
+  return compileDeviceLLVMToObject(llPath, outObjPath,
+                                   resolveTargetCPU(module,
+                                                    ObjectEmissionDeviceTarget::Cube),
+                                   toolchain.bishengPath, stderrPath, diagOS)
+             ? success()
+             : failure();
 }
 
 mlir::LogicalResult mlir::pto::emitFatobjLLVM(

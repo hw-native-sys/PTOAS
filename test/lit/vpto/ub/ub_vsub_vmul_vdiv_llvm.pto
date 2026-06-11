@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test pto.ub.vsub/vmul/vdiv → llvm.hivm.VSUB/VMUL/VDIV lowering.
+
+// RUN: (mkdir -p %T && ptoas --pto-arch=a3 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+// CHECK-LABEL: llvm.func @vsub_llvm_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VSUB.f32
+
+// CHECK-LABEL: llvm.func @vmul_llvm_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VMUL.f32
+
+// CHECK-LABEL: llvm.func @vdiv_llvm_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VDIV.f32
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+
+  func.func @vsub_llvm() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c8 = arith.constant 8 : i64
+    %ptr = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    pto.ub.vsub %ptr, %ptr, %ptr, %c1, %c1, %c1, %c1, %c8, %c8, %c0 :
+      !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>,
+      i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+
+  func.func @vmul_llvm() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c8 = arith.constant 8 : i64
+    %ptr = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    pto.ub.vmul %ptr, %ptr, %ptr, %c1, %c1, %c1, %c1, %c8, %c8, %c0 :
+      !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>,
+      i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+
+  func.func @vdiv_llvm() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c8 = arith.constant 8 : i64
+    %ptr = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    pto.ub.vdiv %ptr, %ptr, %ptr, %c1, %c1, %c1, %c1, %c8, %c8, %c0 :
+      !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>,
+      i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}

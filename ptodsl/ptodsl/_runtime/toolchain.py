@@ -15,6 +15,15 @@ from pathlib import Path
 
 
 def resolve_ptoas_binary() -> Path:
+    for var in ("PTO_BUILD_DIR", "PTO_INSTALL_DIR"):
+        if var in os.environ:
+            cand = Path(os.environ[var]) / "tools" / "ptoas" / "ptoas"
+            if cand.is_file():
+                return cand
+            cand2 = Path(os.environ[var]) / "bin" / "ptoas"
+            if cand2.is_file():
+                return cand2
+
     repo_root = Path(__file__).resolve().parents[4]
     candidates = [
         repo_root / "build" / "tools" / "ptoas" / "ptoas",
@@ -23,6 +32,12 @@ def resolve_ptoas_binary() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
+
+    for start in [Path.cwd()] + list(Path.cwd().parents):
+        for pattern in [start / "install" / "bin" / "ptoas",
+                        start / "build" / "tools" / "ptoas" / "ptoas"]:
+            if pattern.is_file():
+                return pattern
 
     from_path = shutil.which("ptoas")
     if from_path:
@@ -69,10 +84,15 @@ def common_include_flags() -> list[str]:
     ]
 
 
-def aicore_arch_for_kernel_kind(kernel_kind: str) -> str:
+def aicore_arch_for_kernel_kind(kernel_kind: str, target_arch: str = "a5") -> str:
+    target = target_arch.lower()
     if kernel_kind == "vector":
+        if target in {"a2", "a3"}:
+            return "dav-c220-vec"
         return "dav-c310-vec"
     if kernel_kind == "cube":
+        if target in {"a2", "a3"}:
+            return "dav-c220-cube"
         return "dav-c310-cube"
     raise ValueError(f"unsupported kernel_kind for native build: {kernel_kind!r}")
 

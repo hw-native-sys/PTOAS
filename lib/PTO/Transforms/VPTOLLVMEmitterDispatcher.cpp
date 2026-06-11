@@ -12,7 +12,7 @@
 namespace mlir::pto {
 
 static bool usesCANN900Lowering(const CANNVersion &cannVersion) {
-  return cannVersion >= CANNVersion::release(9, 0, 0);
+  return false; // Force Beta1 path until CANN900 emitter is stable for A3
 }
 
 LogicalResult lowerVPTOModuleToLLVMModules(

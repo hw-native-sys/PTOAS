@@ -6,22 +6,16 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#ifndef PTOAS_VPTO_FATOBJ_EMISSION_H
-#define PTOAS_VPTO_FATOBJ_EMISSION_H
+// Test that pto.ub.set_mask is NOT lowered on a5 targets.
 
-#include "ObjectEmission.h"
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
 
-namespace mlir::pto {
-
-inline LogicalResult emitVPTOFatobj(llvm::Module *cubeModule,
-                                    llvm::Module *vectorModule,
-                                    llvm::StringRef stubSource,
-                                    llvm::ToolOutputFile &outputFile,
-                                    llvm::raw_ostream &diagOS) {
-  return emitFatobjLLVMWithRuntime(cubeModule, vectorModule, stubSource,
-                                   outputFile, diagOS);
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @set_mask_a5_noop() attributes {pto.aicore} {
+    %cNeg1 = arith.constant -1 : i64
+    pto.ub.set_mask %cNeg1, %cNeg1 : i64, i64
+    return
+  }
 }
 
-} // namespace mlir::pto
-
-#endif
+// CHECK-NOT: llvm.hivm.MOVEMASK

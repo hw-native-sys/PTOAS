@@ -1,0 +1,3423 @@
+# A2/A3 DMA Copy and Control Builtin Inventory
+
+## 1. Collection Constraints
+
+- Collection root: `.local/cann`, which is a symlink to `/home/mouliangyu/.local/ascend/beta.1/cann` in this workspace.
+- Architecture scope: A2/A3 DMA/copy builtins exposed as `copy*` CCE builtin aliases, plus companion `set_*` controls used for DMA loop/stride/padding and fixpipe/fix-state setup; not vector compute `vcopy` and not A5 `vector_*` value-operand interfaces.
+- Builtin-name mapping source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h` and `cce_aicore_intrinsics_3101.h`, using `clang_builtin_alias(__builtin_cce_copy*)` and `clang_builtin_alias(__builtin_cce_set_*)` declarations.
+- Complete C++ signature sources: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h` for A2/A3 explicit wrapper signatures and CANN `// ->` packing comments, plus `.local/cann/tools/tikicpulib/lib/include/stub_fun.h` for additional `copy*` and companion `set_*` signatures that map to the same builtin aliases.
+- Included signatures must map to a `__builtin_cce_copy*` or selected companion `__builtin_cce_set_*` alias and must not contain C++ reference parameters. Stub declarations using `const T&` or `T&` `tag*` parameters are treated as higher-level wrapper forms and are excluded.
+- Excluded entries include `vcopy`, unrelated scalar/system controls, vector mask controls already covered by `a2a3-vector-builtins.md`, OPP/AscendC wrapper implementations, namespace-duplicate declarations, generic `copy*` aliases without a complete signature in the scanned sources, and declarations with C++ reference parameters.
+- LLVM IR declarations are exact `declare` lines copied from local `ccec -save-temps` device `.ll` output. Actual probe calls are the exact `call` lines observed inside the generated probe kernel, so the listed IR signature is the compiler-emitted intrinsic signature for that probe, not a hand-derived signature.
+- Entries marked as not captured do not have an exact local LLVM IR signature in this document. The local probe either did not cover that overload or `ccec` rejected it for the tested target feature set; this mark does not imply that the builtin has no lowering on every target.
+- A single LLVM intrinsic can correspond to many C++ builtin overloads. In these cases the C++ overloads are only type/parameter conveniences; after overload resolution they lower to the same intrinsic shape, commonly with pointer address spaces plus one packed `i64` control operand.
+- Parameter packing is source-derived, not inferred. The document uses CANN `// ->` comments as the authoritative wrapper packing formula; CANN `ASM:` comments identify the bottom-level operation/register but do not provide a bitfield formula; direct `uint64_t config` or `config0/config1` forms are already-packed bottom-level forms.
+- `stub_fun.h` contains many declaration-only overloads without `// ->` comments. For those signatures the document records the complete C++ signature but does not invent a packing formula; use the nearest CANN `// ->` overload only when the signature is materially the same.
+- Copy inventory count: 54 builtin names with complete signatures, 762 complete C++ signatures, 117 signatures with CANN packing comments, and 12 observed LLVM intrinsic names from partial probes. Companion control inventory count: 58 builtin names and 65 complete C++ signatures; 41 companion signatures have captured LLVM IR declarations.
+- Alias names with no complete non-reference signature in the scanned sources: `__builtin_cce_copy_cbuf_to_cbuf_loopenhance`, `__builtin_cce_copy_cbuf_to_gm_align_no_padding`, `__builtin_cce_copy_cbuf_to_gm_multi_nz2dn`, `__builtin_cce_copy_cbuf_to_gm_multi_nz2nd`, `__builtin_cce_copy_gm_to_ubuf_align_no_padding`, `__builtin_cce_copy_ubuf_to_gm_align_no_padding`.
+
+## 2. Builtin Signatures
+
+- `__builtin_cce_copy_cbuf_to_bt`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:941`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.MOV.L1.TO.BT`
+    - `llvm.hivm.MOV.L1.TO.BT.cfg`
+    - `llvm.hivm.andb64rr`
+    - `llvm.hivm.shli64ri`
+    - `llvm.hivm.orb64rr`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.MOV.L1.TO.BT.cfg(i64, ptr addrspace(2) nocapture readonly, i64, i64, i64, i64, i64) #1`
+    - `declare i64 @llvm.hivm.andb64rr(i64, i64) #2`
+    - `declare i64 @llvm.hivm.shli64ri(i64, i64) #2`
+    - `declare i64 @llvm.hivm.orb64rr(i64, i64) #2`
+    - `declare void @llvm.hivm.MOV.L1.TO.BT(i64, ptr addrspace(2) nocapture readonly, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOV.L1.TO.BT(i64 1, ptr addrspace(2) null, i64 281479271743504), !dbg !10`
+    - `call void @llvm.hivm.MOV.L1.TO.BT(i64 1, ptr addrspace(2) null, i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ bfloat16_t *src, bool convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1008.
+      - Parameter packing: Header packing comment: `/* #429 */ __builtin_cce_copy_cbuf_to_bt(dst, src, ((convControl & 0x1) << 3 | (nBurst & 0xfff) << 4 | (lenBurst & 0xffff) << 16 | (sourceGap & 0xffff) << 32 | (dstGap & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ bfloat16_t *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1003.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ float *src, bool convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1028.
+      - Parameter packing: Header packing comment: `/* #436 */ __builtin_cce_copy_cbuf_to_bt(dst, src, ((convControl & 0x1) << 3 | (nBurst & 0xfff) << 4 | (lenBurst & 0xffff) << 16 | (sourceGap & 0xffff) << 32 | (dstGap & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ float *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1023.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ half *src, bool convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1018.
+      - Parameter packing: Header packing comment: `/* #433 */ __builtin_cce_copy_cbuf_to_bt(dst, src, ((convControl & 0x1) << 3 | (nBurst & 0xfff) << 4 | (lenBurst & 0xffff) << 16 | (sourceGap & 0xffff) << 32 | (dstGap & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ half *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1013.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ int32_t *src, bool convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1038.
+      - Parameter packing: Header packing comment: `/* #439 */ __builtin_cce_copy_cbuf_to_bt(dst, src, ((convControl & 0x1) << 3 | (nBurst & 0xfff) << 4 | (lenBurst & 0xffff) << 16 | (sourceGap & 0xffff) << 32 | (dstGap & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ int32_t *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1033.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ bfloat16_t* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1085; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1088.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ bfloat16_t* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap, uint8_t fixVal);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1091; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1094.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ bfloat16_t* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1019; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1022.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ float* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1049; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1052.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ float* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap, uint8_t fixVal);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1055; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1058.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ float* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1031; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1034.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ half* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1061; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1064.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ half* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap, uint8_t fixVal);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1067; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1070.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ half* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1025; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1028.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ int32_t* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1073; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1076.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ int32_t* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap, uint8_t fixVal);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1079; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1082.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ int32_t* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1037; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1040.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ void* src, uint16_t convControl, uint16_t nBurst, uint16_t lenBurst, uint16_t sourceGap, uint16_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1043; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1046.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_bt(uint64_t dst, __cbuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1013; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1016.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_copy_cbuf_to_fbuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:945`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.MOV.L1.TO.FB.v220`
+    - `llvm.hivm.MOV.L1.TO.FB.v220.cfg`
+    - `llvm.hivm.andb64rr`
+    - `llvm.hivm.shli64ri`
+    - `llvm.hivm.orb64rr`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.MOV.L1.TO.FB.v220(ptr addrspace(7) nocapture writeonly, ptr addrspace(2) nocapture readonly, i64) #1`
+    - `declare void @llvm.hivm.MOV.L1.TO.FB.v220.cfg(ptr addrspace(7) nocapture writeonly, ptr addrspace(2) nocapture readonly, i64, i64, i64, i64) #1`
+    - `declare i64 @llvm.hivm.andb64rr(i64, i64) #2`
+    - `declare i64 @llvm.hivm.shli64ri(i64, i64) #2`
+    - `declare i64 @llvm.hivm.orb64rr(i64, i64) #2`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOV.L1.TO.FB.v220(ptr addrspace(7) null, ptr addrspace(2) null, i64 1), !dbg !10`
+    - `call void @llvm.hivm.MOV.L1.TO.FB.v220(ptr addrspace(7) null, ptr addrspace(2) null, i64 281479271743504), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_fbuf(__fbuf__ void *dst, __cbuf__ void *src, uint16_t burstNum, uint16_t burstLen, uint16_t srcGapSize, uint16_t dstGapSize);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1048.
+      - Parameter packing: Header packing comment: `/* #452 */ __builtin_cce_copy_cbuf_to_fbuf(dst, src, ((burstNum & 0xfff) << 4 | (burstLen & 0xffff) << 16 | (srcGapSize & 0xffff) << 32 | (dstGapSize & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_fbuf(__fbuf__ void *dst, __cbuf__ void *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1043.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_fbuf(__fbuf__ void* dst, __cbuf__ void* src, uint16_t burstNum, uint16_t burstLen, uint16_t srcGapSize, uint16_t dstGapSize);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1103; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1106.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_fbuf(__fbuf__ void* dst, __cbuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1097; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1100.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_copy_cbuf_to_fbuf_v2`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:947`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_fbuf_v2(__fbuf__ void *dst, __cbuf__ void *src, uint16_t burst_num, uint16_t burst_len, uint16_t src_stride, uint16_t dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1058.
+      - Parameter packing: Header packing comment: `/* #454 */ __builtin_cce_copy_cbuf_to_fbuf_v2(dst, src, ((burst_num & 0xfff) << 4 | (burst_len & 0xffff) << 16 | (src_stride & 0xffff) << 32 | (dst_stride & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_fbuf_v2(__fbuf__ void *dst, __cbuf__ void *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1053.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_fbuf_v2(__fbuf__ void * dst, __cbuf__ void * src, uint16_t burst_num, uint16_t burst_len, uint16_t src_stride, uint16_t dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20468.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_fbuf_v2(__fbuf__ void * dst, __cbuf__ void * src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20467.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_copy_cbuf_to_gm`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:949`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_gm(__gm__ void* dst, __cbuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1109.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_gm(__gm__ void* dst, __cbuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1110.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_cbuf_to_gm_align`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:951`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ float* dst, __cbuf__ float* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1112.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ half* dst, __cbuf__ half* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1111.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ int16_t* dst, __cbuf__ int16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1113.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ int32_t* dst, __cbuf__ int32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1114.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ int8_t* dst, __cbuf__ int8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1115.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ uint16_t* dst, __cbuf__ uint16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1116.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ uint32_t* dst, __cbuf__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1117.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align(__gm__ uint8_t* dst, __cbuf__ uint8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1118.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_cbuf_to_gm_align_v2`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:955`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ float* dst, __cbuf__ float* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2586.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ float* tag1, __cbuf__ float* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2595.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ float* tag1, __cbuf__ float* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2603.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ float* tag1, __cbuf__ float* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2611.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ half* dst, __cbuf__ half* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2587.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ half* tag1, __cbuf__ half* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2596.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ half* tag1, __cbuf__ half* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2604.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int16_t* tag1, __cbuf__ int16_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2592.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int16_t* tag1, __cbuf__ int16_t* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2600.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int16_t* tag1, __cbuf__ int16_t* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2608.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int32_t* tag1, __cbuf__ int32_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2594.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int32_t* tag1, __cbuf__ int32_t* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2602.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int32_t* tag1, __cbuf__ int32_t* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2610.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int8_t* dst, __cbuf__ int8_t* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2588.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int8_t* tag1, __cbuf__ int8_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2590.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int8_t* tag1, __cbuf__ int8_t* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2598.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ int8_t* tag1, __cbuf__ int8_t* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2606.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint16_t* tag1, __cbuf__ uint16_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2591.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint16_t* tag1, __cbuf__ uint16_t* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2599.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint16_t* tag1, __cbuf__ uint16_t* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2607.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint32_t* tag1, __cbuf__ uint32_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2593.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint32_t* tag1, __cbuf__ uint32_t* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2601.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint32_t* tag1, __cbuf__ uint32_t* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2609.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint8_t* tag1, __cbuf__ uint8_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2589.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint8_t* tag1, __cbuf__ uint8_t* tag2, uint8_t tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2597.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ uint8_t* tag1, __cbuf__ uint8_t* tag2, uint8_t tag3, uint16_t tag4, uint16_t tag5, uint16_t tag6, uint16_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2605.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ void * dst_addr, __cbuf__ void * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2584.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_gm_align_v2(__gm__ void * dst_addr, __cbuf__ void * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t l2_cache_ctl, uint64_t burst_dst_stride, uint32_t burst_src_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2585.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_cbuf_to_pt`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:961`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_pt(uint64_t dst, __cbuf__ void* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcGap, uint16_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20458.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_cbuf_to_pt(uint64_t dst, __cbuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20457.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_copy_cbuf_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:963`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.MOV.L1.TO.UB`
+    - `llvm.hivm.MOV.L1.TO.UB.cfg`
+    - `llvm.hivm.andb64rr`
+    - `llvm.hivm.shli64ri`
+    - `llvm.hivm.orb64rr`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.MOV.L1.TO.UB.cfg(ptr addrspace(6) nocapture writeonly, ptr addrspace(2) nocapture readonly, i64, i64, i64, i64, i64) #1`
+    - `declare i64 @llvm.hivm.andb64rr(i64, i64) #2`
+    - `declare i64 @llvm.hivm.shli64ri(i64, i64) #2`
+    - `declare i64 @llvm.hivm.orb64rr(i64, i64) #2`
+    - `declare void @llvm.hivm.MOV.L1.TO.UB(ptr addrspace(6) nocapture writeonly, ptr addrspace(2) nocapture readonly, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOV.L1.TO.UB(ptr addrspace(6) null, ptr addrspace(2) null, i64 281479271743504)`
+    - `call void @llvm.hivm.MOV.L1.TO.UB(ptr addrspace(6) null, ptr addrspace(2) null, i64 1)`
+  - Probe targets used: `dav-m200`
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_cbuf_to_ubuf(__ubuf__ void *dst_addr, __cbuf__ void *src_addr, bool sub_blockid, uint16_t burst_num, uint16_t burst_len, uint16_t src_gap, uint16_t dst_gap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1068.
+      - Parameter packing: Header packing comment: `/* #558 */ __builtin_cce_copy_cbuf_to_ubuf(dst_addr, src_addr, ((sub_blockid & 0x1) << 0 | (burst_num & 0xfff) << 4 | (burst_len & 0xffff) << 16 | (src_gap & 0xffff) << 32 | (dst_gap & 0xffff) << 48))`
+    - `void __builtin_cce_copy_cbuf_to_ubuf(__ubuf__ void *dst_addr, __cbuf__ void *src_addr, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1063.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_ubuf(__ubuf__ void* dst, __cbuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1119; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1122.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_cbuf_to_ubuf(__ubuf__ void* dst, __cbuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1125; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1128.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_depthwise_cc_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:965`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ float* dst, __cc__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1137.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1138.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ float* dst, __cc__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1133.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ float* dst, __cc__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1134.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ half* dst, __cc__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1135.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1136.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ half* dst, __cc__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1131.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_depthwise_cc_to_ubuf(__ubuf__ half* dst, __cc__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1132.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:967`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf(__cbuf__ void* dst, __gm__ void* src, uint64_t config, pad_t padMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1139.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf(__cbuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, pad_t padMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1140.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_align`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:969`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ float* dst, __gm__ float* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1504.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ half* dst, __gm__ half* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1501.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ int16_t* dst, __gm__ int16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1499.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ int32_t* dst, __gm__ int32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1502.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ int8_t* dst, __gm__ int8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1497.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ uint16_t* dst, __gm__ uint16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1500.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ uint32_t* dst, __gm__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1503.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align(__cbuf__ uint8_t* dst, __gm__ uint8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1498.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_align_v2`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:971`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1073.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1078.
+      - Parameter packing: Header packing comment: `/* #595 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float *dst_addr, __gm__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1123.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float *dst_addr, __gm__ float *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1128.
+      - Parameter packing: Header packing comment: `/* #619 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1083.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1088.
+      - Parameter packing: Header packing comment: `/* #600 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1093.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1098.
+      - Parameter packing: Header packing comment: `/* #604 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1103.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1108.
+      - Parameter packing: Header packing comment: `/* #608 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ half *dst_addr, __gm__ half *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1113.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ half *dst_addr, __gm__ half *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1118.
+      - Parameter packing: Header packing comment: `/* #613 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1133.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1138.
+      - Parameter packing: Header packing comment: `/* #624 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1143.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1148.
+      - Parameter packing: Header packing comment: `/* #629 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1153.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1158.
+      - Parameter packing: Header packing comment: `/* #637 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1163.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1168.
+      - Parameter packing: Header packing comment: `/* #645 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1173.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1178.
+      - Parameter packing: Header packing comment: `/* #653 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1183.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1188.
+      - Parameter packing: Header packing comment: `/* #659 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1193.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1198.
+      - Parameter packing: Header packing comment: `/* #665 */ __builtin_cce_copy_gm_to_cbuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ bfloat16_t * dst_addr, __gm__ bfloat16_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2672; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2675.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ bfloat16_t * dst_addr, __gm__ bfloat16_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2678; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2681.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float * dst_addr, __gm__ float * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2696; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2699.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ float * dst_addr, __gm__ float * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2702; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2705.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ fp8_e4m3fn_t * dst_addr, __gm__ fp8_e4m3fn_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2792; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2795.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ fp8_e4m3fn_t * dst_addr, __gm__ fp8_e4m3fn_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2798; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2801.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ fp8_e5m2_t * dst_addr, __gm__ fp8_e5m2_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2780; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2783.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ fp8_e5m2_t * dst_addr, __gm__ fp8_e5m2_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2786; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2789.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ half * dst_addr, __gm__ half * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2684; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2687.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ half * dst_addr, __gm__ half * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2690; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2693.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ half* dst, __gm__ half* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2828; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2831.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ hifloat8_t * dst_addr, __gm__ hifloat8_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2804; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2807.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ hifloat8_t * dst_addr, __gm__ hifloat8_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2810; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2813.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int16_t * dst_addr, __gm__ int16_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2708; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2711.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int16_t * dst_addr, __gm__ int16_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2714; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2717.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int32_t * dst_addr, __gm__ int32_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2720; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2723.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int32_t * dst_addr, __gm__ int32_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2726; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2729.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int8_t* dst, __gm__ int8_t* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2834; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2837.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2732; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2735.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2738; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2741.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint16_t * dst_addr, __gm__ uint16_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2744; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2747.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint16_t * dst_addr, __gm__ uint16_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2750; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2753.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint16_t* tag1, __gm__ uint16_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2846; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2849.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint32_t * dst_addr, __gm__ uint32_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2756; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2759.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint32_t * dst_addr, __gm__ uint32_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2762; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2765.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint32_t* dst, __gm__ uint32_t* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2816; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2819.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint8_t* dst, __gm__ uint8_t* src, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2822; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2825.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2768; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2771.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2774; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2777.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_align_v2(__cbuf__ uint8_t* tag1, __gm__ uint8_t* tag2, int tag3, const uint16_t tag4, uint32_t tag5, uint32_t tag6, uint64_t tag7);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2840; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2843.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_multi_dn2nz`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:973`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1203.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1208.
+      - Parameter packing: Header packing comment: `/* #670 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float *dst_addr, __gm__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1253.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float *dst_addr, __gm__ float *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1258.
+      - Parameter packing: Header packing comment: `/* #692 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1213.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1218.
+      - Parameter packing: Header packing comment: `/* #674 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1223.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1228.
+      - Parameter packing: Header packing comment: `/* #678 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1233.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1238.
+      - Parameter packing: Header packing comment: `/* #682 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ half *dst_addr, __gm__ half *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1243.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ half *dst_addr, __gm__ half *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1248.
+      - Parameter packing: Header packing comment: `/* #686 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1263.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1268.
+      - Parameter packing: Header packing comment: `/* #698 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1273.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1278.
+      - Parameter packing: Header packing comment: `/* #702 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1283.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1288.
+      - Parameter packing: Header packing comment: `/* #706 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1293.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1298.
+      - Parameter packing: Header packing comment: `/* #710 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1303.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1308.
+      - Parameter packing: Header packing comment: `/* #716 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1313.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1318.
+      - Parameter packing: Header packing comment: `/* #720 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1323.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1328.
+      - Parameter packing: Header packing comment: `/* #724 */ __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctl & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ bfloat16_t* dst, __gm__ bfloat16_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1337; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1340.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ bfloat16_t* dst_addr, __gm__ bfloat16_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1343; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1346.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float* dst, __gm__ float* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1361; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1364.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ float* dst_addr, __gm__ float* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1367; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1370.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ fp8_e4m3fn_t* dst, __gm__ fp8_e4m3fn_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1397; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1400.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ fp8_e4m3fn_t* dst_addr, __gm__ fp8_e4m3fn_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1403; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1406.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ fp8_e5m2_t* dst, __gm__ fp8_e5m2_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1409; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1412.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ fp8_e5m2_t* dst_addr, __gm__ fp8_e5m2_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1415; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1418.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ half* dst, __gm__ half* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1349; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1352.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ half* dst_addr, __gm__ half* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1355; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1358.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ hifloat8_t* dst, __gm__ hifloat8_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1421; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1424.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ hifloat8_t* dst_addr, __gm__ hifloat8_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1427; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1430.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int16_t* dst, __gm__ int16_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1433; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1436.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int16_t* dst_addr, __gm__ int16_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1439; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1442.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int32_t* dst, __gm__ int32_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1457; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1460.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int32_t* dst_addr, __gm__ int32_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1463; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1466.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int8_t* dst, __gm__ int8_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1373; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1376.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1379; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1382.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint16_t* dst, __gm__ uint16_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1445; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1448.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint16_t* dst_addr, __gm__ uint16_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1451; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1454.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint32_t* dst, __gm__ uint32_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1469; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1472.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint32_t* dst_addr, __gm__ uint32_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1475; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1478.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint8_t* dst, __gm__ uint8_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1385; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1388.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_dn2nz(__cbuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1391; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1394.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_multi_nd2nz`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:975`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ bfloat16_t *dst, __gm__ bfloat16_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1333.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1338.
+      - Parameter packing: Header packing comment: `/* #730 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float *dst, __gm__ float *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1383.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float *dst_addr, __gm__ float *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1388.
+      - Parameter packing: Header packing comment: `/* #759 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float8_e4m3_t *dst, __gm__ float8_e4m3_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1343.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1348.
+      - Parameter packing: Header packing comment: `/* #736 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float8_e5m2_t *dst, __gm__ float8_e5m2_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1353.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1358.
+      - Parameter packing: Header packing comment: `/* #741 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float8_e8m0_t *dst, __gm__ float8_e8m0_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1363.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1368.
+      - Parameter packing: Header packing comment: `/* #746 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ half *dst, __gm__ half *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1373.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ half *dst_addr, __gm__ half *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1378.
+      - Parameter packing: Header packing comment: `/* #751 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ hifloat8_t *dst, __gm__ hifloat8_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1393.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1398.
+      - Parameter packing: Header packing comment: `/* #766 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int16_t *dst, __gm__ int16_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1403.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1408.
+      - Parameter packing: Header packing comment: `/* #772 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int32_t *dst, __gm__ int32_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1413.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1418.
+      - Parameter packing: Header packing comment: `/* #778 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int8_t *dst, __gm__ int8_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1423.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1428.
+      - Parameter packing: Header packing comment: `/* #783 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint16_t *dst, __gm__ uint16_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1433.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1438.
+      - Parameter packing: Header packing comment: `/* #791 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint32_t *dst, __gm__ uint32_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1443.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1448.
+      - Parameter packing: Header packing comment: `/* #797 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint8_t *dst, __gm__ uint8_t *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1453.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctrl_mode, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1458.
+      - Parameter packing: Header packing comment: `/* #802 */ __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(dst_addr, src_addr, ((sid & 0xf) << 0 | (loop1_src_stride & 0xffffffffff) << 4 | (l2_cache_ctrl_mode & 0xf) << 44 | (n_value & 0xffff) << 48), ((d_value & 0x1fffff) << 0 | (loop4_src_stride & 0xffffffffff) << 21 | (smallc0_en & 0x1) << 61))`
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ bfloat16_t* dst, __gm__ bfloat16_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1205; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1208.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ bfloat16_t* dst_addr, __gm__ bfloat16_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1211; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1214.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float* dst, __gm__ float* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1217; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1220.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ float* dst_addr, __gm__ float* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1223; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1226.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ fp8_e4m3fn_t* dst, __gm__ fp8_e4m3fn_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1313; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1316.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ fp8_e4m3fn_t* dst_addr, __gm__ fp8_e4m3fn_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1319; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1322.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ fp8_e5m2_t* dst, __gm__ fp8_e5m2_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1301; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1304.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ fp8_e5m2_t* dst_addr, __gm__ fp8_e5m2_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1307; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1310.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ half* dst, __gm__ half* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1193; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1196.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ half* dst_addr, __gm__ half* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1199; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1202.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ hifloat8_t* dst, __gm__ hifloat8_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1325; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1328.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ hifloat8_t* dst_addr, __gm__ hifloat8_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1331; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1334.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int16_t* dst, __gm__ int16_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1229; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1232.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int16_t* dst_addr, __gm__ int16_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1235; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1238.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int32_t* dst, __gm__ int32_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1253; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1256.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int32_t* dst_addr, __gm__ int32_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1259; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1262.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int8_t* dst, __gm__ int8_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1241; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1244.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1247; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1250.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint16_t* dst, __gm__ uint16_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1265; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1268.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint16_t* dst_addr, __gm__ uint16_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1271; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1274.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint32_t* dst, __gm__ uint32_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1289; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1292.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint32_t* dst_addr, __gm__ uint32_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1295; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1298.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint8_t* dst, __gm__ uint8_t* src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1277; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1280.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz(__cbuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint8_t sid, uint64_t loop1_src_stride, uint8_t l2_cache_ctl, uint16_t n_value, uint32_t d_value, uint64_t loop4_src_stride, bool smallc0_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1283; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1286.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:977`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ bfloat16_t* dst, __gm__ bfloat16_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1143.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ bfloat16_t* dst, __gm__ bfloat16_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1144.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ half* dst, __gm__ half* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1141.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ half* dst, __gm__ half* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1142.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ int16_t* dst, __gm__ int16_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1145.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ int16_t* dst, __gm__ int16_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1146.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ uint16_t* dst, __gm__ uint16_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1147.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b16(__cbuf__ uint16_t* dst, __gm__ uint16_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1148.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:979`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s(__cbuf__ float* dst, __gm__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1149.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s(__cbuf__ float* dst, __gm__ float* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1150.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s(__cbuf__ int32_t* dst, __gm__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1151.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s(__cbuf__ int32_t* dst, __gm__ int32_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1152.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s(__cbuf__ uint32_t* dst, __gm__ uint32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1153.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b32s(__cbuf__ uint32_t* dst, __gm__ uint32_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1154.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b8`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:981`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b8(__cbuf__ int8_t* dst, __gm__ int8_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1155.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b8(__cbuf__ int8_t* dst, __gm__ int8_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1156.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b8(__cbuf__ uint8_t* dst, __gm__ uint8_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1157.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_cbuf_multi_nd2nz_b8(__cbuf__ uint8_t* dst, __gm__ uint8_t* src, uint8_t sid, uint16_t ndNum, uint16_t nValue, uint16_t dValue, uint16_t srcNdMatrixStride, uint16_t srcDValue, uint16_t dstNzC0Stride, uint16_t dstNzNStride, uint16_t dstNzMatrixStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1158.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_cbuf_v2`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:983`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_cbuf_v2(__cbuf__ void *dst, __gm__ void *src, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1463.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_cbuf_v2(__cbuf__ void *dst, __gm__ void *src, uint8_t sid, uint32_t nBurst, uint32_t lenBurst, uint8_t padFUncMode, uint8_t l2Ctrl, uint64_t srcStride, uint32_t dstStride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1468.
+      - Parameter packing: Header packing comment: `/* #824 */ __builtin_cce_copy_gm_to_cbuf_v2(dst, src, ((sid & 0xf) << 0 | (nBurst & 0x1ffff) << 4 | (lenBurst & 0x1ffff) << 25 | (padFUncMode & 0xf) << 56 | (l2Ctrl & 0xf) << 60), ((srcStride & 0xfffffffff) << 0 | (dstStride & 0x1ffff) << 40))`
+
+- `__builtin_cce_copy_gm_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:985`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.MOV.OUT.TO.UB`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.MOV.OUT.TO.UB(ptr addrspace(6) nocapture writeonly, ptr addrspace(1) nocapture readonly, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOV.OUT.TO.UB(ptr addrspace(6) null, ptr addrspace(1) null, i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf(__ubuf__ void* dst, __gm__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1481.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1482.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_align`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:987`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ float* dst, __gm__ float* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1496.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ half* dst, __gm__ half* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1493.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ int16_t* dst, __gm__ int16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1491.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ int32_t* dst, __gm__ int32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1494.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ int8_t* dst, __gm__ int8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1489.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ uint16_t* dst, __gm__ uint16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1492.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ uint32_t* dst, __gm__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1495.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align(__ubuf__ uint8_t* dst, __gm__ uint8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1490.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_align_b16`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:989`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_align_b16(__ubuf__ void* dst, __gm__ void* src, uint64_t config, uint64_t gapConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1483.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_b16(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1484.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_align_b32`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:991`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_align_b32(__ubuf__ void* dst, __gm__ void* src, uint64_t config, uint64_t gapConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1485.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_b32(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1486.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_align_b8`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:993`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_align_b8(__ubuf__ void* dst, __gm__ void* src, uint64_t config, uint64_t gapConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1487.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_b8(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1488.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_align_v2`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:997`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1473.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ bfloat16_t *dst_addr, __gm__ bfloat16_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1478.
+      - Parameter packing: Header packing comment: `/* #881 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float *dst_addr, __gm__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1523.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float *dst_addr, __gm__ float *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1528.
+      - Parameter packing: Header packing comment: `/* #905 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1483.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float8_e4m3_t *dst_addr, __gm__ float8_e4m3_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1488.
+      - Parameter packing: Header packing comment: `/* #886 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1493.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float8_e5m2_t *dst_addr, __gm__ float8_e5m2_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1498.
+      - Parameter packing: Header packing comment: `/* #890 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1503.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float8_e8m0_t *dst_addr, __gm__ float8_e8m0_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1508.
+      - Parameter packing: Header packing comment: `/* #894 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ half *dst_addr, __gm__ half *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1513.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ half *dst_addr, __gm__ half *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1518.
+      - Parameter packing: Header packing comment: `/* #899 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1533.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ hifloat8_t *dst_addr, __gm__ hifloat8_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1538.
+      - Parameter packing: Header packing comment: `/* #910 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1543.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int16_t *dst_addr, __gm__ int16_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1548.
+      - Parameter packing: Header packing comment: `/* #915 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1553.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int32_t *dst_addr, __gm__ int32_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1558.
+      - Parameter packing: Header packing comment: `/* #923 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1563.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int8_t *dst_addr, __gm__ int8_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1568.
+      - Parameter packing: Header packing comment: `/* #931 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1573.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint16_t *dst_addr, __gm__ uint16_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1578.
+      - Parameter packing: Header packing comment: `/* #939 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1583.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint32_t *dst_addr, __gm__ uint32_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1588.
+      - Parameter packing: Header packing comment: `/* #945 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1593.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint8_t *dst_addr, __gm__ uint8_t *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1598.
+      - Parameter packing: Header packing comment: `/* #951 */ __builtin_cce_copy_gm_to_ubuf_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (left_padding_count & 0x3f) << 46 | (right_padding_count & 0x3f) << 52 | (data_select_bit & 0x1) << 58 | (l2_cache_ctl & 0xf) << 60), ((burst_src_stride & 0xffffffffff) << 0 | (burst_dst_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ bfloat16_t * dst_addr, __gm__ bfloat16_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2900; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2903.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ bfloat16_t * dst_addr, __gm__ bfloat16_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2906; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2909.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float * dst_addr, __gm__ float * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2936; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2939.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float * dst_addr, __gm__ float * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2942; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2945.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ float* dst_addr, __gm__ float* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2930; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2933.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ fp8_e4m3fn_t * dst_addr, __gm__ fp8_e4m3fn_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3068; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3071.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ fp8_e4m3fn_t * dst_addr, __gm__ fp8_e4m3fn_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3074; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3077.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ fp8_e5m2_t * dst_addr, __gm__ fp8_e5m2_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3056; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3059.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ fp8_e5m2_t * dst_addr, __gm__ fp8_e5m2_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3062; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3065.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ half * dst_addr, __gm__ half * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2918; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2921.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ half * dst_addr, __gm__ half * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2924; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2927.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ half* dst_addr, __gm__ half* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2912; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2915.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ hifloat8_t * dst_addr, __gm__ hifloat8_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3080; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3083.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ hifloat8_t * dst_addr, __gm__ hifloat8_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3086; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3089.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int16_t * dst_addr, __gm__ int16_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2954; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2957.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int16_t * dst_addr, __gm__ int16_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2960; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2963.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int16_t* dst_addr, __gm__ int16_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2948; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2951.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int32_t * dst_addr, __gm__ int32_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2972; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2975.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int32_t * dst_addr, __gm__ int32_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2978; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2981.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int32_t* dst_addr, __gm__ int32_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2966; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2969.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2990; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2993.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2996; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2999.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ int8_t* dst_addr, __gm__ int8_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2984; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2987.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint16_t * dst_addr, __gm__ uint16_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3008; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3011.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint16_t * dst_addr, __gm__ uint16_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3014; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3017.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint16_t* dst_addr, __gm__ uint16_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3002; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3005.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint32_t * dst_addr, __gm__ uint32_t * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3026; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3029.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint32_t * dst_addr, __gm__ uint32_t * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3032; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3035.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint32_t* dst_addr, __gm__ uint32_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3020; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3023.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3044; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3047.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool constant_padding_ctl, uint8_t l2_cache_ctl, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3050; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3053.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ uint8_t* dst_addr, __gm__ uint8_t* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3038; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3041.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ void* dst_addr, __gm__ void* src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3098; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3101.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_align_v2(__ubuf__ void* dst_addr, __gm__ void* src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t left_padding_count, uint8_t right_padding_count, bool data_select_bit, uint64_t burst_src_stride, uint32_t burst_dst_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3092; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:3095.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_pad_b16`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:999`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_pad_b16(__ubuf__ void* dst, __gm__ void* src, uint64_t config, uint64_t paddingConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1505.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_pad_b16(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, uint8_t leftPaddingNum, uint8_t rightPaddingNum);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1506.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_pad_b32`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1001`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_pad_b32(__ubuf__ void* dst, __gm__ void* src, uint64_t config, uint64_t paddingConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1507.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_pad_b32(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, uint8_t leftPaddingNum, uint8_t rightPaddingNum);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1508.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_gm_to_ubuf_pad_b8`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1003`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_gm_to_ubuf_pad_b8(__ubuf__ void* dst, __gm__ void* src, uint64_t config, uint64_t paddingConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1509.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_gm_to_ubuf_pad_b8(__ubuf__ void* dst, __gm__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, uint8_t leftPaddingNum, uint8_t rightPaddingNum);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1510.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cbuf_to_cc`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1005`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ bfloat16_t* dst, __cbuf__ bfloat16_t* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1516.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ bfloat16_t* dst, __cbuf__ bfloat16_t* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1515.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ bfloat16_t* dst, __cbuf__ float* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1518.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ bfloat16_t* dst, __cbuf__ float* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1517.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ float* dst, __cbuf__ float* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1520.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ float* dst, __cbuf__ float* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1519.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ half* dst, __cbuf__ float* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1514.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ half* dst, __cbuf__ float* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1513.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ half* dst, __cbuf__ half* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1512.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ half* dst, __cbuf__ half* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1511.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ int32_t* dst, __cbuf__ int32_t* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1522.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ int32_t* dst, __cbuf__ int32_t* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1521.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ uint32_t* dst, __cbuf__ uint32_t* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1524.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cbuf_to_cc(__cc__ uint32_t* dst, __cbuf__ uint32_t* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1523.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_copy_matrix_cc_to_cbuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1007`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1603.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1608.
+      - Parameter packing: Header packing comment: `/* #1007 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1683.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1688.
+      - Parameter packing: Header packing comment: `/* #1056 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1673.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1678.
+      - Parameter packing: Header packing comment: `/* #1053 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e4m3_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1623.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e4m3_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1628.
+      - Parameter packing: Header packing comment: `/* #1014 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e4m3_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1703.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e4m3_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1708.
+      - Parameter packing: Header packing comment: `/* #1072 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e5m2_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1633.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e5m2_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1638.
+      - Parameter packing: Header packing comment: `/* #1017 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e5m2_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1713.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float8_e5m2_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1718.
+      - Parameter packing: Header packing comment: `/* #1076 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1613.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1618.
+      - Parameter packing: Header packing comment: `/* #1011 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1693.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1698.
+      - Parameter packing: Header packing comment: `/* #1067 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ hifloat8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1643.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ hifloat8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1648.
+      - Parameter packing: Header packing comment: `/* #1020 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ hifloat8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1723.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ hifloat8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1728.
+      - Parameter packing: Header packing comment: `/* #1080 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int32_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1753.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int32_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1758.
+      - Parameter packing: Header packing comment: `/* #1123 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1653.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1658.
+      - Parameter packing: Header packing comment: `/* #1031 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1733.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1738.
+      - Parameter packing: Header packing comment: `/* #1100 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1663.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1668.
+      - Parameter packing: Header packing comment: `/* #1043 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1743.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1748.
+      - Parameter packing: Header packing comment: `/* #1112 */ __builtin_cce_copy_matrix_cc_to_cbuf(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t * dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2121; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2124.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1549; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1552.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1555; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1558.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ bfloat16_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2067; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2070.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1561; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1564.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1615; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1618.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1609; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1612.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ float* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2091; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2094.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ fp8_e4m3fn_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2127; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2130.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1525; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1528.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1543; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1546.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1537; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1540.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1531; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1534.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1627; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1630.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1645; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1648.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1639; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1642.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1633; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1636.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2073; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2076.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ half* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2097; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2100.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ hifloat8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2133; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2136.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int16_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1651; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1654.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int16_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1657; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1660.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int32_t * dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2115; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2118.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int32_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1621; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1624.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1717; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1720.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1711; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1714.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1567; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1570.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1585; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1588.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1579; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1582.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1573; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1576.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1663; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1666.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1681; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1684.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1675; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1678.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1669; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1672.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2079; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2082.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ int8_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2103; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2106.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1591; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1594.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1603; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1606.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1597; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1600.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1687; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1690.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1705; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1708.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1699; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1702.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1693; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1696.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2085; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2088.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf(__cbuf__ uint8_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2109; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2112.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_cbuf_b4`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1009`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_b4(__cbuf__ void* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1723.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_b4(__cbuf__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1724.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_b4(__cbuf__ void* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1725.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_b4(__cbuf__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1726.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_cbuf_s4`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1011`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1763.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1768.
+      - Parameter packing: Header packing comment: `/* #1142 */ __builtin_cce_copy_matrix_cc_to_cbuf_s4(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1773.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1778.
+      - Parameter packing: Header packing comment: `/* #1151 */ __builtin_cce_copy_matrix_cc_to_cbuf_s4(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1731.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1733.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1732.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1734.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1736.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_cbuf_s4(__cbuf__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1735.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_gm`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1013`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1783.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1788.
+      - Parameter packing: Header packing comment: `/* #1185 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1863.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1868.
+      - Parameter packing: Header packing comment: `/* #1234 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1853.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1858.
+      - Parameter packing: Header packing comment: `/* #1229 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e4m3_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1803.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e4m3_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1808.
+      - Parameter packing: Header packing comment: `/* #1192 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e4m3_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1883.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e4m3_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1888.
+      - Parameter packing: Header packing comment: `/* #1250 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e5m2_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1813.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e5m2_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1818.
+      - Parameter packing: Header packing comment: `/* #1195 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e5m2_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1893.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float8_e5m2_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1898.
+      - Parameter packing: Header packing comment: `/* #1254 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1793.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1798.
+      - Parameter packing: Header packing comment: `/* #1189 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1873.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1878.
+      - Parameter packing: Header packing comment: `/* #1245 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ hifloat8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1823.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ hifloat8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1828.
+      - Parameter packing: Header packing comment: `/* #1198 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ hifloat8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1903.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ hifloat8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1908.
+      - Parameter packing: Header packing comment: `/* #1258 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1933.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1938.
+      - Parameter packing: Header packing comment: `/* #1300 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1833.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1838.
+      - Parameter packing: Header packing comment: `/* #1208 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1913.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1918.
+      - Parameter packing: Header packing comment: `/* #1277 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1843.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1848.
+      - Parameter packing: Header packing comment: `/* #1219 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1923.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1928.
+      - Parameter packing: Header packing comment: `/* #1289 */ __builtin_cce_copy_matrix_cc_to_gm(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t * dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2019; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2022.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1941; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1944.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1953; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1956.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1947; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1950.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ bfloat16_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1965; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1968.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1761; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1764.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1827; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1830.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1821; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1824.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1815; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1818.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ float* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1989; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1992.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ fp8_e4m3fn_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2025; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2028.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1737; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1740.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1755; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1758.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1749; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1752.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1743; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1746.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ half* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2037; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2040.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1839; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1842.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1857; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1860.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1851; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1854.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1845; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1848.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1971; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1974.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ half* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1995; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1998.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ hifloat8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2031; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2034.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int16_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1863; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1866.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int16_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1869; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1872.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int16_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1959; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1962.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t * dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2013; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2016.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1833; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1836.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1935; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1938.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1929; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1932.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1923; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1926.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1767; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1770.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1785; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1788.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1779; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1782.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1773; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1776.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1875; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1878.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1893; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1896.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1887; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1890.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1881; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1884.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1977; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1980.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ int8_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2001; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2004.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1791; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1794.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1809; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1812.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1803; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1806.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1797; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1800.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1899; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1902.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1917; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1920.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1911; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1914.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1905; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1908.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1983; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:1986.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm(__gm__ uint8_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2007; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2010.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_gm_b4`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1015`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_gm_b4(__gm__ void* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2283.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_b4(__gm__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2284.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_b4(__gm__ void* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2285.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_b4(__gm__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2286.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_gm_s4`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1017`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1943.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1948.
+      - Parameter packing: Header packing comment: `/* #1319 */ __builtin_cce_copy_matrix_cc_to_gm_s4(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1953.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t l2_cache_ctl, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1958.
+      - Parameter packing: Header packing comment: `/* #1328 */ __builtin_cce_copy_matrix_cc_to_gm_s4(dst_addr, src_addr, ((sid & 0xf) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (l2_cache_ctl & 0xf) << 16 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2291.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2293.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2292.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2294.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2296.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_gm_s4(__gm__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2295.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_ub`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1019`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.FIX.L0C.TO.UB.f2h.ELEWISE`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.FIX.L0C.TO.UB.f2h.ELEWISE(ptr addrspace(6) nocapture writeonly, ptr addrspace(5) nocapture readonly, i64, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.FIX.L0C.TO.UB.f2h.ELEWISE(ptr addrspace(6) null, ptr addrspace(5) null, i64 1, i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1963.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1968.
+      - Parameter packing: Header packing comment: `/* #1358 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2043.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2048.
+      - Parameter packing: Header packing comment: `/* #1402 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2033.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2038.
+      - Parameter packing: Header packing comment: `/* #1399 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e4m3_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1983.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e4m3_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1988.
+      - Parameter packing: Header packing comment: `/* #1364 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e4m3_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2063.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e4m3_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2068.
+      - Parameter packing: Header packing comment: `/* #1416 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e5m2_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1993.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e5m2_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1998.
+      - Parameter packing: Header packing comment: `/* #1367 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e5m2_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2073.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float8_e5m2_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2078.
+      - Parameter packing: Header packing comment: `/* #1420 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1973.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:1978.
+      - Parameter packing: Header packing comment: `/* #1361 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2053.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2058.
+      - Parameter packing: Header packing comment: `/* #1412 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ hifloat8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2003.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ hifloat8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2008.
+      - Parameter packing: Header packing comment: `/* #1370 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ hifloat8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2083.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ hifloat8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2088.
+      - Parameter packing: Header packing comment: `/* #1424 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2113.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2118.
+      - Parameter packing: Header packing comment: `/* #1462 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2013.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2018.
+      - Parameter packing: Header packing comment: `/* #1380 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2093.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2098.
+      - Parameter packing: Header packing comment: `/* #1442 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2023.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2028.
+      - Parameter packing: Header packing comment: `/* #1390 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2103.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2108.
+      - Parameter packing: Header packing comment: `/* #1452 */ __builtin_cce_copy_matrix_cc_to_ub(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2309; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2312.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t* dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2211; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2214.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2139; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2142.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t* dst_addr, __cc__ int32_t* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2265; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2268.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ bfloat16_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2193; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2196.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2357; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2360.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2369; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2372.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2363; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2366.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float* dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2235; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2238.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ float* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2163; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2166.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ fp8_e4m3fn_t * dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2271; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2274.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ fp8_e4m3fn_t * dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2199; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2202.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2297; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2300.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2315; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2318.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2303; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2306.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2375; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2378.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2387; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2390.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2381; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2384.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2217; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2220.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2145; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2148.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst_addr, __cc__ int32_t* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2241; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2244.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ half* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2169; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2172.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ hifloat8_t* dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2277; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2280.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ hifloat8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2205; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2208.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2429; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2432.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2441; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2444.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2435; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2438.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t* dst_addr, __cc__ int32_t* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2259; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2262.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int32_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2187; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2190.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2321; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2324.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2333; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2336.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2327; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2330.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2393; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2396.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2405; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2408.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2399; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2402.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2223; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2226.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2151; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2154.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst_addr, __cc__ int32_t* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2247; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2250.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ int8_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2175; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2178.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2339; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2342.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2351; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2354.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2345; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2348.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2411; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2414.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2423; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2426.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2417; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2420.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst_addr, __cc__ float* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2229; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2232.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst_addr, __cc__ float* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2157; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2160.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst_addr, __cc__ int32_t* src_addr, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2253; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2256.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub(__ubuf__ uint8_t* dst_addr, __cc__ int32_t* src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_cfg, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2181; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2184.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_ub_s4`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1021`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void *dst_addr, __cc__ float *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2123.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void *dst_addr, __cc__ float *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2128.
+      - Parameter packing: Header packing comment: `/* #1477 */ __builtin_cce_copy_matrix_cc_to_ub_s4(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void *dst_addr, __cc__ int32_t *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2133.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void *dst_addr, __cc__ int32_t *src_addr, uint8_t sid, uint16_t n_size, uint16_t m_size, uint32_t loop_dst_stride, uint16_t loop_src_stride, uint8_t dual_dst_ctl, bool sub_blockid, uint8_t clip_relu_pre, uint8_t unit_flag_ctl, uint64_t quant_pre, uint8_t relu_pre, bool split_en, bool NZ2ND_en, uint64_t quant_post, uint8_t relu_post, bool clip_relu_post, bool loop_enhance_en, uint8_t eltwise_op, bool eltwise_antq_en, bool loop_enhance_merge_en, bool C0_pad_en, bool wino_post_en, bool broadcast_en, bool NZ2DN_en);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2138.
+      - Parameter packing: Header packing comment: `/* #1486 */ __builtin_cce_copy_matrix_cc_to_ub_s4(dst_addr, src_addr, ((sid & 0x) << 0 | (n_size & 0xfff) << 4 | (m_size & 0xffff) << 16 | (loop_dst_stride & 0xffffffff) << 32), ((loop_src_stride & 0xffff) << 0 | (dual_dst_ctl & 0x3) << 16 | (sub_blockid & 0x1) << 18 | (quant_pre & 0x20) << 24 | (clip_relu_pre & 0x3) << 30 | (unit_flag_ctl & 0x3) << 32 | (quant_pre & 0x1f) << 34 | (relu_pre & 0x7) << 39 | (split_en & 0x1) << 42 | (NZ2ND_en & 0x1) << 43 | (quant_post & 0x1f) << 44 | (relu_post & 0x7) << 49 | (clip_relu_post & 0x1) << 52 | (loop_enhance_en & 0x1) << 53 | (eltwise_op & 0x7) << 54 | (eltwise_antq_en & 0x1) << 57 | (loop_enhance_merge_en & 0x1) << 58 | (C0_pad_en & 0x1) << 59 | (wino_post_en & 0x1) << 60 | (broadcast_en & 0x1) << 61 | (NZ2DN_en & 0x1) << 62))`
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void* dst, __cc__ float* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2450.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2452.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void* dst, __cc__ float* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2451.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void* dst, __cc__ int32_t* src, uint64_t xm, uint64_t xt);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2453.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, QuantMode_post quant_post, uint8_t relu_post, bool clip_relu_post, uint8_t eltwiseOP, uint8_t eltwise_antq_cfg, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2455.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ub_s4(__ubuf__ void* dst, __cc__ int32_t* src, uint8_t sid, uint16_t NSize, uint16_t MSize, uint32_t dstStride_dst_D, uint16_t srcStride, uint8_t clip_relu_pre, uint8_t UnitFlagMode, QuantMode_t QuantPRE, uint8_t ReLUPRE, bool channelSplit, bool NZ2ND_EN, bool C0_Pad_EN);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2454.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_cc_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1023`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ float* dst, __cc__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2460.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2461.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2458.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2459.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2456.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2457.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2462.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2463.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ int16_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2464.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ int16_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2465.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2466.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2467.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2468.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2469.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ uint32_t* dst, __cc__ uint32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2470.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ uint32_t* dst, __cc__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2471.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2472.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_cc_to_ubuf(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2473.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_matrix_ubuf_to_cc`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1025`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ float* dst, __ubuf__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2476.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ float* dst, __ubuf__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2477.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ float* dst, __ubuf__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2478.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ float* dst, __ubuf__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2479.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ half* dst, __ubuf__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2474.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ half* dst, __ubuf__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2475.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ int32_t* dst, __ubuf__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2480.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ int32_t* dst, __ubuf__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2481.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2482.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_matrix_ubuf_to_cc(__cc__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2483.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_small_matrix_cc_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1027`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2484.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2485.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ int16_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2486.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ int16_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2487.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2488.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2489.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2490.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2491.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ uint32_t* dst, __cc__ uint32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2492.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ uint32_t* dst, __cc__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2493.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2494.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_cc_to_ubuf(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2495.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_small_matrix_ubuf_to_cc`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1029`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_small_matrix_ubuf_to_cc(__cc__ int32_t* dst, __ubuf__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2496.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_ubuf_to_cc(__cc__ int32_t* dst, __ubuf__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2497.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_small_matrix_ubuf_to_cc(__cc__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2498.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_small_matrix_ubuf_to_cc(__cc__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2499.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_cbuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1031`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_cbuf(__cbuf__ void *dst_addr, __ubuf__ void *src_addr, bool sub_blockid, uint16_t burst_num, uint16_t burst_len, uint16_t src_gap, uint16_t dst_gap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2148.
+      - Parameter packing: Header packing comment: `/* #1558 */ __builtin_cce_copy_ubuf_to_cbuf(dst_addr, src_addr, ((sub_blockid & 0x1) << 0 | (burst_num & 0xfff) << 4 | (burst_len & 0xffff) << 16 | (src_gap & 0xffff) << 32 | (dst_gap & 0xffff) << 48))`
+    - `void __builtin_cce_copy_ubuf_to_cbuf(__cbuf__ void *dst_addr, __ubuf__ void *src_addr, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2143.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_cbuf(__cbuf__ void* dst, __ubuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2500; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2503.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_cbuf(__cbuf__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2506; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2509.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_fbuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1033`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_fbuf(__fbuf__ void* dst, __ubuf__ void* src, CvtMode_t cvtMode, uint16_t burstNum, uint16_t burstLen, uint16_t srcGapSize, uint16_t dstGapSize);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2513.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_fbuf(__fbuf__ void* dst, __ubuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2512.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_copy_ubuf_to_gm`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1035`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.MOV.UB.TO.OUT`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.MOV.UB.TO.OUT(ptr addrspace(1) nocapture writeonly, ptr addrspace(6) nocapture readonly, i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.MOV.UB.TO.OUT(ptr addrspace(1) null, ptr addrspace(6) null, i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm(__gm__ void* dst, __ubuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2514.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm(__gm__ void* dst, __ubuf__ void* src, uint64_t config, bm_t byteMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2515.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2517.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, bm_t byteMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2516.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_align`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1037`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ float* dst, __ubuf__ float* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2531.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ half* dst, __ubuf__ half* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2528.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ int16_t* dst, __ubuf__ int16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2526.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ int32_t* dst, __ubuf__ int32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2529.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ int8_t* dst, __ubuf__ int8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2524.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2527.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2530.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align(__gm__ uint8_t* dst, __ubuf__ uint8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2525.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_align_b16`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1039`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_align_b16(__gm__ void* dst, __ubuf__ void* src, uint64_t config, uint64_t gapConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2518.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_b16(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2519.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_align_b32`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1041`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_align_b32(__gm__ void* dst, __ubuf__ void* src, uint64_t config, uint64_t gapConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2520.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_b32(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2521.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_align_b8`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1043`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_align_b8(__gm__ void* dst, __ubuf__ void* src, uint64_t config, uint64_t gapConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2522.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_b8(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint8_t leftPaddingNum, uint8_t rightPaddingNum, uint32_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2523.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_align_v2`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1047`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ void *dst_addr, __ubuf__ void *src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2153.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ void *dst_addr, __ubuf__ void *src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t l2_cache_ctl, uint64_t burst_dst_stride, uint32_t burst_src_stride);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2158.
+      - Parameter packing: Header packing comment: `/* #1605 */ __builtin_cce_copy_ubuf_to_gm_align_v2(dst_addr, src_addr, ((sid & 0xf) << 0 | (burst_num & 0x1fffff) << 4 | (burst_len & 0x1fffff) << 25 | (l2_cache_ctl & 0xf) << 60), ((burst_dst_stride & 0xffffffffff) << 0 | (burst_src_stride & 0x1fffff) << 40))`
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ float* dst, __ubuf__ float* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2666; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2669.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ half* dst, __ubuf__ half* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2648; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2651.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ int16_t* dst, __ubuf__ int16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2636; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2639.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ int32_t* dst, __ubuf__ int32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2654; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2657.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ int8_t* dst, __ubuf__ int8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2624; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2627.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ uint16_t* dst, __ubuf__ uint16_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2642; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2645.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2660; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2663.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ uint8_t* dst, __ubuf__ uint8_t* src, uint8_t sid, uint16_t nBurst, uint32_t lenBurst, uint64_t srcGap, uint32_t dstGap);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2630; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2633.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ void * dst_addr, __ubuf__ void * src_addr, uint64_t config0, uint64_t config1);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2612; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2615.
+      - Parameter packing: Direct bottom-level form: `config0, config1` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_align_v2(__gm__ void * dst_addr, __ubuf__ void * src_addr, uint8_t sid, uint32_t burst_num, uint32_t burst_len, uint8_t l2_cache_ctl, uint64_t burst_dst_stride, uint32_t burst_src_stride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2618; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2621.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_pad_b16`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1049`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_pad_b16(__gm__ void* dst, __ubuf__ void* src, uint64_t config, uint64_t paddingConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2532.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_pad_b16(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, uint8_t leftPaddingNum, uint8_t rightPaddingNum);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2533.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_pad_b32`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1051`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_pad_b32(__gm__ void* dst, __ubuf__ void* src, uint64_t config, uint64_t paddingConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2534.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_pad_b32(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, uint8_t leftPaddingNum, uint8_t rightPaddingNum);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2535.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_gm_pad_b8`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1053`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_gm_pad_b8(__gm__ void* dst, __ubuf__ void* src, uint64_t config, uint64_t paddingConfig);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2536.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_gm_pad_b8(__gm__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, uint8_t leftPaddingNum, uint8_t rightPaddingNum);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2537.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_ubuf_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1055`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_ubuf_to_ubuf(__ubuf__ void *dst, __ubuf__ void *src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcGap, uint16_t dstGap);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2163.
+      - Parameter packing: Header packing comment: `/* #1644 */ __builtin_cce_copy_ubuf_to_ubuf(dst, src, ((dstGap & 0xffff) << 48 | (srcGap & 0xffff) << 32 | (lenBurst & 0xffff) << 16 | (nBurst & 0xffff) << 0))`
+    - `void __builtin_cce_copy_ubuf_to_ubuf(__ubuf__ void *dst, __ubuf__ void *src, uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:2168.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_ubuf(__ubuf__ void* dst, __ubuf__ void* src, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2550; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2553.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_ubuf_to_ubuf(__ubuf__ void* dst, __ubuf__ void* src, uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2538; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2541.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_ubuf_to_ubuf(__ubuf__ void* dst, __ubuf__ void* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2544; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2547.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_vector_cc_to_ubuf`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1057`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ float* dst, __cc__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2560.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ float* dst, __cc__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2561.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ half* dst, __cc__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2558.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ half* dst, __cc__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2559.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ half* dst, __cc__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2556.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ half* dst, __cc__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2557.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ half* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2562.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ half* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2563.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ int16_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2564.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ int16_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2565.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2566.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ int32_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2567.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2568.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ int8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2569.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ uint32_t* dst, __cc__ uint32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2570.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ uint32_t* dst, __cc__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2571.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2572.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_cc_to_ubuf(__ubuf__ uint8_t* dst, __cc__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2573.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+- `__builtin_cce_copy_vector_ubuf_to_cc`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:1059`
+  - Observed LLVM intrinsic names: Not captured by the partial local probe.
+  - Observed LLVM IR declarations: Not captured by the partial local probe.
+  - Complete C++ signatures:
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ float* dst, __ubuf__ float* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2576.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ float* dst, __ubuf__ float* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2577.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ float* dst, __ubuf__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2578.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ float* dst, __ubuf__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2579.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ half* dst, __ubuf__ half* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2574.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ half* dst, __ubuf__ half* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2575.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ int32_t* dst, __ubuf__ int32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2580.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ int32_t* dst, __ubuf__ int32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2581.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ uint32_t* dst, __ubuf__ uint32_t* src, uint64_t config, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2582.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_copy_vector_ubuf_to_cc(__cc__ uint32_t* dst, __ubuf__ uint32_t* src, uint8_t sid, uint16_t nBurst, uint16_t lenBurst, uint16_t srcStride, uint16_t dstStride, ConvRelu_t crMode);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:2583.
+      - Parameter packing: No CANN `// ->` packing comment found for this signature in the scanned headers.
+
+## 3. Companion Set/Control Builtins
+
+- Scope: `set_*` builtins commonly paired with `copy*` DMA flows for loop sizing/striding, ND-DMA padding/parameters, and fixpipe/fix-state configuration.
+- Excluded here: vector mask controls such as `set_vector_mask`, `set_mask_count`, `set_mask_norm`, and `set_cmpmask`; those are documented with vector builtins in `a2a3-vector-builtins.md`.
+- Companion control count: 58 builtin names and 65 complete C++ signatures.
+- LLVM IR probe coverage: 41 of 65 signatures captured device LLVM IR; 35 builtin names have at least one captured LLVM intrinsic; 38 unique LLVM intrinsic names were observed.
+- The listed LLVM IR declarations and actual probe calls are exact lines from the captured `.ll` files. For uncaptured entries, this section intentionally leaves the IR signature absent instead of deriving one from the C++ signature.
+- `Not captured` means the local target sweep rejected the signature for the tested targets. The C++ signature and CANN packing/ASM comment remain header-derived.
+- For `set_*` entries whose CANN header only says `ASM: MOV <REGISTER>, config`, the bottom-level C++ parameter is already the register/control payload. The header does not expose a higher-level bitfield pack unless a separate `// ->` line is listed under that exact signature.
+
+- `__builtin_cce_set_cube_stride_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2037`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_cube_stride_para(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6892.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_deqscale`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2047`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.DEQSCALE.h`
+    - `llvm.hivm.SET.DEQSCALE.i`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.DEQSCALE.h(half) #1`
+    - `declare void @llvm.hivm.SET.DEQSCALE.i(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.DEQSCALE.h(half 0xH3C00)`
+    - `call void @llvm.hivm.SET.DEQSCALE.i(i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_deqscale(half config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6705.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+    - `void __builtin_cce_set_deqscale(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6706.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_elt_antiq_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:805`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.ELT.ANTIQ.PARA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.ELT.ANTIQ.PARA(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.ELT.ANTIQ.PARA(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_elt_antiq_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4159; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6707.
+      - Parameter packing: Direct control form; header operation comment: `MOV		ELT_ANTIQ_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_elt_src_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:807`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.ELT.SRC.PARA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.ELT.SRC.PARA(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.ELT.SRC.PARA(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_elt_src_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4164; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6709.
+      - Parameter packing: Direct control form; header operation comment: `MOV		ELT_SRC_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_fcol2img`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2055`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.FCOL2IMG`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.FCOL2IMG(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.FCOL2IMG(i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fcol2img(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6712.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_fix_clip_relu`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:811`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.FIX.CLIP.RELU`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.FIX.CLIP.RELU(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.FIX.CLIP.RELU(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fix_clip_relu(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4174; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6714.
+      - Parameter packing: Direct control form; header operation comment: `MOV		FIX_CLIP_RELU, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_fixp_addr`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:813`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.FIXP.ADDR`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.FIXP.ADDR(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.FIXP.ADDR(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fixp_addr(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4179; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6715.
+      - Parameter packing: Direct control form; header operation comment: `MOV		FIXP_ADDR, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_fixp_nz_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2063`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fixp_nz_para(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20470.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_fm_step_pos`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2067`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fm_step_pos(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6862.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_fmatrix`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:817`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.FMATRIX`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.FMATRIX(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.FMATRIX(i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fmatrix(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4194; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6740; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6743.
+      - Parameter packing: Direct control form; header operation comment: `MOV		FMATRIX, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_fmatrix_b`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:819`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.FMATRIX.B`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.FMATRIX.B(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.FMATRIX.B(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fmatrix_b(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4199; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6747; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6750.
+      - Parameter packing: Direct control form; header operation comment: `MOV		FMATRIX_B, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_fmatrix_dual_0`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2073`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fmatrix_dual_0(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6753.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_fmatrix_dual_1`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2075`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fmatrix_dual_1(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6754.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_fpc`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:821`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.FPC`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.FPC(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.FPC(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fpc(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4204; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6757; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6760.
+      - Parameter packing: Direct control form; header operation comment: `MOV		FPC, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_fpdeq`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2085`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_fpdeq(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6764.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_kernel`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2143`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_kernel(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6893.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_loop0_stride_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:837`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP0.STRIDE.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP0.STRIDE.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP0.STRIDE.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop0_stride_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4279; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19564; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19567.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP0_STRIDE_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop1_stride_l1toout`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:839`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop1_stride_l1toout(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4284.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP1_STRIDE_L1TOOUT, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop1_stride_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:841`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP1.STRIDE.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP1.STRIDE.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP1.STRIDE.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop1_stride_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4289; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19570; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19573.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP1_STRIDE_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop1_stride_outtol1`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:843`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop1_stride_outtol1(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4294; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19534; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19537.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP1_STRIDE_OUTTOL1, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop1_stride_outtoub`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:845`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP1.STRIDE.OUTTOUB(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop1_stride_outtoub(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4299; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19516; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19519.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP1_STRIDE_OUTTOUB, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop1_stride_ubtoout`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:847`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP1.STRIDE.UBTOOUT`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP1.STRIDE.UBTOOUT(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP1.STRIDE.UBTOOUT(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop1_stride_ubtoout(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4304; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19552; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19555.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP1_STRIDE_UBTOOUT, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop2_stride_l1toout`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:849`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop2_stride_l1toout(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4309.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP2_STRIDE_L1TOOUT, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop2_stride_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:851`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP2.STRIDE.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP2.STRIDE.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP2.STRIDE.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop2_stride_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4314; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19576; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19579.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP2_STRIDE_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop2_stride_outtol1`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:853`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop2_stride_outtol1(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4319; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19540; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19543.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP2_STRIDE_OUTTOL1, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop2_stride_outtoub`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:855`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP2.STRIDE.OUTTOUB(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop2_stride_outtoub(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4324; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19522; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19525.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP2_STRIDE_OUTTOUB, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop2_stride_ubtoout`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:857`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP2.STRIDE.UBTOOUT`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP2.STRIDE.UBTOOUT(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP2.STRIDE.UBTOOUT(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop2_stride_ubtoout(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4329; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19558; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19561.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP2_STRIDE_UBTOOUT, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop3_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:859`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP3.PARA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP3.PARA(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP3.PARA(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop3_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4334; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6795; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6798.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP3_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop3_stride_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:861`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP3.STRIDE.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP3.STRIDE.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP3.STRIDE.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop3_stride_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4339; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19582; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19585.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP3_STRIDE_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop4_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:863`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop4_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4344; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20453.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP4_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop4_stride_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:865`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP4.STRIDE.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP4.STRIDE.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP4.STRIDE.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop4_stride_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4349; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19588; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19591.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP4_STRIDE_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop_size_l1toout`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:867`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop_size_l1toout(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4354.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP_SIZE_L1TOOUT, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop_size_outtol1`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:869`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop_size_outtol1(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4359; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19528; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19531.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP_SIZE_OUTTOL1, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop_size_outtoub`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:871`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP.SIZE.OUTTOUB`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP.SIZE.OUTTOUB(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP.SIZE.OUTTOUB(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop_size_outtoub(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4364; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19510; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19513.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP_SIZE_OUTTOUB, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_loop_size_ubtoout`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:873`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LOOP.SIZE.UBTOOUT`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LOOP.SIZE.UBTOOUT(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LOOP.SIZE.UBTOOUT(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_loop_size_ubtoout(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4369; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19546; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19549.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LOOP_SIZE_UBTOOUT, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_lrelu_alpha`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:875`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.LRELU.ALPHA.f32`
+    - `llvm.hivm.SET.LRELU.ALPHA.f16`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.LRELU.ALPHA.f32(float) #1`
+    - `declare void @llvm.hivm.SET.LRELU.ALPHA.f16(half) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.LRELU.ALPHA.f32(float 1.000000e+00)`
+    - `call void @llvm.hivm.SET.LRELU.ALPHA.f16(half 0xH3C00)`
+  - Probe targets used: `dav-m200`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_lrelu_alpha(float config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4379; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6805.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LRELU_ALPHA, config`; pipe: `PIPE_S`.
+    - `void __builtin_cce_set_lrelu_alpha(half config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4374; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6804.
+      - Parameter packing: Direct control form; header operation comment: `MOV		LRELU_ALPHA, config`; pipe: `PIPE_S`.
+    - `void __builtin_cce_set_lrelu_alpha(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6803.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_matrix_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2233`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_matrix_para(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6891.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_mov_pad_val`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:881`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.MOV.PAD.VAL`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.MOV.PAD.VAL(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.MOV.PAD.VAL(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_mov_pad_val(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4394; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6808; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6811.
+      - Parameter packing: Direct control form; header operation comment: `MOV		MOV_PAD_VAL, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_mte2_antiq_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:883`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_mte2_antiq_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4399; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6711.
+      - Parameter packing: Direct control form; header operation comment: `MOV		MTE2_ANTIQ_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_mte2_nz_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:885`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_mte2_nz_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4404; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19489; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19492.
+      - Parameter packing: Direct control form; header operation comment: `MOV		MTE2_NZ_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_mte2_src_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:887`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_mte2_src_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4409; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19495; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19498.
+      - Parameter packing: Direct control form; header operation comment: `MOV		MTE2_SRC_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_mte3_nz_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2247`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_mte3_nz_para(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6890.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_nd_para`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:889`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.ND.PARA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.ND.PARA(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.ND.PARA(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_nd_para(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4414; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6816.
+      - Parameter packing: Direct control form; header operation comment: `MOV		ND_PARA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_pad_cnt_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:891`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.PAD.CNT.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.PAD.CNT.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.PAD.CNT.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_pad_cnt_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4419; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19594; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19597.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PAD_CNT_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_pad_val_nddma`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:893`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.PAD.VAL.NDDMA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.PAD.VAL.NDDMA(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.PAD.VAL.NDDMA(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_pad_val_nddma(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4424; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19504; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:19507.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PAD_VAL_NDDMA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_pad_val_outtol1`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:895`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_pad_val_outtol1(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4429; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6815.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PAD_VAL_OUTTOL1, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_pad_val_outtoub`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:897`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.PAD.VAL.OUTTOUB`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.PAD.VAL.OUTTOUB(i64) #3`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.PAD.VAL.OUTTOUB(i64 1), !dbg !10`
+  - Probe targets used: `dav-c310-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_pad_val_outtoub(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4434; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6814.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PAD_VAL_OUTTOUB, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_padding`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:899`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.PADDING.f16`
+    - `llvm.hivm.SET.PADDING`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.PADDING.f16(half) #1`
+    - `declare void @llvm.hivm.SET.PADDING(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.PADDING.f16(half 0xH3C00)`
+    - `call void @llvm.hivm.SET.PADDING(i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_padding(half config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4444; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6823; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6826.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PADDING, config`; pipe: `PIPE_S`.
+    - `void __builtin_cce_set_padding(int16_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4449; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6829; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6832.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PADDING, config`; pipe: `PIPE_S`.
+    - `void __builtin_cce_set_padding(uint16_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4454; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6835; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6838.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PADDING, config`; pipe: `PIPE_S`.
+    - `void __builtin_cce_set_padding(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4439; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6817; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6820.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PADDING, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_padding_b`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:901`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_padding_b(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4459; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:20455.
+      - Parameter packing: Direct control form; header operation comment: `MOV		PADDING_B, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_quant_post`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:907`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.QUANT.POST`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.QUANT.POST(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.QUANT.POST(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_quant_post(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4474; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6853.
+      - Parameter packing: Direct control form; header operation comment: `MOV		QUANT_POST, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_quant_pre`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:909`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.QUANT.PRE.v300`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.QUANT.PRE.v300(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.QUANT.PRE.v300(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_quant_pre(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4479; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6855; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6858.
+      - Parameter packing: Direct control form; header operation comment: `MOV		QUANT_PRE, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_relu_alpha`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:911`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.RELU.ALPHA`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.RELU.ALPHA(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.RELU.ALPHA(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_relu_alpha(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4484; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6865.
+      - Parameter packing: Direct control form; header operation comment: `MOV		RELU_ALPHA, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_reqscale`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2277`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_reqscale(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6867.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_rpn_cor_ir`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:913`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.RPN.COR.IR`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.RPN.COR.IR(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.RPN.COR.IR(i64 1)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_rpn_cor_ir(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4489; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6868.
+      - Parameter packing: Header packing comment: `/* #3326 */ __builtin_cce_mov_vspr(19, config)`
+
+- `__builtin_cce_set_rpn_offset`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2281`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.RPN.OFFSET`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.RPN.OFFSET(half) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.RPN.OFFSET(half 0xH3C00)`
+  - Probe targets used: `dav-m200-vec`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_rpn_offset(half config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6869.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_st_atomic_cfg`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:915`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.ST.ATOMIC.CFG`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.ST.ATOMIC.CFG(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.ST.ATOMIC.CFG(i64 1), !dbg !10`
+  - Probe targets used: `dav-m300`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_st_atomic_cfg(atomic_type_t type, atomic_op_t op);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4499; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6874; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6877.
+      - Parameter packing: Header packing comment: `/* #4073 */ __builtin_cce_set_st_atomic_cfg(((type & 0x7) << 0 | (op & 0x3) << 3))`
+    - `void __builtin_cce_set_st_atomic_cfg(uint64_t config);`
+      - Signature source: .local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics_3101.h:4494; .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6873.
+      - Parameter packing: Direct control form; header operation comment: `MOV		ST_ATOMIC_CFG, config`; pipe: `PIPE_S`.
+
+- `__builtin_cce_set_vpipe`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2301`
+  - Observed LLVM intrinsic names:
+    - `llvm.hivm.SET.VPIPE`
+  - Observed LLVM IR declarations:
+    - `declare void @llvm.hivm.SET.VPIPE(i64) #1`
+  - Actual probe calls:
+    - `call void @llvm.hivm.SET.VPIPE(i64 1)`
+  - Probe targets used: `dav-m200`
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_vpipe(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6888.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.
+
+- `__builtin_cce_set_vsp`
+  - C++ wrapper alias source: `.local/cann/x86_64-linux/ccec_compiler/lib/clang/15.0.5/include/cce_aicore_intrinsics.h:2303`
+  - Observed LLVM intrinsic names: Not captured by the local target sweep.
+  - Observed LLVM IR declarations: Not captured by the local target sweep.
+  - Complete C++ signatures:
+    - `void __builtin_cce_set_vsp(uint64_t config);`
+      - Signature source: .local/cann/tools/tikicpulib/lib/include/stub_fun.h:6889.
+      - Parameter packing: Direct bottom-level form: `config` is already supplied as the packed/control operand; no `// ->` wrapper packing comment is needed.

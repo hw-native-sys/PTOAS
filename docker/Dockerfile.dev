@@ -1,0 +1,84 @@
+# PTOAS development environment with NPU support (CANN 9.0.0)
+#
+# Usage:
+#   docker build -f docker/Dockerfile.dev -t ptoas-dev-cann900 .
+#
+# This image provides the toolchain for building and running PTOAS on NPU.
+# It does NOT contain PTOAS itself -- mount PTOAS source at /workspace and
+# run `pip install -e .` inside the container.
+
+# ---- Base: CANN 9.0.0 (provides bisheng, CANN runtime, Python 3.12) ----
+FROM quay.io/ascend/cann:9.0.0-910b-ubuntu22.04-py3.12
+
+# ---- Build args (matching CI) ----
+ARG LLVM_REPO=https://github.com/vpto-dev/llvm-project.git
+ARG LLVM_REF=feature-vpto
+ARG PTO_ISA_REPO=https://gitcode.com/cann/pto-isa.git
+ARG PTO_ISA_COMMIT=662d7f2a916d6bbde3109ce4a16ed5c28f5d900a
+
+# ---- Paths ----
+ENV LLVM_SOURCE_DIR=/opt/llvm-project
+ENV LLVM_BUILD_DIR=/opt/llvm-project/build
+ENV LLVM_INSTALL_DIR=/usr/local/llvm
+ENV ASCEND_HOME_PATH=/usr/local/Ascend/cann-9.0.0
+ENV PTO_LIB_PATH=/opt/pto-isa
+
+# =========================================================================
+# 1. System dependencies
+# =========================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake ninja-build git build-essential clang lld \
+    libedit-dev zlib1g-dev libxml2-dev libzstd-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# =========================================================================
+# 2. Python dependencies
+# =========================================================================
+RUN pip install --no-cache-dir 'pybind11<3' numpy pyyaml
+
+# =========================================================================
+# 3. Build LLVM/MLIR (vpto fork, feature-vpto branch)
+# =========================================================================
+RUN git clone --depth 1 --branch "${LLVM_REF}" "${LLVM_REPO}" "${LLVM_SOURCE_DIR}"
+
+WORKDIR ${LLVM_SOURCE_DIR}
+
+RUN cmake -G Ninja -S llvm -B "${LLVM_BUILD_DIR}" \
+    -DLLVM_ENABLE_PROJECTS="mlir;clang" \
+    -DBUILD_SHARED_LIBS=ON \
+    -DLLVM_ENABLE_ASSERTIONS=ON \
+    -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
+    -DPython3_EXECUTABLE=python3 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_TARGETS_TO_BUILD="host" \
+    -DCMAKE_INSTALL_PREFIX="${LLVM_INSTALL_DIR}" \
+    -DLLVM_INSTALL_UTILS=ON
+
+RUN ninja -C "${LLVM_BUILD_DIR}"
+
+RUN cmake --install "${LLVM_BUILD_DIR}"
+
+# =========================================================================
+# 4. Clone pto-isa (headers for bisheng compilation of generated kernels)
+# =========================================================================
+RUN git clone "${PTO_ISA_REPO}" "${PTO_LIB_PATH}" \
+    && cd "${PTO_LIB_PATH}" && git checkout "${PTO_ISA_COMMIT}"
+
+# =========================================================================
+# 5. Torch + torch-npu (for on-device kernel launch)
+# =========================================================================
+RUN pip install --no-cache-dir torch==2.9.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir torch-npu==2.9.0
+
+# =========================================================================
+# 6. Environment
+# =========================================================================
+ENV PATH="${LLVM_INSTALL_DIR}/bin:${ASCEND_HOME_PATH}/compiler/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${LLVM_INSTALL_DIR}/lib:${ASCEND_HOME_PATH}/lib64:${ASCEND_HOME_PATH}/lib64/plugin/opskernel:${ASCEND_HOME_PATH}/lib64/plugin/nnengine:${ASCEND_HOME_PATH}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:${LD_LIBRARY_PATH}"
+ENV MLIR_PYTHON_ROOT="${LLVM_INSTALL_DIR}/python_packages/mlir_core"
+
+ENV BISHENG_OPTS="-I${PTO_LIB_PATH}/include/pto -fPIC -shared -O2 -std=c++17 --npu-arch=dav-2201 -DMEMORY_BASE"
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

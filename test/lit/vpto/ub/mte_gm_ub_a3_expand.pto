@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A3: mte_gm_ub → copy_gm_to_ubuf expansion (before LLVM lowering)
+// Verifies that on A2A3, no SET.LOOP HW config ops are emitted — all loops use scf.for.
+
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @mte_gm_ub_a3_expand(%arg0: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %ub = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    pto.mte_gm_ub %arg0, %ub, %c0, %c1
+      nburst(%c1, %c1, %c1)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+    return
+  }
+
+  func.func @mte_gm_ub_a3_expand_with_loops(%arg0: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %ub = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    pto.mte_gm_ub %arg0, %ub, %c0, %c1
+      nburst(%c1, %c1, %c1)
+      loop(%c1, %c1, %c1)
+      loop1(%c1, %c1, %c1)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, loop i64, i64, i64, loop1 i64, i64, i64
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @mte_gm_ub_a3_expand(
+// CHECK: pto.copy_gm_to_ubuf
+// CHECK-NOT: pto.mte_gm_ub
+// CHECK-NOT: pto.set_loop
+
+// CHECK-LABEL: func.func @mte_gm_ub_a3_expand_with_loops(
+// CHECK: scf.for
+// CHECK: pto.copy_gm_to_ubuf
+// CHECK-NOT: pto.set_loop
+// CHECK-NOT: pto.mte_gm_ub

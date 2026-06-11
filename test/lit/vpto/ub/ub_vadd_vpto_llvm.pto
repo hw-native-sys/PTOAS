@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a3 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+// CHECK-LABEL: llvm.func @ub_vadd_s16_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VADD.s16
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @ub_vadd_s16(%dst: !pto.ptr<i16, ub>, %src0: !pto.ptr<i16, ub>, %src1: !pto.ptr<i16, ub>) attributes {pto.aicore} {
+    %c128 = arith.constant 128 : i64
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c4 = arith.constant 4 : i64
+    %c5 = arith.constant 5 : i64
+    pto.ub.vadd %dst, %src0, %src1, %c128, %c0, %c1, %c2, %c3, %c4, %c5 : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+
+// CHECK-LABEL: llvm.func @ub_vadd_f16_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VADD.f16
+  func.func @ub_vadd_f16(%dst: !pto.ptr<f16, ub>, %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>) attributes {pto.aicore} {
+    %c128 = arith.constant 128 : i64
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c4 = arith.constant 4 : i64
+    %c5 = arith.constant 5 : i64
+    pto.ub.vadd %dst, %src0, %src1, %c128, %c0, %c1, %c2, %c3, %c4, %c5 : !pto.ptr<f16, ub>, !pto.ptr<f16, ub>, !pto.ptr<f16, ub>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+
+// CHECK-LABEL: llvm.func @ub_vadd_s32_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VADD.s32
+  func.func @ub_vadd_s32(%dst: !pto.ptr<i32, ub>, %src0: !pto.ptr<i32, ub>, %src1: !pto.ptr<i32, ub>) attributes {pto.aicore} {
+    %c128 = arith.constant 128 : i64
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c4 = arith.constant 4 : i64
+    %c5 = arith.constant 5 : i64
+    pto.ub.vadd %dst, %src0, %src1, %c128, %c0, %c1, %c2, %c3, %c4, %c5 : !pto.ptr<i32, ub>, !pto.ptr<i32, ub>, !pto.ptr<i32, ub>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+
+// CHECK-LABEL: llvm.func @ub_vadd_f32_mix_aiv
+// CHECK: llvm.call @llvm.hivm.VADD.f32
+  func.func @ub_vadd_f32(%dst: !pto.ptr<f32, ub>, %src0: !pto.ptr<f32, ub>, %src1: !pto.ptr<f32, ub>) attributes {pto.aicore} {
+    %c128 = arith.constant 128 : i64
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c4 = arith.constant 4 : i64
+    %c5 = arith.constant 5 : i64
+    pto.ub.vadd %dst, %src0, %src1, %c128, %c0, %c1, %c2, %c3, %c4, %c5 : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+
+// Verify A3/HVVM byte packing:
+//   repeat[7:0], dstBlk[15:8], src0Blk[23:16], src1Blk[31:24],
+//   dstRep[39:32], src0Rep[47:40], src1Rep[55:48], simdFlag[63:56]=1.
+// CHECK-LABEL: llvm.func @ub_vadd_packed_mix_aiv
+// CHECK: llvm.mlir.constant(72057594037927936 : i64)
+// CHECK: llvm.or
+// CHECK: %[[DSTBLK:.*]] = llvm.mlir.constant(2 : i64)
+// CHECK: %[[SH8:.*]] = llvm.mlir.constant(8 : i64)
+// CHECK: llvm.shl %[[DSTBLK]], %[[SH8]]
+// CHECK: %[[SRC0BLK:.*]] = llvm.mlir.constant(3 : i64)
+// CHECK: %[[SH16:.*]] = llvm.mlir.constant(16 : i64)
+// CHECK: llvm.shl %[[SRC0BLK]], %[[SH16]]
+// CHECK: %[[SRC1BLK:.*]] = llvm.mlir.constant(6 : i64)
+// CHECK: %[[SH24:.*]] = llvm.mlir.constant(24 : i64)
+// CHECK: llvm.shl %[[SRC1BLK]], %[[SH24]]
+// CHECK: %[[DSTREP:.*]] = llvm.mlir.constant(9 : i64)
+// CHECK: %[[SH32:.*]] = llvm.mlir.constant(32 : i64)
+// CHECK: llvm.shl %[[DSTREP]], %[[SH32]]
+// CHECK: %[[SRC0REP:.*]] = llvm.mlir.constant(12 : i64)
+// CHECK: %[[SH40:.*]] = llvm.mlir.constant(40 : i64)
+// CHECK: llvm.shl %[[SRC0REP]], %[[SH40]]
+// CHECK: %[[SRC1REP:.*]] = llvm.mlir.constant(15 : i64)
+// CHECK: %[[SH48:.*]] = llvm.mlir.constant(48 : i64)
+// CHECK: llvm.shl %[[SRC1REP]], %[[SH48]]
+// CHECK: llvm.call @llvm.hivm.VADD.s16({{.*}}, {{.*}}, {{.*}}, {{%.*}}) : (!llvm.ptr<6>, !llvm.ptr<6>, !llvm.ptr<6>, i64) -> ()
+  func.func @ub_vadd_packed(%dst: !pto.ptr<i16, ub>, %src0: !pto.ptr<i16, ub>, %src1: !pto.ptr<i16, ub>) attributes {pto.aicore} {
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c6 = arith.constant 6 : i64
+    %c9 = arith.constant 9 : i64
+    %c12 = arith.constant 12 : i64
+    %c15 = arith.constant 15 : i64
+    pto.ub.vadd %dst, %src0, %src1, %c1, %c2, %c3, %c6, %c9, %c12, %c15 : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}

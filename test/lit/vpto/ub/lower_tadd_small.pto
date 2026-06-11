@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test Bin1LNormModeSmall: 2x32 f32, v_col=8. vRows>1 → per-row scf.for count mode.
+
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a3 --pto-backend=vpto %s -o %t --mlir-print-ir-after=pto-lower-to-ubuf-ops 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @lower_tadd_small() attributes {pto.aicore} {
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tadd ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @lower_tadd_small
+// CHECK: pto.ub.set_mask_count
+// CHECK: pto.ub.vadd
+// CHECK: pto.ub.set_mask_norm
+// CHECK-NOT: pto.tadd
