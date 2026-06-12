@@ -270,29 +270,34 @@ struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
 };
 
 template <typename AsyncEventOp>
-struct PTOAsyncEventToEmitC : public OpConversionPattern<AsyncEventOp> {
+struct PTOAsyncEventToEmitC : public ConversionPattern {
   explicit PTOAsyncEventToEmitC(const TypeConverter &typeConverter,
                                 MLIRContext *ctx,
                                 StringRef callee)
-      : OpConversionPattern<AsyncEventOp>(typeConverter, ctx),
+      : ConversionPattern(typeConverter, AsyncEventOp::getOperationName(),
+                          /*benefit=*/1, ctx),
         callee(callee.str()) {}
 
-  LogicalResult match(AsyncEventOp op) const override {
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                                ConversionPatternRewriter &builder) const override {
+    return rewriteAsyncEvent(op, operands, &builder);
+  }
+
+private:
+  LogicalResult rewriteAsyncEvent(Operation *rootOp, ArrayRef<Value> operands,
+                                  ConversionPatternRewriter *builder) const {
+    auto op = cast<AsyncEventOp>(rootOp);
+    typename AsyncEventOp::Adaptor adaptor(operands, op);
     Type resultTy =
         this->getTypeConverter()->convertType(op.getCompleted().getType());
     if (!resultTy)
       return failure();
-    return success();
-  }
 
-  void rewrite(AsyncEventOp op, typename AsyncEventOp::Adaptor adaptor,
-               ConversionPatternRewriter &rewriter) const override {
-    Type resultTy =
-        this->getTypeConverter()->convertType(op.getCompleted().getType());
-    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+    builder->replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, TypeRange{resultTy}, callee, ArrayAttr{}, ArrayAttr{},
         ValueRange{peelUnrealized(adaptor.getEvent()),
                    peelUnrealized(adaptor.getSession())});
+    return success();
   }
 
   std::string callee;

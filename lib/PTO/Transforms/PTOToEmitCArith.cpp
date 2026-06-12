@@ -480,20 +480,26 @@ struct ArithExtSIToEmitC : public OpConversionPattern<arith::ExtSIOp> {
 };
 
 template <typename CastOp>
-struct ArithCastToEmitC : public OpConversionPattern<CastOp> {
-  using OpConversionPattern<CastOp>::OpConversionPattern;
+struct ArithCastToEmitC : public ConversionPattern {
+  ArithCastToEmitC(const TypeConverter &typeConverter, MLIRContext *ctx)
+      : ConversionPattern(typeConverter, CastOp::getOperationName(),
+                          /*benefit=*/1, ctx) {}
 
-  LogicalResult match(CastOp op) const override {
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                                ConversionPatternRewriter &builder) const override {
+    return rewriteCast(op, operands, &builder);
+  }
+
+private:
+  LogicalResult rewriteCast(Operation *rootOp, ArrayRef<Value> operands,
+                            ConversionPatternRewriter *builder) const {
+    auto op = cast<CastOp>(rootOp);
+    typename CastOp::Adaptor adaptor(operands, op);
     Type dstTy = this->getTypeConverter()->convertType(op.getType());
     if (!dstTy)
       return failure();
+    builder->replaceOpWithNewOp<emitc::CastOp>(op, dstTy, adaptor.getIn());
     return success();
-  }
-
-  void rewrite(CastOp op, typename CastOp::Adaptor adaptor,
-               ConversionPatternRewriter &rewriter) const override {
-    Type dstTy = this->getTypeConverter()->convertType(op.getType());
-    rewriter.replaceOpWithNewOp<emitc::CastOp>(op, dstTy, adaptor.getIn());
   }
 };
 
