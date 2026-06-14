@@ -16,6 +16,36 @@
 
 #include "mlir/IR/Dialect.h"
 
-#include "PTO/IR/PTODialect.h.inc"
+namespace mlir {
+namespace pto {
+
+class PTODialect : public ::mlir::Dialect {
+  explicit PTODialect(::mlir::MLIRContext *context);
+
+  void initialize();
+  friend class ::mlir::MLIRContext;
+
+public:
+  ~PTODialect() override;
+  static constexpr ::llvm::StringLiteral getDialectNamespace() {
+    return ::llvm::StringLiteral("pto");
+  }
+
+  ::mlir::Attribute parseAttribute(::mlir::DialectAsmParser &parser,
+                                   ::mlir::Type type) const override;
+
+  void printAttribute(::mlir::Attribute attr,
+                      ::mlir::DialectAsmPrinter &printer) const override;
+
+  ::mlir::Type parseType(::mlir::DialectAsmParser &parser) const override;
+
+  void printType(::mlir::Type type,
+                 ::mlir::DialectAsmPrinter &printer) const override;
+};
+
+} // namespace pto
+} // namespace mlir
+
+MLIR_DECLARE_EXPLICIT_TYPE_ID(::mlir::pto::PTODialect)
 
 #endif // MLIR_DIALECT_PTO_IR_PTODIALECT_H
