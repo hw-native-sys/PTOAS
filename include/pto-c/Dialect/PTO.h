@@ -9,8 +9,10 @@
 #ifndef MLIR_C_DIALECT_PTO_H
 #define MLIR_C_DIALECT_PTO_H
 
-#include "mlir-c/Support.h"
 #include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
