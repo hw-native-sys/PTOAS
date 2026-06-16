@@ -9777,6 +9777,129 @@ static void foldVPTOTypeCasts(ModuleOp module, TypeConverter &typeConverter) {
   }
 }
 
+static Value peelSingleResultCast(Value value) {
+  while (auto castOp = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+    if (castOp->getNumOperands() != 1 || castOp->getNumResults() != 1)
+      break;
+    value = castOp.getOperand(0);
+  }
+  return value;
+}
+
+static Value findLLVMIndexValue(Value value) {
+  value = peelSingleResultCast(value);
+  if (!value)
+    return {};
+  if (value.getType().isInteger(64))
+    return value;
+  for (Operation *user : llvm::make_early_inc_range(value.getUsers())) {
+    auto castOp = dyn_cast<UnrealizedConversionCastOp>(user);
+    if (!castOp || castOp->getNumOperands() != 1 || castOp->getNumResults() != 1)
+      continue;
+    Value result = castOp.getResult(0);
+    if (result.getType().isInteger(64))
+      return result;
+  }
+  return {};
+}
+
+static void eraseDeadTileMetadataOps(ModuleOp module) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<Operation *> opsToErase;
+    module.walk([&](pto::SetValidShapeOp op) {
+      opsToErase.push_back(op);
+    });
+    for (Operation *op : llvm::reverse(opsToErase)) {
+      op->erase();
+      changed = true;
+    }
+
+    opsToErase.clear();
+    module.walk([&](pto::GetValidShapeOp op) {
+      if (!op->use_empty())
+        return;
+      opsToErase.push_back(op);
+    });
+    for (Operation *op : llvm::reverse(opsToErase)) {
+      op->erase();
+      changed = true;
+    }
+
+    opsToErase.clear();
+    module.walk([&](pto::TReshapeOp op) {
+      if (!op->use_empty())
+        return;
+      opsToErase.push_back(op);
+    });
+    for (Operation *op : llvm::reverse(opsToErase)) {
+      op->erase();
+      changed = true;
+    }
+
+    opsToErase.clear();
+    module.walk([&](pto::AllocTileOp op) {
+      if (!op->use_empty())
+        return;
+      opsToErase.push_back(op);
+    });
+    for (Operation *op : llvm::reverse(opsToErase)) {
+      op->erase();
+      changed = true;
+    }
+
+    opsToErase.clear();
+    module.walk([&](UnrealizedConversionCastOp op) {
+      if (!op->use_empty())
+        return;
+      opsToErase.push_back(op);
+    });
+    for (Operation *op : llvm::reverse(opsToErase)) {
+      op->erase();
+      changed = true;
+    }
+  }
+}
+
+static void cleanupResidualTileMetadataForLLVMExport(ModuleOp module) {
+  SmallVector<pto::GetValidShapeOp> getValidShapeOps;
+  module.walk([&](pto::GetValidShapeOp op) { getValidShapeOps.push_back(op); });
+
+  for (pto::GetValidShapeOp op : getValidShapeOps) {
+    Value source = peelSingleResultCast(op.getSource());
+    auto alloc = source ? source.getDefiningOp<pto::AllocTileOp>() : nullptr;
+    if (!alloc)
+      continue;
+
+    Value row = alloc.getValidRow();
+    Value col = alloc.getValidCol();
+    if (!row || !col)
+      continue;
+
+    if (Value llvmRow = findLLVMIndexValue(row)) {
+      for (Operation *user :
+           llvm::make_early_inc_range(op.getValidRow().getUsers())) {
+        auto castOp = dyn_cast<UnrealizedConversionCastOp>(user);
+        if (castOp && castOp->getNumResults() == 1 &&
+            castOp.getResult(0).getType().isInteger(64))
+          castOp.getResult(0).replaceAllUsesWith(llvmRow);
+      }
+    }
+    if (Value llvmCol = findLLVMIndexValue(col)) {
+      for (Operation *user :
+           llvm::make_early_inc_range(op.getValidCol().getUsers())) {
+        auto castOp = dyn_cast<UnrealizedConversionCastOp>(user);
+        if (castOp && castOp->getNumResults() == 1 &&
+            castOp.getResult(0).getType().isInteger(64))
+          castOp.getResult(0).replaceAllUsesWith(llvmCol);
+      }
+    }
+  }
+
+  eraseDeadTileMetadataOps(module);
+}
+
 static LogicalResult lowerVPTOOps(ModuleOp module, llvm::raw_ostream &diagOS) {
   MLIRContext *context = module.getContext();
   VPTOTypeConverter typeConverter(context);
@@ -10150,6 +10273,7 @@ static LogicalResult runPipeline(ModuleOp module, llvm::raw_ostream &diagOS,
     diagOS << "VPTO LLVM emission failed: official lowering pipeline failed\n";
     return failure();
   }
+  cleanupResidualTileMetadataForLLVMExport(clonedModule);
   return emit(clonedModule);
 }
 
