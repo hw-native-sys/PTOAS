@@ -61,6 +61,13 @@ static std::string formatMaskType(StringRef granularity) {
   return storage;
 }
 
+static std::string formatVAddrType(StringRef granularity) {
+  std::string storage;
+  llvm::raw_string_ostream os(storage);
+  os << "!pto.vaddr<" << granularity << ">";
+  return storage;
+}
+
 static LogicalResult verifyVRegTypeLike(Operation *op, Type type,
                                        StringRef roleDescription) {
   auto vecType = dyn_cast<VRegType>(type);
@@ -89,6 +96,37 @@ static LogicalResult verifyMaskTypeWithGranularityLike(Operation *op, Type type,
     return op->emitOpError()
            << roleDescription << " must be " << formatMaskType(granularity);
   }
+  return success();
+}
+
+static LogicalResult verifyVAddrTypeLike(Operation *op, Type type,
+                                         StringRef roleDescription) {
+  if (!isa<VAddrType>(type))
+    return op->emitOpError() << roleDescription << " must be !pto.vaddr<...>";
+  return success();
+}
+
+static bool isVectorAddressUpdateSeedUse(OpOperand &use) {
+  Operation *owner = use.getOwner();
+  if (auto op = dyn_cast<ValduOp>(owner))
+    return &use == &op.getAddrInMutable();
+  if (auto op = dyn_cast<VastuOp>(owner))
+    return &use == &op.getAddrInMutable();
+  return false;
+}
+
+static LogicalResult verifySingleVectorAddressUpdateSeedUse(Operation *op,
+                                                            Value addr,
+                                                            StringRef role) {
+  unsigned updateSeedUses = 0;
+  for (OpOperand &use : addr.getUses()) {
+    if (isVectorAddressUpdateSeedUse(use))
+      ++updateSeedUses;
+  }
+  if (updateSeedUses > 1)
+    return op->emitOpError()
+           << role
+           << " must not seed multiple vector-address update chains";
   return success();
 }
 
@@ -814,15 +852,15 @@ static bool isSupportedVtrcRoundMode(StringRef mode) {
 }
 
 static bool isStoreAlignProducer(Operation *op) {
-  return isa<InitAlignOp, PstuOp, VstusOp, VsturOp>(op);
+  return isa<InitAlignOp, PstuOp, VstusOp, VsturOp, VastuOp>(op);
 }
 
 static bool isStoreAlignSink(Operation *op) {
-  return isa<VstasOp, VstarOp>(op);
+  return isa<VstasOp, VstarOp, VastaOp>(op);
 }
 
 static bool isLoadAlignProducer(Operation *op) {
-  return isa<VldasOp, VldusOp>(op);
+  return isa<VldasOp, VldusOp, ValdaOp, ValduOp>(op);
 }
 
 static scf::IfOp getEnclosingBranchIf(Operation *op) {
@@ -884,6 +922,10 @@ static FailureOr<Value> resolveStoreAlignRootImpl(
         continue;
       }
       if (auto stateOp = dyn_cast<VsturOp>(def)) {
+        current = stateOp.getAlignIn();
+        continue;
+      }
+      if (auto stateOp = dyn_cast<VastuOp>(def)) {
         current = stateOp.getAlignIn();
         continue;
       }
@@ -983,6 +1025,11 @@ static LogicalResult verifyStoreAlignLinearUses(Value value, Operation *user) {
         continue;
       }
       if (auto stateOp = dyn_cast<VsturOp>(owner)) {
+        nextValues.push_back(stateOp.getAlignOut());
+        branchUsers.push_back(owner);
+        continue;
+      }
+      if (auto stateOp = dyn_cast<VastuOp>(owner)) {
         nextValues.push_back(stateOp.getAlignOut());
         branchUsers.push_back(owner);
         continue;
@@ -1111,8 +1158,14 @@ static FailureOr<Value> resolveLoadAlignRootImpl(
     if (Operation *def = current.getDefiningOp()) {
       if (isa<VldasOp>(def))
         return current;
+      if (isa<ValdaOp>(def))
+        return current;
       if (auto stateOp = dyn_cast<VldusOp>(def)) {
         current = stateOp.getAlign();
+        continue;
+      }
+      if (auto stateOp = dyn_cast<ValduOp>(def)) {
+        current = stateOp.getAlignIn();
         continue;
       }
       if (auto forOp = dyn_cast<scf::ForOp>(def)) {
@@ -1185,6 +1238,11 @@ static LogicalResult verifyLoadAlignLinearUses(Value value, Operation *user) {
       Operation *owner = use.getOwner();
       if (auto stateOp = dyn_cast<VldusOp>(owner)) {
         nextValues.push_back(stateOp.getUpdatedAlign());
+        branchUsers.push_back(owner);
+        continue;
+      }
+      if (auto stateOp = dyn_cast<ValduOp>(owner)) {
+        nextValues.push_back(stateOp.getAlignOut());
         branchUsers.push_back(owner);
         continue;
       }
@@ -3387,6 +3445,34 @@ MaskType::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+bool VAddrType::isSupportedGranularity(StringRef granularity) {
+  return granularity == "b8" || granularity == "b16" ||
+         granularity == "b32";
+}
+
+Type VAddrType::parse(AsmParser &parser) {
+  auto loc = parser.getCurrentLocation();
+  StringRef granularity;
+  if (failed(parser.parseLess()) || failed(parser.parseKeyword(&granularity)) ||
+      failed(parser.parseGreater()))
+    return {};
+
+  return parser.getChecked<VAddrType>(loc, parser.getContext(), granularity);
+}
+
+void VAddrType::print(AsmPrinter &printer) const {
+  printer << "<" << getGranularity() << ">";
+}
+
+LogicalResult
+VAddrType::verify(function_ref<InFlightDiagnostic()> emitError,
+                  StringRef granularity) {
+  if (!isSupportedGranularity(granularity))
+    return emitError() << "'" << formatVAddrType(granularity)
+                       << "' expected granularity to be one of b8, b16, b32";
+  return success();
+}
+
 void CopyGmToUbufOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -4628,6 +4714,59 @@ LogicalResult VldsOp::verify() {
   }
   return success();
 }
+
+LogicalResult VagOp::verify() {
+  if (getStrides().empty() || getStrides().size() > 4)
+    return emitOpError("requires one to four i32 byte stride operands");
+  for (Value stride : getStrides()) {
+    if (!stride.getType().isInteger(32))
+      return emitOpError("requires all stride operands to be i32");
+  }
+  auto forOp = (*this)->getParentOfType<scf::ForOp>();
+  if (!forOp)
+    return emitOpError("must be nested under scf.for");
+  if (!forOp.getInductionVar().getType().isInteger(16))
+    return emitOpError("requires enclosing scf.for induction variable to be i16");
+  if (failed(verifyVAddrTypeLike(*this, getAddr().getType(), "result type")))
+    return failure();
+  return success();
+}
+
+void ValdOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult ValdOp::verify() {
+  if (failed(verifyVldsCommon(*this)))
+    return failure();
+  if (failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")))
+    return failure();
+  return success();
+}
+
+void Valdx2Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult Valdx2Op::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+  if (failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")) ||
+      failed(verifyVRegTypeLike(*this, getLow().getType(), "low result type")) ||
+      failed(verifyVRegTypeLike(*this, getHigh().getType(), "high result type")))
+    return failure();
+  if (getLow().getType() != getHigh().getType())
+    return emitOpError("requires low/high results to share one vector type");
+  if (!isSupportedVldx2DistToken(getDist()))
+    return emitOpError("requires a supported x2 load distribution token");
+  return success();
+}
 void VldasOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -4644,8 +4783,54 @@ LogicalResult VldasOp::verify() {
   return success();
 }
 
+void ValdaOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult ValdaOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")) ||
+      failed(verifyAlignTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+  return success();
+}
+
 LogicalResult InitAlignOp::verify() {
   return verifyAlignTypeLike(*this, getResult().getType(), "result type");
+}
+
+void ValduOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult ValduOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
+  if (failed(verifyVAddrTypeLike(*this, getAddrIn().getType(), "addr_in type")) ||
+      failed(verifyVAddrTypeLike(*this, getAddrOut().getType(), "addr_out type")) ||
+      failed(verifyAlignTypeLike(*this, getAlignIn().getType(), "align_in type")) ||
+      failed(verifyAlignTypeLike(*this, getAlignOut().getType(), "align_out type")) ||
+      failed(verifyVRegTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (getAddrIn().getType() != getAddrOut().getType())
+    return emitOpError("requires addr_in and addr_out to have identical types");
+  if (getAlignIn().getType() != getAlignOut().getType())
+    return emitOpError("requires align_in and align_out to have identical types");
+  if (!getInc().getType().isInteger(32))
+    return emitOpError("requires inc to be i32");
+  if (failed(verifySingleVectorAddressUpdateSeedUse(*this, getAddrIn(),
+                                                    "addr_in")))
+    return failure();
+  return success();
 }
 
 LogicalResult SprclrOp::verify() {
@@ -5076,6 +5261,25 @@ LogicalResult PldsOp::verify() {
     return emitOpError("requires a UB-backed source");
   if (!getOffset().getType().isIndex())
     return emitOpError("requires index offset");
+  if (!isSupportedPredicateLoadDist(getDist()))
+    return emitOpError("requires predicate load dist to be NORM, US, or DS");
+  return success();
+}
+
+void PaldOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+}
+
+LogicalResult PaldOp::verify() {
+  if (!isBufferLike(getSource().getType()))
+    return emitOpError("requires a pointer-like source");
+  if (failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")) ||
+      failed(verifyMaskTypeLike(*this, getResult().getType(), "result type")))
+    return failure();
+  if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed source");
   if (!isSupportedPredicateLoadDist(getDist()))
     return emitOpError("requires predicate load dist to be NORM, US, or DS");
   return success();
@@ -6194,6 +6398,21 @@ LogicalResult VstsOp::verify() {
     return emitOpError("requires updated base result to match base type");
   return success();
 }
+
+void VastOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult VastOp::verify() {
+  if (failed(verifyVstsCommon(*this)))
+    return failure();
+  if (failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")))
+    return failure();
+  return success();
+}
 void Vstsx2Op::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -6215,6 +6434,31 @@ LogicalResult Vstsx2Op::verify() {
     return emitOpError("requires a UB-backed destination");
   if (!getOffset().getType().isIndex())
     return emitOpError("requires index offset");
+  if (!isSupportedVstsx2DistToken(getDist()))
+    return emitOpError("requires a supported x2 store distribution token");
+  return success();
+}
+
+void Vastx2Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getLowMutable());
+  effects.emplace_back(MemoryEffects::Read::get(), &getHighMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult Vastx2Op::verify() {
+  if (failed(verifyVRegTypeLike(*this, getLow().getType(), "low value type")) ||
+      failed(verifyVRegTypeLike(*this, getHigh().getType(), "high value type")) ||
+      failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")) ||
+      failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")))
+    return failure();
+  if (getLow().getType() != getHigh().getType())
+    return emitOpError("requires low/high values to share one vector type");
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  if (classifyMemoryRole(getDestination().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
   if (!isSupportedVstsx2DistToken(getDist()))
     return emitOpError("requires a supported x2 store distribution token");
   return success();
@@ -6315,6 +6559,26 @@ LogicalResult PstsOp::verify() {
   return success();
 }
 
+void PastOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult PastOp::verify() {
+  if (failed(verifyMaskTypeLike(*this, getValue().getType(), "value type")) ||
+      failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")))
+    return failure();
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  if (classifyMemoryRole(getDestination().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
+  if (!isSupportedPredicateStoreDist(getDist()))
+    return emitOpError("requires predicate store dist to be NORM or PK");
+  return success();
+}
+
 void VsstbOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -6349,6 +6613,24 @@ void VstasOp::getEffects(
 
 LogicalResult VstasOp::verify() {
   if (failed(verifyStoreAlignChain(getValue(), *this, "value type")))
+    return failure();
+  if (!isBufferLike(getDestination().getType()))
+    return emitOpError("requires a pointer-like destination");
+  if (classifyMemoryRole(getDestination().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed destination");
+  return success();
+}
+
+void VastaOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+}
+
+LogicalResult VastaOp::verify() {
+  if (failed(verifyStoreAlignChain(getValue(), *this, "value type")) ||
+      failed(verifyVAddrTypeLike(*this, getAddr().getType(), "addr type")))
     return failure();
   if (!isBufferLike(getDestination().getType()))
     return emitOpError("requires a pointer-like destination");
@@ -6422,6 +6704,37 @@ LogicalResult VstusOp::verify() {
     return emitOpError("requires a pointer-like base");
   if (classifyMemoryRole(getBase().getType()) == MemoryRole::GM)
     return emitOpError("requires a UB-backed base");
+  return success();
+}
+
+void VastuOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getAlignInMutable());
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getBaseMutable());
+}
+
+LogicalResult VastuOp::verify() {
+  if (failed(verifyStoreAlignChain(getAlignIn(), *this, "align_in type")) ||
+      failed(verifyAlignTypeLike(*this, getAlignOut().getType(), "align_out type")) ||
+      failed(verifyVAddrTypeLike(*this, getAddrIn().getType(), "addr_in type")) ||
+      failed(verifyVAddrTypeLike(*this, getAddrOut().getType(), "addr_out type")) ||
+      failed(verifyVRegTypeLike(*this, getValue().getType(), "value type")))
+    return failure();
+  if (getAddrIn().getType() != getAddrOut().getType())
+    return emitOpError("requires addr_in and addr_out to have identical types");
+  if (getAlignIn().getType() != getAlignOut().getType())
+    return emitOpError("requires align_in and align_out to have identical types");
+  if (!isBufferLike(getBase().getType()))
+    return emitOpError("requires a pointer-like base");
+  if (classifyMemoryRole(getBase().getType()) == MemoryRole::GM)
+    return emitOpError("requires a UB-backed base");
+  if (getMode() != "POST_UPDATE")
+    return emitOpError("requires mode to be \"POST_UPDATE\"");
+  if (failed(verifySingleVectorAddressUpdateSeedUse(*this, getAddrIn(),
+                                                    "addr_in")))
+    return failure();
   return success();
 }
 

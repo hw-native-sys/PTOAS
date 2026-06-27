@@ -53,6 +53,26 @@ def MaskType : TypeDef<PTO_Dialect, "Mask"> {
   }];
 }
 
+def VAddrType : TypeDef<PTO_Dialect, "VAddr"> {
+  let mnemonic = "vaddr";
+  let summary = "A PTO low-level vector_address offset token";
+
+  let parameters = (ins
+    StringRefParameter<"address granularity view">:$granularity
+  );
+
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+
+  let extraClassDeclaration = [{
+    static bool isSupportedGranularity(::llvm::StringRef granularity);
+
+    bool isB8() const { return getGranularity() == "b8"; }
+    bool isB16() const { return getGranularity() == "b16"; }
+    bool isB32() const { return getGranularity() == "b32"; }
+  }];
+}
+
 def AlignType : TypeDef<PTO_Dialect, "Align"> {
   let mnemonic = "align";
   let summary = "A PTO low-level vector_align carrier";

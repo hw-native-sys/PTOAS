@@ -36,6 +36,8 @@ def PTO_B32MaskTypeConstraint : Type<
   "PTO low-level b32 mask type">;
 def PTO_AlignTypeConstraint : Type<CPred<"::llvm::isa<::mlir::pto::AlignType>($_self)">,
                                     "PTO low-level align type">;
+def PTO_VAddrTypeConstraint : Type<CPred<"::llvm::isa<::mlir::pto::VAddrType>($_self)">,
+                                    "PTO low-level vector_address offset type">;
 
 def PTO_BufferType : Type<
   CPred<"::llvm::isa<::mlir::pto::PtrType>($_self)">,
@@ -1348,6 +1350,52 @@ def PTO_VldsOp : PTO_Op<"vlds", [
   }];
 }
 
+def PTO_VagOp : PTO_Op<"vag"> {
+  let arguments = (ins Variadic<I32>:$strides);
+  let results = (outs PTO_VAddrTypeConstraint:$addr);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $strides attr-dict `:` type($strides) `->` type($addr)
+  }];
+}
+
+def PTO_ValdOp : PTO_Op<"vald", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferLikeType:$source,
+    PTO_VAddrTypeConstraint:$addr,
+    OptionalAttr<StrAttr>:$dist
+  );
+
+  let results = (outs PTO_VectorType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $addr `]` attr-dict `:` type($source) `,` type($addr) `->` type($result)
+  }];
+}
+
+def PTO_Valdx2Op : PTO_Op<"valdx2", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferLikeType:$source,
+    PTO_VAddrTypeConstraint:$addr,
+    StrAttr:$dist
+  );
+  let results = (outs PTO_VectorType:$low, PTO_VectorType:$high);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $addr `]` `,` $dist attr-dict `:` type($source) `,` type($addr) `->` type($low) `,` type($high)
+  }];
+}
+
 def PTO_Vldsx2Op : PTO_Op<"vldsx2", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -1378,6 +1426,23 @@ def PTO_VldasOp : PTO_Op<"vldas", [
 
   let assemblyFormat = [{
     $source attr-dict `:` type($source) `->` type($result)
+  }];
+}
+
+def PTO_ValdaOp : PTO_Op<"valda", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferLikeType:$source,
+    PTO_VAddrTypeConstraint:$addr
+  );
+
+  let results = (outs PTO_AlignTypeConstraint:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $addr `]` attr-dict `:` type($source) `,` type($addr) `->` type($result)
   }];
 }
 
@@ -1458,6 +1523,29 @@ def PTO_VldusOp : PTO_Op<"vldus", [
 
   let assemblyFormat = [{
     $source `,` $align attr-dict `:` type($source) `,` type($align) `->` type($result) `,` type($updated_align)
+  }];
+}
+
+def PTO_ValduOp : PTO_Op<"valdu", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferLikeType:$source,
+    PTO_VAddrTypeConstraint:$addr_in,
+    PTO_AlignTypeConstraint:$align_in,
+    I32:$inc
+  );
+
+  let results = (outs
+    PTO_VectorType:$result,
+    PTO_AlignTypeConstraint:$align_out,
+    PTO_VAddrTypeConstraint:$addr_out
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $addr_in `]` `,` $align_in `,` $inc attr-dict `:` type($source) `,` type($addr_in) `,` type($align_in) `,` type($inc) `->` type($result) `,` type($align_out) `,` type($addr_out)
   }];
 }
 
@@ -1755,6 +1843,23 @@ def PTO_PldsOp : PTO_Op<"plds", [
 
   let assemblyFormat = [{
     $source `[` $offset `]` `,` $dist attr-dict `:` type($source) `,` type($offset) `->` type($result)
+  }];
+}
+
+def PTO_PaldOp : PTO_Op<"pald", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferLikeType:$source,
+    PTO_VAddrTypeConstraint:$addr,
+    StrAttr:$dist
+  );
+  let results = (outs PTO_MaskTypeConstraint:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $source `[` $addr `]` `,` $dist attr-dict `:` type($source) `,` type($addr) `->` type($result)
   }];
 }
 
@@ -2539,6 +2644,26 @@ def PTO_VstsOp : PTO_Op<"vsts", [
   }];
 }
 
+def PTO_VastOp : PTO_Op<"vast", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_VectorType:$value,
+    PTO_BufferLikeType:$destination,
+    PTO_VAddrTypeConstraint:$addr,
+    OptionalAttr<StrAttr>:$dist,
+    PTO_MaskTypeConstraint:$mask
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $value `,` $destination `[` $addr `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($addr) `,` type($mask)
+  }];
+}
+
 def PTO_VscatterOp : PTO_Op<"vscatter", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -2574,6 +2699,25 @@ def PTO_PstsOp : PTO_Op<"psts", [
 
   let assemblyFormat = [{
     $value `,` $destination `[` $offset `]` `,` $dist attr-dict `:` type($value) `,` type($destination) `,` type($offset)
+  }];
+}
+
+def PTO_PastOp : PTO_Op<"past", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_MaskTypeConstraint:$value,
+    PTO_BufferLikeType:$destination,
+    PTO_VAddrTypeConstraint:$addr,
+    StrAttr:$dist
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $value `,` $destination `[` $addr `]` `,` $dist attr-dict `:` type($value) `,` type($destination) `,` type($addr)
   }];
 }
 
@@ -3302,6 +3446,26 @@ def PTO_Vstsx2Op : PTO_Op<"vstsx2", [
   }];
 }
 
+def PTO_Vastx2Op : PTO_Op<"vastx2", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_VectorType:$low,
+    PTO_VectorType:$high,
+    PTO_BufferLikeType:$destination,
+    PTO_VAddrTypeConstraint:$addr,
+    StrAttr:$dist,
+    PTO_MaskTypeConstraint:$mask
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $low `,` $high `,` $destination `[` $addr `]` `,` $dist `,` $mask attr-dict `:` type($low) `,` type($high) `,` type($destination) `,` type($addr) `,` type($mask)
+  }];
+}
+
 def PTO_VsldbOp : PTO_Op<"vsldb", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -3354,6 +3518,23 @@ def PTO_VstasOp : PTO_Op<"vstas", [
 
   let assemblyFormat = [{
     $value `,` $destination `,` $offset attr-dict `:` type($value) `,` type($destination) `,` type($offset)
+  }];
+}
+
+def PTO_VastaOp : PTO_Op<"vasta", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_AlignTypeConstraint:$value,
+    PTO_BufferLikeType:$destination,
+    PTO_VAddrTypeConstraint:$addr
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $value `,` $destination `[` $addr `]` attr-dict `:` type($value) `,` type($destination) `,` type($addr)
   }];
 }
 
@@ -3410,6 +3591,26 @@ def PTO_VstusOp : PTO_Op<"vstus", [
 
   let assemblyFormat = [{
     $align_in `,` $offset `,` $value `,` $base attr-dict `:` type($align_in) `,` type($offset) `,` type($value) `,` type($base) `->` type($align_out)
+  }];
+}
+
+def PTO_VastuOp : PTO_Op<"vastu", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_AlignTypeConstraint:$align_in,
+    PTO_VAddrTypeConstraint:$addr_in,
+    PTO_VectorType:$value,
+    PTO_BufferLikeType:$base,
+    StrAttr:$mode
+  );
+  let results = (outs PTO_AlignTypeConstraint:$align_out,
+                      PTO_VAddrTypeConstraint:$addr_out);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $align_in `,` $addr_in `,` $value `,` $base `,` $mode attr-dict `:` type($align_in) `,` type($addr_in) `,` type($value) `,` type($base) `->` type($align_out) `,` type($addr_out)
   }];
 }
 
