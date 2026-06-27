@@ -9,6 +9,7 @@
 #include "acl/acl.h"
 #include "test_common.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
@@ -28,24 +29,25 @@ using namespace PtoTestCommon;
     }                                                                          \
   } while (0)
 
-void LaunchVectorAddressValdVast(float *src, float *dst, void *stream);
+void LaunchVectorAddressMultidimValdVast(uint8_t *src, uint8_t *dst,
+                                         void *stream);
 
 int main() {
-  constexpr size_t kElements = 64;
-  constexpr size_t kBytes = kElements * sizeof(float);
+  constexpr size_t kSrcBytes = 4096;
+  constexpr size_t kDstBytes = 8192;
 
-  float *srcHost = nullptr;
-  float *dstHost = nullptr;
-  float *srcDevice = nullptr;
-  float *dstDevice = nullptr;
+  uint8_t *srcHost = nullptr;
+  uint8_t *dstHost = nullptr;
+  uint8_t *srcDevice = nullptr;
+  uint8_t *dstDevice = nullptr;
 
   int rc = 0;
   bool aclInited = false;
   bool deviceSet = false;
   int deviceId = 0;
   aclrtStream stream = nullptr;
-  size_t srcFileSize = kBytes;
-  size_t dstFileSize = kBytes;
+  size_t srcFileSize = kSrcBytes;
+  size_t dstFileSize = kDstBytes;
 
   ACL_CHECK(aclInit(nullptr));
   aclInited = true;
@@ -55,34 +57,34 @@ int main() {
   deviceSet = true;
   ACL_CHECK(aclrtCreateStream(&stream));
 
-  ACL_CHECK(aclrtMallocHost((void **)(&srcHost), kBytes));
-  ACL_CHECK(aclrtMallocHost((void **)(&dstHost), kBytes));
-  ACL_CHECK(aclrtMalloc((void **)&srcDevice, kBytes, ACL_MEM_MALLOC_HUGE_FIRST));
-  ACL_CHECK(aclrtMalloc((void **)&dstDevice, kBytes, ACL_MEM_MALLOC_HUGE_FIRST));
+  ACL_CHECK(aclrtMallocHost((void **)(&srcHost), kSrcBytes));
+  ACL_CHECK(aclrtMallocHost((void **)(&dstHost), kDstBytes));
+  ACL_CHECK(aclrtMalloc((void **)&srcDevice, kSrcBytes, ACL_MEM_MALLOC_HUGE_FIRST));
+  ACL_CHECK(aclrtMalloc((void **)&dstDevice, kDstBytes, ACL_MEM_MALLOC_HUGE_FIRST));
 
-  if (!ReadFile("./v1.bin", srcFileSize, srcHost, kBytes) ||
-      srcFileSize != kBytes) {
+  if (!ReadFile("./v1.bin", srcFileSize, srcHost, kSrcBytes) ||
+      srcFileSize != kSrcBytes) {
     std::fprintf(stderr, "[ERROR] failed to read v1.bin\n");
     rc = 1;
     goto cleanup;
   }
-  if (!ReadFile("./v2.bin", dstFileSize, dstHost, kBytes) ||
-      dstFileSize != kBytes) {
+  if (!ReadFile("./v2.bin", dstFileSize, dstHost, kDstBytes) ||
+      dstFileSize != kDstBytes) {
     std::fprintf(stderr, "[ERROR] failed to read v2.bin\n");
     rc = 1;
     goto cleanup;
   }
-  ACL_CHECK(aclrtMemcpy(srcDevice, kBytes, srcHost, kBytes,
+  ACL_CHECK(aclrtMemcpy(srcDevice, kSrcBytes, srcHost, kSrcBytes,
                         ACL_MEMCPY_HOST_TO_DEVICE));
-  ACL_CHECK(aclrtMemcpy(dstDevice, kBytes, dstHost, kBytes,
+  ACL_CHECK(aclrtMemcpy(dstDevice, kDstBytes, dstHost, kDstBytes,
                         ACL_MEMCPY_HOST_TO_DEVICE));
 
-  LaunchVectorAddressValdVast(srcDevice, dstDevice, stream);
+  LaunchVectorAddressMultidimValdVast(srcDevice, dstDevice, stream);
 
   ACL_CHECK(aclrtSynchronizeStream(stream));
-  ACL_CHECK(aclrtMemcpy(dstHost, kBytes, dstDevice, kBytes,
+  ACL_CHECK(aclrtMemcpy(dstHost, kDstBytes, dstDevice, kDstBytes,
                         ACL_MEMCPY_DEVICE_TO_HOST));
-  WriteFile("./v2.bin", dstHost, kBytes);
+  WriteFile("./v2.bin", dstHost, kDstBytes);
 
 cleanup:
   aclrtFree(srcDevice);

@@ -39,9 +39,10 @@ struct MrgSortExecutedNumList {
 #endif
 
 extern "C" __global__ [aicore] void
-vector_address_vald_vast(__gm__ float *src, __gm__ float *dst);
+vector_address_multidim_vald_vast(__gm__ uint8_t *src, __gm__ uint8_t *dst);
 
-void LaunchVectorAddressValdVast(float *src, float *dst, void *stream) {
-  vector_address_vald_vast<<<1, nullptr, stream>>>((__gm__ float *)src,
-                                                   (__gm__ float *)dst);
+void LaunchVectorAddressMultidimValdVast(uint8_t *src, uint8_t *dst,
+                                         void *stream) {
+  vector_address_multidim_vald_vast<<<1, nullptr, stream>>>(
+      (__gm__ uint8_t *)src, (__gm__ uint8_t *)dst);
 }

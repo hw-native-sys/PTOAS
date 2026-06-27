@@ -13,24 +13,34 @@ from pathlib import Path
 import numpy as np
 
 
-ELEMENTS = 64
-SEED = 29
+SOURCE_BYTES = 4096
+OUTPUT_BYTES = 8192
+SEED = 43
 
 
 def generate(output_dir: Path, seed: int) -> None:
     rng = np.random.default_rng(seed)
-    v1 = rng.uniform(-16.0, 16.0, size=(ELEMENTS,)).astype(np.float32)
-    v2 = np.zeros((ELEMENTS,), dtype=np.float32)
+    values = rng.uniform(-32.0, 32.0, size=(SOURCE_BYTES // 4,)).astype(np.float32)
+    data = values.view(np.uint8)
+    golden = np.zeros((OUTPUT_BYTES,), dtype=np.uint8)
+
+    golden[0:1024] = data[0:1024]
+    golden[1024:2048] = data[0:1024]
+
+    x2_base = 2048
+    golden[x2_base : x2_base + 512] = data[0:512]
+    golden[x2_base + 1024 : x2_base + 1280] = data[1024:1280]
+    golden[x2_base + 2048 : x2_base + 2304] = data[2052:2308]
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    v1.tofile(output_dir / "v1.bin")
-    v2.tofile(output_dir / "v2.bin")
-    v1.tofile(output_dir / "golden_v2.bin")
+    data.tofile(output_dir / "v1.bin")
+    np.zeros((OUTPUT_BYTES,), dtype=np.uint8).tofile(output_dir / "v2.bin")
+    golden.tofile(output_dir / "golden_v2.bin")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate inputs/golden for VPTO vector-address vald/vast."
+        description="Generate inputs/golden for VPTO combined vector-address memory case."
     )
     parser.add_argument("--output-dir", type=Path, default=Path("."))
     parser.add_argument("--seed", type=int, default=SEED)
