@@ -70,6 +70,11 @@ scf.for %i = %c0 to %c2 step %c1 {
 `pto.vag` does not create or outline a loop. The surrounding loop must already
 exist in the PTO IR.
 
+For nested loops, the active loop stack is determined at the lexical position of
+the `pto.vag` op. The immediately enclosing `scf.for` is the innermost active
+loop for that `pto.vag`; each enclosing `scf.for` outside it is the next outer
+active loop.
+
 ---
 
 ## Address Generation
@@ -82,18 +87,51 @@ exist in the PTO IR.
 - **syntax:** `%addr = pto.vag %s0, %s1, %s2, %s3 : i32, i32, i32, i32 -> !pto.vaddr<G>`
 - **semantics:** Create a vector-address offset value for the surrounding loop.
 - **inputs:**
-  `%s0` ... `%s3` are byte strides for active loop dimensions.
+  `%s0` ... `%s3` are byte strides for active loop dimensions. The operands are
+  ordered from inner loop to outer loop:
+  `%s0` applies to the immediately enclosing loop, `%s1` applies to the next
+  outer loop, `%s2` applies to the next outer loop after that, and `%s3` applies
+  to the fourth active loop.
 - **outputs:**
   `%addr` is a `!pto.vaddr<G>` offset token.
 - **constraints and limitations:**
   `pto.vag` takes one to four `i32` byte-stride operands. It MUST be nested in
   an `i16` `scf.for`. The result granularity MUST be `b8`, `b16`, or `b32`.
 
+For a `pto.vag` nested under active loop counters `i0, i1, i2, i3`, listed from
+inner to outer at the `pto.vag` location, the logical offset is:
+
+```text
+addr = i0 * s0
+     + i1 * s1
+     + i2 * s2
+     + i3 * s3
+```
+
+If fewer than four stride operands are present, only the corresponding innermost
+active loop counters participate in the address. For example, `pto.vag %s0,
+%s1` uses the immediately enclosing loop and its next outer loop.
+
 **Example:**
 
 ```mlir
 %stride = arith.constant 4 : i32
 %addr = pto.vag %stride : i32 -> !pto.vaddr<b32>
+```
+
+Four nested loops:
+
+```mlir
+scf.for %k = %c0_i16 to %k_bound step %c1_i16 : i16 {
+  scf.for %l = %c0_i16 to %l_bound step %c1_i16 : i16 {
+    scf.for %m = %c0_i16 to %m_bound step %c1_i16 : i16 {
+      scf.for %n = %c0_i16 to %n_bound step %c1_i16 : i16 {
+        %addr = pto.vag %n_stride, %m_stride, %l_stride, %k_stride
+            : i32, i32, i32, i32 -> !pto.vaddr<b32>
+      }
+    }
+  }
+}
 ```
 
 ---
