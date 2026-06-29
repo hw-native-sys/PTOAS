@@ -40,6 +40,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/PTOInsertSync.cpp
   PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
+  PTOInsertVMemBar.cpp
   PTOViewToMemref.cpp
   PTOValidateIntToPtrUses.cpp
   ExpandTileOp.cpp

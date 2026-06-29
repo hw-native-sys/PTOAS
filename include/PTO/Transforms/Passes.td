@@ -888,4 +888,28 @@ def VPTOPtrCastCleanup
                            "mlir::memref::MemRefDialect"];
 }
 
+def PTOInsertVMemBar
+    : Pass<"pto-insert-v-membar", "mlir::func::FuncOp"> {
+  let summary = "Insert V-pipeline memory barriers between tile ops with "
+                "overlapping UB addresses";
+  let description = [{
+    After `pto-expand-tile-op` (and before `pto-inline-libcall`), each tile
+    op is a `func.call` whose tile operands trace back to `pto.alloc_tile`
+    with a constant UB address. This pass analyzes RAW/WAW/WAR memory
+    dependencies between V-pipeline tile ops whose `alloc_tile` address
+    ranges overlap, and inserts `pto.mem_bar` barriers so that inlined
+    `vsts`/`vlds` do not reorder across the dependency.
+
+    Only V-pipeline tile ops (`getPipe() == PIPE_V`) are considered; Cube
+    synchronization and cross-pipeline sync remain the responsibility of
+    `pto-insert-sync` and friends. Only intra-block, intra-iteration
+    dependencies are handled.
+  }];
+  let constructor = "mlir::pto::createPTOInsertVMemBarPass()";
+  let dependentDialects = ["mlir::pto::PTODialect",
+                           "mlir::memref::MemRefDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::func::FuncDialect"];
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

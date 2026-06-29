@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ( ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --enable-v-membar \
+// RUN:        --mlir-print-ir-after=pto-insert-v-membar %s -o %t 2>&1 || true ) | FileCheck %s
+//
+// Two `pto.tcolexpandmul` write UB tiles at addr 1536 (t) and 1792 (%0); a
+// following `pto.tsub` reads both (1536, 1792) and writes 1536 (rot_lo, which
+// reuses t's address). This creates RAW (1536, 1792) and WAW (1536) hazards.
+// With --enable-v-membar the pass must insert a `pto.mem_bar "VST_VLD"` before
+// pto.tsub so the inlined vsts/vlds cannot reorder.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmembar_raw_waw_overlap(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c768_i64 = arith.constant 768 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c1280_i64 = arith.constant 1280 : i64
+    %c1536_i64 = arith.constant 1536 : i64
+    %c1792_i64 = arith.constant 1792 : i64
+    %c0_index = arith.constant 0 : index
+    %c1_index = arith.constant 1 : index
+    %c64_index = arith.constant 64 : index
+    %c1024_index = arith.constant 1024 : index
+    %c128_index = arith.constant 128 : index
+    %c16_index = arith.constant 16 : index
+
+    %k_view = pto.make_tensor_view %arg0, shape = [%c16_index, %c1024_index], strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %cos_view = pto.make_tensor_view %arg1, shape = [%c1_index, %c64_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+
+    %k_lo__tile = pto.alloc_tile addr = %c1024_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %k_lo_pview = pto.partition_view %k_view, offsets = [%arg2, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    pto.tload ins(%k_lo_pview : !pto.partition_tensor_view<1x64xf32>) outs(%k_lo__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %k_hi__tile = pto.alloc_tile addr = %c1280_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %k_hi_pview = pto.partition_view %k_view, offsets = [%arg2, %c64_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    pto.tload ins(%k_hi_pview : !pto.partition_tensor_view<1x64xf32>) outs(%k_hi__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %cos_lo__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cos_lo_pview = pto.partition_view %cos_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    pto.tload ins(%cos_lo_pview : !pto.partition_tensor_view<1x64xf32>) outs(%cos_lo__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %sin_lo__tile = pto.alloc_tile addr = %c256_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %sin_lo_pview = pto.partition_view %cos_view, offsets = [%c0_index, %c64_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    pto.tload ins(%sin_lo_pview : !pto.partition_tensor_view<1x64xf32>) outs(%sin_lo__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    %t__tile = pto.alloc_tile addr = %c1536_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolexpandmul ins(%k_lo__tile, %cos_lo__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %0 = pto.alloc_tile addr = %c1792_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolexpandmul ins(%k_hi__tile, %sin_lo__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %rot_lo__tile = pto.alloc_tile addr = %c1536_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tsub ins(%t__tile, %0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%rot_lo__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: IR Dump After PTOInsertVMemBar
+// CHECK: pto.tcolexpandmul
+// CHECK: pto.tcolexpandmul
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.tsub

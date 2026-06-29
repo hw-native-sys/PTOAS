@@ -317,6 +317,12 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+static llvm::cl::opt<bool> enableVMembar(
+    "enable-v-membar",
+    llvm::cl::desc("Insert V-pipeline mem_bar between tile ops with "
+                   "overlapping UB addresses (VST/VLD RAW/WAW/WAR)"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> enableBufidSync(
     "enable-bufid_sync",
     llvm::cl::desc("Enable A5 buffer-id synchronization insertion pass"),
@@ -1558,6 +1564,13 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module, int argc,
       enableOpFusion && moduleArchAttr && moduleArchAttr.getValue() == "a5";
 
   pto::ExpandTileOpOptions expandOpts = resolveExpandTileOpOptions(argc, argv);
+  // Insert V-pipeline mem_bar while tile ops are still in their structured
+  // `pto.tsub` / `pto.tcolexpandmul` form (before pto-expand-tile-op turns
+  // them into func.call), so OpPipeInterface + DestinationStyleOpInterface +
+  // constant alloc_tile addresses are all available.
+  if (enableVMembar)
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOInsertVMemBarPass());
   kernelModulePM.addPass(pto::createExpandTileOpPass(expandOpts));
 
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
