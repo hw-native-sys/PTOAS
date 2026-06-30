@@ -9,7 +9,8 @@ progression that is tied to the loop counter rather than to scalar pointer
 arithmetic.
 
 This chapter documents the PTO surface contract for `!pto.vaddr` and the
-`pto.vag` / `pto.vald` / `pto.vast` / `pto.pald` / `pto.past` families.
+`pto.vaddr_loop` / `pto.vag` / `pto.vald` / `pto.vast` / `pto.pald` /
+`pto.past` families.
 
 ---
 
@@ -74,6 +75,65 @@ For nested loops, the active loop stack is determined at the lexical position of
 the `pto.vag` op. The immediately enclosing `scf.for` is the innermost active
 loop for that `pto.vag`; each enclosing `scf.for` outside it is the next outer
 active loop.
+
+---
+
+## Structured Vector-Address Loops
+
+### `pto.vaddr_loop`
+
+- **syntax:** `pto.vaddr_loop bounds(%ub0[, %ub1[, %ub2[, %ub3]]]) vaddr(%addr = strides(%s0[, %s1[, %s2[, %s3]]]) : !pto.vaddr<G>[, ...]) { ... }`
+- **semantics:** Execute the body in one to four canonical nested
+  vector-address loops. Each vector-address value declared by the `vaddr(...)`
+  header is available by name inside the loop body.
+- **inputs:**
+  `%ub0` ... `%ub3` are `i16` upper bounds ordered from outer loop to inner
+  loop. Each `strides(...)` list contains `i32` byte strides ordered in the same
+  order as the bounds: outer loop to inner loop.
+- **outputs:**
+  Each `%addr` declared in the header is a `!pto.vaddr<G>` offset token scoped
+  to the loop body.
+- **constraints and limitations:**
+  `pto.vaddr_loop` takes one to four `i16` upper bound operands. Each
+  `strides(...)` list MUST have exactly the same number of operands as
+  `bounds(...)`. The loop lower bound is `0` and the step is `1`. Use a zero
+  stride for a loop dimension that should not contribute to an address.
+
+For a four-dimensional loop:
+
+```mlir
+pto.vaddr_loop bounds(%K, %L, %M, %N)
+    vaddr(%addr = strides(%k_stride, %l_stride, %m_stride, %n_stride)
+        : !pto.vaddr<b32>) {
+}
+```
+
+the logical offset is:
+
+```text
+addr = k * k_stride
+     + l * l_stride
+     + m * m_stride
+     + n * n_stride
+```
+
+Multiple vector addresses may be declared in the same loop. Each one carries its
+own stride list:
+
+```mlir
+pto.vaddr_loop bounds(%K, %L, %M, %N)
+    vaddr(%src_addr = strides(%src_k, %src_l, %src_m, %src_n)
+              : !pto.vaddr<b32>,
+          %dst_addr = strides(%dst_k, %dst_l, %dst_m, %dst_n)
+              : !pto.vaddr<b32>) {
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+
+  %value = pto.vald %src[%src_addr] {dist = "NORM"}
+      : !pto.ptr<f32, ub>, !pto.vaddr<b32> -> !pto.vreg<64xf32>
+  pto.vast %value, %dst[%dst_addr], %mask {dist = "NORM_B32"}
+      : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vaddr<b32>, !pto.mask<b32>
+}
+```
 
 ---
 

@@ -1361,6 +1361,29 @@ def PTO_VagOp : PTO_Op<"vag"> {
   }];
 }
 
+def PTO_VAddrLoopOp : PTO_Op<"vaddr_loop", [
+    SingleBlock,
+    NoTerminator,
+    AttrSizedOperandSegments
+  ]> {
+  let summary = "Structured vector-address loop";
+  let description = [{
+    `pto.vaddr_loop` represents one to four canonical nested vector-address
+    loops. The op carries only upper bounds. Each vector-address value declared
+    in the header has one byte stride per loop dimension and is made available
+    as a body region argument.
+  }];
+
+  let arguments = (ins
+    Variadic<I16>:$bounds,
+    Variadic<I32>:$strides
+  );
+  let regions = (region SizedRegion<1>:$body);
+
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+}
+
 def PTO_ValdOp : PTO_Op<"vald", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {

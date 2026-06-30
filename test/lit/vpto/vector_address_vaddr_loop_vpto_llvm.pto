@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ( source /usr/local/Ascend/cann/set_env.sh >/dev/null 2>&1 || true; ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vaddr_loop_ops(%src_f32: !pto.ptr<f32, ub>, %dst_f32: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c2_i16 = arith.constant 2 : i16
+    %c3_i16 = arith.constant 3 : i16
+    %c4_i16 = arith.constant 4 : i16
+    %c5_i16 = arith.constant 5 : i16
+    %c0_i32 = arith.constant 0 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c64_i32 = arith.constant 64 : i32
+    %c96_i32 = arith.constant 96 : i32
+    %c128_i32 = arith.constant 128 : i32
+    pto.vecscope {
+      pto.vaddr_loop bounds(%c2_i16, %c3_i16, %c4_i16, %c5_i16)
+          vaddr(%outer_addr = strides(%c128_i32, %c96_i32, %c64_i32, %c0_i32)
+                    : !pto.vaddr<b32>,
+                %inner_addr = strides(%c0_i32, %c96_i32, %c64_i32, %c32_i32)
+                    : !pto.vaddr<b32>) {
+        %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %loaded = pto.vald %src_f32[%outer_addr] {dist = "NORM"}
+            : !pto.ptr<f32, ub>, !pto.vaddr<b32> -> !pto.vreg<64xf32>
+        pto.vast %loaded, %dst_f32[%inner_addr], %mask {dist = "NORM_B32"}
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vaddr<b32>, !pto.mask<b32>
+      }
+    }
+    return
+  }
+}
+
+// ROUNDTRIP-LABEL: func.func @vaddr_loop_ops(
+// ROUNDTRIP-NOT: ^bb0
+// ROUNDTRIP: pto.vaddr_loop bounds(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) vaddr([[OUTER:%[^ ]+]] = strides(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : !pto.vaddr<b32>, [[INNER:%[^ ]+]] = strides(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : !pto.vaddr<b32>) {
+// ROUNDTRIP: pto.vald %{{.*}}[[OUTER]]
+// ROUNDTRIP: pto.vast %{{.*}}, %{{.*}}[[INNER]]
+
+// CHECK-LABEL: llvm.func @vaddr_loop_ops_mix_aiv
+// CHECK-DAG: %[[C0:.*]] = llvm.mlir.constant(0 : i32) : i32
+// CHECK-DAG: %[[C32:.*]] = llvm.mlir.constant(32 : i32) : i32
+// CHECK-DAG: %[[C64:.*]] = llvm.mlir.constant(64 : i32) : i32
+// CHECK-DAG: %[[C96:.*]] = llvm.mlir.constant(96 : i32) : i32
+// CHECK-DAG: %[[C128:.*]] = llvm.mlir.constant(128 : i32) : i32
+// CHECK: ^bb{{[0-9]+}}:
+// CHECK: %[[PAD0:.*]] = llvm.mlir.constant(0 : i32) : i32
+// CHECK-NEXT: %[[OUTER_ADDR:.*]] = llvm.call @llvm.hivm.vag.32(%[[C64]], %[[C96]], %[[C128]], %[[PAD0]])
+// CHECK-SAME: : (i32, i32, i32, i32) -> vector<1xi32>
+// CHECK-NEXT: llvm.br
+// CHECK: %[[INNER_ADDR:.*]] = llvm.call @llvm.hivm.vag.32(%[[C32]], %[[C64]], %[[C96]], %[[C0]])
+// CHECK-SAME: : (i32, i32, i32, i32) -> vector<1xi32>
+// CHECK: llvm.call @llvm.hivm.vldx1.v64f32(%{{.*}}, %[[OUTER_ADDR]],
+// CHECK: llvm.call @llvm.hivm.vstx1.v64f32(%{{.*}}, %{{.*}}, %[[INNER_ADDR]],

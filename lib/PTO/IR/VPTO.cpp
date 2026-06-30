@@ -4732,6 +4732,123 @@ LogicalResult VagOp::verify() {
   return success();
 }
 
+ParseResult VAddrLoopOp::parse(OpAsmParser &parser, OperationState &result) {
+  SmallVector<OpAsmParser::UnresolvedOperand> bounds;
+  SmallVector<OpAsmParser::UnresolvedOperand> strides;
+  SmallVector<OpAsmParser::Argument> regionArgs;
+
+  if (parser.parseKeyword("bounds") || parser.parseLParen() ||
+      parser.parseOperandList(bounds) || parser.parseRParen())
+    return failure();
+  if (bounds.empty() || bounds.size() > 4)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "requires one to four upper bound operands");
+
+  if (parser.parseKeyword("vaddr") || parser.parseLParen())
+    return failure();
+
+  if (succeeded(parser.parseOptionalRParen()))
+    return parser.emitError(parser.getCurrentLocation(),
+                            "requires at least one vaddr declaration");
+
+  do {
+    OpAsmParser::Argument arg;
+    SmallVector<OpAsmParser::UnresolvedOperand> group;
+    Type addrType;
+    if (parser.parseOperand(arg.ssaName) || parser.parseEqual() ||
+        parser.parseKeyword("strides") || parser.parseLParen() ||
+        parser.parseOperandList(group) || parser.parseRParen() ||
+        parser.parseColonType(addrType))
+      return failure();
+    if (group.size() != bounds.size()) {
+      return parser.emitError(parser.getCurrentLocation())
+             << "requires each vaddr stride list to contain " << bounds.size()
+             << " operands";
+    }
+    arg.type = addrType;
+    regionArgs.push_back(arg);
+    llvm::append_range(strides, group);
+  } while (succeeded(parser.parseOptionalComma()));
+
+  if (parser.parseRParen())
+    return failure();
+
+  Type i16Type = parser.getBuilder().getIntegerType(16);
+  Type i32Type = parser.getBuilder().getIntegerType(32);
+  SmallVector<Type> boundTypes(bounds.size(), i16Type);
+  SmallVector<Type> strideTypes(strides.size(), i32Type);
+  if (parser.resolveOperands(bounds, boundTypes, parser.getCurrentLocation(),
+                             result.operands) ||
+      parser.resolveOperands(strides, strideTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+
+  auto &segments =
+      result.getOrAddProperties<VAddrLoopOp::Properties>().operandSegmentSizes;
+  llvm::copy(ArrayRef<int32_t>{static_cast<int32_t>(bounds.size()),
+                               static_cast<int32_t>(strides.size())},
+             segments.begin());
+
+  Region *body = result.addRegion();
+  if (parser.parseRegion(*body, regionArgs) ||
+      parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  return success();
+}
+
+void VAddrLoopOp::print(OpAsmPrinter &printer) {
+  printer << " bounds(";
+  printer.printOperands(getBounds());
+  printer << ") vaddr(";
+
+  unsigned rank = getBounds().size();
+  ValueRange strides = getStrides();
+  Block &bodyBlock = getBody().front();
+  for (auto [index, arg] : llvm::enumerate(bodyBlock.getArguments())) {
+    if (index != 0)
+      printer << ", ";
+    printer << arg << " = strides(";
+    printer.printOperands(strides.slice(index * rank, rank));
+    printer << ") : " << arg.getType();
+  }
+  printer << ") ";
+  printer.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+                      /*printBlockTerminators=*/false);
+  printer.printOptionalAttrDict((*this)->getAttrs(),
+                                /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+LogicalResult VAddrLoopOp::verify() {
+  if (getBounds().empty() || getBounds().size() > 4)
+    return emitOpError("requires one to four i16 upper bound operands");
+  for (Value bound : getBounds()) {
+    if (!bound.getType().isInteger(16))
+      return emitOpError("requires all upper bound operands to be i16");
+  }
+  for (Value stride : getStrides()) {
+    if (!stride.getType().isInteger(32))
+      return emitOpError("requires all stride operands to be i32");
+  }
+
+  Block &bodyBlock = getBody().front();
+  if (bodyBlock.getNumArguments() == 0)
+    return emitOpError("requires at least one vaddr region argument");
+
+  size_t rank = getBounds().size();
+  size_t expectedStrides = rank * bodyBlock.getNumArguments();
+  if (getStrides().size() != expectedStrides) {
+    return emitOpError()
+           << "requires stride operand count to equal rank (" << rank
+           << ") times vaddr count (" << bodyBlock.getNumArguments() << ")";
+  }
+  for (BlockArgument arg : bodyBlock.getArguments()) {
+    if (failed(verifyVAddrTypeLike(*this, arg.getType(), "body argument type")))
+      return failure();
+  }
+  return success();
+}
+
 void ValdOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {

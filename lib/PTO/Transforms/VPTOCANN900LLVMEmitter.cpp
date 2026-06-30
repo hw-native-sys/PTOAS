@@ -29,6 +29,7 @@
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -279,6 +280,11 @@ static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
 
 static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
   return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value))
+      .getResult();
+}
+
+static Value getI16Constant(OpBuilder &builder, Location loc, uint64_t value) {
+  return builder.create<arith::ConstantOp>(loc, builder.getI16IntegerAttr(value))
       .getResult();
 }
 
@@ -6634,6 +6640,91 @@ private:
   LoweringState &state;
 };
 
+class LowerVAddrLoopOpPattern final
+    : public OpConversionPattern<pto::VAddrLoopOp> {
+public:
+  explicit LowerVAddrLoopOpPattern(TypeConverter &typeConverter,
+                                   MLIRContext *context,
+                                   LoweringState &state)
+      : OpConversionPattern<pto::VAddrLoopOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::VAddrLoopOp op, pto::VAddrLoopOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ValueRange bounds = adaptor.getBounds();
+    if (bounds.empty() || bounds.size() > 4)
+      return rewriter.notifyMatchFailure(op, "unexpected vaddr_loop rank");
+
+    Location loc = op.getLoc();
+    Value lower = getI16Constant(rewriter, loc, 0);
+    Value step = getI16Constant(rewriter, loc, 1);
+
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(op);
+    SmallVector<Operation *, 4> vaddrInsertionAnchors;
+    vaddrInsertionAnchors.reserve(bounds.size());
+    for (Value bound : bounds) {
+      auto forOp = rewriter.create<scf::ForOp>(loc, lower, bound, step);
+      if (!vaddrInsertionAnchors.empty())
+        vaddrInsertionAnchors.back() = forOp;
+      vaddrInsertionAnchors.push_back(forOp.getBody()->getTerminator());
+      rewriter.setInsertionPoint(forOp.getBody()->getTerminator());
+    }
+
+    IRMapping mapping;
+    ValueRange strides = adaptor.getStrides();
+    Block &bodyBlock = op.getBody().front();
+    size_t rank = bounds.size();
+    if (strides.size() != rank * bodyBlock.getNumArguments())
+      return rewriter.notifyMatchFailure(op, "unexpected vaddr stride count");
+
+    StringRef calleeName = buildVagCallee(op.getContext());
+    for (auto [index, arg] : llvm::enumerate(bodyBlock.getArguments())) {
+      Type resultType = this->getTypeConverter()->convertType(arg.getType());
+      if (!resultType)
+        return rewriter.notifyMatchFailure(op, "failed to convert vaddr type");
+
+      ValueRange group = strides.slice(index * rank, rank);
+      unsigned activeDepth = 1;
+      for (auto [strideIndex, stride] : llvm::enumerate(group)) {
+        if (!matchPattern(stride, m_Zero()))
+          activeDepth = strideIndex + 1;
+      }
+
+      rewriter.setInsertionPoint(vaddrInsertionAnchors[activeDepth - 1]);
+      SmallVector<Value, 4> args;
+      args.reserve(4);
+      for (Value stride : llvm::reverse(group.take_front(activeDepth)))
+        args.push_back(stride);
+      if (args.size() < 4) {
+        Value zeroValue = getI32Constant(rewriter, loc, 0);
+        while (args.size() < 4)
+          args.push_back(zeroValue);
+      }
+
+      auto funcType = rewriter.getFunctionType(
+          TypeRange{rewriter.getI32Type(), rewriter.getI32Type(),
+                    rewriter.getI32Type(), rewriter.getI32Type()},
+          TypeRange{resultType});
+      auto call = rewriter.create<func::CallOp>(loc, calleeName,
+                                                TypeRange{resultType}, args);
+      state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+      mapping.map(arg, call.getResult(0));
+    }
+
+    rewriter.setInsertionPoint(vaddrInsertionAnchors.back());
+    for (Operation &nested : bodyBlock.getOperations())
+      rewriter.clone(nested, mapping);
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 class LowerValdOpPattern final : public OpConversionPattern<pto::ValdOp> {
 public:
   explicit LowerValdOpPattern(TypeConverter &typeConverter, MLIRContext *context,
@@ -10485,7 +10576,8 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerRuntimeQueryOpPattern<pto::GetSubBlockIdxOp>,
                LowerRuntimeQueryOpPattern<pto::GetBlockNumOp>,
                LowerRuntimeQueryOpPattern<pto::GetSubBlockNumOp>,
-               LowerVldsOpPattern, LowerVagOpPattern, LowerValdOpPattern,
+               LowerVldsOpPattern, LowerVagOpPattern, LowerVAddrLoopOpPattern,
+               LowerValdOpPattern,
                LowerValdx2OpPattern, LowerVldsx2OpPattern, LowerVsldbOpPattern,
                LowerVldasOpPattern, LowerValdaOpPattern,
                LowerInitAlignOpPattern,
@@ -10587,7 +10679,8 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::StoreVfSimtInfoOp,
                       pto::SetMovPadValOp, pto::SetQuantPreOp>();
   target.addIllegalOp<pto::Sbitset0Op, pto::Sbitset1Op>();
-  target.addIllegalOp<pto::VldsOp, pto::VagOp, pto::ValdOp, pto::Valdx2Op,
+  target.addIllegalOp<pto::VldsOp, pto::VagOp, pto::VAddrLoopOp,
+                      pto::ValdOp, pto::Valdx2Op,
                       pto::Vldsx2Op, pto::VsldbOp,
                       pto::VldasOp, pto::ValdaOp, pto::InitAlignOp,
                       pto::VldusOp, pto::ValduOp,
