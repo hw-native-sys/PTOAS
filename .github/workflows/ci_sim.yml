@@ -312,6 +312,7 @@ jobs:
           ref: ${{ env.PYPTO_REF }}
           path: ${{ env.PYPTO_WORKSPACE }}
           fetch-depth: 1
+          submodules: recursive
           persist-credentials: false
 
       - name: Checkout PTO-ISA
@@ -380,6 +381,23 @@ jobs:
           # ci_sim only runs PyPTO simulator tests. Keep the runtime install from
           # auto-detecting onboard platforms from the runner's CANN environment.
           env -u ASCEND_HOME_PATH python3 -m pip install --no-build-isolation --no-deps "${PYPTO_WORKSPACE}/runtime"
+          python3 - <<'PY'
+          from simpler_setup.environment import PROJECT_ROOT
+
+          required = [
+              PROJECT_ROOT / "src" / "a5" / "runtime" / "tensormap_and_ringbuffer" / "runtime" / "runtime.h",
+              PROJECT_ROOT / "src" / "a2a3" / "runtime" / "tensormap_and_ringbuffer" / "runtime" / "runtime.h",
+              PROJECT_ROOT / "src" / "common" / "task_interface" / "tensor.h",
+          ]
+          missing = [str(path) for path in required if not path.is_file()]
+          if missing:
+              print(f"simpler_setup PROJECT_ROOT={PROJECT_ROOT}")
+              print("Missing PyPTO runtime header assets:")
+              for path in missing:
+                  print(f"  - {path}")
+              raise SystemExit(1)
+          print(f"simpler_setup PROJECT_ROOT={PROJECT_ROOT}")
+          PY
 
       - name: Run PyPTO PTOAS end-to-end simulator smoke
         shell: bash
