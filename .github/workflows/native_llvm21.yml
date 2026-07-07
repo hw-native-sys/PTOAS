@@ -1,0 +1,156 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+name: Native LLVM 21 Build
+
+on:
+  pull_request:
+  push:
+    tags-ignore:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LLVM_REPO: https://github.com/llvm/llvm-project.git
+  LLVM_REF: llvmorg-21.1.8
+  LLVM_CACHE_FLAVOR: llvm21-native-release-v1
+  LLVM_BUILD_DIR: ${{ github.workspace }}/llvm-project/build-native
+  PTO_BUILD_DIR: ${{ github.workspace }}/build-native-llvm21
+  PTOAS_CLANG_MAJOR: "15"
+
+jobs:
+  native-llvm21-build:
+    name: Build PTOAS with native LLVM 21
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          # GitHub-hosted runners may include Microsoft apt sources unrelated to
+          # PTOAS; these can intermittently return 403 and break apt-get update.
+          sudo rm -f \
+            /etc/apt/sources.list.d/azure-cli*.list \
+            /etc/apt/sources.list.d/azure-cli*.sources \
+            /etc/apt/sources.list.d/microsoft-prod*.list \
+            /etc/apt/sources.list.d/microsoft-prod*.sources \
+            /etc/apt/sources.list.d/packages-microsoft-prod*.list \
+            /etc/apt/sources.list.d/packages-microsoft-prod*.sources
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake git ninja-build \
+            clang-${PTOAS_CLANG_MAJOR} lld-${PTOAS_CLANG_MAJOR} \
+            libedit-dev zlib1g-dev libxml2-dev libzstd-dev
+
+      - name: Resolve clang-${{ env.PTOAS_CLANG_MAJOR }} toolchain
+        run: |
+          set -euo pipefail
+          clang_c="$(command -v "clang-${PTOAS_CLANG_MAJOR}")"
+          clang_cxx="$(command -v "clang++-${PTOAS_CLANG_MAJOR}")"
+          echo "PTOAS_CMAKE_C_COMPILER=${clang_c}" >> "${GITHUB_ENV}"
+          echo "PTOAS_CMAKE_CXX_COMPILER=${clang_cxx}" >> "${GITHUB_ENV}"
+          "${clang_c}" --version | head -n 1
+          "${clang_cxx}" --version | head -n 1
+
+      - name: Resolve LLVM source SHA
+        id: llvm-source
+        run: |
+          set -euo pipefail
+          LLVM_SOURCE_SHA="$(git ls-remote "${LLVM_REPO}" "refs/tags/${LLVM_REF}^{}" | awk '{print $1}' | head -n 1)"
+          if [ -z "${LLVM_SOURCE_SHA}" ]; then
+            LLVM_SOURCE_SHA="$(git ls-remote "${LLVM_REPO}" "refs/tags/${LLVM_REF}" | awk '{print $1}' | head -n 1)"
+          fi
+          if [ -z "${LLVM_SOURCE_SHA}" ]; then
+            echo "ERROR: failed to resolve ${LLVM_REPO} ${LLVM_REF}" >&2
+            exit 1
+          fi
+          echo "sha=${LLVM_SOURCE_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore LLVM build cache
+        id: cache-llvm
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.LLVM_BUILD_DIR }}
+          key: llvm-${{ runner.os }}-clang${{ env.PTOAS_CLANG_MAJOR }}-${{ steps.llvm-source.outputs.sha }}-${{ env.LLVM_CACHE_FLAVOR }}
+
+      - name: Prepare LLVM source
+        run: |
+          set -euo pipefail
+          mkdir -p llvm-project
+          cd llvm-project
+          if [ ! -d .git ]; then
+            git init
+            git remote add origin "${LLVM_REPO}"
+          fi
+          git remote set-url origin "${LLVM_REPO}"
+          git fetch --depth 1 origin "refs/tags/${LLVM_REF}"
+          git checkout --force FETCH_HEAD
+
+      - name: Build native LLVM/MLIR
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cmake -C "${GITHUB_WORKSPACE}/cmake/LinuxHardeningCache.cmake" \
+            -G Ninja \
+            -S "${GITHUB_WORKSPACE}/llvm-project/llvm" \
+            -B "${LLVM_BUILD_DIR}" \
+            -DLLVM_ENABLE_PROJECTS="mlir" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="${PTOAS_CMAKE_C_COMPILER}" \
+            -DCMAKE_CXX_COMPILER="${PTOAS_CMAKE_CXX_COMPILER}" \
+            -DLLVM_TARGETS_TO_BUILD="host"
+          ninja -C "${LLVM_BUILD_DIR}"
+
+      - name: Save LLVM build cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.LLVM_BUILD_DIR }}
+          key: llvm-${{ runner.os }}-clang${{ env.PTOAS_CLANG_MAJOR }}-${{ steps.llvm-source.outputs.sha }}-${{ env.LLVM_CACHE_FLAVOR }}
+
+      - name: Configure PTOAS without patched LLVM extensions
+        run: |
+          set -euo pipefail
+          rm -rf "${PTO_BUILD_DIR}"
+          cmake -C "${GITHUB_WORKSPACE}/cmake/LinuxHardeningCache.cmake" \
+            -G Ninja \
+            -S "${GITHUB_WORKSPACE}" \
+            -B "${PTO_BUILD_DIR}" \
+            -DLLVM_DIR="${LLVM_BUILD_DIR}/lib/cmake/llvm" \
+            -DMLIR_DIR="${LLVM_BUILD_DIR}/lib/cmake/mlir" \
+            -DPTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS=OFF \
+            -DPTO_ENABLE_PYTHON_BINDING=OFF \
+            -DBUILD_TESTING=OFF \
+            -DPTOAS_ENABLE_WERROR=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="${PTOAS_CMAKE_C_COMPILER}" \
+            -DCMAKE_CXX_COMPILER="${PTOAS_CMAKE_CXX_COMPILER}"
+
+      - name: Build PTOAS
+        run: |
+          set -euo pipefail
+          ninja -C "${PTO_BUILD_DIR}" pto-opt
+
+      - name: Smoke test ptoas CLI
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="${PTO_BUILD_DIR}/lib:${LLVM_BUILD_DIR}/lib:${LD_LIBRARY_PATH:-}"
+          "${PTO_BUILD_DIR}/tools/ptoas/ptoas" --version
