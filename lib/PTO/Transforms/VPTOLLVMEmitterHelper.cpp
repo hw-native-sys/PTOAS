@@ -570,6 +570,7 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
   });
 
   auto callsSimtEntry = [](llvm::Function &function) {
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
     for (llvm::BasicBlock &block : function) {
       for (llvm::Instruction &inst : block) {
         auto *call = llvm::dyn_cast<llvm::CallBase>(&inst);
@@ -579,6 +580,9 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
           return true;
       }
     }
+#else
+    (void)function;
+#endif
     return false;
   };
 
@@ -590,6 +594,7 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
     annotations->addOperand(llvm::MDNode::get(ctx, ops));
   };
 
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
   auto addHIVMModuleI32Annotation = [&](llvm::StringRef kind, uint32_t value) {
     llvm::Metadata *ops[] = {
         nullptr, llvm::MDString::get(ctx, kind),
@@ -605,10 +610,12 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
         llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32Ty, value))};
     function.addMetadata("annotation", *llvm::MDNode::get(ctx, ops));
   };
+#endif
 
   for (llvm::Function &function : llvmModule) {
     if (function.isDeclaration())
       continue;
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
     if (function.getCallingConv() == llvm::CallingConv::SimtEntry) {
       uint32_t maxThreads = kDefaultSimtMaxThreads;
       uint32_t maxRegisters = kDefaultSimtMaxRegisters;
@@ -625,6 +632,7 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
       addHIVMModuleI32Annotation("simt-max-registers", maxRegisters);
       continue;
     }
+#endif
     if (function.getLinkage() != llvm::GlobalValue::ExternalLinkage)
       continue;
 

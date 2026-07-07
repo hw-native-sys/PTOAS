@@ -213,6 +213,14 @@ if(PTOAS_ENABLE_WERROR)
   endif()
 endif()
 
+option(PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
+       "Build code paths that depend on PTOAS LLVM patch-only APIs" ON)
+if(PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS)
+  add_compile_definitions(PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS=1)
+else()
+  add_compile_definitions(PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS=0)
+endif()
+
 # macOS: 移除已废弃的 -undefined suppress，避免 ld 警告（保留 -undefined dynamic_lookup 即可）
 if(APPLE)
   foreach(_var CMAKE_SHARED_MODULE_CREATE_CXX_FLAGS CMAKE_MODULE_LINKER_FLAGS)

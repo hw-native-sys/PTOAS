@@ -68,6 +68,7 @@ static Type getElementTypeFromVectorLike(Type type);
 static std::optional<int64_t> getElementCountFromVectorLike(Type type);
 
 static Type getLowPrecisionLLVMType(Type type, MLIRContext *context) {
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
   if (pto::isPTOHiFloat8Type(type))
     return LLVM::LLVMHiFloat8Type::get(context);
   if (isa<pto::F4E1M2x2Type>(type))
@@ -78,6 +79,10 @@ static Type getLowPrecisionLLVMType(Type type, MLIRContext *context) {
     return LLVM::LLVMFloat8E4M3Type::get(context);
   if (pto::isPTOFloat8E5M2LikeType(type))
     return LLVM::LLVMFloat8E5M2Type::get(context);
+#else
+  (void)type;
+  (void)context;
+#endif
   return {};
 }
 
@@ -88,9 +93,11 @@ static Type getLLVMCompatibleVectorType(ArrayRef<int64_t> shape,
 }
 
 static Type normalizePayloadTypeForLLVMLowering(Type type, Builder &builder) {
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
   if (pto::isPTOHiFloat8x2Type(type))
     return getLLVMCompatibleVectorType(
         {2}, LLVM::LLVMHiFloat8Type::get(builder.getContext()));
+#endif
   if (Type lowpType = getLowPrecisionLLVMType(type, builder.getContext()))
     return lowpType;
 
@@ -118,10 +125,12 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
     return builder.getI16Type();
   if (pto::isPTOLowPrecisionType(type))
     return builder.getI8Type();
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
   if (isa<LLVM::LLVMHiFloat8Type, LLVM::LLVMFloat8E4M3Type,
           LLVM::LLVMFloat8E5M2Type, LLVM::LLVMFloat4E1M2x2Type,
           LLVM::LLVMFloat4E2M1x2Type>(type))
     return builder.getI8Type();
+#endif
 
   if (auto vecType = dyn_cast<VectorType>(type)) {
     Type normalizedElement =
@@ -10507,6 +10516,7 @@ static void applyArtifactVisibilityLinkage(ModuleOp sourceModule,
 static void applySimtEntryCallingConvention(
     llvm::Module &llvmModule,
     const llvm::StringSet<llvm::BumpPtrAllocator> &simtEntryNames) {
+#if PTOAS_ENABLE_PATCHED_LLVM_EXTENSIONS
   for (llvm::Function &function : llvmModule) {
     if (simtEntryNames.contains(function.getName())) {
       function.setCallingConv(llvm::CallingConv::SimtEntry);
@@ -10535,6 +10545,10 @@ static void applySimtEntryCallingConvention(
       }
     }
   }
+#else
+  (void)llvmModule;
+  (void)simtEntryNames;
+#endif
 }
 
 static FailureOr<EmittedLLVMModule>
