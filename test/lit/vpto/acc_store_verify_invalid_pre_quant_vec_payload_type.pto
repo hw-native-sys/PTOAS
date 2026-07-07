@@ -6,16 +6,16 @@ module attributes {"pto.target_arch" = "a5"} {
     %c0_i64 = arith.constant 0 : i64
     %c16_i64 = arith.constant 16 : i64
     %c32_i64 = arith.constant 32 : i64
-    %payload = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui64, fb>
+    %payload = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui32, fb>
 
     pto.mte_l0c_ub %src, %dst, %c16_i64, %c16_i64, %c16_i64, %c32_i64,
       dst_mode(%c0_i64),
       pre_quant(%payload, mode = qf322f16_pre_vec)
       : !pto.ptr<f32, l0c>, !pto.ptr<f16, ub>, i64, i64, i64, i64, i64,
-        !pto.ptr<ui64, fb>
+        !pto.ptr<ui32, fb>
 
     return
   }
 }
 
-// CHECK: vector pre_quant mode requires scaling pointer element type to be f16, bf16, or f32
+// CHECK: vector pre_quant mode requires scaling pointer element type to be f16, bf16, f32, or ui64
