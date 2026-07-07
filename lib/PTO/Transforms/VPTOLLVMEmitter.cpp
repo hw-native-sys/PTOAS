@@ -799,6 +799,8 @@ static std::string getCopyElementFragment(Type elementType) {
       return intType.isUnsigned() ? "u16" : "s16";
     case 32:
       return intType.isUnsigned() ? "u32" : "s32";
+    case 64:
+      return "s32";
     default:
       return {};
     }

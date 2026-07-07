@@ -74,8 +74,8 @@ static const TestCase kCases[] = {
     {"f16_f32_f32_nz2nz",  (void*)LaunchTSTORE_ACC2GM_f16_f32_f32_nz2nz,  QUANT_NONE, 16, 32, 16, 2, 2, 4, 0, true},
     {"bf16_f32_bf16_nz2nz",(void*)LaunchTSTORE_ACC2GM_bf16_f32_bf16_nz2nz,QUANT_NONE, 16, 32, 16, 2, 2, 2, 0, false},
     // TSTORE_FP cases (vector quant, NZ2ND)
-    {"f16_f32_f16_vec",    (void*)LaunchTSTORE_ACC2GM_f16_f32_f16_vec,     QUANT_VECTOR, 16, 64, 16, 2, 2, 2, 4, false},
-    {"bf16_f32_bf16_vec",  (void*)LaunchTSTORE_ACC2GM_bf16_f32_bf16_vec,   QUANT_VECTOR, 16, 64, 16, 2, 2, 2, 4, false},
+    {"f16_f32_f16_vec",    (void*)LaunchTSTORE_ACC2GM_f16_f32_f16_vec,     QUANT_VECTOR, 16, 32, 16, 2, 2, 2, 8, false},
+    {"bf16_f32_bf16_vec",  (void*)LaunchTSTORE_ACC2GM_bf16_f32_bf16_vec,   QUANT_VECTOR, 16, 32, 16, 2, 2, 2, 8, false},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 
@@ -84,7 +84,7 @@ static int RunCase(const TestCase &tc, int deviceId, aclrtStream stream) {
     const size_t x1Count = tc.M * tc.K;
     const size_t x2Count = tc.K * tc.N;
     const size_t dstCount = tc.M * tc.N;
-    const size_t quantCount = (tc.quant_mode == QUANT_VECTOR) ? 64 * 2 : 0;
+    const size_t quantCount = (tc.quant_mode == QUANT_VECTOR) ? tc.N : 0;
 
     const size_t x1Size = x1Count * tc.x1ElemSize;
     const size_t x2Size = x2Count * tc.x2ElemSize;

@@ -101,20 +101,20 @@ void LaunchTSTORE_ACC2GM_bf16_f32_bf16_nz2nz(void *dst, void *x1, void *x2, void
 
 // Vector quant TSTORE_FP cases: dst + x1 + x2 + quant (4 GM pointers)
 
-// Case 5: encoded vector scaling, f16 dst (4 void* args)
+// Case 5: f16 scaling, f16 dst (4 void* args)
 extern "C" __global__ AICORE void TSTORE_ACC2GM_f16_f32_f16_vec(
-    __gm__ half *dst, __gm__ half *x1, __gm__ half *x2, __gm__ uint32_t *quant);
+    __gm__ half *dst, __gm__ half *x1, __gm__ half *x2, __gm__ uint64_t *quant);
 
 void LaunchTSTORE_ACC2GM_f16_f32_f16_vec(void *dst, void *x1, void *x2, void *quant, void *stream) {
     TSTORE_ACC2GM_f16_f32_f16_vec<<<1, nullptr, stream>>>(
-        (__gm__ half *)dst, (__gm__ half *)x1, (__gm__ half *)x2, (__gm__ uint32_t *)quant);
+        (__gm__ half *)dst, (__gm__ half *)x1, (__gm__ half *)x2, (__gm__ uint64_t *)quant);
 }
 
-// Case 6: encoded vector scaling, bf16 dst (4 void* args)
+// Case 6: bf16 scaling, bf16 dst (4 void* args)
 extern "C" __global__ AICORE void TSTORE_ACC2GM_bf16_f32_bf16_vec(
-    __gm__ uint16_t *dst, __gm__ uint16_t *x1, __gm__ uint16_t *x2, __gm__ uint32_t *quant);
+    __gm__ uint16_t *dst, __gm__ uint16_t *x1, __gm__ uint16_t *x2, __gm__ uint64_t *quant);
 
 void LaunchTSTORE_ACC2GM_bf16_f32_bf16_vec(void *dst, void *x1, void *x2, void *quant, void *stream) {
     TSTORE_ACC2GM_bf16_f32_bf16_vec<<<1, nullptr, stream>>>(
-        (__gm__ uint16_t *)dst, (__gm__ uint16_t *)x1, (__gm__ uint16_t *)x2, (__gm__ uint32_t *)quant);
+        (__gm__ uint16_t *)dst, (__gm__ uint16_t *)x1, (__gm__ uint16_t *)x2, (__gm__ uint64_t *)quant);
 }

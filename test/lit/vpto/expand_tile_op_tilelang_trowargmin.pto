@@ -18,8 +18,7 @@
 // CHECK: pto.castptr
 // CHECK: pto.vbr
 // CHECK: pto.vlds
-// CHECK: pto.vneg
-// CHECK: pto.vcmax
+// CHECK: pto.vcmin
 // CHECK: pto.vdintlv
 // CHECK: pto.vsts
 

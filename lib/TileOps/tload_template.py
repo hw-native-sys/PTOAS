@@ -31,6 +31,21 @@ def _known_le(lhs, rhs) -> bool:
     return lhs_value <= rhs_value
 
 
+def _memory_space_value(value):
+    memory_space = getattr(value, "memory_space", None)
+    if memory_space is None:
+        return None
+    return memory_space.value if hasattr(memory_space, "value") else memory_space
+
+
+def _is_scaling_tile(value) -> bool:
+    return _memory_space_value(value) in {"scaling", "SCALING"}
+
+
+def _is_ub_tile(value) -> bool:
+    return _memory_space_value(value) in {"ub", "UB"}
+
+
 def _match_tile_layout(dst, *, row_major: bool, s_layout) -> bool:
     b_layout_ok = (
         dst.config.b_layout == pto.BLayout.ROW_MAJOR
@@ -62,6 +77,8 @@ def _check_load_bounds(src, dst, *, logical_rows, logical_cols=None, stride_axis
 
 
 def _tload_preconditions_nd2nd(src, dst) -> bool:
+    if not _is_ub_tile(dst):
+        return False
     logical_rows = src.shape[0] * src.shape[1] * src.shape[2] * src.shape[3]
     logical_cols = src.shape[4]
     return _match_tile_layout(
@@ -72,6 +89,8 @@ def _tload_preconditions_nd2nd(src, dst) -> bool:
 
 
 def _tload_preconditions_dn2dn(src, dst) -> bool:
+    if not _is_ub_tile(dst):
+        return False
     logical_rows = src.shape[3]
     logical_cols = src.shape[0] * src.shape[1] * src.shape[2] * src.shape[4]
     return _match_tile_layout(
@@ -81,6 +100,8 @@ def _tload_preconditions_dn2dn(src, dst) -> bool:
     )
 
 def _tload_preconditions_nz2nz(src, dst) -> bool:
+    if not _is_ub_tile(dst):
+        return False
     logical_rows = src.shape[2]
     return _match_tile_layout(
         dst, row_major=False, s_layout=pto.SLayout.ROW_MAJOR
@@ -330,7 +351,23 @@ def _constraint_tload_mat_base(src, dst) -> bool:
     if dst_dtype is None:
         return False
     dtype_name = dst_dtype.name if hasattr(dst_dtype, "name") else str(dst_dtype)
-    supported_dtypes = {"f16", "bf16", "f32", "i8", "si8", "ui8", "i16", "si16", "ui16", "i32", "si32"}
+    supported_dtypes = {
+        "f16",
+        "bf16",
+        "f32",
+        "i8",
+        "si8",
+        "ui8",
+        "i16",
+        "si16",
+        "ui16",
+        "i32",
+        "si32",
+        "ui32",
+        "i64",
+        "si64",
+        "ui64",
+    }
     if dtype_name not in supported_dtypes:
         return False
     return True
@@ -470,6 +507,15 @@ def _constraint_tload_gm_to_mat_linear(src, dst) -> bool:
     if hasattr(src, "strides") and src.strides is not None and len(src.strides) >= 1:
         if not _known_eq(src.strides[-1], 1):
             return False
+        if len(src.strides) >= 2:
+            src_tail = _last_two_shape_dims(src)
+            expected_row_stride = None
+            if src_tail is not None:
+                expected_row_stride = src_tail[1]
+            elif hasattr(dst, "valid_shape") and dst.valid_shape is not None:
+                expected_row_stride = dst.valid_shape[1]
+            if expected_row_stride is not None and not _known_eq(src.strides[-2], expected_row_stride):
+                return False
     return True
 
 
@@ -481,6 +527,7 @@ def _constraint_tload_gm_to_mat_linear(src, dst) -> bool:
         (pto.f16, pto.f16),
         (pto.bf16, pto.bf16),
         (pto.f32, pto.f32),
+        (pto.ui64, pto.ui64),
     ],
     constraints=[_constraint_tload_gm_to_mat_linear],
     name="tload_gm_to_mat_linear",

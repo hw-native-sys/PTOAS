@@ -4672,8 +4672,10 @@ class _SemanticAnalyzer:
 
     def _require_fixpipe_vector_payload(self, expr: SemanticExpr, context: str) -> None:
         ptr = self._require_pointer_expr(expr, context, memory_space="scaling")
-        if ptr.type.element_dtype not in {f16, bf16, f32}:
-            raise TypeError(f"{context} must be an fb pointer with f16, bf16, or f32 elements in TileLang DSL v1")
+        if ptr.type.element_dtype not in {f16, bf16, f32, ui64}:
+            raise TypeError(
+                f"{context} must be an fb pointer with f16, bf16, f32, or ui64 elements in TileLang DSL v1"
+            )
 
     def _validate_fixpipe_payload(
         self,

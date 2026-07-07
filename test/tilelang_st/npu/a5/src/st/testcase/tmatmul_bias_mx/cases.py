@@ -12,7 +12,7 @@
 
 import numpy as np
 import ml_dtypes
-from mx_fp4 import FP4_E1M2, FP4_E2M1
+from st_common import FP4_E1M2, FP4_E2M1
 
 fp8_e4m3fn = ml_dtypes.float8_e4m3fn
 fp8_e5m2 = ml_dtypes.float8_e5m2

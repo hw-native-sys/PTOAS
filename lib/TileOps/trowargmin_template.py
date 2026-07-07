@@ -24,12 +24,8 @@ def template_trowargmin(src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
     valid_rows, valid_cols = src.valid_shape
     elem_bytes = pto.bytewidth(idx_dtype)
 
-    # Float vcmin is slow or can fail to terminate on large A5 row-arg cases.
-    # Use argmax(-x) for floating point inputs and keep vcmin for other types.
-    if pto.constexpr(src_dtype == pto.f32 or src_dtype == pto.f16):
-        init_val = pto.PadValue.MIN.eval(src_dtype)
-    else:
-        init_val = pto.PadValue.MAX.eval(src_dtype)
+    # Initialize with dtype-specific maximum value (aligned with pto-isa Padding<T>::Max)
+    init_val = pto.PadValue.MAX.eval(src_dtype)
 
     # Select one-point store dist based on index dtype size
     if pto.constexpr(elem_bytes == 4):
@@ -55,11 +51,7 @@ def template_trowargmin(src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
         for col in range(0, valid_cols, lanes):
             mask, remained = pto.make_mask(src_dtype, remained)
             v_src = pto.vlds(src[row, col:])
-            if pto.constexpr(src_dtype == pto.f32 or src_dtype == pto.f16):
-                v_src = pto.vneg(v_src, mask)
-                v_reduced = pto.vcmax(v_src, mask)
-            else:
-                v_reduced = pto.vcmin(v_src, mask)
+            v_reduced = pto.vcmin(v_src, mask)
             
             v_val, v_idx = pto.vdintlv(v_reduced, pto.vbr(src_dtype(0)))
             v_idx = pto.vbitcast(v_idx, idx_dtype)
@@ -68,12 +60,8 @@ def template_trowargmin(src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
             col_offset = idx_dtype(col)
             v_idx = pto.vadds(v_idx, col_offset, mask_1_idx)
             
-            # Compare current chunk min with global min so far. Floating-point
-            # inputs use negated values, so the comparison direction flips.
-            if pto.constexpr(src_dtype == pto.f32 or src_dtype == pto.f16):
-                cmp_mask = pto.vcmp(v_val_acc, v_val, mask_1, "lt")
-            else:
-                cmp_mask = pto.vcmp(v_val_acc, v_val, mask_1, "gt")
+            # Compare current chunk min with global min so far
+            cmp_mask = pto.vcmp(v_val_acc, v_val, mask_1, "gt")
             
             # Update global min and global argmin
             v_val_acc = pto.vsel(v_val, v_val_acc, cmp_mask)

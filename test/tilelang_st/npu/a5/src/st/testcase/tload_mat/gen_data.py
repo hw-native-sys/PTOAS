@@ -58,12 +58,12 @@ for case in CASES:
         x1_compute = x1_f32
         x2_compute = x2_f32
 
-    # Golden = matmul result in f32 (ACC output is always f32 for float matmul)
+    # Golden = matmul result in f32 using the exact input precision consumed by the kernel.
     golden_f32 = np.matmul(x1_compute, x2_compute)
 
-    # For DN2NZ cases, x1 is stored in DN (col-major/transposed) format
-    # in GM. x2 stays ND so the case isolates the DN load path under matmul.
-    if layout == "dn2nz" and case["dtype"] != np.float32:
+    # For DN2NZ cases, x1 is stored in DN (col-major/transposed) format in GM.
+    # x2 stays ND so the matmul pipeline isolates the DN load path under test.
+    if layout == "dn2nz":
         x1_gm_f32 = x1_f32.T  # [K, M] transposed for DN format
         x2_gm_f32 = x2_f32
     else:

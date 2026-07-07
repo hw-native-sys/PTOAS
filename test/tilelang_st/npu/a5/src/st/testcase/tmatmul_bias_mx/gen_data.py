@@ -13,7 +13,7 @@ import sys
 import math
 import numpy as np
 import ml_dtypes
-from mx_fp4 import (
+from st_common import (
     FP4_E1M2,
     FP4_E2M1,
     make_fp4_random,

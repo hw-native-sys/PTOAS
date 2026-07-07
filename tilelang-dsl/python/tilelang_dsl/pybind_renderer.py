@@ -1527,6 +1527,7 @@ class PybindRenderer:
             name = dtype.name
             sizes = {
                 "i1": 1, "i8": 1, "i16": 2, "i32": 4, "i64": 8,
+                "si64": 8, "ui64": 8,
                 "f16": 2, "bf16": 2, "f32": 4,
                 "hif8": 1, "f8e4m3": 1, "f8e5m2": 1,
                 "f4e1m2x2": 1, "f4e2m1x2": 1,

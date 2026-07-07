@@ -637,8 +637,12 @@ def _constraint_tstore_fp(src, fp, dst) -> bool:
     target="a5",
     op="pto.tstore_fp",
     dtypes=[
+        (pto.f32, pto.f16, pto.f16),
+        (pto.f32, pto.bf16, pto.bf16),
         (pto.f32, pto.f32, pto.f16),
         (pto.f32, pto.f32, pto.bf16),
+        (pto.f32, pto.ui64, pto.f16),
+        (pto.f32, pto.ui64, pto.bf16),
     ],
     constraints=[_constraint_tstore_fp],
     name="tstore_fp_acc_to_gm",
@@ -663,7 +667,7 @@ def template_tstore_fp_acc_to_gm(src: pto.Tile, fp: pto.Tile, dst: pto.Partition
     m, n = src.valid_shape
 
     acc_ptr = src.as_ptr()
-    fp_ptr = pto.castptr(0, pto.ptr(pto.f32, pto.MemorySpace.SCALING))
+    fp_ptr = fp.as_ptr()
     gm_ptr = dst.as_ptr()
 
     dst_dtype = dst.element_type

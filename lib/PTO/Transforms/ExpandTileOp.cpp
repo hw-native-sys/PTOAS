@@ -1048,6 +1048,14 @@ func::FuncOp ExpandState::invokeTilelangDaemon(const SpecKey &key,
 func::FuncOp ExpandState::invokeTilelangDSL(const SpecKey &key,
                                               Operation *tileOp,
                                               ModuleOp mod, MLIRContext *ctx) {
+  std::string uniqueName = buildUniqueFunctionBaseName(key);
+  SymbolTable targetSymTable(mod);
+  if (auto existingFunc = targetSymTable.lookup(uniqueName)) {
+    llvm::errs() << "ExpandTileOp: reuse existing function @" << uniqueName
+                 << "\n";
+    return cast<func::FuncOp>(existingFunc);
+  }
+
   // Try daemon first if daemon socket path is provided.
   if (!daemonSocketPath.empty()) {
     func::FuncOp daemonResult = invokeTilelangDaemon(key, tileOp, mod, ctx);
@@ -1188,16 +1196,6 @@ func::FuncOp ExpandState::invokeTilelangDSL(const SpecKey &key,
   builder.setInsertionPointToEnd(mod.getBody());
   SmallVector<func::FuncOp, 4> clonedFuncs;
   llvm::StringMap<std::string> renamedSymbols;
-
-  std::string uniqueName = buildUniqueFunctionBaseName(key);
-
-  // Check if function already exists in module (deduplication)
-  SymbolTable targetSymTable(mod);
-  if (auto existingFunc = targetSymTable.lookup(uniqueName)) {
-    // Function already exists, return it directly (avoid redefinition)
-    llvm::errs() << "ExpandTileOp: reuse existing function @" << uniqueName << "\n";
-    return cast<func::FuncOp>(existingFunc);
-  }
 
   std::vector<std::string> newNameStorage;
   for (auto [index, fn] : llvm::enumerate(parsedFuncs)) {

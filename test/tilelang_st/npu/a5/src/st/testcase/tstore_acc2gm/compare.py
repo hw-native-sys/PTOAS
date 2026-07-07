@@ -35,14 +35,6 @@ def get_dtype_for_bin(case):
     return np.uint16  # fallback
 
 
-def nz_to_nd(flat, m, n, dtype):
-    """Convert the single-block NZ footprint used by these cases to [M, N]."""
-    elem_bytes = np.dtype(dtype).itemsize
-    c0 = 512 // (16 * elem_bytes)
-    blocks = n // c0
-    return flat.reshape(blocks, c0, m).transpose(2, 0, 1).reshape(m, n)
-
-
 def main():
     case_filter = sys.argv[1] if len(sys.argv) > 1 else None
 
@@ -69,10 +61,12 @@ def main():
             # DN format stores data as col-major, so transpose gives row-major [M, N]
         elif dst_layout == "nz2nz":
             # NZ2NZ: output is stored in fractal NZ format
+            # For comparison, we reshape back to [M, N] row-major
+            # The NZ format for M=16, N=32 is the same total element count
             golden_flat = np.fromfile(os.path.join(name, "golden.bin"), dtype=dtype)
             output_flat = np.fromfile(os.path.join(name, "output.bin"), dtype=dtype)
             golden = golden_flat.reshape(M, N)
-            output = nz_to_nd(output_flat, M, N, dtype)
+            output = output_flat.reshape(M, N)
         else:
             # NZ2ND: output is [M, N] in row-major (ND) format
             golden = np.fromfile(os.path.join(name, "golden.bin"), dtype=dtype).reshape(M, N)

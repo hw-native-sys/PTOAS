@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch a5 --enable-insert-sync %s | FileCheck %s
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @tmov_m2s_waits_for_l1_load(
+      %scale_gm: memref<1x32xui64, #pto.address_space<gm>>) {
+    %scale_mat = pto.alloc_tile
+      : !pto.tile_buf<loc=mat, dtype=ui64, rows=1, cols=32, v_row=1, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scale_fb = pto.alloc_tile
+      : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=32, v_row=1, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%scale_gm : memref<1x32xui64, #pto.address_space<gm>>)
+              outs(%scale_mat : !pto.tile_buf<loc=mat, dtype=ui64, rows=1, cols=32,
+                                              v_row=1, v_col=32, blayout=row_major,
+                                              slayout=none_box, fractal=512, pad=0>)
+    pto.tmov ins(%scale_mat : !pto.tile_buf<loc=mat, dtype=ui64, rows=1, cols=32,
+                                              v_row=1, v_col=32, blayout=row_major,
+                                              slayout=none_box, fractal=512, pad=0>)
+             outs(%scale_fb : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=32,
+                                            v_row=1, v_col=32, blayout=row_major,
+                                            slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void tmov_m2s_waits_for_l1_load(
+// CHECK: set_flag(PIPE_MTE2, PIPE_FIX, EVENT_ID{{[0-9]+}});
+// CHECK: wait_flag(PIPE_MTE2, PIPE_FIX, EVENT_ID{{[0-9]+}});
+// CHECK-NOT: wait_flag(PIPE_MTE2, PIPE_MTE1

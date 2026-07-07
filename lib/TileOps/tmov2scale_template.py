@@ -22,10 +22,8 @@ scale parameters in the fixpipe quantization flow. Requirements:
 Constraint: This template is selected when dst.memory_space == SCALING.
 
 Data format:
-  - Each f32 scale value is stored as ui64 (f32 bits in lower 32 bits, upper 32 bits = 0)
-  - Hardware interprets each ui64's lower 32 bits as one f32 scale value
-  - Total bytes = N * 8 (N ui64 elements)
-  - len_burst = N (number of ui64 elements to transfer)
+  - The source and destination tile element types match.
+  - len_burst is expressed in 64-byte copy_cbuf_to_fbuf burst units.
 """
 
 import tilelang_dsl as pto
@@ -68,6 +66,7 @@ def _tmov_m2s_constraint(src: pto.Tile, dst: pto.Tile) -> bool:
         (pto.f16, pto.f16),
         (pto.bf16, pto.bf16),
         (pto.f32, pto.f32),
+        (pto.ui64, pto.ui64),
     ],
 )
 def template_tmov_m2s(src: pto.Tile, dst: pto.Tile):
@@ -80,17 +79,14 @@ def template_tmov_m2s(src: pto.Tile, dst: pto.Tile):
     The scale parameters are loaded into FB for fixpipe quantization.
 
     mte_l1_fb semantics:
-      - len_burst = M (number of rows in the scaling tile)
+      - len_burst = rows * cols * sizeof(dtype) / 64
       - Each row contains one set of scale parameters for all columns
-      - For 16x16 f32 scaling: len_burst = 16 (see textract_fp.pto:128)
-      - For 1x16 f32 scaling: len_burst = 1 (single row of parameters)
 
     nburst = (n_burst, src_gap, dst_gap) - single burst with no gaps
     """
-    # Scale tile has shape MxN (typically 1xN for per-column scales)
-    m, _ = dst.valid_shape
-    # len_burst = M (number of rows/parameter sets)
-    len_burst = m
+    # copy_cbuf_to_fbuf uses 64-byte burst units.
+    m, n = src.valid_shape
+    len_burst = (m * n * pto.bytewidth(src.element_type)) // 64
     n_burst = 1
     src_gap = 0
     dst_gap = 0

@@ -24,10 +24,15 @@ HIF8 = "hif8"
 F4E1M2X2 = "f4e1m2x2"
 F4E2M1X2 = "f4e2m1x2"
 
-# Keep the generated CI testcase bounded: dtype coverage is broad, shape coverage is
-# represented by one aligned tile shape.
+# 7 shapes (aligning with C++ INSTANTIATE_TCVT)
 SHAPES = [
     (1, 128, 1, 128),
+    (2, 64, 2, 64),
+    (4, 32, 4, 32),
+    (2, 128, 2, 128),
+    (4, 128, 4, 65),   # Partial tiles
+    (4, 256, 4, 200),  # Partial tiles
+    (1, 256, 1, 129),  # Partial tiles
 ]
 
 _DTYPE_NAME = {
@@ -146,18 +151,7 @@ def _make_low_precision_cases():
     return lowp_cases
 
 
-def _requires_unsupported_vselr(case):
-    """Skip tcvt shapes that currently expand to VPTO vselr signatures without lowering."""
-    src_dtype = case["src_dtype"]
-    dst_dtype = case["dst_dtype"]
-    return (
-        (src_dtype is np.float32 and dst_dtype in (F8E4M3, F8E5M2, HIF8))
-        or (src_dtype is bfloat16 and dst_dtype in (F4E1M2X2, F4E2M1X2))
-        or (src_dtype in (np.int32, np.uint32) and dst_dtype is np.uint8)
-    )
-
-
-_ALL_CASES = [
+CASES = [
     {
         "name": "f32_to_i32_rint_16x64",
         "dtype": np.int32,
@@ -253,5 +247,3 @@ _ALL_CASES = [
     *_make_cases(np.int64, np.float32),
     *_make_cases(np.int64, np.int32),
 ]
-
-CASES = [case for case in _ALL_CASES if not _requires_unsupported_vselr(case)]

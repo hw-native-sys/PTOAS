@@ -95,6 +95,70 @@ def save_case_data(case_name, data_dict):
 
 
 # ---------------------------------------------------------------------------
+# FP4 helpers
+# ---------------------------------------------------------------------------
+
+FP4_E1M2 = "f4e1m2x2"
+
+
+def _fp4_e2m1_dtype():
+    import ml_dtypes
+
+    return ml_dtypes.float4_e2m1fn
+
+
+FP4_E2M1 = _fp4_e2m1_dtype()
+
+
+def is_fp4_e1m2(dtype):
+    return dtype == FP4_E1M2
+
+
+def is_fp4_e2m1(dtype):
+    return dtype == FP4_E2M1
+
+
+def make_fp4_random(dtype, shape):
+    if is_fp4_e2m1(dtype):
+        return np.random.randint(-6, 6, shape).astype(FP4_E2M1)
+    if is_fp4_e1m2(dtype):
+        return np.random.randint(-1, 2, shape).astype(np.float32)
+    raise TypeError(f"unsupported fp4 dtype: {dtype!r}")
+
+
+def zeros_fp4(dtype, shape):
+    if is_fp4_e2m1(dtype):
+        return np.zeros(shape, dtype=FP4_E2M1)
+    if is_fp4_e1m2(dtype):
+        return np.zeros(shape, dtype=np.float32)
+    raise TypeError(f"unsupported fp4 dtype: {dtype!r}")
+
+
+def _e1m2_nibbles(values):
+    values = np.asarray(values, dtype=np.float32)
+    nibbles = np.zeros(values.shape, dtype=np.uint8)
+    nibbles[values > 0] = 0x4
+    nibbles[values < 0] = 0xC
+    return nibbles
+
+
+def fp4_nibbles(values, dtype):
+    if is_fp4_e2m1(dtype):
+        return np.asarray(values).reshape(-1).view(np.uint8).reshape(np.asarray(values).shape) & 0x0F
+    if is_fp4_e1m2(dtype):
+        return _e1m2_nibbles(values)
+    raise TypeError(f"unsupported fp4 dtype: {dtype!r}")
+
+
+def pack_two_fp4(matrix, dtype):
+    row, col = matrix.shape
+    flat = fp4_nibbles(matrix, dtype).reshape(-1)
+    high = flat[::2] & 0x0F
+    low = (flat[1::2] & 0x0F) << 4
+    return (low | high).reshape(row, col // 2)
+
+
+# ---------------------------------------------------------------------------
 # Terminal styling
 # ---------------------------------------------------------------------------
 
