@@ -44,10 +44,10 @@ struct TestCase {
 static const TestCase kCases[] = {
     {"f16_nd2nz",  (void*)LaunchTLOAD_MAT_f16_nd2nz,  16, 32, 16, 2, 2, 4, true},
     {"bf16_nd2nz", (void*)LaunchTLOAD_MAT_bf16_nd2nz, 16, 32, 16, 2, 2, 4, true},
-    {"f32_nd2nz",  (void*)LaunchTLOAD_MAT_f32_nd2nz,  16, 32, 16, 4, 4, 4, true},
+    {"f32_nd2nz",  (void*)LaunchTLOAD_MAT_f32_nd2nz,  16, 64, 32, 4, 4, 4, true},
     {"f16_dn2nz",  (void*)LaunchTLOAD_MAT_f16_dn2nz,  16, 32, 16, 2, 2, 4, true},
     {"bf16_dn2nz", (void*)LaunchTLOAD_MAT_bf16_dn2nz, 16, 32, 16, 2, 2, 4, true},
-    {"f32_dn2nz",  (void*)LaunchTLOAD_MAT_f32_dn2nz,  16, 32, 16, 4, 4, 4, true},
+    {"f32_dn2nz",  (void*)LaunchTLOAD_MAT_f32_dn2nz,  16, 64, 32, 4, 4, 4, true},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 

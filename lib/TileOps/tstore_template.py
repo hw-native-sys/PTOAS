@@ -329,13 +329,20 @@ def _extract_s_layout_value(config) -> str | None:
     """Extract the effective s_layout string from a config object.
 
     For TileConfig this is the s_layout attribute.
-    For ViewConfig there is no slayout distinction; returns None.
+    For ViewConfig, NZ maps to the boxed row-major secondary layout used by
+    cube accumulator stores.
     """
     if config is None:
         return None
     if hasattr(config, "s_layout") and config.s_layout is not None:
         sl = config.s_layout
         return sl.value if hasattr(sl, "value") else sl
+    if hasattr(config, "layout") and config.layout is not None:
+        layout = config.layout
+        layout_str = layout.value if hasattr(layout, "value") else str(layout)
+        normalized = layout_str.strip().lower().replace("-", "_")
+        if normalized == "nz":
+            return "row_major"
     return None
 
 
@@ -414,17 +421,36 @@ def template_tstore_acc_to_gm_nz2nd(src: pto.Tile, dst: pto.PartitionTensorView)
     acc_ptr = src.as_ptr()
     gm_ptr = dst.as_ptr()
 
-    # src_stride: ACC buffer stride (N under NZ format)
+    # src_stride: ACC buffer stride (M under NZ format)
     # dst_stride: GM stride (N under ND format)
-    src_stride = n
+    src_stride = m
     dst_stride = n
+    src_elem = src.element_type
+    dst_elem = dst.element_type
 
-    pto.mte_l0c_gm(
-        acc_ptr, gm_ptr,
-        m, n, src_stride, dst_stride,
-        0, 0,
-        layout="nz2nd"
-    )
+    if pto.constexpr(src_elem == pto.f32 and dst_elem == pto.f16):
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout="nz2nd",
+            pre_quant=(pto.f16(1.0), "f32_f16"),
+        )
+    elif pto.constexpr(src_elem == pto.f32 and dst_elem == pto.bf16):
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout="nz2nd",
+            pre_quant=(pto.bf16(1.0), "f32_bf16"),
+        )
+    else:
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout="nz2nd"
+        )
     return
 
 
@@ -460,16 +486,35 @@ def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView)
     gm_ptr = dst.as_ptr()
 
     # NZ2DN requires an additional loop0_src_stride parameter
-    src_stride = n
+    src_stride = m
     dst_stride = m  # Under DN format, stride is M
     loop0_src_stride = 1  # loop0_src_stride for NZ2DN
+    src_elem = src.element_type
+    dst_elem = dst.element_type
 
-    pto.mte_l0c_gm(
-        acc_ptr, gm_ptr,
-        m, n, src_stride, dst_stride,
-        0, 0,
-        layout=("nz2dn", loop0_src_stride)
-    )
+    if pto.constexpr(src_elem == pto.f32 and dst_elem == pto.f16):
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout=("nz2dn", loop0_src_stride),
+            pre_quant=(pto.f16(1.0), "f32_f16"),
+        )
+    elif pto.constexpr(src_elem == pto.f32 and dst_elem == pto.bf16):
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout=("nz2dn", loop0_src_stride),
+            pre_quant=(pto.bf16(1.0), "f32_bf16"),
+        )
+    else:
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout=("nz2dn", loop0_src_stride)
+        )
     return
 
 
@@ -503,16 +548,35 @@ def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView)
     acc_ptr = src.as_ptr()
     gm_ptr = dst.as_ptr()
 
-    src_stride = n
+    src_stride = m
     dst_stride = n
-    split = 1  # NZ2NZ requires a split parameter
+    split = 0  # NZ2NZ requires a split parameter
+    src_elem = src.element_type
+    dst_elem = dst.element_type
 
-    pto.mte_l0c_gm(
-        acc_ptr, gm_ptr,
-        m, n, src_stride, dst_stride,
-        0, 0,
-        layout=("nz2nz", split)
-    )
+    if pto.constexpr(src_elem == pto.f32 and dst_elem == pto.f16):
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout=("nz2nz", split),
+            pre_quant=(pto.f16(1.0), "f32_f16"),
+        )
+    elif pto.constexpr(src_elem == pto.f32 and dst_elem == pto.bf16):
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout=("nz2nz", split),
+            pre_quant=(pto.bf16(1.0), "f32_bf16"),
+        )
+    else:
+        pto.mte_l0c_gm(
+            acc_ptr, gm_ptr,
+            m, n, src_stride, dst_stride,
+            0, 0,
+            layout=("nz2nz", split)
+        )
     return
 
 
@@ -573,8 +637,8 @@ def _constraint_tstore_fp(src, fp, dst) -> bool:
     target="a5",
     op="pto.tstore_fp",
     dtypes=[
-        (pto.f32, pto.f16, pto.f16),
-        (pto.f32, pto.bf16, pto.bf16),
+        (pto.f32, pto.f32, pto.f16),
+        (pto.f32, pto.f32, pto.bf16),
     ],
     constraints=[_constraint_tstore_fp],
     name="tstore_fp_acc_to_gm",
@@ -599,24 +663,19 @@ def template_tstore_fp_acc_to_gm(src: pto.Tile, fp: pto.Tile, dst: pto.Partition
     m, n = src.valid_shape
 
     acc_ptr = src.as_ptr()
-    fp_ptr = fp.as_ptr()
+    fp_ptr = pto.castptr(0, pto.ptr(pto.f32, pto.MemorySpace.SCALING))
     gm_ptr = dst.as_ptr()
 
-    # Determine pre_quant mode based on fp (scaling) buffer dtype:
-    # Use qf322*_pre_vec modes which support vector scale rows (scaling buffer).
-    # f32_f16/f32_bf16 modes only accept scalar payload and cannot be used here.
-    # Note: dst.dtype is not supported by the TileLang DSL v1 frontend for
-    # PartitionTensorView, so we use fp.element_type instead.
-    fp_dtype = fp.element_type
+    dst_dtype = dst.element_type
 
-    if pto.constexpr(fp_dtype == pto.bf16):
+    if pto.constexpr(dst_dtype == pto.bf16):
         quant_mode = "qf322bf16_pre_vec"
     else:
         quant_mode = "qf322f16_pre_vec"
 
     # TODO: Replace with tstore_fp DSL surface once available.
     # Currently using mte_l0c_gm + pre_quant as a temporary workaround.
-    src_stride = n
+    src_stride = m
     dst_stride = n
 
     pto.mte_l0c_gm(

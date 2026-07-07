@@ -15,10 +15,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
   // Case 0: f16 src, f32 acc, f32 dst (no-quant, NZ2ND)
   func.func @TSTORE_ACC2GM_f16_f32_f32_nz2nd(%dst_gm: !pto.ptr<f32>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
     %c32 = arith.constant 32 : index
     %c512 = arith.constant 512 : index
 
@@ -28,6 +29,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] from GM -> MAT
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
@@ -35,14 +39,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT -> ACC [16,32] f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
     // TSTORE.ACC NZ2ND: ACC -> GM [16,32] f32
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x32xf32>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xf32>)
@@ -53,11 +60,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
   // Case 1: f16 src, f32 acc, f16 dst (no-quant, NZ2ND with dtype conversion)
   func.func @TSTORE_ACC2GM_f16_f32_f16_nz2nd(%dst_gm: !pto.ptr<f16>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
+    %c512 = arith.constant 512 : index
 
     // TLOAD.MAT ND2NZ: x1 [16,16]
     %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
@@ -65,6 +75,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32]
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
@@ -72,14 +85,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
     // TSTORE.ACC NZ2ND: ACC f32 -> GM f16 (dtype conversion)
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xf16>)
@@ -90,7 +106,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
   // Case 2: bf16 src, f32 acc, f32 dst (no-quant, NZ2ND)
   func.func @TSTORE_ACC2GM_bf16_f32_f32_nz2nd(%dst_gm: !pto.ptr<f32>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
@@ -102,6 +118,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] bf16
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
@@ -109,14 +128,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xbf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT bf16 -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
     // TSTORE.ACC NZ2ND: ACC f32 -> GM f32
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x32xf32>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xf32>)
@@ -127,7 +149,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
   // Case 3: bf16 src, f32 acc, bf16 dst (no-quant, NZ2ND with dtype conversion)
   func.func @TSTORE_ACC2GM_bf16_f32_bf16_nz2nd(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
@@ -139,6 +161,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] bf16
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
@@ -146,14 +171,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xbf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT bf16 -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
     // TSTORE.ACC NZ2ND: ACC f32 -> GM bf16 (dtype conversion)
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x32xbf16>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xbf16>)
@@ -164,7 +192,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
   // Case 4: i8 src, i32 acc, i32 dst (no-quant, NZ2ND)
   func.func @TSTORE_ACC2GM_i8_i32_i32_nz2nd(%dst_gm: !pto.ptr<i32>, %x1_gm: !pto.ptr<i8>, %x2_gm: !pto.ptr<i8>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
@@ -173,24 +201,30 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     // TLOAD.MAT ND2NZ: x1 [16,16] i8
     %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xi8>
     %sv_x1 = pto.partition_view %tv_x1, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xi8> -> !pto.partition_tensor_view<16x16xi8>
-    %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xi8, blayout=col_major, slayout=row_major>
+    %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x32xi8, valid=16x16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xi8>)
-              outs(%mat_a : !pto.tile_buf<mat, 16x16xi8, blayout=col_major, slayout=row_major>)
+              outs(%mat_a : !pto.tile_buf<mat, 16x32xi8, valid=16x16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x32xi8, valid=16x16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x32xi8, valid=16x16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x32xi8, valid=16x16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] i8
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xi8>
     %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xi8> -> !pto.partition_tensor_view<16x32xi8>
-    %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xi8, blayout=col_major, slayout=row_major>
+    %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 32x32xi8, valid=16x32, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xi8>)
-              outs(%mat_b : !pto.tile_buf<mat, 16x32xi8, blayout=col_major, slayout=row_major>)
+              outs(%mat_b : !pto.tile_buf<mat, 32x32xi8, valid=16x32, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 32x32xi8, valid=16x32, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 32x32xi8, valid=16x32, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 32x32xi8, valid=16x32, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT i8 -> ACC i32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xi32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xi8, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xi8, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x32xi8, valid=16x16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 32x32xi8, valid=16x32, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xi32, blayout=col_major, slayout=row_major>)
 
     // TSTORE.ACC NZ2ND: ACC i32 -> GM i32
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xi32>
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<16x32xi32>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xi32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xi32>)
@@ -202,7 +236,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
   // Case NZ2DN: f16 src, f32 acc, f32 dst (no-quant, NZ2DN — col-major GM dest)
   // NZ2DN: dst is stored in DN (col-major) format with shape [N, M], strides [M, 1]
   func.func @TSTORE_ACC2GM_f16_f32_f32_nz2dn(%dst_gm: !pto.ptr<f32>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
@@ -214,6 +248,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] f16
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
@@ -221,89 +258,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT f16 -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
-    // TSTORE.ACC NZ2DN: ACC f32 -> GM f32 (DN col-major format [N, M])
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c32, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
-    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c32, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x16xf32>
-    pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
-               outs(%sv_dst : !pto.partition_tensor_view<32x16xf32>)
-
-    pto.barrier #pto.pipe<PIPE_ALL>
-    return
-  }
-
-  // Case NZ2DN: bf16 src, f32 acc, bf16 dst (no-quant, NZ2DN — col-major GM dest)
-  func.func @TSTORE_ACC2GM_bf16_f32_bf16_nz2dn(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c16 = arith.constant 16 : index
-    %c32 = arith.constant 32 : index
-
-    // TLOAD.MAT ND2NZ: x1 [16,16] bf16
-    %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xbf16>
-    %sv_x1 = pto.partition_view %tv_x1, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x16xbf16>
-    %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
-              outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
-
-    // TLOAD.MAT ND2NZ: x2 [16,32] bf16
-    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
-    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x32xbf16>
-    %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xbf16>)
-              outs(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
-
-    // TMATMUL: MAT bf16 -> ACC f32
-    %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
-                outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
-
-    // TSTORE.ACC NZ2DN: ACC f32 -> GM bf16 (DN col-major format [N, M])
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c32, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xbf16>
-    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c32, %c16] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<32x16xbf16>
-    pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
-               outs(%sv_dst : !pto.partition_tensor_view<32x16xbf16>)
-
-    pto.barrier #pto.pipe<PIPE_ALL>
-    return
-  }
-
-  // Case NZ2NZ: f16 src, f32 acc, f32 dst (no-quant, NZ2NZ — fractal GM dest)
-  // NZ2NZ: dst is stored in NZ (fractal) format with b_layout=col_major, s_layout=row_major
-  func.func @TSTORE_ACC2GM_f16_f32_f32_nz2nz(%dst_gm: !pto.ptr<f32>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c16 = arith.constant 16 : index
-    %c32 = arith.constant 32 : index
-
-    // TLOAD.MAT ND2NZ: x1 [16,16] f16
-    %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
-    %sv_x1 = pto.partition_view %tv_x1, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
-    %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
-              outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
-
-    // TLOAD.MAT ND2NZ: x2 [16,32] f16
-    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
-    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
-    %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf16>)
-              outs(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
-
-    // TMATMUL: MAT f16 -> ACC f32
-    %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
-                outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
-
-    // TSTORE.ACC NZ2NZ: ACC f32 -> GM f32 (NZ fractal format)
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    // TSTORE.ACC NZ2DN: ACC f32 -> GM f32 (logical [M, N] with DN col-major storage)
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x32xf32>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xf32>)
@@ -312,9 +277,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     return
   }
 
-  // Case NZ2NZ: bf16 src, f32 acc, bf16 dst (no-quant, NZ2NZ — fractal GM dest)
-  func.func @TSTORE_ACC2GM_bf16_f32_bf16_nz2nz(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // Case NZ2DN: bf16 src, f32 acc, bf16 dst (no-quant, NZ2DN — col-major GM dest)
+  func.func @TSTORE_ACC2GM_bf16_f32_bf16_nz2dn(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>)
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
@@ -326,6 +291,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] bf16
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
@@ -333,14 +301,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xbf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT bf16 -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
-    // TSTORE.ACC NZ2NZ: ACC f32 -> GM bf16 (NZ fractal format)
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
+    // TSTORE.ACC NZ2DN: ACC f32 -> GM bf16 (logical [M, N] with DN col-major storage)
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xbf16>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x32xbf16>
     pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
                outs(%sv_dst : !pto.partition_tensor_view<16x32xbf16>)
@@ -349,13 +320,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     return
   }
 
-  // Case 5: f16 src, f32 acc, f16 dst (vector quant/TSTORE_FP, NZ2ND)
-  func.func @TSTORE_ACC2GM_f16_f32_f16_vec(%dst_gm: !pto.ptr<f16>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>, %quant_gm: !pto.ptr<f16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // Case NZ2NZ: f16 src, f32 acc, f32 dst (no-quant, NZ2NZ — fractal GM dest)
+  // NZ2NZ: dst is stored in NZ (fractal) format with b_layout=col_major, s_layout=row_major
+  func.func @TSTORE_ACC2GM_f16_f32_f32_nz2nz(%dst_gm: !pto.ptr<f32>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>)
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
+    %c512 = arith.constant 512 : index
 
     // TLOAD.MAT ND2NZ: x1 [16,16] f16
     %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
@@ -363,6 +338,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] f16
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
@@ -370,36 +348,34 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT f16 -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
-    // TLOAD quant_vector from GM to scaling buffer (1x32 f16) for TSTORE_FP
-    %tv_quant = pto.make_tensor_view %quant_gm, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
-    %sv_quant = pto.partition_view %tv_quant, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<1x32xf16>
-    %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x32xf16>
-    pto.tload ins(%sv_quant : !pto.partition_tensor_view<1x32xf16>)
-              outs(%fp_tile : !pto.tile_buf<scaling, 1x32xf16>)
-
-    // TSTORE_FP: ACC f32 + scaling f16 -> GM f16 (qf322f16_pre_vec)
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
-    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
-    pto.tstore_fp ins(%acc_c, %fp_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xf16>)
-                  outs(%sv_dst : !pto.partition_tensor_view<16x32xf16>)
+    // TSTORE.ACC NZ2NZ: ACC f32 -> GM f32 (NZ fractal footprint)
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c1, %c1, %c16, %c8, %c4], strides = [%c512, %c512, %c32, %c4, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<?x?x?x?x?xf32>
+    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0, %c0, %c0, %c0], sizes = [%c1, %c1, %c16, %c8, %c4] : !pto.tensor_view<?x?x?x?x?xf32> -> !pto.partition_tensor_view<1x1x16x8x4xf32>
+    pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
+               outs(%sv_dst : !pto.partition_tensor_view<1x1x16x8x4xf32>)
 
     pto.barrier #pto.pipe<PIPE_ALL>
     return
   }
 
-  // Case 6: bf16 src, f32 acc, bf16 dst (vector quant/TSTORE_FP, NZ2ND)
-  func.func @TSTORE_ACC2GM_bf16_f32_bf16_vec(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>, %quant_gm: !pto.ptr<bf16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // Case NZ2NZ: bf16 src, f32 acc, bf16 dst (no-quant, NZ2NZ — fractal GM dest)
+  func.func @TSTORE_ACC2GM_bf16_f32_bf16_nz2nz(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>)
+      attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
+    %c512 = arith.constant 512 : index
 
     // TLOAD.MAT ND2NZ: x1 [16,16] bf16
     %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xbf16>
@@ -407,6 +383,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>)
 
     // TLOAD.MAT ND2NZ: x2 [16,32] bf16
     %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
@@ -414,24 +393,160 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
     pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xbf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
 
     // TMATMUL: MAT bf16 -> ACC f32
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x32xbf16, blayout=row_major, slayout=col_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
-    // TLOAD quant_vector from GM to scaling buffer (1x32 bf16) for TSTORE_FP
-    %tv_quant = pto.make_tensor_view %quant_gm, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
-    %sv_quant = pto.partition_view %tv_quant, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x32xbf16>
-    %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x32xbf16>
-    pto.tload ins(%sv_quant : !pto.partition_tensor_view<1x32xbf16>)
-              outs(%fp_tile : !pto.tile_buf<scaling, 1x32xbf16>)
+    // TSTORE.ACC NZ2NZ: ACC f32 -> GM bf16 (NZ fractal footprint)
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c1, %c1, %c16, %c16, %c2], strides = [%c512, %c512, %c32, %c2, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<?x?x?x?x?xbf16>
+    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0, %c0, %c0, %c0], sizes = [%c1, %c1, %c16, %c16, %c2] : !pto.tensor_view<?x?x?x?x?xbf16> -> !pto.partition_tensor_view<1x1x16x16x2xbf16>
+    pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
+               outs(%sv_dst : !pto.partition_tensor_view<1x1x16x16x2xbf16>)
 
-    // TSTORE_FP: ACC f32 + scaling bf16 -> GM bf16 (qf322bf16_pre_vec)
-    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
-    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x32xbf16>
-    pto.tstore_fp ins(%acc_c, %fp_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xbf16>)
-                  outs(%sv_dst : !pto.partition_tensor_view<16x32xbf16>)
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  // Case 5: f16 src, f32 acc, f16 dst (vector quant/TSTORE_FP, NZ2ND)
+  func.func @TSTORE_ACC2GM_f16_f32_f16_vec(%dst_gm: !pto.ptr<f16>, %x1_gm: !pto.ptr<f16>, %x2_gm: !pto.ptr<f16>, %quant_gm: !pto.ptr<ui32>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c8_i64 = arith.constant 8 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+
+    // TLOAD.MAT ND2NZ: x1 [16,16] f16
+    %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %sv_x1 = pto.partition_view %tv_x1, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+    pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>)
+
+    // TLOAD.MAT ND2NZ: x2 [16,64] f16
+    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf16>
+    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x64xf16>
+    %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x64xf16, blayout=col_major, slayout=row_major>
+    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x64xf16>)
+              outs(%mat_b : !pto.tile_buf<mat, 16x64xf16, blayout=col_major, slayout=row_major>)
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID1"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID1"]
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x64xf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x64xf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x64xf16, blayout=row_major, slayout=col_major>)
+
+    // TMATMUL: MAT f16 -> ACC f32
+    %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x64xf32, blayout=col_major, slayout=row_major>
+    pto.set_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x64xf16, blayout=row_major, slayout=col_major>)
+                outs(%acc_c : !pto.tile_buf<acc, 16x64xf32, blayout=col_major, slayout=row_major>)
+
+    %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x128xf32, blayout=row_major, slayout=none_box, fractal=512>
+
+    // Load qf322f16_pre_vec encoded parameters to FB using the pto-isa tileop layout.
+    %l1_fp_raw = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui32, l1>
+    %l1_fp = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui64, l1>
+    %fb_fp = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, fb>
+    pto.mte_gm_l1 %quant_gm, %l1_fp_raw, %c512_i64
+      nburst(%c1_i64, %c0_i64, %c0_i64)
+      : !pto.ptr<ui32>, !pto.ptr<ui32, l1>, i64, i64, i64, i64
+    pto.set_flag["PIPE_M", "PIPE_FIX", "EVENT_ID2"]
+    pto.wait_flag["PIPE_M", "PIPE_FIX", "EVENT_ID2"]
+    pto.set_flag["PIPE_MTE2", "PIPE_FIX", "EVENT_ID3"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_FIX", "EVENT_ID3"]
+    pto.mte_l1_fb %l1_fp, %fb_fp, %c8_i64
+      nburst(%c1_i64, %c0_i64, %c0_i64)
+      : !pto.ptr<ui64, l1>, !pto.ptr<f32, fb>, i64, i64, i64, i64
+    // TSTORE_FP: ACC f32 + scaling f32 -> GM f16 (qf322f16_pre_vec)
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x64xf16>
+    pto.tstore_fp ins(%acc_c, %fp_tile : !pto.tile_buf<acc, 16x64xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x128xf32, blayout=row_major, slayout=none_box, fractal=512>)
+                  outs(%sv_dst : !pto.partition_tensor_view<16x64xf16>)
+
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  // Case 6: bf16 src, f32 acc, bf16 dst (vector quant/TSTORE_FP, NZ2ND)
+  func.func @TSTORE_ACC2GM_bf16_f32_bf16_vec(%dst_gm: !pto.ptr<bf16>, %x1_gm: !pto.ptr<bf16>, %x2_gm: !pto.ptr<bf16>, %quant_gm: !pto.ptr<ui32>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c8_i64 = arith.constant 8 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+
+    // TLOAD.MAT ND2NZ: x1 [16,16] bf16
+    %tv_x1 = pto.make_tensor_view %x1_gm, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xbf16>
+    %sv_x1 = pto.partition_view %tv_x1, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x16xbf16>
+    %mat_a = pto.alloc_tile : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>
+    pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
+              outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    %l0a_tile = pto.alloc_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>
+    pto.tmov ins(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0a_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>)
+
+    // TLOAD.MAT ND2NZ: x2 [16,64] bf16
+    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xbf16>
+    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x64xbf16>
+    %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x64xbf16, blayout=col_major, slayout=row_major>
+    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x64xbf16>)
+              outs(%mat_b : !pto.tile_buf<mat, 16x64xbf16, blayout=col_major, slayout=row_major>)
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID1"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID1"]
+    %l0b_tile = pto.alloc_tile : !pto.tile_buf<right, 16x64xbf16, blayout=row_major, slayout=col_major>
+    pto.tmov ins(%mat_b : !pto.tile_buf<mat, 16x64xbf16, blayout=col_major, slayout=row_major>)
+             outs(%l0b_tile : !pto.tile_buf<right, 16x64xbf16, blayout=row_major, slayout=col_major>)
+
+    // TMATMUL: MAT bf16 -> ACC f32
+    %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x64xf32, blayout=col_major, slayout=row_major>
+    pto.set_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.tmatmul ins(%l0a_tile, %l0b_tile : !pto.tile_buf<left, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x64xbf16, blayout=row_major, slayout=col_major>)
+                outs(%acc_c : !pto.tile_buf<acc, 16x64xf32, blayout=col_major, slayout=row_major>)
+
+    %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x128xf32, blayout=row_major, slayout=none_box, fractal=512>
+
+    // Load qf322bf16_pre_vec encoded parameters to FB using the pto-isa tileop layout.
+    %l1_fp_raw = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui32, l1>
+    %l1_fp = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui64, l1>
+    %fb_fp = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, fb>
+    pto.mte_gm_l1 %quant_gm, %l1_fp_raw, %c512_i64
+      nburst(%c1_i64, %c0_i64, %c0_i64)
+      : !pto.ptr<ui32>, !pto.ptr<ui32, l1>, i64, i64, i64, i64
+    pto.set_flag["PIPE_M", "PIPE_FIX", "EVENT_ID2"]
+    pto.wait_flag["PIPE_M", "PIPE_FIX", "EVENT_ID2"]
+    pto.set_flag["PIPE_MTE2", "PIPE_FIX", "EVENT_ID3"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_FIX", "EVENT_ID3"]
+    pto.mte_l1_fb %l1_fp, %fb_fp, %c8_i64
+      nburst(%c1_i64, %c0_i64, %c0_i64)
+      : !pto.ptr<ui64, l1>, !pto.ptr<f32, fb>, i64, i64, i64, i64
+    // TSTORE_FP: ACC f32 + scaling f32 -> GM bf16 (qf322bf16_pre_vec)
+    %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x64xbf16>
+    pto.tstore_fp ins(%acc_c, %fp_tile : !pto.tile_buf<acc, 16x64xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x128xf32, blayout=row_major, slayout=none_box, fractal=512>)
+                  outs(%sv_dst : !pto.partition_tensor_view<16x64xbf16>)
 
     pto.barrier #pto.pipe<PIPE_ALL>
     return

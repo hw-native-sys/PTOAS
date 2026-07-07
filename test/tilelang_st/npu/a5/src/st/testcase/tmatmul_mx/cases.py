@@ -12,12 +12,12 @@
 
 import numpy as np
 import ml_dtypes
-import en_dtypes
+from mx_fp4 import FP4_E1M2, FP4_E2M1
 
 fp8_e4m3fn = ml_dtypes.float8_e4m3fn
 fp8_e5m2 = ml_dtypes.float8_e5m2
-fp4_e1m2x2 = en_dtypes.float4_e1m2
-fp4_e2m1x2 = en_dtypes.float4_e2m1
+fp4_e1m2x2 = FP4_E1M2
+fp4_e2m1x2 = FP4_E2M1
 
 CASES = [
     {"name": "fp8_e5m2_128x64x64", "atype": fp8_e5m2, "btype": fp8_e5m2, "m": 128, "k": 64, "n": 64, "m_padded": 128, "n_padded": 64, "is_bias": False, "is_fp4": False, "eps": 1e-3},

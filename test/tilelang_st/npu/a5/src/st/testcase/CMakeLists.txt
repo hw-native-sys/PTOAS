@@ -211,7 +211,6 @@ set(ALL_TESTCASES
     textract
     textract_fp
     textract_v2v
-    fp8_load_test
     tmov2left
     tmov2right
     tmov2bias

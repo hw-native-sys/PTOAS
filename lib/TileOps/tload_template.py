@@ -336,6 +336,19 @@ def _constraint_tload_mat_base(src, dst) -> bool:
     return True
 
 
+def _layout_value(config):
+    if config is None or not hasattr(config, "layout"):
+        return None
+    layout = config.layout
+    return layout.value if hasattr(layout, "value") else layout
+
+
+def _last_two_shape_dims(value):
+    if not hasattr(value, "shape") or value.shape is None or len(value.shape) < 2:
+        return None
+    return value.shape[-2], value.shape[-1]
+
+
 def _constraint_tload_mat_nd2nz(src, dst) -> bool:
     """TLOAD.MAT ND2NZ fractal load constraint"""
     if not _constraint_tload_mat_base(src, dst):
@@ -356,13 +369,19 @@ def _constraint_tload_mat_nd2nz(src, dst) -> bool:
     # ND2NZ: source is in ND (row-major) format where the inner dimension (g4)
     # corresponds to the tile column count. Disambiguates from DN format where
     # g4 corresponds to the tile row count.
-    if hasattr(src, 'rank') and src.rank == 5:
-        dst_valid_cols = dst.valid_shape[1] if hasattr(dst, 'valid_shape') and dst.valid_shape is not None else None
-        if dst_valid_cols is not None and hasattr(src, 'shape') and src.shape is not None:
-            src_inner = src.shape[4] if len(src.shape) >= 5 else None
-            if src_inner is not None:
-                if not _known_eq(dst_valid_cols, src_inner):
-                    return False
+    src_layout = _layout_value(src.config)
+    if src_layout is not None and src_layout in {"dn", "DN"}:
+        return False
+    src_tail = _last_two_shape_dims(src)
+    if src_tail is not None and hasattr(dst, 'valid_shape') and dst.valid_shape is not None:
+        src_rows, src_cols = src_tail
+        dst_valid_rows, dst_valid_cols = dst.valid_shape
+        is_nd_shape = _known_eq(dst_valid_rows, src_rows) and _known_eq(dst_valid_cols, src_cols)
+        is_dn_shape = _known_eq(dst_valid_rows, src_cols) and _known_eq(dst_valid_cols, src_rows)
+        if not is_nd_shape:
+            return False
+        if is_dn_shape and src_layout is not None and src_layout in {"dn", "DN"}:
+            return False
     return True
 
 
@@ -384,14 +403,127 @@ def _constraint_tload_mat_dn2nz(src, dst) -> bool:
     # DN2NZ: source is in DN (col-major) format where the inner dimension (g4)
     # corresponds to the tile row count. Disambiguates from ND format where
     # g4 corresponds to the tile column count.
-    if hasattr(src, 'rank') and src.rank == 5:
-        dst_valid_rows = dst.valid_shape[0] if hasattr(dst, 'valid_shape') and dst.valid_shape is not None else None
-        if dst_valid_rows is not None and hasattr(src, 'shape') and src.shape is not None:
-            src_inner = src.shape[4] if len(src.shape) >= 5 else None
-            if src_inner is not None:
-                if not _known_eq(dst_valid_rows, src_inner):
-                    return False
+    src_tail = _last_two_shape_dims(src)
+    if src_tail is not None and hasattr(dst, 'valid_shape') and dst.valid_shape is not None:
+        src_rows, src_cols = src_tail
+        dst_valid_rows, dst_valid_cols = dst.valid_shape
+        is_nd_shape = _known_eq(dst_valid_rows, src_rows) and _known_eq(dst_valid_cols, src_cols)
+        is_dn_shape = _known_eq(dst_valid_rows, src_cols) and _known_eq(dst_valid_cols, src_rows)
+        src_layout = _layout_value(src.config)
+        if src_layout is not None and src_layout in {"dn", "DN"} and is_nd_shape:
+            return is_dn_shape
+        if not is_dn_shape:
+            return False
+        if is_nd_shape and (src_layout is None or src_layout not in {"dn", "DN"}):
+            return False
     return True
+
+
+def _constraint_tload_mat_dn2nz_layout(src, dst) -> bool:
+    """TLOAD.MAT DN2NZ for source views explicitly marked as DN layout."""
+    if not _constraint_tload_mat_base(src, dst):
+        return False
+    config = dst.config
+    if config is None:
+        return False
+    b_layout = config.b_layout
+    s_layout = config.s_layout
+    if b_layout is None or s_layout is None:
+        return False
+    b_layout_value = b_layout.value if hasattr(b_layout, "value") else b_layout
+    s_layout_value = s_layout.value if hasattr(s_layout, "value") else s_layout
+    if b_layout_value not in {"col_major", "COL_MAJOR"} or s_layout_value not in {"row_major", "ROW_MAJOR"}:
+        return False
+    if _layout_value(src.config) not in {"dn", "DN"}:
+        return False
+    src_tail = _last_two_shape_dims(src)
+    if src_tail is not None and hasattr(dst, 'valid_shape') and dst.valid_shape is not None:
+        src_rows, src_cols = src_tail
+        dst_valid_rows, dst_valid_cols = dst.valid_shape
+        return _known_eq(dst_valid_rows, src_rows) and _known_eq(dst_valid_cols, src_cols)
+    return True
+
+
+def _constraint_tload_gm_to_mat_linear(src, dst) -> bool:
+    """TLOAD.MAT linear GM -> L1 load constraint."""
+    if not _constraint_tload_mat_base(src, dst):
+        return False
+    config = dst.config
+    if config is None:
+        return False
+    b_layout = config.b_layout
+    s_layout = config.s_layout
+    if b_layout is None or s_layout is None:
+        return False
+    b_layout_value = b_layout.value if hasattr(b_layout, "value") else b_layout
+    s_layout_value = s_layout.value if hasattr(s_layout, "value") else s_layout
+    if b_layout_value not in {"row_major", "ROW_MAJOR"}:
+        return False
+    if s_layout_value not in {"none_box", "NONE_BOX"}:
+        return False
+    src_tail = _last_two_shape_dims(src)
+    if src_tail is not None and hasattr(dst, "valid_shape") and dst.valid_shape is not None:
+        src_rows, src_cols = src_tail
+        dst_valid_rows, dst_valid_cols = dst.valid_shape
+        if not (_known_eq(dst_valid_rows, src_rows) and _known_eq(dst_valid_cols, src_cols)):
+            return False
+    if hasattr(src, "strides") and src.strides is not None and len(src.strides) >= 1:
+        if not _known_eq(src.strides[-1], 1):
+            return False
+    return True
+
+
+@pto.ckernel(
+    target="a5",
+    op="pto.tload",
+    priority=2,
+    dtypes=[
+        (pto.f16, pto.f16),
+        (pto.bf16, pto.bf16),
+        (pto.f32, pto.f32),
+    ],
+    constraints=[_constraint_tload_gm_to_mat_linear],
+    name="tload_gm_to_mat_linear",
+)
+def template_tload_gm_to_mat_linear(src: pto.PartitionTensorView, dst: pto.Tile):
+    """GM -> MAT linear load template for row-major MAT tiles."""
+    rows, cols = dst.valid_shape
+    elem_bytes = pto.bytewidth(dst.element_type)
+    len_burst = rows * cols * elem_bytes
+    pto.mte_gm_l1(
+        src.as_ptr(),
+        dst.as_ptr(),
+        len_burst,
+        nburst=(1, 0, 0),
+    )
+    return
+
+
+@pto.ckernel(
+    target="a5",
+    op="pto.tload",
+    priority=2,
+    dtypes=[
+        (pto.f16, pto.f16),
+        (pto.bf16, pto.bf16),
+        (pto.f32, pto.f32),
+        (pto.i8, pto.i8),
+    ],
+    constraints=[_constraint_tload_mat_dn2nz_layout],
+    name="tload_gm_to_mat_dn2nz_layout",
+)
+def template_tload_gm_to_mat_dn2nz_layout(src: pto.PartitionTensorView, dst: pto.Tile):
+    """GM -> MAT DN2NZ load for DN-layout views with logical shape."""
+    m, k = dst.valid_shape
+
+    pto.mte_gm_l1_frac(
+        src.as_ptr(), dst.as_ptr(), pto.FractalMode.DN2NZ,
+        shape=(m, k),
+        src_layout=(m * pto.bytewidth(dst.element_type),),
+        dst_group=(1, 1, k, 0),
+        ctrl=(0, False)
+    )
+    return
 
 
 @pto.ckernel(
@@ -402,6 +534,7 @@ def _constraint_tload_mat_dn2nz(src, dst) -> bool:
         (pto.f16, pto.f16),
         (pto.bf16, pto.bf16),
         (pto.f32, pto.f32),
+        (pto.i8, pto.i8),
     ],
     constraints=[_constraint_tload_mat_nd2nz],
     name="tload_gm_to_mat_nd2nz",
@@ -428,8 +561,8 @@ def template_tload_gm_to_mat_nd2nz(src: pto.PartitionTensorView, dst: pto.Tile):
     n_value = m
     d_value = k
 
-    # src_layout: inner stride = K (number of elements per row)
-    src_inner_stride = k
+    # src_layout uses byte stride in GM.
+    src_inner_stride = k * pto.bytewidth(dst.element_type)
 
     # dst_group: (group_count, loop2_stride, loop3_stride, loop4_stride)
     # For simple single-block case: (1, 1, m, 0)
@@ -455,6 +588,7 @@ def template_tload_gm_to_mat_nd2nz(src: pto.PartitionTensorView, dst: pto.Tile):
         (pto.f16, pto.f16),
         (pto.bf16, pto.bf16),
         (pto.f32, pto.f32),
+        (pto.i8, pto.i8),
     ],
     constraints=[_constraint_tload_mat_dn2nz],
     name="tload_gm_to_mat_dn2nz",
@@ -478,15 +612,11 @@ def template_tload_gm_to_mat_dn2nz(src: pto.PartitionTensorView, dst: pto.Tile):
     gm_ptr = src.as_ptr()
     mat_ptr = dst.as_ptr()
 
-    # DN2NZ parameter calculation
-    # For DN format, the original shape is (K, M) -- no logical conversion
-    # needed. dn2nz writes the same logical N x D result into NZ layout.
-    # n_value = K, d_value = M
     n_value = k
     d_value = m
 
-    # src_layout: inner stride = M (number of elements per column)
-    src_inner_stride = m
+    # src_layout uses byte stride in GM.
+    src_inner_stride = m * pto.bytewidth(dst.element_type)
 
     # dst_group: (group_count, loop2_stride, loop3_stride, loop4_stride)
     # (1, 1, k, 0)

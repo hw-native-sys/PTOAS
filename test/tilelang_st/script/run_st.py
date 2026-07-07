@@ -187,6 +187,12 @@ if _SELECTED_CASE_NAMES:
 """
     with open(dst_path, "w", encoding="utf-8") as handle:
         handle.write(wrapper)
+    _clear_python_cache(dst_path)
+
+
+def _clear_python_cache(path):
+    pycache_dir = os.path.join(os.path.dirname(path), "__pycache__")
+    shutil.rmtree(pycache_dir, ignore_errors=True)
 
 
 def _copy_testcase_scripts(testcase, case_filters=None):
@@ -194,7 +200,7 @@ def _copy_testcase_scripts(testcase, case_filters=None):
     work_dir = get_testcase_work_dir(testcase)
     os.makedirs(work_dir, exist_ok=True)
     # Shared scripts (testcase/ level).
-    for name in ("st_common.py",):
+    for name in ("st_common.py", "mx_fp4.py"):
         src = os.path.join("testcase", name)
         if os.path.isfile(src):
             run_command(["cp", src, os.path.join(work_dir, name)])
@@ -210,6 +216,8 @@ def _copy_testcase_scripts(testcase, case_filters=None):
                     _write_filtered_cases_module(os.path.abspath(src), dst, selected_case_names)
                     continue
             run_command(["cp", src, dst])
+            if name == "cases.py":
+                _clear_python_cache(dst)
 
 
 def run_gen_data(testcase, case_filters=None):

@@ -28,6 +28,12 @@ def bf16_to_uint16(arr):
     return (f32_view >> 16).astype(np.uint16)
 
 
+def bf16_to_float32(arr):
+    """Round float32 values to bfloat16 precision and return float32 values."""
+    u16 = bf16_to_uint16(arr)
+    return (u16.astype(np.uint32) << 16).view(np.float32)
+
+
 for case in CASES:
     setup_case_rng(case)
 
@@ -41,20 +47,30 @@ for case in CASES:
     x1_f32 = np.random.uniform(-1, 1, size=(M, K)).astype(np.float32)
     x2_f32 = np.random.uniform(-1, 1, size=(K, N)).astype(np.float32)
 
-    # Golden = matmul result in f32 (ACC output is always f32 for float matmul)
-    golden_f32 = np.matmul(x1_f32, x2_f32)
+    dtype_raw = case.get("dtype_raw", None)
+    if dtype_raw == "bf16":
+        x1_compute = bf16_to_float32(x1_f32)
+        x2_compute = bf16_to_float32(x2_f32)
+    elif case["dtype"] == np.float16:
+        x1_compute = x1_f32.astype(np.float16).astype(np.float32)
+        x2_compute = x2_f32.astype(np.float16).astype(np.float32)
+    else:
+        x1_compute = x1_f32
+        x2_compute = x2_f32
 
-    # For DN2NZ layout, input data must be stored in DN (col-major/transposed) format
-    # in GM. The kernel's tload handles the DN→NZ conversion internally.
-    if layout == "dn2nz":
+    # Golden = matmul result in f32 (ACC output is always f32 for float matmul)
+    golden_f32 = np.matmul(x1_compute, x2_compute)
+
+    # For DN2NZ cases, x1 is stored in DN (col-major/transposed) format
+    # in GM. x2 stays ND so the case isolates the DN load path under matmul.
+    if layout == "dn2nz" and case["dtype"] != np.float32:
         x1_gm_f32 = x1_f32.T  # [K, M] transposed for DN format
-        x2_gm_f32 = x2_f32.T  # [N, K] transposed for DN format
+        x2_gm_f32 = x2_f32
     else:
         x1_gm_f32 = x1_f32
         x2_gm_f32 = x2_f32
 
     # Prepare input data in source dtype (using DN-layout data if needed)
-    dtype_raw = case.get("dtype_raw", None)
     if dtype_raw == "bf16":
         x1_bin = bf16_to_uint16(x1_gm_f32)
         x2_bin = bf16_to_uint16(x2_gm_f32)

@@ -21,252 +21,39 @@ void LaunchTCVT_f32_to_i32_round_16x64(void *src, void *dst, void *stream);
 void LaunchTCVT_i32_to_f32_rint_16x64(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_f16_rint_16x64(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_f32_rint_16x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f8e4m3_16x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f8e5m2_16x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_hif8_16x64(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_hif8_16x64(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f4e1m2x2_16x64_to_16x32(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f4e2m1x2_16x64_to_16x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f8e4m3_4x96(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_hif8_4x96(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_f16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_bf16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_bf16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_bf16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_bf16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_bf16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_bf16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_bf16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_i16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_i32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_i64_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i64_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i64_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i64_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i64_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i64_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_i64_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f32_to_f32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f32_to_f32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_f32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_f32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_f32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_f32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_f32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_f32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_f32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_i32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_i16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_i16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_si8_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_si8_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_si8_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_si8_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_si8_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_si8_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_si8_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_f16_to_ui8_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_ui8_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_ui8_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_ui8_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_ui8_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_ui8_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_f16_to_ui8_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_bf16_to_f32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_bf16_to_f16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_f16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_bf16_to_i32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_i32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_i32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_i32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_i32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_i32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_bf16_to_i32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_ui8_to_f16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_f16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_f16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_f16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_f16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_f16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_f16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_ui8_to_ui16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_ui16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_ui16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_ui16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_ui16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_ui16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_ui8_to_ui16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_si8_to_f16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_f16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_f16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_f16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_f16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_f16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_f16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_si8_to_si16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_si16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_si16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_si16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_si16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_si16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_si16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_si8_to_i32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_i32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_i32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_i32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_i32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_i32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_si8_to_i32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i16_to_ui8_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui8_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui8_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui8_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui8_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui8_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui8_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i16_to_f16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i16_to_f32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_f32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i16_to_ui32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_ui32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i16_to_i32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_i32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_i32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_i32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_i32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_i32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i16_to_i32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i32_to_f32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_f32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_f32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_f32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_f32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_f32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_f32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i32_to_i16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i32_to_i64_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i64_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i64_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i64_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i64_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i64_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_i64_1x129(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui8_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i32_to_ui16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i32_to_ui16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_ui32_to_i16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_i16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_i16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_i16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_i16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_i16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_i16_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_ui32_to_ui16_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui16_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui16_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui16_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui16_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui16_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui16_1x129(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_ui32_to_ui8_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i64_to_f32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_f32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_f32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_f32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_f32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_f32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_f32_1x129(void *src, void *dst, void *stream);
 void LaunchTCVT_i64_to_i32_1x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_i32_2x64(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_i32_4x32(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_i32_2x128(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_i32_4x65(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_i32_4x200(void *src, void *dst, void *stream);
-void LaunchTCVT_i64_to_i32_1x129(void *src, void *dst, void *stream);
 
 using LaunchFn = void (*)(void *, void *, void *);
 
@@ -287,252 +74,39 @@ static const TestCase kCases[] = {
     {"i32_to_f32_rint_16x64", LaunchTCVT_i32_to_f32_rint_16x64, 16, 64, 16, 64, sizeof(int32_t), sizeof(float)},
     {"f32_to_f16_rint_16x64", LaunchTCVT_f32_to_f16_rint_16x64, 16, 64, 16, 64, sizeof(float), sizeof(uint16_t)},
     {"f16_to_f32_rint_16x64", LaunchTCVT_f16_to_f32_rint_16x64, 16, 64, 16, 64, sizeof(uint16_t), sizeof(float)},
-    {"f32_to_f8e4m3_16x64", LaunchTCVT_f32_to_f8e4m3_16x64, 16, 64, 16, 64, sizeof(float), sizeof(uint8_t)},
-    {"f32_to_f8e5m2_16x64", LaunchTCVT_f32_to_f8e5m2_16x64, 16, 64, 16, 64, sizeof(float), sizeof(uint8_t)},
-    {"f32_to_hif8_16x64", LaunchTCVT_f32_to_hif8_16x64, 16, 64, 16, 64, sizeof(float), sizeof(uint8_t)},
     {"f16_to_hif8_16x64", LaunchTCVT_f16_to_hif8_16x64, 16, 64, 16, 64, sizeof(uint16_t), sizeof(uint8_t)},
-    {"bf16_to_f4e1m2x2_16x64_to_16x32", LaunchTCVT_bf16_to_f4e1m2x2_16x64_to_16x32, 16, 64, 16, 32, sizeof(uint16_t), sizeof(uint8_t)},
-    {"bf16_to_f4e2m1x2_16x64_to_16x32", LaunchTCVT_bf16_to_f4e2m1x2_16x64_to_16x32, 16, 64, 16, 32, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f32_to_f8e4m3_4x96", LaunchTCVT_f32_to_f8e4m3_4x96, 4, 96, 4, 96, sizeof(float), sizeof(uint8_t)},
-    {"f32_to_hif8_4x96", LaunchTCVT_f32_to_hif8_4x96, 4, 96, 4, 96, sizeof(float), sizeof(uint8_t)},
     {"f32_to_f16_1x128", LaunchTCVT_f32_to_f16_1x128, 1, 128, 1, 128, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_f16_2x64", LaunchTCVT_f32_to_f16_2x64, 2, 64, 2, 64, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_f16_4x32", LaunchTCVT_f32_to_f16_4x32, 4, 32, 4, 32, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_f16_2x128", LaunchTCVT_f32_to_f16_2x128, 2, 128, 2, 128, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_f16_4x65", LaunchTCVT_f32_to_f16_4x65, 4, 128, 4, 128, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_f16_4x200", LaunchTCVT_f32_to_f16_4x200, 4, 256, 4, 256, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_f16_1x129", LaunchTCVT_f32_to_f16_1x129, 1, 256, 1, 256, sizeof(float), sizeof(uint16_t)},
     {"f32_to_bf16_1x128", LaunchTCVT_f32_to_bf16_1x128, 1, 128, 1, 128, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_bf16_2x64", LaunchTCVT_f32_to_bf16_2x64, 2, 64, 2, 64, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_bf16_4x32", LaunchTCVT_f32_to_bf16_4x32, 4, 32, 4, 32, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_bf16_2x128", LaunchTCVT_f32_to_bf16_2x128, 2, 128, 2, 128, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_bf16_4x65", LaunchTCVT_f32_to_bf16_4x65, 4, 128, 4, 128, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_bf16_4x200", LaunchTCVT_f32_to_bf16_4x200, 4, 256, 4, 256, sizeof(float), sizeof(uint16_t)},
-    {"f32_to_bf16_1x129", LaunchTCVT_f32_to_bf16_1x129, 1, 256, 1, 256, sizeof(float), sizeof(uint16_t)},
     {"f32_to_i16_1x128", LaunchTCVT_f32_to_i16_1x128, 1, 128, 1, 128, sizeof(float), sizeof(int16_t)},
-    {"f32_to_i16_2x64", LaunchTCVT_f32_to_i16_2x64, 2, 64, 2, 64, sizeof(float), sizeof(int16_t)},
-    {"f32_to_i16_4x32", LaunchTCVT_f32_to_i16_4x32, 4, 32, 4, 32, sizeof(float), sizeof(int16_t)},
-    {"f32_to_i16_2x128", LaunchTCVT_f32_to_i16_2x128, 2, 128, 2, 128, sizeof(float), sizeof(int16_t)},
-    {"f32_to_i16_4x65", LaunchTCVT_f32_to_i16_4x65, 4, 128, 4, 128, sizeof(float), sizeof(int16_t)},
-    {"f32_to_i16_4x200", LaunchTCVT_f32_to_i16_4x200, 4, 256, 4, 256, sizeof(float), sizeof(int16_t)},
-    {"f32_to_i16_1x129", LaunchTCVT_f32_to_i16_1x129, 1, 256, 1, 256, sizeof(float), sizeof(int16_t)},
     {"f32_to_i32_1x128", LaunchTCVT_f32_to_i32_1x128, 1, 128, 1, 128, sizeof(float), sizeof(int32_t)},
-    {"f32_to_i32_2x64", LaunchTCVT_f32_to_i32_2x64, 2, 64, 2, 64, sizeof(float), sizeof(int32_t)},
-    {"f32_to_i32_4x32", LaunchTCVT_f32_to_i32_4x32, 4, 32, 4, 32, sizeof(float), sizeof(int32_t)},
-    {"f32_to_i32_2x128", LaunchTCVT_f32_to_i32_2x128, 2, 128, 2, 128, sizeof(float), sizeof(int32_t)},
-    {"f32_to_i32_4x65", LaunchTCVT_f32_to_i32_4x65, 4, 128, 4, 128, sizeof(float), sizeof(int32_t)},
-    {"f32_to_i32_4x200", LaunchTCVT_f32_to_i32_4x200, 4, 256, 4, 256, sizeof(float), sizeof(int32_t)},
-    {"f32_to_i32_1x129", LaunchTCVT_f32_to_i32_1x129, 1, 256, 1, 256, sizeof(float), sizeof(int32_t)},
     {"f32_to_i64_1x128", LaunchTCVT_f32_to_i64_1x128, 1, 128, 1, 128, sizeof(float), sizeof(int64_t)},
-    {"f32_to_i64_2x64", LaunchTCVT_f32_to_i64_2x64, 2, 64, 2, 64, sizeof(float), sizeof(int64_t)},
-    {"f32_to_i64_4x32", LaunchTCVT_f32_to_i64_4x32, 4, 32, 4, 32, sizeof(float), sizeof(int64_t)},
-    {"f32_to_i64_2x128", LaunchTCVT_f32_to_i64_2x128, 2, 128, 2, 128, sizeof(float), sizeof(int64_t)},
-    {"f32_to_i64_4x65", LaunchTCVT_f32_to_i64_4x65, 4, 128, 4, 128, sizeof(float), sizeof(int64_t)},
-    {"f32_to_i64_4x200", LaunchTCVT_f32_to_i64_4x200, 4, 256, 4, 256, sizeof(float), sizeof(int64_t)},
-    {"f32_to_i64_1x129", LaunchTCVT_f32_to_i64_1x129, 1, 256, 1, 256, sizeof(float), sizeof(int64_t)},
     {"f32_to_f32_1x128", LaunchTCVT_f32_to_f32_1x128, 1, 128, 1, 128, sizeof(float), sizeof(float)},
-    {"f32_to_f32_2x64", LaunchTCVT_f32_to_f32_2x64, 2, 64, 2, 64, sizeof(float), sizeof(float)},
-    {"f32_to_f32_4x32", LaunchTCVT_f32_to_f32_4x32, 4, 32, 4, 32, sizeof(float), sizeof(float)},
-    {"f32_to_f32_2x128", LaunchTCVT_f32_to_f32_2x128, 2, 128, 2, 128, sizeof(float), sizeof(float)},
-    {"f32_to_f32_4x65", LaunchTCVT_f32_to_f32_4x65, 4, 128, 4, 128, sizeof(float), sizeof(float)},
-    {"f32_to_f32_4x200", LaunchTCVT_f32_to_f32_4x200, 4, 256, 4, 256, sizeof(float), sizeof(float)},
-    {"f32_to_f32_1x129", LaunchTCVT_f32_to_f32_1x129, 1, 256, 1, 256, sizeof(float), sizeof(float)},
     {"f16_to_f32_1x128", LaunchTCVT_f16_to_f32_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(float)},
-    {"f16_to_f32_2x64", LaunchTCVT_f16_to_f32_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(float)},
-    {"f16_to_f32_4x32", LaunchTCVT_f16_to_f32_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(float)},
-    {"f16_to_f32_2x128", LaunchTCVT_f16_to_f32_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(float)},
-    {"f16_to_f32_4x65", LaunchTCVT_f16_to_f32_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(float)},
-    {"f16_to_f32_4x200", LaunchTCVT_f16_to_f32_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(float)},
-    {"f16_to_f32_1x129", LaunchTCVT_f16_to_f32_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(float)},
     {"f16_to_i32_1x128", LaunchTCVT_f16_to_i32_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(int32_t)},
-    {"f16_to_i32_2x64", LaunchTCVT_f16_to_i32_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(int32_t)},
-    {"f16_to_i32_4x32", LaunchTCVT_f16_to_i32_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(int32_t)},
-    {"f16_to_i32_2x128", LaunchTCVT_f16_to_i32_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(int32_t)},
-    {"f16_to_i32_4x65", LaunchTCVT_f16_to_i32_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(int32_t)},
-    {"f16_to_i32_4x200", LaunchTCVT_f16_to_i32_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(int32_t)},
-    {"f16_to_i32_1x129", LaunchTCVT_f16_to_i32_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(int32_t)},
     {"f16_to_i16_1x128", LaunchTCVT_f16_to_i16_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(int16_t)},
-    {"f16_to_i16_2x64", LaunchTCVT_f16_to_i16_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(int16_t)},
-    {"f16_to_i16_4x32", LaunchTCVT_f16_to_i16_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(int16_t)},
-    {"f16_to_i16_2x128", LaunchTCVT_f16_to_i16_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(int16_t)},
-    {"f16_to_i16_4x65", LaunchTCVT_f16_to_i16_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(int16_t)},
-    {"f16_to_i16_4x200", LaunchTCVT_f16_to_i16_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(int16_t)},
-    {"f16_to_i16_1x129", LaunchTCVT_f16_to_i16_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(int16_t)},
     {"f16_to_si8_1x128", LaunchTCVT_f16_to_si8_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(int8_t)},
-    {"f16_to_si8_2x64", LaunchTCVT_f16_to_si8_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(int8_t)},
-    {"f16_to_si8_4x32", LaunchTCVT_f16_to_si8_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(int8_t)},
-    {"f16_to_si8_2x128", LaunchTCVT_f16_to_si8_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(int8_t)},
-    {"f16_to_si8_4x65", LaunchTCVT_f16_to_si8_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(int8_t)},
-    {"f16_to_si8_4x200", LaunchTCVT_f16_to_si8_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(int8_t)},
-    {"f16_to_si8_1x129", LaunchTCVT_f16_to_si8_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(int8_t)},
     {"f16_to_ui8_1x128", LaunchTCVT_f16_to_ui8_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f16_to_ui8_2x64", LaunchTCVT_f16_to_ui8_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f16_to_ui8_4x32", LaunchTCVT_f16_to_ui8_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f16_to_ui8_2x128", LaunchTCVT_f16_to_ui8_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f16_to_ui8_4x65", LaunchTCVT_f16_to_ui8_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f16_to_ui8_4x200", LaunchTCVT_f16_to_ui8_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(uint8_t)},
-    {"f16_to_ui8_1x129", LaunchTCVT_f16_to_ui8_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(uint8_t)},
     {"bf16_to_f32_1x128", LaunchTCVT_bf16_to_f32_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(float)},
-    {"bf16_to_f32_2x64", LaunchTCVT_bf16_to_f32_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(float)},
-    {"bf16_to_f32_4x32", LaunchTCVT_bf16_to_f32_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(float)},
-    {"bf16_to_f32_2x128", LaunchTCVT_bf16_to_f32_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(float)},
-    {"bf16_to_f32_4x65", LaunchTCVT_bf16_to_f32_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(float)},
-    {"bf16_to_f32_4x200", LaunchTCVT_bf16_to_f32_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(float)},
-    {"bf16_to_f32_1x129", LaunchTCVT_bf16_to_f32_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(float)},
     {"bf16_to_f16_1x128", LaunchTCVT_bf16_to_f16_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(uint16_t)},
-    {"bf16_to_f16_2x64", LaunchTCVT_bf16_to_f16_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(uint16_t)},
-    {"bf16_to_f16_4x32", LaunchTCVT_bf16_to_f16_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(uint16_t)},
-    {"bf16_to_f16_2x128", LaunchTCVT_bf16_to_f16_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(uint16_t)},
-    {"bf16_to_f16_4x65", LaunchTCVT_bf16_to_f16_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(uint16_t)},
-    {"bf16_to_f16_4x200", LaunchTCVT_bf16_to_f16_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(uint16_t)},
-    {"bf16_to_f16_1x129", LaunchTCVT_bf16_to_f16_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(uint16_t)},
     {"bf16_to_i32_1x128", LaunchTCVT_bf16_to_i32_1x128, 1, 128, 1, 128, sizeof(uint16_t), sizeof(int32_t)},
-    {"bf16_to_i32_2x64", LaunchTCVT_bf16_to_i32_2x64, 2, 64, 2, 64, sizeof(uint16_t), sizeof(int32_t)},
-    {"bf16_to_i32_4x32", LaunchTCVT_bf16_to_i32_4x32, 4, 32, 4, 32, sizeof(uint16_t), sizeof(int32_t)},
-    {"bf16_to_i32_2x128", LaunchTCVT_bf16_to_i32_2x128, 2, 128, 2, 128, sizeof(uint16_t), sizeof(int32_t)},
-    {"bf16_to_i32_4x65", LaunchTCVT_bf16_to_i32_4x65, 4, 128, 4, 128, sizeof(uint16_t), sizeof(int32_t)},
-    {"bf16_to_i32_4x200", LaunchTCVT_bf16_to_i32_4x200, 4, 256, 4, 256, sizeof(uint16_t), sizeof(int32_t)},
-    {"bf16_to_i32_1x129", LaunchTCVT_bf16_to_i32_1x129, 1, 256, 1, 256, sizeof(uint16_t), sizeof(int32_t)},
     {"ui8_to_f16_1x128", LaunchTCVT_ui8_to_f16_1x128, 1, 128, 1, 128, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_f16_2x64", LaunchTCVT_ui8_to_f16_2x64, 2, 64, 2, 64, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_f16_4x32", LaunchTCVT_ui8_to_f16_4x32, 4, 32, 4, 32, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_f16_2x128", LaunchTCVT_ui8_to_f16_2x128, 2, 128, 2, 128, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_f16_4x65", LaunchTCVT_ui8_to_f16_4x65, 4, 128, 4, 128, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_f16_4x200", LaunchTCVT_ui8_to_f16_4x200, 4, 256, 4, 256, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_f16_1x129", LaunchTCVT_ui8_to_f16_1x129, 1, 256, 1, 256, sizeof(uint8_t), sizeof(uint16_t)},
     {"ui8_to_ui16_1x128", LaunchTCVT_ui8_to_ui16_1x128, 1, 128, 1, 128, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_ui16_2x64", LaunchTCVT_ui8_to_ui16_2x64, 2, 64, 2, 64, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_ui16_4x32", LaunchTCVT_ui8_to_ui16_4x32, 4, 32, 4, 32, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_ui16_2x128", LaunchTCVT_ui8_to_ui16_2x128, 2, 128, 2, 128, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_ui16_4x65", LaunchTCVT_ui8_to_ui16_4x65, 4, 128, 4, 128, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_ui16_4x200", LaunchTCVT_ui8_to_ui16_4x200, 4, 256, 4, 256, sizeof(uint8_t), sizeof(uint16_t)},
-    {"ui8_to_ui16_1x129", LaunchTCVT_ui8_to_ui16_1x129, 1, 256, 1, 256, sizeof(uint8_t), sizeof(uint16_t)},
     {"si8_to_f16_1x128", LaunchTCVT_si8_to_f16_1x128, 1, 128, 1, 128, sizeof(int8_t), sizeof(uint16_t)},
-    {"si8_to_f16_2x64", LaunchTCVT_si8_to_f16_2x64, 2, 64, 2, 64, sizeof(int8_t), sizeof(uint16_t)},
-    {"si8_to_f16_4x32", LaunchTCVT_si8_to_f16_4x32, 4, 32, 4, 32, sizeof(int8_t), sizeof(uint16_t)},
-    {"si8_to_f16_2x128", LaunchTCVT_si8_to_f16_2x128, 2, 128, 2, 128, sizeof(int8_t), sizeof(uint16_t)},
-    {"si8_to_f16_4x65", LaunchTCVT_si8_to_f16_4x65, 4, 128, 4, 128, sizeof(int8_t), sizeof(uint16_t)},
-    {"si8_to_f16_4x200", LaunchTCVT_si8_to_f16_4x200, 4, 256, 4, 256, sizeof(int8_t), sizeof(uint16_t)},
-    {"si8_to_f16_1x129", LaunchTCVT_si8_to_f16_1x129, 1, 256, 1, 256, sizeof(int8_t), sizeof(uint16_t)},
     {"si8_to_si16_1x128", LaunchTCVT_si8_to_si16_1x128, 1, 128, 1, 128, sizeof(int8_t), sizeof(int16_t)},
-    {"si8_to_si16_2x64", LaunchTCVT_si8_to_si16_2x64, 2, 64, 2, 64, sizeof(int8_t), sizeof(int16_t)},
-    {"si8_to_si16_4x32", LaunchTCVT_si8_to_si16_4x32, 4, 32, 4, 32, sizeof(int8_t), sizeof(int16_t)},
-    {"si8_to_si16_2x128", LaunchTCVT_si8_to_si16_2x128, 2, 128, 2, 128, sizeof(int8_t), sizeof(int16_t)},
-    {"si8_to_si16_4x65", LaunchTCVT_si8_to_si16_4x65, 4, 128, 4, 128, sizeof(int8_t), sizeof(int16_t)},
-    {"si8_to_si16_4x200", LaunchTCVT_si8_to_si16_4x200, 4, 256, 4, 256, sizeof(int8_t), sizeof(int16_t)},
-    {"si8_to_si16_1x129", LaunchTCVT_si8_to_si16_1x129, 1, 256, 1, 256, sizeof(int8_t), sizeof(int16_t)},
     {"si8_to_i32_1x128", LaunchTCVT_si8_to_i32_1x128, 1, 128, 1, 128, sizeof(int8_t), sizeof(int32_t)},
-    {"si8_to_i32_2x64", LaunchTCVT_si8_to_i32_2x64, 2, 64, 2, 64, sizeof(int8_t), sizeof(int32_t)},
-    {"si8_to_i32_4x32", LaunchTCVT_si8_to_i32_4x32, 4, 32, 4, 32, sizeof(int8_t), sizeof(int32_t)},
-    {"si8_to_i32_2x128", LaunchTCVT_si8_to_i32_2x128, 2, 128, 2, 128, sizeof(int8_t), sizeof(int32_t)},
-    {"si8_to_i32_4x65", LaunchTCVT_si8_to_i32_4x65, 4, 128, 4, 128, sizeof(int8_t), sizeof(int32_t)},
-    {"si8_to_i32_4x200", LaunchTCVT_si8_to_i32_4x200, 4, 256, 4, 256, sizeof(int8_t), sizeof(int32_t)},
-    {"si8_to_i32_1x129", LaunchTCVT_si8_to_i32_1x129, 1, 256, 1, 256, sizeof(int8_t), sizeof(int32_t)},
     {"i16_to_ui8_1x128", LaunchTCVT_i16_to_ui8_1x128, 1, 128, 1, 128, sizeof(int16_t), sizeof(uint8_t)},
-    {"i16_to_ui8_2x64", LaunchTCVT_i16_to_ui8_2x64, 2, 64, 2, 64, sizeof(int16_t), sizeof(uint8_t)},
-    {"i16_to_ui8_4x32", LaunchTCVT_i16_to_ui8_4x32, 4, 32, 4, 32, sizeof(int16_t), sizeof(uint8_t)},
-    {"i16_to_ui8_2x128", LaunchTCVT_i16_to_ui8_2x128, 2, 128, 2, 128, sizeof(int16_t), sizeof(uint8_t)},
-    {"i16_to_ui8_4x65", LaunchTCVT_i16_to_ui8_4x65, 4, 128, 4, 128, sizeof(int16_t), sizeof(uint8_t)},
-    {"i16_to_ui8_4x200", LaunchTCVT_i16_to_ui8_4x200, 4, 256, 4, 256, sizeof(int16_t), sizeof(uint8_t)},
-    {"i16_to_ui8_1x129", LaunchTCVT_i16_to_ui8_1x129, 1, 256, 1, 256, sizeof(int16_t), sizeof(uint8_t)},
     {"i16_to_f16_1x128", LaunchTCVT_i16_to_f16_1x128, 1, 128, 1, 128, sizeof(int16_t), sizeof(uint16_t)},
-    {"i16_to_f16_2x64", LaunchTCVT_i16_to_f16_2x64, 2, 64, 2, 64, sizeof(int16_t), sizeof(uint16_t)},
-    {"i16_to_f16_4x32", LaunchTCVT_i16_to_f16_4x32, 4, 32, 4, 32, sizeof(int16_t), sizeof(uint16_t)},
-    {"i16_to_f16_2x128", LaunchTCVT_i16_to_f16_2x128, 2, 128, 2, 128, sizeof(int16_t), sizeof(uint16_t)},
-    {"i16_to_f16_4x65", LaunchTCVT_i16_to_f16_4x65, 4, 128, 4, 128, sizeof(int16_t), sizeof(uint16_t)},
-    {"i16_to_f16_4x200", LaunchTCVT_i16_to_f16_4x200, 4, 256, 4, 256, sizeof(int16_t), sizeof(uint16_t)},
-    {"i16_to_f16_1x129", LaunchTCVT_i16_to_f16_1x129, 1, 256, 1, 256, sizeof(int16_t), sizeof(uint16_t)},
     {"i16_to_f32_1x128", LaunchTCVT_i16_to_f32_1x128, 1, 128, 1, 128, sizeof(int16_t), sizeof(float)},
-    {"i16_to_f32_2x64", LaunchTCVT_i16_to_f32_2x64, 2, 64, 2, 64, sizeof(int16_t), sizeof(float)},
-    {"i16_to_f32_4x32", LaunchTCVT_i16_to_f32_4x32, 4, 32, 4, 32, sizeof(int16_t), sizeof(float)},
-    {"i16_to_f32_2x128", LaunchTCVT_i16_to_f32_2x128, 2, 128, 2, 128, sizeof(int16_t), sizeof(float)},
-    {"i16_to_f32_4x65", LaunchTCVT_i16_to_f32_4x65, 4, 128, 4, 128, sizeof(int16_t), sizeof(float)},
-    {"i16_to_f32_4x200", LaunchTCVT_i16_to_f32_4x200, 4, 256, 4, 256, sizeof(int16_t), sizeof(float)},
-    {"i16_to_f32_1x129", LaunchTCVT_i16_to_f32_1x129, 1, 256, 1, 256, sizeof(int16_t), sizeof(float)},
     {"i16_to_ui32_1x128", LaunchTCVT_i16_to_ui32_1x128, 1, 128, 1, 128, sizeof(int16_t), sizeof(uint32_t)},
-    {"i16_to_ui32_2x64", LaunchTCVT_i16_to_ui32_2x64, 2, 64, 2, 64, sizeof(int16_t), sizeof(uint32_t)},
-    {"i16_to_ui32_4x32", LaunchTCVT_i16_to_ui32_4x32, 4, 32, 4, 32, sizeof(int16_t), sizeof(uint32_t)},
-    {"i16_to_ui32_2x128", LaunchTCVT_i16_to_ui32_2x128, 2, 128, 2, 128, sizeof(int16_t), sizeof(uint32_t)},
-    {"i16_to_ui32_4x65", LaunchTCVT_i16_to_ui32_4x65, 4, 128, 4, 128, sizeof(int16_t), sizeof(uint32_t)},
-    {"i16_to_ui32_4x200", LaunchTCVT_i16_to_ui32_4x200, 4, 256, 4, 256, sizeof(int16_t), sizeof(uint32_t)},
-    {"i16_to_ui32_1x129", LaunchTCVT_i16_to_ui32_1x129, 1, 256, 1, 256, sizeof(int16_t), sizeof(uint32_t)},
     {"i16_to_i32_1x128", LaunchTCVT_i16_to_i32_1x128, 1, 128, 1, 128, sizeof(int16_t), sizeof(int32_t)},
-    {"i16_to_i32_2x64", LaunchTCVT_i16_to_i32_2x64, 2, 64, 2, 64, sizeof(int16_t), sizeof(int32_t)},
-    {"i16_to_i32_4x32", LaunchTCVT_i16_to_i32_4x32, 4, 32, 4, 32, sizeof(int16_t), sizeof(int32_t)},
-    {"i16_to_i32_2x128", LaunchTCVT_i16_to_i32_2x128, 2, 128, 2, 128, sizeof(int16_t), sizeof(int32_t)},
-    {"i16_to_i32_4x65", LaunchTCVT_i16_to_i32_4x65, 4, 128, 4, 128, sizeof(int16_t), sizeof(int32_t)},
-    {"i16_to_i32_4x200", LaunchTCVT_i16_to_i32_4x200, 4, 256, 4, 256, sizeof(int16_t), sizeof(int32_t)},
-    {"i16_to_i32_1x129", LaunchTCVT_i16_to_i32_1x129, 1, 256, 1, 256, sizeof(int16_t), sizeof(int32_t)},
     {"i32_to_f32_1x128", LaunchTCVT_i32_to_f32_1x128, 1, 128, 1, 128, sizeof(int32_t), sizeof(float)},
-    {"i32_to_f32_2x64", LaunchTCVT_i32_to_f32_2x64, 2, 64, 2, 64, sizeof(int32_t), sizeof(float)},
-    {"i32_to_f32_4x32", LaunchTCVT_i32_to_f32_4x32, 4, 32, 4, 32, sizeof(int32_t), sizeof(float)},
-    {"i32_to_f32_2x128", LaunchTCVT_i32_to_f32_2x128, 2, 128, 2, 128, sizeof(int32_t), sizeof(float)},
-    {"i32_to_f32_4x65", LaunchTCVT_i32_to_f32_4x65, 4, 128, 4, 128, sizeof(int32_t), sizeof(float)},
-    {"i32_to_f32_4x200", LaunchTCVT_i32_to_f32_4x200, 4, 256, 4, 256, sizeof(int32_t), sizeof(float)},
-    {"i32_to_f32_1x129", LaunchTCVT_i32_to_f32_1x129, 1, 256, 1, 256, sizeof(int32_t), sizeof(float)},
     {"i32_to_i16_1x128", LaunchTCVT_i32_to_i16_1x128, 1, 128, 1, 128, sizeof(int32_t), sizeof(int16_t)},
-    {"i32_to_i16_2x64", LaunchTCVT_i32_to_i16_2x64, 2, 64, 2, 64, sizeof(int32_t), sizeof(int16_t)},
-    {"i32_to_i16_4x32", LaunchTCVT_i32_to_i16_4x32, 4, 32, 4, 32, sizeof(int32_t), sizeof(int16_t)},
-    {"i32_to_i16_2x128", LaunchTCVT_i32_to_i16_2x128, 2, 128, 2, 128, sizeof(int32_t), sizeof(int16_t)},
-    {"i32_to_i16_4x65", LaunchTCVT_i32_to_i16_4x65, 4, 128, 4, 128, sizeof(int32_t), sizeof(int16_t)},
-    {"i32_to_i16_4x200", LaunchTCVT_i32_to_i16_4x200, 4, 256, 4, 256, sizeof(int32_t), sizeof(int16_t)},
-    {"i32_to_i16_1x129", LaunchTCVT_i32_to_i16_1x129, 1, 256, 1, 256, sizeof(int32_t), sizeof(int16_t)},
     {"i32_to_i64_1x128", LaunchTCVT_i32_to_i64_1x128, 1, 128, 1, 128, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_i64_2x64", LaunchTCVT_i32_to_i64_2x64, 2, 64, 2, 64, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_i64_4x32", LaunchTCVT_i32_to_i64_4x32, 4, 32, 4, 32, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_i64_2x128", LaunchTCVT_i32_to_i64_2x128, 2, 128, 2, 128, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_i64_4x65", LaunchTCVT_i32_to_i64_4x65, 4, 128, 4, 128, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_i64_4x200", LaunchTCVT_i32_to_i64_4x200, 4, 256, 4, 256, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_i64_1x129", LaunchTCVT_i32_to_i64_1x129, 1, 256, 1, 256, sizeof(int32_t), sizeof(int64_t)},
-    {"i32_to_ui8_1x128", LaunchTCVT_i32_to_ui8_1x128, 1, 128, 1, 128, sizeof(int32_t), sizeof(uint8_t)},
-    {"i32_to_ui8_2x64", LaunchTCVT_i32_to_ui8_2x64, 2, 64, 2, 64, sizeof(int32_t), sizeof(uint8_t)},
-    {"i32_to_ui8_4x32", LaunchTCVT_i32_to_ui8_4x32, 4, 32, 4, 32, sizeof(int32_t), sizeof(uint8_t)},
-    {"i32_to_ui8_2x128", LaunchTCVT_i32_to_ui8_2x128, 2, 128, 2, 128, sizeof(int32_t), sizeof(uint8_t)},
-    {"i32_to_ui8_4x65", LaunchTCVT_i32_to_ui8_4x65, 4, 128, 4, 128, sizeof(int32_t), sizeof(uint8_t)},
-    {"i32_to_ui8_4x200", LaunchTCVT_i32_to_ui8_4x200, 4, 256, 4, 256, sizeof(int32_t), sizeof(uint8_t)},
-    {"i32_to_ui8_1x129", LaunchTCVT_i32_to_ui8_1x129, 1, 256, 1, 256, sizeof(int32_t), sizeof(uint8_t)},
     {"i32_to_ui16_1x128", LaunchTCVT_i32_to_ui16_1x128, 1, 128, 1, 128, sizeof(int32_t), sizeof(uint16_t)},
-    {"i32_to_ui16_2x64", LaunchTCVT_i32_to_ui16_2x64, 2, 64, 2, 64, sizeof(int32_t), sizeof(uint16_t)},
-    {"i32_to_ui16_4x32", LaunchTCVT_i32_to_ui16_4x32, 4, 32, 4, 32, sizeof(int32_t), sizeof(uint16_t)},
-    {"i32_to_ui16_2x128", LaunchTCVT_i32_to_ui16_2x128, 2, 128, 2, 128, sizeof(int32_t), sizeof(uint16_t)},
-    {"i32_to_ui16_4x65", LaunchTCVT_i32_to_ui16_4x65, 4, 128, 4, 128, sizeof(int32_t), sizeof(uint16_t)},
-    {"i32_to_ui16_4x200", LaunchTCVT_i32_to_ui16_4x200, 4, 256, 4, 256, sizeof(int32_t), sizeof(uint16_t)},
-    {"i32_to_ui16_1x129", LaunchTCVT_i32_to_ui16_1x129, 1, 256, 1, 256, sizeof(int32_t), sizeof(uint16_t)},
     {"ui32_to_i16_1x128", LaunchTCVT_ui32_to_i16_1x128, 1, 128, 1, 128, sizeof(uint32_t), sizeof(int16_t)},
-    {"ui32_to_i16_2x64", LaunchTCVT_ui32_to_i16_2x64, 2, 64, 2, 64, sizeof(uint32_t), sizeof(int16_t)},
-    {"ui32_to_i16_4x32", LaunchTCVT_ui32_to_i16_4x32, 4, 32, 4, 32, sizeof(uint32_t), sizeof(int16_t)},
-    {"ui32_to_i16_2x128", LaunchTCVT_ui32_to_i16_2x128, 2, 128, 2, 128, sizeof(uint32_t), sizeof(int16_t)},
-    {"ui32_to_i16_4x65", LaunchTCVT_ui32_to_i16_4x65, 4, 128, 4, 128, sizeof(uint32_t), sizeof(int16_t)},
-    {"ui32_to_i16_4x200", LaunchTCVT_ui32_to_i16_4x200, 4, 256, 4, 256, sizeof(uint32_t), sizeof(int16_t)},
-    {"ui32_to_i16_1x129", LaunchTCVT_ui32_to_i16_1x129, 1, 256, 1, 256, sizeof(uint32_t), sizeof(int16_t)},
     {"ui32_to_ui16_1x128", LaunchTCVT_ui32_to_ui16_1x128, 1, 128, 1, 128, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui16_2x64", LaunchTCVT_ui32_to_ui16_2x64, 2, 64, 2, 64, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui16_4x32", LaunchTCVT_ui32_to_ui16_4x32, 4, 32, 4, 32, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui16_2x128", LaunchTCVT_ui32_to_ui16_2x128, 2, 128, 2, 128, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui16_4x65", LaunchTCVT_ui32_to_ui16_4x65, 4, 128, 4, 128, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui16_4x200", LaunchTCVT_ui32_to_ui16_4x200, 4, 256, 4, 256, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui16_1x129", LaunchTCVT_ui32_to_ui16_1x129, 1, 256, 1, 256, sizeof(uint32_t), sizeof(uint16_t)},
-    {"ui32_to_ui8_1x128", LaunchTCVT_ui32_to_ui8_1x128, 1, 128, 1, 128, sizeof(uint32_t), sizeof(uint8_t)},
-    {"ui32_to_ui8_2x64", LaunchTCVT_ui32_to_ui8_2x64, 2, 64, 2, 64, sizeof(uint32_t), sizeof(uint8_t)},
-    {"ui32_to_ui8_4x32", LaunchTCVT_ui32_to_ui8_4x32, 4, 32, 4, 32, sizeof(uint32_t), sizeof(uint8_t)},
-    {"ui32_to_ui8_2x128", LaunchTCVT_ui32_to_ui8_2x128, 2, 128, 2, 128, sizeof(uint32_t), sizeof(uint8_t)},
-    {"ui32_to_ui8_4x65", LaunchTCVT_ui32_to_ui8_4x65, 4, 128, 4, 128, sizeof(uint32_t), sizeof(uint8_t)},
-    {"ui32_to_ui8_4x200", LaunchTCVT_ui32_to_ui8_4x200, 4, 256, 4, 256, sizeof(uint32_t), sizeof(uint8_t)},
-    {"ui32_to_ui8_1x129", LaunchTCVT_ui32_to_ui8_1x129, 1, 256, 1, 256, sizeof(uint32_t), sizeof(uint8_t)},
     {"i64_to_f32_1x128", LaunchTCVT_i64_to_f32_1x128, 1, 128, 1, 128, sizeof(int64_t), sizeof(float)},
-    {"i64_to_f32_2x64", LaunchTCVT_i64_to_f32_2x64, 2, 64, 2, 64, sizeof(int64_t), sizeof(float)},
-    {"i64_to_f32_4x32", LaunchTCVT_i64_to_f32_4x32, 4, 32, 4, 32, sizeof(int64_t), sizeof(float)},
-    {"i64_to_f32_2x128", LaunchTCVT_i64_to_f32_2x128, 2, 128, 2, 128, sizeof(int64_t), sizeof(float)},
-    {"i64_to_f32_4x65", LaunchTCVT_i64_to_f32_4x65, 4, 128, 4, 128, sizeof(int64_t), sizeof(float)},
-    {"i64_to_f32_4x200", LaunchTCVT_i64_to_f32_4x200, 4, 256, 4, 256, sizeof(int64_t), sizeof(float)},
-    {"i64_to_f32_1x129", LaunchTCVT_i64_to_f32_1x129, 1, 256, 1, 256, sizeof(int64_t), sizeof(float)},
     {"i64_to_i32_1x128", LaunchTCVT_i64_to_i32_1x128, 1, 128, 1, 128, sizeof(int64_t), sizeof(int32_t)},
-    {"i64_to_i32_2x64", LaunchTCVT_i64_to_i32_2x64, 2, 64, 2, 64, sizeof(int64_t), sizeof(int32_t)},
-    {"i64_to_i32_4x32", LaunchTCVT_i64_to_i32_4x32, 4, 32, 4, 32, sizeof(int64_t), sizeof(int32_t)},
-    {"i64_to_i32_2x128", LaunchTCVT_i64_to_i32_2x128, 2, 128, 2, 128, sizeof(int64_t), sizeof(int32_t)},
-    {"i64_to_i32_4x65", LaunchTCVT_i64_to_i32_4x65, 4, 128, 4, 128, sizeof(int64_t), sizeof(int32_t)},
-    {"i64_to_i32_4x200", LaunchTCVT_i64_to_i32_4x200, 4, 256, 4, 256, sizeof(int64_t), sizeof(int32_t)},
-    {"i64_to_i32_1x129", LaunchTCVT_i64_to_i32_1x129, 1, 256, 1, 256, sizeof(int64_t), sizeof(int32_t)},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 

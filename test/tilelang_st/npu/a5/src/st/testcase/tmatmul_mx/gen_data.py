@@ -13,12 +13,18 @@ import sys
 import math
 import numpy as np
 import ml_dtypes
-import en_dtypes
+from mx_fp4 import (
+    FP4_E1M2,
+    FP4_E2M1,
+    make_fp4_random,
+    zeros_fp4,
+    pack_two_fp4 as mx_pack_two_fp4,
+)
 
 fp8_e4m3fn = ml_dtypes.float8_e4m3fn
 fp8_e5m2 = ml_dtypes.float8_e5m2
-fp4_e1m2x2 = en_dtypes.float4_e1m2
-fp4_e2m1x2 = en_dtypes.float4_e2m1
+fp4_e1m2x2 = FP4_E1M2
+fp4_e2m1x2 = FP4_E2M1
 
 np.random.seed(19)
 
@@ -103,28 +109,31 @@ def gen_golden(case):
     k_aligned = ceil_align(k, 64)
 
     if atype == fp4_e2m1x2:
-        x1 = np.random.randint(-6, 6, [m, k]).astype(atype)
+        x1 = make_fp4_random(atype, [m, k])
     elif atype == fp4_e1m2x2:
-        x1 = np.random.randint(-1, 2, [m, k]).astype(atype)
+        x1 = make_fp4_random(atype, [m, k])
     else:
         x1 = np.random.randint(-10, 10, [m, k]).astype(atype)
 
     if btype == fp4_e2m1x2:
-        x2 = np.random.randint(-6, 6, [k, n]).astype(btype)
+        x2 = make_fp4_random(btype, [k, n])
     elif btype == fp4_e1m2x2:
-        x2 = np.random.randint(-1, 2, [k, n]).astype(btype)
+        x2 = make_fp4_random(btype, [k, n])
     else:
         x2 = np.random.randint(-10, 10, [k, n]).astype(btype)
 
-    x1_padded = np.zeros([m_padded, k_aligned], dtype=atype)
-    x1_padded[:m, :k] = x1
-    x2_padded = np.zeros([k_aligned, n_padded], dtype=btype)
-    x2_padded[:k, :n] = x2
-
     if is_fp4:
-        x1_bin = pack_two_fp4(x1_padded)
-        x2_bin = pack_two_fp4(x2_padded)
+        x1_padded = zeros_fp4(atype, [m_padded, k_aligned])
+        x1_padded[:m, :k] = x1
+        x2_padded = zeros_fp4(btype, [k_aligned, n_padded])
+        x2_padded[:k, :n] = x2
+        x1_bin = mx_pack_two_fp4(x1_padded, atype)
+        x2_bin = mx_pack_two_fp4(x2_padded, btype)
     else:
+        x1_padded = np.zeros([m_padded, k_aligned], dtype=atype)
+        x1_padded[:m, :k] = x1
+        x2_padded = np.zeros([k_aligned, n_padded], dtype=btype)
+        x2_padded[:k, :n] = x2
         if case["name"] == "fp8_e4m3_16x32x16":
             x1_bin = np.ascontiguousarray(x1_padded)
             x2_bin = np.ascontiguousarray(x2_padded)

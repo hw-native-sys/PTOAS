@@ -65,6 +65,8 @@ def _tmov_m2s_constraint(src: pto.Tile, dst: pto.Tile) -> bool:
     op="pto.tmov",
     constraints=[_tmov_m2s_constraint],
     dtypes=[
+        (pto.f16, pto.f16),
+        (pto.bf16, pto.bf16),
         (pto.f32, pto.f32),
     ],
 )

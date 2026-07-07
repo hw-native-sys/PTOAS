@@ -46,8 +46,8 @@ CASES = [
         "dtype": np.float32,
         "layout": "nd2nz",
         "M": 16,
-        "N": 32,
-        "K": 16,
+        "N": 64,
+        "K": 32,
         "eps": 1e-3,
     },
     # DN2NZ layout (col-major GM source -> NZ MAT dest)
@@ -75,8 +75,8 @@ CASES = [
         "dtype": np.float32,
         "layout": "dn2nz",
         "M": 16,
-        "N": 32,
-        "K": 16,
+        "N": 64,
+        "K": 32,
         "eps": 1e-3,
     },
 ]
