@@ -88,7 +88,7 @@ def make_explicit_tadd_kernel():
         c64_i32 = pto.const(64, dtype=pto.int32)
         c64 = pto.const(64)
 
-        with pto.simd():
+        with pto.tileop():
             ptr_f32_ub = pto.ptr(pto.float32, "ub")
             vf32 = pto.vreg_type(64, pto.float32)
             ptr_src = pto.castptr(c4096_i64, ptr_f32_ub)
@@ -155,7 +155,7 @@ def make_explicit_softmax_kernel(name: str, *, rows: int, seq: int):
                 pto.set_flag("MTE2", "V", event_id=0)
                 pto.wait_flag("MTE2", "V", event_id=0)
 
-                with pto.simd():
+                with pto.tileop():
                     row_loop = pto.for_(0, runtime_rows, step=packed_rows).carry(remained=runtime_rows)
                     with row_loop:
                         row_base = row_loop.iv
@@ -263,7 +263,7 @@ def make_explicit_launch_softmax_kernel(name: str, *, rows: int, seq: int):
         pto.set_flag("MTE2", "V", event_id=0)
         pto.wait_flag("MTE2", "V", event_id=0)
 
-        with pto.simd():
+        with pto.tileop():
             row_loop = pto.for_(0, runtime_rows, step=lane_num).carry(remained=runtime_rows)
             with row_loop:
                 row_base = row_loop.iv

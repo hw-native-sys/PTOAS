@@ -63,7 +63,7 @@ class TracingRuntime:
     def dispatch_subkernel_call(self, subkernel, *args, **kwargs):
         """Dispatch a decorated PTODSL subkernel call in the active trace."""
         session = require_active_session(f"@pto.{subkernel.spec.role.value}")
-        if subkernel.spec.role.value in {"cube", "simd", "simt"}:
+        if subkernel.spec.role.value in {"tileop", "cube", "simd", "simt"}:
             return session.lower_helper_subkernel(subkernel, *args, **kwargs)
         return subkernel.emit_body(*args, **kwargs)
 

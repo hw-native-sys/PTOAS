@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-after=pto-materialize-tileop-sections %s 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @entry() attributes {pto.kernel} {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf32>
+    %c16_i32 = arith.constant 16 : i32
+    func.call @tile_vec_copy_loop(%src, %dst, %c16_i32) :
+      (!pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>, i32) -> ()
+    return
+  }
+
+  func.func private @tile_vec_copy_loop(
+      %arg0: !pto.tile_buf<vec, 1x16xf32>,
+      %arg1: !pto.tile_buf<vec, 1x16xf32>,
+      %arg2: i32)
+      attributes {pto.tileop.helper} {
+    %mask, %tail = pto.plt_b32 %arg2 : i32 -> !pto.mask<b32>, i32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c1 step %c1 {
+      %0 = pto.tile_buf_addr %arg0 : !pto.tile_buf<vec, 1x16xf32> -> memref<1x16xf32, #pto.address_space<vec>>
+      %subview = memref.subview %0[0, 0] [1, 16] [1, 1] : memref<1x16xf32, #pto.address_space<vec>> to memref<16xf32, strided<[1]>, #pto.address_space<vec>>
+      %vec = pto.vlds %subview[%c0] : memref<16xf32, strided<[1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+      %1 = pto.tile_buf_addr %arg1 : !pto.tile_buf<vec, 1x16xf32> -> memref<1x16xf32, #pto.address_space<vec>>
+      %subview_0 = memref.subview %1[0, 0] [1, 16] [1, 1] : memref<1x16xf32, #pto.address_space<vec>> to memref<16xf32, strided<[1]>, #pto.address_space<vec>>
+      pto.vsts %vec, %subview_0[%c0], %mask : !pto.vreg<64xf32>, memref<16xf32, strided<[1]>, #pto.address_space<vec>>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// CHECK: func.func private @tile_vec_copy_loop
+// CHECK-SAME: pto.tileop.helper
+// CHECK: pto.plt_b32
+// CHECK: scf.for
+// CHECK: pto.section.vector {
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: }

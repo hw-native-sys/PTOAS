@@ -28,27 +28,35 @@ def expect_raises(callback, exc_type, *message_fragments: str) -> None:
 
 
 def define_bad_subkernel_signature_probe():
-    @pto.simd
+    @pto.tileop
     def bad_tensor_formal(A: TensorSpec(rank=2, dtype=pto.f32)):
         pto.pipe_barrier(pto.Pipe.ALL)
 
     return bad_tensor_formal
 
 
-def define_illegal_simd_ptr_signature_probe():
+def define_legacy_simd_surface_probe():
     @pto.simd
+    def legacy_simd_probe(tile: pto.Tile):
+        pto.pipe_barrier(pto.Pipe.ALL)
+
+    return legacy_simd_probe
+
+
+def define_legacy_cube_surface_probe():
+    @pto.cube
+    def legacy_cube_probe(tile: pto.Tile):
+        pto.pipe_barrier(pto.Pipe.ALL)
+
+    return legacy_cube_probe
+
+
+def define_illegal_tileop_ptr_signature_probe():
+    @pto.tileop
     def bad_ptr_formal(meta_ptr: pto.ptr(pto.i32, pto.MemorySpace.UB)):
         pto.pipe_barrier(pto.Pipe.ALL)
 
     return bad_ptr_formal
-
-
-def define_illegal_cube_scalar_signature_probe():
-    @pto.cube
-    def bad_cube_formal(tile: pto.Tile, cols: pto.i32):
-        pto.pipe_barrier(pto.Pipe.ALL)
-
-    return bad_cube_formal
 
 
 def define_removed_ukernel_surface_probe():
@@ -71,7 +79,7 @@ def define_invalid_jit_mode_probe():
     return bad_mode_probe
 
 
-@pto.simd
+@pto.tileop
 def host_tensor_operand_probe(tensor: pto.Tile):
     pto.pipe_barrier(pto.Pipe.ALL)
 
@@ -89,7 +97,7 @@ def nested_simt_probe():
     pto.get_tid_x()
 
 
-@pto.simd
+@pto.tileop
 def illegal_simt_placement_probe():
     nested_simt_probe()
 
@@ -99,7 +107,7 @@ def nested_simt_from_simd_entry(*, TRACE_TOKEN: pto.const_expr = 0):
     illegal_simt_placement_probe()
 
 
-@pto.simd
+@pto.tileop
 def illegal_inline_simt_placement_probe():
     with pto.simt():
         pto.get_tid_x()
@@ -110,24 +118,35 @@ def nested_inline_simt_from_simd_entry(*, TRACE_TOKEN: pto.const_expr = 0):
     illegal_inline_simt_placement_probe()
 
 
-@pto.simd
-def simd_value_escape_probe():
+@pto.tileop
+def tileop_value_escape_probe():
     return pto.pset_b32("PAT_ALL")
 
 
 @pto.jit(target="a5")
 def simd_value_escape_entry(*, TRACE_TOKEN: pto.const_expr = 0):
-    simd_value_escape_probe()
+    tileop_value_escape_probe()
 
 
-@pto.simd
+@pto.tileop
 def tile_only_probe(inp_tile: pto.Tile):
     pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.tileop
+def invalid_tileop_return_probe(inp_tile: pto.Tile):
+    return inp_tile
 
 
 @pto.jit(target="a5")
 def illegal_subkernel_callsite_entry(A_ptr: pto.ptr(pto.f32, "gm")):
     tile_only_probe(A_ptr)
+
+
+@pto.jit(target="a5")
+def invalid_tileop_return_entry():
+    meta_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 1])
+    invalid_tileop_return_probe(meta_tile)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -144,7 +163,7 @@ def main() -> None:
         AttributeError,
         "pto.ukernel is not a supported PTODSL public interface",
         '@pto.jit(mode="explicit")',
-        "@pto.simd/@pto.simt/@pto.cube",
+        "@pto.tileop",
     )
     expect_raises(
         define_removed_tensor_spec_surface_probe,
@@ -170,21 +189,26 @@ def main() -> None:
     expect_raises(
         define_bad_subkernel_signature_probe,
         TypeError,
-        "@pto.simd parameter 'A' cannot be annotated with pto.tensor_spec(...)",
+        "@pto.tileop parameter 'A' cannot be annotated with pto.tensor_spec(...)",
         "@pto.jit positional parameters",
     )
     expect_raises(
-        define_illegal_simd_ptr_signature_probe,
+        define_legacy_simd_surface_probe,
         TypeError,
-        "@pto.simd parameter 'meta_ptr' uses unsupported subkernel annotation",
-        "pto.Tile parameters plus PTO scalar annotations",
-        "@pto.jit(entry=False)",
+        "@pto.simd is a legacy PTODSL subkernel surface",
+        "Use @pto.tileop",
     )
     expect_raises(
-        define_illegal_cube_scalar_signature_probe,
+        define_legacy_cube_surface_probe,
         TypeError,
-        "@pto.cube parameter 'cols' uses unsupported subkernel annotation",
-        "pto.Tile parameters only",
+        "@pto.cube is a legacy PTODSL subkernel surface",
+        "Use @pto.tileop",
+    )
+    expect_raises(
+        define_illegal_tileop_ptr_signature_probe,
+        TypeError,
+        "@pto.tileop parameter 'meta_ptr' uses unsupported subkernel annotation",
+        "pto.Tile / pto.TensorView / pto.PartitionTensorView parameters plus PTO scalar annotations",
         "@pto.jit(entry=False)",
     )
     expect_raises(
@@ -198,27 +222,33 @@ def main() -> None:
         nested_simt_from_simd_entry.compile,
         RuntimeError,
         "@pto.simt helper materialization is only supported from the top-level @pto.jit body",
-        "inside @pto.simd",
+        "inside @pto.tileop",
     )
     expect_raises(
         nested_inline_simt_from_simd_entry.compile,
         RuntimeError,
         "inline pto.simt() may only be used from the top-level @pto.jit body",
-        "inside @pto.simd",
+        "inside @pto.tileop",
     )
     expect_raises(
         simd_value_escape_entry.compile,
         RuntimeError,
-        "@pto.simd cannot return transient SIMD values",
+        "@pto.tileop cannot return transient SIMD values",
         "!pto.mask<b32>",
         "Write the value back to a Tile/UB buffer instead",
     )
     expect_raises(
         illegal_subkernel_callsite_entry.compile,
         TypeError,
-        "@pto.simd argument 'inp_tile' violates the declared subkernel interface",
+        "@pto.tileop argument 'inp_tile' violates the declared subkernel interface",
         "Expected a pto.Tile value",
         "either pass a legal PTODSL boundary value or remove the subkernel decorator",
+    )
+    expect_raises(
+        invalid_tileop_return_entry.compile,
+        TypeError,
+        "@pto.tileop return values must be PTO scalar values",
+        "Return Tile/TensorView/PartitionTensorView/ptr data through explicit subkernel operands instead",
     )
     expect_raises(
         inline_simt_value_escape_entry.compile,

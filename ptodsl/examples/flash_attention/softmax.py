@@ -14,13 +14,13 @@ This file now keeps two layers:
 - ``fa_softmax_init_vpto_kernel`` / ``fa_softmax_update_vpto_kernel``:
   ptr-ABI VPTO child modules intended to become separate backend objects
 - ``fa_softmax_init_vpto`` / ``fa_softmax_update_vpto``:
-  Tile-ABI ``@pto.simd`` adapters that materialize ``as_ptr()`` internally
+  Tile-ABI ``@pto.tileop`` adapters that materialize ``as_ptr()`` internally
 - ``fa_softmax_vpto_probe``: minimal entry wrapper for compile-only inspection
 
 The intended structure is:
 
 - auto-mode callers only see Tile arguments
-- the ``@pto.simd`` adapter bridges Tile -> ptr
+- the ``@pto.tileop`` adapter bridges Tile -> ptr
 - the explicit VPTO kernel module owns the micro-instruction body
 """
 
@@ -225,7 +225,7 @@ def fa_softmax_update_vpto_kernel(
         pto.vsts(exp_scale, exp_scale_ptr, row, one32, dist="1PT_B32")
 
 
-@pto.simd
+@pto.tileop
 def fa_softmax_init_vpto(
     qk: pto.Tile,
     p_nz: pto.Tile,
@@ -245,7 +245,7 @@ def fa_softmax_init_vpto(
     )
 
 
-@pto.simd
+@pto.tileop
 def fa_softmax_update_vpto(
     qk: pto.Tile,
     p_nz: pto.Tile,

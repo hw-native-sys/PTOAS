@@ -63,7 +63,7 @@ def _tilelang_generated_body(
         pto.set_flag("MTE2", "V", event_id=iter % 2)
         pto.wait_flag("MTE2", "V", event_id=iter % 2)
         pto.wait_flag("MTE3", "V", event_id=iter % 2)
-        with pto.simd():
+        with pto.tileop():
             mask_cnt = 8192
             with pto.for_(0, 128, step=1) as i:
                 mask = pto.pset_b32("PAT_ALL")
@@ -157,7 +157,7 @@ def _tilelang_generated_body_small(A, B, C):
         pto.set_flag("MTE2", "V", event_id=iter % 2)
         pto.wait_flag("MTE2", "V", event_id=iter % 2)
         pto.wait_flag("MTE3", "V", event_id=iter % 2)
-        with pto.simd():
+        with pto.tileop():
             with pto.for_(0, 2, step=1) as i:
                 mask = pto.pset_b32("PAT_ALL")
                 r0 = pto.vlds(

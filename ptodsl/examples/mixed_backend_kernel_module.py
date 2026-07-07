@@ -44,7 +44,7 @@ def scale_row_kernel_module(
     base_gm: pto.ptr(pto.f32, "gm"),
     row: pto.i32,
 ):
-    with pto.simd():
+    with pto.tileop():
         c0_i64 = pto.const(0, dtype=pto.i64)
         row_offset = row * _ROW_ELEMS
         row_gm = pto.addptr(base_gm, row_offset)

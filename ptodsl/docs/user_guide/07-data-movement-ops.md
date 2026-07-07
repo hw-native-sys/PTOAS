@@ -307,7 +307,7 @@ def process_block(k_part, v_part, k_tile, v_tile, o_tile, o_part,
 
 ## 7.3 Vector loads (simd)
 
-Inside `@pto.simd`, data moves between UB tiles and vector registers (`vreg`). Vector loads read a contiguous chunk of a tile row into a `vreg`; the chunk size equals the hardware vector width for the element type (e.g., 64 elements for `f32`, 128 for `f16`).
+Inside `@pto.tileop`, data moves between UB tiles and vector registers (`vreg`). Vector loads read a contiguous chunk of a tile row into a `vreg`; the chunk size equals the hardware vector width for the element type (e.g., 64 elements for `f32`, 128 for `f16`).
 
 ### Tile-index syntax
 
@@ -824,7 +824,9 @@ pto.vstas(align, ub_dst_f32, pto.const(64))
 
 ## 7.5 Cube data movement (cube)
 
-Inside `@pto.cube`, data flows through a hierarchy of private buffers: GM → L1 (cbuf) → L0A/L0B (operand buffers) → L0C (accumulator) → UB or back to GM.
+Inside a cube-style `@pto.tileop` helper, data flows through a hierarchy of
+private buffers: GM → L1 (cbuf) → L0A/L0B (operand buffers) → L0C
+(accumulator) → UB or back to GM.
 
 ### Staging: GM → L1 and L1 → UB
 
@@ -1065,11 +1067,12 @@ pto.mte_l0c_ub(acc, ub, 16, 32, 16, 32, split=pto.SplitMode.N)   # split N
 
 ### Typical cube dataflow in a matmul
 
-A full cube matmul (`@pto.cube`) follows this dataflow pattern:
+A full cube matmul (a cube-style `@pto.tileop` helper) follows this dataflow
+pattern:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.cube_helper","symbol":"data_movement_cube_helper_probe","compile":{"BLOCK_M":16,"BLOCK_K":16,"BLOCK_N":16}} -->
 ```python
-@pto.cube
+@pto.tileop
 def qk_matmul(
     q_tile: pto.Tile,
     k_tile: pto.Tile,
@@ -1226,7 +1229,7 @@ Cube (producer) side:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"pipe_communication.c2v_global_producer","symbol":"pipe_communication_c2v_global_producer_probe","compile":{}} -->
 ```python
-@pto.cube
+@pto.tileop
 def producer(src_tile: pto.Tile):
     c2v.init_cube()
     entry = c2v.alloc(split=0)
@@ -1239,7 +1242,7 @@ Vector (consumer) side:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"pipe_communication.c2v_global_consumer","symbol":"pipe_communication_c2v_global_consumer_probe","compile":{}} -->
 ```python
-@pto.simd
+@pto.tileop
 def consumer(dst_tile: pto.Tile):
     c2v.init_simd()
     entry = c2v.pop(split=0)
@@ -1270,7 +1273,7 @@ Vector (producer) side:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"pipe_communication.v2c_global_producer","symbol":"pipe_communication_v2c_global_producer_probe","compile":{}} -->
 ```python
-@pto.simd
+@pto.tileop
 def producer(src_tile: pto.Tile):
     v2c.init_simd()
     entry = v2c.alloc(split=0)
@@ -1282,7 +1285,7 @@ Cube (consumer) side:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"pipe_communication.v2c_global_consumer","symbol":"pipe_communication_v2c_global_consumer_probe","compile":{}} -->
 ```python
-@pto.cube
+@pto.tileop
 def consumer(dst_tile: pto.Tile):
     v2c.init_cube()
     entry = v2c.pop(split=0)
@@ -1320,7 +1323,7 @@ Cube (producer) transaction:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"pipe_communication.c2v_local_producer","symbol":"pipe_communication_c2v_local_producer_probe","compile":{}} -->
 ```python
-@pto.cube
+@pto.tileop
 def producer(src_tile: pto.Tile):
     c2v_peer.init_cube()
     c2v_peer.push(src_tile, split=0)
@@ -1330,7 +1333,7 @@ Vector (consumer) transaction:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"pipe_communication.c2v_local_consumer","symbol":"pipe_communication_c2v_local_consumer_probe","compile":{}} -->
 ```python
-@pto.simd
+@pto.tileop
 def consumer(dst_tile: pto.Tile):
     c2v.init_simd()
     tile = c2v.pop(result_type=dst_tile, split=0)
@@ -1385,7 +1388,7 @@ def cube_producer(
         offsets=[0, 0], sizes=[16, 16])
     a_tile = pto.alloc_tile(shape=[16, 16], dtype=pto.f32)
 
-    with pto.cube():
+    with pto.tileop():
         pto.tile.load(a_part, a_tile)
         c2v.init_cube()
         entry = c2v.alloc(split=0)
@@ -1412,7 +1415,7 @@ def vector_consumer(
         pto.make_tensor_view(dst, shape=[16, 16], strides=[16, 1]),
         offsets=[0, 0], sizes=[16, 16])
 
-    with pto.simd():
+    with pto.tileop():
         c2v.init_simd()
         entry = c2v.pop(split=0)
         entry_part = pto.partition_view(entry, offsets=[0, 0], sizes=[16, 16])

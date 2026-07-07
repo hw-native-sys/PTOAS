@@ -276,7 +276,9 @@ The user guide under `ptodsl/docs/user_guide/` is the canonical PTODSL API
 reference. This README keeps only a compact map of the public surface:
 
 - `@pto.jit`: the only host-visible kernel entry
-- `@pto.cube`, `@pto.simd`, `@pto.simt`: hardware-unit sub-kernels
+- `@pto.tileop`: custom tile-op helper surface for vector-style and cube-style sub-kernels
+- `@pto.simt`: SIMT helper surface with launch dimensions
+- legacy `@pto.cube`, `@pto.simd`: removed public aliases; PTODSL now diagnoses them and directs users to `@pto.tileop`
 - `pto.ptr(...)` + runtime PTO scalar annotations: public entry ABI
 - `pto.make_tensor_view(...)`, `pto.partition_view(...)`, `pto.alloc_tile(...)`:
   core data-model builders

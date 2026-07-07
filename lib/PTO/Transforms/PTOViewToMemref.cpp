@@ -747,6 +747,24 @@ static Type convertTileBufTypeToMemRef(mlir::pto::TileBufType tbTy) {
                          tbTy.getMemorySpace());
 }
 
+static Type convertTensorViewLikeTypeToMemRef(ArrayRef<int64_t> shape,
+                                              Type elementType,
+                                              MLIRContext *ctx,
+                                              bool forceDynamicShape) {
+  SmallVector<int64_t, 4> resultShape;
+  if (forceDynamicShape) {
+    resultShape.assign(shape.size(), ShapedType::kDynamic);
+  } else {
+    resultShape.assign(shape.begin(), shape.end());
+  }
+
+  SmallVector<int64_t, 4> dynStrides(shape.size(), ShapedType::kDynamic);
+  auto layoutAttr =
+      StridedLayoutAttr::get(ctx, ShapedType::kDynamic, dynStrides);
+  auto gmSpace = AddressSpaceAttr::get(ctx, AddressSpace::GM);
+  return MemRefType::get(resultShape, elementType, layoutAttr, gmSpace);
+}
+
 static Type convertPTOTypeToMemRef(Type t) {
   // 1. 处理 !pto.ptr<T>
   if (auto pty = dyn_cast<mlir::pto::PtrType>(t)) {
@@ -764,11 +782,15 @@ static Type convertPTOTypeToMemRef(Type t) {
   if (auto mtbTy = dyn_cast<mlir::pto::MultiTileBufType>(t))
     return convertTileBufTypeToMemRef(mtbTy.getSlotType());
   if (auto tvTy = dyn_cast<mlir::pto::TensorViewType>(t))
-    return MemRefType::get(tvTy.getShape(), tvTy.getElementType(),
-                           MemRefLayoutAttrInterface(), Attribute());
+    return convertTensorViewLikeTypeToMemRef(tvTy.getShape(),
+                                             tvTy.getElementType(),
+                                             tvTy.getContext(),
+                                             /*forceDynamicShape=*/true);
   if (auto partTy = dyn_cast<mlir::pto::PartitionTensorViewType>(t))
-    return MemRefType::get(partTy.getShape(), partTy.getElementType(),
-                           MemRefLayoutAttrInterface(), Attribute());
+    return convertTensorViewLikeTypeToMemRef(partTy.getShape(),
+                                             partTy.getElementType(),
+                                             partTy.getContext(),
+                                             /*forceDynamicShape=*/false);
   // 其他类型透传
   return t;
 }

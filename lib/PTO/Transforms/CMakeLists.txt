@@ -69,6 +69,9 @@ add_mlir_dialect_library(PTOTransforms
   SlotAffineAnalysis.cpp
   PTOWrapFunctionsInSectionsPass.cpp
   PTONormalizeUncoveredTileSections.cpp
+  PTOInferTileOpSummaryPass.cpp
+  PTOMaterializeTileOpSectionsPass.cpp
+  PTOVerifyTileOpContractPass.cpp
   VPTONormalizeContainer.cpp
   VPTOSplitCVModule.cpp
   InsertSync/PTOIRTranslator.cpp

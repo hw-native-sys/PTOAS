@@ -36,6 +36,7 @@ from mlir.ir import (
     IntegerType,
     Operation,
     StringAttr,
+    TypeAttr,
     UnitAttr,
 )
 
@@ -154,6 +155,7 @@ class TraceSession:
         self._carry_loop_stack = []
         self._inline_subkernel_counter = 0
         self._escaped_inline_values: dict[object, tuple[str, str]] = {}
+        self._helper_result_templates: dict[tuple[str, tuple], object] = {}
 
     @property
     def current_function(self):
@@ -232,16 +234,15 @@ class TraceSession:
         return f"{base_symbol_name}_{suffix}"
 
     def _create_subkernel_section_op(self, role: str):
-        if role == "simd":
-            return _pto.SectionVectorOp()
-        if role == "cube":
-            return _pto.SectionCubeOp()
         return None
 
+    def _canonical_helper_role(self, role: str) -> str:
+        if role in {"tileop", "simd", "cube"}:
+            return "tileop"
+        return role
+
     def _create_inline_subkernel_wrapper(self, role: str):
-        wrapper_op = None
-        if self._subkernel_section_policy(role) != "function_kind":
-            wrapper_op = self._create_subkernel_section_op(role)
+        wrapper_op = self._create_subkernel_section_op(role)
         if wrapper_op is None:
             wrapper_op = _pto.VecScopeOp()
         body_block = wrapper_op.body.blocks.append()
@@ -272,27 +273,12 @@ class TraceSession:
 
     def _subkernel_helper_attributes(self, role: str) -> tuple[tuple[str, object], ...]:
         attrs: list[tuple[str, object]] = []
-        if role in {"simd", "cube"}:
-            attrs.append(("pto.ptodsl.subkernel_helper", StringAttr.get(role)))
-            if self._subkernel_section_policy(role) == "function_kind":
-                attrs.append(
-                    (
-                        "pto.kernel_kind",
-                        Attribute.parse(
-                            f"#pto.kernel_kind<{self._subkernel_role_kernel_kind(role)}>"
-                        ),
-                    )
-                )
+        helper_role = self._canonical_helper_role(role)
+        if helper_role == "tileop":
+            attrs.append(("pto.tileop.helper", UnitAttr.get()))
         if role == "simt":
             attrs.append(("pto.simt_entry", UnitAttr.get()))
         return tuple(attrs)
-
-    def _emit_simt_helper_launch_metadata(self) -> None:
-        i32 = IntegerType.get_signless(32)
-        dim_z = arith.ConstantOp(i32, 1).result
-        dim_y = arith.ConstantOp(i32, 1).result
-        dim_x = arith.ConstantOp(i32, 1).result
-        _pto.StoreVfSimtInfoOp(dim_z, dim_y, dim_x)
 
     def _erase_attached_op(self, op_view) -> None:
         parent = op_view.operation.parent
@@ -419,6 +405,37 @@ class TraceSession:
         for value in values:
             self._escaped_inline_values[value] = (role, str(value.type))
 
+    def _flatten_helper_result_templates(self, value) -> tuple:
+        if value is None:
+            return ()
+        if isinstance(value, tuple):
+            flattened = []
+            for item in value:
+                flattened.extend(self._flatten_helper_result_templates(item))
+            return tuple(flattened)
+        if isinstance(value, list):
+            flattened = []
+            for item in value:
+                flattened.extend(self._flatten_helper_result_templates(item))
+            return tuple(flattened)
+        if isinstance(value, dict):
+            flattened = []
+            for item in value.values():
+                flattened.extend(self._flatten_helper_result_templates(item))
+            return tuple(flattened)
+        return (value,)
+
+    def _wrap_helper_call_results(self, template, results_iter):
+        if template is None:
+            return None
+        if isinstance(template, tuple):
+            return tuple(self._wrap_helper_call_results(item, results_iter) for item in template)
+        if isinstance(template, list):
+            return [self._wrap_helper_call_results(item, results_iter) for item in template]
+        if isinstance(template, dict):
+            return {name: self._wrap_helper_call_results(item, results_iter) for name, item in template.items()}
+        return wrap_like_surface_value(template, next(results_iter))
+
     def _remap_captured_operands(self, root_ops, capture_mapping) -> None:
         for op_view in self._walk_op_tree(root_ops):
             operands = op_view.operation.operands
@@ -429,11 +446,7 @@ class TraceSession:
 
     def _outline_inline_subkernel(self, outline_frame: InlineSubkernelOutlineFrame) -> None:
         role = outline_frame.trace_frame.role
-        section_policy = self._subkernel_section_policy(role)
-        if role in {"simd", "cube"} and section_policy != "function_kind":
-            root_ops = (outline_frame.wrapper_op,)
-        else:
-            root_ops = tuple(outline_frame.body_block.operations)
+        root_ops = tuple(outline_frame.body_block.operations)
 
         defined_values = self._collect_defined_values(root_ops)
         captures = self._collect_capture_values(root_ops)
@@ -453,23 +466,20 @@ class TraceSession:
 
         with InsertionPoint(outline_frame.wrapper_op.operation):
             if role == "simt":
-                self._emit_simt_helper_launch_metadata()
-            func.CallOp(helper_fn, list(captures))
+                self._emit_simt_launch_call(helper_fn, captures, dims=(1, 1, 1))
+            else:
+                func.CallOp(helper_fn, list(captures))
 
         entry_block = helper_fn.add_entry_block()
         with InsertionPoint(entry_block):
             terminator = func.ReturnOp([])
         return_anchor = terminator.operation.opview
 
-        if role in {"simd", "cube"} and section_policy != "function_kind":
-            outline_frame.wrapper_op.move_before(return_anchor)
-            outlined_roots = (outline_frame.wrapper_op,)
-        else:
-            body_ops = tuple(outline_frame.body_block.operations)
-            for op_view in body_ops:
-                op_view.move_before(return_anchor)
-            outline_frame.wrapper_op.operation.erase()
-            outlined_roots = body_ops
+        body_ops = tuple(outline_frame.body_block.operations)
+        for op_view in body_ops:
+            op_view.move_before(return_anchor)
+        outline_frame.wrapper_op.operation.erase()
+        outlined_roots = body_ops
 
         capture_mapping = dict(zip(captures, entry_block.arguments))
         self._remap_captured_operands(outlined_roots, capture_mapping)
@@ -483,11 +493,13 @@ class TraceSession:
         arg_templates = tuple(args)
         arg_types = tuple(unwrap_surface_value(arg).type for arg in arg_templates)
         owner_symbol_name = self.current_function_owner_symbol_name
+        result_template = None
         helper_spec = HelperFunctionSpec(
             symbol_name=subkernel.spec.symbol_name,
             arg_types=arg_types,
             attributes=self._subkernel_helper_attributes(subkernel.spec.role.value),
         )
+        helper_cache_key = (owner_symbol_name, helper_spec.cache_key())
         helper_fn, created = self.get_or_create_helper_function(
             helper_spec,
             owner_symbol_name=owner_symbol_name,
@@ -505,10 +517,21 @@ class TraceSession:
                 InsertionPoint(entry_block),
             ):
                 with self.enter_subkernel(subkernel):
-                    subkernel.emit_body(*wrapped_args, **kwargs)
-                func.ReturnOp([])
+                    result_template = subkernel.emit_body(*wrapped_args, **kwargs)
+                flat_results = self._flatten_helper_result_templates(result_template)
+                result_types = [unwrap_surface_value(value).type for value in flat_results]
+                helper_fn.operation.attributes["function_type"] = TypeAttr.get(
+                    func.FunctionType.get(list(arg_types), result_types)
+                )
+                func.ReturnOp([unwrap_surface_value(value) for value in flat_results])
+            self._helper_result_templates[helper_cache_key] = result_template
+        else:
+            result_template = self._helper_result_templates.get(helper_cache_key)
 
-        func.CallOp(helper_fn, [unwrap_surface_value(arg) for arg in arg_templates])
+        call_op = func.CallOp(helper_fn, [unwrap_surface_value(arg) for arg in arg_templates])
+        if result_template is None:
+            return None
+        return self._wrap_helper_call_results(result_template, iter(call_op.results))
 
     def begin_carry_loop(self, start, stop, step, state_items):
         """Materialize one authored ``pto.for_(...).carry(...)`` loop body."""
@@ -536,12 +559,14 @@ class TraceSession:
         """Lower one ``@pto.simt`` call through a dedicated helper function."""
         helper_fn, arg_templates = self._get_or_create_simt_helper_function(subkernel, *args, **kwargs)
 
-        self._emit_simt_helper_launch_metadata()
-        func.CallOp(helper_fn, [unwrap_surface_value(arg) for arg in arg_templates])
+        self._emit_simt_launch_call(helper_fn, arg_templates, dims=(1, 1, 1))
 
     def lower_simt_launch_subkernel(self, subkernel, *args, dims, **kwargs):
         """Lower one explicit ``pto.simt_launch`` call through a SIMT helper."""
         helper_fn, arg_templates = self._get_or_create_simt_helper_function(subkernel, *args, **kwargs)
+        self._emit_simt_launch_call(helper_fn, arg_templates, dims=dims)
+
+    def _emit_simt_launch_call(self, helper_fn, arg_templates, *, dims) -> None:
         dim_x, dim_y, dim_z = _coerce_simt_launch_dims(dims)
         Operation.create(
             "pto.simt_launch",

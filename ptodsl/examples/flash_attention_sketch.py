@@ -16,8 +16,8 @@ layering explicit and keep the semantic contracts clean:
       └─ flash_attention_kernel   (@pto.jit, mode="explicit")
            ├─ Tile Ops                 tile.load / tile.store at the GM↔UB boundary
            ├─ explicit orchestration   mte_load / pipe_barrier / pointer sequencing
-           ├─ @pto.cube               matrix products (QK^T and P@V)
-           ├─ @pto.simd               row-wise online softmax
+           ├─ @pto.tileop             matrix products (QK^T and P@V, cube-style)
+           ├─ @pto.tileop             row-wise online softmax (vector-style)
            └─ @pto.simt               scalar metadata and output blending
 
 Design rules illustrated here:
@@ -39,9 +39,10 @@ Design rules illustrated here:
    such as ``mte_load`` are used instead of tile ops where needed.
    ``mte_load`` / ``mte_store`` accept partitions and tiles directly,
    deriving strides and burst sizes from the type metadata.
-6. ``simd`` / ``simt`` / ``cube`` are hardware boundaries. They do not expose
-   vreg values across the function boundary. Data crosses the boundary through
-   UB-backed tiles or typed UB pointers only.
+6. ``tileop`` / ``simt`` are the public helper boundaries. ``@pto.tileop``
+   covers both vector-style and cube-style helper bodies, but transient
+   hardware-local values still do not cross the function boundary. Data crosses
+   the boundary through UB-backed tiles or typed UB pointers only.
 7. Named sub-kernels are reusable wherever their parameter contract is
    satisfied. This sketch uses the explicit ``@pto.jit(mode="explicit")`` path
    because it needs user-ordered DMA and phase barriers; smaller kernels can
@@ -361,11 +362,11 @@ def flash_attention_kernel(
 # Boundary contract:
 # - Tile arguments are UB-backed or cube-local buffers carrying addressable
 #   storage.
-# - No vector register escapes a simd function.
+# - No vector register escapes a tile-op helper.
 # - No implicit global-memory access happens inside these kernels.
 
 
-@pto.cube
+@pto.tileop
 def qk_matmul(
     q_mat: pto.Tile,       # MAT, [Br, dim]
     k_mat: pto.Tile,       # MAT, [Bc, dim]
@@ -392,7 +393,7 @@ def qk_matmul(
     pto.mte_l0c_ub(s_acc.as_ptr(), s_tile.as_ptr(), m, n, n, n, 0)
 
 
-@pto.cube
+@pto.tileop
 def pv_matmul(
     p_mat: pto.Tile,       # MAT, [Br, Bc]
     v_mat: pto.Tile,       # MAT, [Bc, dim]
@@ -417,7 +418,7 @@ def pv_matmul(
     pto.mte_l0c_ub(pv_acc.as_ptr(), pv_tile.as_ptr(), m, n, n, n, 0)
 
 
-@pto.simd
+@pto.tileop
 def online_softmax_rows(
     s_tile: pto.Tile,          # UB, [Br, Bc]
     p_tile: pto.Tile,          # UB, [Br, Bc], output
@@ -663,7 +664,7 @@ def kv_block_process(
 # │                                                                            │
 # │   Key idea: one place owns the "how this block runs on hardware" story.   │
 # ├──────────────────────────────────────────────────────────────────────────┤
-# │ @pto.cube           Matrix-product kernels                                 │
+# │ @pto.tileop         Matrix-product kernels (cube-style bodies)             │
 # │                                                                            │
 # │   qk_matmul: Q @ K^T                                                       │
 # │   pv_matmul: P @ V                                                         │
@@ -671,7 +672,7 @@ def kv_block_process(
 # │                                                                            │
 # │   Key idea: UB tiles are inputs/outputs; cube-local state is explicit.    │
 # ├──────────────────────────────────────────────────────────────────────────┤
-# │ @pto.simd           Row-wise vector math                                   │
+# │ @pto.tileop         Row-wise vector math                                   │
 # │                                                                            │
 # │   online_softmax_rows                                                      │
 # │   vreg stays local; persistent state is written back to UB tiles           │

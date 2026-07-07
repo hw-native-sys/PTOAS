@@ -13,7 +13,7 @@ This file mirrors the launchable shape used by ``softmax.py``:
 
 - ``fa_gu_init_vpto_kernel`` / ``fa_gu_update_vpto_kernel`` are ptr-ABI VPTO
   child modules.
-- ``fa_gu_init_vpto`` / ``fa_gu_update_vpto`` are Tile-ABI ``@pto.simd``
+- ``fa_gu_init_vpto`` / ``fa_gu_update_vpto`` are Tile-ABI ``@pto.tileop``
   adapters for callers such as ``flash_attention_vf_fusion.py``.
 - ``fa_gu_init_vpto_validate`` / ``fa_gu_update_vpto_validate`` are host-visible
   launch wrappers for standalone validation.
@@ -105,7 +105,7 @@ def fa_gu_update_vpto_kernel(
             pto.vsts(out_vec, o_ptr, row_base + col, mask, dist="NORM_B32")
 
 
-@pto.simd
+@pto.tileop
 def fa_gu_init_vpto(
     pv_tile: pto.Tile,
     o_tile: pto.Tile,
@@ -119,7 +119,7 @@ def fa_gu_init_vpto(
     )
 
 
-@pto.simd
+@pto.tileop
 def fa_gu_update_vpto(
     o_tile: pto.Tile,
     pv_tile: pto.Tile,

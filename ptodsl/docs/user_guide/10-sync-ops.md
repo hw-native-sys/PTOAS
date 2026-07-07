@@ -437,7 +437,7 @@ Where do sync operations belong in PTODSL's public entry model?
 |---------|---------------------|
 | `@pto.jit(mode="auto")` | Users can write sync explicitly when needed. PTOAS also provides an `--enable-insert-sync` option that auto-inserts `set_flag`/`wait_flag` pairs based on op-to-pipe mapping. |
 | `@pto.jit(mode="explicit")` | The compiler does not insert sync — the user is fully responsible. Place `set_flag`/`wait_flag` between MTE and compute, `mem_bar` between compute phases, `pipe_barrier` at phase boundaries. |
-| Shared `@pto.cube` / `@pto.simd` / `@pto.simt` helpers | Cross-pipeline ordering is provided by the surrounding `@pto.jit` schedule. Helpers may still use `mem_bar` for intra-pipeline ordering when UB addresses alias. |
+| Shared `@pto.tileop` / `@pto.simt` helpers | Cross-pipeline ordering is provided by the surrounding `@pto.jit` schedule. Helpers may still use `mem_bar` for intra-pipeline ordering when UB addresses alias. |
 
 **Rule of thumb**: in `mode="auto"`, think in tiles and let the compiler handle
 orchestration. In `mode="explicit"`, think in micro-instructions and place the

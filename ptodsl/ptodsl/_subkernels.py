@@ -17,17 +17,19 @@ import inspect
 from ._diagnostics import (
     illegal_inline_subkernel_placement_error,
     illegal_subkernel_placement_error,
+    legacy_subkernel_surface_error,
     simd_value_escape_error,
     subkernel_argument_type_error,
     subkernel_host_tensor_boundary_error,
     subkernel_illegal_annotation_error,
     subkernel_illegal_parameter_kind_error,
     subkernel_missing_annotation_error,
+    subkernel_return_boundary_error,
     subkernel_signature_boundary_error,
 )
 from ._ast_rewrite import rewrite_jit_function
 from ._host_tensors import TensorSpec, looks_like_host_tensor
-from ._surface_types import Tile
+from ._surface_types import PartitionTensorView, TensorView, Tile
 from ._surface_values import unwrap_surface_value
 from ._tracing import current_runtime, current_session
 from ._types import (
@@ -59,9 +61,11 @@ from ._types import (
     ui32,
     ui64,
 )
+from mlir.ir import FloatType, IndexType, IntegerType
 
 
 class KernelRole(str, Enum):
+    TILEOP = "tileop"
     CUBE = "cube"
     SIMD = "simd"
     SIMT = "simt"
@@ -188,11 +192,15 @@ class SubkernelTemplate:
                 raise subkernel_host_tensor_boundary_error(self.spec.role.value, name)
 
     def _validate_result(self, result) -> None:
-        if self.spec.role != KernelRole.SIMD:
+        if self.spec.role in {KernelRole.TILEOP, KernelRole.SIMD}:
+            escaped_type = _find_transient_simd_escape(result)
+            if escaped_type is not None:
+                raise simd_value_escape_error(escaped_type, surface=f"@pto.{self.spec.role.value}")
+            _validate_subkernel_scalar_result(self.spec.role.value, result)
             return
-        escaped_type = _find_transient_simd_escape(result)
-        if escaped_type is not None:
-            raise simd_value_escape_error(escaped_type)
+        if self.spec.role == KernelRole.CUBE:
+            _validate_subkernel_scalar_result(self.spec.role.value, result)
+            return
 
 
 class _SimtLaunchTemplate:
@@ -231,6 +239,38 @@ def _find_transient_simd_escape(value):
     if type_text.startswith("!pto.vreg<") or type_text.startswith("!pto.mask<"):
         return type_text
     return None
+
+
+def _is_scalar_result_type(type_obj) -> bool:
+    return (
+        IndexType.isinstance(type_obj)
+        or IntegerType.isinstance(type_obj)
+        or FloatType.isinstance(type_obj)
+    )
+
+
+def _validate_subkernel_scalar_result(role: str, value) -> None:
+    if value is None:
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            _validate_subkernel_scalar_result(role, item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _validate_subkernel_scalar_result(role, item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _validate_subkernel_scalar_result(role, item)
+        return
+    raw_value = unwrap_surface_value(value)
+    type_obj = getattr(raw_value, "type", None)
+    if type_obj is None:
+        raise subkernel_return_boundary_error(role, type(value).__name__)
+    if _is_scalar_result_type(type_obj):
+        return
+    raise subkernel_return_boundary_error(role, str(type_obj))
 
 
 def _is_supported_runtime_scalar_annotation(annotation) -> bool:
@@ -292,6 +332,10 @@ def _normalize_subkernel_annotation(annotation):
     text = annotation.strip()
     if text in {"Tile", "pto.Tile"}:
         return Tile
+    if text in {"TensorView", "pto.TensorView"}:
+        return TensorView
+    if text in {"PartitionTensorView", "pto.PartitionTensorView"}:
+        return PartitionTensorView
     if text in _POSTPONED_DTYPE_ANNOTATIONS:
         return _POSTPONED_DTYPE_ANNOTATIONS[text]
     if text.startswith("pto.ptr(") and text.endswith(")"):
@@ -301,11 +345,17 @@ def _normalize_subkernel_annotation(annotation):
     return annotation
 
 
+def _allows_view_annotations(role: KernelRole) -> bool:
+    return role in {KernelRole.TILEOP, KernelRole.SIMD}
+
+
 def _is_supported_subkernel_annotation(role: KernelRole, annotation) -> bool:
     if annotation is Tile:
         return True
     if role == KernelRole.CUBE:
         return False
+    if _allows_view_annotations(role) and annotation in {TensorView, PartitionTensorView}:
+        return True
     if _is_supported_runtime_scalar_annotation(annotation):
         return True
     if role == KernelRole.SIMT and isinstance(annotation, _PtrDescriptor):
@@ -316,8 +366,11 @@ def _is_supported_subkernel_annotation(role: KernelRole, annotation) -> bool:
 def _expected_subkernel_annotation_summary(role: KernelRole) -> str:
     if role == KernelRole.CUBE:
         return "pto.Tile parameters only"
-    if role == KernelRole.SIMD:
-        return "pto.Tile parameters plus PTO scalar annotations such as pto.i32/pto.f32"
+    if role in {KernelRole.TILEOP, KernelRole.SIMD}:
+        return (
+            "pto.Tile / pto.TensorView / pto.PartitionTensorView parameters plus PTO scalar "
+            "annotations such as pto.i32/pto.f32"
+        )
     return "pto.Tile parameters, typed pto.ptr(...) values, and PTO scalar annotations"
 
 
@@ -347,11 +400,46 @@ def _is_runtime_scalar_value(value) -> bool:
     )
 
 
+def _is_tensor_view_value(value) -> bool:
+    raw_value = unwrap_surface_value(value)
+    type_obj = getattr(raw_value, "type", None)
+    if type_obj is None:
+        return False
+    return str(type_obj).startswith("!pto.tensor_view<")
+
+
+def _is_partition_tensor_view_value(value) -> bool:
+    raw_value = unwrap_surface_value(value)
+    type_obj = getattr(raw_value, "type", None)
+    if type_obj is None:
+        return False
+    return str(type_obj).startswith("!pto.partition_tensor_view<")
+
+
 def _normalize_subkernel_argument(role: KernelRole, name: str, annotation, value):
     if annotation is Tile:
         if isinstance(value, Tile):
             return value
         raise subkernel_argument_type_error(role.value, name, "a pto.Tile value", type(value).__name__)
+
+    if annotation is TensorView:
+        if _allows_view_annotations(role) and isinstance(value, TensorView) and _is_tensor_view_value(value):
+            return value
+        raise subkernel_argument_type_error(role.value, name, "a pto.TensorView value", type(value).__name__)
+
+    if annotation is PartitionTensorView:
+        if (
+            _allows_view_annotations(role)
+            and isinstance(value, PartitionTensorView)
+            and _is_partition_tensor_view_value(value)
+        ):
+            return value
+        raise subkernel_argument_type_error(
+            role.value,
+            name,
+            "a pto.PartitionTensorView value",
+            type(value).__name__,
+        )
 
     if _is_supported_runtime_scalar_annotation(annotation):
         if isinstance(value, (bool, int, float)):
@@ -415,6 +503,8 @@ class _SubkernelSurface:
         self._session_cm = None
 
     def __call__(self, fn):
+        if self._role in {KernelRole.CUBE, KernelRole.SIMD}:
+            raise legacy_subkernel_surface_error(f"@pto.{self._role.value}")
         return SubkernelTemplate(
             SubkernelSpec(
                 role=self._role,
@@ -428,6 +518,8 @@ class _SubkernelSurface:
         )
 
     def __enter__(self):
+        if self._role in {KernelRole.CUBE, KernelRole.SIMD}:
+            raise legacy_subkernel_surface_error(f"with pto.{self._role.value}()")
         if self._role == KernelRole.SIMT and (
             self._simt_max_threads is not None or self._simt_max_regs is not None
         ):
@@ -505,6 +597,10 @@ def _decorate_subkernel(
     )
 
 
+def tileop(fn=None, *, name: str | None = None, target: str = "a5", ast_rewrite: bool = True):
+    return _decorate_subkernel(KernelRole.TILEOP, fn, name=name, target=target, ast_rewrite=ast_rewrite)
+
+
 def cube(fn=None, *, name: str | None = None, target: str = "a5", ast_rewrite: bool = True):
     return _decorate_subkernel(KernelRole.CUBE, fn, name=name, target=target, ast_rewrite=ast_rewrite)
 
@@ -551,6 +647,7 @@ __all__ = [
     "KernelRole",
     "SubkernelSpec",
     "SubkernelTemplate",
+    "tileop",
     "cube",
     "simd",
     "simt",

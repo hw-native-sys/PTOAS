@@ -18,7 +18,7 @@ The Python code maps 1-to-1 to the MLIR IR lines:
       %c0_i64    = arith.constant 0 : i64    # pto.const(0, dtype=pto.int64)
       %c16       = arith.constant 16 : index # pto.const(16, dtype=pto.index)
       …
-      pto.simd {                              # with pto.simd():
+      pto.tileop {                              # with pto.tileop():
         %0 = pto.castptr %c4096_i64 …        #   pto.castptr(c4096_i64, …)
         scf.for %arg0 = %c0 to %c16 … {      #   for i in range(c0, c16, c1):
           %mask, _ = pto.plt_b32 …           #     pto.plt_b32(c64_i32)
@@ -43,7 +43,7 @@ def TADD():
     c64_i32   = pto.const(64,   dtype=pto.int32)
     c64       = pto.const(64)
 
-    with pto.simd():
+    with pto.tileop():
         ptr_f32_ub   = pto.ptr(pto.float32, "ub")
         vf32         = pto.vreg_type(64, pto.float32)
         ptr_src      = pto.castptr(c4096_i64, ptr_f32_ub)

@@ -197,8 +197,8 @@ switch that kernel to `mode="explicit"`:
 
 <!-- ptodsl-doc-test: {"mode":"compile","symbol":"vec_add_micro","compile":{"BLOCK":128}} -->
 ```python
-# SIMD sub-kernel — vector instructions on individual rows.
-@pto.simd
+# Tile-op helper — vector instructions on individual rows.
+@pto.tileop
 def add_rows(a_tile: pto.Tile, b_tile: pto.Tile, o_tile: pto.Tile,
              rows: pto.index, cols: pto.index):
     VEC = pto.elements_per_vreg(pto.f32)
@@ -211,7 +211,7 @@ def add_rows(a_tile: pto.Tile, b_tile: pto.Tile, o_tile: pto.Tile,
             o_vec = pto.vadd(a_vec, b_vec, mask)
             pto.vsts(o_vec, o_tile[r, c:], mask)
 
-# Single kernel entry in explicit mode — micro-instruction staging plus SIMD sub-kernel.
+# Single kernel entry in explicit mode — micro-instruction staging plus a tile-op helper.
 @pto.jit(target="a5", mode="explicit")
 def vec_add_micro(
     A_ptr: pto.ptr(pto.f32, "gm"),
@@ -252,11 +252,11 @@ def vec_add_micro(
   loops over blocks, and directly authors the micro-instruction schedule for
   each block.
 
-- **`@pto.simd` sub-kernel**: the top-level kernel calls a SIMD sub-kernel
+- **`@pto.tileop` sub-kernel**: the top-level kernel calls a vector custom OP
   for the row-wise vector work while keeping instruction staging in the
   explicit entry body.
 
-- **Inside `@pto.simd`**: the outer Python `for range(...)` iterates over rows,
+- **Inside `@pto.tileop`**: the outer Python `for range(...)` iterates over rows,
   and the inner Python `for range(...)` iterates over column chunks of the hardware vector width
   (`elements_per_vreg`). Each iteration loads a vector-width slice into a
   `vreg`, does the addition under a mask (for tail elements), and stores the

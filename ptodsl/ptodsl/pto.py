@@ -145,7 +145,7 @@ from ._control_flow import (    # noqa: F401
 
 # ── Decorator ─────────────────────────────────────────────────────────────────
 from ._jit import jit, KernelHandle, merge_jit_modules      # noqa: F401
-from ._subkernels import cube, simd, simt     # noqa: F401
+from ._subkernels import tileop, cube, simd, simt     # noqa: F401
 from ._pipe_namespace import pipe  # noqa: F401
 
 # ── Shorthand dtype aliases ───────────────────────────────────────────────────

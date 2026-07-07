@@ -190,8 +190,35 @@ inline constexpr llvm::StringLiteral kPTOSimtMaxRegistersAttrName =
 inline constexpr llvm::StringLiteral kPTOVisibilityAttrName = "pto.visibility";
 inline constexpr llvm::StringLiteral kPTOVisibilityInternalValue = "internal";
 inline constexpr llvm::StringLiteral kPTOVisibilityExternalValue = "external";
+inline constexpr llvm::StringLiteral kPTODSLSubkernelHelperAttrName =
+    "pto.ptodsl.subkernel_helper";
+inline constexpr llvm::StringLiteral kPTOTileOpHelperAttrName =
+    "pto.tileop.helper";
 inline constexpr llvm::StringLiteral kPTODSLLogicalNameAttrName =
     "pto.ptodsl.logical_name";
+
+/// Return the logical PTODSL helper role when present.
+///
+/// Canonical tileop helpers use the unit attr `pto.tileop.helper`. Legacy
+/// helper roles still use `pto.ptodsl.subkernel_helper = "<role>"`.
+inline StringRef getPTODSLSubkernelHelperRole(::mlir::func::FuncOp func) {
+  if (!func)
+    return {};
+  if (func->hasAttrOfType<UnitAttr>(kPTOTileOpHelperAttrName))
+    return "tileop";
+  if (auto attr =
+          func->getAttrOfType<StringAttr>(kPTODSLSubkernelHelperAttrName))
+    return attr.getValue();
+  return {};
+}
+
+inline bool hasPTODSLSubkernelHelperMarker(::mlir::func::FuncOp func) {
+  return !getPTODSLSubkernelHelperRole(func).empty();
+}
+
+inline bool isPTODSLTileOpHelper(::mlir::func::FuncOp func) {
+  return getPTODSLSubkernelHelperRole(func) == "tileop";
+}
 
 /// Return the PTODSL logical function name when present, otherwise fall back to
 /// the current symbol name. PTODSL uses this to mark ABI-specialized helper and

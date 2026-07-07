@@ -558,7 +558,7 @@ FRAGMENT_FIXTURES = {
             {SNIPPET_PLACEHOLDER}
         """
     ),
-    "tail.simd_helper": _fixture(
+    "tail.tileop_helper": _fixture(
         f"""
         {SNIPPET_PLACEHOLDER}
 
@@ -607,12 +607,12 @@ FRAGMENT_FIXTURES = {
     ),
     "kernel_entry.explicit_body": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def qk_matmul(q_tile: pto.Tile, k_tile: pto.Tile, s_tile: pto.Tile):
             return
 
 
-        @pto.simd
+        @pto.tileop
         def online_softmax(s_tile: pto.Tile, o_tile: pto.Tile, rows: pto.i32, cols: pto.i32):
             return
 
@@ -685,7 +685,7 @@ FRAGMENT_FIXTURES = {
             my_cube_kernel(input_tile, output_tile, left_scratch, right_scratch, acc_scratch)
         """
     ),
-    "kernel_entry.simd_signature": _fixture(
+    "kernel_entry.tileop_signature": _fixture(
         f"""
         {SNIPPET_PLACEHOLDER}
 
@@ -694,10 +694,10 @@ FRAGMENT_FIXTURES = {
         def kernel_entry_simd_signature_probe(*, BLOCK: pto.const_expr = 128):
             input_tile = pto.alloc_tile(shape=[1, BLOCK], dtype=pto.f32)
             output_tile = pto.alloc_tile(shape=[1, BLOCK], dtype=pto.f32)
-            my_simd_kernel(input_tile, output_tile, pto.const(1, dtype=pto.i32), pto.const(BLOCK, dtype=pto.i32))
+            my_tileop_kernel(input_tile, output_tile, pto.const(1, dtype=pto.i32), pto.const(BLOCK, dtype=pto.i32))
         """
     ),
-    "kernel_entry.simd_body": _fixture(
+    "kernel_entry.tileop_body": _fixture(
         f"""
         {SNIPPET_PLACEHOLDER}
 
@@ -972,12 +972,12 @@ FRAGMENT_FIXTURES = {
     ),
     "sync_ops.flag_pattern_explicit": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def qk_matmul(q_tile: pto.Tile, k_tile: pto.Tile, p_tile: pto.Tile):
             return
 
 
-        @pto.cube
+        @pto.tileop
         def pv_matmul(p_tile: pto.Tile, v_tile: pto.Tile, o_tile: pto.Tile):
             return
 
@@ -1021,17 +1021,17 @@ FRAGMENT_FIXTURES = {
     ),
     "sync_ops.phase_barrier_explicit": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def qk_matmul(q_tile: pto.Tile, k_tile: pto.Tile, s_tile: pto.Tile):
             return
 
 
-        @pto.simd
+        @pto.tileop
         def online_softmax(s_tile: pto.Tile, p_tile: pto.Tile, rows: pto.i32, cols: pto.i32):
             return
 
 
-        @pto.cube
+        @pto.tileop
         def pv_matmul(p_tile: pto.Tile, v_tile: pto.Tile, pv_tile: pto.Tile):
             return
 
@@ -1134,7 +1134,7 @@ FRAGMENT_FIXTURES = {
     ),
     "data_movement.cube_helper": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def qk_matmul(
             q_tile: pto.Tile,
             k_tile: pto.Tile,
@@ -1164,7 +1164,7 @@ FRAGMENT_FIXTURES = {
     ),
     "compute_ops.vector_compute": _fixture(
         f"""
-        @pto.simd
+        @pto.tileop
         def compute_ops_vector_helper(inp_tile: pto.Tile, out_tile: pto.Tile, row: pto.index):
             col_mask = pto.make_mask(pto.f32, pto.const(16, dtype=pto.i32))
             s_row = pto.vlds(inp_tile[row, 0:])
@@ -1513,7 +1513,7 @@ FRAGMENT_FIXTURES = {
     ),
     "flash_attention.explicit_phase": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def qk_matmul(
             q_mat: pto.Tile,
             k_mat: pto.Tile,
@@ -1525,7 +1525,7 @@ FRAGMENT_FIXTURES = {
             return
 
 
-        @pto.simd
+        @pto.tileop
         def online_softmax_rows(
             s_tile: pto.Tile,
             p_tile: pto.Tile,
@@ -1542,7 +1542,7 @@ FRAGMENT_FIXTURES = {
             return
 
 
-        @pto.cube
+        @pto.tileop
         def pv_matmul(
             p_mat: pto.Tile,
             v_mat: pto.Tile,
@@ -1722,7 +1722,7 @@ FRAGMENT_FIXTURES = {
     ),
     "flash_attention.online_softmax_loop": _fixture(
         f"""
-        @pto.simd
+        @pto.tileop
         def flash_attention_online_softmax_loop_helper(
             s_tile: pto.Tile,
             p_tile: pto.Tile,
@@ -1761,7 +1761,7 @@ FRAGMENT_FIXTURES = {
     ),
     "flash_attention.online_softmax_compute": _fixture(
         f"""
-        @pto.simd
+        @pto.tileop
         def flash_attention_online_softmax_compute_helper(
             s_tile: pto.Tile,
             p_tile: pto.Tile,
@@ -1805,7 +1805,7 @@ FRAGMENT_FIXTURES = {
     ),
     "flash_attention.online_softmax_store": _fixture(
         f"""
-        @pto.simd
+        @pto.tileop
         def flash_attention_online_softmax_store_helper(
             s_tile: pto.Tile,
             p_tile: pto.Tile,
@@ -1890,7 +1890,7 @@ FRAGMENT_FIXTURES = {
     ),
     "gemm.cube_helper": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def gemm_tile(
             a_mat: pto.Tile,
             b_mat: pto.Tile,
@@ -1915,7 +1915,7 @@ FRAGMENT_FIXTURES = {
     ),
     "gemm.jit_kernel": _fixture(
         f"""
-        @pto.cube
+        @pto.tileop
         def gemm_tile(
             a_mat: pto.Tile,
             b_mat: pto.Tile,

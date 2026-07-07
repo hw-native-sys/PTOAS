@@ -94,7 +94,7 @@ def fast_inverse_dense_f32(
     pto.set_flag("MTE2", "V", event_id=0)
     pto.wait_flag("MTE2", "V", event_id=0)
 
-    with pto.simd():
+    with pto.tileop():
         active, _ = pto.make_mask(pto.f32, batch_i32)
         d00 = pto.vlds(in_tile[0, 0:])
         d01 = pto.vlds(in_tile[1, 0:])

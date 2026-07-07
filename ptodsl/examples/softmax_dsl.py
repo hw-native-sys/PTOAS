@@ -71,7 +71,7 @@ def _make_softmax_kernel(name: str, *, rows: int, seq: int):
             pto.set_flag("MTE2", "V", event_id=0)
             pto.wait_flag("MTE2", "V", event_id=0)
 
-            with pto.simd():
+            with pto.tileop():
                 remaining_rows = runtime_rows
                 for row_base in range(0, runtime_rows, packed_rows):
                     active_rows, remaining_rows = pto.make_mask(pto.f32, remaining_rows)

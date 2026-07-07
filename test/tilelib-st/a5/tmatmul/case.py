@@ -9,7 +9,7 @@
 
 # Minimal PTODSL cube/tmatmul pilot for A5.
 # Goal: validate plain cube tile.matmul lowering/runtime first, without mixing
-# MX-specific scale/bias handling or @pto.cube helper boundaries.
+# MX-specific scale/bias handling or decorated tileop helper boundaries.
 
 from pathlib import Path
 import sys
@@ -39,7 +39,7 @@ L0C_ADDR = 0
 # directory use automatic tile address allocation.
 
 
-@pto.cube
+@pto.tileop
 def cube_matmul_tile(
     a_mat: pto.Tile,
     b_mat: pto.Tile,

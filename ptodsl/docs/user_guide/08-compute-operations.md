@@ -1254,9 +1254,9 @@ pto.tile.gemv_mx_bias(lhs_l0a_mx, lhs_scale, rhs_l0b_mx, rhs_scale, bias_tile, a
 
 ---
 
-## 8.2 Vector compute (L3 — `@pto.simd`)
+## 8.2 Vector compute (L3 — `@pto.tileop`)
 
-Vector compute ops operate on `VRegType` values inside `@pto.simd` sub-kernels. Every vector op takes a `MaskType` predicate that gates which lanes participate; masked-off lanes produce an unspecified result (use the result only where the mask is true, or feed it to a masked store).
+Vector compute ops operate on `VRegType` values inside `@pto.tileop` sub-kernels. Every vector op takes a `MaskType` predicate that gates which lanes participate; masked-off lanes produce an unspecified result (use the result only where the mask is true, or feed it to a masked store).
 
 All vector ops in this section follow the pattern established in Section 7.3 for tile-index and pointer-form addressing. The signatures below use the vector-register form — tile-index forms load into `vreg` first, then compute.
 
@@ -1605,7 +1605,7 @@ exp_f16_odd  = pto.vmulscvt(exp_f32_odd, 1.0, mask, rnd=pto.VcvtRoundMode.A, par
 
 ### 8.2.7 Vector type conversion and packing
 
-These ops change the element type or layout of vector registers. They are distinct from the tile-level `tile.cvt` — they operate on `VRegType` values inside `@pto.simd` and are the explicit micro-op counterparts to higher-level conversion helpers.
+These ops change the element type or layout of vector registers. They are distinct from the tile-level `tile.cvt` — they operate on `VRegType` values inside `@pto.tileop` and are the explicit micro-op counterparts to higher-level conversion helpers.
 
 #### `pto.vcvt(src: VRegType, to_dtype: DType, mask: MaskType, *, rnd: VcvtRoundMode | None = None, sat: VcvtSatMode | None = None, part: VcvtPartMode | None = None) -> VRegType`
 
@@ -1720,7 +1720,7 @@ packed_high = pto.vpack(vec_i32, pto.VPackPart.HIGHER)  # upper 64 lanes -> 128�
 
 ---
 
-## 8.3 Cube compute (L3 — `@pto.cube`)
+## 8.3 Cube compute (L3 — cube-style `@pto.tileop`)
 
 The Cube unit performs matrix multiplication. Its operands are typed pointers into cube-local buffers — L0A (left operand), L0B (right operand), L0C (accumulator), and BIAS. Cube data movement (`mte_l1_l0a`, `mte_l1_l0b`, `mte_l0c_ub`, etc.) was covered in Section 7.5; this section covers the compute instruction itself.
 
@@ -1824,7 +1824,7 @@ A full cube matmul follows a three-stage pattern: stage operands into L0A/L0B, c
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.cube_helper","symbol":"data_movement_cube_helper_probe","compile":{"BLOCK_M":16,"BLOCK_K":16,"BLOCK_N":16}} -->
 ```python
-@pto.cube
+@pto.tileop
 def qk_matmul(
     q_tile: pto.Tile,
     k_tile: pto.Tile,

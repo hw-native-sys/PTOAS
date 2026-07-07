@@ -26,14 +26,8 @@ using namespace mlir::pto;
 
 namespace {
 
-static constexpr llvm::StringLiteral kPTODSLSubkernelHelperAttr =
-    "pto.ptodsl.subkernel_helper";
-
 static StringRef getSubkernelRole(func::FuncOp funcOp) {
-  if (auto roleAttr =
-          funcOp->getAttrOfType<StringAttr>(kPTODSLSubkernelHelperAttr))
-    return roleAttr.getValue();
-  return {};
+  return pto::getPTODSLSubkernelHelperRole(funcOp);
 }
 
 static std::optional<PIPE> getExpectedPipeForRole(StringRef role) {

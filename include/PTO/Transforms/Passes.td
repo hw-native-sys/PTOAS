@@ -340,6 +340,85 @@ def PTONormalizeUncoveredTileSections
   ];
 }
 
+def PTOInferTileOpSummary
+    : Pass<"pto-infer-tileop-summary", "func::FuncOp"> {
+  let summary = "Infer phase summary attributes for PTODSL tileop helpers";
+  let description = [{
+    Scans functions marked with canonical `pto.tileop.helper` (while still
+    accepting legacy `pto.ptodsl.subkernel_helper = "tileop"`) and
+    derives the backend-owned summary attributes:
+    - `pto.tileop.primary_domain`
+    - `pto.tileop.phases`
+    - `pto.tileop.operand_effects`
+
+    This pass is intentionally summary-only. It does not materialize sections,
+    inline helpers, or change InsertSync modeling.
+  }];
+
+  let constructor = "mlir::pto::createPTOInferTileOpSummaryPass()";
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::pto::PTODialect"
+  ];
+}
+
+def PTOMaterializeTileOpSections
+    : Pass<"pto-materialize-tileop-sections", "func::FuncOp"> {
+  let summary = "Materialize one primary PTO section for PTODSL tileop helpers";
+  let description = [{
+    Consumes backend-owned tileop summary attributes on functions marked with
+    canonical `pto.tileop.helper` (while still accepting legacy
+    `pto.ptodsl.subkernel_helper = "tileop"`) and wraps one contiguous
+    primary-domain compute span in `pto.section.vector` or `pto.section.cube`.
+
+    Unlike `pto-normalize-uncovered-tile-sections`, this pass is helper-local
+    and runs after tileop phase summary inference. It uses those inferred phases
+    to preserve non-primary MTE/S/sync operations outside the materialized
+    primary-domain section.
+
+    The MVP implementation expects one contiguous primary compute span in the
+    helper body. Leading and trailing MTE phases remain top-level so late
+    helper inlining can expose VPTO section sugar to `vpto-split-cv-module`.
+  }];
+
+  let constructor = "mlir::pto::createPTOMaterializeTileOpSectionsPass()";
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::pto::PTODialect"
+  ];
+}
+
+def PTOVerifyTileOpContract
+    : Pass<"pto-verify-tileop-contract", "func::FuncOp"> {
+  let summary = "Verify backend-owned PTODSL tileop helper contracts";
+  let description = [{
+    Verifies functions marked with canonical `pto.tileop.helper` (while still
+    accepting legacy `pto.ptodsl.subkernel_helper = "tileop"`) after summary
+    inference and section materialization.
+
+    Current MVP contract:
+    - results must be PTO scalar values only
+    - helper-local `pto.alloc_tile`, `pto.reserve_buffer`, and `pto.talloc`
+      are rejected
+    - nested tileop helper calls are rejected
+    - SIMT-only PTO ops are rejected
+    - at least one primary compute op must exist, and all primary compute ops
+      must belong to exactly one domain (`vector` or `cube`)
+    - scalar/MTE/sync phases may coexist, but `pto.tileop.primary_domain`,
+      `pto.tileop.phases`, and `pto.tileop.operand_effects` must remain
+      consistent with the helper body
+  }];
+
+  let constructor = "mlir::pto::createPTOVerifyTileOpContractPass()";
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::pto::PTODialect"
+  ];
+}
+
 def VPTOSplitCVModule : Pass<"vpto-split-cv-module", "ModuleOp"> {
   let summary = "Split a VPTO module with cube/vector sections into kernel modules";
   let description = [{
@@ -586,7 +665,8 @@ def PTOInlineBackendHelpers
   let description = [{
     Force-inlines backend helper functions that should not survive to backend-
     specific lowering:
-    - PTODSL subkernel helpers marked with `pto.ptodsl.subkernel_helper`
+    - PTODSL subkernel helpers marked with `pto.tileop.helper` or legacy
+      `pto.ptodsl.subkernel_helper`
 
     This pass runs on the shared mainline before backend-specific pipelines so
     both VPTO and EmitC consume the same helper-inlined IR.
@@ -622,10 +702,10 @@ def PTOVerifySubkernelPipeContract
     : Pass<"pto-verify-subkernel-pipe-contract", "func::FuncOp"> {
   let summary = "Verify PTODSL subkernel helpers stay within one InsertSync pipe contract";
   let description = [{
-    Verifies PTODSL subkernel helpers marked with `pto.ptodsl.subkernel_helper`
-    and their same-module local call closure stay within one role-consistent PTO
-    compute contract before InsertSync models the call boundary as one compound
-    node.
+    Verifies legacy PTODSL subkernel helpers marked with
+    `pto.ptodsl.subkernel_helper` and their same-module local call closure stay
+    within one role-consistent PTO compute contract before InsertSync models
+    the call boundary as one compound node.
 
     Current contract:
     - `simd` helpers may only contain PTO ops on `PIPE_V`

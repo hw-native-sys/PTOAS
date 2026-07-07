@@ -92,7 +92,7 @@ def dynamic_softmax(
     pto.set_flag("MTE2", "V", event_id=0)
     pto.wait_flag("MTE2", "V", event_id=0)
 
-    with pto.simd():
+    with pto.tileop():
         remaining_rows = runtime_rows
         for row_base in range(0, runtime_rows, lane_num):
             active_rows, remaining_after_pack = pto.make_mask(pto.f32, remaining_rows)

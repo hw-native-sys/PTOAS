@@ -256,7 +256,7 @@ def process_tile_module(
     rows: pto.i32,
     cols: pto.i32,
 ):
-    with pto.simd():
+    with pto.tileop():
         vec = pto.elements_per_vreg(pto.f32)
         initial_remained = cols
         with pto.for_(0, rows, step=1) as r:
@@ -278,7 +278,7 @@ def explicit_vpto_kernel_module(
     o_tile: pto.Tile,
     cols: pto.i32,
 ):
-    with pto.simd():
+    with pto.tileop():
         remained = cols
         vec = pto.elements_per_vreg(pto.f32)
         loop = pto.for_(0, cols, step=vec).carry(remained=remained)
@@ -296,7 +296,7 @@ def process_row_ptr_kernel_module(
     dst_gm: pto.ptr(pto.f32, "gm"),
     row: pto.i32,
 ):
-    with pto.simd():
+    with pto.tileop():
         c0_i64 = pto.const(0, dtype=pto.i64)
         row_offset = row * 16
         src_row = pto.addptr(src_gm, row_offset)
@@ -379,12 +379,15 @@ def emitc_entry_calls_vpto_kernel_module_probe(
         process_row_ptr_kernel_module(A_ptr, O_ptr, row)
 
 
-@pto.simd
+@pto.tileop
 def emitc_vpto_kernel_module_callsite_simd_helper(
     src_tile: pto.Tile,
     dst_tile: pto.Tile,
     cols: pto.i32,
 ):
+    mask, _ = pto.make_mask(pto.f32, cols)
+    vec = pto.vlds(src_tile[0, 0:])
+    pto.vsts(vec, dst_tile[0, 0:], mask)
     explicit_vpto_kernel_module(src_tile, dst_tile, cols)
 
 
@@ -666,57 +669,126 @@ SUBKERNEL_OBSERVATIONS = []
 INLINE_SUBKERNEL_SCOPE_OBSERVATIONS = []
 
 
-@pto.simd
-def nested_simd_probe():
+@pto.tileop
+def nested_tileop_probe():
     session = current_session()
     frame = session.current_subkernel
     SUBKERNEL_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
 
 
-@pto.cube
+@pto.tileop
 def top_level_cube_probe():
     session = current_session()
     frame = session.current_subkernel
     SUBKERNEL_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
 
 
-@pto.simd
+@pto.tileop
+def top_level_tileop_probe():
+    session = current_session()
+    frame = session.current_subkernel
+    SUBKERNEL_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
+
+
+@pto.tileop
 def top_level_simd_probe():
     session = current_session()
     frame = session.current_subkernel
     SUBKERNEL_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
 
 
-@pto.simd
-def explicit_vector_simd_probe():
+@pto.tileop
+def explicit_vector_tileop_probe():
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
-@pto.cube
-def explicit_vector_cube_probe():
-    pto.pipe_barrier(pto.Pipe.ALL)
+@pto.tileop
+def vector_scalar_return_probe(inp_tile: pto.Tile, out_tile: pto.Tile, cols: pto.i32):
+    col_mask = pto.make_mask(pto.f32, cols)
+    row = pto.const(0)
+    s_row = pto.vlds(inp_tile[row, 0:])
+    pto.vsts(s_row, out_tile[row, 0:], col_mask)
+    return cols
+
+
+@pto.tileop
+def tileop_view_boundary_probe(
+    src_view: pto.TensorView,
+    src_part: pto.PartitionTensorView,
+    out_tile: pto.Tile,
+    rows: pto.i32,
+):
+    _ = src_view
+    pto.tile.load(src_part, out_tile)
+    return rows
+
+
+@pto.tileop
+def simd_view_boundary_probe(
+    src_view: pto.TensorView,
+    src_part: pto.PartitionTensorView,
+    out_tile: pto.Tile,
+    rows: pto.i32,
+):
+    _ = src_view
+    pto.tile.load(src_part, out_tile)
+    return rows
+
+
+@pto.jit(target="a5")
+def scalar_return_subkernel_lowering_probe():
+    inp_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
+    out_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
+    stats_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 2])
+    cols = pto.const(16, dtype=pto.i32)
+    returned_cols = vector_scalar_return_probe(inp_tile, out_tile, cols)
+    scalar.store(returned_cols, stats_tile.as_ptr(), 0)
+
+
+@pto.jit(target="a5")
+def tileop_view_boundary_entry_probe(
+    A_ptr: pto.ptr(pto.f32, "gm"),
+    rows: pto.i32,
+    cols: pto.i32,
+):
+    src_view = pto.make_tensor_view(A_ptr, shape=[rows, cols], strides=[cols, 1])
+    src_part = pto.partition_view(src_view, offsets=[0, 0], sizes=[rows, cols])
+    out_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[rows, cols])
+    stats_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 1])
+    returned_rows = tileop_view_boundary_probe(src_view, src_part, out_tile, rows)
+    scalar.store(returned_rows, stats_tile.as_ptr(), 0)
+
+
+@pto.jit(target="a5")
+def simd_view_boundary_entry_probe(
+    A_ptr: pto.ptr(pto.f32, "gm"),
+    rows: pto.i32,
+    cols: pto.i32,
+):
+    src_view = pto.make_tensor_view(A_ptr, shape=[rows, cols], strides=[cols, 1])
+    src_part = pto.partition_view(src_view, offsets=[0, 0], sizes=[rows, cols])
+    out_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[rows, cols])
+    stats_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 1])
+    returned_rows = simd_view_boundary_probe(src_view, src_part, out_tile, rows)
+    scalar.store(returned_rows, stats_tile.as_ptr(), 0)
 
 
 @pto.jit(target="a5")
 def shared_subkernel_lowering_probe(*, TRACE_TOKEN: pto.const_expr = 0):
     top_level_cube_probe()
+    top_level_tileop_probe()
     top_level_simd_probe()
-    nested_simd_probe()
+    nested_tileop_probe()
 
 
 @pto.jit(target="a5", kernel_kind="vector")
-def explicit_vector_calls_simd_probe(*, TRACE_TOKEN: pto.const_expr = 0):
-    explicit_vector_simd_probe()
+def explicit_vector_calls_tileop_probe(*, TRACE_TOKEN: pto.const_expr = 0):
+    explicit_vector_tileop_probe()
 
 
 @pto.jit(target="a5", kernel_kind="vector")
-def explicit_vector_calls_cube_probe(*, TRACE_TOKEN: pto.const_expr = 0):
-    explicit_vector_cube_probe()
-
-
-@pto.jit(target="a5", kernel_kind="vector")
-def explicit_vector_inline_simd_probe(*, TRACE_TOKEN: pto.const_expr = 0):
-    with pto.simd():
+def explicit_vector_inline_tileop_probe(*, TRACE_TOKEN: pto.const_expr = 0):
+    with pto.tileop():
         pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -729,11 +801,15 @@ def inline_subkernel_scope_probe(*, TRACE_TOKEN: pto.const_expr = 0):
         frame = session.current_subkernel
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
         scalar.store(0, meta_tile.as_ptr() + 0)
-    with pto.simd():
+    with pto.tileop():
         frame = session.current_subkernel
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
         pto.pipe_barrier(pto.Pipe.ALL)
-    with pto.cube():
+    with pto.tileop():
+        frame = session.current_subkernel
+        INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
+        pto.pipe_barrier(pto.Pipe.ALL)
+    with pto.tileop():
         frame = session.current_subkernel
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
         pto.pipe_barrier(pto.Pipe.ALL)
@@ -896,7 +972,7 @@ def simt_invalid_atomic_signedness_probe(gm: pto.ptr(pto.f32, "gm")):
     pto.atomic_add(gm, value, signedness="signed")
 
 
-@pto.simd
+@pto.tileop
 def ast_subkernel_runtime_for_helper(rows: pto.i32):
     for row in range(0, rows, 1):
         _ = row
@@ -1314,7 +1390,7 @@ ast_signature_closure_default_kernel_probe = make_ast_signature_closure_default_
 def make_ast_rebound_subkernel_probe():
     limit = 2
 
-    @pto.simd
+    @pto.tileop
     def helper():
         for _ in pto.static_range(limit):
             pto.pipe_barrier(pto.Pipe.ALL)
@@ -1352,7 +1428,7 @@ def make_sourceless_subkernel_entry():
     namespace = {"pto": pto}
     exec(
         """
-@pto.simd
+@pto.tileop
 def sourceless_subkernel_helper():
     if True:
         pto.pipe_barrier(pto.Pipe.ALL)
@@ -1498,7 +1574,7 @@ def host_runtime_scalar_entry_probe(
     pto.tile.store(o_tile, o_part)
 
 
-@pto.simd
+@pto.tileop
 def tile_slice_vector_probe(inp_tile: pto.Tile, out_tile: pto.Tile, row: pto.index):
     mask, _ = pto.plt_b32(pto.const(64, dtype=pto.i32))
     vec = pto.vlds(inp_tile[row, 0:])
@@ -1688,7 +1764,7 @@ def shared_index_coercion_probe():
         pto.wait_flag(pto.Pipe.V, pto.Pipe.MTE2, event_id=limit)
 
 
-@pto.simd
+@pto.tileop
 def public_vector_surface_probe(inp_tile: pto.Tile, out_tile: pto.Tile, stats_tile: pto.Tile):
     col_mask = pto.make_mask(pto.f32, pto.const(16, dtype=pto.i32))
     row = pto.const(0)
@@ -1702,7 +1778,7 @@ def public_vector_surface_probe(inp_tile: pto.Tile, out_tile: pto.Tile, stats_ti
     scalar.store(row_sum, stats_tile[row, 1])
 
 
-@pto.cube
+@pto.tileop
 def public_cube_surface_probe(
     lhs_tile: pto.Tile,
     rhs_tile: pto.Tile,
@@ -1793,7 +1869,7 @@ def public_cube_surface_probe(
     pto.mte_l0c_ub(acc_tile.as_ptr(), out_tile.as_ptr(), m, n, n, n, split=pto.SplitMode.M, layout="nz2nd")
 
 
-@pto.cube
+@pto.tileop
 def public_cube_tile_mx_probe(
     mat_lhs: pto.Tile,
     mat_lhs_scale: pto.Tile,
@@ -3625,8 +3701,9 @@ def main() -> None:
         "mixed-backend EmitC entry should keep its top-level tile load/store path alongside the kernel-module call",
     )
     expect(
-        mixed_backend_text.count("pto.section.vector {") == 1,
-        "before PTOAS inferred normalization, the mixed-backend PTODSL IR should only carry the helper-authored explicit vector section",
+        mixed_backend_text.count("pto.section.vector {") == 0
+        and mixed_backend_text.count("pto.section.cube {") == 0,
+        "before PTOAS inferred normalization, the mixed-backend PTODSL IR should stay naked and let PTOAS infer missing sections later",
     )
     expect(
         "pto.tload" in mixed_backend_text
@@ -3666,19 +3743,23 @@ def main() -> None:
     decorated_mixed_backend_text = emitc_entry_calls_vpto_kernel_module_via_decorated_simd_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(
         decorated_mixed_backend_text,
-        "emitc entry calling vpto kernel-module through @pto.simd specialization",
+        "emitc entry calling vpto kernel-module through @pto.tileop specialization",
     )
+    decorated_helper_body = decorated_mixed_backend_text.split(
+        "func.func @emitc_vpto_kernel_module_callsite_simd_helper__ptodsl_",
+        1,
+    )[1].split("func.func private @explicit_vpto_kernel_module__ptodsl_", 1)[0]
     expect(
         re.search(
             r"call @emitc_vpto_kernel_module_callsite_simd_helper__ptodsl_[0-9a-f]+"
             r"\(%[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+\)",
             decorated_mixed_backend_text,
         ) is not None,
-        "@pto.simd helper callsites should lower to helper function calls in the caller body",
+        "@pto.tileop helper callsites should lower to helper function calls in the caller body",
     )
     expect(
-        "pto.section.vector {" in decorated_mixed_backend_text,
-        "the outlined @pto.simd helper body should still materialize one vector section",
+        "pto.section.vector {" not in decorated_helper_body,
+        "decorated @pto.tileop helper bodies should now stay naked in PTODSL IR and rely on later PTOAS section materialization",
     )
     multi_abi_compiled = entry_calls_kernel_module_multiple_abi_probe.compile()
     multi_abi_text = multi_abi_compiled.mlir_text()
@@ -4114,49 +4195,109 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(shared_subkernel_text, "shared subkernel lowering specialization")
     expect(
         SUBKERNEL_OBSERVATIONS == [
-            ("cube", "top_level_cube_probe", 1),
-            ("simd", "top_level_simd_probe", 1),
-            ("simd", "nested_simd_probe", 1),
+            ("tileop", "top_level_cube_probe", 1),
+            ("tileop", "top_level_tileop_probe", 1),
+            ("tileop", "top_level_simd_probe", 1),
+            ("tileop", "nested_tileop_probe", 1),
         ],
         f"unexpected shared subkernel lowering observations: {SUBKERNEL_OBSERVATIONS!r}",
     )
     expect(
         re.search(r"call @top_level_cube_probe__ptodsl_[0-9a-f]+\(\)", shared_subkernel_text) is not None
+        and re.search(r"call @top_level_tileop_probe__ptodsl_[0-9a-f]+\(\)", shared_subkernel_text) is not None
         and re.search(r"call @top_level_simd_probe__ptodsl_[0-9a-f]+\(\)", shared_subkernel_text) is not None
-        and re.search(r"call @nested_simd_probe__ptodsl_[0-9a-f]+\(\)", shared_subkernel_text) is not None,
-        "@pto.cube/@pto.simd decorated subkernels should lower to helper calls in the caller body",
+        and re.search(r"call @nested_tileop_probe__ptodsl_[0-9a-f]+\(\)", shared_subkernel_text) is not None,
+        "@pto.tileop decorated subkernels should lower to helper calls in the caller body",
     )
     expect(
-        shared_subkernel_text.count("pto.section.vector {") == 2 and "pto.section.cube {" in shared_subkernel_text,
-        "outlined decorated helper bodies should still preserve their PTO unit sections",
+        shared_subkernel_text.count("pto.tileop.helper") == 4
+        and 'pto.ptodsl.subkernel_helper = "tileop"' not in shared_subkernel_text
+        and 'pto.ptodsl.subkernel_helper = "simd"' not in shared_subkernel_text
+        and 'pto.ptodsl.subkernel_helper = "cube"' not in shared_subkernel_text,
+        "decorated @pto.tileop helpers should canonicalize to the tileop backend helper role",
+    )
+    expect(
+        "pto.section.vector {" not in shared_subkernel_text
+        and "pto.section.cube {" not in shared_subkernel_text,
+        "decorated @pto.tileop helpers should now lower as naked tileop helpers without pre-materialized sections",
     )
 
-    explicit_vector_simd_text = explicit_vector_calls_simd_probe.compile(TRACE_TOKEN=1).mlir_text()
-    expect_parse_roundtrip_and_verify(
-        explicit_vector_simd_text,
-        "explicit vector jit calling simd subkernel specialization",
+    scalar_return_subkernel_text = scalar_return_subkernel_lowering_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(scalar_return_subkernel_text, "scalar return subkernel lowering specialization")
+    expect(
+        re.search(r"func\.func @vector_scalar_return_probe__ptodsl_[0-9a-f]+\([^)]*\) -> i32", scalar_return_subkernel_text)
+        is not None,
+        "decorated tileop helpers that return PTO scalar values should materialize scalar helper result types",
     )
     expect(
-        "pto.kernel_kind = #pto.kernel_kind<vector>" in explicit_vector_simd_text
-        and "pto.section.vector {" not in explicit_vector_simd_text,
-        "same-kind @pto.simd helpers inside explicit vector kernels should use function/kernel kind metadata without redundant sections",
+        "pto.vlds" in scalar_return_subkernel_text
+        and "pto.vsts" in scalar_return_subkernel_text
+        and re.search(r"%[a-zA-Z0-9_]+ = call @vector_scalar_return_probe__ptodsl_[0-9a-f]+\([^)]*\) : \([^)]*\) -> i32", scalar_return_subkernel_text)
+        is not None,
+        "decorated tileop helper callsites should consume scalar func.call results while preserving primary vector compute in the helper body",
     )
-    expect_raises(
-        RuntimeError,
-        lambda: explicit_vector_calls_cube_probe.compile(TRACE_TOKEN=1).mlir_text(),
-        "@pto.cube cannot be lowered inside an explicit @pto.jit(kernel_kind='vector')",
+    expect(
+        "pto.store " in scalar_return_subkernel_text,
+        "scalar helper return values should remain usable by later PTODSL scalar stores",
     )
-    explicit_vector_inline_simd_text = explicit_vector_inline_simd_probe.compile(
+
+    tileop_view_boundary_text = tileop_view_boundary_entry_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(tileop_view_boundary_text, "tileop view boundary specialization")
+    expect(
+        re.search(
+            r"func\.func @tileop_view_boundary_probe__ptodsl_[0-9a-f]+\([^)]*!pto\.tensor_view<[^)]*!pto\.partition_tensor_view<[^)]*!pto\.tile_buf<",
+            tileop_view_boundary_text,
+        ) is not None,
+        "decorated tileop helpers should accept TensorView and PartitionTensorView formals in their lowered helper signature",
+    )
+    expect(
+        "pto.tload" in tileop_view_boundary_text
+        and re.search(
+            r"%[a-zA-Z0-9_]+ = call @tileop_view_boundary_probe__ptodsl_[0-9a-f]+\([^)]*\) : \([^)]*!pto\.tensor_view<[^)]*!pto\.partition_tensor_view<[^)]*\) -> i32",
+            tileop_view_boundary_text,
+        ) is not None,
+        "tileop callsites should pass TensorView/PartitionTensorView operands through the helper ABI and preserve scalar returns",
+    )
+
+    simd_view_boundary_text = simd_view_boundary_entry_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(simd_view_boundary_text, "simd view boundary specialization")
+    expect(
+        re.search(
+            r"func\.func @simd_view_boundary_probe__ptodsl_[0-9a-f]+\([^)]*!pto\.tensor_view<[^)]*!pto\.partition_tensor_view<[^)]*!pto\.tile_buf<",
+            simd_view_boundary_text,
+        ) is not None,
+        "tileop helpers should accept TensorView and PartitionTensorView formals in the same lowered helper ABI",
+    )
+    expect(
+        "pto.tload" in simd_view_boundary_text
+        and re.search(
+            r"%[a-zA-Z0-9_]+ = call @simd_view_boundary_probe__ptodsl_[0-9a-f]+\([^)]*\) : \([^)]*!pto\.tensor_view<[^)]*!pto\.partition_tensor_view<[^)]*\) -> i32",
+            simd_view_boundary_text,
+        ) is not None,
+        "tileop callsites should pass TensorView/PartitionTensorView operands through the same helper ABI and preserve scalar returns",
+    )
+
+    explicit_vector_tileop_text = explicit_vector_calls_tileop_probe.compile(TRACE_TOKEN=1).mlir_text()
+    expect_parse_roundtrip_and_verify(
+        explicit_vector_tileop_text,
+        "explicit vector jit calling tileop subkernel specialization",
+    )
+    expect(
+        "pto.kernel_kind = #pto.kernel_kind<vector>" in explicit_vector_tileop_text
+        and "pto.section.vector {" not in explicit_vector_tileop_text,
+        "same-kind @pto.tileop helpers inside explicit vector kernels should use function/kernel kind metadata without redundant sections",
+    )
+    explicit_vector_inline_tileop_text = explicit_vector_inline_tileop_probe.compile(
         TRACE_TOKEN=1
     ).mlir_text()
     expect_parse_roundtrip_and_verify(
-        explicit_vector_inline_simd_text,
-        "explicit vector jit calling inline simd specialization",
+        explicit_vector_inline_tileop_text,
+        "explicit vector jit calling inline tileop specialization",
     )
     expect(
-        "pto.kernel_kind = #pto.kernel_kind<vector>" in explicit_vector_inline_simd_text
-        and "pto.section.vector {" not in explicit_vector_inline_simd_text,
-        "same-kind inline pto.simd() scopes inside explicit vector kernels should avoid redundant sections",
+        "pto.kernel_kind = #pto.kernel_kind<vector>" in explicit_vector_inline_tileop_text
+        and "pto.section.vector {" not in explicit_vector_inline_tileop_text,
+        "same-kind inline pto.tileop() scopes inside explicit vector kernels should avoid redundant sections",
     )
 
     INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.clear()
@@ -4165,42 +4306,41 @@ def main() -> None:
     expect(
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS == [
             ("simt", "inline_simt", 1),
-            ("simd", "inline_simd", 1),
-            ("cube", "inline_cube", 1),
+            ("tileop", "inline_tileop", 1),
+            ("tileop", "inline_tileop", 1),
+            ("tileop", "inline_tileop", 1),
         ],
         f"unexpected inline subkernel scope observations: {INLINE_SUBKERNEL_SCOPE_OBSERVATIONS!r}",
     )
     expect(
-        inline_subkernel_scope_text.count("pto.store_vfsimt_info") == 1,
-        "inline pto.simt() should materialize one caller-side store_vfsimt_info before the helper call",
+        re.search(r"pto\.simt_launch @inline_simt_[0-9]+__ptodsl_[0-9a-f]+<<<", inline_subkernel_scope_text) is not None,
+        "inline pto.simt() should materialize one caller-side pto.simt_launch",
     )
     expect(
-        re.search(r"call @inline_simt_[0-9]+__ptodsl_[0-9a-f]+\([^\\n]*\)", inline_subkernel_scope_text) is not None
-        and re.search(r"call @inline_simd_[0-9]+__ptodsl_[0-9a-f]+\([^\\n]*\)", inline_subkernel_scope_text) is not None
-        and re.search(r"call @inline_cube_[0-9]+__ptodsl_[0-9a-f]+\([^\\n]*\)", inline_subkernel_scope_text) is not None,
-        "inline pto.simt()/pto.simd()/pto.cube() scopes should each lower to one helper call",
+        re.search(r"call @inline_tileop_[0-9]+__ptodsl_[0-9a-f]+\([^\\n]*\)", inline_subkernel_scope_text) is not None
+        and len(re.findall(r"call @inline_tileop_[0-9]+__ptodsl_[0-9a-f]+\([^\\n]*\)", inline_subkernel_scope_text)) == 3,
+        "inline pto.tileop() scopes should each lower to one helper call",
+    )
+    expect(
+        inline_subkernel_scope_text.count("pto.tileop.helper") == 3
+        and 'pto.ptodsl.subkernel_helper = "tileop"' not in inline_subkernel_scope_text
+        and 'pto.ptodsl.subkernel_helper = "simd"' not in inline_subkernel_scope_text
+        and 'pto.ptodsl.subkernel_helper = "cube"' not in inline_subkernel_scope_text,
+        "outlined inline tileop helpers should canonicalize to the tileop backend helper role",
     )
     expect(
         inline_subkernel_scope_text.count("pto.barrier <PIPE_ALL>") >= 2
-        and "pto.section.vector {" in inline_subkernel_scope_text
-        and "pto.section.cube {" in inline_subkernel_scope_text
+        and "pto.section.vector {" not in inline_subkernel_scope_text
+        and "pto.section.cube {" not in inline_subkernel_scope_text
         and "pto.store" in inline_subkernel_scope_text,
-        "outlined inline helpers should preserve the authored SIMD/Cube sections and SIMT scalar ops",
+        "outlined inline helpers should lower as naked tileop bodies while preserving SIMT scalar ops",
     )
 
     simt_text = simt_helper_lowering_probe.compile(TRACE_TOKEN=1).mlir_text()
     expect_parse_roundtrip_and_verify(simt_text, "simt helper lowering specialization")
     expect(
-        simt_text.count("pto.store_vfsimt_info") == 2,
-        "each @pto.simt callsite should materialize a caller-side store_vfsimt_info",
-    )
-    expect(
-        re.search(r"call @simt_tid_probe__simt_\d+\(\)", simt_text) is not None,
-        "each @pto.simt callsite should lower to a func.call of the helper symbol",
-    )
-    expect(
-        len(re.findall(r"call @simt_tid_probe__simt_\d+\(\)", simt_text)) == 2,
-        "both @pto.simt callsites should call the same helper specialization",
+        len(re.findall(r"pto\.simt_launch @simt_tid_probe__simt_\d+<<<", simt_text)) == 2,
+        "each @pto.simt callsite should materialize a caller-side pto.simt_launch",
     )
     expect(
         len(
@@ -4418,11 +4558,11 @@ def main() -> None:
     )
     expect(
         ast_subkernel_runtime_for_text.count("scf.for") == 1,
-        "@pto.simd helper should rewrite Python range(...) loops into runtime scf.for",
+        "@pto.tileop helper should rewrite Python range(...) loops into runtime scf.for",
     )
     expect(
         "pto.barrier <PIPE_ALL>" in ast_subkernel_runtime_for_text,
-        "rewritten @pto.simd helper body should lower inside the caller trace",
+        "rewritten @pto.tileop helper body should lower inside the caller trace",
     )
 
     carry_text = carry_loop_lowering_probe.compile(BLOCK=32).mlir_text()
@@ -4919,8 +5059,8 @@ def main() -> None:
     simt_pointer_offset_text = simt_pointer_offset_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(simt_pointer_offset_text, "simt pointer offset specialization")
     expect(
-        re.search(r"call @simt_pointer_offset_helper__simt_\d+", simt_pointer_offset_text) is not None,
-        "@pto.simt pointer helper should lower to a helper func.call",
+        re.search(r"pto\.simt_launch @simt_pointer_offset_helper__simt_\d+<<<", simt_pointer_offset_text) is not None,
+        "@pto.simt pointer helper should lower to a caller-side pto.simt_launch",
     )
     expect(
         re.search(r"pto\.store %c9_i32, %(?:arg0|\d+)\[%c1(?:_\d+)?\]", simt_pointer_offset_text) is not None,

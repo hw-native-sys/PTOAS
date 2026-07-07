@@ -14,6 +14,7 @@
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
+#include <mutex>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -27,6 +28,8 @@ llvm::cl::opt<unsigned> insertSyncDebugLevelOpt(
     llvm::cl::desc("Debug verbosity for PTOInsertSync: "
                    "0=off, 1=phase, 2=syncir, 3=trace"),
     llvm::cl::init(0));
+
+std::mutex insertSyncDebugDumpMutex;
 
 } // namespace
 
@@ -321,16 +324,22 @@ void mlir::pto::dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR
     }
   }
 
-  os << "\n// === [PTOInsertSync Debug] " << phase << " === //\n";
-  os << llvm::formatv("// nodes={0}, syncGroups={1}, activeOps={2} "
-                      "(set={3}, wait={4}, barrier={5}, blockSet={6}, "
-                      "blockWait={7}, blockAll={8})\n",
-                      syncIR.size(), syncOperations.size(), activeOps, setCnt,
-                      waitCnt, barrierCnt, blockSetCnt, blockWaitCnt,
-                      blockAllCnt);
+  std::string buffer;
+  llvm::raw_string_ostream bufferedOS(buffer);
+
+  bufferedOS << "\n// === [PTOInsertSync Debug] " << phase << " === //\n";
+  bufferedOS << llvm::formatv("// nodes={0}, syncGroups={1}, activeOps={2} "
+                              "(set={3}, wait={4}, barrier={5}, blockSet={6}, "
+                              "blockWait={7}, blockAll={8})\n",
+                              syncIR.size(), syncOperations.size(), activeOps,
+                              setCnt, waitCnt, barrierCnt, blockSetCnt,
+                              blockWaitCnt, blockAllCnt);
 
   if (level < static_cast<unsigned>(InsertSyncDebugLevel::SyncIR)) {
-    os << "// ========================================= //\n";
+    bufferedOS << "// ========================================= //\n";
+    bufferedOS.flush();
+    std::lock_guard<std::mutex> lock(insertSyncDebugDumpMutex);
+    os << buffer;
     return;
   }
 
@@ -340,6 +349,10 @@ void mlir::pto::dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR
   options.showMemInfo = showMemInfo;
   options.showUselessSync = showMemInfo;
 
-  dumpSyncIR(os, syncIR, opForPrinting, options, showMemInfo);
-  os << "// ========================================= //\n";
+  dumpSyncIR(bufferedOS, syncIR, opForPrinting, options, showMemInfo);
+  bufferedOS << "// ========================================= //\n";
+  bufferedOS.flush();
+
+  std::lock_guard<std::mutex> lock(insertSyncDebugDumpMutex);
+  os << buffer;
 }

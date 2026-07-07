@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @entry(%meta: !pto.ptr<i32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %meta_view = pto.make_tensor_view %meta, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xi32>
+    %meta_part = pto.partition_view %meta_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x8xi32>
+    %meta_tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=32, pad=0>
+    func.call @simt_only_helper(%meta_part, %meta_tile) :
+      (!pto.partition_tensor_view<1x8xi32>,
+       !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=32, pad=0>) -> ()
+    return
+  }
+
+  func.func private @simt_only_helper(
+      %meta: !pto.partition_tensor_view<1x8xi32>,
+      %tmp: !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=32, pad=0>)
+      attributes {pto.tileop.helper} {
+    %tid = pto.get_tid_x : i32
+    pto.tadds ins(%tmp, %tid : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=32, pad=0>, i32)
+              outs(%tmp : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=32, pad=0>)
+    pto.tstore ins(%tmp : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=32, pad=0>)
+               outs(%meta : !pto.partition_tensor_view<1x8xi32>)
+    return
+  }
+}
+
+// CHECK: error: is SIMT-only and cannot appear inside a tileop helper

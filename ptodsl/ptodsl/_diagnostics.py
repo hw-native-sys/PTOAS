@@ -359,12 +359,23 @@ def inline_subkernel_value_escape_error(role: str, type_text: str) -> RuntimeErr
     )
 
 
-def simd_value_escape_error(type_text: str) -> RuntimeError:
+def simd_value_escape_error(type_text: str, *, surface: str = "@pto.simd") -> RuntimeError:
     """Return one diagnostic for transient SIMD values escaping a simd subkernel boundary."""
     return RuntimeError(
-        f"@pto.simd cannot return transient SIMD values across the subkernel boundary "
+        f"{surface} cannot return transient SIMD values across the subkernel boundary "
         f"(got {type_text}). Write the value back to a Tile/UB buffer instead."
     )
+
+
+def subkernel_return_boundary_error(role: str, observed: object) -> TypeError:
+    """Return one diagnostic for unsupported PTODSL subkernel return values."""
+    return TypeError(
+        f"@pto.{role} return values must be PTO scalar values or tuples/lists/dicts of PTO scalar values. "
+        f"Got {observed!r}. Return Tile/TensorView/PartitionTensorView/ptr data through explicit "
+        "subkernel operands instead."
+    )
+
+
 
 
 def tile_row_alignment_error(*, shape, dtype, row_bytes: int, required_alignment: int) -> TypeError:
@@ -433,19 +444,28 @@ def invalid_jit_backend_error(
     )
 
 
+def legacy_subkernel_surface_error(surface: str) -> TypeError:
+    """Return one diagnostic for removed legacy subkernel public surfaces."""
+    return TypeError(
+        f"{surface} is a legacy PTODSL subkernel surface and is no longer supported. "
+        "Use @pto.tileop for named custom-op helpers, or inline custom-op code with "
+        "`with pto.tileop():`. Keep @pto.simt only for launched SIMT helpers."
+    )
+
+
 def unsupported_public_surface_error(name: str) -> AttributeError:
     """Return one diagnostic for unsupported names on the public ``pto`` surface."""
     hints = {
         "ukernel": (
             'Use @pto.jit(mode="explicit") for explicit DMA orchestration, and call or inline '
-            "@pto.simd/@pto.simt/@pto.cube directly from that kernel."
+            "@pto.tileop helpers directly from that kernel."
         ),
         "tile_buf_type": (
             "Use pto.alloc_tile(shape=..., dtype=..., memory_space=..., valid_shape=..., addr=...) "
             "to author tiles, and keep explicit tile-type construction inside internal implementation code only."
         ),
         "vecscope": (
-            "Use @pto.simd for named SIMD helpers, or inline SIMD code with `with pto.simd():`."
+            "Use @pto.tileop for named custom OP helpers, or inline custom OP code with `with pto.tileop():`."
         ),
         "as_ptr": (
             "Use tile.as_ptr(), view.as_ptr(), or partition.as_ptr() on the authored object itself "
@@ -505,6 +525,7 @@ __all__ = [
     "jit_source_file_error",
     "invalid_jit_mode_error",
     "invalid_jit_backend_error",
+    "legacy_subkernel_surface_error",
     "jit_legacy_tensor_spec_helper_error",
     "native_python_control_flow_error",
     "simd_value_escape_error",

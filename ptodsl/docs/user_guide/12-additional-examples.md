@@ -76,11 +76,11 @@ When a data dimension is not evenly divisible by the tile size or the hardware v
 
 ### 12.2.1 Tail handling in a SIMD kernel
 
-Below is a self-contained `@pto.simd` kernel that adds two tiles row by row, handling column tails with `make_mask`:
+Below is a self-contained `@pto.tileop` kernel that adds two tiles row by row, handling column tails with `make_mask`:
 
-<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"tail.simd_helper","symbol":"tail_simd_helper_probe","compile":{"BLOCK":128}} -->
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"tail.tileop_helper","symbol":"tail_simd_helper_probe","compile":{"BLOCK":128}} -->
 ```python
-@pto.simd
+@pto.tileop
 def add_rows_with_tail(a_tile: pto.Tile, b_tile: pto.Tile, o_tile: pto.Tile,
                        rows: pto.i32, cols: pto.i32):
     VEC = pto.elements_per_vreg(pto.f32)          # 64 for f32
@@ -160,13 +160,16 @@ def vec_add_with_tail(
 
 ## 12.3 GEMM: matrix multiplication on the Cube unit
 
-This example demonstrates a complete GEMM kernel: `C = A @ B` where A is `[M, K]` and B is `[K, N]`. It uses `@pto.jit` for tile allocation and loop scheduling, and `@pto.cube` for the actual matrix multiply.
+This example demonstrates a complete GEMM kernel: `C = A @ B` where A is
+`[M, K]` and B is `[K, N]`. It uses `@pto.jit` for tile allocation and loop
+scheduling, and a cube-style `@pto.tileop` helper for the actual matrix
+multiply.
 
 ### 12.3.1 Cube sub-kernel
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"gemm.cube_helper","symbol":"gemm_tile_probe","compile":{"BLOCK_M":64,"BLOCK_K":64,"BLOCK_N":64}} -->
 ```python
-@pto.cube
+@pto.tileop
 def gemm_tile(a_mat: pto.Tile, b_mat: pto.Tile, o_tile: pto.Tile,
               a_l0a: pto.Tile, b_l0b: pto.Tile, o_acc: pto.Tile):
     m = a_mat.valid_shape[0]
@@ -380,10 +383,10 @@ def online_layernorm(
 |------|-----|
 | Whole-kernel orchestration, GM↔UB boundary | `@pto.jit` |
 | Tile-level data movement | `tile.load` / `tile.store` |
-| Custom row-wise vector math | `@pto.simd` |
+| Custom row-wise vector math | `@pto.tileop` |
 | Custom per-element logic | `@pto.simt` |
-| Matrix multiply | `@pto.cube` |
+| Matrix multiply | cube-style `@pto.tileop` |
 | Micro-instruction-level control | `mode="explicit"` |
-| Inline compute for quick prototyping | `with pto.simd():` etc. |
+| Inline compute for quick prototyping | `with pto.tileop():` etc. |
 
-**Respect boundary contracts.** Vregs don't cross `@pto.simd` boundaries. Cube-local state doesn't leak into UB. Tile Ops and MTE Ops belong to different programming models — use Tile Ops in `mode="auto"`, and micro-instructions in `mode="explicit"`.
+**Respect boundary contracts.** Vregs don't cross `@pto.tileop` boundaries. Cube-local state doesn't leak into UB. Tile Ops and MTE Ops belong to different programming models — use Tile Ops in `mode="auto"`, and micro-instructions in `mode="explicit"`.

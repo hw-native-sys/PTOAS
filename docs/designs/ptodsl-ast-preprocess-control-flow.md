@@ -19,8 +19,8 @@ static specialization readable.
 ## Goals
 
 - Make native Python control-flow syntax usable by default for runtime control
-  flow in `@pto.jit(...)` kernels and named `@pto.cube` / `@pto.simd` /
-  `@pto.simt` sub-kernels.
+  flow in `@pto.jit(...)` kernels and named `@pto.tileop` / `@pto.simt`
+  sub-kernels.
 - Use `ast_rewrite` as the public name for the source rewrite feature.
 - Rewrite legal Python `if` / `for range(...)` into existing PTODSL
   control-flow surfaces.

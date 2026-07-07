@@ -181,7 +181,7 @@ class Sm2PvFreeHook:
                 self.sync.free()
 
 
-@pto.cube
+@pto.tileop
 def qk_matmul_stage(
     qMatTile: pto.Tile,
     kMatTile: pto.Tile,
@@ -200,7 +200,7 @@ def qk_matmul_stage(
     pto.mte_l0c_ub(qkAccTile.as_ptr(), qkVecTileSub.as_ptr(), rows, cols, cols, cols, 0)
 
 
-@pto.cube
+@pto.tileop
 def pv_matmul_stage(
     pMatTileSub: pto.Tile,
     vMatTile: pto.Tile,

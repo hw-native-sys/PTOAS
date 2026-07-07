@@ -64,8 +64,7 @@ Python Wrapper              L0  user-facing wrapper (NumPy, torch-npu, pure Pyth
   │    └─ backend="emitc"         EmitC backend, mode="auto" only
   ├─ Tile Ops                     tile.load, tile.store, tile.add, ...
   ├─ MTE Ops                      mte_load / mte_store / mte_gm_ub / ...
-  ├─ @pto.cube                    matrix products (mad, mte_l1_l0a, mte_l0c_ub, ...)
-  ├─ @pto.simd                    row-wise vector math (vlds, vadd, vexp, vsts, ...)
+  ├─ @pto.tileop                  custom tile-op helpers (vector- and cube-style bodies)
   └─ @pto.simt                    scalar-like compute (lds, sts, pointwise blends, ...)
 ```
 
@@ -247,21 +246,25 @@ micro-instruction surface — MTE ops, explicit sync, and pointer-level
 control — so you can mix tile operations with hand-authored instructions in
 the same kernel.
 
-### Sub-kernels — `@pto.cube` / `@pto.simd` / `@pto.simt`
+### Sub-kernels — `@pto.tileop` / `@pto.simt`
 
 These are hardware-bound compute sub-kernels, each mapped to a specific NPU compute unit:
 
-- **`@pto.cube`** consumes UB tiles and explicit cube-local scratch (LEFT, RIGHT, ACC, BIAS). Typical operations: `mad`, `mte_l1_l0a`, `mte_l1_l0b`, `mte_l0c_ub`.
-
-- **`@pto.simd`** operates on vector registers (`vreg`). Typical operations: `vlds`, `vadd`, `vexp`, `vcgmax`, `vsts`. Vector registers never cross the simd function boundary — persistent state is written back to UB tiles.
+- **`@pto.tileop`** is the custom tile-op surface for both vector-style and cube-style helper bodies that operate on UB tiles and hardware-local scratch. Typical operations range from `vlds` / `vadd` / `vexp` / `vsts` to `mte_l1_l0a` / `mad` / `mte_l0c_ub`.
 
 - **`@pto.simt`** is a scalar-programmable processor group that executes scalar instructions across many work-items in parallel. Typical operations: `lds`, `sts`, scalar arithmetic and comparison. Well-suited for per-element tile walks, boundary metadata, and pointwise blends.
 
-Each can be invoked as a named decorated function (`@pto.cube` /
-`@pto.simd` / `@pto.simt`) or inline as a context manager
-(`with pto.cube():`, `with pto.simd():`, `with pto.simt():`).
+Tile-op helpers can be invoked as named decorated functions (`@pto.tileop`) or
+inline context managers (`with pto.tileop():`). SIMT helpers use `@pto.simt`
+and launch dimensions via `helper[x, y, z](...)` or `pto.simt_launch(...)`.
 
-The boundary contract is strict: vreg values do not escape a simd kernel, cube-local state does not leak into UB, and data crosses layer boundaries only through UB-backed tiles or typed UB pointers.
+Legacy `@pto.cube` / `@pto.simd` and `with pto.cube():` / `with pto.simd():`
+are no longer supported public surfaces. PTODSL raises a diagnostic directing
+users to `@pto.tileop`.
+
+The boundary contract is strict: transient `vreg` values do not escape a
+tileop helper, cube-local state does not leak into UB, and data crosses layer
+boundaries only through UB-backed tiles or typed UB pointers.
 
 ## 1.3 Tracing execution model
 
@@ -295,15 +298,16 @@ GM boundary.
 
 **Explicit orchestration path** stages the current K and V blocks with
 `mte_load`, issues `pipe_barrier(Pipe.ALL)` at phase boundaries, then
-sequences four sub-kernel calls: `qk_matmul` (cube),
-`online_softmax_rows` (simd), `pv_matmul` (cube), `blend_output_rows` (simt).
+sequences four sub-kernel calls: `qk_matmul` (cube-style tileop),
+`online_softmax_rows` (vector-style tileop), `pv_matmul` (cube-style tileop),
+`blend_output_rows` (simt).
 
-**`@pto.cube`** performs `mte_l1_l0a` / `mte_l1_l0b` / `mad` /
-`mte_l0c_ub` for both QK^T and P@V products.
+**Cube-style `@pto.tileop` bodies** perform `mte_l1_l0a` / `mte_l1_l0b` /
+`mad` / `mte_l0c_ub` for both QK^T and P@V products.
 
-**`@pto.simd`** implements the online softmax update: per-row max, exp, sum,
-and alpha/beta computation using vector ops (`vlds`, `vcgmax`, `vexp`,
-`vcgadd`, `vsts`).
+**Vector-style `@pto.tileop` bodies** implement the online softmax update:
+per-row max, exp, sum, and alpha/beta computation using vector ops (`vlds`,
+`vcgmax`, `vexp`, `vcgadd`, `vsts`).
 
 **`@pto.simt`** blends the old and new output accumulators with per-element
 `lds`/`sts` and scalar arithmetic.
@@ -325,7 +329,7 @@ Chapter 11 walks through this example in full detail.
 |---------|-------|
 | 1 | Introduction (this chapter) |
 | 2 | Quick Start — a minimal working kernel |
-| 3 | Kernel entries, kernel modules, and sub-kernels: `@pto.jit(entry=True/False, backend=...)`, `@pto.cube`, `@pto.simd`, `@pto.simt` |
+| 3 | Kernel entries, kernel modules, and sub-kernels: `@pto.jit(entry=True/False, backend=...)`, `@pto.tileop`, `@pto.simt` |
 | 4 | Type system and buffer management: scalars, tiles, views, allocation |
 | 5 | Control flow: trace-time Python vs device-side `pto.for_` / `pto.if_` |
 | 6 | Scalar and pointer operations |

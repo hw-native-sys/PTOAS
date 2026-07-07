@@ -117,6 +117,10 @@ std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
     return std::make_pair(toBufferOp.getBuffer(), toBufferOp.getTensor());
   } else if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(op)) {
     return std::make_pair(toTensorOp.getResult(), toTensorOp.getOperand());
+  } else if (auto tileBufAddrOp = dyn_cast<pto::TileBufAddrOp>(op)) {
+    return std::make_pair(tileBufAddrOp.getDst(), tileBufAddrOp.getSrc());
+  } else if (auto tensorViewAddrOp = dyn_cast<pto::TensorViewAddrOp>(op)) {
+    return std::make_pair(tensorViewAddrOp.getDst(), tensorViewAddrOp.getSrc());
   }
   return std::nullopt;
 }

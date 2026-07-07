@@ -79,7 +79,7 @@ def vmulscvt_pack_kernel(
     pto.set_flag("MTE2", "V", event_id=0)
     pto.wait_flag("MTE2", "V", event_id=0)
 
-    with pto.simd():
+    with pto.tileop():
         mask32 = pto.pset_b32(pto.MaskPattern.ALL)
         mask16 = pto.pset_b16(pto.MaskPattern.ALL)
 

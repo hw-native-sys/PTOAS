@@ -223,7 +223,12 @@ static ModuleOp cloneModuleForKind(ModuleOp source, FunctionKernelKind kind,
 }
 
 static LogicalResult splitCVModule(ModuleOp module) {
-  if (hasKernelKind(module) || hasKernelKindChildModule(module))
+  if (auto kernelKind = module->getAttrOfType<FunctionKernelKindAttr>(
+          FunctionKernelKindAttr::name)) {
+    rewriteSectionsForKind(module, kernelKind.getKernelKind());
+    return success();
+  }
+  if (hasKernelKindChildModule(module))
     return success();
   if (!hasCVSections(module))
     return success();

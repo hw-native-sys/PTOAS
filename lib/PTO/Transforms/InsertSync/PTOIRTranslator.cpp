@@ -35,6 +35,12 @@ using namespace mlir::pto;
 
 namespace {
 
+static constexpr llvm::StringLiteral kTileOpPrimaryDomainAttr =
+    "pto.tileop.primary_domain";
+static constexpr llvm::StringLiteral kTileOpPhasesAttr = "pto.tileop.phases";
+static constexpr llvm::StringLiteral kTileOpOperandEffectsAttr =
+    "pto.tileop.operand_effects";
+
 constexpr size_t kTileRank2D = 2;
 constexpr unsigned kStrideInlineCapacity = 4;
 constexpr unsigned kMemoryEffectInlineCapacity = 4;
@@ -210,28 +216,102 @@ static func::FuncOp lookupPTODSLSubkernelHelper(func::CallOp callOp) {
   auto callee = module.lookupSymbol<func::FuncOp>(callOp.getCallee());
   if (!callee)
     return {};
-  if (!callee->hasAttr("pto.ptodsl.subkernel_helper"))
+  if (!pto::hasPTODSLSubkernelHelperMarker(callee))
     return {};
   return callee;
 }
 
+static StringRef getResolvedPTODSLSubkernelHelperRole(func::FuncOp callee) {
+  return pto::getPTODSLSubkernelHelperRole(callee);
+}
+
 static std::optional<pto::PipelineType>
 getPTODSLSubkernelHelperPipe(func::FuncOp callee) {
-  auto roleAttr =
-      callee->getAttrOfType<mlir::StringAttr>("pto.ptodsl.subkernel_helper");
-  if (!roleAttr)
+  StringRef role = getResolvedPTODSLSubkernelHelperRole(callee);
+  if (role.empty())
     return std::nullopt;
 
   return llvm::StringSwitch<std::optional<pto::PipelineType>>(
-             roleAttr.getValue())
+             role)
       .Case("cube", pto::PipelineType::PIPE_M)
       .Case("simd", pto::PipelineType::PIPE_V)
       .Default(std::nullopt);
 }
 
+static bool isTileOpSubkernelHelper(func::FuncOp callee) {
+  return pto::isPTODSLTileOpHelper(callee);
+}
+
 static bool isPTODSLSubkernelMemoryOperand(Type type) {
   return isa<MemRefType, pto::PtrType, pto::TileBufType, pto::TensorViewType,
              pto::PartitionTensorViewType>(type);
+}
+
+static bool collectPTODSLTileOpCallOperands(func::CallOp callOp,
+                                            ArrayAttr operandIndices,
+                                            SmallVectorImpl<Value> &values) {
+  for (Attribute operandIndexAttr : operandIndices) {
+    auto indexAttr = dyn_cast<IntegerAttr>(operandIndexAttr);
+    if (!indexAttr)
+      return false;
+
+    int64_t operandIndex = indexAttr.getInt();
+    if (operandIndex < 0 ||
+        operandIndex >= static_cast<int64_t>(callOp.getNumOperands()))
+      return false;
+
+    Value operand = callOp.getOperand(static_cast<unsigned>(operandIndex));
+    if (!isPTODSLSubkernelMemoryOperand(operand.getType()))
+      continue;
+    values.push_back(operand);
+  }
+  return true;
+}
+
+static bool getPTODSLTileOpCallPhases(func::CallOp callOp, func::FuncOp callee,
+                                      SmallVectorImpl<SyncMacroPhase> &phases) {
+  auto primaryDomainAttr =
+      callee->getAttrOfType<FunctionKernelKindAttr>(kTileOpPrimaryDomainAttr);
+  auto phasesAttr = callee->getAttrOfType<ArrayAttr>(kTileOpPhasesAttr);
+  auto operandEffectsAttr =
+      callee->getAttrOfType<ArrayAttr>(kTileOpOperandEffectsAttr);
+  if (!primaryDomainAttr || !phasesAttr || !operandEffectsAttr)
+    return false;
+
+  if (operandEffectsAttr.size() != callOp.getNumOperands())
+    return false;
+
+  unsigned macroPhaseId = 0;
+  for (Attribute phaseAttr : phasesAttr) {
+    auto dictAttr = dyn_cast<DictionaryAttr>(phaseAttr);
+    auto pipeAttr =
+        dictAttr ? dyn_cast_or_null<PipeAttr>(dictAttr.get("pipe")) : PipeAttr();
+    auto usesAttr =
+        dictAttr ? dyn_cast_or_null<ArrayAttr>(dictAttr.get("operand_uses"))
+                 : ArrayAttr();
+    auto defsAttr =
+        dictAttr ? dyn_cast_or_null<ArrayAttr>(dictAttr.get("operand_defs"))
+                 : ArrayAttr();
+    auto resultsAttr =
+        dictAttr ? dyn_cast_or_null<ArrayAttr>(dictAttr.get("result_defs"))
+                 : ArrayAttr();
+    if (!dictAttr || !pipeAttr || !usesAttr || !defsAttr || !resultsAttr)
+      return false;
+
+    SyncMacroPhase phase;
+    phase.pipe = static_cast<PipelineType>(pipeAttr.getPipe());
+    if (!collectPTODSLTileOpCallOperands(callOp, usesAttr, phase.useValues) ||
+        !collectPTODSLTileOpCallOperands(callOp, defsAttr, phase.defValues))
+      return false;
+
+    if (phase.useValues.empty() && phase.defValues.empty())
+      continue;
+
+    phase.phaseId = macroPhaseId++;
+    phases.push_back(std::move(phase));
+  }
+
+  return true;
 }
 
 static pto::TCoreType getPTODSLSubkernelHelperCoreType(
@@ -748,6 +828,17 @@ void PTOIRTranslator::UpdatePTODSLSubkernelCallInfo(func::CallOp callOp) {
   func::FuncOp callee = lookupPTODSLSubkernelHelper(callOp);
   if (!callee)
     return;
+
+  if (isTileOpSubkernelHelper(callee)) {
+    SmallVector<SyncMacroPhase, 8> phases;
+    if (!getPTODSLTileOpCallPhases(callOp, callee, phases))
+      return;
+    for (const auto &phase : phases) {
+      MakeMacroCompound(callOp, phase.pipe, ValueRange(phase.defValues),
+                        ValueRange(phase.useValues), phase.phaseId);
+    }
+    return;
+  }
 
   std::optional<pto::PipelineType> pipe = getPTODSLSubkernelHelperPipe(callee);
   if (!pipe || *pipe == pto::PipelineType::PIPE_UNASSIGNED)

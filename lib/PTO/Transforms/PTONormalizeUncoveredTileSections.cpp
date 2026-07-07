@@ -110,6 +110,10 @@ static bool hasExplicitFunctionKernelKind(func::FuncOp funcOp) {
          funcOp->hasAttrOfType<FunctionKernelKindAttr>(FunctionKernelKindAttr::name);
 }
 
+static bool isTileOpSubkernelHelper(func::FuncOp funcOp) {
+  return pto::isPTODSLTileOpHelper(funcOp);
+}
+
 static bool isInsideKernelKindModule(func::FuncOp funcOp) {
   if (!funcOp)
     return false;
@@ -118,7 +122,9 @@ static bool isInsideKernelKindModule(func::FuncOp funcOp) {
 }
 
 static bool hasKnownKernelKindContext(func::FuncOp funcOp) {
-  return isInsideKernelKindModule(funcOp) || hasExplicitFunctionKernelKind(funcOp);
+  return isInsideKernelKindModule(funcOp) ||
+         hasExplicitFunctionKernelKind(funcOp) ||
+         isTileOpSubkernelHelper(funcOp);
 }
 
 static std::optional<AddressSpace> getBufferAddressSpace(Type type) {

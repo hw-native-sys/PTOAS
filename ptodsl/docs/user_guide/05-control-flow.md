@@ -4,7 +4,7 @@ PTODSL uses a **tracing** compilation model. When you call `kernel.compile(...)`
 
 This has one critical implication for how you write loops and branches:
 
-- **Python native `for`/`if`** is rewritten to device-side control flow by default in `@pto.jit` bodies and named `@pto.cube` / `@pto.simd` / `@pto.simt` sub-kernels. A `for i in range(rows)` loop records a device loop, and a runtime `if` records both branches.
+- **Python native `for`/`if`** is rewritten to device-side control flow by default in `@pto.jit` bodies and named `@pto.tileop` / `@pto.simt` sub-kernels. A `for i in range(rows)` loop records a device loop, and a runtime `if` records both branches.
 - **`pto.const_expr` / `pto.static_range`** keep compile-time Python behavior when you want trace-time specialization or unrolling.
 - **`pto.for_` / `pto.if_`** produce device-side control flow. The loop bound or branch condition can be a runtime value, and the hardware will execute the loop or take the branch dynamically.
 
@@ -465,7 +465,7 @@ def debug_kernel(*, BLOCK: pto.const_expr = 4):
         pto.pipe_barrier(pto.Pipe.ALL)
 
 
-@pto.simd(ast_rewrite=False)
+@pto.tileop(ast_rewrite=False)
 def debug_simd_helper():
     if pto.const_expr(True):
         pto.pipe_barrier(pto.Pipe.ALL)

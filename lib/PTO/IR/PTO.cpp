@@ -14569,9 +14569,15 @@ getEnclosingFunctionKernelKind(Operation *op) {
   return kernelKindAttr.getKernelKind();
 }
 
+static bool isInsideTileOpSubkernelHelper(Operation *op) {
+  auto funcOp = op->getParentOfType<func::FuncOp>();
+  return pto::isPTODSLTileOpHelper(funcOp);
+}
+
 static bool isInsideSectionOrAttributedKernel(Operation *op) {
   return isInsideSectionCube(op) || isInsideSectionVector(op) ||
-         getEnclosingFunctionKernelKind(op).has_value();
+         getEnclosingFunctionKernelKind(op).has_value() ||
+         isInsideTileOpSubkernelHelper(op);
 }
 
 static LogicalResult verifySplitAttr(Operation *op, int64_t split) {
@@ -14583,6 +14589,8 @@ static LogicalResult verifySplitAttr(Operation *op, int64_t split) {
 static LogicalResult verifyFrontendKernelKind(Operation *op,
                                               FunctionKernelKind expected,
                                               StringRef kernelName) {
+  if (isInsideTileOpSubkernelHelper(op))
+    return success();
   if (isInsideSectionCube(op)) {
     if (expected == FunctionKernelKind::Cube)
       return success();
@@ -15860,7 +15868,7 @@ LogicalResult InitializeL2LPipeOp::verify() {
 
 LogicalResult TPushOp::verify() {
   if (!isInsideSectionOrAttributedKernel(getOperation()))
-    return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
+    return emitOpError("must be inside pto.section.cube/vector, a kernel_kind function, or a tileop subkernel helper");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
   if (failed(verifySplitAttr(getOperation(), getSplit())))
@@ -15876,7 +15884,7 @@ LogicalResult TPushOp::verify() {
 
 LogicalResult TAllocOp::verify() {
   if (!isInsideSectionOrAttributedKernel(getOperation()))
-    return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
+    return emitOpError("must be inside pto.section.cube/vector, a kernel_kind function, or a tileop subkernel helper");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
   if (failed(verifyTensorEntryMatchesInternalPipeInit(
@@ -15887,7 +15895,7 @@ LogicalResult TAllocOp::verify() {
 
 LogicalResult TPopOp::verify() {
   if (!isInsideSectionOrAttributedKernel(getOperation()))
-    return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
+    return emitOpError("must be inside pto.section.cube/vector, a kernel_kind function, or a tileop subkernel helper");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
   if (failed(verifySplitAttr(getOperation(), getSplit())))
@@ -15904,7 +15912,7 @@ LogicalResult TPopOp::verify() {
 
 LogicalResult TFreeOp::verify() {
   if (!isInsideSectionOrAttributedKernel(getOperation()))
-    return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
+    return emitOpError("must be inside pto.section.cube/vector, a kernel_kind function, or a tileop subkernel helper");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
   if (getEntry() &&

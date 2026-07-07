@@ -243,7 +243,7 @@ def process_row_ptr_kernel_module(
     dst_gm: pto.ptr(pto.f32, "gm"),
     row: pto.i32,
 ):
-    with pto.simd():
+    with pto.tileop():
         c0_i64 = pto.const(0, dtype=pto.i64)
         row_offset = row * 16
         src_row = pto.addptr(src_gm, row_offset)
@@ -472,8 +472,10 @@ def main() -> None:
     expect(
         "func.func public @scale_row_kernel_module__ptodsl_" in example_vpto_child
         and 'pto.visibility = "external"' in example_vpto_child
-        and "pto.section.vector {" in example_vpto_child,
-        "mixed_backend_kernel_module.py VPTO child should expose a public helper definition with explicit vector authoring, matching the vector-helper side of mixed-external-vadd",
+        and "func.func @inline_tileop_0__ptodsl_" in example_vpto_child
+        and "pto.tileop.helper" in example_vpto_child
+        and "pto.section.vector {" not in example_vpto_child,
+        "mixed_backend_kernel_module.py VPTO child should expose a public wrapper plus a naked tileop helper body, leaving vector section materialization to later PTOAS normalization",
     )
 
     example_frontend_texts = run_ptoas_frontend_verify(

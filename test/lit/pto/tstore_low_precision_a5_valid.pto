@@ -24,13 +24,13 @@ module {
   }
 }
 
-// CHECK: func.func @tstore_low_precision_a5_valid(%arg0: memref<16x16xf8E4M3FN>, %arg1: memref<16x16x!pto.hif8>, %arg2: i64)
+// CHECK: func.func @tstore_low_precision_a5_valid(%arg0: memref<16x16xf8E4M3FN, strided<[?, ?], offset: ?>, #pto.address_space<gm>>, %arg1: memref<16x16x!pto.hif8, strided<[?, ?], offset: ?>, #pto.address_space<gm>>, %arg2: i64)
 // CHECK: pto.bind_tile
 // CHECK: pto.section.vector {
 // CHECK: pto.tstore ins(
-// CHECK: outs(%arg0 : memref<16x16xf8E4M3FN>)
+// CHECK: outs(%arg0 : memref<16x16xf8E4M3FN, strided<[?, ?], offset: ?>, #pto.address_space<gm>>)
 // CHECK: }
 // CHECK: pto.section.cube {
 // CHECK: pto.tstore ins(
-// CHECK: outs(%arg1 : memref<16x16x!pto.hif8>)
+// CHECK: outs(%arg1 : memref<16x16x!pto.hif8, strided<[?, ?], offset: ?>, #pto.address_space<gm>>)
 // CHECK: }

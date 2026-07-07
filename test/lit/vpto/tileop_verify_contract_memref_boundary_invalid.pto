@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @memref_boundary_invalid(
+      %tmp: memref<16xf32, #pto.address_space<vec>>,
+      %tile: !pto.tile_buf<vec, 1x16xf32>,
+      %cols: i32)
+      attributes {pto.tileop.helper} {
+    %mask, %tail = pto.plt_b32 %cols : i32 -> !pto.mask<b32>, i32
+    %c0 = arith.constant 0 : index
+    %vec = pto.vlds %tmp[%c0] : memref<16xf32, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+    %tile_mem = pto.tile_buf_addr %tile : !pto.tile_buf<vec, 1x16xf32> -> memref<1x16xf32, #pto.address_space<vec>>
+    %tile_row = memref.subview %tile_mem[0, 0] [1, 16] [1, 1] : memref<1x16xf32, #pto.address_space<vec>> to memref<16xf32, strided<[1]>, #pto.address_space<vec>>
+    pto.vsts %vec, %tile_row[%c0], %mask : !pto.vreg<64xf32>, memref<16xf32, strided<[1]>, #pto.address_space<vec>>, !pto.mask<b32>
+    return
+  }
+}
+
+// CHECK: error: 'func.func' op tileop helper arguments must be Tile/TensorView/PartitionTensorView or PTO scalar values

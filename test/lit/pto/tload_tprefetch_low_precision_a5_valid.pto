@@ -23,7 +23,7 @@ module {
   }
 }
 
-// CHECK: func.func @tload_tprefetch_low_precision_a5_valid(%arg0: memref<16x16xf8E4M3FN>, %arg1: memref<16x16x!pto.hif8>)
-// CHECK: pto.declare_tile_memref -> memref<16x16x!pto.hif8
-// CHECK: pto.tload ins(%arg0 : memref<16x16xf8E4M3FN>) outs(
-// CHECK: pto.tprefetch ins(%arg1 : memref<16x16x!pto.hif8>) outs(
+// CHECK: func.func @tload_tprefetch_low_precision_a5_valid(%arg0: memref<16x16xf8E4M3FN, strided<[?, ?], offset: ?>, #pto.address_space<gm>>, %arg1: memref<16x16x!pto.hif8, strided<[?, ?], offset: ?>, #pto.address_space<gm>>)
+// CHECK: pto.declare_tile_memref -> memref<16x16x!pto.hif8, strided<[16, 1], offset: ?>, #pto.address_space<vec>>
+// CHECK: pto.tload ins(%arg0 : memref<16x16xf8E4M3FN, strided<[?, ?], offset: ?>, #pto.address_space<gm>>) outs(
+// CHECK: pto.tprefetch ins(%arg1 : memref<16x16x!pto.hif8, strided<[?, ?], offset: ?>, #pto.address_space<gm>>) outs(

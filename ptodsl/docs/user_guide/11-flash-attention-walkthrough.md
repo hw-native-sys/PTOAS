@@ -11,8 +11,8 @@ flash_attention(...)           L0  user-facing wrapper
   └─ @pto.jit(entry=True, mode="explicit") flash_attention_kernel
        ├─ Tile Ops                 tile.load / tile.store at the GM↔UB boundary
        ├─ explicit orchestration   mte_load / pipe_barrier / pointer sequencing
-       ├─ @pto.cube               qk_matmul / pv_matmul
-       ├─ @pto.simd               online_softmax_rows
+       ├─ @pto.tileop             qk_matmul / pv_matmul (cube-style)
+       ├─ @pto.tileop             online_softmax_rows (vector-style)
        └─ @pto.simt               materialize_tile_bounds / blend_output_rows
 ```
 
@@ -438,13 +438,13 @@ The simt sub-kernel blends the old output accumulator with the new PV contributi
 
 Each `pipe_barrier(Pipe.ALL)` between phases is explicit in the orchestration body. This is intentional: at the orchestration boundary, the user controls pipeline ordering. Auto mode may still use synchronization primitives where needed, but it does so around compiler-managed tile staging rather than user-authored instruction scheduling.
 
-## 11.5 Cube sub-kernel — `@pto.cube`
+## 11.5 Cube-style tileop sub-kernel
 
 ### `qk_matmul` — `S = Q @ K^T`
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"flash_attention.qk_cube_helper","symbol":"flash_attention_qk_cube_helper_probe","compile":{"BLOCK_Q":16,"BLOCK_KV":16}} -->
 ```python
-@pto.cube
+@pto.tileop
 def qk_matmul(
     q_mat: pto.Tile,
     k_mat: pto.Tile,
@@ -476,7 +476,7 @@ The cube kernel does not allocate scratch — the caller (top-level kernel) owns
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"flash_attention.pv_cube_helper","symbol":"flash_attention_pv_cube_helper_probe","compile":{"BLOCK_Q":16,"BLOCK_KV":16}} -->
 ```python
-@pto.cube
+@pto.tileop
 def pv_matmul(
     p_mat: pto.Tile,
     v_mat: pto.Tile,
@@ -497,10 +497,10 @@ def pv_matmul(
 
 Structurally identical to `qk_matmul`, but without transposition and with different input/output tiles. The scratch tiles `p_l0a`, `v_l0b`, and `pv_acc` are reused across KV blocks — the caller (top-level kernel) allocates them once.
 
-## 11.6 SIMD sub-kernel — online softmax
+## 11.6 Tile-op sub-kernel — online softmax
 
 ```python
-@pto.simd
+@pto.tileop
 def online_softmax_rows(
     s_tile: pto.Tile,
     p_tile: pto.Tile,
@@ -682,6 +682,6 @@ After all KV blocks: the top-level kernel issues `tile.store(o_final_tile, o_par
 
 **Tile-level boundary vs micro-instruction boundary**: `tile.load`/`tile.store` are the tile-atomic surface used in auto mode and at the top-level tile boundary of this sketch. `mte_load` appears in explicit orchestration, authored as individual pointer-based instructions. The abstraction split is auto mode as tile-centric authoring, explicit mode as user-ordered orchestration.
 
-**No vreg across sub-kernel boundaries**: vector registers are local to each `@pto.simd` kernel. Data crosses sub-kernel boundaries through UB tiles — the boundary contract is enforced by the type system.
+**No vreg across sub-kernel boundaries**: vector registers are local to each `@pto.tileop` kernel. Data crosses sub-kernel boundaries through UB tiles — the boundary contract is enforced by the type system.
 
-**Invocation flexibility**: This sketch uses the explicit `@pto.jit(entry=True, mode="explicit")` path for full micro-instruction control. The same named sub-kernels can also be reused from `@pto.jit(mode="auto")` when the body stays within the auto-mode contract, or written inline as context managers (`with pto.simd():`, etc.). The orchestration logic could be extracted into `@pto.jit(entry=False)` kernel modules for reuse across multiple entry kernels. See Chapter 3 for details.
+**Invocation flexibility**: This sketch uses the explicit `@pto.jit(entry=True, mode="explicit")` path for full micro-instruction control. The same named sub-kernels can also be reused from `@pto.jit(mode="auto")` when the body stays within the auto-mode contract, or written inline as context managers (`with pto.tileop():`, etc.). The orchestration logic could be extracted into `@pto.jit(entry=False)` kernel modules for reuse across multiple entry kernels. See Chapter 3 for details.

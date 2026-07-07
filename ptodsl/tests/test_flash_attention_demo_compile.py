@@ -69,7 +69,7 @@ def main() -> None:
         "flash attention wrapper compile should encode the VPTO backend directly on the child module",
     )
     expect("func.func @materialize_tile_bounds" in wrapper_text, "wrapper compile should emit the SIMT helper function")
-    expect("pto.store_vfsimt_info" in wrapper_text, "wrapper compile should materialize SIMT caller metadata setup")
+    expect("pto.simt_launch" in wrapper_text, "wrapper compile should materialize SIMT launch ops")
     expect("pto.barrier <PIPE_ALL>" in wrapper_text, "demo phase boundaries should lower to pipe_barrier(Pipe.ALL)")
 
     compiled = demo.flash_attention_kernel.compile(
@@ -102,7 +102,7 @@ def main() -> None:
         "direct compile should encode the VPTO backend directly on the child module",
     )
     expect("!pto.tile_buf<mat, 64x128xf32" in specialized_text, "BLOCK_Q=64 specialization should change the physical Q tile shape")
-    expect("func.call @materialize_tile_bounds" in specialized_text, "direct compile should still route SIMT helpers through func.call")
+    expect("pto.simt_launch @materialize_tile_bounds" in specialized_text, "direct compile should route SIMT helpers through launch ops")
 
     cached = demo.flash_attention_kernel.cached_specializations()
     expect(len(cached) >= 2, "wrapper compile plus explicit compile should populate at least two cached specializations")

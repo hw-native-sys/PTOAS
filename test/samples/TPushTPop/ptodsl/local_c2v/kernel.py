@@ -57,7 +57,7 @@ def ptodsl_tpush_tpop_local_c2v_cube(
     )
     src_tile = pto.alloc_tile(shape=[_ROWS, _COLS], dtype=pto.f32)
     pto.tile.load(a_part, src_tile)
-    with pto.cube():
+    with pto.tileop():
         c2v.init_cube()
         c2v.push(src_tile, split=0)
 
@@ -81,7 +81,7 @@ def ptodsl_tpush_tpop_local_c2v_vector(
         id=0,
     )
     dst_type = pto.alloc_tile(shape=[_ROWS, _COLS], dtype=pto.f32)
-    with pto.simd():
+    with pto.tileop():
         c2v.init_simd()
         fifo_tile = c2v.pop(result_type=dst_type, split=0)
         pto.tile.store(fifo_tile, o_part)

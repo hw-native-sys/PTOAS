@@ -133,7 +133,7 @@ For example:
 ```python
 @pto.jit(target="a5", entry=False, backend="vpto", mode="explicit")
 def scale_row(base_gm: pto.ptr(pto.f32, "gm"), row: pto.i32):
-    with pto.simd():
+    with pto.tileop():
         ...
 
 @pto.jit(target="a5", backend="emitc")
@@ -168,10 +168,9 @@ kernel. The Vector/Cube execution ownership is a PTOAS responsibility:
   the VPTO backend.
 
 This keeps the PTODSL programming model independent of the physical sectioning
-rules. PTODSL can still expose helper abstractions such as `@pto.simd`,
-`@pto.cube`, `with pto.simd():`, and `with pto.cube():`, but the design does
-not require users or the frontend to manually partition every operation into a
-final section.
+rules. PTODSL exposes logical helper abstractions such as `@pto.tileop` and
+`with pto.tileop():`, but the design does not require users or the frontend to
+manually partition every operation into a final section.
 
 ### PTODSL IR Codegen Shape
 
@@ -233,11 +232,10 @@ Python-only structure. This lowering records PTODSL helper structure and call
 boundaries; it does not make PTODSL responsible for the final Vector/Cube
 section partition.
 
-For `@pto.simd` / `@pto.cube` and inline `with pto.simd():` / `with pto.cube():`
-scopes, PTODSL:
+For `@pto.tileop` and inline `with pto.tileop():` scopes, PTODSL:
 
 - outlines the subkernel body into a helper `func.func` when needed
-- marks the helper with `pto.ptodsl.subkernel_helper`
+- marks the helper with canonical `pto.tileop.helper`
 - emits a helper call from the caller body
 
 This is the PTODSL-side expression of a logical mixed kernel: the entry or
@@ -526,4 +524,5 @@ Use this order when debugging mixed compilation:
 | `pto.aicore` | `func.func` | Legacy entry marker accepted for compatibility. |
 | `pto.internal.non_entry` | `func.func` | Frontend/helper metadata; not used for current entry inference. |
 | `pto.ptodsl.logical_name` | `func.func` | Source-level logical name used when assembling wrappers and peer references. |
-| `pto.ptodsl.subkernel_helper` | `func.func` | Frontend helper classification: `simd`, `cube`, or `simt`. |
+| `pto.tileop.helper` | `func.func` | Canonical tileop-style helper marker emitted for `@pto.tileop` helpers. |
+| `pto.ptodsl.subkernel_helper` | `func.func` | Legacy helper role marker retained for compatibility with older/manual IR. |
