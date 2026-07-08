@@ -1465,8 +1465,7 @@ def TMovOp  : PTO_TOp<"tmov", [
         return ::mlir::pto::PIPE::PIPE_V;
       }
 
-      // MAT -> Scaling loads the fixpipe buffer through MOV_L1_TO_FB
-      // (pto-isa TMovToFb / copy_cbuf_to_fbuf).
+      // MAT -> Scaling moves L1 data into the fixpipe parameter buffer.
       if (s == ::mlir::pto::AddressSpace::MAT &&
           d == ::mlir::pto::AddressSpace::SCALING) {
         return ::mlir::pto::PIPE::PIPE_FIX;
