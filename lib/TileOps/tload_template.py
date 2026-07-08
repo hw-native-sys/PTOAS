@@ -355,13 +355,16 @@ def _constraint_tload_mat_nd2nz(src, dst) -> bool:
         return False
     # ND2NZ: source is in ND (row-major) format where the inner dimension (g4)
     # corresponds to the tile column count. Disambiguates from DN format where
-    # g4 corresponds to the tile row count.
+    # g4 corresponds to the tile row count. Use the *static* dst.shape
+    # (rows/cols from the tile_buf type) rather than dst.valid_shape, which
+    # may be dynamic ([null, null]) and would otherwise let both ND2NZ and
+    # DN2NZ match when the shape comparison is skipped.
     if hasattr(src, 'rank') and src.rank == 5:
-        dst_valid_cols = dst.valid_shape[1] if hasattr(dst, 'valid_shape') and dst.valid_shape is not None else None
-        if dst_valid_cols is not None and hasattr(src, 'shape') and src.shape is not None:
+        dst_cols = dst.shape[1] if hasattr(dst, 'shape') and dst.shape is not None else None
+        if dst_cols is not None and hasattr(src, 'shape') and src.shape is not None:
             src_inner = src.shape[4] if len(src.shape) >= 5 else None
             if src_inner is not None:
-                if not _known_eq(dst_valid_cols, src_inner):
+                if not _known_eq(dst_cols, src_inner):
                     return False
     return True
 
@@ -383,13 +386,15 @@ def _constraint_tload_mat_dn2nz(src, dst) -> bool:
         return False
     # DN2NZ: source is in DN (col-major) format where the inner dimension (g4)
     # corresponds to the tile row count. Disambiguates from ND format where
-    # g4 corresponds to the tile column count.
+    # g4 corresponds to the tile column count. Use the *static* dst.shape
+    # (rows/cols from the tile_buf type) rather than dst.valid_shape, which
+    # may be dynamic and would otherwise let both templates match.
     if hasattr(src, 'rank') and src.rank == 5:
-        dst_valid_rows = dst.valid_shape[0] if hasattr(dst, 'valid_shape') and dst.valid_shape is not None else None
-        if dst_valid_rows is not None and hasattr(src, 'shape') and src.shape is not None:
+        dst_rows = dst.shape[0] if hasattr(dst, 'shape') and dst.shape is not None else None
+        if dst_rows is not None and hasattr(src, 'shape') and src.shape is not None:
             src_inner = src.shape[4] if len(src.shape) >= 5 else None
             if src_inner is not None:
-                if not _known_eq(dst_valid_rows, src_inner):
+                if not _known_eq(dst_rows, src_inner):
                     return False
     return True
 
@@ -423,13 +428,23 @@ def template_tload_gm_to_mat_nd2nz(src: pto.PartitionTensorView, dst: pto.Tile):
     gm_ptr = src.as_ptr()
     mat_ptr = dst.as_ptr()
 
+    # Element byte width (src and dst share dtype per the template dtypes table).
+    elem_bytes = pto.bytewidth(dst.element_type)
+
+    # rank-5 partition view metadata (g3 = M rows, g4 = K cols for ND source).
+    g0, g1, g2, g3, g4 = src.shape
+    s0, s1, s2, s3, s4 = src.strides
+
     # ND2NZ parameter calculation
     # n_value = M (row count), d_value = K (column count)
     n_value = m
     d_value = k
 
-    # src_layout: inner stride = K (number of elements per row)
-    src_inner_stride = k
+    # src_layout: inner stride in BYTES = src physical row stride (s3).
+    # Hardware loop1_src_stride is in bytes (pto-isa a5/TLoad.hpp:
+    # GetByteSize<DType>(gStride3)); a strided GM slice has s3 != K, so the
+    # element stride must be scaled by elem_bytes.
+    src_inner_stride = s3 * elem_bytes
 
     # dst_group: (group_count, loop2_stride, loop3_stride, loop4_stride)
     # For simple single-block case: (1, 1, m, 0)
@@ -478,6 +493,13 @@ def template_tload_gm_to_mat_dn2nz(src: pto.PartitionTensorView, dst: pto.Tile):
     gm_ptr = src.as_ptr()
     mat_ptr = dst.as_ptr()
 
+    # Element byte width (src and dst share dtype per the template dtypes table).
+    elem_bytes = pto.bytewidth(dst.element_type)
+
+    # rank-5 partition view metadata (g3 = K, g4 = M for DN col-major source).
+    g0, g1, g2, g3, g4 = src.shape
+    s0, s1, s2, s3, s4 = src.strides
+
     # DN2NZ parameter calculation
     # For DN format, the original shape is (K, M) -- no logical conversion
     # needed. dn2nz writes the same logical N x D result into NZ layout.
@@ -485,8 +507,9 @@ def template_tload_gm_to_mat_dn2nz(src: pto.PartitionTensorView, dst: pto.Tile):
     n_value = k
     d_value = m
 
-    # src_layout: inner stride = M (number of elements per column)
-    src_inner_stride = m
+    # src_layout: inner stride in BYTES = src physical stride along the M
+    # direction (s4). pto-isa TLoadCubeND2NZ uses gStride4 when layout == DN.
+    src_inner_stride = s4 * elem_bytes
 
     # dst_group: (group_count, loop2_stride, loop3_stride, loop4_stride)
     # (1, 1, k, 0)
