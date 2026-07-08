@@ -2834,7 +2834,7 @@ static LogicalResult verifyStructuredAccStoreLike(
           getStructuredAccStoreScalingElementType(preQuant) !=
               IntegerType::get(op->getContext(), 64, IntegerType::Unsigned))
         return op->emitOpError(
-            "vector pre_quant mode requires scaling pointer element type to be f16, bf16, f32, or ui64");
+            "vector pre_quant mode requires scaling pointer element type to be f16, bf16, f32, or packed ui64 Quant_PRE entries");
     } else if (!isStructuredAccStoreFloatScalarPayload(preQuant)) {
       return op->emitOpError(
           "scalar pre_quant mode requires f16/bf16/f32 payload");

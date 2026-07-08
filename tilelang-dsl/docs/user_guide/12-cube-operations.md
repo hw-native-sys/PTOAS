@@ -643,8 +643,9 @@ result rectangle to write.
 **Constraints**:
 - Clause order is canonical: `unit_flag -> pre_quant -> pre_relu -> layout -> loop3 -> sat`.
 - `pre_quant` requires payload and mode together.
-- Vector `pre_quant` modes require an `fb` pointer with `f16`, `bf16`, or `f32`
-  element type.
+- Vector `pre_quant` modes require an `fb` pointer. The payload may use
+  `f16`, `bf16`, or `f32` elements, or `ui64` when it is already packed as
+  8-byte Quant_PRE parameter entries.
 - Scalar `pre_quant` modes require an `f16`, `bf16`, or `f32` scalar payload.
 - `pre_quant` source element type must be `f32` or `i32`, and the selected mode
   must be compatible with source and destination element types.

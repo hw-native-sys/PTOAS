@@ -18,4 +18,4 @@ module attributes {"pto.target_arch" = "a5"} {
   }
 }
 
-// CHECK: vector pre_quant mode requires scaling pointer element type to be f16, bf16, f32, or ui64
+// CHECK: vector pre_quant mode requires scaling pointer element type to be f16, bf16, f32, or packed ui64 Quant_PRE entries
