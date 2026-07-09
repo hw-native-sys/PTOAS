@@ -98,7 +98,7 @@ func.func @kernel(%out, %x, %scratch, %rows, %cols) {
   - `operand_defs`: 整数 `ArrayAttr`（同上，可空）。
   - `result_defs`: 整数 `ArrayAttr`（**MVP 固定空或仅 scalar result，不参与 memory sync**；复杂语义后置）。
 - **effects 可空**：纯内部 phase 可全空，保留在 phases 用于校验/主域推导，**InsertSync 跳过不建 `CompoundInstanceElement`**。有 boundary effect 的 phase 才建节点。是否标 use/def 是 **policy 非 IR 不变量**。
-- `pto.tileop.operand_effects`：从 phases 非空 effects 派生（union use→read、def→write），unknown→readwrite；scalar 标 read 但不建图。
+- `pto.tileop.operand_effects`：从 phases 非空 effects 派生（union use→read、def→write）；无显式 boundary effect 的 operand 默认标 read。scalar 标 read 但不建图。
 - `pto.tileop.primary_domain`：主计算域 vector/cube（借用枚举值，不挂 `kernel_kind` attr）。
 - **去掉 `pipe_footprint`**：body pipe set 由 `phases.pipe` 集合表达。
 
@@ -148,12 +148,13 @@ func.func @kernel(%out, %x, %scratch, %rows, %cols) {
 
 1. **verifier 改造**：tile op verifier 把带 `pto.tileop.helper` 的 func 当合法上下文；results 限 scalar；**拒绝 alloc_tile/reserve_buffer/TAlloc**；内部 vreg/mask/scalar 临时不跨边界。
 2. **`PTONormalizeUncoveredTileSections` 跳过 tileop**（P0）：`normalizeFunction`/`hasKnownKernelKindContext` 增条件——带 `pto.tileop.helper` 的 func 跳过，避免 preBackendPM:1786 扫到裸 body 混合段报错。
-3. **新增 `PTOInferTileOpSummaryPass`**：扫 helper body 推导 primary_domain + phases（pipe 按 `getPipe()`，effects 可空，operand index 指向所有 operand，memory-like 才建图）+ operand_effects（从非空 effects 派生）。tileop 专用 MTE/S 规则，不改全局 `classifyTileOpByPipe`。
-4. **新增 materialize pass**：按 primary_domain+phases 物化 `SectionCubeOp`/`SectionVectorOp`（只包 cube/vector 主段），MTE/S/sync 保持 top-level。**lit case 覆盖两类**：MTE+section.vector+MTE、MTE+section.cube+MTE，验证 `VPTOSplitCVModule`/EmitC/VPTO 接受（注意 `hasSectionKind`:58-83 要求 func 含 section，`eraseSectionSplitCandidatesWithoutSectionKind`:170-175 会擦除无 section 的 candidate）。
-5. **`UpdatePTODSLSubkernelCallInfo` 改造**：读 primary_domain+phases；按**有 boundary effect 的 phase**拆多 `CompoundInstanceElement`（空 effect phase 跳过，scalar operand 不建图）；memory operand 副作用从保守全 R+W 改读 operand_effects；支持 callsite scalar results 进依赖图。
-6. **新增 `PTOVerifyTileOpContractPass`**：校验 body op `getPipe()` ∈ phases pipe 集合、主域 pipe 与 primary_domain 一致、operand_effects == 非空 phases 派生、SIMT-only op 排除、cube+vector 混算 reject、results 限 scalar、tileop helper 无互调、**拒绝 alloc_tile/reserve_buffer/TAlloc**、**负例（只有 MTE/S/sync 无主计算证据报错）**。旧 `PTOVerifySubkernelPipeContractPass` 保留兼容 cube/simd。
-7. 主 pipeline 不再依赖 `PTOWrapFunctionsInSectionsPass` 为 tileop helper 自动套单段；tileop section 形成以 `PTOMaterializeTileOpSectionsPass` 为准。
-8. **`PTOInlineBackendHelpers`**：保证不丢围绕 call 的 sync ops；后续 `VPTOSplitCVModule` 会在单域 VPTO module 内展开同域 section、删除异域 section，避免 section 容器遗留到 VPTO LLVM lowering。
+3. **不把 tileop materialize 合并进 `PTONormalizeUncoveredTileSections`**：NormalizeUncovered 面向普通函数的 top-level uncovered tile segment，不消费 tileop summary；tileop helper 需要先由 `PTOInferTileOpSummaryPass` 推导 primary_domain/phases/effects，再只包主计算 span，并保留 MTE/S/sync 在 section 外。因此 tileop 走 helper-local、summary-driven 的 `PTOMaterializeTileOpSectionsPass`，NormalizeUncovered 只负责跳过 tileop helper，避免早期按普通 segment 规则误判。
+4. **新增 `PTOInferTileOpSummaryPass`**：扫 helper body 推导 primary_domain + phases（pipe 按 `getPipe()`，effects 可空，operand index 指向所有 operand，memory-like 才建图）+ operand_effects（从非空 effects 派生）。tileop 专用 MTE/S 规则，不改全局 `classifyTileOpByPipe`。
+5. **新增 materialize pass**：按 primary_domain+phases 物化 `SectionCubeOp`/`SectionVectorOp`（只包 cube/vector 主段），MTE/S/sync 保持 top-level。**lit case 覆盖两类**：MTE+section.vector+MTE、MTE+section.cube+MTE，验证 `VPTOSplitCVModule`/EmitC/VPTO 接受（注意 `hasSectionKind`:58-83 要求 func 含 section，`eraseSectionSplitCandidatesWithoutSectionKind`:170-175 会擦除无 section 的 candidate）。
+6. **`UpdatePTODSLSubkernelCallInfo` 改造**：读 primary_domain+phases；按**有 boundary effect 的 phase**拆多 `CompoundInstanceElement`（空 effect phase 跳过，scalar operand 不建图）；memory operand 副作用从保守全 R+W 改读 operand_effects；支持 callsite scalar results 进依赖图。
+7. **新增 `PTOVerifyTileOpContractPass`**：校验 body op `getPipe()` ∈ phases pipe 集合、主域 pipe 与 primary_domain 一致、operand_effects == 非空 phases 派生、SIMT-only op 排除、cube+vector 混算 reject、results 限 scalar、tileop helper 无互调、**拒绝 alloc_tile/reserve_buffer/TAlloc**、**负例（只有 MTE/S/sync 无主计算证据报错）**。旧 `PTOVerifySubkernelPipeContractPass` 保留兼容 cube/simd。
+8. 主 pipeline 不再依赖 `PTOWrapFunctionsInSectionsPass` 为 tileop helper 自动套单段；tileop section 形成以 `PTOMaterializeTileOpSectionsPass` 为准。
+9. **`PTOInlineBackendHelpers`**：保证不丢围绕 call 的 sync ops；后续 `VPTOSplitCVModule` 会在单域 VPTO module 内展开同域 section、删除异域 section，避免 section 容器遗留到 VPTO LLVM lowering。
 
 ### pass 顺序（实测修正，P0）
 
@@ -187,7 +188,13 @@ func.func @kernel(%out, %x, %scratch, %rows, %cols) {
 6. inline `with pto.tileop()` 已与 decorated `@pto.tileop` 对齐：前端不再预套 section，统一交后端 `PTOMaterializeTileOpSectionsPass` 物化。
 7. `VPTOSplitCVModule` 已支持已单域化 `pto.kernel_kind` module 的 section rewrite：同域 section 展开，异域 section 删除，避免 tileop inline 后的 section 容器进入 VPTO LLVM lowering。
 
-## 7. 仍待单独收敛的差异
+## 7. 当前默认 effect 策略
 
-1. **`pto.tileop.operand_effects` 的“无显式 boundary effect 时默认值”尚未与本文最终写法重新对齐。**
-   本文目标写法仍按 `unknown→readwrite` 记录；当前实现会把无 boundary effect 的 operand 物化/校验为 `"read"`。这一点需要单独决策后再统一设计与实现。
+`pto.tileop.operand_effects` 对无显式 boundary effect 的 operand 默认记录为
+`"read"`，与当前实现和 verifier 保持一致。
+
+这样做的含义是：如果 helper body 没有明确写某个边界 operand，summary 不凭空为
+它制造 write 依赖。真正读写边界 tile/view 的 op 必须通过 MemoryEffect 和
+boundary value trace 被记录到 phase 的 `operand_uses` / `operand_defs` 中；如果
+真实写入被漏掉，那是 op effect 或 trace 规则缺失，需要补对应 op 的 effect 建模，
+而不是靠默认值掩盖。
