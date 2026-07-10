@@ -32,17 +32,22 @@ issue 直接推动的是 PTODSL subkernel public surface 的收敛。修改前�
 同时暴露 `@pto.simd`、`@pto.cube`、inline `with pto.simd():`、
 inline `with pto.cube():` 和 `@pto.simt`。
 
-这里的问题不是“名字太多”本身，而是 `simd` / `cube` 把两个不同层级的事情绑在
-了一起：
+这里的问题不是“名字太多”本身，而是 `simd` / `cube` 把两件不该耦合的事情绑
+在了一起：
 
-- public surface：用户是在定义哪类 helper，它的参数和返回值边界是什么。
+- 用户入口（public surface）：用户要定义的是“一个 tile-level helper”，它的
+  参数和返回值边界是什么、能不能含 load/compute/store 多个阶段。
 - 主计算风格：helper body 里真正的主计算是 Vector 还是 Cube。
 
-tile-level helper 的自然边界是 `Tile` / `TensorView` /
-`PartitionTensorView` / PTO scalar。它可以是 vector-style，也可以是
-cube-style，还可能包含 MTE load/store、Scalar 控制和 sync。让用户先用
-`@pto.simd` 或 `@pto.cube` 选择主计算风格，会让 API 名字、参数契约、inline
-路径和 PTOAS 后续分析分叉。
+这两件事本应分开。一个 tile-level helper 的自然边界是 `Tile` / `TensorView`
+/ `PartitionTensorView` / PTO scalar；它的 body 可以是 vector-style，也可以是
+cube-style，还可能同时包含 MTE load/store、Scalar 控制和 sync（softmax 就是
+典型例子：MTE load → Vector compute → MTE store）。
+
+旧 API 要求用户先用 `@pto.simd` / `@pto.cube` 选主计算风格，于是 API 名字、
+参数契约、inline 路径和 PTOAS 后续分析都跟着 `simd` / `cube` 分叉成两套。但
+“是不是 vector 主计算”本该由 PTOAS 看 body 自己推导出来，而不是让用户提前
+用 decorator 名字声明。
 
 因此本次设计只保留两个用户入口：
 
@@ -86,91 +91,46 @@ def kernel(src, dst):
 MTE load -> Vector compute -> MTE store
 ```
 
-这几个词在后续设计里只承担固定含义：
-
-| 词 | 在本文中的含义 |
-|---|---|
-| public surface | 用户写的入口，例如 `@pto.tileop` 或 `@pto.simt` |
-| public ABI | helper 参数和返回值允许跨调用边界传什么 |
-| pipe | 单个 PTO IR op 的执行管线，例如 MTE、Vector、Cube、Scalar |
-| phase | helper body 中相邻的一段同 pipe 操作及其边界读写摘要 |
-| primary_domain | tileop helper 的主计算域，只能是 `vector` 或 `cube` |
-| section | PTO IR 中标记主计算段的容器，例如 `pto.section.vector/cube` |
-
-注意这里的 `primary_domain = vector` 不表示 helper 里只有 Vector pipe。上面的
-softmax helper 同时有 MTE phase 和 Vector phase；MTE load/store 仍然是 MTE
-pipe，不属于 Vector 或 Cube。
-
-PTOAS 需要从 helper body 里恢复两类信息：
-
-1. 这个 helper 的主计算域是什么，后续应该物化成 vector section 还是 cube
-   section。
-2. 每个 phase 读写了哪些跨 helper 边界的 operand，后续 InsertSync 才能在多个
-   helper call 之间建同步依赖。
 
 ## 4. 方案总览
 
-新方案把用户可见的 tile-level helper 入口统一为 `@pto.tileop`：
+第 2 节已经说明用户入口的变化。这里从相同层级比较修改前后的职责分工，只关注
+tile-level helper；`@pto.simt` 在修改前后都保留独立入口，不在图中重复展示。
 
-```python
-@pto.tileop
-def helper(...):
-    ...
-
-with pto.tileop():
-    ...
-```
-
-SIMT 仍使用独立入口：
-
-```python
-@pto.simt
-def simt_helper(ptr: pto.ptr(pto.f32, "gm"), n: pto.i32):
-    ...
-```
-
-修改前，tile-level helper 的 public surface 和 PTODSL tracing 路径会先按
-`simd` / `cube` 分叉：
+修改前，用户必须先选择 `simd` 或 `cube`。PTODSL tracing 再把这个选择记录成
+分类标记，并按该分类生成对应的 section 形态：
 
 ```mermaid
 flowchart LR
-  User["用户代码"]
-  Simd["@pto.simd<br/>with pto.simd()"]
-  Cube["@pto.cube<br/>with pto.cube()"]
-  Simt["@pto.simt"]
-  Trace["PTODSL tracing<br/>生成带角色标记的 PTO IR"]
-  PTOAS["PTOAS<br/>消费前端角色标记"]
+  User["用户定义<br/>tile-level helper"]
+  Surface["选择 @pto.simd<br/>或 @pto.cube"]
+  Trace["PTODSL tracing<br/>记录 simd/cube 分类标记<br/>生成对应 section 形态"]
+  IR["PTO IR"]
+  PTOAS["PTOAS<br/>消费前端给出的分类"]
   Output["EmitC / VPTO output"]
 
-  User --> Simd --> Trace
-  User --> Cube --> Trace
-  User --> Simt --> Trace
-  Trace --> PTOAS --> Output
+  User --> Surface --> Trace --> IR --> PTOAS --> Output
 ```
 
-新方案的整体职责分工如下：
+新方案在相同层级上的流程如下：
 
 ```mermaid
 flowchart LR
-  User["用户代码<br/>@pto.tileop / @pto.simt"]
-  Trace["PTODSL tracing<br/>生成 PTO IR"]
-  Marker["tileop helper 标记<br/>pto.tileop.helper"]
-  PTOAS["PTOAS<br/>推导 primary_domain / phases / effects<br/>物化 section<br/>校验 contract"]
+  User["用户定义<br/>tile-level helper"]
+  Surface["统一使用 @pto.tileop"]
+  Trace["PTODSL tracing<br/>记录 body 和<br/>pto.tileop.helper"]
+  IR["PTO IR"]
+  PTOAS["PTOAS<br/>从 body 推导分类、阶段和读写<br/>再生成对应 section"]
   Output["EmitC / VPTO output"]
 
-  User --> Trace --> Marker --> PTOAS --> Output
+  User --> Surface --> Trace --> IR --> PTOAS --> Output
 ```
 
-这条流程的关键点是：PTODSL tracing 不再提前判断 helper 是 vector-style 还是
-cube-style，也不预套 `pto.section.vector/cube`。它只把 helper 记录成 PTO IR，
-并标记为 `pto.tileop.helper`。PTOAS 再根据 helper body 推导
-`primary_domain`、`phases` 和边界 effect。
+核心变化是分类职责发生了转移：修改前由用户选择 `simd/cube`，PTODSL tracing
+把这个选择直接写进 IR；修改后用户统一写 `@pto.tileop`，PTODSL tracing 只记录
+helper body，PTOAS 再从 body 推导主计算域、阶段和读写关系。
 
-这样 decorated helper 和 inline `with pto.tileop():` 走同一套 PTOAS contract；
-vector-style 和 cube-style helper 也不再暴露两套 public boundary 规则。
-
-旧 `@pto.simd` / `@pto.cube` 代码迁移到 `@pto.tileop`；SIMT helper 不迁移，
-仍使用 `@pto.simt`。更完整的迁移规则见第 9 节。
+因此新方案简化的是用户入口和 PTODSL tracing 路径。PTOAS 内部新增的分析和校验会在第 7 节展开。
 
 ## 5. Public contract
 
@@ -252,20 +212,13 @@ func.func private @softmax(%src: !pto.tensor_view<...>,
     attributes {pto.tileop.helper} {
   // body 里先保留 tracing 得到的原始 op 顺序。
   // 这里还没有 pto.section.vector 或 pto.section.cube。
-  pto.tload ... outs(%scratch) : ...
-  pto.tadd ... outs(%scratch) : ...
-  pto.tstore ... ins(%scratch) : ...
+  pto.tload ... outs(%scratch) : ...     // MTE load
+  pto.vadd ... outs(%scratch) : ...      // Vector compute
+  pto.tstore ... ins(%scratch) : ...     // MTE store
   return
 }
 ```
 
-从这个例子能看出三点：
-
-- 函数 attributes 里只有 `pto.tileop.helper`，没有
-  `pto.tileop.primary_domain`。
-- 函数 attributes 里也没有 `pto.tileop.phases` 和
-  `pto.tileop.operand_effects`。
-- body 里的 op 没有被包在 `pto.section.vector` 或 `pto.section.cube` 里面。
 
 PTOAS 后续再基于 helper body 推导这些属性：
 
@@ -278,22 +231,11 @@ attributes {
 }
 ```
 
-这三个属性不是给用户手写的配置项，而是 PTOAS 后续 pass 基于 helper body 推导出的
-内部摘要。它们具体由哪些 pass 生成、校验和消费，见第 7 节。
-
-这样做有两个好处：
-
-1. PTODSL tracing 不需要猜 helper 是 vector 还是 cube，也不需要维护 body pipe
-   分类。
-2. decorated `@pto.tileop` 和 inline `with pto.tileop()` 走同一条 PTOAS
-   contract。
-
 ## 7. lib/PTO 详细设计
 
-前面的章节说明了 public surface 和 PTODSL tracing 后的 IR 形态。真正让
-`@pto.tileop` 工作起来的修改主要在 `lib/PTO`：PTOAS 不再把 PTODSL 给出的 role
-当作最终答案，而是在 PTO IR 上重新推导 helper 的主计算域、phase 和边界 effect，
-再把这些信息交给 section materialization、InsertSync 和 VPTO split 使用。
+前面的章节说明了 public surface 和 PTODSL tracing 后的 IR 形态。本节继续说明
+`lib/PTO` 中负责摘要推导、section 物化、contract 校验、同步建模和 VPTO split
+的具体修改。
 
 本节涉及的 pass / 流程状态如下：
 
@@ -351,28 +293,32 @@ flowchart LR
   IR --> Infer --> Materialize --> Verify --> Sync --> Inline --> Split --> Lower
 ```
 
-这条链路里有一个核心约定：PTODSL 只负责把函数标成 tileop helper；`lib/PTO`
-负责解释这个 helper。也就是说，`@pto.tileop` 的语义不是靠 frontend 预先塞一个
-`vector` 或 `cube` role 完成，而是靠 PTOAS 在 IR body 上做分析完成。
+### 7.2 如何标记一个 tileop helper
 
-### 7.2 Helper marker
-
-新的 canonical marker 是 unit attr：
+PTODSL tracing 生成 PTO IR 时，需要告诉 PTOAS：“这个函数不是普通函数，而是一个
+tileop helper”。做法是在函数上加一个没有额外取值的标签：
 
 ```mlir
 attributes {pto.tileop.helper}
 ```
 
-`include/PTO/IR/PTO.h` 里统一封装了 marker 识别逻辑：
+看到这个标签后，后续 PTOAS pass 才会对该函数执行 tileop 专用的摘要推导、
+section 物化和 contract 校验。普通函数没有这个标签，也就不会进入这些处理。
 
-- 有 `pto.tileop.helper` 时，helper role 解析为 `tileop`。
-- 旧 IR 如果仍带 `pto.ptodsl.subkernel_helper = "tileop"`，PTOAS 仍能识别。
-- 新文档和新 IR 形态使用 `pto.tileop.helper`，不再把
-  `pto.ptodsl.subkernel_helper = "tileop"` 当作推荐写法。
+修改前，PTODSL 使用一个字符串属性同时表示不同 helper 类型：
 
-这样做的原因是：`pto.ptodsl.subkernel_helper = "simd/cube/tileop"` 是旧的
-role 字符串机制；tileop 现在是一个明确的 PTOAS contract，用 unit attr 表达比
-继续复用旧字符串更清楚。
+```mlir
+pto.ptodsl.subkernel_helper = "simd"
+pto.ptodsl.subkernel_helper = "cube"
+pto.ptodsl.subkernel_helper = "tileop"
+```
+
+新生成的 IR 统一使用专门的 `pto.tileop.helper` 标签，不再把 tileop 塞进旧的
+`subkernel_helper` 字符串。为了让已有 IR 仍能通过 PTOAS，代码暂时也能识别旧的
+`pto.ptodsl.subkernel_helper = "tileop"` 写法。
+
+这两种形式的统一识别封装在 `include/PTO/IR/PTO.h` 中。后续 pass 只需要询问
+“这个函数是不是 tileop helper”，不需要分别处理新旧属性格式。
 
 ### 7.3 Summary 属性设计
 
@@ -434,16 +380,16 @@ operand #2: scratch_tile
 它的算法可以概括成：
 
 ```text
-for op in helper body, recursively in source order:
-  pipe = classify(op)
-  if pipe is Vector or Cube primary compute:
-    set or validate primary_domain
-  if pipe changed from previous PTO body op:
-    start a new phase
-  if op has MemoryEffect:
-    将 op 实际读写的值追溯回 helper 参数
-    在当前 phase 记录这个参数是 use 还是 def
-    合并得到整个 helper 对该参数的总体 read/write effect
+按源代码顺序递归遍历 helper body 里的每个 op：
+  pipe = classify(op)                          # 判断 op 属于哪个 pipe
+  if pipe 是 Vector 或 Cube 主计算：
+      设置或校验 primary_domain
+  if pipe 和上一个 body op 不同：
+      开始一个新的 phase
+  if op 带有 MemoryEffect：
+      把 op 实际读写的值追溯回 helper 参数
+      在当前 phase 记录这个参数被读(use)还是被写(def)
+      合并得到整个 helper 对该参数的总体 read/write effect
 ```
 
 pipe 分类分两层：
@@ -541,19 +487,37 @@ materialize pass 的具体规则是：
 8. 把最终 span 包进 `pto.section.vector` 或 `pto.section.cube`，MTE/S/sync 留在
    section 外。
 
-控制流场景是这次实现的重点之一。对于：
+控制流中的主计算也需要被找到。这里的 helper entry block，指函数 body 最外层的
+代码块。用户把计算写在循环里时，最外层直接包含的是 `scf.for`，真正的 MTE 和
+Vector op 则在 `scf.for` 的循环体里：
 
 ```mlir
 scf.for %i = %c0 to %rows step %c1 {
-  %slice = memref.subview %tile[%i, 0] [1, 64] [1, 1] : ...
-  %v = pto.vlds %slice[%c0] : ...
-  pto.vsts %v, %slice[%c0], %mask : ...
+  pto.tload ...       // MTE load
+  pto.tadds ...       // Vector compute
+  pto.tstore ...      // MTE store
 }
 ```
 
-materialize pass 不应该只看 helper entry block 的顶层 op，然后因为顶层只有
-`scf.for` 就放弃。现在它会递归进 loop body，在 loop body 内把 vector primary
-span materialize 成 section。
+如果 pass 只检查函数最外层直接包含的 op，它只能看到一个 `scf.for`，看不到循环
+体里的 `pto.tadds`，因而会错误地认为这个 helper 没有 Vector 主计算。
+
+当前实现会把 `scf.for` 当作包含内部代码的控制流容器，继续进入它的循环体检查。
+找到 `pto.tadds` 后，只在循环体内部给这段 Vector 主计算加 section：
+
+```mlir
+scf.for %i = %c0 to %rows step %c1 {
+  pto.tload ...       // 仍在 section 外
+  pto.section.vector {
+    pto.tadds ...
+  }
+  pto.tstore ...      // 仍在 section 外
+}
+```
+
+因此这里的“递归”只是指：从函数最外层进入 `scf.for` / `scf.if` 等控制流的内部
+代码块，继续寻找主计算段。pass 不会因为主计算写在循环或分支里，就把整个循环或
+分支都包进 Vector/Cube section。
 
 ### 7.6 PTOVerifyTileOpContractPass
 
@@ -581,81 +545,69 @@ verifier 通过重新推导一遍 summary 来发现这种不一致。
 
 ### 7.7 InsertSync 如何消费 tileop summary
 
-InsertSync 在 `PTOIRTranslator` 里把 IR 转成 sync solver 能理解的 dependency
-graph。普通 PTO op 可以直接根据 op 的 def/use 建图；helper call 不一样，因为
-call 本身看不到 callee body 的内部 pipe。tileop summary 就是给 helper call
-使用的 callee-side 摘要。
-
-当 translator 看到：
+InsertSync 的任务是根据不同 pipe 对同一份数据的读写关系插入同步。对于直接出现
+在 kernel 里的 PTO op，PTOAS 可以从 op 本身知道它属于哪个 pipe、读取什么、写入
+什么。但是看到一次 helper 调用时：
 
 ```mlir
 func.call @row_softmax(%src, %dst, %scratch) : ...
 ```
 
-它会查 `@row_softmax` 是否是 tileop helper。如果是，则读取：
+这条 `func.call` 只列出了传给 helper 的三个值，看不出 helper 内部先做 MTE load、
+再做 Vector compute、最后做 MTE store。因此，PTOAS 需要读取 `@row_softmax`
+函数上的 `pto.tileop.phases`，用它补回调用语句中看不到的阶段和读写信息。
 
-```text
-pto.tileop.phases
-pto.tileop.operand_effects
-```
+一次 tileop helper 调用按下面的步骤处理：
 
-然后把 phase 里的 operand index 映射回 call operand：
+1. `PTOIRTranslator` 找到被调用的 helper，读取它的 `pto.tileop.phases`。
+2. 将摘要里的 helper 参数编号，对应到这次调用实际传入的值。
+3. 每个读写了 helper 边界参数的 phase，生成一个 InsertSync 建模节点。
+4. `InsertSyncAnalysis` 比较这些节点的 pipe 和读写关系，判断哪里需要同步。
 
-```text
-phase operand_uses = [0]  -> use %src
-phase operand_defs = [2]  -> def %scratch
-```
+转换后，每个建模节点记录所属 pipe、读取的值和写入的值。实现中这个节点对应
+`CompoundInstanceElement`，但它不是新的 PTO IR op，只是 InsertSync 分析期间
+使用的一条阶段记录。
 
-每个带边界 effect 的 phase 会变成一个 `CompoundInstanceElement`。这个节点携带：
-
-- pipe：来自 phase 的 `pipe`
-- use values：phase 读的 call operands
-- def values：phase 写的 call operands
-- macro phase id：保持同一个 helper call 内 phase 的顺序身份
-
-如果某个 phase 没有 boundary use/def，translator 会跳过它；纯内部 phase 不需要
-成为跨 helper call 的同步边界节点。
+如果一个 phase 只操作 helper 内部的临时值，没有读写任何 helper 参数，PTOAS
+不会为它建立调用边界节点，因为它不会与 helper 外部的操作产生数据依赖。
 
 #### 7.7.1 和旧同步建模的对比
 
-这里改的不是 sync solver 本身，而是 helper call 进入 dependency graph 前的
-建模方式。sync solver 仍然根据 use/def 和 pipe 信息判断哪些 op 之间需要同步；
-区别在于旧方案给它的是一个粗粒度 helper call 节点，新方案给它的是多个
-phase-level 节点。
+这次修改没有更换 InsertSync 判断同步依赖的算法，改变的是
+`PTOIRTranslator` 如何向它描述一次 helper 调用。
 
-从“建立 hazard 之前”的流程看，差异在 `PTOIRTranslator` 把 helper call 翻译成
-SyncIR 节点这一步：
+旧 `simd/cube` helper：
 
 ```mermaid
 flowchart TB
-  subgraph Old["旧 simd/cube helper"]
-    OldCall["func.call @helper(%src, %dst, %scratch)"]
-    OldRole["读取前端 role<br/>simd / cube"]
-    OldOperands["扫描 memory-like call operands"]
-    OldNode["生成 1 个 CompoundInstanceElement<br/>pipe = role 对应 pipe<br/>operands = 保守 read+write"]
-    OldHazard["InsertSyncAnalysis<br/>基于这个粗粒度节点建立 hazard"]
+  OldCall["func.call @helper(%src, %dst, %scratch)"]
+  OldRole["读取前端给出的<br/>simd / cube 分类"]
+  OldOperands["收集调用时传入的<br/>tile / view 等值"]
+  OldNode["把整个调用表示成 1 个节点<br/>所有边界值保守地视为既读又写"]
+  OldHazard["InsertSyncAnalysis<br/>判断同步依赖"]
 
-    OldCall --> OldRole --> OldOperands --> OldNode --> OldHazard
-  end
+  OldCall --> OldRole --> OldOperands --> OldNode --> OldHazard
+```
 
-  subgraph New["当前 tileop helper"]
-    NewCall["func.call @helper(%src, %dst, %scratch)"]
-    NewSummary["读取被调 helper 的 summary<br/>pto.tileop.phases / operand_effects"]
-    NewMap["把 phase operand index<br/>映射回 call operand"]
-    NewNodes["生成多个 CompoundInstanceElement<br/>每个 phase 一个 pipe、use、def 节点"]
-    NewHazard["InsertSyncAnalysis<br/>基于 phase 节点建立 hazard"]
+当前 `tileop` helper：
 
-    NewCall --> NewSummary --> NewMap --> NewNodes --> NewHazard
-  end
+```mermaid
+flowchart TB
+  NewCall["func.call @helper(%src, %dst, %scratch)"]
+  NewSummary["读取 helper 的<br/>pto.tileop.phases"]
+  NewMap["把 helper 参数编号<br/>对应到这次调用实际传入的值"]
+  NewNodes["按 phase 生成节点<br/>分别记录 pipe、读取值和写入值"]
+  NewHazard["InsertSyncAnalysis<br/>判断同步依赖"]
+
+  NewCall --> NewSummary --> NewMap --> NewNodes --> NewHazard
 ```
 
 | 对比项 | 旧 `simd/cube` helper | 当前 `tileop` helper |
 |---|---|---|
-| call 边界信息来源 | 前端 role 和 call operands | `pto.tileop.phases` / `pto.tileop.operand_effects` |
-| 建图粒度 | 一个 helper call 近似成一个整体节点 | 一个 helper call 拆成多个带 pipe 的 phase 节点 |
-| operand effect | memory-like operand 通常保守按 read+write 建模 | 按 summary 记录的 use/def 建模 |
-| pipe 信息 | 主要来自 helper 的粗粒度 role，例如 vector-style | 来自每个 phase 的 pipe，例如 MTE、Vector、MTE |
-| 对纯内部 phase 的处理 | 难以区分内部 effect 和边界 effect | 没有 boundary use/def 的 phase 不进入跨 call 同步边界 |
+| 信息来源 | 前端给出的 `simd/cube` 分类和调用参数 | PTOAS 从 helper body 推导的 phase 摘要 |
+| 建模粒度 | 整个 helper 调用是一个节点 | 一个有边界读写的 phase 是一个节点 |
+| 读写关系 | 边界值保守地视为既读又写 | 分别记录每个 phase 实际读取和写入的参数 |
+| pipe 信息 | 整个调用只有一个粗粒度分类 | 每个 phase 保留自己的 MTE、Vector 或 Cube pipe |
 
 例如一个 helper body 是：
 
@@ -665,10 +617,8 @@ Vector compute(scratch)
 MTE store(scratch -> dst)
 ```
 
-旧方案在两个连续 helper call 之间只能把整个 call 近似成一个读写边界节点；
-InsertSync 看不到 load、compute、store 三个阶段各自读写了哪个 helper 参数。
-
-当前方案会把这个 call 表达成类似下面的 phase 摘要：
+旧方案把整个调用描述成一个节点，无法表达三个阶段各自属于哪个 pipe、读写哪个
+参数。当前方案则把它表示成三条阶段记录：
 
 ```text
 phase 0: pipe = MTE,    use src,     def scratch
@@ -676,24 +626,40 @@ phase 1: pipe = Vector, use scratch, def scratch
 phase 2: pipe = MTE,    use scratch, def dst
 ```
 
-InsertSync 再把这些 phase 逐个放进 dependency graph。这样它在跨 helper call
-判断依赖时，看到的是每个阶段的真实边界读写，而不是一个保守的大节点。
+当 kernel 中前后出现其他 PTO op 或 helper 调用时，InsertSync 可以用这些阶段记录
+判断它们是否在不同 pipe 上读写了同一个值，再决定是否插入同步；不再需要把整个
+helper 调用保守地当作一次不可拆分的读写。
 
 ### 7.8 VPTOSplitCVModule 的 section rewrite
 
-VPTO lowering 前，`pto.section.vector/cube` 需要被归到对应 module 形态里处理。
-`VPTOSplitCVModule` 的职责是把 section sugar 变成 VPTO lowering 能消费的结构：
+section 的作用有明确的生命周期：计算域尚未确定时用于区分 Vector/Cube；计算域
+确定后就应被移除，因为 section 容器本身不对应后端指令。
 
-- 如果 module 还没有 `pto.kernel_kind`，并且函数里同时有 vector/cube section，
-  pass 会 clone 出 vector/cube 两个 module。
-- 生成 vector module 时，展开 `pto.section.vector`，删除 `pto.section.cube`。
-- 生成 cube module 时，展开 `pto.section.cube`，删除 `pto.section.vector`。
-- 如果 module 已经带 `pto.kernel_kind`，也要做同样的 section rewrite：同域
-  section 展开，异域 section 删除。
+```mermaid
+flowchart LR
+  Input["包含 vector/cube section 的 module"]
+  Kind{"已有 pto.kernel_kind?"}
+  Split["按 section 拆成<br/>Vector / Cube module"]
+  Rewrite["展开同域 section<br/>删除异域 section"]
+  Ready["不再包含 section<br/>进入 VPTO LLVM lowering"]
 
-最后一点是这次修复的重要边界。否则在已单域化的 VPTO module 中，
-`pto.section.vector/cube` 可能遗留到 LLVM lowering；section 内如果包含控制流，
-后续转换会让 section region 形态不再满足 verifier 约束。
+  Input --> Kind
+  Kind -- "否" --> Split --> Rewrite --> Ready
+  Kind -- "是" --> Rewrite
+```
+
+`VPTOSplitCVModule` 的处理可以概括为：
+
+```text
+if module 已有 kernel_kind:
+    展开同域 section，删除异域 section
+else:
+    根据 vector/cube section 拆分 module
+    在每个新 module 中展开同域 section，删除异域 section
+```
+
+主干原有实现会在“已有 `kernel_kind`”时直接返回，导致 helper inline 后的 section
+可能遗留到 LLVM lowering。本次修改补上该分支，并增加包含 `scf.for` 的回归测试。
 
 ### 7.9 设计边界
 
@@ -765,15 +731,16 @@ boundary 规则、两套诊断文案、两套 inline/decorated 处理路径。�
 
 ### 9.2 phase summary 让跨 helper 调用的同步更清楚
 
-还要区分“helper 里实际出现了多个 pipe”和“PTOAS 在 helper 调用边界看到的摘要
-粒度”。前者说的是 helper body 真实做了哪些事；后者说的是 PTOAS 在处理
+这里要区分两件事：一是 helper body 里实际出现了哪些 pipe（helper 真实做了
+什么），二是 PTOAS 在 helper 调用边界能看到的摘要粒度（PTOAS 处理连续 helper
+调用时能拿到多少内部信息）。例如面对：
 
 ```text
 call @row_softmax(...)
 call @row_softmax(...)
 ```
 
-这类连续 helper 调用时，能看到多少内部读写信息。
+这类连续 helper 调用，PTOAS 能看到多少内部读写信息，就取决于摘要粒度。
 
 旧 `simd`/`cube` 路径会把整个 helper call 压成一个粗粒度节点，例如“这是一个
 vector-style call”。这不表示 helper 里面真的只有 Vector pipe，而是表示 PTOAS
@@ -979,8 +946,9 @@ operand effect，还要处理 inline 后可能产生的跨域 section 嵌套。�
 第 8 节已经列出相比旧方案新增或收紧的限制。除此之外，使用当前实现时还要注意：
 
 - function result 只允许 scalar；tile/view 输出仍通过 output operand 表达。
-- 无显式 boundary effect 的 operand 默认记录为 `read`；真实读写边界 tile/view
-  的 op 需要通过 MemoryEffect 和 boundary value trace 进入 phase summary。
+- 如果一个 operand 没有被任何 op 显式读写，它的 effect 默认记为 `read`。只有
+  实现了 `MemoryEffectOpInterface`、且读写值能追溯回 helper 参数的 op，才会真正
+  影响 phase summary 里的 use/def。
 
 这些边界不是因为 PTOAS/VPTO 永远无法支持，而是为了让当前 public contract 和
 sync/memory/codegen 行为先稳定下来。
