@@ -414,10 +414,20 @@ def template_tstore_acc_to_gm_nz2nd(src: pto.Tile, dst: pto.PartitionTensorView)
     acc_ptr = src.as_ptr()
     gm_ptr = dst.as_ptr()
 
-    # src_stride: ACC buffer stride (N under NZ format)
-    # dst_stride: GM stride (N under ND format)
-    src_stride = n
-    dst_stride = n
+    # rank-5 partition view metadata (ND: g3 = M rows, g4 = N cols).
+    g0, g1, g2, g3, g4 = dst.shape
+    s0, s1, s2, s3, s4 = dst.strides
+
+    # Strides are in ELEMENT units (pto-isa a5/TStore.hpp: TStoreAccND passes
+    # srcStride/dstD to copy_matrix_cc_to_gm without GetByteSize; the hardware
+    # scales by dtype internally). The earlier `src_stride = dst_stride = n`
+    # filled both fields with the tile column count, which is wrong for any
+    # strided GM slice and produces sparse/shifted GM writes.
+    #
+    #   src_stride = TileData::Rows = src.shape[0]  (NZ row stride of L0C acc)
+    #   dst_stride = gStride3       = s3            (GM physical row stride)
+    src_stride = src.shape[0]
+    dst_stride = s3
 
     pto.mte_l0c_gm(
         acc_ptr, gm_ptr,
@@ -459,10 +469,18 @@ def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView)
     acc_ptr = src.as_ptr()
     gm_ptr = dst.as_ptr()
 
-    # NZ2DN requires an additional loop0_src_stride parameter
-    src_stride = n
-    dst_stride = m  # Under DN format, stride is M
-    loop0_src_stride = 1  # loop0_src_stride for NZ2DN
+    # rank-5 partition view metadata (DN: g3 = M, g4 = N, col-major).
+    g0, g1, g2, g3, g4 = dst.shape
+    s0, s1, s2, s3, s4 = dst.strides
+
+    # Strides are in ELEMENT units (see template_tstore_acc_to_gm_nz2nd).
+    # DN (col-major): adjacent rows step along the M direction, whose physical
+    # stride is s4 (PTOAS 5D DN view strides collapse to [M, M, M, 1, M]).
+    #   src_stride = TileData::Rows = src.shape[0]  (NZ row stride of L0C acc)
+    #   dst_stride = s4                             (GM physical stride along M)
+    src_stride = src.shape[0]
+    dst_stride = s4
+    loop0_src_stride = 1  # loop0_src_stride for NZ2DN (NZ source)
 
     pto.mte_l0c_gm(
         acc_ptr, gm_ptr,
@@ -503,7 +521,17 @@ def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView)
     acc_ptr = src.as_ptr()
     gm_ptr = dst.as_ptr()
 
-    src_stride = n
+    # src_stride is in ELEMENT units (pto-isa a5/TStore.hpp: TStoreAccNZ sets
+    # srcStride = TileData::Rows). The earlier `src_stride = n` filled the L0C
+    # source stride with the column count, which is wrong whenever N differs
+    # from the acc tile row count.
+    #   src_stride = TileData::Rows = src.shape[0]  (NZ row stride of L0C acc)
+    # NOTE: dst_stride for NZ2NZ is the NZ-fractal physical row stride
+    # (ceil(M, FRACTAL_NZ_ROW) * c0 in pto-isa TStoreAccNZ). The compact NZ
+    # views used today set this equal to n, so the legacy value is retained
+    # until a strided NZ destination case is exercised to validate the exact
+    # stride index.
+    src_stride = src.shape[0]
     dst_stride = n
     split = 1  # NZ2NZ requires a split parameter
 
@@ -616,8 +644,13 @@ def template_tstore_fp_acc_to_gm(src: pto.Tile, fp: pto.Tile, dst: pto.Partition
 
     # TODO: Replace with tstore_fp DSL surface once available.
     # Currently using mte_l0c_gm + pre_quant as a temporary workaround.
-    src_stride = n
-    dst_stride = n
+    # Strides are in ELEMENT units (see template_tstore_acc_to_gm_nz2nd).
+    #   src_stride = TileData::Rows = src.shape[0]  (NZ row stride of L0C acc)
+    #   dst_stride = gStride3       = s3            (GM physical row stride, ND)
+    g0, g1, g2, g3, g4 = dst.shape
+    s0, s1, s2, s3, s4 = dst.strides
+    src_stride = src.shape[0]
+    dst_stride = s3
 
     pto.mte_l0c_gm(
         acc_ptr, gm_ptr,
