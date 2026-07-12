@@ -359,13 +359,14 @@ def _constraint_tload_mat_nd2nz(src, dst) -> bool:
     # (rows/cols from the tile_buf type) rather than dst.valid_shape, which
     # may be dynamic ([null, null]) and would otherwise let both ND2NZ and
     # DN2NZ match when the shape comparison is skipped.
-    if hasattr(src, 'rank') and src.rank == 5:
-        dst_cols = dst.shape[1] if hasattr(dst, 'shape') and dst.shape is not None else None
-        if dst_cols is not None and hasattr(src, 'shape') and src.shape is not None:
-            src_inner = src.shape[4] if len(src.shape) >= 5 else None
-            if src_inner is not None:
-                if not _known_eq(dst_cols, src_inner):
-                    return False
+    if not (hasattr(src, 'rank') and src.rank == 5):
+        return False
+    dst_cols = dst.shape[1] if hasattr(dst, 'shape') and dst.shape is not None else None
+    if dst_cols is not None and hasattr(src, 'shape') and src.shape is not None:
+        src_inner = src.shape[4] if len(src.shape) >= 5 else None
+        if src_inner is not None:
+            if not _known_eq(dst_cols, src_inner):
+                return False
     return True
 
 
@@ -389,13 +390,14 @@ def _constraint_tload_mat_dn2nz(src, dst) -> bool:
     # g4 corresponds to the tile column count. Use the *static* dst.shape
     # (rows/cols from the tile_buf type) rather than dst.valid_shape, which
     # may be dynamic and would otherwise let both templates match.
-    if hasattr(src, 'rank') and src.rank == 5:
-        dst_rows = dst.shape[0] if hasattr(dst, 'shape') and dst.shape is not None else None
-        if dst_rows is not None and hasattr(src, 'shape') and src.shape is not None:
-            src_inner = src.shape[4] if len(src.shape) >= 5 else None
-            if src_inner is not None:
-                if not _known_eq(dst_rows, src_inner):
-                    return False
+    if not (hasattr(src, 'rank') and src.rank == 5):
+        return False
+    dst_rows = dst.shape[0] if hasattr(dst, 'shape') and dst.shape is not None else None
+    if dst_rows is not None and hasattr(src, 'shape') and src.shape is not None:
+        src_inner = src.shape[4] if len(src.shape) >= 5 else None
+        if src_inner is not None:
+            if not _known_eq(dst_rows, src_inner):
+                return False
     return True
 
 
