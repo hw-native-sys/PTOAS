@@ -1,200 +1,346 @@
+# PTODSL TileOp 多 Phase 设计
 
-# 定稿设计方案（final）
+## 1. 背景和目标
 
-## 1. 目标与用户模型
+PTODSL 需要一种可复用的 tile 级 helper：调用者把已经规划好的片上
+`Tile` 传入，helper 用 MTE、SIMD、Cube 和必要时的 SIMT 微指令完成一段
+计算。一个真实的 helper 很少只属于一条 pipe。例如，一个 block 可能依次执行：
 
-`pto.tileop` 统一 custom subkernel 标识（取代 `pto.cube`/`pto.simd` 的 public subkernel 入口职责；`pto.simt` 专属 launched SIMT）。建模为 tile-level IR 上以 tile/tensorview/scalar 为 IO、带 phase 摘要的命名 helper + `func.call`，让 `PTOInsertSync`/`PTOPlanMemory` 当一等公民。用户零参数，**摘要全由后端 `PTOInferTileOpSummaryPass` 推导；canonical helper marker 统一收敛到 `pto.tileop.helper` unit attr。**
+```text
+MTE load -> SIMD normalize -> MTE move -> Cube matmul -> SIMD post-process
+```
+
+旧的 `simd` / `cube` subkernel 模型把一次 helper call 概括为单一角色。这样无法
+表达 helper 内不同阶段分别读取、写入了哪个边界 Tile，也无法正确处理多段
+Vector/Cube 计算、MTE 与计算域的归属，以及直接写在 helper 中的 SIMT 微指令。
+
+本设计以 `@pto.tileop` 作为唯一的 tile 级 helper surface。它的边界简单且稳定：
+只传递 `Tile` 和 PTO scalar。helper body 则可以包含多个不同 pipe 的微指令阶段。
+
+本文描述的是目标设计。当前实现仍保留 TensorView ABI、单一 `primary_domain` 和
+单个主计算 section 等过渡性行为；第 10 节列出差异和迁移顺序。
+
+## 2. 基础概念
+
+### 2.1 Kernel、helper、Tile 与 scalar
+
+- **kernel** 是 `@pto.jit` 定义的可执行入口，负责 tile 分配、整体调度和调用
+  helper。
+- **tileop helper** 是由 `@pto.tileop` 定义、可被 kernel 多次调用的命名函数。它
+  不单独规划 Tile 生命周期，也不是设备执行入口。
+- **Tile** 是调用者已经拥有并交给 helper 使用的片上数据缓冲区。它是 tileop
+  唯一的复合数据边界类型。
+- **PTO scalar** 是 `i32`、`f32` 等设备标量，可作为大小、步长、标志或计算参数。
+  scalar 不代表一块可由同步系统追踪的 Tile 数据。
+
+`@pto.simt` 保留为独立的 launched-SIMT public surface，可使用既有的 ptr ABI 和
+launch 语法。它不成为 tileop 的 ABI，也不能从 tileop 中被调用。本设计额外允许
+用户在 tileop body 中直接写 **SIMT 微指令**；这两件事不同。
+
+| surface | public ABI | 使用场景 |
+|---|---|---|
+| `@pto.tileop` | `Tile`、PTO scalar | 复用多 pipe 的 tile 级计算；body 可直接写 SIMT 微指令 |
+| `@pto.simt` | `ptr`、PTO scalar | 保留的 launched-SIMT helper；需要将 ptr 作为函数边界时使用 |
+
+因此，“tileop 允许 SIMT”只表示其 body 可以包含和自动 outline SIMT 微指令，
+不表示 `@pto.tileop` 接受 ptr，也不替换 `@pto.simt`。
+
+### 2.2 Pipe、phase 与 section
+
+- **pipe** 是一类执行资源，例如 MTE、Vector、Cube、SIMT 或 Scalar。
+- **phase** 是 helper 内一段有确定执行 pipe、边界 Tile 读写和顺序关系的操作。
+  一个 helper 可以有任意多个 phase，同一 pipe 也可以多次出现。
+- **section** 是 PTOAS 为 VPTO 分模块和 lowering 物化的 IR 容器：
+  `pto.section.vector` 或 `pto.section.cube`。它不是用户选择的 helper role。
+
+phase 描述“这段操作做了什么以及依赖什么”；section 描述“这段 Vector/Cube 操作
+在后续 VPTO 流程中属于哪个计算模块”。MTE、SIMT、同步和控制流可构成 phase，
+但不自动变成 Vector/Cube section。
+
+## 3. `@pto.tileop` 的公共契约
+
+### 3.1 ABI
+
+`@pto.tileop` 的位置参数只允许：
+
+| 类型 | 用途 |
+|---|---|
+| `pto.Tile` | 输入、输出或 scratch Tile |
+| PTO scalar | 标量参数和标量结果 |
+
+不允许 `TensorView`、`PartitionTensorView`、`ptr`、`memref`、host tensor、
+`TensorSpec`、vreg、mask 或 pipe handle 跨 helper 边界。ptr 继续只属于独立
+`@pto.simt` 的 public ABI；这项 `@pto.simt` 契约不在本次 redesign 的收紧范围内。
+
+Tile 输出通过可写的 Tile 参数表达，不通过 function result 返回。function result
+仅允许 PTO scalar。这样 caller 始终拥有 Tile 的分配、别名和生命周期，PTOAS 也能
+将 helper 的读写明确映射到 call 的 Tile operands。
 
 ```python
+# 设计示意：所有复合数据都通过 Tile 边界传递。
 @pto.tileop
-def softmax(src_view: pto.TensorView, out_tile: pto.Tile, scratch_tile: pto.Tile,
-            rows: pto.i32, cols: pto.i32):
-    # caller 传入 scratch/out tile；body 不新建 tile buffer
-    pto.tload(src_view, scratch_tile)        # MTE
-    m = pto.vmax(scratch_tile)               # PIPE_V
-    e = pto.vexp(pto.vsub(m, scratch_tile))  # PIPE_V
-    s = pto.vsum(e)                          # PIPE_V
-    r = pto.vdiv(e, s)                       # PIPE_V
-    pto.tstore(out_tile, r)                  # MTE
+def fused_block(src: pto.Tile, weight: pto.Tile, dst: pto.Tile,
+                scratch: pto.Tile, rows: pto.i32, cols: pto.i32):
+    # body 见下一节。
+    ...
 
 @pto.jit
-def kernel(out, x):
-    softmax(x, out, scratch, rows, cols)
-    softmax(x, out, scratch, rows, cols)     # 复用
+def kernel(src, weight, dst):
+    # kernel 负责创建和规划 src_tile、weight_tile、dst_tile、scratch_tile。
+    fused_block(src_tile, weight_tile, dst_tile, scratch_tile, rows, cols)
 ```
 
-约束（编译期强制）：
-- IO 只允许 Tile/TensorView/PartitionTensorView/PTO scalar。**输出 tile/tensorview 全走 output operand + operand_effects=write/readwrite；func.call results MVP 只允许 scalar。**
-- **helper 内禁止 `alloc_tile`/`reserve_buffer`/`TAlloc`/任何需 PlanMemory 为 callee-local 规划的 op；内部 tile buffer 必须来自 caller operand。内部 vreg/mask/scalar 临时可存但不跨边界。**
-- body 允许 tload/tstore、vector ops、scalar(PIPE_S) ops、cube ops、`pipe_barrier` 同步。
-- 不允许 host tensor/TensorSpec/vreg/mask/pipe_handle 跨边界；不允许 SIMT-only op。
-- **tileop helper 之间不互相调用**（避免 helper 摘要和边界 effect 递归组合）。inline 后若形成同主域 `pto.section.*`，由后端 section 规范化展开；跨主域或无法判定语义的 section 混合仍拒绝。
-- **负例：tileop 只有 MTE/S/sync、无 vector/cube 主计算证据时报错。**
-- MVP 单主计算域（vector **或** cube）+ 多辅助 pipe；reject cube+vector 混算。多 phase 是 correctness 必需。
+### 3.2 Body 允许和禁止的内容
 
-## 2. 关键后端事实（已核对，含 pipeline 实测）
+tileop body 允许下列内容：
 
-- `PTOInsertSync`/`PTOPlanMemory` 均 `func.walk` 全递归进 region。
-- InsertSync 现有两条 PTODSL subkernel 路径：legacy `simd/cube` 兼容路径仍按 helper role→单 pipe、memory operand **保守建模为 read+write**；`tileop` 路径已读 `primary_domain/phases/operand_effects`，按 **non-empty boundary-effect phase** 拆多 `CompoundInstanceElement`。
-- **`CompoundInstanceElement`（`SyncCommon.h:334-341`）单 `kPipeValue` + 单组 def/use**；空 def/use 节点合法但不贡献跨边界依赖。
-- **`classifyTileOpByPipe`（`PTONormalizeUncoveredTileSections.cpp:252-254`）把 MTE1 归 Cube**；`inferSegmentKind` 对混合段报错。
-- **`normalizeFunction`（:740-764）**：对不带 kernel_kind 且不带 tileop helper marker 的 func 会 `collectUncoveredTopLevelSegments`→`inferSegmentKind`，混合段 `emitSegmentInferenceError` 失败。`hasKnownKernelKindContext` 现已把 canonical `pto.tileop.helper`（并兼容 legacy `pto.ptodsl.subkernel_helper = "tileop"`）视为已知上下文并直接跳过 NormalizeUncovered。
-- **`VPTOSplitCVModule`**：`hasSectionKind`（:58-83）检查 func 含 `SectionCubeOp`/`SectionVectorOp`；不带 section 的 split candidate 被 `eraseSectionSplitCandidatesWithoutSectionKind`（:170-175）擦除；`:135` 要求"must contain section"。未带 `pto.kernel_kind` 的多域输入仍拒绝嵌套 section；已单域化的 `pto.kernel_kind` module 会按该主域展开同域 section、删除异域 section，避免 section 留到 VPTO LLVM lowering。
-- **实测 pipeline 顺序（`ptoas.cpp:1780-1900`）**：
-  ```
-  preBackendPM: NormalizeUncoveredTileSections (1786)
-  main pm: ... → PTOInferTileOpSummaryPass → PTOMaterializeTileOpSectionsPass
-           → PTOVerifyTileOpContractPass → ... → ViewToMemref
-           → PlanMemory → ResolveReservedBuffers
-           → VerifySubkernelPipeContract → InsertSync → ... →
-           MaterializeTileHandles → InlineBackendHelpers
-  ```
-- MLIR attribute 不能引用 SSA value；PTO 无 ValueAttr 机制；custom attr 需在 `PTOAttrs.td` 注册（`PTO_Attr` 基类 :36）。
-- `alloc_tile`（`PTOOps.td:318`）、`reserve_buffer`（:1792）、`TAllocOp`（:2240，PlanMemory:478 处理）真实存在。
+- MTE、SIMD、Cube 和 SIMT 微指令；
+- 标量运算、地址派生、cast、`arith` 和 `scf` 等结构性操作；
+- 显式 pipe 同步和显式 SIMT 线程同步。
 
-## 3. IR 载体：方案 B — named helper + `func.call` + 后端推导的 phase 摘要
+tileop body 不允许下列内容：
 
-复用 `func.call` + 命名 helper + callee 解析。**不复用 `kernel_kind`**，用后端推导的 `pto.tileop.primary_domain`。**不预套 section**，改 verifier + NormalizeUncovered 接受 tileop 裸 body。**前端只标 `pto.tileop.helper`，摘要全后端生成。**
+- 高层 TileOps，例如由自动调度或 Tile API 负责语义的 load/store/compute 操作；
+- `alloc_tile`、`reserve_buffer`、`TAlloc` 等需要为 callee 单独规划生命周期的
+  Tile 分配；scratch 和输出 Tile 必须由 caller 传入；
+- 对另一个 tileop helper 或 `@pto.simt` helper 的调用；
+- 将内部 vreg、mask、pointer 或 pipe handle 作为参数或结果泄漏到 helper 外。
 
+这里的限制不禁止在 body 内从 Tile 派生地址，也不禁止 SIMT 微指令使用这些内部
+地址。限制的是 public ABI：派生 pointer 的作用域不能超出当前 helper 或其自动
+生成的内部 SIMT entry。
+
+## 4. 用户可见的多 Phase 模型
+
+用户不为 helper 指定 `vector`、`cube` 或 `simt` role。用户按算法需要写微指令和
+显式同步；PTOAS 从 body 推导阶段。下面是概念流程，不表示可直接编译的 Python
+代码：
+
+```text
+Tile src, weight, dst, scratch
+       |
+       +-- MTE phase:      src -> scratch
+       +-- SIMD phase:     normalize(scratch)
+       +-- MTE phase:      scratch -> Cube input buffer
+       +-- Cube phase:     matmul(weight, scratch)
+       +-- SIMD phase:     post-process -> dst
+       +-- SIMT phase:     per-element fixup(dst)
 ```
-// 前端 trace 后：helper 只带统一 marker
-func.func @softmax(%src: !pto.tensorview<...>, %out: !pto.tile<...>, %scratch: !pto.tile<...>,
-                   %rows: i32, %cols: i32)
-    { pto.tileop.helper } {
-  pto.tload %src, %scratch
-  %m = pto.vmax %scratch
+
+同一 helper 可以有多个 Vector section、多个 Cube section，以及二者交错的 phase。
+例如 `Vector -> MTE -> Vector` 必须产生两个 Vector 计算 span，而不是为了保持
+“单一 primary span”把中间 MTE 包进 section。控制流也不改变这一原则：PTOAS 递归
+分析 `scf.for` 和 `scf.if` 的 region，在具体 region 内物化计算 span；不得因为顶层
+只有一个 `scf.for` 就跳过或包裹整个 loop。
+
+## 5. PTODSL tracing 与 PTOAS phase graph
+
+### 5.1 PTODSL tracing 的职责
+
+PTODSL tracing 是执行 Python helper 定义并记录 PTO IR 的过程。新设计中，它只做
+两件与 tileop 相关的事：
+
+1. 验证 Tile/Scalar public ABI，并记录带 `pto.tileop.helper` marker 的命名
+   `func.func`；
+2. 原样保留 body 中的微指令、结构化控制流和用户写出的同步。
+
+tracing 不预先选择 Vector 或 Cube，不写 `primary_domain`，不把 body 包进
+`pto.section.vector/cube`，也不预先填写 phase 或 operand effect 属性。inline
+`with pto.tileop():` 与命名 `@pto.tileop` 使用同一套 body 规则；inline 路径不因
+位置不同而硬编码一个 section kind。
+
+```text
+PTODSL tracing
+  -> func.func {pto.tileop.helper}，Tile/Scalar ABI，原始微指令 body
+  -> PTOAS 推导 phase graph 并验证
+```
+
+### 5.2 Phase graph
+
+PTOAS 的 phase 推导 pass 扫描 helper body，读每个微指令自身声明的 `getPipe()`，
+并生成有序 phase graph。每个 phase 至少记录：
+
+- 执行 pipe；
+- 在源顺序和结构化控制流中的位置；
+- 读取和写入的 Tile 参数编号；
+- 与前后 phase 的数据依赖和控制依赖；
+- 用户显式同步形成的不可删除顺序边；
+- 对 MTE phase 而言，最终归属的 Vector 或 Cube 物理模块。
+
+读写摘要必须追溯到 helper 参数。例如 `tile[row, col:]`、地址计算、cast、
+`memref.subview`、`scf` 的 iter_arg/result 等会产生派生 SSA value；真正被微指令
+读写的可能是派生值而不是函数参数。PTOAS 沿这些透明派生关系追溯，最后记录
+“第几个 Tile 参数被读或写”。这样摘要既不把内部 pointer 误当作 ABI，也不会漏掉
+tile slice 的边界 effect。
+
+目标 IR 属性形态如下，字段名仅说明语义：
+
+```text
+func.func @fused_block(%src, %weight, %dst, %scratch, %rows, %cols)
+    {pto.tileop.helper,
+     pto.tileop.phases = [
+       {pipe = MTE2, tile_uses = [0], tile_defs = [3]},
+       {pipe = V,    tile_uses = [3], tile_defs = [3]},
+       {pipe = MTE1, tile_uses = [3], tile_defs = [3], owner = CUBE},
+       {pipe = CUBE, tile_uses = [1, 3], tile_defs = [2]},
+       {pipe = V,    tile_uses = [2], tile_defs = [2]},
+       {pipe = SIMT, tile_uses = [2], tile_defs = [2]}
+     ],
+     pto.tileop.operand_effects = [read, read, readwrite, readwrite, read, read]} {
   ...
-  pto.tstore %out, %r
-  return
-}
-
-// PTOInferTileOpSummaryPass 后：补全摘要（真 MLIR attr 结构）
-func.func @softmax(%src, %out, %scratch, %rows, %cols)
-    { pto.tileop.helper,
-      pto.tileop.primary_domain = #pto.kernel_kind<vector>,
-      pto.tileop.phases = #array<#dict<{
-        pipe = #pto.pipe<MTE1>, operand_uses = [0], operand_defs = [2], result_defs = []
-      }, #dict<{
-        pipe = #pto.pipe<V>,    operand_uses = [2], operand_defs = [1], result_defs = []
-      }, #dict<{
-        pipe = #pto.pipe<MTE1>, operand_uses = [1], operand_defs = [1], result_defs = []
-      }>>,
-      pto.tileop.operand_effects = ["read", "readwrite", "readwrite", "read", "read"]
-    } {
-  ...
-}
-
-func.func @kernel(%out, %x, %scratch, %rows, %cols) {
-  func.call @softmax(%x, %out, %scratch, %rows, %cols) : (...) -> ()
-  func.call @softmax(%x, %out, %scratch, %rows, %cols) : (...) -> ()   // 复用
 }
 ```
 
-### phase attr schema（真 MLIR 结构，需在 PTOAttrs.td 注册）
+`operand_effects` 是所有 phase 的 Tile effect 的并集，用于快速检查和 callsite
+建模；真正的顺序和逐阶段同步依据 `phases`。不再存在 `pto.tileop.primary_domain`。
+scalar 可以出现在参数列表和 phase 内，但不作为 Tile memory hazard 节点。
 
-- `pto.tileop.phases`: `ArrayAttr<DictionaryAttr>`，每 phase dict：
-  - `pipe`: 复用现有 pipe 整数枚举（`PTOAttrs.td:213-227`）或新 `PipeAttr`（需注册），按 op `getPipe()` 推。
-  - `operand_uses`: 整数 `ArrayAttr`（operand index 指向函数所有 operands；**InsertSync 只消费 memory-like operand**，scalar 可在 summary 供验证或忽略、不参与建图；可空）。
-  - `operand_defs`: 整数 `ArrayAttr`（同上，可空）。
-  - `result_defs`: 整数 `ArrayAttr`（**MVP 固定空或仅 scalar result，不参与 memory sync**；复杂语义后置）。
-- **effects 可空**：纯内部 phase 可全空，保留在 phases 用于校验/主域推导，**InsertSync 跳过不建 `CompoundInstanceElement`**。有 boundary effect 的 phase 才建节点。是否标 use/def 是 **policy 非 IR 不变量**。
-- `pto.tileop.operand_effects`：从 phases 非空 effects 派生（union use→read、def→write）；无显式 boundary effect 的 operand 默认标 read。scalar 标 read 但不建图。
-- `pto.tileop.primary_domain`：主计算域 vector/cube（借用枚举值，不挂 `kernel_kind` attr）。
-- **去掉 `pipe_footprint`**：body pipe set 由 `phases.pipe` 集合表达。
+## 6. 自动同步和用户显式同步
 
-### operand index 作用域（明确）
+PTOAS 负责普通数据 hazard：某个 phase 写入 Tile 后，后续不同 pipe 的 phase 或
+另一次 helper call 读取/写入同一 Tile 时，`InsertSync` 根据 phase graph 插入所需的
+pipe 同步。它既分析 helper body 内的常规生产者/消费者关系，也在 callsite 将摘要中
+的 Tile 参数编号映射回本次 `func.call` 的实际 Tile operand。
 
-- index 指向**函数所有 operands**（含 scalar）。
-- InsertSync 只消费 **memory-like operand**（tile/tensorview）的 use/def 建 `CompoundInstanceElement`。
-- scalar operand 可在 summary 供验证或忽略；**不参与 def/use 建图**。
+```text
+helper A 的 phase 2 写 %scratch
+        +-----------------------+
+                                v
+helper B 的 phase 0 读 %scratch
 
-### 摘要属性职责划分
-
-| 职责 | 由谁承担 |
-|---|---|
-| body 出现过的 pipe 集合 | `phases.pipe` 集合（verifier 校验 body op getPipe() ∈ 此集） |
-| caller 跨边界 sync 建模 | 有 boundary effect 的 phase（memory-like operand use/def 非空），InsertSync 为其建 `CompoundInstanceElement` |
-| 主计算域 | `primary_domain` |
-| 每 operand 副作用 | `operand_effects`（从非空 phase effects 派生；scalar 标 read 但不建图） |
-
-> 不保留 `has_sync`：InsertSync 假设 helper 内部自管同步、caller 层只管跨边界。
-
-### 输出/results 边界（MVP 硬约束）
-
-- 输出 tile/tensorview 全走 output operand + operand_effects=write/readwrite。
-- **func.call results MVP 只允许 scalar**（alias handle 后置）。
-- **helper 内禁 `alloc_tile`/`reserve_buffer`/`TAlloc`**；内部 tile 必须来自 caller operand；内部 vreg/mask/scalar 临时不跨边界。
-
-## 4. MVP 边界
-
-- 单主计算域 + 多辅助 pipe；reject cube+vector 混算。
-- **多 phase correctness 必需**，pipe 按 `getPipe()` 推；effects 可空（非空才建 sync 节点），softmax V phase 标 use/def 是 policy。
-- MTE1/2/3/4、PIPE_S 归 phase、不参与 primary_domain 判定（tileop 专用规则，不改全局 `classifyTileOpByPipe`）。
-- 禁 helper-local tile allocation。
-- SIMT-only op 排除。**tileop helper 禁止调用另一 tileop helper**；同域 section 嵌套由后端规范化展开，异域/混合 section 不作为合法用户模型。
-- **负例：tileop 只有 MTE/S/sync 无主计算证据报错。**
-
-## 5. 改动点
-
-### 前端（`_subkernels.py` + `_tracing/session.py`）
-
-1. `_create_subkernel_section_op`：tileop **不预套 section**。
-2. helper 只附 `pto.tileop.helper`；**不写 primary_domain/phases/operand_effects**。
-3. helper 函数类型：输出全走 operand；results 只用于 scalar。
-4. 前端 public boundary 契约：保留 vreg/mask 不外逃；results 限 scalar；**禁 tileop helper 互调**。helper body 内 `alloc_tile/reserve_buffer/TAlloc` 等 helper-local 资源分配由后端 `PTOVerifyTileOpContractPass` 兜底拒绝。
-5. 装饰器无 `kind` 参数；public surface 仅保留 `@pto.tileop` / `@pto.simt`，legacy `@pto.cube` / `@pto.simd` 前端直接报迁移诊断。
-
-### 后端
-
-1. **verifier 改造**：tile op verifier 把带 `pto.tileop.helper` 的 func 当合法上下文；results 限 scalar；**拒绝 alloc_tile/reserve_buffer/TAlloc**；内部 vreg/mask/scalar 临时不跨边界。
-2. **`PTONormalizeUncoveredTileSections` 跳过 tileop**（P0）：`normalizeFunction`/`hasKnownKernelKindContext` 增条件——带 `pto.tileop.helper` 的 func 跳过，避免 preBackendPM:1786 扫到裸 body 混合段报错。
-3. **不把 tileop materialize 合并进 `PTONormalizeUncoveredTileSections`**：NormalizeUncovered 面向普通函数的 top-level uncovered tile segment，不消费 tileop summary；tileop helper 需要先由 `PTOInferTileOpSummaryPass` 推导 primary_domain/phases/effects，再只包主计算 span，并保留 MTE/S/sync 在 section 外。因此 tileop 走 helper-local、summary-driven 的 `PTOMaterializeTileOpSectionsPass`，NormalizeUncovered 只负责跳过 tileop helper，避免早期按普通 segment 规则误判。
-4. **新增 `PTOInferTileOpSummaryPass`**：扫 helper body 推导 primary_domain + phases（pipe 按 `getPipe()`，effects 可空，operand index 指向所有 operand，memory-like 才建图）+ operand_effects（从非空 effects 派生）。tileop 专用 MTE/S 规则，不改全局 `classifyTileOpByPipe`。
-5. **新增 materialize pass**：按 primary_domain+phases 物化 `SectionCubeOp`/`SectionVectorOp`（只包 cube/vector 主段），MTE/S/sync 保持 top-level。**lit case 覆盖两类**：MTE+section.vector+MTE、MTE+section.cube+MTE，验证 `VPTOSplitCVModule`/EmitC/VPTO 接受（注意 `hasSectionKind`:58-83 要求 func 含 section，`eraseSectionSplitCandidatesWithoutSectionKind`:170-175 会擦除无 section 的 candidate）。
-6. **`UpdatePTODSLSubkernelCallInfo` 改造**：读 primary_domain+phases；按**有 boundary effect 的 phase**拆多 `CompoundInstanceElement`（空 effect phase 跳过，scalar operand 不建图）；memory operand 副作用从保守全 R+W 改读 operand_effects；支持 callsite scalar results 进依赖图。
-7. **新增 `PTOVerifyTileOpContractPass`**：校验 body op `getPipe()` ∈ phases pipe 集合、主域 pipe 与 primary_domain 一致、operand_effects == 非空 phases 派生、SIMT-only op 排除、cube+vector 混算 reject、results 限 scalar、tileop helper 无互调、**拒绝 alloc_tile/reserve_buffer/TAlloc**、**负例（只有 MTE/S/sync 无主计算证据报错）**。旧 `PTOVerifySubkernelPipeContractPass` 保留兼容 cube/simd。
-8. 主 pipeline 不再依赖 `PTOWrapFunctionsInSectionsPass` 为 tileop helper 自动套单段；tileop section 形成以 `PTOMaterializeTileOpSectionsPass` 为准。
-9. **`PTOInlineBackendHelpers`**：保证不丢围绕 call 的 sync ops；后续 `VPTOSplitCVModule` 会在单域 VPTO module 内展开同域 section、删除异域 section，避免 section 容器遗留到 VPTO LLVM lowering。
-
-### pass 顺序（实测修正，P0）
-
-```
-前端 trace → verifier(tileop 裸 body)
-→ [preBackendPM] NormalizeUncoveredTileSections (跳过 `pto.tileop.helper`)   ← P0 必须跳过
-→ [main pm] PTOInferTileOpSummaryPass
-→ PTOMaterializeTileOpSectionsPass
-→ PTOVerifyTileOpContractPass
-→ ... → ViewToMemref → PlanMemory → ResolveReservedBuffers →
-   VerifySubkernelPipeContract → InsertSync → ... →
-   MaterializeTileHandles → InlineBackendHelpers
+InsertSync 根据写/读的 pipe 和顺序插入必要同步。
 ```
 
-### 可选后置（非 MVP）
+以下同步不能靠普通 Tile 读写关系可靠推导，必须由用户显式表达：
 
-- helper-local tile allocation 的 callsite clone/inline（放开 result 返回 tile / alloc_tile 等）。
-- alias handle result（放开 result 非 scalar / result_defs 复杂语义）。
-- phases def/use 细到 UB 子区域。
-- 内联 opt pass。
+- 算法规定的阶段边界、流水重叠和事件编号；
+- 对同一 Tile 的刻意并发访问或别名协议；
+- SIMT work-item 之间的 `syncthreads`、thread fence 等线程级同步。
 
-## 6. 当前落地状态
+显式 pipe barrier、flag wait/set 和 SIMT 线程同步会成为 phase graph 的固定边。
+PTOAS 不删除它们；自动同步只补尚未覆盖的普通数据 hazard，且不能再插入等价的
+重复同步。
 
-已落地并与本文主设计一致的部分：
+## 7. TileOp 内的 SIMT 微指令
 
-1. `NormalizeUncoveredTileSections` 已把 tileop helper marker 视为已知上下文并跳过预归一化。
-2. `PTOInferTileOpSummaryPass`、`PTOMaterializeTileOpSectionsPass`、`PTOVerifyTileOpContractPass` 已接入主 pipeline，且都位于 `PlanMemory` 之前。
-3. `UpdatePTODSLSubkernelCallInfo` 已能消费 tileop 摘要，按 phase 建模跨 helper 边界的 InsertSync 依赖；legacy `simd/cube` 兼容路径仍保留保守单-pipe 建模。
-4. tileop helper ABI 已收敛为 Tile/TensorView/PartitionTensorView/PTO scalar；`ptr` 仍为 SIMT-only。
-5. `@pto.tileop` 在 IR 层语义上统一到 tileop helper role，并使用 canonical `pto.tileop.helper` marker；legacy public `@pto.simd` / `@pto.cube` 已前端报错；后端仍兼容 legacy `pto.ptodsl.subkernel_helper = "tileop"`。
-6. inline `with pto.tileop()` 已与 decorated `@pto.tileop` 对齐：前端不再预套 section，统一交后端 `PTOMaterializeTileOpSectionsPass` 物化。
-7. `VPTOSplitCVModule` 已支持已单域化 `pto.kernel_kind` module 的 section rewrite：同域 section 展开，异域 section 删除，避免 tileop inline 后的 section 容器进入 VPTO LLVM lowering。
+tileop 允许直接包含 SIMT 微指令 phase，但这不等于允许调用 `@pto.simt` helper。
+PTOAS 会将可 outline 的连续 SIMT 微指令 span 变成内部实现细节：
 
-## 7. 当前默认 effect 策略
+```text
+tileop 原始 body
+  -> pto.store_vfsimt_info(dim_z, dim_y, dim_x)
+  -> SIMT 微指令 span
 
-`pto.tileop.operand_effects` 对无显式 boundary effect 的 operand 默认记录为
-`"read"`，与当前实现和 verifier 保持一致。
+PTOAS SIMT outline
+  -> 内部 func.func {pto.simt_entry}，capture 仅为 Tile/Scalar
+  -> pto.simt_launch(dim_x, dim_y, dim_z, captures...)
+```
 
-这样做的含义是：如果 helper body 没有明确写某个边界 operand，summary 不凭空为
-它制造 write 依赖。真正读写边界 tile/view 的 op 必须通过 MemoryEffect 和
-boundary value trace 被记录到 phase 的 `operand_uses` / `operand_defs` 中；如果
-真实写入被漏掉，那是 op effect 或 trace 规则缺失，需要补对应 op 的 effect 建模，
-而不是靠默认值掩盖。
+每个 SIMT span 前必须显式出现并支配该 span 的
+`pto.store_vfsimt_info(dim_z, dim_y, dim_x)`。该配置只消费给紧随其后的一个
+SIMT span；缺失、被多个 span 竞争、维度不合法或无法确定配置关联时均报错。显式
+维度避免 PTOAS 从 Tile shape 或循环结构猜测线程布局。
+
+outline 后的 `pto.simt_entry` 只捕获 Tile 和 scalar。SIMT body 内需要的 pointer
+从捕获 Tile 派生，不能被提升为 tileop 的函数参数。用户写出的 `syncthreads` 和
+其他 SIMT 同步原样保留在 entry 中。若一个 SIMT region 无法在保持结构化控制流和
+capture 规则的前提下 outline，PTOAS 必须诊断，而不能退化为普通 Vector 或忽略它。
+
+## 8. Section 物化、MTE 归属和 VPTO split
+
+### 8.1 Section materialization
+
+在同步摘要已经可用后，PTOAS 将每个最大 SIMD phase range 物化为
+`pto.section.vector`，将每个最大 Cube phase range 物化为 `pto.section.cube`。
+同一函数可以生成多个同类或异类 section。MTE、Scalar、SIMT 和同步保持在 section
+外，以便它们保留自己的 pipe 语义。
+
+```text
+MTE -> [section.vector] -> MTE -> [section.cube] -> [section.vector] -> SIMT
+```
+
+materialize pass 必须在嵌套 region 中处理 span，不能把混有 MTE、sync 或另一个
+计算域的整个 `scf.for` / `scf.if` 容器套成一个 Vector 或 Cube section。inline 后
+若出现同域 section 嵌套，由 section normalization 展开；跨域嵌套或无法确定语义的
+布局必须拒绝。
+
+### 8.2 MTE 归属
+
+MTE 本身不等于 Vector 或 Cube。PTOAS 根据 Tile 数据流把 MTE phase 归属到其唯一
+服务的 Vector 或 Cube 计算模块：例如 MTE 将数据搬到只被 Cube phase 消费的 Tile，
+该 MTE 归 Cube；计算结果经 MTE 写回且唯一来自 Vector phase，则归 Vector。
+
+一个 MTE phase 若同时服务两个计算域、数据流不足以确定归属，或其 Tile alias 使
+归属不唯一，必须报错。用户需要将数据移动拆开、使用独立 Tile，或写出能够消除
+歧义的算法结构；PTOAS 不能把同一条 MTE 指令复制到两个模块。
+
+### 8.3 `VPTOSplitCVModule` 与 `kernel_kind`
+
+`VPTOSplitCVModule` 以 section 和 MTE 归属为输入生成 Vector/Cube 模块。它必须：
+
+- 支持一个函数中的多个 Vector 和 Cube section；
+- 在 Vector clone 中保留全部 Vector section、归属 Vector 的 MTE，以及生成的
+  SIMT entry/launch；
+- 在 Cube clone 中保留全部 Cube section 和归属 Cube 的 MTE；
+- 只在 split clone 中删除另一域的内容，不能在用户显式要求单一 `kernel_kind`
+  的模块中静默删除相反域的 phase。
+
+`pto.kernel_kind` 是 PTOAS 在模块分拆和 VPTO lowering 时使用的模块语义标记。
+它不是 `@pto.tileop` 的源级参数，也不能代替 phase 分析。显式单 kind 模块若仍含
+不属于该 kind 的 phase，应当诊断；否则错误会被隐藏到更晚的 lowering。
+
+## 9. 验证规则和预期诊断
+
+PTOAS 的 tileop contract verifier 至少应拒绝以下情况：
+
+- 非 Tile/Scalar ABI，或非 scalar function result；
+- 高层 TileOps、callee-local Tile allocation、tileop/helper 调用；
+- SIMT span 前没有唯一且有效的 `store_vfsimt_info`；
+- SIMT outline 需要捕获 ptr、vreg、mask 或 pipe handle；
+- 无法追溯到 Tile 参数的边界 memory effect；
+- 无法唯一归属到 Vector/Cube 的 MTE phase；
+- 无法物化的跨域/混合 section 结构；
+- 显式单 kind 模块中存在相反计算域的 phase。
+
+诊断应指出 helper、phase 和相关 Tile 参数，而不是只在最终 VPTO 或 LLVM lowering
+阶段报告“非法 section”。
+
+## 10. 当前实现差异和迁移计划
+
+| 项目 | 当前实现 | 目标设计 |
+|---|---|---|
+| tileop ABI | Tile、TensorView、PartitionTensorView、scalar | 仅 Tile、scalar |
+| 计算域 | 单一 `primary_domain` | 多 pipe、多 phase、无 primary domain |
+| SIMD/Cube | 只允许一个主计算域和主 span | 可有多个 Vector/Cube section 并交错 |
+| SIMT | tileop body 禁止 SIMT-only op | 允许直接写 SIMT 微指令并自动 outline |
+| 摘要 | phase + effect，服务单主域模型 | phase graph + Tile effect + MTE owner |
+| section | 只物化单个主计算 span | 物化所有最大 SIMD/Cube span |
+| split | 依赖单域化 section 形态 | 处理多 section、MTE owner 和 SIMT entry |
+| 同步 | 已开始按 phase 建 callsite 节点 | 覆盖多 phase body、跨 call Tile hazard 与显式边 |
+
+独立 `@pto.simt` 的 ptr ABI、launch syntax 和使用场景保持不变；本 redesign 仅修改
+`@pto.tileop` 的 ABI 及其 body 中的 SIMT 微指令处理方式。
+
+迁移按以下顺序进行：
+
+1. 收紧 PTODSL `@pto.tileop` ABI 到 Tile/Scalar，并补齐前端和后端负例；
+2. 让 tracing 只产生 raw tileop body，不写 `primary_domain` 或预套 section；
+3. 将 phase summary 扩展为无主域的多 phase graph，并完成 Tile 派生值追溯；
+4. 让 `InsertSync` 消费该 graph，先保证普通 Tile data hazard 和显式同步共存；
+5. 实现 tileop 内 SIMT span 的 launch 配置验证与 outline；
+6. 改造 section materialization、MTE ownership 和 `VPTOSplitCVModule`；
+7. 完成 VPTO/LLVM lowering 回归后，删除旧的单主域 tileop 路径和兼容属性。
+
+## 11. 回归测试
+
+目标实现至少需要以下覆盖：
+
+- Tile/Scalar ABI 正例，以及 TensorView、ptr、memref、vreg、mask 和非 scalar
+  result 的负例；
+- MTE+SIMD、MTE+Cube+SIMD、重复同域 section、控制流内 section；
+- Tile slice、address cast 和 `scf` iter_arg 派生值的 effect 追溯；
+- helper 内和跨 helper call 的自动 data-hazard sync，用户显式 barrier 保留且不重复；
+- tileop 内 SIMT 微指令、合法 launch 配置、线程同步、缺失配置和非法 capture；
+- MTE owner 推导成功、歧义 owner 诊断；
+- 多 section Vector/Cube split、SIMT 位于 Vector 侧、显式单 kind 冲突诊断；
+- 最终 VPTO 和 LLVM lowering 的端到端编译回归。
