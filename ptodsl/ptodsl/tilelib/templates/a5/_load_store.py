@@ -219,24 +219,28 @@ def tstore_nz_constraint(src_kind, src_shape, src_valid_shape, src_memory_space,
     )
 
 
-def tload_mat_nd2nz_constraint(src_kind, src_shape, src_memory_space, dst_kind, dst_valid_shape, dst_memory_space, dst_config, dst_dtype, **_):
+def tload_mat_nd2nz_constraint(src_kind, src_shape, src_memory_space, dst_kind, dst_shape, dst_memory_space, dst_config, dst_dtype, **_):
     if src_kind != "view" or dst_kind != "tile" or src_memory_space != "gm" or dst_memory_space != "mat":
         return False
     if dst_config.b_layout != "col_major" or dst_config.s_layout != "row_major":
         return False
     if dst_dtype not in {"f16", "bf16", "f32"}:
         return False
-    return _view_rank(src_shape) != 5 or _known_eq(src_shape[4], dst_valid_shape[1])
+    if _view_rank(src_shape) != 5:
+        return False
+    return _known_eq(src_shape[4], dst_shape[1])
 
 
-def tload_mat_dn2nz_constraint(src_kind, src_shape, src_memory_space, dst_kind, dst_valid_shape, dst_memory_space, dst_config, dst_dtype, **_):
+def tload_mat_dn2nz_constraint(src_kind, src_shape, src_memory_space, dst_kind, dst_shape, dst_memory_space, dst_config, dst_dtype, **_):
     if src_kind != "view" or dst_kind != "tile" or src_memory_space != "gm" or dst_memory_space != "mat":
         return False
     if dst_config.b_layout != "col_major" or dst_config.s_layout != "row_major":
         return False
     if dst_dtype not in {"f16", "bf16", "f32"}:
         return False
-    return _view_rank(src_shape) != 5 or _known_eq(src_shape[4], dst_valid_shape[0])
+    if _view_rank(src_shape) != 5:
+        return False
+    return _known_eq(src_shape[4], dst_shape[0])
 
 
 def tstore_acc_base(src_kind, src_memory_space, src_dtype, dst_kind, dst_memory_space, **_):

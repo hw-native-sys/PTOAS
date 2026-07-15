@@ -206,13 +206,17 @@ def template_tstore_nz(src: pto.Tile, dst: pto.PartitionTensorView):
 )
 def template_tstore_acc_to_gm_nz2nd(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
+    strides = dst.strides
+    src_stride = src.shape[0]
+    dst_stride = n if strides is None or strides[3] is None else strides[3]
+
     pto.mte_l0c_gm(
         src.as_ptr(),
         dst.as_ptr(),
         m,
         n,
-        n,
-        n,
+        src_stride,
+        dst_stride,
         0,
         0,
         layout="nz2nd",
@@ -236,16 +240,21 @@ def template_tstore_acc_to_gm_nz2nd(src: pto.Tile, dst: pto.PartitionTensorView)
 )
 def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
+    strides = dst.strides
+    src_stride = src.shape[0]
+    dst_stride = m if strides is None or strides[4] is None else strides[4]
+    loop0_src_stride = 1
+
     pto.mte_l0c_gm(
         src.as_ptr(),
         dst.as_ptr(),
         m,
         n,
-        n,
-        m,
+        src_stride,
+        dst_stride,
         0,
         0,
-        layout=("nz2dn", 1),
+        layout=("nz2dn", loop0_src_stride),
     )
 
 
@@ -266,13 +275,16 @@ def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView)
 )
 def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
+    src_stride = src.shape[0]
+    dst_stride = n
+
     pto.mte_l0c_gm(
         src.as_ptr(),
         dst.as_ptr(),
         m,
         n,
-        n,
-        n,
+        src_stride,
+        dst_stride,
         0,
         0,
         layout=("nz2nz", 1),
@@ -295,14 +307,18 @@ def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView)
 )
 def template_tstore_fp_acc_to_gm(src: pto.Tile, fp: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
+    strides = dst.strides
     quant_mode = "qf322bf16_pre_vec" if str(fp.dtype) == "bf16" else "qf322f16_pre_vec"
+    src_stride = src.shape[0]
+    dst_stride = n if strides is None or strides[3] is None else strides[3]
+
     pto.mte_l0c_gm(
         src.as_ptr(),
         dst.as_ptr(),
         m,
         n,
-        n,
-        n,
+        src_stride,
+        dst_stride,
         0,
         0,
         layout="nz2nd",
