@@ -510,6 +510,9 @@ static void appendOpContextAttrs(
           "mask_pattern",
           stringifyMaskPattern(maskPatternAttr.getValue()).str());
     }
+    if (auto axisAttr = tgather.getAxisAttr()) {
+      attrs.emplace_back("axis_value", axisAttr.getValue().str());
+    }
   }
   if (auto ttri = dyn_cast<pto::TTriOp>(op)) {
     attrs.emplace_back("upper_or_lower", std::to_string(ttri.getUpperOrLower()));

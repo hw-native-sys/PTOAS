@@ -7474,7 +7474,7 @@ pto.tconcatidx ins(%src0, %src1, %idx0, %idx1 :
 
 **Summary:** Gathers elements from a source tile using one of three PTO-ISA-compatible forms:
 
-- index gather: `src + indices + tmp -> dst`
+- index gather: `src + indices[+ tmp] -> dst`
 - compare gather: `src + kValue + tmp -> dst + cdst`
 - mask-pattern gather: `src + maskPattern -> dst`
 
@@ -7500,7 +7500,7 @@ Mask form:
 | `dst` | `pto.tile_buf` | Main destination tile |
 | `cdst` | `Optional<pto.tile_buf>` | Secondary destination tile used only by compare form |
 | `indices` | `Optional<pto.tile_buf>` | Index tile used only by index form |
-| `tmp` | `Optional<pto.tile_buf>` | Temporary tile used by index form and compare form |
+| `tmp` | `Optional<pto.tile_buf>` | Temporary tile used by compare form; optionally used by index form on A2/A3 (required), A5 (optional) |
 | `kValue` | `Optional<scalar>` | Scalar compare value used only by compare form |
 | `maskPattern` | `Optional<MaskPatternAttr>` | Mask pattern used only by mask form |
 | `cmpMode` | `Optional<CmpModeAttr>` | Compare mode used only by compare form; defaults to `eq` when omitted |
@@ -7534,18 +7534,18 @@ pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>} : !pto.tile_buf<.
 **Constraints & Verification:**
 
 - Exactly one of the following forms must be used:
-  - index form: `indices` and `tmp`
+  - index form: `indices` (A5: `tmp` is optional; A2/A3: `tmp` is required)
   - compare form: `kValue`, `tmp`, and `cdst`
   - mask form: `maskPattern`
 - **Index gather: implementation checks (A2/A3)**:
   - `src` and `dst` element types must match and be one of `i16/i32/f16/f32`.
   - `indices` element type must be `i32`.
-  - `tmp` element type must match `indices`.
+  - `tmp` is required; `tmp` element type must match `indices`.
   - `indices` and `tmp` must have the same valid shape.
 - **Index gather: implementation checks (A5)**:
   - `src` and `dst` element types must match and be one of `i8/i16/i32/f16/f32`, or a target-supported fp8 type (`f8E4M3*`/`f8E5M2*`).
   - `indices` element type must be `i16` or `i32`.
-  - PTO IR does not impose an extra tmp shape or valid-shape relation in the A5 index form.
+  - `tmp` is optional; PTO IR does not impose an extra tmp shape or valid-shape relation in the A5 index form.
 - **Compare gather: implementation checks (A2/A3)**:
   - `dst` element type must be `i32`.
   - `src` element type must be `f16/f32`, or `i32` when `cmpMode=eq`.

@@ -232,20 +232,22 @@ When the hardware format requires scratch storage, pass `tmp`.
 block length. Multi-list forms can pass `src`/`dst` sequences together with
 `tmp` and `excuted`.
 
-#### `pto.tile.gather(src: Tile, dst: Tile, *, mask_pattern: str | None = None, indices: Tile | None = None, tmp: Tile | None = None, cdst: Tile | None = None, k_value: ScalarType | None = None, cmp_mode: CmpMode | str | None = None, offset: int | None = None) -> None`
+#### `pto.tile.gather(src: Tile, dst: Tile, *, mask_pattern: str | None = None, axis: str | None = None, indices: Tile | None = None, tmp: Tile | None = None, cdst: Tile | None = None, k_value: ScalarType | None = None, cmp_mode: CmpMode | str | None = None, offset: int | None = None) -> None`
 
 **Description**: Gathers/selects tile elements. For TopK extraction from an
 interleaved `(score, index)` sort buffer, use `mask_pattern="P0101"` for score
 slots and `mask_pattern="P1010"` for index slots. Supported tile mask patterns
 are `P0101`, `P1010`, `P0001`, `P0010`, `P0100`, `P1000`, and `P1111`.
+When using `mask_pattern`, `axis` must be specified as `"row"` or `"col"` to
+indicate the direction of mask expansion.
 
 **Example**:
 
 ```python
 pto.tile.sort32(src_tile, index_tile, sort_tile)
 pto.tile.mrgsort(sort_tile, tmp_sort_tile, pto.const(64, dtype=pto.i32))
-pto.tile.gather(tmp_sort_tile, top_scores, mask_pattern="P0101")
-pto.tile.gather(tmp_sort_tile, top_indices, mask_pattern="P1010")
+pto.tile.gather(tmp_sort_tile, top_scores, mask_pattern="P0101", axis="row")
+pto.tile.gather(tmp_sort_tile, top_indices, mask_pattern="P1010", axis="row")
 ```
 
 #### `pto.tile.gatherb(src: Tile, offsets: Tile, dst: Tile) -> None`

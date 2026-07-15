@@ -16,8 +16,8 @@ argument.  For each input row, the kernel runs:
   1. ``pto.tile.sort32`` to sort 32-column blocks and produce interleaved
      ``(score_f32, idx_u32)`` records.
   2. ``pto.tile.mrgsort`` to merge those records into descending score order.
-  3. ``pto.tile.gather(..., mask_pattern="P0101")`` to extract top-K scores.
-  4. ``pto.tile.gather(..., mask_pattern="P1010")`` to extract top-K indices.
+  3. ``pto.tile.gather(..., mask_pattern="P0101", axis="row")`` to extract top-K scores.
+  4. ``pto.tile.gather(..., mask_pattern="P1010", axis="row")`` to extract top-K indices.
 
 The valid TopK shape here is the smallest old-DSL shape:
 ``N_COLS=128`` and ``TOPK=64``.  It exercises one merge pass because
@@ -134,10 +134,10 @@ def topk_c128_k64(
         pto.tile.mov(sort_tmp, sort_tile)
 
         pto.tile.mov(sort_tile, gather_win_f32)
-        pto.tile.gather(gather_win_f32, top_scores, mask_pattern="P0101")
+        pto.tile.gather(gather_win_f32, top_scores, mask_pattern="P0101", axis="row")
 
         pto.tile.mov(sort_tile, gather_win_u32)
-        pto.tile.gather(gather_win_u32, top_indices, mask_pattern="P1010")
+        pto.tile.gather(gather_win_u32, top_indices, mask_pattern="P1010", axis="row")
 
         pto.tile.store(top_scores, scores_part)
         pto.tile.store(top_indices, indices_part)

@@ -3704,10 +3704,17 @@ def tgather(
     tmp=None,
     k_value=None,
     mask_pattern=None,
+    axis=None,
     cmp_mode=None,
     offset=None,
 ):
     """``pto.tgather`` tile gather/select wrapper."""
+    if indices is not None and (axis is not None or mask_pattern is not None):
+        raise ValueError("indices and axis/mask_pattern cannot be provided together")
+    if mask_pattern is not None and axis is None:
+        raise ValueError("axis must be provided when mask_pattern is specified")
+    if axis is not None and axis not in ("row", "col"):
+        raise ValueError(f"axis must be 'row' or 'col', got {axis!r}")
     _pto.tgather(
         unwrap_surface_value(src),
         unwrap_surface_value(dst),
@@ -3716,6 +3723,7 @@ def tgather(
         tmp=None if tmp is None else unwrap_surface_value(tmp),
         k_value=None if k_value is None else unwrap_surface_value(k_value),
         mask_pattern=None if mask_pattern is None else _tile_mask_pattern_attr(mask_pattern),
+        axis=None if axis is None else axis,
         cmp_mode=None if cmp_mode is None else _normalize_cmp_mode(cmp_mode),
         offset=offset,
     )

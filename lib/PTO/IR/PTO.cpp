@@ -851,7 +851,18 @@ ParseResult mlir::pto::TGatherOp::parse(OpAsmParser &parser, OperationState &res
     result.addAttribute("maskPattern", mp);
     hasMask = true;
 
-    if (parser.parseColonType(srcTy) || parser.parseRParen())
+    if (parser.parseColonType(srcTy))
+      return failure();
+    if (succeeded(parser.parseOptionalComma())) {
+      StringAttr axisAttr;
+      if (parser.parseAttribute(axisAttr))
+        return failure();
+      if (axisAttr.getValue() != "row" && axisAttr.getValue() != "col")
+        return parser.emitError(parser.getCurrentLocation(),
+                                "axis must be \"row\" or \"col\"");
+      result.addAttribute("axis", axisAttr);
+    }
+    if (parser.parseRParen())
       return failure();
   } else {
     OpAsmParser::UnresolvedOperand extra;
@@ -983,6 +994,8 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
   p << " ins(" << getSrc() << ", ";
   if (auto mp = getMaskPatternAttr()) {
     p << "{maskPattern = " << mp << "} : " << getSrc().getType();
+    if (auto axisAttr = getAxisAttr())
+      p << ", " << axisAttr;
   } else if (getCdst()) {
     p << getKValue();
     if (getTmp()) {
@@ -1012,10 +1025,10 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
 
   if (getMaskPatternAttr()) {
     p.printOptionalAttrDict((*this)->getAttrs(),
-                            /*elidedAttrs=*/{"maskPattern", "operandSegmentSizes"});
+                            /*elidedAttrs=*/{"maskPattern", "axis", "operandSegmentSizes"});
   } else {
     p.printOptionalAttrDict((*this)->getAttrs(),
-                            /*elidedAttrs=*/{"operandSegmentSizes"});
+                            /*elidedAttrs=*/{"axis", "operandSegmentSizes"});
   }
 }
 
@@ -7459,6 +7472,46 @@ llvm::LogicalResult mlir::pto::TGatherOp::verify() {
       return emitOpError("expects dst valid_shape[1] to equal dst cols");
     }
 
+    auto axisAttr = getAxisAttr();
+    if (!axisAttr)
+      return emitOpError("expects mask-pattern tgather to provide axis attribute");
+    StringRef axisVal = axisAttr.getValue();
+    auto mp = getMaskPatternAttr();
+    if (!mp)
+      return emitOpError("expects mask-pattern tgather to provide maskPattern");
+    auto getMaskGatherTimes = [](mlir::pto::MaskPatternAttr mp) -> unsigned {
+      switch (mp.getValue()) {
+      case mlir::pto::MaskPattern::P1111:
+        return 1;
+      case mlir::pto::MaskPattern::P0101:
+      case mlir::pto::MaskPattern::P1010:
+        return 2;
+      default:
+        return 4;
+      }
+    };
+    const unsigned times = getMaskGatherTimes(mp);
+    auto srcValid = getValidShapeVec(srcTy);
+    if (srcValid.size() != 2 || dstValid.size() != 2)
+      return emitOpError("expects src and dst to have rank-2 valid_shape");
+    if (axisVal == "row") {
+      if (srcValid[0] != ShapedType::kDynamic && dstValid[0] != ShapedType::kDynamic &&
+          dstValid[0] != srcValid[0])
+        return emitOpError("expects dst valid rows to equal src valid rows for row direction");
+      if (srcValid[1] != ShapedType::kDynamic && dstValid[1] != ShapedType::kDynamic &&
+          srcValid[1] != static_cast<int64_t>(dstValid[1] * times))
+        return emitOpError("expects src valid cols to equal dst valid cols times the mask expansion factor for row direction");
+    } else if (axisVal == "col") {
+      if (srcValid[1] != ShapedType::kDynamic && dstValid[1] != ShapedType::kDynamic &&
+          dstValid[1] != srcValid[1])
+        return emitOpError("expects dst valid cols to equal src valid cols for col direction");
+      if (srcValid[0] != ShapedType::kDynamic && dstValid[0] != ShapedType::kDynamic &&
+          srcValid[0] != static_cast<int64_t>(dstValid[0] * times))
+        return emitOpError("expects src valid rows to equal dst valid rows times the mask expansion factor for col direction");
+    } else {
+      return emitOpError("Invalid axis value, expected \"row\" or \"col\"");
+    }
+
     if (allowA5MaskTypes) {
       if (!(srcElemBytes == 1 || srcElemBytes == 2 || srcElemBytes == 4))
         return emitOpError("expects A5 mask-pattern gather element size to be 1, 2, or 4 bytes");
@@ -7476,12 +7529,15 @@ llvm::LogicalResult mlir::pto::TGatherOp::verify() {
     Type srcTy = getSrc().getType();
     Type dstTy = getDst().getType();
     Type idxTy = getIndices().getType();
-    Type tmpTy = getTmp().getType();
     if (failed(verifyTileBufCommon(*this, srcTy, "src", allowA5ElemTypes)) ||
         failed(verifyTileBufCommon(*this, dstTy, "dst", allowA5ElemTypes)) ||
-        failed(verifyTileBufCommon(*this, idxTy, "indices")) ||
-        failed(verifyTileBufCommon(*this, tmpTy, "tmp")))
+        failed(verifyTileBufCommon(*this, idxTy, "indices")))
       return failure();
+    if (getTmp()) {
+      Type tmpTy = getTmp().getType();
+      if (failed(verifyTileBufCommon(*this, tmpTy, "tmp")))
+        return failure();
+    }
 
     Type srcElem = getElemTy(srcTy);
     Type dstElem = getElemTy(dstTy);
@@ -7525,10 +7581,10 @@ llvm::LogicalResult mlir::pto::TGatherOp::verify() {
     }
 
     if (!allowA5ElemTypes) {
-      Type tmpElem = getElemTy(tmpTy);
+      Type tmpElem = getElemTy(getTmp().getType());
       if (tmpElem != idxElem)
         return emitOpError("expects tmp and indices to have the same element type");
-      if (failed(verifyTileBufSameValidShape(*this, idxTy, tmpTy, "indices", "tmp")))
+      if (failed(verifyTileBufSameValidShape(*this, idxTy, getTmp().getType(), "indices", "tmp")))
         return failure();
     }
     return success();
@@ -7591,6 +7647,8 @@ llvm::LogicalResult mlir::pto::TGatherOp::verify() {
         return emitOpError("mask-pattern tgather only allows src and dst operands");
       return verifyMaskForm(/*allowA5MaskTypes=*/false);
     }
+    if (getAxisAttr())
+      return emitOpError("axis attribute must not be provided without maskPattern");
     if (getCdst() || getKValue()) {
       if (!getCdst() || !getKValue() || !getTmp())
         return emitOpError("compare-form tgather expects dst, cdst, kValue, and tmp");
@@ -7609,6 +7667,8 @@ llvm::LogicalResult mlir::pto::TGatherOp::verify() {
         return emitOpError("mask-pattern tgather only allows src and dst operands");
       return verifyMaskForm(/*allowA5MaskTypes=*/true);
     }
+    if (getAxisAttr())
+      return emitOpError("axis attribute must not be provided without maskPattern");
     if (getCdst() || getKValue()) {
       if (!getCdst() || !getKValue() || !getTmp())
         return emitOpError("compare-form tgather expects dst, cdst, kValue, and tmp");
@@ -7616,8 +7676,8 @@ llvm::LogicalResult mlir::pto::TGatherOp::verify() {
         return emitOpError("compare-form tgather does not take indices");
       return verifyCompareForm(/*allowA5SrcTypes=*/true);
     }
-    if (!getIndices() || !getTmp())
-      return emitOpError("index-form tgather expects both indices and tmp");
+    if (!getIndices())
+      return emitOpError("index-form tgather expects indices");
     return verifyIndexForm(/*allow16BitIndices=*/true, /*allowA5ElemTypes=*/true);
   };
 

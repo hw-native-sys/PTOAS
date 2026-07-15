@@ -109,8 +109,8 @@ def fast_hadamard_f16(
         pto.tile.load(row_part, row_tile)
 
         for _ in range(0, log2_n_i32, 1):
-            pto.tile.gather(row_tile, even_tile, mask_pattern="P0101")
-            pto.tile.gather(row_tile, odd_tile, mask_pattern="P1010")
+            pto.tile.gather(row_tile, even_tile, mask_pattern="P0101", axis="row")
+            pto.tile.gather(row_tile, odd_tile, mask_pattern="P1010", axis="row")
             pto.tile.add(even_tile, odd_tile, plus_tile)
             pto.tile.sub(even_tile, odd_tile, minus_tile)
             pto.tile.store(plus_tile, plus_part)

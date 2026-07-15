@@ -4,7 +4,7 @@ module {
   func.func @tgather_low_precision_a5_emitc() {
     %src_mask = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst_mask = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tgather ins(%src_mask, {maskPattern = #pto.mask_pattern<P1111>} : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tgather ins(%src_mask, {maskPattern = #pto.mask_pattern<P1111>} : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, "row")
                 outs(%dst_mask : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 
     %src_idx = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E5M2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>

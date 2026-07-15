@@ -10032,15 +10032,17 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
       return rewriter.notifyMatchFailure(op, (name + " must be emitc::OpaqueType (tile)").str());
     };
 
-    // Case 1: index-based TGATHER(dst, src0, indices, tmp)
+    // Case 1: index-based TGATHER(dst, src0, indices[, tmp])
     if (Value idx = adaptor.getIndices()) {
       idx = peelUnrealized(idx);
-      Value tmp = peelUnrealized(adaptor.getTmp());
+      SmallVector<Value, 4> operands{dst, src0, idx};
+      if (Value tmp = adaptor.getTmp())
+        operands.push_back(peelUnrealized(tmp));
 
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TGATHER",
           /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-          /*operands=*/ValueRange{dst, src0, idx, tmp});
+          /*operands=*/operands);
 
       rewriter.eraseOp(op);
       return success();

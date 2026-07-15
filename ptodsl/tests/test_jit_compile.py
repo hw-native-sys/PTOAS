@@ -605,8 +605,8 @@ def tile_sort_gather_surface_probe():
 
     pto.tile.sort32(src, idx, sort)
     pto.tile.mrgsort(sort, tmp, pto.const(64, dtype=pto.i32))
-    pto.tile.gather(tmp, gather_scores, mask_pattern="P0101")
-    pto.tgather(tmp, gather_indices, mask_pattern="P1010")
+    pto.tile.gather(tmp, gather_scores, mask_pattern="P0101", axis="row")
+    pto.tgather(tmp, gather_indices, mask_pattern="P1010", axis="row")
 
 
 @pto.jit(target="a5")

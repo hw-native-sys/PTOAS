@@ -4867,6 +4867,7 @@ def TGatherOp : PTO_TOp<"tgather", [
     Optional<PTODpsType>:$tmp,
     Optional<ScalarType>:$kValue,
     OptionalAttr<PTO_MaskPatternAttr>:$maskPattern,
+    OptionalAttr<StrAttr>:$axis,
     OptionalAttr<PTO_CmpModeAttr>:$cmpMode,
     OptionalAttr<I32Attr>:$offset
   );
@@ -4880,6 +4881,7 @@ def TGatherOp : PTO_TOp<"tgather", [
     bool hasCompareForm() { return static_cast<bool>(getCdst()) || static_cast<bool>(getKValue()); }
     bool hasIndexForm() { return static_cast<bool>(getIndices()); }
     bool hasMaskForm() { return static_cast<bool>(getMaskPatternAttr()); }
+    bool hasAxis() { return static_cast<bool>(getAxisAttr()); }
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
     ::mlir::MutableOperandRange getDpsInitsMutable() {
       return ::mlir::MutableOperandRange(getOperation(), 1, 1 + (getCdst() ? 1 : 0));
