@@ -16,36 +16,9 @@
 
 #include "mlir/IR/Dialect.h"
 
-namespace mlir {
-namespace pto {
+static_assert(sizeof(::mlir::Dialect) > 0,
+              "PTODialect.h.inc requires a complete mlir::Dialect definition");
 
-class PTODialect : public ::mlir::Dialect {
-  explicit PTODialect(::mlir::MLIRContext *context);
-
-  void initialize();
-  friend class ::mlir::MLIRContext;
-
-public:
-  ~PTODialect() override;
-  static constexpr ::llvm::StringLiteral getDialectNamespace() {
-    return ::llvm::StringLiteral("pto");
-  }
-
-  ::mlir::Attribute parseAttribute(::mlir::DialectAsmParser &parser,
-                                   ::mlir::Type type) const override;
-
-  void printAttribute(::mlir::Attribute attr,
-                      ::mlir::DialectAsmPrinter &printer) const override;
-
-  ::mlir::Type parseType(::mlir::DialectAsmParser &parser) const override;
-
-  void printType(::mlir::Type type,
-                 ::mlir::DialectAsmPrinter &printer) const override;
-};
-
-} // namespace pto
-} // namespace mlir
-
-MLIR_DECLARE_EXPLICIT_TYPE_ID(::mlir::pto::PTODialect)
+#include "PTO/IR/PTODialect.h.inc"
 
 #endif // MLIR_DIALECT_PTO_IR_PTODIALECT_H
