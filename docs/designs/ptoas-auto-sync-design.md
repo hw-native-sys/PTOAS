@@ -88,10 +88,12 @@
 | `scope` | `pto::AddressSpace` | 地址空间（GM/MAT/VEC/ACC/LEFT/RIGHT 等） |
 | `baseAddresses` | `SmallVector<uint64_t>` | 已知的偏移列表，配合 `allocateSize` 做精确区间重叠 |
 | `allocateSize` | `uint64_t` | 字节大小 |
+| `hasKnownPhysicalAddresses` | `bool` | `baseAddresses` 是否为已知 absolute 本地物理地址 |
+| `aliasesUnknownRange` | `bool` | 地址值或范围未知时，是否必须保守 alias 同地址空间内的任意缓冲区 |
 
-`operator==`（第 111 行）要求 `baseAddresses`、`rootBuffer`、`scope`、
-`allocateSize`、`baseBuffer` 全部相等才算同一缓冲；这是别名分析里的「严格相等」
-判定，命中后可直接走依赖路径。
+`operator==` 要求 `baseAddresses`、`rootBuffer`、`scope`、
+`allocateSize`、`baseBuffer` 和两个地址状态字段全部相等才算同一缓冲；
+这是别名分析里的「严格相等」判定，命中后可直接走依赖路径。
 
 ### 3.4 同步指令：`SyncOperation`
 
@@ -381,8 +383,12 @@ hazard 判定按三类关系展开：
 
 1. `scope` 不同，直接不别名。
 2. `GM` 先比较 root，必要时追踪 `realRoot`。
-3. 地址和大小都已知，就做区间重叠。
-4. 信息缺失（地址未知、size 未知），保守按“可能重叠”。
+3. 任一侧设置 `aliasesUnknownRange` 时，保守按“可能重叠”。
+4. 两侧都是已知 absolute 本地物理地址时，即使 allocation SSA root 不同，
+   也按半开字节区间 `[base, base + size)` 判断重叠；区间端点相接不算 alias。
+5. 其余 root-relative 地址保持原有 root/view 链分析；不同 root 下相同的相对
+   offset（例如 level-2 规划前的 `baseAddresses={0}`）不会被误当作同一物理地址。
+6. size 未知，或 absolute view offset / 区间端点计算溢出时，保守按“可能重叠”。
 
 这套规则在信息不足时会偏保守，但不会牺牲正确性。后续会继续补强动态 shape/offset 场景下的精细分析。
 

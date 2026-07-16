@@ -15,6 +15,8 @@
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/Support/Debug.h"
+
+#include <limits>
  
 #define DEBUG_TYPE "pto-inject-sync"
  
@@ -299,6 +301,14 @@ bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
                                               int bIndex) {
   uint64_t aStart = a->baseAddresses[aIndex];
   uint64_t bStart = b->baseAddresses[bIndex];
+
+  // Invalid/overflowing half-open ranges are not safe to classify as
+  // disjoint. Conservatively report overlap if either end cannot be
+  // represented.
+  if (a->allocateSize > std::numeric_limits<uint64_t>::max() - aStart ||
+      b->allocateSize > std::numeric_limits<uint64_t>::max() - bStart)
+    return true;
+
   uint64_t aEnd = aStart + a->allocateSize;
   uint64_t bEnd = bStart + b->allocateSize;
  

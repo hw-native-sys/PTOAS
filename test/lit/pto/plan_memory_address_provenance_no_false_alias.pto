@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Address-less level-2 allocations start as root-relative offsets. They must
+// not all alias merely because their pre-planning baseAddresses are zero.
+// PlanMemory assigns disjoint physical ranges here, and InsertSync must not add
+// a spurious PIPE_V -> PIPE_MTE2 dependency between the first TMULS and the
+// unrelated second TLOAD.
+//
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --check-prefix=SYNC
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @plan_memory_address_provenance_no_false_alias(
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %one = arith.constant 1.000000e+00 : f32
+
+    %assembled = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vector_out = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %index_row = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
+              outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
+              outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    // Keep the assembled tile live across the index load so PlanMemory cannot
+    // legally reuse its physical range for index_row.
+    pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// SYNC-LABEL: AICORE void plan_memory_address_provenance_no_false_alias(
+// SYNC:      TMULS(
+// SYNC-NOT:  set_flag(PIPE_V, PIPE_MTE2
+// SYNC:      TLOAD(

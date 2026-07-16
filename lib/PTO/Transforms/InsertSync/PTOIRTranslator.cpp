@@ -24,6 +24,7 @@
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include <limits>
 #include <optional>
 
 #define DEBUG_TYPE "pto-ir-translator"
@@ -125,6 +126,19 @@ static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
   if (!getConstIndexValue(value, address) || address < 0)
     return std::nullopt;
   return static_cast<uint64_t>(address);
+}
+
+static std::optional<uint64_t> addByteOffset(uint64_t base, uint64_t offset) {
+  if (offset > std::numeric_limits<uint64_t>::max() - base)
+    return std::nullopt;
+  return base + offset;
+}
+
+static void markAddressRangeUnknown(BaseMemInfo &info) {
+  info.baseAddresses.clear();
+  info.allocateSize = 0;
+  info.hasKnownPhysicalAddresses = false;
+  info.aliasesUnknownRange = true;
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {
@@ -430,9 +444,13 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   }
 
   // 3. 注册 Buffer 信息
+  bool hasKnownPhysicalAddress =
+      knownPhysicalAddress.has_value() && isLocalAddressSpace(space);
+  bool aliasesUnknownRange =
+      op.getAddr() && isLocalAddressSpace(space) && !knownPhysicalAddress;
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       res, res, space, SmallVector<uint64_t>{baseAddr}, sizeInBytes,
-      knownPhysicalAddress.has_value() && isLocalAddressSpace(space));
+      hasKnownPhysicalAddress, aliasesUnknownRange);
 
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
@@ -951,8 +969,20 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     SmallVector<uint64_t> addresses;
     addresses.reserve(subViewAddresses->size());
     uint64_t parentBase = parentInfo->baseAddresses[0];
-    for (uint64_t offset : *subViewAddresses)
-      addresses.push_back(parentBase + offset);
+    bool overflowed = false;
+    for (uint64_t offset : *subViewAddresses) {
+      std::optional<uint64_t> address = addByteOffset(parentBase, offset);
+      if (!address) {
+        overflowed = true;
+        break;
+      }
+      addresses.push_back(*address);
+    }
+    if (overflowed) {
+      markAddressRangeUnknown(*newInfo);
+      resultMemInfoVec.emplace_back(std::move(newInfo));
+      continue;
+    }
     newInfo->baseAddresses = std::move(addresses);
     newInfo->allocateSize = segmentSize;
     resultMemInfoVec.emplace_back(std::move(newInfo));

@@ -321,6 +321,16 @@ def GetTensorViewStrideOp : PTO_Op<"get_tensor_view_stride", [Pure]> {
 
 def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
   let summary = "Allocates a tile buffer (logical buffer).";
+  let description = [{
+    Without `addr`, this op declares a logical local allocation whose physical
+    address is selected by PTOAS memory planning.
+
+    Under `--pto-level=level3`, `addr` is required and denotes an absolute byte
+    address in the tile's local address space. Synchronization analysis compares
+    constant absolute ranges across distinct allocation SSA roots. If an
+    absolute address is dynamic, analysis conservatively treats it as possibly
+    aliasing any allocation in the same local address space.
+  }];
 
   let arguments = (ins
     Optional<I64>:$addr,

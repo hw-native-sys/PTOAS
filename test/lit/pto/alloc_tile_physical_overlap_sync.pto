@@ -7,8 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Explicit local alloc_tile addresses are physical UB addresses. Distinct SSA
-// roots whose ranges overlap must synchronize an asynchronous MTE3 read before
-// a later V-pipe write reuses the range.
+// roots whose ranges overlap must synchronize cross-pipe reuse. Known disjoint
+// and boundary-touching half-open ranges must remain independent, while dynamic
+// absolute addresses conservatively alias.
 //
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
 
@@ -42,6 +43,110 @@ module attributes {pto.target_arch = "a2a3"} {
               outs(%reused : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+
+  // Models the gather failure directly: PIPE_V is still reading the assembled
+  // 4 KiB tile at [4096,8192) when PIPE_MTE2 overwrites the 32-byte index row
+  // at [4608,4640). The distinct alloc_tile roots must still produce a
+  // PIPE_V -> PIPE_MTE2 WAR dependency.
+  func.func @alloc_tile_explicit_overlap_v_to_mte2(
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c4608_i64 = arith.constant 4608 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %assembled = pto.alloc_tile addr = %c4096_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vector_out = pto.alloc_tile addr = %c8192_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %index_row = pto.alloc_tile addr = %c4608_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
+              outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
+              outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @alloc_tile_explicit_disjoint_no_sync(
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %assembled = pto.alloc_tile addr = %c4096_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vector_out = pto.alloc_tile addr = %c8192_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %index_row = pto.alloc_tile addr = %c16384_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
+              outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
+              outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @alloc_tile_explicit_boundary_no_sync(
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c12288_i64 = arith.constant 12288 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %assembled = pto.alloc_tile addr = %c4096_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vector_out = pto.alloc_tile addr = %c12288_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %index_row = pto.alloc_tile addr = %c8192_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
+              outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
+              outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @alloc_tile_unknown_absolute_sync(
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>,
+      %assembled_addr: i64,
+      %index_addr: i64)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c8192_i64 = arith.constant 8192 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %assembled = pto.alloc_tile addr = %assembled_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vector_out = pto.alloc_tile addr = %c8192_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %index_row = pto.alloc_tile addr = %index_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
+              outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
+              outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
 }
 
 // CHECK-LABEL: AICORE void alloc_tile_physical_overlap_sync(
@@ -49,3 +154,25 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-NEXT: set_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[MTE3_TO_V:[0-9]+]]);
 // CHECK-NEXT: wait_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[MTE3_TO_V]]);
 // CHECK-NEXT: TMULS(
+
+// CHECK-LABEL: AICORE void alloc_tile_explicit_overlap_v_to_mte2(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void alloc_tile_explicit_disjoint_no_sync(
+// CHECK:      TMULS(
+// CHECK-NOT:  set_flag(PIPE_V, PIPE_MTE2
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void alloc_tile_explicit_boundary_no_sync(
+// CHECK:      TMULS(
+// CHECK-NOT:  set_flag(PIPE_V, PIPE_MTE2
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void alloc_tile_unknown_absolute_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[UNKNOWN_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[UNKNOWN_V_TO_MTE2]]);
+// CHECK:      TLOAD(
