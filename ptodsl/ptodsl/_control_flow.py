@@ -23,6 +23,7 @@ Public API
 
 from ._bootstrap import make_context  # noqa: F401
 from ._runtime_index_ops import coerce_runtime_index
+from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session
 from ._surface_values import unwrap_surface_value, wrap_like_surface_value, wrap_surface_value
@@ -415,11 +416,6 @@ class _IfCM:
         order = tuple(kwargs.keys())
         for name, value in kwargs.items():
             raw_value = unwrap_surface_value(value)
-            if not hasattr(raw_value, "type"):
-                raise TypeError(
-                    "br.assign(...) expects PTO runtime values or authored surface values; "
-                    f"'{name}' received {type(value).__name__}"
-                )
             raw_values[name] = raw_value
             templates[name] = value
         self._branch_assignments[branch_name] = {
@@ -490,22 +486,62 @@ class _IfCM:
 
         order = then_assignment["order"]
         result_types = []
+        result_templates = {}
         for name in order:
             then_value = then_assignment["raw_values"][name]
             else_value = else_assignment["raw_values"][name]
+            then_type = getattr(then_value, "type", None)
+            else_type = getattr(else_value, "type", None)
+            then_template = then_assignment["templates"][name]
+
+            if then_type is None and else_type is None:
+                raise TypeError(
+                    "br.assign(...) requires at least one PTO runtime value to infer the result type; "
+                    f"'{name}' received {type(then_value).__name__} and {type(else_value).__name__}"
+                )
+            if then_type is None:
+                then_value = self._materialize_branch_literal(
+                    "then",
+                    name,
+                    then_value,
+                    else_type,
+                )
+                then_assignment["raw_values"][name] = then_value
+                then_type = then_value.type
+                then_template = else_assignment["templates"][name]
+            if else_type is None:
+                else_value = self._materialize_branch_literal(
+                    "else",
+                    name,
+                    else_value,
+                    then_type,
+                )
+                else_assignment["raw_values"][name] = else_value
+                else_type = else_value.type
             if then_value.type != else_value.type:
                 raise RuntimeError(
                     f"br.assign(...) type mismatch for '{name}': "
                     f"then branch yields {then_value.type}, else branch yields {else_value.type}"
                 )
             result_types.append(then_value.type)
+            result_templates[name] = then_template
 
         return {
             "order": order,
             "result_types": result_types,
+            "result_templates": result_templates,
             "then": then_assignment,
             "else": else_assignment,
         }
+
+    def _materialize_branch_literal(self, branch_name, name, value, target_type):
+        block = self._tmp_if.then_block if branch_name == "then" else self._tmp_if.else_block
+        with InsertionPoint(block):
+            return coerce_scalar_to_type(
+                value,
+                target_type,
+                context=f"br.assign(...) value '{name}'",
+            )
 
     def _finalize_side_effect_if(self):
         has_else = self._branch_entered["else"]
@@ -533,7 +569,7 @@ class _IfCM:
         merged = {}
         for name, template, result in zip(
             merge_spec["order"],
-            (merge_spec["then"]["templates"][name] for name in merge_spec["order"]),
+            (merge_spec["result_templates"][name] for name in merge_spec["order"]),
             final_if.results,
         ):
             merged[name] = wrap_like_surface_value(template, result)

@@ -156,8 +156,11 @@ class _NameInfoVisitor(ast.NodeVisitor):
     def __init__(self):
         self.loads = set()
         self.stores = set()
+        self._comprehension_bindings = set()
 
     def visit_Name(self, node):
+        if node.id in self._comprehension_bindings:
+            return
         if isinstance(node.ctx, ast.Load):
             self.loads.add(node.id)
         elif isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -182,14 +185,14 @@ class _NameInfoVisitor(ast.NodeVisitor):
         for decorator in node.decorator_list:
             self.visit(decorator)
         self._visit_arguments_defaults(node.args)
-        self.loads.update(_function_free_vars(node))
+        self._add_loads(_function_free_vars(node))
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
     def visit_Lambda(self, node):
         self._visit_arguments_defaults(node.args)
-        self.loads.update(_lambda_free_vars(node))
+        self._add_loads(_lambda_free_vars(node))
 
     def visit_ClassDef(self, node):
         self.stores.add(node.name)
@@ -199,7 +202,7 @@ class _NameInfoVisitor(ast.NodeVisitor):
             self.visit(base)
         for keyword in node.keywords:
             self.visit(keyword.value)
-        self.loads.update(_class_body_free_vars(node))
+        self._add_loads(_class_body_free_vars(node))
 
     def _visit_arguments_defaults(self, args):
         for default in args.defaults:
@@ -207,6 +210,39 @@ class _NameInfoVisitor(ast.NodeVisitor):
         for default in args.kw_defaults:
             if default is not None:
                 self.visit(default)
+
+    def _add_loads(self, names):
+        self.loads.update(name for name in names if name not in self._comprehension_bindings)
+
+    def _visit_comprehension(self, generators, result_nodes):
+        saved_bindings = self._comprehension_bindings
+        self._comprehension_bindings = set(saved_bindings)
+        try:
+            for generator in generators:
+                # The iterator is evaluated before this generator target is
+                # bound. Later generators and the result run in the nested
+                # comprehension scope.
+                self.visit(generator.iter)
+                self._comprehension_bindings.update(_target_binding_names(generator.target))
+                self.visit(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            for result_node in result_nodes:
+                self.visit(result_node)
+        finally:
+            self._comprehension_bindings = saved_bindings
+
+    def visit_ListComp(self, node):
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_SetComp(self, node):
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_DictComp(self, node):
+        self._visit_comprehension(node.generators, [node.key, node.value])
+
+    def visit_GeneratorExp(self, node):
+        self._visit_comprehension(node.generators, [node.elt])
 
 
 def _name_info(node) -> _NameInfo:
@@ -224,9 +260,10 @@ class _ScopeBindingVisitor(ast.NodeVisitor):
         self.stores = set()
         self.globals = set()
         self.nonlocals = set()
+        self._comprehension_bindings = set()
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, (ast.Store, ast.Del)):
+        if node.id not in self._comprehension_bindings and isinstance(node.ctx, (ast.Store, ast.Del)):
             self.stores.add(node.id)
 
     def visit_FunctionDef(self, node):
@@ -256,6 +293,33 @@ class _ScopeBindingVisitor(ast.NodeVisitor):
             if alias.name == "*":
                 continue
             self.stores.add(alias.asname or alias.name)
+
+    def _visit_comprehension(self, generators, result_nodes):
+        saved_bindings = self._comprehension_bindings
+        self._comprehension_bindings = set(saved_bindings)
+        try:
+            for generator in generators:
+                self.visit(generator.iter)
+                self._comprehension_bindings.update(_target_binding_names(generator.target))
+                self.visit(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            for result_node in result_nodes:
+                self.visit(result_node)
+        finally:
+            self._comprehension_bindings = saved_bindings
+
+    def visit_ListComp(self, node):
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_SetComp(self, node):
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_DictComp(self, node):
+        self._visit_comprehension(node.generators, [node.key, node.value])
+
+    def visit_GeneratorExp(self, node):
+        self._visit_comprehension(node.generators, [node.elt])
 
 
 def _argument_names(args) -> set[str]:
@@ -296,6 +360,19 @@ def _class_body_free_vars(node) -> set[str]:
 
 def _target_stores(node) -> set[str]:
     return _name_info(node).stores
+
+
+def _target_binding_names(node) -> set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.Starred):
+        return _target_binding_names(node.value)
+    if isinstance(node, (ast.List, ast.Tuple)):
+        names = set()
+        for element in node.elts:
+            names.update(_target_binding_names(element))
+        return names
+    return set()
 
 
 def _live_before_block(stmts, live_after) -> set[str]:
@@ -380,16 +457,23 @@ class _ControlFlowRewriter:
         return value
 
     def rewrite_block(self, stmts, *, live_after, allow_loop_control=False):
-        rewritten_reversed = []
+        # Analyze the original source block before any nested rewrite replaces
+        # a statement with generated AST. Generated carry/branch scaffolding
+        # has different bindings from the authored Python source.
+        rewrite_plan = []
         live = set(live_after)
         for stmt in reversed(stmts):
+            rewrite_plan.append((stmt, set(live)))
+            live = _live_before_stmt(stmt, live)
+
+        rewritten_reversed = []
+        for stmt, source_live_after in rewrite_plan:
             rewritten = self.rewrite_stmt(
                 stmt,
-                live_after=live,
+                live_after=source_live_after,
                 allow_loop_control=allow_loop_control,
             )
             rewritten_reversed[:0] = rewritten
-            live = _live_before_stmt(stmt, live)
         return rewritten_reversed
 
     def rewrite_stmt(self, stmt, *, live_after, allow_loop_control=False):
@@ -401,6 +485,12 @@ class _ControlFlowRewriter:
             )
         if isinstance(stmt, ast.For):
             return self._rewrite_for(
+                stmt,
+                live_after=live_after,
+                allow_loop_control=allow_loop_control,
+            )
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and isinstance(stmt.value, ast.IfExp):
+            return self._rewrite_ifexp_assignment(
                 stmt,
                 live_after=live_after,
                 allow_loop_control=allow_loop_control,
@@ -596,6 +686,26 @@ class _ControlFlowRewriter:
             )
         )
         return result
+
+    def _rewrite_ifexp_assignment(self, stmt, *, live_after, allow_loop_control=False):
+        ifexp = stmt.value
+        then_stmt = copy.deepcopy(stmt)
+        then_stmt.value = copy.deepcopy(ifexp.body)
+        else_stmt = copy.deepcopy(stmt)
+        else_stmt.value = copy.deepcopy(ifexp.orelse)
+        conditional = ast.copy_location(
+            ast.If(
+                test=copy.deepcopy(ifexp.test),
+                body=[then_stmt],
+                orelse=[else_stmt],
+            ),
+            stmt,
+        )
+        return self._rewrite_if(
+            conditional,
+            live_after=live_after,
+            allow_loop_control=allow_loop_control,
+        )
 
     def _branch_assign(self, branch_name, names, *, old_value_names, assigned_names):
         return ast.Expr(

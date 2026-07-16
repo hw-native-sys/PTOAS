@@ -304,6 +304,22 @@ def ast_rewrite_side_effect_kernel():
         pto.pipe_barrier(pto.Pipe.ALL)
 ```
 
+### Conditional expressions
+
+A conditional expression used as the complete right-hand side of a normal
+(`=`) or annotated assignment is rewritten with the same device-side branch
+semantics. For example,
+`count = remaining if has_tail else 64` produces a merged runtime value when
+`has_tail` is a PTO runtime condition. A Python scalar literal branch is
+materialized using the other branch's runtime scalar type. Both branches must
+therefore provide, or allow PTODSL to infer, one compatible runtime scalar type.
+
+This rewrite does not apply to augmented assignments such as `+=`, or to a
+conditional expression nested inside a larger right-hand-side expression. Those
+forms keep normal Python tracing semantics, so their condition must be a
+trace-time Python boolean. For a runtime condition in either form, first assign
+the conditional result directly or use an explicit `pto.if_`.
+
 ### Runtime loops
 
 Native `range(...)` loops become device-side loops:

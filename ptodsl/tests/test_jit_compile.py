@@ -1256,6 +1256,99 @@ def ast_runtime_for_branch_local_temp_probe(rows: pto.i32):
         _ = out
 
 
+@pto.jit(target="a5")
+def ast_sibling_loop_target_reuse_probe(rows: pto.i32, cols: pto.i32):
+    for t in range(rows):
+        for c in range(cols):
+            col = c * 64
+            _ = col
+            pto.pipe_barrier(pto.Pipe.ALL)
+
+        for _ in pto.static_range(2):
+            for c in range(cols):
+                col = c * 64
+                _ = col
+                pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.jit(target="a5")
+def ast_sibling_loop_temporary_reuse_probe(rows: pto.i32, cols: pto.i32):
+    for t in range(rows):
+        for _ in pto.static_range(2):
+            for dpost_chunk in range(cols):
+                col = dpost_chunk * 64
+                cnt = col + 1
+                mask = cnt
+                d_reg = mask
+                _ = d_reg
+                pto.pipe_barrier(pto.Pipe.ALL)
+
+        for _ in pto.static_range(2):
+            for _ in pto.static_range(2):
+                for dcomb_chunk in range(cols):
+                    col = dcomb_chunk * 64
+                    cnt = col + 1
+                    mask = cnt
+                    d_reg = mask
+                    _ = d_reg
+                    pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.jit(target="a5")
+def ast_comprehension_scope_probe(rows: pto.i32, cols: pto.i32):
+    for t in range(rows):
+        for chunk in range(cols):
+            heads = [h for h in pto.static_range(4)]
+            for h in pto.static_range(4):
+                value = heads[h]
+                _ = value
+                pto.pipe_barrier(pto.Pipe.ALL)
+
+            for _ in pto.static_range(2):
+                for h in pto.static_range(4):
+                    value = heads[h]
+                    _ = value
+                    pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.jit(target="a5")
+def ast_runtime_conditional_expression_probe(rows: pto.i32, cols: pto.i32):
+    for t in range(rows):
+        col = t * 64
+        cnt = cols - col if cols - col < 64 else 64
+        _ = cnt
+        pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.jit(target="a5")
+def ast_combined_loop_scope_probe(rows: pto.i32, cols: pto.i32):
+    mask1 = pto.const(1, dtype=pto.index)
+    mask_all = pto.const(2, dtype=pto.index)
+    for t in range(rows):
+        for c in range(cols):
+            col = c * 64
+            mask = col
+            d_heads = [mask + h for h in pto.static_range(4)]
+            acc = None
+            for h in pto.static_range(4):
+                term = d_heads[h]
+                acc = term if acc is None else acc + term
+            sink = acc + col + mask
+            _ = sink
+            pto.pipe_barrier(pto.Pipe.ALL)
+
+        for _ in pto.static_range(4):
+            mix_acc = pto.const(0, dtype=pto.index)
+            for c in range(cols):
+                col = c * 64
+                mask = col
+                mix_acc = mix_acc + mask
+                pto.pipe_barrier(pto.Pipe.ALL)
+            sum_v = mix_acc + mask_all
+            out = sum_v + mask1
+            _ = out
+
+
 @pto.jit(target="a5", ast_rewrite=False)
 def ast_rewrite_disabled_nested_helper_python_control_probe():
     def helper(enabled):
@@ -4834,6 +4927,80 @@ def main() -> None:
     expect(
         "iter_args(" not in ast_runtime_for_branch_local_temp_text,
         "branch-local temporaries should not be inferred as loop-carried state",
+    )
+
+    ast_sibling_loop_target_reuse_text = ast_sibling_loop_target_reuse_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        ast_sibling_loop_target_reuse_text,
+        "AST-rewritten sibling runtime loop-target reuse specialization",
+    )
+    expect(
+        ast_sibling_loop_target_reuse_text.count("scf.for") == 4,
+        "sibling runtime loops reusing an induction-variable name should all lower to scf.for",
+    )
+    expect(
+        "iter_args(" not in ast_sibling_loop_target_reuse_text,
+        "sibling loop-target reuse should not infer a synthetic carried induction variable",
+    )
+
+    ast_sibling_loop_temporary_reuse_text = ast_sibling_loop_temporary_reuse_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        ast_sibling_loop_temporary_reuse_text,
+        "AST-rewritten sibling loop-local temporary reuse specialization",
+    )
+    expect(
+        ast_sibling_loop_temporary_reuse_text.count("scf.for") == 7,
+        "sibling runtime loops reusing loop-local temporary names should all lower to scf.for",
+    )
+    expect(
+        "iter_args(" not in ast_sibling_loop_temporary_reuse_text,
+        "sibling loop-local temporaries should not be inferred as last-iteration values",
+    )
+
+    ast_comprehension_scope_text = ast_comprehension_scope_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        ast_comprehension_scope_text,
+        "AST-rewritten static_range comprehension scope specialization",
+    )
+    expect(
+        ast_comprehension_scope_text.count("scf.for") == 2,
+        "comprehension targets should not become carried runtime-loop values",
+    )
+    expect(
+        "iter_args(" not in ast_comprehension_scope_text,
+        "comprehension-local targets should not be materialized as loop carry state",
+    )
+
+    ast_runtime_conditional_expression_text = ast_runtime_conditional_expression_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        ast_runtime_conditional_expression_text,
+        "AST-rewritten conditional-expression specialization",
+    )
+    expect(
+        ast_runtime_conditional_expression_text.count("scf.for") == 1,
+        "conditional expressions inside runtime loops should retain the authored scf.for",
+    )
+    expect(
+        ast_runtime_conditional_expression_text.count("scf.if") == 1,
+        "a runtime conditional expression should lower through one merged scf.if",
+    )
+    expect(
+        "arith.constant 64" in ast_runtime_conditional_expression_text,
+        "a literal conditional-expression branch should materialize with the runtime branch type",
+    )
+
+    ast_combined_loop_scope_text = ast_combined_loop_scope_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        ast_combined_loop_scope_text,
+        "AST-rewritten combined sibling-loop/comprehension/conditional specialization",
+    )
+    expect(
+        ast_combined_loop_scope_text.count("scf.for") == 6,
+        "the combined pattern should retain all authored runtime loops",
+    )
+    expect(
+        ast_combined_loop_scope_text.count("iter_args(") == 4,
+        "the combined pattern should carry only the four intended mix_acc accumulators",
     )
 
     ast_rewrite_disabled_nested_helper_python_control_text = (
