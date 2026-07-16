@@ -106,7 +106,9 @@ jobs:
       PTO_WHEELHOUSE: ${{ github.workspace }}/wheelhouse-assert
       PTOAS_VENV: ${{ github.workspace }}/.venv-ptoas-assert
       MLIR_PYTHONPATH: ${{ github.workspace }}/llvm-project/llvm/build-assert/tools/mlir/python_packages/mlir_core
-      LLVM_CACHE_FLAVOR: llvm21-assert-shared-mlirpy-hardening-v1
+      # Bump together with shared Linux hardening flags to invalidate stale
+      # LLVM caches built with older ISA baselines.
+      LLVM_CACHE_FLAVOR: llvm21-assert-shared-mlirpy-hardening-v2
     steps:
       - name: Checkout
         uses: actions/checkout@v4

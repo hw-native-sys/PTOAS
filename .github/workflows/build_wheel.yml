@@ -26,7 +26,9 @@ permissions:
 env:
   LLVM_REPO: https://github.com/vpto-dev/llvm-project.git
   LLVM_REF: feature-vpto-llvm21
-  LLVM_CACHE_FLAVOR: llvm21-vpto-release-hardening-v1
+  # Bump when shared hardening flags change so stale LLVM build caches do not
+  # keep exporting newer ISA baselines into release wheels.
+  LLVM_CACHE_FLAVOR: llvm21-vpto-release-hardening-v2
 
 jobs:
   build_wheel:

@@ -63,6 +63,16 @@ class PtoasBuildBackendTests(unittest.TestCase):
             ["cmake", "--build", str(build_dir), "--target", "install"],
         )
 
+    def test_linux_hardening_cache_keeps_x86_64_baseline(self):
+        cache_path = (
+            Path(__file__).resolve().parents[2] / "cmake" / "LinuxHardeningCache.cmake"
+        )
+        cache_text = cache_path.read_text(encoding="utf-8")
+        self.assertIn("uname -m", cache_text)
+        self.assertIn('MATCHES "^(x86_64|amd64|i[3-6]86)$"', cache_text)
+        self.assertIn("-march=x86-64", cache_text)
+        self.assertIn("-mtune=generic", cache_text)
+
 
 if __name__ == "__main__":
     unittest.main()

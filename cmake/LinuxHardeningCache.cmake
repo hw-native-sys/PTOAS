@@ -9,13 +9,40 @@
 # Shared Linux hardening flags for LLVM/PTOAS package builds.
 # This cache file is intended to be passed via `cmake -C ...` so release and
 # delivery builds inherit the same compiler options that codecheck expects.
+# Keep the Linux wheel/toolchain target on the x86-64 baseline only for x86
+# hosts so auditwheel can repair the shipped ptoas binary into a portable
+# manylinux wheel without breaking aarch64 builds.
 
-foreach(_flag_var CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+execute_process(
+  COMMAND uname -m
+  OUTPUT_VARIABLE _ptoas_linux_machine
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+string(TOLOWER "${_ptoas_linux_machine}" _ptoas_linux_machine)
+set(_ptoas_linux_x86_64_baseline_flags "")
+if(_ptoas_linux_machine MATCHES "^(x86_64|amd64|i[3-6]86)$")
+  set(_ptoas_linux_x86_64_baseline_flags -march=x86-64 -mtune=generic)
+endif()
+
+set(_ptoas_linux_compile_flag_vars
+    CMAKE_C_FLAGS
+    CMAKE_CXX_FLAGS
+    CMAKE_C_FLAGS_DEBUG
+    CMAKE_C_FLAGS_MINSIZEREL
+    CMAKE_C_FLAGS_RELEASE
+    CMAKE_C_FLAGS_RELWITHDEBINFO
+    CMAKE_CXX_FLAGS_DEBUG
+    CMAKE_CXX_FLAGS_MINSIZEREL
+    CMAKE_CXX_FLAGS_RELEASE
+    CMAKE_CXX_FLAGS_RELWITHDEBINFO)
+
+foreach(_flag_var IN LISTS _ptoas_linux_compile_flag_vars)
   set(_flag_value "${${_flag_var}}")
   foreach(_hardening_flag
       -D_FORTIFY_SOURCE=2
       -fstack-protector-strong
-      -ftrapv)
+      -ftrapv
+      ${_ptoas_linux_x86_64_baseline_flags})
     if(NOT " ${_flag_value} " MATCHES "(^| )${_hardening_flag}( |$)")
       string(APPEND _flag_value " ${_hardening_flag}")
     endif()
