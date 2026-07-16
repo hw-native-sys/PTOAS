@@ -15,39 +15,31 @@ import sys
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compute the ptoas CLI version from the top-level CMakeLists.txt."
+        description="Compute the VMI release version from a version file."
     )
     parser.add_argument(
-        "--cmake-file",
-        default="CMakeLists.txt",
-        help="Path to the top-level CMakeLists.txt file.",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=("dev", "release"),
-        default="dev",
-        help="Both dev and release modes use the base version from CMakeLists.txt; release mode exists to validate release tags against that version.",
+        "--version-file",
+        default="docs/release/VMI_VERSION",
+        help="Path to the VMI version file.",
     )
     parser.add_argument(
         "--check-tag",
-        help="Optional release tag to validate, e.g. ptoas-v0.8 or v0.8.",
+        help="Optional release tag to validate, e.g. vmi-v0.1.0.",
     )
     return parser.parse_args()
 
 
-def read_base_version(cmake_file: pathlib.Path) -> str:
-    content = cmake_file.read_text(encoding="utf-8")
-    match = re.search(r"project\s*\(\s*ptoas\s+VERSION\s+([0-9]+\.[0-9]+)\s*\)", content)
-    if not match:
-        raise ValueError(
-            f"could not find 'project(ptoas VERSION x.y)' in {cmake_file}"
-        )
-    return match.group(1)
+def read_version(version_file: pathlib.Path) -> str:
+    version = version_file.read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError(f"invalid VMI version '{version}' in {version_file}")
+    return version
+
 
 def normalize_tag(tag: str) -> str:
     normalized = tag.strip()
-    if normalized.startswith("ptoas-"):
-        normalized = normalized[len("ptoas-"):]
+    if normalized.startswith("vmi-"):
+        normalized = normalized[len("vmi-"):]
     if normalized.startswith("v"):
         normalized = normalized[1:]
     return normalized
@@ -55,12 +47,11 @@ def normalize_tag(tag: str) -> str:
 
 def main() -> int:
     args = parse_args()
-    cmake_file = pathlib.Path(args.cmake_file)
-    base_version = read_base_version(cmake_file)
-    version = base_version
+    version_file = pathlib.Path(args.version_file)
+    version = read_version(version_file)
 
     if args.check_tag is not None:
-        normalized_tag = normalize_tag(args.check_tag.strip())
+        normalized_tag = normalize_tag(args.check_tag)
         if normalized_tag != version:
             print(
                 f"release tag '{args.check_tag}' does not match computed version '{version}'",

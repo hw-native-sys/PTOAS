@@ -17,7 +17,7 @@ import sys
 PROJECT_VERSION_RE = re.compile(
     r"(project\s*\(\s*ptoas\s+VERSION\s+)([0-9]+\.[0-9]+)(\s*\))"
 )
-TAG_VERSION_RE = re.compile(r"v?([0-9]+)\.([0-9]+)")
+TAG_VERSION_RE = re.compile(r"^(?:ptoas-)?v?([0-9]+)\.([0-9]+)$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +54,8 @@ def parse_args() -> argparse.Namespace:
 
 def normalize_version(version: str) -> str:
     normalized = version.strip()
+    if normalized.startswith("ptoas-"):
+        normalized = normalized[len("ptoas-"):]
     if normalized.startswith("v"):
         normalized = normalized[1:]
     if not re.fullmatch(r"[0-9]+\.[0-9]+", normalized):

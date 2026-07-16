@@ -29,6 +29,7 @@ env:
 
 jobs:
   build_wheel:
+    if: github.event_name != 'release' || startsWith(github.ref_name, 'ptoas-v') || startsWith(github.ref_name, 'vmi-v')
     # Non-release runs keep a single-Python matrix for faster gates;
     # release/nightly runs fan out to publish the full wheel set plus binary artifacts.
     name: Build ptoas-bin (macOS ${{ matrix.arch }}, py${{ matrix.python }})
@@ -67,8 +68,22 @@ jobs:
       - name: Compute PTOAS CLI version
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
-            EXPECTED_RELEASE_VERSION="$(python .github/scripts/compute_ptoas_version.py --mode release)"
-            PTOAS_VERSION="${GITHUB_REF_NAME#v}"
+            case "${GITHUB_REF_NAME}" in
+              ptoas-v*)
+                EXPECTED_RELEASE_VERSION="$(python .github/scripts/compute_ptoas_version.py --mode release)"
+                PTOAS_VERSION="${GITHUB_REF_NAME#ptoas-v}"
+                ;;
+              vmi-v*)
+                EXPECTED_RELEASE_VERSION="$(python .github/scripts/compute_vmi_version.py \
+                  --version-file docs/release/VMI_VERSION \
+                  --check-tag "${GITHUB_REF_NAME}")"
+                PTOAS_VERSION="${GITHUB_REF_NAME#vmi-v}"
+                ;;
+              *)
+                echo "release tags for the wheel workflow must start with 'ptoas-v' or 'vmi-v'" >&2
+                exit 1
+                ;;
+            esac
             if [ "${PTOAS_VERSION}" != "${EXPECTED_RELEASE_VERSION}" ]; then
               echo "release tag '${GITHUB_REF_NAME}' does not match computed version '${EXPECTED_RELEASE_VERSION}'" >&2
               exit 1
@@ -353,7 +368,7 @@ jobs:
 
   upload_release_assets:
     name: Upload release assets
-    if: github.event_name == 'release' || github.event_name == 'schedule'
+    if: (github.event_name == 'release' && (startsWith(github.ref_name, 'ptoas-v') || startsWith(github.ref_name, 'vmi-v'))) || github.event_name == 'schedule'
     needs: build_wheel
     runs-on: ubuntu-latest
 

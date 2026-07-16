@@ -23,7 +23,7 @@ backend-path = ["."]
 
 [project]
 name = "ptoas"
-version = "0.1.0"
+version = "0.51"
 description = "PTO Assembler & Optimizer"
 readme = "README.md"
 requires-python = ">=3.9"

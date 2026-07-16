@@ -202,6 +202,7 @@ from mlir.dialects import pto as mlir_pto
 > - `ptoas-bin-*.tar.gz` 这类 compiler-only 二进制 tarball 只提供 CLI/toolchain，
 >   **不是** PTODSL-capable Python distribution；仅解压 tarball 不能保证
 >   `import ptodsl` 可用。
+> - release tag 约定：`ptoas-vX.Y` 发布主工具链，`vmi-vA.B.C` 发布 VMI 文档/规范。
 
 ---
 

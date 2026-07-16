@@ -1,7 +1,7 @@
 # PTOAS (PTO Assembler & Optimizer)
 
 ## 版本
-- 版本号：v0.1.0
+- 版本号：v0.51
 - 发布日期：2026-02-14
 
 ## 变更摘要
