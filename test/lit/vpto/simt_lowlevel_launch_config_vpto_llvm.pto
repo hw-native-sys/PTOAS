@@ -8,27 +8,130 @@
 
 // RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
 
+// Verify:
+// 1. MLIR attributes (pto.simt_max_threads, pto.simt_entry) are preserved
+//    through lowering.
+// 2. The deprecated pto.simt_max_regs attribute is preserved in MLIR for
+//    backward compatibility (the emitter will ignore it and derive the final
+//    simt-max-registers annotation from pto.simt_max_threads instead).
+
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @launch_config_kernel(%dst: !pto.ptr<i32, ub>) attributes {pto.aicore} {
     %dim_z = arith.constant 1 : i32
     %dim_y = arith.constant 1 : i32
     %dim_x = arith.constant 32 : i32
     pto.store_vfsimt_info %dim_z, %dim_y, %dim_x : i32, i32, i32
-    func.call @launch_config_body(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_256(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_257(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_512(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_513(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_1024(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_1025(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_boundary_2048(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_default(%dst) : (!pto.ptr<i32, ub>) -> ()
+    func.call @body_explicit_max_regs_ignored(%dst) : (!pto.ptr<i32, ub>) -> ()
     return
   }
 
-  func.func @launch_config_body(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 256 : i32, pto.simt_max_regs = 48 : i32} {
+  // max_threads=256 (boundary ≤256 → regs=128 at emission)
+  func.func @body_boundary_256(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 256 : i32} {
     %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
     %tid_x = pto.get_tid_x : i32
-    %laneid = pto.get_laneid : i32
     pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
-    pto.store %laneid, %dst[%c1] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=257 (boundary ≤512 → regs=64 at emission)
+  func.func @body_boundary_257(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 257 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=512 (boundary ≤512 → regs=64 at emission)
+  func.func @body_boundary_512(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 512 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=513 (boundary ≤1024 → regs=32 at emission)
+  func.func @body_boundary_513(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 513 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=1024 (boundary ≤1024 → regs=32 at emission)
+  func.func @body_boundary_1024(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 1024 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=1025 (boundary ≤2048 → regs=16 at emission)
+  func.func @body_boundary_1025(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 1025 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=2048 (boundary ≤2048 → regs=16 at emission)
+  func.func @body_boundary_2048(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 2048 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // No max_threads specified → defaults to 1024 → regs=32 at emission
+  func.func @body_default(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    return
+  }
+
+  // max_threads=256 with deprecated pto.simt_max_regs=48.
+  // Both attributes survive lowering, but the emitter derives max-regs (128)
+  // from max_threads (256), ignoring the explicit pto.simt_max_regs value.
+  func.func @body_explicit_max_regs_ignored(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry, pto.simt_max_threads = 256 : i32, pto.simt_max_regs = 48 : i32} {
+    %c0 = arith.constant 0 : index
+    %tid_x = pto.get_tid_x : i32
+    pto.store %tid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
     return
   }
 }
 
-// CHECK-LABEL: llvm.func @launch_config_body
+// CHECK-LABEL: llvm.func @body_boundary_256
+// CHECK-SAME: pto.simt_max_threads = 256 : i32
+
+// CHECK-LABEL: llvm.func @body_boundary_257
+// CHECK-SAME: pto.simt_max_threads = 257 : i32
+
+// CHECK-LABEL: llvm.func @body_boundary_512
+// CHECK-SAME: pto.simt_max_threads = 512 : i32
+
+// CHECK-LABEL: llvm.func @body_boundary_513
+// CHECK-SAME: pto.simt_max_threads = 513 : i32
+
+// CHECK-LABEL: llvm.func @body_boundary_1024
+// CHECK-SAME: pto.simt_max_threads = 1024 : i32
+
+// CHECK-LABEL: llvm.func @body_boundary_1025
+// CHECK-SAME: pto.simt_max_threads = 1025 : i32
+
+// CHECK-LABEL: llvm.func @body_boundary_2048
+// CHECK-SAME: pto.simt_max_threads = 2048 : i32
+
+// CHECK-LABEL: llvm.func @body_default
+// CHECK: pto.simt_entry
+
+// CHECK-LABEL: llvm.func @body_explicit_max_regs_ignored
 // CHECK-SAME: pto.simt_max_regs = 48 : i32
 // CHECK-SAME: pto.simt_max_threads = 256 : i32

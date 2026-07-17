@@ -48,24 +48,36 @@ The current PTO SIMT surface supports these operation families:
 | Conversion | `pto.convert` |
 | Entry synchronization and state | `pto.syncthreads`, `pto.threadfence`, `pto.threadfence_block`, `pto.keep`, `pto.resume` |
 
-Two optional function attributes may be attached to a `pto.simt_entry`
-function:
+One optional function attribute may be attached to a `pto.simt_entry` function:
 
 | Function attribute | Type | Default | Meaning |
 |--------------------|------|---------|---------|
 | `pto.simt_max_threads` | signless `i32` integer attribute | `1024` | Compile-time launch envelope. It should cover the largest `dim_x * dim_y * dim_z` launch count used for this entry. |
-| `pto.simt_max_regs` | signless `i32` integer attribute | `32` | Compile-time scalar register budget per workitem. Lower values constrain scalar live state; higher values permit more scalar live values with higher resource pressure. |
 
-Both attributes are optional. If present, they must be positive `i32`
-attributes and may only appear on functions that also carry `pto.simt_entry`.
-They do not launch work by themselves; the actual workitem count comes from
+The attribute is optional. If present, it must be a positive `i32` attribute
+and may only appear on functions that also carry `pto.simt_entry`. It does not
+launch work by itself; the actual workitem count comes from
 `pto.store_vfsimt_info` or `pto.simt_launch`.
+
+The per-workitem register budget (`simt-max-registers`) is **automatically
+derived** from `pto.simt_max_threads` according to the hardware resource
+partition:
+
+| `max_threads` | Derived `max_regs` |
+|---|---|
+| ≤ 256 | 128 |
+| ≤ 512 | 64 |
+| ≤ 1024 | 32 |
+| ≤ 2048 | 16 |
+
+The `pto.simt_max_regs` attribute is **deprecated** as a public interface.
+Existing IR that carries it will still parse, but the emitter ignores its
+value and always computes `simt-max-registers` from `pto.simt_max_threads`.
 
 ```mlir
 func.func @body(%dst: !pto.ptr<i32, ub>)
     attributes {pto.simt_entry,
-                pto.simt_max_threads = 256 : i32,
-                pto.simt_max_regs = 48 : i32} {
+                pto.simt_max_threads = 256 : i32} {
   return
 }
 ```
