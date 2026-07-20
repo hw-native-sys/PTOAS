@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -139,6 +140,7 @@ static void markAddressRangeUnknown(BaseMemInfo &info) {
   info.allocateSize = 0;
   info.hasKnownPhysicalAddresses = false;
   info.aliasesUnknownRange = true;
+  info.hasInexactSubviewRange = false;
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {
@@ -930,9 +932,25 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
   if (!result || !source) return;
   if (!buffer2MemInfoMap_.contains(source)) return;
 
+  auto retainConservativeParentRange = [&]() {
+    auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+    for (auto &parentInfo : buffer2MemInfoMap_[source]) {
+      auto newInfo = parentInfo->clone(result);
+      newInfo->hasInexactSubviewRange = true;
+      resultMemInfoVec.emplace_back(std::move(newInfo));
+    }
+  };
+
   auto sourceType = dyn_cast<pto::TileBufType>(source.getType());
   if (!sourceType) {
     UpdateConservativeAliasBufferInfo(result, source);
+    return;
+  }
+
+  if (llvm::any_of(buffer2MemInfoMap_[source], [](const auto &parentInfo) {
+        return !parentInfo || parentInfo->hasInexactSubviewRange;
+      })) {
+    retainConservativeParentRange();
     return;
   }
 
@@ -942,7 +960,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
                      : getPtoSubViewBaseAddresses(
                            op, sourceType, static_cast<int64_t>(elemBytes));
   if (!subViewAddresses || subViewAddresses->empty()) {
-    UpdateConservativeAliasBufferInfo(result, source);
+    retainConservativeParentRange();
     return;
   }
 
@@ -958,7 +976,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {
     if (!parentInfo || parentInfo->baseAddresses.size() != 1 ||
         parentInfo->allocateSize == 0) {
-      UpdateConservativeAliasBufferInfo(result, source);
+      retainConservativeParentRange();
       return;
     }
   }
@@ -985,6 +1003,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     }
     newInfo->baseAddresses = std::move(addresses);
     newInfo->allocateSize = segmentSize;
+    newInfo->hasInexactSubviewRange = false;
     resultMemInfoVec.emplace_back(std::move(newInfo));
   }
 }

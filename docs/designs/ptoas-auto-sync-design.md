@@ -90,9 +90,10 @@
 | `allocateSize` | `uint64_t` | 字节大小 |
 | `hasKnownPhysicalAddresses` | `bool` | `baseAddresses` 是否为已知 absolute 本地物理地址 |
 | `aliasesUnknownRange` | `bool` | 地址值或范围未知时，是否必须保守 alias 同地址空间内的任意缓冲区 |
+| `hasInexactSubviewRange` | `bool` | 当前范围是否为动态 subview 的保守父级包络，防止后续静态 view 错误收窄 |
 
 `operator==` 要求 `baseAddresses`、`rootBuffer`、`scope`、
-`allocateSize`、`baseBuffer` 和两个地址状态字段全部相等才算同一缓冲；
+`allocateSize`、`baseBuffer` 和三个地址状态字段全部相等才算同一缓冲；
 这是别名分析里的「严格相等」判定，命中后可直接走依赖路径。
 
 ### 3.4 同步指令：`SyncOperation`

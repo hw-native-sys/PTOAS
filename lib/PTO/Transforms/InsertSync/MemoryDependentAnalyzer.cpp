@@ -218,6 +218,17 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
     return isBufferAddressRangeOverlap(a, b);
   }
 
+  // A known physical address and a root-relative offset are not directly
+  // comparable. This mixed state is not expected after level-3 planning, but
+  // treating distinct roots as disjoint would be an unsafe default if a future
+  // pipeline combines planned and symbolic local buffers.
+  if (a->hasKnownPhysicalAddresses != b->hasKnownPhysicalAddresses) {
+    if (isTraceEnabled())
+      llvm::errs() << "    -> Mixed local address provenance. "
+                      "Conservatively aliasing.\n";
+    return true;
+  }
+
   if (a->rootBuffer == b->rootBuffer) {
     if (a->baseAddresses.empty() || b->baseAddresses.empty()) return true;
     if (a->allocateSize == 0 || b->allocateSize == 0) return true;

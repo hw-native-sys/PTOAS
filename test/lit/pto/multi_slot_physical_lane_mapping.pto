@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --mlir-print-ir-after=pto-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
+
+// Dynamic event IDs require slot index i on the producer and consumer to name
+// the same physical range. Here each tile is 512 bytes:
+//
+//   producer: [4096, 4608], consumer: [4608, 5120]
+//
+// The dependency is producer slot 1 -> consumer slot 0. Keying both sides by
+// the same runtime slot index would set and wait on different hardware events,
+// so this shifted mapping must fall back to one static event.
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @shifted_slots_use_static_backedge(
+      %gm: !pto.partition_tensor_view<16x16xf16>,
+      %dst: !pto.partition_tensor_view<16x16xf16>,
+      %n: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %producer_base = arith.constant 4096 : i64
+    %consumer_base = arith.constant 4608 : i64
+
+    %producer_slots = pto.alloc_multi_tile addr = %producer_base
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %consumer_slots = pto.alloc_multi_tile addr = %consumer_base
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %idx = arith.remui %i, %c2 : index
+      %producer = pto.multi_tile_get %producer_slots[%idx]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      %consumer = pto.multi_tile_get %consumer_slots[%idx]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>)
+                outs(%producer : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%consumer : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%dst : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @shifted_slots_use_static_backedge
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <[[EVENT:EVENT_ID[0-9]+]]>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <[[EVENT]]>]
+// CHECK-NOT: pto.set_flag_dyn
+// CHECK-NOT: pto.wait_flag_dyn
+// CHECK: return

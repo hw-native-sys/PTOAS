@@ -88,11 +88,13 @@ struct BaseMemInfo {
       Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
       SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
       bool hasKnownPhysicalAddresses = false,
-      bool aliasesUnknownRange = false)
+      bool aliasesUnknownRange = false,
+      bool hasInexactSubviewRange = false)
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
         baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
         hasKnownPhysicalAddresses(hasKnownPhysicalAddresses),
-        aliasesUnknownRange(aliasesUnknownRange) {}
+        aliasesUnknownRange(aliasesUnknownRange),
+        hasInexactSubviewRange(hasInexactSubviewRange) {}
  
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
   Value baseBuffer;
@@ -109,6 +111,10 @@ struct BaseMemInfo {
   // through integer IR. When set, this memory object aliases any range in the
   // same address space.
   bool aliasesUnknownRange;
+  // True when this range is a conservative parent envelope for a subview
+  // whose exact offset could not be modeled. Exact child views must not narrow
+  // that envelope.
+  bool hasInexactSubviewRange;
  
   bool areVectorEqual(const SmallVector<uint64_t>& vec1,
                       const SmallVector<uint64_t>& vec2) const {
@@ -127,6 +133,8 @@ struct BaseMemInfo {
       return false;
     if (aliasesUnknownRange != other.aliasesUnknownRange)
       return false;
+    if (hasInexactSubviewRange != other.hasInexactSubviewRange)
+      return false;
     // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
     // 但为了保持原有逻辑，先保留。重点是 rootBuffer 必须一致。
     if (allocateSize != other.allocateSize) return false;
@@ -137,13 +145,15 @@ struct BaseMemInfo {
   std::unique_ptr<BaseMemInfo> clone() const {
     return std::make_unique<BaseMemInfo>(
         baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+        hasKnownPhysicalAddresses, aliasesUnknownRange,
+        hasInexactSubviewRange);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+        hasKnownPhysicalAddresses, aliasesUnknownRange,
+        hasInexactSubviewRange);
   }
 };
  

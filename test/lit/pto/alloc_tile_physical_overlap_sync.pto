@@ -147,6 +147,39 @@ module attributes {pto.target_arch = "a2a3"} {
               outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+
+  // A static child of an inexact dynamic subview must retain the conservative
+  // parent envelope. At runtime %row = 1 places %child at [4352,4384), which
+  // overlaps the distinct allocation written by the following MTE2 load.
+  func.func @chained_dynamic_subview_remains_conservative(
+      %index_src: !pto.partition_tensor_view<1x8xf32>,
+      %row: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c4096_i64 = arith.constant 4096 : i64
+    %c4352_i64 = arith.constant 4352 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.alloc_tile addr = %c4096_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dynamic = pto.subview %root[%row, %c0] sizes [1, 64] :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %child = pto.subview %dynamic[%c0, %c0] sizes [1, 8] :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %vector_out = pto.alloc_tile addr = %c8192_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %target = pto.alloc_tile addr = %c4352_i64 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tmuls ins(%child, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
+              outs(%target : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
 }
 
 // CHECK-LABEL: AICORE void alloc_tile_physical_overlap_sync(
@@ -175,4 +208,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK:      TMULS(
 // CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[UNKNOWN_V_TO_MTE2:[0-9]+]]);
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[UNKNOWN_V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void chained_dynamic_subview_remains_conservative(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[DYNAMIC_VIEW_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[DYNAMIC_VIEW_V_TO_MTE2]]);
 // CHECK:      TLOAD(
