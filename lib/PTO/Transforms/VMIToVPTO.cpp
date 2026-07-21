@@ -34,6 +34,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
+#include <numeric>
 #include <type_traits>
 
 namespace mlir {
@@ -1019,25 +1020,135 @@ std::optional<int64_t> getConstantIndexValue(Value value) {
   return std::nullopt;
 }
 
-bool isKnownIndexMultipleOf(Value value, int64_t multiple, int depth = 0) {
-  if (multiple <= 1)
-    return true;
+static int64_t normalizeRemainder(int64_t value, int64_t modulus) {
+  int64_t remainder = value % modulus;
+  return remainder < 0 ? remainder + modulus : remainder;
+}
+
+std::optional<int64_t> getKnownIndexRemainder(Value value, int64_t modulus,
+                                              int depth = 0) {
+  if (modulus <= 1)
+    return 0;
   if (depth > 6)
-    return false;
+    return std::nullopt;
   if (std::optional<int64_t> constant = getConstantIndexValue(value))
-    return *constant % multiple == 0;
+    return normalizeRemainder(*constant, modulus);
 
-  if (auto add = value.getDefiningOp<arith::AddIOp>())
-    return isKnownIndexMultipleOf(add.getLhs(), multiple, depth + 1) &&
-           isKnownIndexMultipleOf(add.getRhs(), multiple, depth + 1);
-  if (auto sub = value.getDefiningOp<arith::SubIOp>())
-    return isKnownIndexMultipleOf(sub.getLhs(), multiple, depth + 1) &&
-           isKnownIndexMultipleOf(sub.getRhs(), multiple, depth + 1);
-  if (auto mul = value.getDefiningOp<arith::MulIOp>())
-    return isKnownIndexMultipleOf(mul.getLhs(), multiple, depth + 1) ||
-           isKnownIndexMultipleOf(mul.getRhs(), multiple, depth + 1);
+  if (auto cast = value.getDefiningOp<arith::IndexCastOp>())
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  if (auto cast = value.getDefiningOp<arith::ExtSIOp>())
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  if (auto cast = value.getDefiningOp<arith::ExtUIOp>())
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+    if (cast->getNumOperands() == 1 && cast->getNumResults() == 1)
+      return getKnownIndexRemainder(cast.getOperand(0), modulus, depth + 1);
+  }
 
-  return false;
+  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
+    std::optional<int64_t> lhs =
+        getKnownIndexRemainder(add.getLhs(), modulus, depth + 1);
+    std::optional<int64_t> rhs =
+        getKnownIndexRemainder(add.getRhs(), modulus, depth + 1);
+    if (lhs && rhs)
+      return normalizeRemainder(*lhs + *rhs, modulus);
+    return std::nullopt;
+  }
+  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
+    std::optional<int64_t> lhs =
+        getKnownIndexRemainder(sub.getLhs(), modulus, depth + 1);
+    std::optional<int64_t> rhs =
+        getKnownIndexRemainder(sub.getRhs(), modulus, depth + 1);
+    if (lhs && rhs)
+      return normalizeRemainder(*lhs - *rhs, modulus);
+    return std::nullopt;
+  }
+  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
+    std::optional<int64_t> lhs =
+        getKnownIndexRemainder(mul.getLhs(), modulus, depth + 1);
+    std::optional<int64_t> rhs =
+        getKnownIndexRemainder(mul.getRhs(), modulus, depth + 1);
+    if ((lhs && *lhs == 0) || (rhs && *rhs == 0))
+      return 0;
+    if (lhs && rhs)
+      return normalizeRemainder(*lhs * *rhs, modulus);
+    return std::nullopt;
+  }
+
+  return std::nullopt;
+}
+
+std::optional<int64_t> getKnownPointerByteRemainder(Value pointer,
+                                                    int64_t alignmentBytes,
+                                                    int depth = 0) {
+  if (alignmentBytes <= 1)
+    return 0;
+  if (depth > 6)
+    return std::nullopt;
+
+  // A raw PTO pointer block argument is a base address. Its required
+  // address-space alignment is an ABI precondition; derived pointers must
+  // prove that their element offsets preserve that alignment.
+  if (isa<BlockArgument>(pointer))
+    return 0;
+
+  if (auto cast = pointer.getDefiningOp<CastPtrOp>()) {
+    Value input = cast.getInput();
+    if (isa<PtrType>(input.getType()))
+      return getKnownPointerByteRemainder(input, alignmentBytes, depth + 1);
+    if (isa<IntegerType>(input.getType()))
+      return getKnownIndexRemainder(input, alignmentBytes, depth + 1);
+    return std::nullopt;
+  }
+
+  if (auto cast = pointer.getDefiningOp<UnrealizedConversionCastOp>()) {
+    if (cast->getNumOperands() == 1 && cast->getNumResults() == 1)
+      return getKnownPointerByteRemainder(cast.getOperand(0), alignmentBytes,
+                                          depth + 1);
+    return std::nullopt;
+  }
+
+  if (auto add = pointer.getDefiningOp<AddPtrOp>()) {
+    std::optional<int64_t> base =
+        getKnownPointerByteRemainder(add.getPtr(), alignmentBytes, depth + 1);
+    auto pointerType = dyn_cast<PtrType>(add.getPtr().getType());
+    if (!base || !pointerType)
+      return std::nullopt;
+    unsigned elementBits =
+        pto::getPTOStorageElemBitWidth(pointerType.getElementType());
+    if (elementBits == 0 || elementBits % 8 != 0)
+      return std::nullopt;
+    int64_t elementBytes = elementBits / 8;
+    int64_t offsetModulus =
+        alignmentBytes / std::gcd(alignmentBytes, elementBytes);
+    std::optional<int64_t> offset =
+        getKnownIndexRemainder(add.getOffset(), offsetModulus, depth + 1);
+    if (!offset)
+      return std::nullopt;
+    return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
+  }
+
+  return std::nullopt;
+}
+
+bool isKnown32ByteAlignedAddress(Value pointer, Value elementOffset,
+                                 Type elementType) {
+  constexpr int64_t alignmentBytes = 32;
+  std::optional<int64_t> base =
+      getKnownPointerByteRemainder(pointer, alignmentBytes);
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  if (!base || elementBits == 0 || elementBits % 8 != 0)
+    return false;
+
+  int64_t elementBytes = elementBits / 8;
+  int64_t offsetModulus =
+      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
+  std::optional<int64_t> offset =
+      getKnownIndexRemainder(elementOffset, offsetModulus);
+  if (!offset)
+    return false;
+  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes) ==
+         0;
 }
 
 FailureOr<int64_t> getStaticMemRefElementCount(Type type) {
@@ -7156,16 +7267,42 @@ struct OneToNVMIGroupStoreOpPattern
         compactValue = packed->front();
       }
 
+      if (isKnown32ByteAlignedAddress(*destination, *offset,
+                                      valueVMIType.getElementType())) {
+        auto compactType = dyn_cast<VRegType>(compactValue.getType());
+        std::optional<std::string> normalDist =
+            getX2MemoryDistToken(valueVMIType.getElementType(), "NORM");
+        if (!compactType || !normalDist)
+          return rewriter.notifyMatchFailure(
+              op, "aligned compact group_store requires a supported vreg "
+                  "element type");
+        FailureOr<MaskType> maskType =
+            getMaskTypeForVReg(compactType, rewriter.getContext());
+        if (failed(maskType))
+          return rewriter.notifyMatchFailure(
+              op, "failed to derive aligned compact group_store mask type");
+        FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+            op.getLoc(), *maskType, valueVMIType.getElementCount(), rewriter);
+        if (failed(storeMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create aligned compact group_store mask");
+        rewriter.create<VstsOp>(
+            op.getLoc(), /*updated_base=*/Type{}, compactValue, *destination,
+            *offset, rewriter.getStringAttr(*normalDist), *storeMask);
+        rewriter.eraseOp(op);
+        return success();
+      }
+
       FailureOr<VRegType> wordType =
           getUnsignedCarrierVRegType(rewriter.getContext(), 32);
       if (failed(wordType))
         return rewriter.notifyMatchFailure(
             op, "failed to derive compact group-store word carrier type");
-      FailureOr<Value> words = bitcastVReg(
-          op.getLoc(), compactValue, *wordType, rewriter);
+      FailureOr<Value> words =
+          bitcastVReg(op.getLoc(), compactValue, *wordType, rewriter);
       FailureOr<Value> wordMask = createPrefixMask(
-          op.getLoc(), MaskType::get(rewriter.getContext(), "b32"),
-          "PAT_VL1", rewriter);
+          op.getLoc(), MaskType::get(rewriter.getContext(), "b32"), "PAT_VL1",
+          rewriter);
       if (failed(words) || failed(wordMask))
         return rewriter.notifyMatchFailure(
             op, "failed to materialize compact group-store words");
@@ -7175,9 +7312,9 @@ struct OneToNVMIGroupStoreOpPattern
               .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
                                 *destination, *offset)
               .getResult();
-      auto wordPtrType = PtrType::get(rewriter.getContext(),
-                                      wordType->getElementType(),
-                                      destinationType.getMemorySpace());
+      auto wordPtrType =
+          PtrType::get(rewriter.getContext(), wordType->getElementType(),
+                       destinationType.getMemorySpace());
       Value wordBase =
           rewriter.create<CastPtrOp>(op.getLoc(), wordPtrType, elementBase)
               .getResult();
@@ -7186,13 +7323,12 @@ struct OneToNVMIGroupStoreOpPattern
       if (failed(allWordMask))
         return rewriter.notifyMatchFailure(
             op, "failed to materialize compact group-store word selector mask");
-      auto indexType = VRegType::get(rewriter.getContext(),
-                                     wordType->getElementCount(),
-                                     rewriter.getI32Type());
+      auto indexType =
+          VRegType::get(rewriter.getContext(), wordType->getElementCount(),
+                        rewriter.getI32Type());
 
-      int64_t wordCount =
-          valueVMIType.getElementCount() * static_cast<int64_t>(elementBits) /
-          32;
+      int64_t wordCount = valueVMIType.getElementCount() *
+                          static_cast<int64_t>(elementBits) / 32;
       for (int64_t wordIndex = 0; wordIndex < wordCount; ++wordIndex) {
         Value word = *words;
         if (wordIndex != 0) {
@@ -7236,10 +7372,10 @@ struct OneToNVMIGroupStoreOpPattern
           getConstantIndexValue(op.getRowStride());
       FailureOr<int64_t> lanesPerPart =
           getDataLanesPerPart(valueVMIType.getElementType());
-      int64_t alignedStoreElems = 256 / elementBits;
       if (constantRowStride && *constantRowStride == 1 &&
           succeeded(lanesPerPart) && layout.getNumGroups() <= *lanesPerPart &&
-          isKnownIndexMultipleOf(op.getOffset(), alignedStoreElems)) {
+          isKnown32ByteAlignedAddress(*destination, *offset,
+                                      valueVMIType.getElementType())) {
         auto firstType = dyn_cast<VRegType>(valueParts.front().getType());
         if (!firstType)
           return rewriter.notifyMatchFailure(op,
@@ -7364,7 +7500,9 @@ struct OneToNVMIGroupStoreOpPattern
             return rewriter.notifyMatchFailure(
                 op, "unsupported element type for packed group_store mask");
           if (!laneStridedPackedByteStore && numGroups == 8 &&
-              valueParts.size() == 1 && isKnownIndexMultipleOf(*offset, 32)) {
+              valueParts.size() == 1 &&
+              isKnown32ByteAlignedAddress(*destination, *offset,
+                                          valueVMIType.getElementType())) {
             MLIRContext *ctx = rewriter.getContext();
             auto ui16 = IntegerType::get(
                 ctx, 16, IntegerType::SignednessSemantics::Unsigned);

@@ -20,6 +20,62 @@ module {
     return
   }
 
+  func.func @aligned_compact_group_store_bf16(
+      %value: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %row: index, %tile: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<bf16, ub>
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %row_off = arith.muli %row, %c128 : index
+    %tile_off = arith.muli %tile, %c16 : index
+    %off = arith.addi %row_off, %tile_off : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<bf16, ub>
+    return
+  }
+
+  func.func @aligned_compact_group_store_bf16_across_addptr(
+      %value: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %base = pto.castptr %c102400_i64 : i64 -> !pto.ptr<bf16, ub>
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %dst = pto.addptr %base, %c8 : <bf16, ub> -> <bf16, ub>
+    pto.vmi.vstore %value, %dst[%c8], %c1 {group = 8}
+        : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<bf16, ub>
+    return
+  }
+
+  func.func @partially_aligned_compact_group_store_bf16(
+      %value: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %row: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<bf16, ub>
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %off = arith.muli %row, %c8 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<bf16, ub>
+    return
+  }
+
+  func.func @unaligned_base_compact_group_store_bf16(
+      %value: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>) {
+    %c102416_i64 = arith.constant 102416 : i64
+    %dst = pto.castptr %c102416_i64 : i64 -> !pto.ptr<bf16, ub>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.vmi.vstore %value, %dst[%c0], %c1 {group = 8}
+        : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<bf16, ub>
+    return
+  }
+
   func.func @regular_group_store_ui32(
       %value: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
       %dst: !pto.ptr<ui32, ub>, %off: index) {
@@ -67,6 +123,19 @@ module {
 // LOWER-NOT: dist = "NORM_B16"
 // LOWER-NOT: dist = "PK_B16"
 // LOWER-NOT: dist = "PK4_B32"
+// LOWER-LABEL: func.func @aligned_compact_group_store_bf16(
+// LOWER: %[[MASK:.*]] = pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
+// LOWER: pto.vsts %arg0, %{{.*}}[%{{.*}}], %[[MASK]] {dist = "NORM_B16"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+// LOWER-NOT: dist = "1PT_B32"
+// LOWER-LABEL: func.func @aligned_compact_group_store_bf16_across_addptr(
+// LOWER: pto.vsts %arg0, %{{.*}}[%{{.*}}], %{{.*}} {dist = "NORM_B16"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+// LOWER-NOT: dist = "1PT_B32"
+// LOWER-LABEL: func.func @partially_aligned_compact_group_store_bf16(
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER-NOT: dist = "NORM_B16"
+// LOWER-LABEL: func.func @unaligned_base_compact_group_store_bf16(
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER-NOT: dist = "NORM_B16"
 // LOWER-LABEL: func.func @regular_group_store_ui32(
 // LOWER-NOT: dist = "1PT_B32"
 // LOWER-COUNT-1: pto.vsts {{.*}} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
