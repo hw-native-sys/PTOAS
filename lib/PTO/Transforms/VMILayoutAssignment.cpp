@@ -1054,24 +1054,28 @@ struct LayoutSolver {
         return WalkResult::advance();
       }
       if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-        requestDataUse(hist.getAccMutable(), getContiguousLayout());
-        requestDataUse(hist.getSourceMutable(), getContiguousLayout());
+        requestDataUse(hist.getAccMutable(), getContiguousLayout(),
+                       /*late=*/false, DataLayoutSeedPhase::Reduce);
+        requestDataUse(hist.getSourceMutable(), getContiguousLayout(),
+                       /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(hist.getMaskMutable(), getContiguousLayout(),
-                                  op)))
+                                  op, DataLayoutSeedPhase::Reduce)))
           return WalkResult::interrupt();
-        if (failed(
-                setNaturalLayout(hist.getResult(), getContiguousLayout(), op)))
+        if (failed(setNaturalLayout(hist.getResult(), getContiguousLayout(), op,
+                                    DataLayoutSeedPhase::Reduce)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
       if (auto hist = dyn_cast<VMIVchistOp>(op)) {
-        requestDataUse(hist.getAccMutable(), getContiguousLayout());
-        requestDataUse(hist.getSourceMutable(), getContiguousLayout());
+        requestDataUse(hist.getAccMutable(), getContiguousLayout(),
+                       /*late=*/false, DataLayoutSeedPhase::Reduce);
+        requestDataUse(hist.getSourceMutable(), getContiguousLayout(),
+                       /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(hist.getMaskMutable(), getContiguousLayout(),
-                                  op)))
+                                  op, DataLayoutSeedPhase::Reduce)))
           return WalkResult::interrupt();
-        if (failed(
-                setNaturalLayout(hist.getResult(), getContiguousLayout(), op)))
+        if (failed(setNaturalLayout(hist.getResult(), getContiguousLayout(), op,
+                                    DataLayoutSeedPhase::Reduce)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }

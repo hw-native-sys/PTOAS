@@ -155,28 +155,31 @@ module {
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_dense_f32_to_f16_store(
 // ASSIGN: %[[X32:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NOT: pto.vmi.ensure_layout
 // ASSIGN: %[[X16:.*]] = pto.vmi.truncf %[[X32]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[X16]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.ptr<f16, ub>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.ptr<f16, ub>
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_multichunk_f32_to_f16_store(
 // ASSIGN: %[[X32:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NOT: pto.vmi.ensure_layout
 // ASSIGN: %[[X16:.*]] = pto.vmi.truncf %[[X32]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[X16]]
-// ASSIGN-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>, !pto.ptr<f16, ub>
+// ASSIGN-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.ptr<f16, ub>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_dense_f32_to_f16_store(
-// LOWER: pto.vldsx2 {{.*}} "DINTLV_B32"
+// LOWER: pto.vlds
+// LOWER: pto.vlds
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// LOWER: pto.vcvt {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
-// LOWER: pto.vor
-// LOWER: pto.vsts
+// LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

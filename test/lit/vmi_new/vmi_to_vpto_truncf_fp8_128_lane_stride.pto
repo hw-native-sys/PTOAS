@@ -24,19 +24,20 @@ module {
 
 // ASSIGN-LABEL: func.func @vmi_to_vpto_truncf_fp8_128_lane_stride(
 // ASSIGN-SAME: %[[INPUT:.*]]: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[D2:.*]] = pto.vmi.ensure_layout %[[INPUT]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[PACKED:.*]] = pto.vmi.truncf %[[D2]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[INPUT]]
+// ASSIGN: %[[PACKED:.*]] = pto.vmi.truncf %[[INPUT]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN: pto.vmi.store %[[PACKED]]
 
 // LOWER-LABEL: func.func @vmi_to_vpto_truncf_fp8_128_lane_stride(
 // LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// LOWER: pto.vcvt {{.*}} {part = "P2", rnd = "R", sat = "SAT"}
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
 // LOWER-NOT: part = "P1"
+// LOWER-NOT: part = "P2"
 // LOWER-NOT: part = "P3"
-// LOWER: pto.vor
-// LOWER: pto.vsts
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

@@ -38,11 +38,11 @@ module {
 // ASSIGN: %[[SUM32:.*]] = pto.vmi.group_reduce_addf %[[SOURCE]], %[[MASK]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: %[[B32:.*]] = pto.vmi.group_broadcast %[[SUM32]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[B16:.*]] = pto.vmi.truncf %[[B32]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[B16]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.ptr<f16, ub>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.ptr<f16, ub>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_reduce_s16_truncf_broadcast_store(
 // LOWER: pto.vcgadd
@@ -50,8 +50,11 @@ module {
 // LOWER: pto.vadd
 // LOWER: pto.vselr
 // LOWER: pto.vselr
-// LOWER: pto.vcvt
-// LOWER: pto.vor
-// LOWER: pto.vsts
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

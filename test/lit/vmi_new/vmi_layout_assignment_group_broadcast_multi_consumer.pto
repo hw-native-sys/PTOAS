@@ -54,9 +54,9 @@ module {
 // ASSIGN: %[[YSUM:.*]] = pto.vmi.group_reduce_addf %[[Y_GROUP]]
 // ASSIGN: pto.vmi.group_store %[[YSUM]]
 // ASSIGN: %[[B_CAST:.*]] = pto.vmi.group_broadcast %[[SUM]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[H:.*]] = pto.vmi.truncf %[[B_CAST]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[H]]
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_broadcast_multi_consumer(
@@ -71,8 +71,11 @@ module {
 // LOWER: pto.vsts
 // LOWER: pto.vselr
 // LOWER: pto.vselr
-// LOWER: pto.vcvt
-// LOWER: pto.vor
-// LOWER: pto.vsts
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

@@ -30,14 +30,13 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_quant_matrix_f32_to_fp8(
-// CHECK-COUNT-2: pto.vldsx2 {{.*}} "DINTLV_B32"
-// CHECK: pto.vdintlv
-// CHECK: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vcvt {{.*}} {part = "P1", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vcvt {{.*}} {part = "P2", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vcvt {{.*}} {part = "P3", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vor
-// CHECK: pto.vsts {{.*}} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+// CHECK-COUNT-4: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+// CHECK-NOT: part = "P1"
+// CHECK-NOT: part = "P2"
+// CHECK-NOT: part = "P3"
+// CHECK-NOT: pto.vor
+// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

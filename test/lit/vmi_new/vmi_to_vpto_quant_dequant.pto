@@ -251,18 +251,20 @@ module {
 // CHECK-SAME: %[[QDST:[^,]+]]: !pto.ptr<f16, ub>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK: pto.vldsx2 {{.*}} "DINTLV_B32" : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
-// CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-COUNT-2: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-2: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
-// CHECK: pto.vcvt {{.*}} {part = "ODD", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
-// CHECK: pto.vor {{.*}} : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
-// CHECK: pto.vsts {{.*}} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+// CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+// CHECK-NOT: part = "ODD"
+// CHECK-NOT: pto.vor
+// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b32>
 // CHECK: scf.if
-// CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
-// CHECK: pto.vcvt {{.*}} {part = "ODD", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
-// CHECK: pto.vor {{.*}} : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
-// CHECK: pto.plt_b16 {{.*}} : i32 -> !pto.mask<b16>, i32
-// CHECK: pto.vsts {{.*}} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+// CHECK-COUNT-2: pto.plt_b32 {{.*}} : i32 -> !pto.mask<b32>, i32
+// CHECK-COUNT-2: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-2: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+// CHECK-NOT: part = "ODD"
+// CHECK-NOT: pto.vor
+// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b32>
 
 // CHECK-LABEL: func.func @vmi_to_vpto_dequant_matrix_fp8_to_f32(
 // CHECK-SAME: %[[FSRC:[^,]+]]: !pto.ptr<f8E4M3FN, ub>
@@ -288,21 +290,23 @@ module {
 // CHECK-SAME: %[[FQDST:[^,]+]]: !pto.ptr<f8E4M3FN, ub>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK: pto.vldsx2 {{.*}} "DINTLV_B32" : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
-// CHECK: pto.vldsx2 {{.*}} "DINTLV_B32" : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
-// CHECK: pto.vdintlv
-// CHECK: pto.vdintlv
+// CHECK-COUNT-4: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 // CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vsts {{.*}} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+// CHECK-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+// CHECK-NOT: part = "P1"
+// CHECK-NOT: part = "P2"
+// CHECK-NOT: part = "P3"
+// CHECK-NOT: pto.vor
+// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
 // CHECK: scf.if
-// CHECK: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vcvt {{.*}} {part = "P1", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vcvt {{.*}} {part = "P2", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vcvt {{.*}} {part = "P3", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.vor {{.*}} : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
-// CHECK: pto.plt_b8 {{.*}} : i32 -> !pto.mask<b8>, i32
-// CHECK: pto.vsts {{.*}} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+// CHECK-COUNT-4: pto.plt_b32 {{.*}} : i32 -> !pto.mask<b32>, i32
+// CHECK-COUNT-4: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+// CHECK-NOT: part = "P1"
+// CHECK-NOT: part = "P2"
+// CHECK-NOT: part = "P3"
+// CHECK-NOT: pto.vor
+// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

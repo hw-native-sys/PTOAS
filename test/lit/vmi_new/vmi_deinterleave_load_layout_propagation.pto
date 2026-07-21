@@ -64,10 +64,9 @@ module {
 // ASSIGN-LABEL: func.func @vmi_deinterleave_load_high_cast(
 // ASSIGN: %[[LOW2:.*]], %[[HIGH2:.*]] = pto.vmi.deinterleave_load
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[HIGH_D4:.*]] = pto.vmi.ensure_layout %[[HIGH2]]
-// ASSIGN-SAME: !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[RESULT:.*]] = pto.vmi.trunci %[[HIGH_D4]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[HIGH2]]
+// ASSIGN: %[[RESULT:.*]] = pto.vmi.trunci %[[HIGH2]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN: return %[[RESULT]]
 
 // LOWER-LABEL: func.func @vmi_deinterleave_load_compare_histogram(

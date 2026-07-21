@@ -36,39 +36,45 @@ module {
 }
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_load_truncf(
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.load
-// ASSIGN-SAME: !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NOT: pto.vmi.ensure_layout
 // ASSIGN: %[[NARROW:.*]] = pto.vmi.truncf %[[WIDE]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
-// ASSIGN: return %[[NARROW]] : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: return %[[NARROW]] : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_load_truncf(
-// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vldsx2 %arg0[%arg1], "DINTLV_B32"
-// LOWER: %[[EVEN:.*]] = pto.vcvt %[[LOW]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// LOWER: %[[ODD:.*]] = pto.vcvt %[[HIGH]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
-// LOWER: %[[NARROW:.*]] = pto.vor %[[EVEN]], %[[ODD]]
-// LOWER: return %[[NARROW]] : !pto.vreg<128xf16>
+// LOWER: %[[PART0:.*]] = pto.vlds
+// LOWER: %[[PART1:.*]] = pto.vlds
+// LOWER: %[[NARROW0:.*]] = pto.vcvt %[[PART0]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER: %[[NARROW1:.*]] = pto.vcvt %[[PART1]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: return %[[NARROW0]], %[[NARROW1]] : !pto.vreg<128xf16>, !pto.vreg<128xf16>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_load_truncf_multi_use(
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.load
-// ASSIGN-SAME: !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[WIDE]]
 // ASSIGN: pto.vmi.store %[[WIDE]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[NARROW:.*]] = pto.vmi.truncf %[[WIDE]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
-// ASSIGN: return %[[NARROW]] : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: return %[[NARROW]] : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_load_truncf_multi_use(
-// LOWER: pto.vstsx2
+// LOWER: %[[PART0:.*]] = pto.vlds
+// LOWER: %[[PART1:.*]] = pto.vlds
+// LOWER: pto.vsts %[[PART0]]
+// LOWER: pto.vsts %[[PART1]]
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// LOWER: pto.vcvt {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
-// LOWER: pto.vor
-// LOWER: return {{.*}} : !pto.vreg<128xf16>
+// LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: return {{.*}}, {{.*}} : !pto.vreg<128xf16>, !pto.vreg<128xf16>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

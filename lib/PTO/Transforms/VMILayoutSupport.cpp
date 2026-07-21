@@ -39,11 +39,18 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+static llvm::cl::opt<bool> preferLaneStrideNarrowing(
+    "vmi-prefer-lane-stride-narrowing",
+    llvm::cl::desc(
+        "Prefer continuous-to-lane-stride layouts for 2x/4x VMI narrowing"),
+    llvm::cl::init(true));
 
 //===----------------------------------------------------------------------===//
 // Layout pattern DSL
@@ -439,6 +446,13 @@ static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
     {bits<16>(), bits<8>(), 0, d(2), c()},
     {bits<32>(), bits<16>(), 0, d(2), c()},
     {bits<32>(), bits<8>(), 0, d(4), c()},
+};
+
+static constexpr PreferredCastLayoutPattern
+    kPreferredLaneStrideNarrowCastLayoutPatterns[] = {
+        {bits<16>(), bits<8>(), 0, c(), ls(2)},
+        {bits<32>(), bits<16>(), 0, c(), ls(2)},
+        {bits<32>(), bits<8>(), 0, c(), ls(4)},
 };
 
 static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
@@ -1401,15 +1415,15 @@ makeMaskGranularityCastLayoutFact(int64_t sourceBits, int64_t resultBits,
   return fact;
 }
 
-FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
-    VMIVRegType sourceType, VMIVRegType resultType, std::string *reason) const {
+static FailureOr<VMICastLayoutFact> getPreferredCastLayoutFactImpl(
+    ArrayRef<PreferredCastLayoutPattern> patterns, VMIVRegType sourceType,
+    VMIVRegType resultType, StringRef tableName, std::string *reason) {
   auto [sourceBits, resultBits] = getCastElementBits(sourceType, resultType);
 
   const PreferredCastLayoutPattern *selected = nullptr;
   bool selectedIsExact = false;
   int64_t elementCount = sourceType.getElementCount();
-  for (const PreferredCastLayoutPattern &pattern :
-       kPreferredCastLayoutPatterns) {
+  for (const PreferredCastLayoutPattern &pattern : patterns) {
     if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
         !matchesElementBitsPattern(pattern.resultBits, resultBits))
       continue;
@@ -1423,14 +1437,15 @@ FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
     }
     if (isExact == selectedIsExact) {
       if (reason)
-        *reason = "preferred cast layout table has ambiguous matching rows";
+        *reason =
+            (Twine(tableName) + " has ambiguous matching rows").str();
       return failure();
     }
   }
 
   if (!selected) {
     if (reason)
-      *reason = "requires a preferred cast layout table row";
+      *reason = (Twine("requires a matching ") + tableName + " row").str();
     return failure();
   }
 
@@ -1440,6 +1455,29 @@ FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
                                                      selected->sourceLayout),
                             materializeLayoutPattern(ctx,
                                                      selected->resultLayout));
+}
+
+static FailureOr<VMICastLayoutFact>
+getPreferredLaneStrideNarrowCastLayoutFactImpl(VMIVRegType sourceType,
+                                               VMIVRegType resultType,
+                                               std::string *reason) {
+  return getPreferredCastLayoutFactImpl(
+      kPreferredLaneStrideNarrowCastLayoutPatterns, sourceType, resultType,
+      "preferred lane-stride narrow cast layout table", reason);
+}
+
+FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
+    VMIVRegType sourceType, VMIVRegType resultType, std::string *reason) const {
+  if (preferLaneStrideNarrowing) {
+    FailureOr<VMICastLayoutFact> laneStrideFact =
+        getPreferredLaneStrideNarrowCastLayoutFactImpl(sourceType, resultType,
+                                                       reason);
+    if (succeeded(laneStrideFact))
+      return laneStrideFact;
+  }
+  return getPreferredCastLayoutFactImpl(
+      kPreferredCastLayoutPatterns, sourceType, resultType,
+      "preferred cast layout table", reason);
 }
 
 FailureOr<SmallVector<VMICastLayoutFact, 4>>

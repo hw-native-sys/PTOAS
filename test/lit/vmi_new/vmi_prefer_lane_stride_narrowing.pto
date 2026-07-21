@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LANE
+// RUN: pto-test-opt %s -vmi-prefer-lane-stride-narrowing=false -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=COMPACT
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=CLI
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.func @truncf_dense_store(
+        %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f8E4M3FN, ub>,
+        %offset: index) {
+      %value = pto.vmi.vload %src[%offset] {dist_mode = "continuous"}
+          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+      %narrow = pto.vmi.vcvt %value {rounding = "R", saturate = "SAT"}
+          : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
+      pto.vmi.vstore %narrow, %dst[%offset] {dist_mode = "continuous"}
+          : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+      return
+    }
+
+    func.func @trunci_dense_masked_store(
+        %src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui8, ub>,
+        %offset: index, %active: index) {
+      %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
+      %value = pto.vmi.vload %src[%offset] {dist_mode = "continuous"}
+          : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<256xui32>
+      %narrow = pto.vmi.vcvt %value {saturate = "SAT"}
+          : !pto.vmi.vreg<256xui32> -> !pto.vmi.vreg<256xui8>
+      pto.vmi.vstore %narrow, %dst[%offset], %mask {dist_mode = "continuous"}
+          : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>,
+            !pto.vmi.mask<256xpred>
+      return
+    }
+  }
+}
+
+// COMPACT-LABEL: func.func @truncf_dense_store(
+// COMPACT: pto.vcvt {{.*}} {part = "P0"
+// COMPACT: pto.vcvt {{.*}} {part = "P1"
+// COMPACT: pto.vcvt {{.*}} {part = "P2"
+// COMPACT: pto.vcvt {{.*}} {part = "P3"
+// COMPACT-COUNT-3: pto.vor
+// COMPACT: pto.vsts
+// COMPACT-NOT: dist = "PK4_B32"
+
+// LANE-LABEL: func.func @truncf_dense_store(
+// LANE-COUNT-4: pto.vcvt {{.*}} {part = "P0"
+// LANE-NOT: part = "P1"
+// LANE-NOT: part = "P2"
+// LANE-NOT: part = "P3"
+// LANE-NOT: pto.vor
+// LANE-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
+
+// LANE-LABEL: func.func @trunci_dense_masked_store(
+// LANE-COUNT-4: pto.vcvt {{.*}} {part = "P0"
+// LANE-NOT: part = "P1"
+// LANE-NOT: part = "P2"
+// LANE-NOT: part = "P3"
+// LANE-NOT: pto.vor
+// LANE-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
+
+// CLI-LABEL: func.func @truncf_dense_store(
+// CLI-COUNT-4: pto.vcvt {{.*}} {part = "P0"
+// CLI-NOT: pto.vor
+// CLI-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}

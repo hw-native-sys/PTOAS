@@ -20,20 +20,20 @@ module {
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_truncf_ensure(
 // ASSIGN-SAME: %[[WIDE:.*]]: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[SPLIT:.*]] = pto.vmi.ensure_layout %[[WIDE]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[NARROW:.*]] = pto.vmi.truncf %[[SPLIT]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[WIDE]]
+// ASSIGN: %[[NARROW:.*]] = pto.vmi.truncf %[[WIDE]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: return %[[NARROW]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_truncf_ensure(
 // LOWER-SAME: %[[D0:arg[0-9]+]]: !pto.vreg<64xf32>
 // LOWER-SAME: %[[D1:arg[0-9]+]]: !pto.vreg<64xf32>
-// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[D0]], %[[D1]]
-// LOWER: %[[EVEN:.*]] = pto.vcvt %[[LOW]]{{.*}}part = "EVEN"
-// LOWER: %[[ODD:.*]] = pto.vcvt %[[HIGH]]{{.*}}part = "ODD"
-// LOWER: %[[NARROW:.*]] = pto.vor %[[EVEN]], %[[ODD]]
-// LOWER: return %[[NARROW]] : !pto.vreg<128xf16>
+// LOWER-NOT: pto.vdintlv
+// LOWER: %[[NARROW0:.*]] = pto.vcvt %[[D0]]{{.*}}part = "EVEN"
+// LOWER: %[[NARROW1:.*]] = pto.vcvt %[[D1]]{{.*}}part = "EVEN"
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: return %[[NARROW0]], %[[NARROW1]] : !pto.vreg<128xf16>, !pto.vreg<128xf16>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

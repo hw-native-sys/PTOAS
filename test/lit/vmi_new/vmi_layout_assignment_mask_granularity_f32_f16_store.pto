@@ -29,32 +29,30 @@ module {
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_mask_granularity_f32_f16_store(
 // ASSIGN: %[[X:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[M32:.*]] = pto.vmi.create_mask
-// ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN: pto.vmi.masked_store %[[X]]
-// ASSIGN-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[H:.*]] = pto.vmi.truncf %[[X]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[M16:.*]] = pto.vmi.create_mask
-// ASSIGN-SAME: -> !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.masked_store %[[H]]
-// ASSIGN-SAME: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_mask_granularity_f32_f16_store(
-// LOWER: pto.vldsx2 {{.*}} "DINTLV_B32"
-// LOWER: pto.plt_b32
-// LOWER: pto.plt_b32
-// LOWER: pto.vintlv
-// LOWER: pto.pintlv_b32
+// LOWER: pto.vlds
+// LOWER: pto.vlds
 // LOWER: pto.vsts
 // LOWER: pto.vsts
 // LOWER: pto.pset_b32 "PAT_ALL"
-// LOWER: pto.vcvt
-// LOWER: pto.vcvt
-// LOWER: pto.vor
-// LOWER: pto.plt_b16
-// LOWER: pto.vsts
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"
+// LOWER-NOT: part = "ODD"
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast
