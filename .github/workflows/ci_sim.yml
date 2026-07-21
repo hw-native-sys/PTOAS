@@ -467,7 +467,6 @@ jobs:
             python3 -m pytest "$@" \
               -v \
               --platform="${platform}" \
-              --pto-isa-commit="${PTO_ISA_COMMIT}" \
               --save-kernels \
               --kernels-dir="${kernels_dir}" \
               2>&1 | tee "${log_file}"
