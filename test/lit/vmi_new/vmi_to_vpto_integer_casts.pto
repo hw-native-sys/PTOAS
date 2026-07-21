@@ -206,16 +206,18 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots8_i32_to_ui8_lane_stride(
 // CHECK-NOT: pto.vcvt
-// CHECK-NOT: pto.vpack
-// CHECK: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<64xi32>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots8_ui16_to_ui8_lane_stride(
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
-// CHECK: pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
-// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b16>
+// CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: pto.vbitcast {{.*}} : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

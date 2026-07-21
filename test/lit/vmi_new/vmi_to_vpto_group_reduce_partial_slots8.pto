@@ -62,8 +62,8 @@ module {
 // CHECK-DAG: %[[SLOT4:.*]] = pto.pge_b16 "PAT_VL4" : !pto.mask<b16>
 // CHECK-COUNT-4: pto.vcgadd
 // CHECK-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[SLOT4]]
-// CHECK: %[[STORE4:.*]] = pto.pge_b16 "PAT_VL4" : !pto.mask<b16>
-// CHECK: pto.vsts {{.*}}, {{.*}}, %[[STORE4]]
+// CHECK: %[[WORDS4:.*]] = pto.vbitcast {{.*}} : !pto.vreg<128xf16> -> !pto.vreg<64xui32>
+// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -72,8 +72,8 @@ module {
 // CHECK-DAG: %[[SLOT8:.*]] = pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
 // CHECK-COUNT-4: pto.vcgadd
 // CHECK-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[SLOT8]]
-// CHECK: %[[STORE8:.*]] = pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
-// CHECK: pto.vsts {{.*}}, {{.*}}, %[[STORE8]]
+// CHECK: %[[WORDS8:.*]] = pto.vbitcast {{.*}} : !pto.vreg<128xf16> -> !pto.vreg<64xui32>
+// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @compact_group_store_ui16(
+      %value: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %dst: !pto.ptr<ui16, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<ui16, ub>
+    return
+  }
+
+  func.func @regular_group_store_ui32(
+      %value: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %dst: !pto.ptr<ui32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<ui32, ub>
+    return
+  }
+
+  func.func @compact_group_store_f32(
+      %value: !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>,
+          !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @regular_group_store_f32(
+      %value: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @compact_group_store_ui16(
+// ASSIGN: pto.vmi.group_store %arg0
+// ASSIGN-LABEL: func.func @regular_group_store_ui32(
+// ASSIGN-NOT: pto.vmi.ensure_layout
+// ASSIGN: pto.vmi.group_store %arg0
+// ASSIGN-LABEL: func.func @compact_group_store_f32(
+// ASSIGN: pto.vmi.group_store %arg0
+// ASSIGN-LABEL: func.func @regular_group_store_f32(
+// ASSIGN: pto.vmi.group_store %arg0
+
+// LOWER-LABEL: func.func @compact_group_store_ui16(
+// LOWER: %[[WORDS:.*]] = pto.vbitcast %arg0 : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER-NOT: dist = "NORM_B16"
+// LOWER-NOT: dist = "PK_B16"
+// LOWER-NOT: dist = "PK4_B32"
+// LOWER-LABEL: func.func @regular_group_store_ui32(
+// LOWER-NOT: dist = "1PT_B32"
+// LOWER-COUNT-1: pto.vsts {{.*}} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER-LABEL: func.func @compact_group_store_f32(
+// LOWER: %[[F32WORDS:.*]] = pto.vbitcast %arg0 : !pto.vreg<64xf32> -> !pto.vreg<64xui32>
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER-LABEL: func.func @regular_group_store_f32(
+// LOWER-NOT: dist = "1PT_B32"
+// LOWER-COUNT-1: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast

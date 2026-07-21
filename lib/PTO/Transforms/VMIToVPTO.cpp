@@ -1662,6 +1662,24 @@ LogicalResult checkSupportedGroupBroadcastLoadShape(
   return success();
 }
 
+static bool isCompactSmallGroupStore(VMILayoutAttr layout,
+                                     VMIVRegType valueType, int64_t numGroups,
+                                     std::optional<int64_t> rowStride) {
+  unsigned elementBits =
+      pto::getPTOStorageElemBitWidth(valueType.getElementType());
+  int64_t payloadBits =
+      valueType.getElementCount() * static_cast<int64_t>(elementBits);
+  return layout && layout.isGroupSlots() && layout.getNumGroups() == numGroups &&
+         layout.getSlots() == 8 &&
+         (layout.getLaneStride() == 1 || layout.getLaneStride() == 2 ||
+          layout.getLaneStride() == 4) &&
+         (valueType.getElementCount() == 4 ||
+          valueType.getElementCount() == 8) &&
+         numGroups == valueType.getElementCount() && elementBits > 0 &&
+         payloadBits > 0 && payloadBits < 256 && payloadBits % 32 == 0 &&
+         rowStride && *rowStride == 1;
+}
+
 LogicalResult
 checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
   auto fail = [&](const Twine &message) -> LogicalResult {
@@ -1672,6 +1690,18 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
 
   auto valueType = cast<VMIVRegType>(op.getValue().getType());
   VMILayoutAttr layout = valueType.getLayoutAttr();
+  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
+  if (isCompactSmallGroupStore(layout, valueType,
+                               op.getNumGroupsAttr().getInt(), rowStride)) {
+    if (!isa<PtrType>(op.getDestination().getType()))
+      return fail("compact small group_store requires !pto.ptr destination");
+    VMIMemoryAccessPlan accessPlan = buildWriteAccessPlan(
+        op.getDestination(), op.getDestination().getType(), valueType,
+        VMIMemoryWriteMaskKind::AllTrue);
+    if (!accessPlan.layoutSupport.isSupported())
+      return fail(accessPlan.layoutSupport.reason);
+    return success();
+  }
   if (layout && layout.isGroupSlots()) {
     VMILayoutSupport supports;
     FailureOr<VMIGroupSlotLayoutFact> fact = supports.getGroupStoreLayoutFact(
@@ -1700,7 +1730,6 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
       return success();
     }
 
-    std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
     if (!rowStride || *rowStride != 1)
       return fail("slots=8 group_store currently requires constant unit "
                   "row_stride");
@@ -7093,6 +7122,104 @@ struct OneToNVMIGroupStoreOpPattern
         "group_store row_stride must convert to one value", rewriter);
     if (failed(destination) || failed(offset) || failed(rowStride))
       return failure();
+
+    unsigned elementBits =
+        pto::getPTOStorageElemBitWidth(valueVMIType.getElementType());
+    bool compactSmallGroupStore = isCompactSmallGroupStore(
+        layout, valueVMIType, op.getNumGroupsAttr().getInt(),
+        getConstantIndexValue(op.getRowStride()));
+    if (compactSmallGroupStore) {
+      // The VMI input remains group_slots(num_groups=8, slots=8). Its active
+      // group values occupy the leading physical lanes, so split that carrier
+      // into 32-bit point stores without changing the VMI layout contract.
+      // This avoids the 32-byte alignment requirement of NORM/PK vector stores
+      // while keeping the original payload dense in memory.
+      ValueRange valueParts = adaptor.getValue();
+      if (valueParts.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "compact small group_store requires one physical value part");
+      auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
+      auto destinationType = dyn_cast<PtrType>((*destination).getType());
+      if (!valueType || !destinationType)
+        return rewriter.notifyMatchFailure(
+            op, "compact small group_store requires vreg and ptr operands");
+
+      Value compactValue = valueParts.front();
+      if (layout.getLaneStride() != 1) {
+        SmallVector<Type> compactTypes{compactValue.getType()};
+        FailureOr<SmallVector<Value>> packed = materializeGroupSlotLaneStride(
+            op, valueParts, compactTypes, valueVMIType.getElementType(),
+            layout.getLaneStride(), /*resultStride=*/1, rewriter);
+        if (failed(packed))
+          return rewriter.notifyMatchFailure(
+              op, "failed to pack group-slot lane stride for compact store");
+        compactValue = packed->front();
+      }
+
+      FailureOr<VRegType> wordType =
+          getUnsignedCarrierVRegType(rewriter.getContext(), 32);
+      if (failed(wordType))
+        return rewriter.notifyMatchFailure(
+            op, "failed to derive compact group-store word carrier type");
+      FailureOr<Value> words = bitcastVReg(
+          op.getLoc(), compactValue, *wordType, rewriter);
+      FailureOr<Value> wordMask = createPrefixMask(
+          op.getLoc(), MaskType::get(rewriter.getContext(), "b32"),
+          "PAT_VL1", rewriter);
+      if (failed(words) || failed(wordMask))
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize compact group-store words");
+
+      Value elementBase =
+          rewriter
+              .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
+                                *destination, *offset)
+              .getResult();
+      auto wordPtrType = PtrType::get(rewriter.getContext(),
+                                      wordType->getElementType(),
+                                      destinationType.getMemorySpace());
+      Value wordBase =
+          rewriter.create<CastPtrOp>(op.getLoc(), wordPtrType, elementBase)
+              .getResult();
+      FailureOr<Value> allWordMask =
+          createAllTrueMaskForVReg(op.getLoc(), *wordType, rewriter);
+      if (failed(allWordMask))
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize compact group-store word selector mask");
+      auto indexType = VRegType::get(rewriter.getContext(),
+                                     wordType->getElementCount(),
+                                     rewriter.getI32Type());
+
+      int64_t wordCount =
+          valueVMIType.getElementCount() * static_cast<int64_t>(elementBits) /
+          32;
+      for (int64_t wordIndex = 0; wordIndex < wordCount; ++wordIndex) {
+        Value word = *words;
+        if (wordIndex != 0) {
+          FailureOr<Value> index = createScalarOffsetConstant(
+              op.getLoc(), indexType.getElementType(), wordIndex, rewriter);
+          if (failed(index))
+            return rewriter.notifyMatchFailure(
+                op, "failed to materialize compact group-store word index");
+          Value indices =
+              rewriter
+                  .create<VdupOp>(op.getLoc(), indexType, *index, *allWordMask,
+                                  /*position=*/nullptr)
+                  .getResult();
+          word = rewriter
+                     .create<VselrOp>(op.getLoc(), *wordType, *words, indices)
+                     .getResult();
+        }
+        Value wordOffset =
+            rewriter.create<arith::ConstantIndexOp>(op.getLoc(), wordIndex);
+        rewriter.create<VstsOp>(
+            op.getLoc(), /*updated_base=*/Type{}, word, wordBase, wordOffset,
+            rewriter.getStringAttr("1PT_B32"), *wordMask);
+      }
+
+      rewriter.eraseOp(op);
+      return success();
+    }
 
     if (layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
         layout.getNumGroups() == op.getNumGroupsAttr().getInt()) {

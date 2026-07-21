@@ -23,8 +23,9 @@ module {
 }
 
 // CHECK-LABEL: func.func @group_store_ui8_slots8_lane_stride2(
-// CHECK: pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
-// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : {{.*}}, !pto.ptr<ui8, ub>, !pto.mask<b16>
+// CHECK: pto.vpack {{.*}}, "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: pto.vbitcast {{.*}} : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

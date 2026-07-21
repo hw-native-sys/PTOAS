@@ -24,6 +24,19 @@ module {
         : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
     return
   }
+
+  func.func @vmi_layout_assignment_group_slot_trunci_lane_stride2(
+      %wide: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %off: index) {
+    %c1 = arith.constant 1 : index
+    %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
+        : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xui8>
+    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+    return
+  }
 }
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride(
@@ -33,8 +46,30 @@ module {
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride(
 // LOWER-NOT: pto.vcvt
-// LOWER-NOT: pto.vpack
-// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<64xi32>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// LOWER: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// LOWER: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// LOWER: %[[SIGNED_WORDS:.*]] = pto.vbitcast %[[PACK8]] : !pto.vreg<256xui8> -> !pto.vreg<64xi32>
+// LOWER: %[[WORDS:.*]] = pto.vbitcast %[[SIGNED_WORDS]] : !pto.vreg<64xi32> -> !pto.vreg<64xui32>
+// LOWER-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER-NOT: dist = "PK_B16"
+// LOWER-NOT: dist = "PK4_B32"
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast
+
+// ASSIGN-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride2(
+// ASSIGN: %[[NARROW2:.*]] = pto.vmi.trunci
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+// ASSIGN: pto.vmi.group_store %[[NARROW2]]
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride2(
+// LOWER: %[[CVT2:.*]] = pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
+// LOWER: %[[CARRIER2:.*]] = pto.vbitcast %[[CVT2]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+// LOWER: %[[PACKEDV2:.*]] = pto.vpack %[[CARRIER2]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// LOWER: %[[WORDS2:.*]] = pto.vbitcast %[[PACKEDV2]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// LOWER-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER-NOT: dist = "PK_B16"
+// LOWER-NOT: dist = "PK4_B32"
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast
