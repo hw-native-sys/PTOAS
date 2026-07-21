@@ -116,6 +116,13 @@ add_custom_target(ptoas_runtime_staging ALL
   VERBATIM
 )
 
+if(TARGET PTODSLPackage)
+  # The build-tree launcher imports ptoas._runtime_entry from build/python.
+  # Keep that package staging coupled to every runtime staging entrypoint,
+  # including partial builds such as tools/ptoas/all.
+  add_dependencies(ptoas_runtime_staging PTODSLPackage)
+endif()
+
 if(TARGET ptoas_runtime_deps)
   add_dependencies(ptoas_runtime_deps ptoas_runtime_staging)
 endif()
