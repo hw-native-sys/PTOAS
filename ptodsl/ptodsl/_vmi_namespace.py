@@ -261,20 +261,25 @@ def _derive_vmull_result_types(a, b, *, context: str):
 
 
 def _derive_hist_result_type(acc, *, context: str):
+    """acc must be 16-bit unsigned or signless integer; result is always ui16."""
     acc_type = _as_vmi_vreg_type(_type_of(acc), context=context)
     element_type = acc_type.element_type
     if not IntegerType.isinstance(element_type):
         raise TypeError(
-            f"{context} requires acc/result element type to be ui16, "
+            f"{context} requires acc element type to be ui16 or i16, "
             f"got {element_type}"
         )
     int_type = IntegerType(element_type)
-    if int_type.width != 16 or not int_type.is_unsigned:
+    if int_type.width != 16 or int_type.is_signed:
         raise TypeError(
-            f"{context} requires acc/result element type to be ui16, "
+            f"{context} requires acc element type to be ui16 or i16, "
             f"got {element_type}"
         )
-    return acc_type
+    return _pto.VMIVRegType.get(
+        acc_type.element_count,
+        IntegerType.get_unsigned(16),
+        layout=acc_type.layout,
+    )
 
 
 def _derive_vgather_result_type(source, offsets, *, context: str):

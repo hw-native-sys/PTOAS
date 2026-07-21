@@ -2545,10 +2545,26 @@ def vmi_vhist_signless_source_probe():
 
 
 @pto.jit(target="a5", backend="vpto", mode="explicit")
-def vmi_vhist_bad_acc_probe():
-    # acc is signless i16 - must be rejected by the PTODSL surface with a
-    # TypeError before the MLIR verifier runs.
+def vmi_vhist_signless_acc_probe():
+    # acc is signless i16 - DSL should accept it (treated as ui16) and emit a
+    # ui16 result for both vdhist and vchist.
     hist_acc_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.i16)
+    hist_src_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.ui8)
+    hist_acc_ptr = hist_acc_tile.as_ptr()
+    hist_src_ptr = hist_src_tile.as_ptr()
+    offset = pto.const(0, dtype=pto.index)
+    hist_acc = pto.vmi.vload(hist_acc_ptr, offset, size=256)
+    hist_src = pto.vmi.vload(hist_src_ptr, offset, size=256)
+    hist_mask = pto.vmi.create_mask(pto.const(256, dtype=pto.index), size=256)
+    _ = pto.vmi.vdhist(hist_acc, hist_src, hist_mask)
+    _ = pto.vmi.vchist(hist_acc, hist_src, hist_mask)
+
+
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vmi_vhist_bad_acc_probe():
+    # acc is signed si16 - must be rejected by the PTODSL surface with a
+    # TypeError before the MLIR verifier runs.
+    hist_acc_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.si16)
     hist_src_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.ui8)
     hist_acc_ptr = hist_acc_tile.as_ptr()
     hist_src_ptr = hist_src_tile.as_ptr()
@@ -5979,10 +5995,28 @@ def main() -> None:
         "!pto.vmi.vreg<256xui16" in vmi_vhist_signless_source_text,
         "vdhist/vchist acc/result must remain ui16 in emitted IR",
     )
+    vmi_vhist_signless_acc_text = vmi_vhist_signless_acc_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        vmi_vhist_signless_acc_text,
+        "public VMI vdhist/vchist signless-acc specialization",
+    )
+    expect(
+        "pto.vmi.vdhist" in vmi_vhist_signless_acc_text
+        and "pto.vmi.vchist" in vmi_vhist_signless_acc_text,
+        "signless-acc vdhist/vchist probe should emit both histogram ops",
+    )
+    expect(
+        "!pto.vmi.vreg<256xi16" in vmi_vhist_signless_acc_text,
+        "vdhist/vchist probe with dtype=pto.i16 acc should surface signless i16 lanes in IR",
+    )
+    expect(
+        "!pto.vmi.vreg<256xui16" in vmi_vhist_signless_acc_text,
+        "vdhist/vchist result must always be ui16, even when acc is signless i16",
+    )
     vmi_vhist_bad_acc_error = expect_raises(
         TypeError,
         vmi_vhist_bad_acc_probe.compile,
-        "requires acc/result element type to be ui16",
+        "requires acc element type to be ui16 or i16",
     )
     expect(
         "pto.vmi.vdhist(...)" in str(vmi_vhist_bad_acc_error),
