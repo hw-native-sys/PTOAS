@@ -48,8 +48,7 @@ module {
 // LOWER-NOT: pto.vcvt
 // LOWER: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // LOWER: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// LOWER: %[[SIGNED_WORDS:.*]] = pto.vbitcast %[[PACK8]] : !pto.vreg<256xui8> -> !pto.vreg<64xi32>
-// LOWER: %[[WORDS:.*]] = pto.vbitcast %[[SIGNED_WORDS]] : !pto.vreg<64xi32> -> !pto.vreg<64xui32>
+// LOWER: %[[WORDS:.*]] = pto.vbitcast %[[PACK8]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
 // LOWER-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 // LOWER-NOT: dist = "PK_B16"
 // LOWER-NOT: dist = "PK4_B32"

@@ -3839,7 +3839,7 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-    PatternRewriter &rewriter) {
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
   if (!sourceLayout || !resultLayout) {
     (void)rewriter.notifyMatchFailure(
         op, "layout materialization requires assigned source/result layouts");
@@ -3856,12 +3856,8 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
   if (sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
       sourceLayout.getNumGroups() == resultLayout.getNumGroups() &&
       sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8) {
-    auto ensure = dyn_cast<VMIEnsureLayoutOp>(op);
-    if (!ensure)
-      return failure();
-    auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
     return materializeGroupSlotLaneStride(
-        op, sourceParts, resultTypes, sourceType.getElementType(),
+        op, sourceParts, resultTypes, sourceVMIElementType,
         sourceLayout.getLaneStride(), resultLayout.getLaneStride(), rewriter);
   }
 
@@ -4164,23 +4160,15 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
 
   if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
       resultLayout.isContiguous() && resultLayout.getLaneStride() != 1) {
-    auto ensure = dyn_cast<VMIEnsureLayoutOp>(op);
-    if (!ensure)
-      return failure();
-    auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
     return materializeContiguousToLaneStride(
-        op, sourceParts, resultTypes, sourceType.getElementType(),
+        op, sourceParts, resultTypes, sourceVMIElementType,
         resultLayout.getLaneStride(), rewriter);
   }
 
   if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() != 1 &&
       resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
-    auto ensure = dyn_cast<VMIEnsureLayoutOp>(op);
-    if (!ensure)
-      return failure();
-    auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
     return materializeLaneStrideToContiguous(
-        op, sourceParts, resultTypes, sourceType.getElementType(),
+        op, sourceParts, resultTypes, sourceVMIElementType,
         sourceLayout.getLaneStride(), rewriter);
   }
 
@@ -4191,16 +4179,48 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     VMILayoutAttr contiguous =
         VMILayoutAttr::getContiguous(rewriter.getContext());
     FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
-        op, sourceParts, resultTypes, sourceLayout, contiguous, rewriter);
+        op, sourceParts, resultTypes, sourceLayout, contiguous,
+        sourceVMIElementType, rewriter);
     if (failed(dense))
       return failure();
     return materializeDataLayoutConversion(op, *dense, resultTypes, contiguous,
-                                           resultLayout, rewriter);
+                                           resultLayout, sourceVMIElementType,
+                                           rewriter);
   }
 
   (void)rewriter.notifyMatchFailure(
       op, "unsupported VMI data layout materialization");
   return failure();
+}
+
+FailureOr<SmallVector<Value>> materializeEnsureLayoutConversion(
+    Operation *op, ValueRange sourceParts, VMIVRegType sourceType,
+    VMIVRegType resultType, const TypeConverter &typeConverter,
+    PatternRewriter &rewriter) {
+  VMILayoutSupport supports;
+  std::string supportReason;
+  if (failed(supports.getEnsureLayoutFact(sourceType, resultType,
+                                          &supportReason))) {
+    (void)rewriter.notifyMatchFailure(
+        op, Twine("ensure_layout has no registered materialization support: ") +
+                supportReason);
+    return failure();
+  }
+
+  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  if (!sourceLayout || !resultLayout) {
+    (void)rewriter.notifyMatchFailure(
+        op, "ensure_layout requires assigned source/result layouts");
+    return failure();
+  }
+
+  SmallVector<Type> resultTypes;
+  if (failed(typeConverter.convertType(resultType, resultTypes)))
+    return failure();
+  return materializeDataLayoutConversion(op, sourceParts, resultTypes,
+                                         sourceLayout, resultLayout,
+                                         sourceType.getElementType(), rewriter);
 }
 
 FailureOr<std::pair<Value, Value>>
@@ -5064,28 +5084,9 @@ struct OneToNVMIEnsureLayoutOpPattern
                   ConversionPatternRewriter &rewriter) const override {
     auto sourceType = cast<VMIVRegType>(op.getSource().getType());
     auto resultType = cast<VMIVRegType>(op.getResult().getType());
-    VMILayoutSupport supports;
-    std::string supportReason;
-    if (failed(supports.getEnsureLayoutFact(sourceType, resultType,
-                                            &supportReason)))
-      return rewriter.notifyMatchFailure(
-          op,
-          Twine("ensure_layout has no registered materialization support: ") +
-              supportReason);
-    VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-    VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-    if (!sourceLayout || !resultLayout)
-      return rewriter.notifyMatchFailure(
-          op, "ensure_layout requires assigned source/result layouts");
-
-    ValueRange sourceParts = adaptor.getSource();
-    FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
-      return failure();
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    FailureOr<SmallVector<Value>> results = materializeDataLayoutConversion(
-        op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
+    FailureOr<SmallVector<Value>> results = materializeEnsureLayoutConversion(
+        op, adaptor.getSource(), sourceType, resultType,
+        *this->getTypeConverter(), rewriter);
     if (failed(results))
       return failure();
     replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
@@ -5998,7 +5999,8 @@ struct OneToNVMILoadOpPattern : OpConversionPattern<VMILoadOp> {
 
     FailureOr<SmallVector<Value>> results = materializeDataLayoutConversion(
         op, contiguousParts, resultTypes, contiguousLayout,
-        resultVMIType.getLayoutAttr(), rewriter);
+        resultVMIType.getLayoutAttr(), resultVMIType.getElementType(),
+        rewriter);
     if (failed(results))
       return failure();
 
@@ -7111,7 +7113,7 @@ struct OneToNVMIStoreOpPattern : OpConversionPattern<VMIStoreOp> {
 
     FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
         op, valueParts, contiguousTypes, valueVMIType.getLayoutAttr(),
-        contiguousLayout, rewriter);
+        contiguousLayout, valueVMIType.getElementType(), rewriter);
     if (failed(storeParts))
       return failure();
 
@@ -7241,10 +7243,9 @@ struct OneToNVMIGroupStoreOpPattern
         getConstantIndexValue(op.getRowStride()));
     if (compactSmallGroupStore) {
       // The VMI input remains group_slots(num_groups=8, slots=8). Its active
-      // group values occupy the leading physical lanes, so split that carrier
-      // into 32-bit point stores without changing the VMI layout contract.
-      // This avoids the 32-byte alignment requirement of NORM/PK vector stores
-      // while keeping the original payload dense in memory.
+      // group values occupy the leading physical lanes. Materialize the same
+      // lane_stride=1 carrier as ensure_layout before selecting either an
+      // aligned NORM store or unaligned 32-bit point stores.
       ValueRange valueParts = adaptor.getValue();
       if (valueParts.size() != 1)
         return rewriter.notifyMatchFailure(
@@ -7257,13 +7258,18 @@ struct OneToNVMIGroupStoreOpPattern
 
       Value compactValue = valueParts.front();
       if (layout.getLaneStride() != 1) {
-        SmallVector<Type> compactTypes{compactValue.getType()};
-        FailureOr<SmallVector<Value>> packed = materializeGroupSlotLaneStride(
-            op, valueParts, compactTypes, valueVMIType.getElementType(),
-            layout.getLaneStride(), /*resultStride=*/1, rewriter);
-        if (failed(packed))
+        VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
+            rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
+        auto compactVMIType = VMIVRegType::get(
+            rewriter.getContext(), valueVMIType.getElementCount(),
+            valueVMIType.getElementType(), compactLayout);
+        FailureOr<SmallVector<Value>> packed =
+            materializeEnsureLayoutConversion(
+                op, valueParts, valueVMIType, compactVMIType,
+                *this->getTypeConverter(), rewriter);
+        if (failed(packed) || packed->size() != 1)
           return rewriter.notifyMatchFailure(
-              op, "failed to pack group-slot lane stride for compact store");
+              op, "failed to materialize compact group_store layout");
         compactValue = packed->front();
       }
 
@@ -7841,7 +7847,8 @@ struct OneToNVMIMaskedStoreOpPattern
       contiguousValueTypes.push_back(value.getType());
     FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
         op, valueParts, contiguousValueTypes, valueVMIType.getLayoutAttr(),
-        VMILayoutAttr::getContiguous(rewriter.getContext()), rewriter);
+        VMILayoutAttr::getContiguous(rewriter.getContext()),
+        valueVMIType.getElementType(), rewriter);
     if (failed(storeParts))
       return failure();
 
@@ -11264,7 +11271,8 @@ struct OneToNVMIChannelSplitOpPattern
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<SmallVector<Value>> results =
         materializeDataLayoutConversion(op, adaptor.getSource(), resultTypes,
-                                        sourceLayout, channelLayout, rewriter);
+                                        sourceLayout, channelLayout,
+                                        sourceType.getElementType(), rewriter);
     if (failed(results))
       return failure();
 
@@ -11310,7 +11318,8 @@ struct OneToNVMIChannelMergeOpPattern
     FailureOr<SmallVector<Value>> results =
         materializeDataLayoutConversion(
             op, flattenOneToNOperands(adaptor.getOperands()),
-            *maybeResultTypes, channelLayout, resultLayout, rewriter);
+            *maybeResultTypes, channelLayout, resultLayout,
+            resultType.getElementType(), rewriter);
     if (failed(results))
       return failure();
 
