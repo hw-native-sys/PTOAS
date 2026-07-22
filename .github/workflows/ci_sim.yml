@@ -112,7 +112,11 @@ jobs:
       LLVM_REF: feature-vpto-llvm21
       PTO_INSTALL_DIR: ${{ github.workspace }}/install
       PTO_WHEELHOUSE: ${{ github.workspace }}/.work/ptoas-wheelhouse
-      PTOAS_VENV: ${{ github.workspace }}/.work/ptoas-sim-venv
+      CI_SIM_VENV: ${{ github.workspace }}/.work/ci-sim-venv
+      CI_PYTHON: ${{ github.workspace }}/.work/ci-sim-venv/bin/python
+      CI_BIN_DIR: ${{ github.workspace }}/.work/ci-sim-venv/bin
+      CI_SIM_BASE_PYTHON_BIN: ${{ vars.CI_SIM_BASE_PYTHON_BIN || '/home/mouliangyu/miniconda3/envs/torchnpu310/bin/python' }}
+      PIP_REQUIRE_VIRTUALENV: "true"
       VPTO_SIM_WORKSPACE: ${{ github.workspace }}/.work/vpto-sim-ci
       TILELANG_DSL_WORKSPACE: ${{ github.workspace }}/.work/tilelang-dsl-ci
       TILELANG_DSL_UT_WORKSPACE: ${{ github.workspace }}/.work/tilelang-dsl-ut-ci
@@ -154,7 +158,7 @@ jobs:
           fi
 
           echo "ASCEND_HOME_PATH=${ASCEND_HOME_PATH_DETECTED}" >> "${GITHUB_ENV}"
-          echo "PTOAS_BIN=${GITHUB_WORKSPACE}/build/tools/ptoas/ptoas" >> "${GITHUB_ENV}"
+          echo "PTOAS_BIN=${CI_BIN_DIR}/ptoas" >> "${GITHUB_ENV}"
 
       - name: Ensure runner dependencies
         shell: bash
@@ -178,43 +182,37 @@ jobs:
             fi
           fi
 
-          python3 -m pip --version >/dev/null 2>&1 || {
-            if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y python3-pip
-            else
-              echo "ERROR: python3-pip is required on self-hosted runner" >&2
-              exit 1
-            fi
-          }
+      - name: Resolve CI Python
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          need_pip_install=0
-          python3 -c "import numpy" >/dev/null 2>&1 || need_pip_install=1
-          python3 -c "import setuptools, wheel" >/dev/null 2>&1 || need_pip_install=1
-          python3 -m pybind11 --cmakedir >/dev/null 2>&1 || need_pip_install=1
-          python3 -m nanobind --cmake_dir >/dev/null 2>&1 || need_pip_install=1
-          python3 -c "import ml_dtypes" >/dev/null 2>&1 || need_pip_install=1
-
-          if [[ "${need_pip_install}" -eq 1 ]]; then
-            python3 -m pip install --upgrade pip
-            python3 -m pip install setuptools wheel 'pybind11<3' nanobind numpy ml-dtypes
+          if [[ ! -x "${CI_SIM_BASE_PYTHON_BIN}" ]]; then
+            echo "ERROR: CI_SIM_BASE_PYTHON_BIN is not executable: ${CI_SIM_BASE_PYTHON_BIN}" >&2
+            exit 1
           fi
+
+          CI_BASE_PYTHON="$(readlink -f "${CI_SIM_BASE_PYTHON_BIN}")"
+          echo "Using configured CI base Python: ${CI_BASE_PYTHON}"
+
+          PYTHON_ABI_TAG="$("${CI_BASE_PYTHON}" - <<'PY'
+          import sys
+          print(f"py{sys.version_info.major}{sys.version_info.minor}")
+          PY
+          )"
+          BASE_HASH="$(printf '%s' "${CI_BASE_PYTHON}" | sha256sum | cut -c1-12)"
+          CI_PYTHON_TAG="${PYTHON_ABI_TAG}-${BASE_HASH}"
+
+          echo "CI_BASE_PYTHON=${CI_BASE_PYTHON}" >> "${GITHUB_ENV}"
+          echo "CI_PYTHON_TAG=${CI_PYTHON_TAG}" >> "${GITHUB_ENV}"
 
       - name: Resolve LLVM directories
         shell: bash
         run: |
           set -euo pipefail
           echo "LLVM_ROOT=${RUNNER_TOOL_CACHE}/llvm-project" >> "${GITHUB_ENV}"
-          echo "LLVM_DIR=${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert" >> "${GITHUB_ENV}"
-          echo "MLIR_PYTHONPATH=${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert/tools/mlir/python_packages/mlir_core" >> "${GITHUB_ENV}"
-
-      - name: Resolve PTODSL build directories
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "PTO_DSL_ST_BUILD_DIR=${GITHUB_WORKSPACE}/build-ptodsl" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_INSTALL_DIR=${GITHUB_WORKSPACE}/install-ptodsl" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_WHEELHOUSE=${GITHUB_WORKSPACE}/.work/ptodsl-wheelhouse" >> "${GITHUB_ENV}"
+          echo "LLVM_DIR=${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert-${CI_PYTHON_TAG}" >> "${GITHUB_ENV}"
+          echo "MLIR_PYTHONPATH=${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert-${CI_PYTHON_TAG}/tools/mlir/python_packages/mlir_core" >> "${GITHUB_ENV}"
 
       - name: Resolve LLVM cache key
         id: llvm-cache-key
@@ -230,7 +228,7 @@ jobs:
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
-          echo "key=llvm-build-${sha}-assert-v1" >> "${GITHUB_OUTPUT}"
+          echo "key=llvm-build-${sha}-assert-${CI_PYTHON_TAG}-v2" >> "${GITHUB_OUTPUT}"
 
       - name: Restore LLVM build cache
         id: llvm-cache
@@ -245,18 +243,48 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "${GITHUB_WORKSPACE}/build"
-          rm -rf "${GITHUB_WORKSPACE}/build-ptodsl"
           rm -rf "${PTO_INSTALL_DIR}"
-          rm -rf "${PTO_DSL_ST_INSTALL_DIR}"
-          rm -rf "${PTO_DSL_ST_WHEELHOUSE}"
           rm -rf "${PTO_WHEELHOUSE}"
-          rm -rf "${PTOAS_VENV}"
+          rm -rf "${CI_SIM_VENV}"
           rm -rf "${VPTO_SIM_WORKSPACE}"
           rm -rf "${TILELANG_DSL_WORKSPACE}"
           rm -rf "${PYPTO_WORKSPACE}"
           rm -rf "${PYPTO_RUN_WORKSPACE}"
           rm -rf "${PTO_ISA_ROOT}"
           rm -rf "${GITHUB_WORKSPACE}/.work/camodel"
+
+      - name: Create CI simulator venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${CI_BASE_PYTHON}" -m venv --system-site-packages "${CI_SIM_VENV}"
+          "${CI_PYTHON}" -m pip install --upgrade pip
+          "${CI_PYTHON}" -m pip install \
+            setuptools \
+            wheel \
+            'pybind11<3' \
+            nanobind \
+            numpy \
+            ml-dtypes \
+            PyYAML \
+            scikit-build-core \
+            ninja \
+            pytest \
+            cloudpickle
+
+          TORCH_DEVICE_BACKEND_AUTOLOAD=0 "${CI_PYTHON}" - <<'PY'
+          import sys
+          import torch
+          import torch_npu  # noqa: F401
+
+          print(sys.executable)
+          print(f"python {sys.version_info.major}.{sys.version_info.minor}")
+          print("torch", torch.__version__)
+          print("torch_npu", getattr(torch_npu, "__version__", "unknown"))
+          PY
+
+          echo "VIRTUAL_ENV=${CI_SIM_VENV}" >> "${GITHUB_ENV}"
+          echo "${CI_BIN_DIR}" >> "${GITHUB_PATH}"
 
       - name: Prepare LLVM source
         shell: bash
@@ -286,6 +314,21 @@ jobs:
           # mismatches with system libraries.
           export CC=gcc
           export CXX=g++
+          CI_PYTHON_PREFIX="$(dirname "$(dirname "${CI_PYTHON}")")"
+          export VIRTUAL_ENV="${CI_PYTHON_PREFIX}"
+          export PATH="${CI_BIN_DIR}:${PATH}"
+          PYBIND11_CMAKE_DIR="$("${CI_PYTHON}" -m pybind11 --cmakedir)"
+          NANOBIND_CMAKE_DIR="$("${CI_PYTHON}" -m nanobind --cmake_dir)"
+          PYTHON_INCLUDE_DIR="$("${CI_PYTHON}" - <<'PY'
+          import sysconfig
+          print(sysconfig.get_path("include"))
+          PY
+          )"
+          PYTHON_LIBRARY="$("${CI_PYTHON}" - <<'PY'
+          import sysconfig
+          print(sysconfig.get_config_var("LIBDIR") + "/" + sysconfig.get_config_var("LDLIBRARY"))
+          PY
+          )"
           # Clean the build directory so that stale generated files from a
           # previous run (e.g. _smt_ops_gen.py left behind when the ref
           # changed) do not leak into the fresh build.
@@ -295,10 +338,25 @@ jobs:
             -DBUILD_SHARED_LIBS=ON \
             -DLLVM_ENABLE_ASSERTIONS=ON \
             -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-            -DPython3_EXECUTABLE=python3 \
-            -DPython_EXECUTABLE=python3 \
-            -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" \
-            -Dnanobind_DIR="$(python3 -m nanobind --cmake_dir)" \
+            -DPython3_EXECUTABLE="${CI_PYTHON}" \
+            -DPython_EXECUTABLE="${CI_PYTHON}" \
+            -DPython3_ROOT_DIR="${CI_PYTHON_PREFIX}" \
+            -DPython_ROOT_DIR="${CI_PYTHON_PREFIX}" \
+            -DPython3_INCLUDE_DIR="${PYTHON_INCLUDE_DIR}" \
+            -DPython_INCLUDE_DIR="${PYTHON_INCLUDE_DIR}" \
+            -DPython3_LIBRARY="${PYTHON_LIBRARY}" \
+            -DPython_LIBRARY="${PYTHON_LIBRARY}" \
+            -DPython3_FIND_STRATEGY=LOCATION \
+            -DPython_FIND_STRATEGY=LOCATION \
+            -DPython3_FIND_VIRTUALENV=ONLY \
+            -DPython_FIND_VIRTUALENV=ONLY \
+            -DPython3_FIND_REGISTRY=NEVER \
+            -DPython_FIND_REGISTRY=NEVER \
+            -DPython3_FIND_FRAMEWORK=NEVER \
+            -DPython_FIND_FRAMEWORK=NEVER \
+            -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" \
+            -Dnanobind_DIR="${NANOBIND_CMAKE_DIR}" \
+            -DCMAKE_PREFIX_PATH="${PYBIND11_CMAKE_DIR};${NANOBIND_CMAKE_DIR};${CI_PYTHON_PREFIX}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_TARGETS_TO_BUILD="host"
 
@@ -326,16 +384,12 @@ jobs:
           # while producing the wheel payload and staging native runtime bits.
           LLVM_BUILD_DIR="${LLVM_DIR}" \
             PTO_INSTALL_DIR="${PTO_INSTALL_DIR}" \
-            python3 -m pip wheel . --no-build-isolation --no-deps --wheel-dir "${PTO_WHEELHOUSE}"
+            "${CI_PYTHON}" -m pip wheel . --no-build-isolation --no-deps --wheel-dir "${PTO_WHEELHOUSE}"
 
-      - name: Create PTOAS simulator venv
+      - name: Install PTOAS wheel in CI venv
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "${PTOAS_VENV}"
-          python3 -m venv "${PTOAS_VENV}"
-          "${PTOAS_VENV}/bin/python" -m pip install --upgrade pip
-
           readarray -t ptoas_wheels < <(find "${PTO_WHEELHOUSE}" -maxdepth 1 -type f -name 'ptoas-*.whl' | sort)
           if [[ "${#ptoas_wheels[@]}" -ne 1 ]]; then
             echo "ERROR: expected exactly one PTOAS wheel in ${PTO_WHEELHOUSE}, found ${#ptoas_wheels[@]}" >&2
@@ -343,8 +397,8 @@ jobs:
             exit 1
           fi
 
-          "${PTOAS_VENV}/bin/pip" install numpy ml-dtypes "${ptoas_wheels[0]}"
-          PATH="${PTOAS_VENV}/bin:${PATH}" bash docker/test_wheel_imports.sh
+          "${CI_PYTHON}" -m pip install --force-reinstall --no-deps "${ptoas_wheels[0]}"
+          PATH="${CI_BIN_DIR}:${PATH}" bash docker/test_wheel_imports.sh
 
       - name: Checkout PyPTO
         uses: actions/checkout@v4
@@ -402,15 +456,6 @@ jobs:
           ln -sf "$(command -v x86_64-conda-linux-gnu-gcc)" "${PYPTO_WORKSPACE}/.work/bin/gcc-15"
           echo "${PYPTO_WORKSPACE}/.work/bin" >> "${GITHUB_PATH}"
 
-      - name: Prepare PyPTO Python dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python3 -m pip install scikit-build-core nanobind ninja pytest cloudpickle
-
       - name: Install PyPTO frontend and runtime
         shell: bash
         env:
@@ -418,38 +463,71 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "${PYPTO_WORKSPACE}/build" "${PYPTO_WORKSPACE}/_skbuild" "${PYPTO_WORKSPACE}/runtime/build"
-          python3 -m pip install --no-build-isolation --no-deps "${PYPTO_WORKSPACE}"
+          "${CI_PYTHON}" -m pip install --force-reinstall --no-build-isolation --no-deps "${PYPTO_WORKSPACE}"
           # ci_sim only runs PyPTO simulator tests. Keep the runtime install from
           # auto-detecting onboard platforms from the runner's CANN environment.
-          env -u ASCEND_HOME_PATH python3 -m pip install --no-build-isolation --no-deps "${PYPTO_WORKSPACE}/runtime"
+          env -u ASCEND_HOME_PATH "${CI_PYTHON}" -m pip install \
+            --force-reinstall \
+            --no-build-isolation \
+            --no-deps \
+            "${PYPTO_WORKSPACE}/runtime"
 
-          python3 - <<'PY'
+          "${CI_PYTHON}" - <<'PY'
+          import os
+          from importlib.metadata import distribution
           from pathlib import Path
 
           from simpler_setup.environment import PROJECT_ROOT
           from simpler_setup.kernel_compiler import KernelCompiler
 
-          required = PROJECT_ROOT / "src" / "common" / "task_interface" / "arg_direction.h"
-          if not required.is_file():
-              raise SystemExit(f"missing required simpler runtime header: {required}")
+          venv_root = Path(os.environ["CI_SIM_VENV"]).resolve()
+          for dist_name in ("ptoas", "pypto", "simpler"):
+              dist_root = Path(distribution(dist_name).locate_file("")).resolve()
+              if not dist_root.is_relative_to(venv_root):
+                  raise SystemExit(
+                      f"{dist_name} resolved outside the CI venv: {dist_root}"
+                  )
+              print(f"{dist_name} distribution={dist_root}")
+
+          required_files = [
+              PROJECT_ROOT / "src" / "common" / "platform" / "sim" / "aicpu" / "cache_ops.cpp",
+              PROJECT_ROOT / "src" / "common" / "platform" / "sim" / "aicpu" / "device_time.cpp",
+              PROJECT_ROOT / "src" / "common" / "task_interface" / "arg_direction.h",
+              PROJECT_ROOT / "src" / "common" / "task_interface" / "tensor.h",
+              PROJECT_ROOT
+              / "src"
+              / "a5"
+              / "runtime"
+              / "tensormap_and_ringbuffer"
+              / "runtime"
+              / "runtime.h",
+          ]
+          missing = [path for path in required_files if not path.is_file()]
+          if missing:
+              raise SystemExit(
+                  "missing required simpler runtime assets:\n"
+                  + "\n".join(str(path) for path in missing)
+              )
 
           include_dirs = KernelCompiler(platform="a5sim").get_orchestration_include_dirs(
               "tensormap_and_ringbuffer"
           )
-          if str(required.parent) not in include_dirs:
+          task_interface_dir = required_files[2].parent
+          if str(task_interface_dir) not in include_dirs:
               raise SystemExit(
                   "simpler orchestration include dirs do not contain "
-                  f"{required.parent}: {include_dirs}"
+                  f"{task_interface_dir}: {include_dirs}"
               )
 
           print(f"simpler PROJECT_ROOT={PROJECT_ROOT}")
-          print(f"simpler arg_direction.h={required}")
+          for path in required_files:
+              print(f"simpler asset={path}")
           PY
 
       - name: Run PyPTO PTOAS end-to-end simulator smoke
         shell: bash
         env:
-          PTOAS_ROOT: ${{ github.workspace }}/build/tools/ptoas
+          PTOAS_ROOT: ${{ env.CI_BIN_DIR }}
           PTO_ISA_ROOT: ${{ env.PTO_ISA_ROOT }}
           TORCH_DEVICE_BACKEND_AUTOLOAD: "0"
         run: |
@@ -464,7 +542,7 @@ jobs:
             local log_file="${PYPTO_RUN_WORKSPACE}/${suite_name}_${platform}.log"
             shift 2
 
-            python3 -m pytest "$@" \
+            "${CI_PYTHON}" -m pytest "$@" \
               -v \
               --platform="${platform}" \
               --save-kernels \
@@ -536,165 +614,11 @@ jobs:
             echo "ERROR: cannot find dav_3510 camodel lib under ${ASCEND_HOME_PATH}" >&2
             exit 1
           fi
-          SIM_LIB_DIR="$(python3 scripts/prepare_quiet_camodel.py \
+          SIM_LIB_DIR="$("${CI_PYTHON}" scripts/prepare_quiet_camodel.py \
             --source-dir "${camodel_candidates[0]}" \
             --output-dir "${GITHUB_WORKSPACE}/.work/camodel")"
           echo "SIM_LIB_DIR=${SIM_LIB_DIR}" >> "${GITHUB_ENV}"
           echo "SIM_LIB_DIR=${SIM_LIB_DIR}"
-
-      - name: Resolve PTODSL Python
-        shell: bash
-        run: |
-          set -euo pipefail
-          source "${ASCEND_HOME_PATH}/bin/setenv.bash"
-
-          add_python_candidate() {
-            local candidate="$1"
-            local resolved
-            [[ -n "${candidate}" ]] || return 0
-            if [[ "${candidate}" != */* ]]; then
-              resolved="$(command -v "${candidate}" 2>/dev/null || true)"
-            else
-              resolved="${candidate}"
-            fi
-            [[ -n "${resolved}" && -x "${resolved}" ]] || return 0
-            resolved="$(readlink -f "${resolved}")"
-            case ":${PYTHON_CANDIDATES[*]}:" in
-              *":${resolved}:"*) return 0 ;;
-            esac
-            PYTHON_CANDIDATES+=("${resolved}")
-          }
-
-          has_torch_npu_packages() {
-            "$1" - <<'PY'
-          import importlib.util
-
-          missing = [
-              name for name in ("torch", "torch_npu")
-              if importlib.util.find_spec(name) is None
-          ]
-          raise SystemExit(1 if missing else 0)
-          PY
-          }
-
-          probe_ptodsl_runtime_python() {
-            TORCH_DEVICE_BACKEND_AUTOLOAD=0 "$1" - <<'PY'
-          import sys
-          import nanobind
-          import numpy
-          import pybind11
-          import yaml
-          import torch
-          import torch_npu  # noqa: F401
-
-          print(sys.executable)
-          print(f"python {sys.version_info.major}.{sys.version_info.minor}")
-          print("torch", torch.__version__)
-          print("torch_npu", getattr(torch_npu, "__version__", "unknown"))
-          print("numpy", numpy.__version__)
-          print("nanobind", getattr(nanobind, "__version__", "unknown"))
-          print("pybind11", pybind11.__version__)
-          PY
-          }
-
-          missing_ptodsl_python_deps() {
-            "$1" - <<'PY'
-          import importlib.util
-
-          deps = [
-              ("setuptools", "setuptools"),
-              ("wheel", "wheel"),
-              ("nanobind", "nanobind"),
-              ("numpy", "numpy"),
-              ("ml_dtypes", "ml-dtypes"),
-              ("yaml", "PyYAML"),
-          ]
-
-          missing = [
-              requirement for module_name, requirement in deps
-              if importlib.util.find_spec(module_name) is None
-          ]
-
-          try:
-              import pybind11
-              version = tuple(int(part) for part in pybind11.__version__.split(".")[:1])
-              if version >= (3,):
-                  missing.append("pybind11<3")
-          except Exception:
-              missing.append("pybind11<3")
-
-          print(" ".join(missing))
-          PY
-          }
-
-          PYTHON_CANDIDATES=()
-          if [[ -n "${PTO_DSL_ST_PYTHON_BIN:-}" ]]; then
-            add_python_candidate "${PTO_DSL_ST_PYTHON_BIN}"
-          else
-            add_python_candidate python3
-            shopt -s nullglob
-            for candidate in \
-              /home/*/miniconda3/bin/python3 \
-              /home/*/miniconda3/bin/python \
-              /home/*/anaconda3/bin/python3 \
-              /home/*/anaconda3/bin/python \
-              /home/*/miniconda3/envs/*/bin/python \
-              /home/*/anaconda3/envs/*/bin/python \
-              /opt/conda/envs/*/bin/python
-            do
-              add_python_candidate "${candidate}"
-            done
-            shopt -u nullglob
-          fi
-
-          SELECTED_BASE_PYTHON=""
-          for candidate in "${PYTHON_CANDIDATES[@]}"; do
-            echo "Probing PTODSL base Python package presence: ${candidate}"
-            if has_torch_npu_packages "${candidate}"; then
-              SELECTED_BASE_PYTHON="${candidate}"
-              break
-            fi
-          done
-
-          if [[ -z "${SELECTED_BASE_PYTHON}" ]]; then
-            echo "ERROR: PTODSL DSL ST requires an existing Python runtime with torch and torch_npu." >&2
-            echo "ERROR: this workflow intentionally does not install torch or torch_npu on every run." >&2
-            echo "ERROR: set PTO_DSL_ST_PYTHON_BIN to a compatible pre-installed interpreter." >&2
-            exit 1
-          fi
-
-          PYTHON_ABI_TAG="$("${SELECTED_BASE_PYTHON}" - <<'PY'
-          import sys
-          print(f"py{sys.version_info.major}{sys.version_info.minor}")
-          PY
-          )"
-          BASE_HASH="$(printf '%s' "${SELECTED_BASE_PYTHON}" | sha256sum | cut -c1-12)"
-          PYTHON_TAG="${PYTHON_ABI_TAG}-${BASE_HASH}"
-          PTODSL_PYTHON_ROOT="${RUNNER_TOOL_CACHE}/ptodsl-python/${PYTHON_TAG}"
-          if [[ ! -x "${PTODSL_PYTHON_ROOT}/bin/python" ]]; then
-            rm -rf "${PTODSL_PYTHON_ROOT}"
-            "${SELECTED_BASE_PYTHON}" -m venv --system-site-packages "${PTODSL_PYTHON_ROOT}"
-          fi
-
-          PTODSL_PYTHON="${PTODSL_PYTHON_ROOT}/bin/python"
-          if ! "${PTODSL_PYTHON}" -m pip --version >/dev/null 2>&1; then
-            "${PTODSL_PYTHON}" -m ensurepip --upgrade
-          fi
-          missing_deps="$(missing_ptodsl_python_deps "${PTODSL_PYTHON}")"
-          if [[ -n "${missing_deps}" ]]; then
-            "${PTODSL_PYTHON}" -m pip install ${missing_deps}
-          fi
-
-          probe_ptodsl_runtime_python "${PTODSL_PYTHON}"
-
-          PTO_DSL_ST_LLVM_DIR="${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert-${PYTHON_TAG}"
-          PTO_DSL_ST_BIN_DIR="$(dirname "${PTODSL_PYTHON}")"
-          echo "PTO_DSL_ST_BASE_PYTHON=${SELECTED_BASE_PYTHON}" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_PYTHON_BIN=${PTODSL_PYTHON}" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_BIN_DIR=${PTO_DSL_ST_BIN_DIR}" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_PTOAS_BIN=${PTO_DSL_ST_BIN_DIR}/ptoas" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_PYTHON_TAG=${PYTHON_TAG}" >> "${GITHUB_ENV}"
-          echo "PTO_DSL_ST_LLVM_DIR=${PTO_DSL_ST_LLVM_DIR}" >> "${GITHUB_ENV}"
 
       - name: Run TileLang DSL CI
         shell: bash
@@ -715,103 +639,7 @@ jobs:
               2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
           fi
 
-      - name: Restore PTODSL LLVM build cache
-        id: ptodsl-llvm-cache
-        continue-on-error: true
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.PTO_DSL_ST_LLVM_DIR }}
-          key: llvm-build-${{ steps.llvm-cache-key.outputs.sha }}-assert-${{ env.PTO_DSL_ST_PYTHON_TAG }}-v2
-
-      - name: Build PTODSL LLVM/MLIR
-        if: steps.ptodsl-llvm-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${LLVM_ROOT}"
-          export CC=gcc
-          export CXX=g++
-          PTODSL_PYTHON_PREFIX="$(dirname "$(dirname "${PTO_DSL_ST_PYTHON_BIN}")")"
-          export VIRTUAL_ENV="${PTODSL_PYTHON_PREFIX}"
-          export PATH="${PTODSL_PYTHON_PREFIX}/bin:${PATH}"
-          PYBIND11_CMAKE_DIR="$("${PTO_DSL_ST_PYTHON_BIN}" -m pybind11 --cmakedir)"
-          NANOBIND_CMAKE_DIR="$("${PTO_DSL_ST_PYTHON_BIN}" -m nanobind --cmake_dir)"
-          PYTHON_INCLUDE_DIR="$("${PTO_DSL_ST_PYTHON_BIN}" - <<'PY'
-          import sysconfig
-          print(sysconfig.get_path("include"))
-          PY
-          )"
-          PYTHON_LIBRARY="$("${PTO_DSL_ST_PYTHON_BIN}" - <<'PY'
-          import sysconfig
-          print(sysconfig.get_config_var("LIBDIR") + "/" + sysconfig.get_config_var("LDLIBRARY"))
-          PY
-          )"
-          rm -rf "${PTO_DSL_ST_LLVM_DIR}"
-          cmake -G Ninja -S llvm -B "${PTO_DSL_ST_LLVM_DIR}" \
-            -DLLVM_ENABLE_PROJECTS="mlir;clang" \
-            -DBUILD_SHARED_LIBS=ON \
-            -DLLVM_ENABLE_ASSERTIONS=ON \
-            -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-            -DPython3_EXECUTABLE="${PTO_DSL_ST_PYTHON_BIN}" \
-            -DPython_EXECUTABLE="${PTO_DSL_ST_PYTHON_BIN}" \
-            -DPython3_ROOT_DIR="${PTODSL_PYTHON_PREFIX}" \
-            -DPython_ROOT_DIR="${PTODSL_PYTHON_PREFIX}" \
-            -DPython3_INCLUDE_DIR="${PYTHON_INCLUDE_DIR}" \
-            -DPython_INCLUDE_DIR="${PYTHON_INCLUDE_DIR}" \
-            -DPython3_LIBRARY="${PYTHON_LIBRARY}" \
-            -DPython_LIBRARY="${PYTHON_LIBRARY}" \
-            -DPython3_FIND_STRATEGY=LOCATION \
-            -DPython_FIND_STRATEGY=LOCATION \
-            -DPython3_FIND_VIRTUALENV=ONLY \
-            -DPython_FIND_VIRTUALENV=ONLY \
-            -DPython3_FIND_REGISTRY=NEVER \
-            -DPython_FIND_REGISTRY=NEVER \
-            -DPython3_FIND_FRAMEWORK=NEVER \
-            -DPython_FIND_FRAMEWORK=NEVER \
-            -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" \
-            -Dnanobind_DIR="${NANOBIND_CMAKE_DIR}" \
-            -DCMAKE_PREFIX_PATH="${PYBIND11_CMAKE_DIR};${NANOBIND_CMAKE_DIR};${PTODSL_PYTHON_PREFIX}" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_TARGETS_TO_BUILD="host"
-
-          ninja -C "${PTO_DSL_ST_LLVM_DIR}"
-
-      - name: Save PTODSL LLVM build cache
-        if: steps.ptodsl-llvm-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.PTO_DSL_ST_LLVM_DIR }}
-          key: llvm-build-${{ steps.llvm-cache-key.outputs.sha }}-assert-${{ env.PTO_DSL_ST_PYTHON_TAG }}-v2
-
-      - name: Build PTODSL PTOAS wheel
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf "${PTO_DSL_ST_BUILD_DIR}" "${PTO_DSL_ST_INSTALL_DIR}"
-          rm -rf "${PTO_DSL_ST_WHEELHOUSE}"
-          mkdir -p "${PTO_DSL_ST_WHEELHOUSE}"
-          export CC=gcc
-          export CXX=g++
-          LLVM_BUILD_DIR="${PTO_DSL_ST_LLVM_DIR}" \
-            PTO_BUILD_DIR="${PTO_DSL_ST_BUILD_DIR}" \
-            PTO_INSTALL_DIR="${PTO_DSL_ST_INSTALL_DIR}" \
-            "${PTO_DSL_ST_PYTHON_BIN}" -m pip wheel . --no-build-isolation --no-deps --wheel-dir "${PTO_DSL_ST_WHEELHOUSE}"
-
-      - name: Install PTODSL PTOAS wheel
-        shell: bash
-        run: |
-          set -euo pipefail
-          readarray -t ptodsl_wheels < <(find "${PTO_DSL_ST_WHEELHOUSE}" -maxdepth 1 -type f -name 'ptoas-*.whl' | sort)
-          if [[ "${#ptodsl_wheels[@]}" -ne 1 ]]; then
-            echo "ERROR: expected exactly one PTOAS wheel in ${PTO_DSL_ST_WHEELHOUSE}, found ${#ptodsl_wheels[@]}" >&2
-            printf '  %s\n' "${ptodsl_wheels[@]}" >&2
-            exit 1
-          fi
-
-          "${PTO_DSL_ST_PYTHON_BIN}" -m pip install --force-reinstall "${ptodsl_wheels[0]}"
-
-      - name: Probe PTODSL runtime Python
+      - name: Probe CI simulator environment
         shell: bash
         run: |
           set -euo pipefail
@@ -820,7 +648,7 @@ jobs:
           source "${ASCEND_HOME_PATH}/bin/setenv.bash"
 
           probe_ptodsl_python() {
-            "${PTO_DSL_ST_PYTHON_BIN}" - <<'PY'
+            "${CI_PYTHON}" - <<'PY'
           import sys
           import mlir.ir  # noqa: F401
           from ptodsl import pto  # noqa: F401
@@ -832,7 +660,7 @@ jobs:
           }
 
           probe_torch_npu_python() {
-            "${PTO_DSL_ST_PYTHON_BIN}" - <<'PY'
+            "${CI_PYTHON}" - <<'PY'
           import numpy
           import torch
           import torch_npu  # noqa: F401
@@ -845,10 +673,10 @@ jobs:
 
           PROBE_LOG="${TILELANG_DSL_WORKSPACE}/ptodsl-python-probe.log"
           : > "${PROBE_LOG}"
-          echo "Probing PTODSL DSL ST Python: ${PTO_DSL_ST_PYTHON_BIN}" | tee -a "${PROBE_LOG}"
-          echo "Probing PTODSL DSL ST ptoas: ${PTO_DSL_ST_PTOAS_BIN}" | tee -a "${PROBE_LOG}"
-          if [[ ! -x "${PTO_DSL_ST_PTOAS_BIN}" ]]; then
-            echo "ERROR: installed PTODSL ptoas entry is missing: ${PTO_DSL_ST_PTOAS_BIN}" | tee -a "${PROBE_LOG}" >&2
+          echo "Probing ci-sim Python: ${CI_PYTHON}" | tee -a "${PROBE_LOG}"
+          echo "Probing installed ptoas: ${PTOAS_BIN}" | tee -a "${PROBE_LOG}"
+          if [[ ! -x "${PTOAS_BIN}" ]]; then
+            echo "ERROR: installed ptoas entry is missing: ${PTOAS_BIN}" | tee -a "${PROBE_LOG}" >&2
             exit 1
           fi
           if ! probe_ptodsl_python >> "${PROBE_LOG}" 2>&1; then
@@ -861,7 +689,7 @@ jobs:
             echo "ERROR: selected PTODSL Python cannot import torch, torch_npu, and numpy." >&2
             exit 1
           fi
-          "${PTO_DSL_ST_PTOAS_BIN}" --version >> "${PROBE_LOG}" 2>&1
+          "${PTOAS_BIN}" --version >> "${PROBE_LOG}" 2>&1
 
           cat "${PROBE_LOG}"
 
@@ -871,15 +699,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${VPTO_SIM_WORKSPACE}"
-          export PYTHON_BIN="${PTO_DSL_ST_PYTHON_BIN}"
-          export PTO_PYTHON_BIN="${PTO_DSL_ST_PYTHON_BIN}"
-          export PATH="${PTO_DSL_ST_BIN_DIR}:${PATH}"
+          export PYTHON_BIN="${CI_PYTHON}"
+          export PTO_PYTHON_BIN="${CI_PYTHON}"
+          export PATH="${CI_BIN_DIR}:${PATH}"
           export TORCH_DEVICE_BACKEND_AUTOLOAD=0
           source "${ASCEND_HOME_PATH}/bin/setenv.bash"
 
           WORK_SPACE="${VPTO_SIM_WORKSPACE}" \
           ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
-          PTOAS_BIN="${PTO_DSL_ST_PTOAS_BIN}" \
+          PTOAS_BIN="${PTOAS_BIN}" \
           DEVICE=SIM \
           JOBS="${JOBS:-32}" \
           bash test/vpto/scripts/run_host_vpto_validation_parallel.sh
@@ -889,14 +717,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${TILELANG_DSL_WORKSPACE}"
-          export PYTHON_BIN="${PTO_DSL_ST_PYTHON_BIN}"
-          export PTO_PYTHON_BIN="${PTO_DSL_ST_PYTHON_BIN}"
-          export PATH="${PTO_DSL_ST_BIN_DIR}:${PATH}"
+          export PYTHON_BIN="${CI_PYTHON}"
+          export PTO_PYTHON_BIN="${CI_PYTHON}"
+          export PATH="${CI_BIN_DIR}:${PATH}"
           export TORCH_DEVICE_BACKEND_AUTOLOAD=0
           source "${ASCEND_HOME_PATH}/bin/setenv.bash"
 
           ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
-          PTOAS_BIN="${PTO_DSL_ST_PTOAS_BIN}" \
+          PTOAS_BIN="${PTOAS_BIN}" \
           scripts/sim_dsl.sh test/tilelib-st/run_tilelib_st.py -- test/tilelib-st/a5 \
             2>&1 | tee "${TILELANG_DSL_WORKSPACE}/tilelib-st-a5.log"
 
@@ -905,14 +733,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${TILELANG_DSL_WORKSPACE}"
-          export PYTHON_BIN="${PTO_DSL_ST_PYTHON_BIN}"
-          export PTO_PYTHON_BIN="${PTO_DSL_ST_PYTHON_BIN}"
-          export PATH="${PTO_DSL_ST_BIN_DIR}:${PATH}"
+          export PYTHON_BIN="${CI_PYTHON}"
+          export PTO_PYTHON_BIN="${CI_PYTHON}"
+          export PATH="${CI_BIN_DIR}:${PATH}"
           export TORCH_DEVICE_BACKEND_AUTOLOAD=0
           source "${ASCEND_HOME_PATH}/bin/setenv.bash"
 
           ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
-          PTOAS_BIN="${PTO_DSL_ST_PTOAS_BIN}" \
+          PTOAS_BIN="${PTOAS_BIN}" \
           scripts/sim_dsl.sh test/dsl-st \
             2>&1 | tee "${TILELANG_DSL_WORKSPACE}/ptodsl-dsl-st.log"
 
@@ -933,10 +761,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${TILELANG_DSL_UT_WORKSPACE}"
-          export PATH="${PTOAS_VENV}/bin:${PATH}"
+          export PATH="${CI_BIN_DIR}:${PATH}"
           export LD_LIBRARY_PATH="${LLVM_DIR}/lib:${PTO_INSTALL_DIR}/lib:${GITHUB_WORKSPACE}/build/lib:${LD_LIBRARY_PATH:-}"
           cd tilelang-dsl/python
-          python3 -m unittest discover -s ../tests -p 'test_*.py' \
+          "${CI_PYTHON}" -m unittest discover -s ../tests -p 'test_*.py' \
             2>&1 | tee "${TILELANG_DSL_UT_WORKSPACE}/unittest.log"
 
       - name: Upload TileLang DSL unit test logs
