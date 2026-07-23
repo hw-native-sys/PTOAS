@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto-llvm-ir %s -o /dev/null
+// RUN: ptoas --pto-arch=a2 --pto-backend=vpto --emit-vpto-llvm-ir %s -o /dev/null
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @mgather_a2a3_types(
+      %s_i8: memref<8xi8, #pto.address_space<gm>>,
+      %s_ui8: memref<8xui8, #pto.address_space<gm>>,
+      %s_i16: memref<8xi16, #pto.address_space<gm>>,
+      %s_ui16: memref<8xui16, #pto.address_space<gm>>,
+      %s_i32: memref<8xi32, #pto.address_space<gm>>,
+      %s_ui32: memref<8xui32, #pto.address_space<gm>>,
+      %s_f16: memref<8xf16, #pto.address_space<gm>>,
+      %s_bf16: memref<8xbf16, #pto.address_space<gm>>,
+      %s_f32: memref<8xf32, #pto.address_space<gm>>) attributes {pto.aicore} {
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    %d_i8 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=32, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_i8, %idx : memref<8xi8, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_i8 : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=32, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_ui8 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_ui8, %idx : memref<8xui8, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_ui8 : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_i16 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_i16, %idx : memref<8xi16, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_i16 : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_ui16 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_ui16, %idx : memref<8xui16, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_ui16 : !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_i32 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_i32, %idx : memref<8xi32, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_i32 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_ui32 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_ui32, %idx : memref<8xui32, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_ui32 : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_f16 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_f16, %idx : memref<8xf16, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_f16 : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_bf16 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_bf16, %idx : memref<8xbf16, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_bf16 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=16, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+
+    %d_f32 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather ins(%s_f32, %idx : memref<8xf32, #pto.address_space<gm>>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%d_f32 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {coalesce = #pto<coalesce elem>}
+    return
+  }
+}

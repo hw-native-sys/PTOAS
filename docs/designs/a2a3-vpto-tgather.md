@@ -1,7 +1,8 @@
 # A2/A3 VPTO Gather Lowering — Design Notes
 
-Scope: bring tile-level gather (`pto.tgather`, `pto.tgatherb`) to the A2/A3
-`vpto` backend so it reaches feature parity with the EmitC path for gather,
+Scope: bring tile-level gather (`pto.tgather`, `pto.tgatherb`, and the GM-to-UB
+form of `pto.mgather`) to the A2/A3 `vpto` backend so it reaches feature parity
+with the EmitC path for gather,
 using the flat `pto.ub.*` UB-pointer op layer (the same layer as the
 elementwise `ub.vadd` family). The A5 `vreg`/`vgather2` path is **out of
 scope** for A2/A3 and must not be used.
@@ -65,10 +66,10 @@ identical to `LowerPTOToUBufOps`'s `dispatch` head/tail repeat loop.
 ### Related A2/A3 operations
 
 - **`MGather` exists on A2/A3** — `npu/a2a3/MGather.hpp` implements GM gather
-  loads for row and element coalescing. Its GM-to-UB VPTO lowering is handled
-  as a separate follow-up because it decomposes into scalar address generation,
-  scalar loads/stores, and per-row MTE2 copies rather than the UB-local
-  `vgather`/`vgatherb` instructions covered here.
+  loads for row and element coalescing. Its GM-to-UB VPTO lowering is implemented
+  as a stacked follow-up using scalar address generation, scalar loads/stores,
+  and per-row MTE2 copies rather than the UB-local `vgather`/`vgatherb`
+  instructions covered here.
 - **No vreg** — A5's `vgather2`/`vgather2_bc` (`npu/a5/TGather.hpp:51,79,108`)
   must not be used on A2/A3.
 
@@ -82,10 +83,27 @@ lowering must reproduce:
 |---|---|---|
 | `pto.tgather` | `emitc::CallOpaqueOp "TGATHER"` (`:9772`) | index `TGATHER(dst,src0,indices,tmp)`; compare `TGATHER<D,S,Tmp,C,CmpMode>(dst,src0,k,tmp,c,offset)`; mask `TGATHER<D,S,MaskPattern::Pxxxx>(dst,src0)` |
 | `pto.tgatherb` | `emitc::CallOpaqueOp "TGATHERB"` (`:9875`) | `TGATHERB(dst, src, offsets)` |
-| `pto.mgather` | `emitc::CallOpaqueOp "MGATHER<Coalesce[,OOB]>"` (`:3323`) | Supported by A2/A3 PTO-ISA/EmitC; VPTO lowering is a separate follow-up |
+| `pto.mgather` | `emitc::CallOpaqueOp "MGATHER<Coalesce[,OOB]>"` (`:3323`) | GM-to-UB Row/Elem lowering is implemented for A2/A3 VPTO; GM-to-L1 remains deferred |
 
 MGATHER semantics: `dst[r,:]=table[idx[r],:]` (Coalesce::Row)
 or `dst[i,j]=table[idx[i,j]]` (Coalesce::Elem), with `GatherOOB` modes.
+
+### A2/A3 VPTO MGATHER decomposition
+
+`LowerPTOToUBufOps` lowers GM-to-UB MGATHER without introducing a new UB
+intrinsic:
+
+- `Coalesce::Row` loads each `i32` index on the scalar pipe, normalizes it for
+  `Undefined`, `Clamp`, `Wrap`, or `Zero`, then issues a row-sized
+  `pto.mte_gm_ub`. The scalar-to-MTE2 handoff uses the macro-reserved
+  `EVENT_ID0`.
+- `Coalesce::Elem` performs scalar indexed GM loads and UB stores for each valid
+  destination element, with the same four OOB policies.
+- The lowering accepts the A2/A3 payload set
+  (`i8/ui8/i16/ui16/i32/ui32/f16/bf16/f32`) and preserves arbitrary row-major
+  GM view strides by flattening logical indices through extracted metadata.
+- GM-to-L1 MGATHER is rejected explicitly at the A2/A3 VPTO lowering boundary
+  until its separate NZ/scratch path is implemented.
 
 ## Current `pto.ub.*` layer
 
@@ -219,9 +237,10 @@ job for these today.
    non-trivial at the PTO IR level. The pto-isa `a2a3/TGather.hpp` handles
    these via template-level loops; the MLIR lowering would need to replicate
    that (e.g., generating a constant index buffer + using the index-form path).
-4. **Separate follow-up**: A2/A3 `mgather` GM-to-UB Row/Elem lowering. This
-   requires scalar index/OOB handling plus MTE2 or scalar GM access and is kept
-   separate from the UB-local gather implementation in this document.
+4. **Stacked follow-up — DONE**: A2/A3 `mgather` GM-to-UB Row/Elem lowering,
+   including scalar index handling, all four `GatherOOB` modes, per-row MTE2
+   copies, scalar element access, the full A2/A3 payload set, and a fail-closed
+   GM-to-L1 diagnostic.
 
 ## References
 

@@ -70,6 +70,13 @@ static unsigned getElementSize(Type elemTy) {
   return 0;
 }
 
+static unsigned getMGatherElementSize(Type elemTy) {
+  if (auto intTy = dyn_cast<IntegerType>(elemTy);
+      intTy && intTy.getWidth() == 8)
+    return 1;
+  return getElementSize(elemTy);
+}
+
 static Type getStoredElemType(Type ty) {
   if (auto tbTy = dyn_cast<pto::TileBufType>(ty)) {
     return tbTy.getElementType();
@@ -150,6 +157,8 @@ struct TileShapeInfo {
 struct TileShapeMetadata {
   SmallVector<int64_t, mlir::pto::kValue2> shape;
   SmallVector<int64_t, mlir::pto::kValue2> validShape;
+  pto::AddressSpace memorySpace;
+  pto::BLayout bLayout;
 };
 
 using TileShapeMap = DenseMap<Value, TileShapeMetadata>;
@@ -287,7 +296,11 @@ struct LowerPTOToUBufOpsPass
         auto pc = builder.create<pto::CastPtrOp>(op.getLoc(), ptrTy, addr);
         tileShapes[pc.getResult()] = {
             SmallVector<int64_t, 2>(shape),
-            SmallVector<int64_t, 2>(tbTy.getValidShape())};
+            SmallVector<int64_t, 2>(tbTy.getValidShape()),
+            cast<pto::AddressSpaceAttr>(tbTy.getMemorySpace())
+                .getAddressSpace(),
+            tbTy.getConfigAttr() ? tbTy.getConfigAttr().getBLayout().getValue()
+                                 : pto::BLayout::RowMajor};
         op.getResult().replaceAllUsesWith(pc.getResult());
         op.erase();
       }
@@ -1104,6 +1117,20 @@ struct LowerPTOToUBufOpsPass
       }
     }
 
+    // ---- mgather (GM -> UB) ----
+    {
+      SmallVector<pto::MGatherOp> ops;
+      func.walk([&](pto::MGatherOp op) { ops.push_back(op); });
+      for (auto op : ops) {
+        builder.setInsertionPoint(op);
+        if (failed(lowerMGather(op, builder, tileShapes))) {
+          signalPassFailure();
+          return;
+        }
+        op.erase();
+      }
+    }
+
     // ---- cleanup dead PTO ops ----
     SmallVector<Operation *> toErase;
     func.walk([&](Operation *op) {
@@ -1547,8 +1574,8 @@ private:
     return !strides.empty() && strides.back() == 1;
   }
 
-  static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TLoadOp op) {
-    auto pvOp = op.getSrc().getDefiningOp<pto::PartitionViewOp>();
+  static FailureOr<DmaViewInfo> extractDmaViewInfo(Operation *op, Value view) {
+    auto pvOp = view.getDefiningOp<pto::PartitionViewOp>();
     if (pvOp) {
       auto mtvOp = pvOp.getSource().getDefiningOp<pto::MakeTensorViewOp>();
       if (!mtvOp) {
@@ -1561,13 +1588,17 @@ private:
                           mtvOp.getStrides().end());
       if (info.strides.empty() ||
           !matchPattern(info.strides.back(), m_One())) {
-        op.emitError("A2/A3 DMA lowering requires a unit innermost stride");
+        op->emitError("A2/A3 DMA lowering requires a unit innermost stride");
         return failure();
       }
       info.offsets.assign(pvOp.getOffsets().begin(), pvOp.getOffsets().end());
       return info;
     }
-    return extractDmaMemRefViewInfo(op.getLoc(), op.getSrc(), op.getContext());
+    return extractDmaMemRefViewInfo(op->getLoc(), view, op->getContext());
+  }
+
+  static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TLoadOp op) {
+    return extractDmaViewInfo(op.getOperation(), op.getSrc());
   }
 
   static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TStoreOp op) {
@@ -1606,6 +1637,7 @@ private:
     if (shape.size() < mlir::pto::kValue2) {
       return failure();
     }
+    }
     if (!hasUnitInnermostStride(view)) {
       emitError(loc) << "A2/A3 DMA lowering requires a unit innermost stride";
       return failure();
@@ -1617,7 +1649,8 @@ private:
     auto ptrTy = pto::PtrType::get(ctx, memTy.getElementType(), msAttr);
     auto metadata = b.create<memref::ExtractStridedMetadataOp>(loc, view);
     info.gmPtr = b.create<pto::CastPtrOp>(loc, ptrTy, traceRootMemRef(view));
-    info.linearOffset = metadata.getOffset();
+    if (memTy.getStridesAndOffset().second != 0)
+      info.linearOffset = metadata.getOffset();
     info.sizes.assign(metadata.getSizes().begin(), metadata.getSizes().end());
     info.strides.assign(metadata.getStrides().begin(),
                         metadata.getStrides().end());
@@ -1679,7 +1712,9 @@ private:
     auto origPtrTy = cast<pto::PtrType>(gmPtr.getType());
     auto bytePtrTy = pto::PtrType::get(b.getContext(), b.getI8Type(),
                                        origPtrTy.getMemorySpace());
-    Value bytePtr = b.create<pto::CastPtrOp>(loc, bytePtrTy, gmPtr);
+    Value bytePtr = gmPtr;
+    if (bytePtrTy != origPtrTy)
+      bytePtr = b.create<pto::CastPtrOp>(loc, bytePtrTy, gmPtr);
     Value offIdx = byteOff;
     if (!offIdx.getType().isIndex()) {
       offIdx = b.create<arith::IndexCastOp>(loc, b.getIndexType(), byteOff)
@@ -1687,6 +1722,8 @@ private:
     }
     Value offsetBytePtr =
         b.create<pto::AddPtrOp>(loc, bytePtrTy, bytePtr, offIdx);
+    if (bytePtrTy == origPtrTy)
+      return offsetBytePtr;
     return b.create<pto::CastPtrOp>(loc, origPtrTy, offsetBytePtr);
   }
 
@@ -1793,6 +1830,266 @@ private:
     b.create<pto::MteUbGmOp>(loc, ubPtr, gmPtr, lenBurst, nburst, Value{},
                              llvm::ArrayRef(loops));
     return success();
+  }
+
+  struct NormalizedGatherIndex {
+    Value value;
+    Value inBounds;
+  };
+
+  Value product(Location loc, OpBuilder &b, ArrayRef<Value> values) {
+    Value result = idxc1(loc, b);
+    for (Value value : values)
+      result = b.create<arith::MulIOp>(loc, result, value);
+    return result;
+  }
+
+  NormalizedGatherIndex normalizeGatherIndex(Location loc, OpBuilder &b,
+                                             Value rawIndex, Value count,
+                                             pto::GatherOOB mode) {
+    Value index = b.create<arith::IndexCastOp>(loc, b.getIndexType(), rawIndex);
+    Value zero = idxc0(loc, b);
+    Value negative =
+        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, index, zero);
+    Value tooLarge =
+        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, index, count);
+    Value outOfBounds = b.create<arith::OrIOp>(loc, negative, tooLarge);
+    Value inBounds = b.create<arith::XOrIOp>(
+        loc, outOfBounds, b.create<arith::ConstantIntOp>(loc, 1, 1));
+
+    switch (mode) {
+    case pto::GatherOOB::Undefined:
+    case pto::GatherOOB::Zero:
+      return {index, inBounds};
+    case pto::GatherOOB::Clamp: {
+      Value nonNegative = b.create<arith::SelectOp>(loc, negative, zero, index);
+      Value last = b.create<arith::SubIOp>(loc, count, idxc1(loc, b));
+      Value aboveLast = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt,
+                                                nonNegative, last);
+      return {b.create<arith::SelectOp>(loc, aboveLast, last, nonNegative),
+              inBounds};
+    }
+    case pto::GatherOOB::Wrap: {
+      Value remainder = b.create<arith::RemSIOp>(loc, index, count);
+      Value wrapped = b.create<arith::AddIOp>(loc, remainder, count);
+      Value remainderNegative = b.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::slt, remainder, zero);
+      return {
+          b.create<arith::SelectOp>(loc, remainderNegative, wrapped, remainder),
+          inBounds};
+    }
+    }
+    llvm_unreachable("unknown MGATHER OOB mode");
+  }
+
+  Value flattenGatherIndex(Location loc, OpBuilder &b, Value flatIndex,
+                           ArrayRef<Value> sizes, ArrayRef<Value> strides) {
+    Value remaining = flatIndex;
+    Value linearOffset = idxc0(loc, b);
+    for (int64_t i = static_cast<int64_t>(sizes.size()) - 1; i >= 0; --i) {
+      Value coordinate = b.create<arith::RemUIOp>(loc, remaining, sizes[i]);
+      Value contribution = b.create<arith::MulIOp>(loc, coordinate, strides[i]);
+      linearOffset = b.create<arith::AddIOp>(loc, linearOffset, contribution);
+      if (i != 0)
+        remaining = b.create<arith::DivUIOp>(loc, remaining, sizes[i]);
+    }
+    return linearOffset;
+  }
+
+  void emitScalarZero(Location loc, OpBuilder &b, Value dst, Value dstOffset,
+                      Type elemTy) {
+    Value zero =
+        b.create<arith::ConstantOp>(loc, elemTy, b.getZeroAttr(elemTy));
+    b.create<pto::StoreScalarOp>(loc, dst, dstOffset, zero);
+  }
+
+  void emitScalarGather(Location loc, OpBuilder &b, Value gmPtr, Value dst,
+                        Value dstOffset, Value sourceOffset, Type elemTy) {
+    Value value = b.create<pto::LoadScalarOp>(loc, elemTy, gmPtr, sourceOffset);
+    b.create<pto::StoreScalarOp>(loc, dst, dstOffset, value);
+  }
+
+  void emitScalarToMte2Sync(Location loc, OpBuilder &b) {
+    auto pipeS = pto::PipeAttr::get(b.getContext(), pto::PIPE::PIPE_S);
+    auto pipeMte2 = pto::PipeAttr::get(b.getContext(), pto::PIPE::PIPE_MTE2);
+    auto event0 =
+        pto::EventAttr::get(b.getContext(), static_cast<pto::EVENT>(0));
+    b.create<pto::SetFlagOp>(loc, pipeS, pipeMte2, event0);
+    b.create<pto::WaitFlagOp>(loc, pipeS, pipeMte2, event0);
+  }
+
+  LogicalResult emitMGatherRow(pto::MGatherOp op, OpBuilder &b,
+                               const DmaViewInfo &viewInfo, Value gmPtr,
+                               Value idxPtr, Value dstPtr,
+                               const TileShapeMetadata &idxMeta,
+                               const TileShapeMetadata &dstMeta, Type elemTy,
+                               pto::GatherOOB oob) {
+    Location loc = op.getLoc();
+    if (viewInfo.sizes.size() < 2)
+      return op.emitOpError(
+          "requires a rank-2 or greater GM table for coalesce=row");
+
+    ArrayRef<Value> rowSizes(viewInfo.sizes.data(), viewInfo.sizes.size() - 1);
+    ArrayRef<Value> rowStrides(viewInfo.strides.data(),
+                               viewInfo.strides.size() - 1);
+    Value tableRows = product(loc, b, rowSizes);
+    int64_t dstRows = dstMeta.validShape[0];
+    int64_t dstCols = dstMeta.validShape[1];
+    int64_t dstStride = dstMeta.shape[1];
+    bool contiguousIndex =
+        idxMeta.validShape[0] <= 1 || idxMeta.bLayout == pto::BLayout::ColMajor;
+    unsigned elemSize = getMGatherElementSize(elemTy);
+
+    for (int64_t row = 0; row < dstRows; ++row) {
+      Value idxOffset =
+          idxc(contiguousIndex ? row : row * idxMeta.shape[1], loc, b);
+      Value rawIndex =
+          b.create<pto::LoadScalarOp>(loc, b.getI32Type(), idxPtr, idxOffset);
+      NormalizedGatherIndex index =
+          normalizeGatherIndex(loc, b, rawIndex, tableRows, oob);
+      Value dstOffset = idxc(row * dstStride, loc, b);
+
+      auto emitCopy = [&]() {
+        Value sourceOffset =
+            flattenGatherIndex(loc, b, index.value, rowSizes, rowStrides);
+        Value source =
+            b.create<pto::AddPtrOp>(loc, gmPtr.getType(), gmPtr, sourceOffset);
+        Value destination =
+            b.create<pto::AddPtrOp>(loc, dstPtr.getType(), dstPtr, dstOffset);
+        emitScalarToMte2Sync(loc, b);
+        pto::DmaLoopConfig nburst{i64c1(loc, b), i64c0(loc, b), i64c0(loc, b)};
+        b.create<pto::MteGmUbOp>(loc, source, destination, i64c0(loc, b),
+                                 i64c(dstCols * elemSize, loc, b), nburst,
+                                 llvm::ArrayRef<pto::DmaLoopConfig>{},
+                                 std::nullopt);
+      };
+
+      if (oob != pto::GatherOOB::Zero) {
+        emitCopy();
+        continue;
+      }
+
+      auto ifOp = b.create<scf::IfOp>(loc, TypeRange{}, index.inBounds,
+                                      /*addThenBlock=*/true,
+                                      /*addElseBlock=*/true);
+      b.setInsertionPointToStart(ifOp.thenBlock());
+      emitCopy();
+      b.create<scf::YieldOp>(loc);
+      b.setInsertionPointToStart(ifOp.elseBlock());
+      for (int64_t col = 0; col < dstCols; ++col)
+        emitScalarZero(loc, b, dstPtr, idxc(row * dstStride + col, loc, b),
+                       elemTy);
+      emitScalarToMte2Sync(loc, b);
+      b.create<scf::YieldOp>(loc);
+      b.setInsertionPointAfter(ifOp);
+    }
+    return success();
+  }
+
+  LogicalResult emitMGatherElem(pto::MGatherOp op, OpBuilder &b,
+                                const DmaViewInfo &viewInfo, Value gmPtr,
+                                Value idxPtr, Value dstPtr,
+                                const TileShapeMetadata &idxMeta,
+                                const TileShapeMetadata &dstMeta, Type elemTy,
+                                pto::GatherOOB oob) {
+    Location loc = op.getLoc();
+    if (viewInfo.sizes.empty())
+      return op.emitOpError("requires a non-empty GM table");
+
+    Value tableElements = product(loc, b, viewInfo.sizes);
+    int64_t dstRows = dstMeta.validShape[0];
+    int64_t dstCols = dstMeta.validShape[1];
+    int64_t dstStride = dstMeta.shape[1];
+    int64_t idxStride = idxMeta.shape[1];
+    for (int64_t row = 0; row < dstRows; ++row) {
+      for (int64_t col = 0; col < dstCols; ++col) {
+        Value idxOffset = idxc(row * idxStride + col, loc, b);
+        Value dstOffset = idxc(row * dstStride + col, loc, b);
+        Value rawIndex =
+            b.create<pto::LoadScalarOp>(loc, b.getI32Type(), idxPtr, idxOffset);
+        NormalizedGatherIndex index =
+            normalizeGatherIndex(loc, b, rawIndex, tableElements, oob);
+        Value sourceOffset = flattenGatherIndex(
+            loc, b, index.value, viewInfo.sizes, viewInfo.strides);
+
+        if (oob != pto::GatherOOB::Zero) {
+          emitScalarGather(loc, b, gmPtr, dstPtr, dstOffset, sourceOffset,
+                           elemTy);
+          continue;
+        }
+
+        auto ifOp = b.create<scf::IfOp>(loc, TypeRange{}, index.inBounds,
+                                        /*addThenBlock=*/true,
+                                        /*addElseBlock=*/true);
+        b.setInsertionPointToStart(ifOp.thenBlock());
+        emitScalarGather(loc, b, gmPtr, dstPtr, dstOffset, sourceOffset,
+                         elemTy);
+        b.create<scf::YieldOp>(loc);
+        b.setInsertionPointToStart(ifOp.elseBlock());
+        emitScalarZero(loc, b, dstPtr, dstOffset, elemTy);
+        b.create<scf::YieldOp>(loc);
+        b.setInsertionPointAfter(ifOp);
+      }
+    }
+    return success();
+  }
+
+  LogicalResult lowerMGather(pto::MGatherOp op, OpBuilder &b,
+                             const TileShapeMap &tileShapes) {
+    auto dstIt = tileShapes.find(op.getDst());
+    auto idxIt = tileShapes.find(op.getIdx());
+    if (dstIt == tileShapes.end())
+      return op.emitOpError(
+          "A2/A3 VPTO lowering requires an alloc_tile-backed mgather dst");
+    if (dstIt->second.memorySpace != pto::AddressSpace::VEC)
+      return op.emitOpError(
+          "A2/A3 VPTO lowering currently supports only GM->UB mgather; "
+          "GM->L1 is deferred");
+    if (idxIt == tileShapes.end())
+      return op.emitOpError(
+          "A2/A3 GM->UB VPTO mgather requires an alloc_tile-backed idx");
+    if (op.getScratch())
+      return op.emitOpError(
+          "A2/A3 GM->UB VPTO mgather does not support a scratch operand");
+    if (dstIt->second.shape.size() != 2 ||
+        dstIt->second.validShape.size() != 2 ||
+        idxIt->second.shape.size() != 2 || idxIt->second.validShape.size() != 2)
+      return op.emitOpError("requires rank-2 idx and dst tiles");
+
+    Type elemTy = getStoredElemType(op.getDst().getType());
+    if (!elemTy || getMGatherElementSize(elemTy) == 0)
+      return op.emitOpError("has an unsupported destination element type");
+    auto idxPtrTy = dyn_cast<pto::PtrType>(op.getIdx().getType());
+    if (!idxPtrTy || !idxPtrTy.getElementType().isInteger(32))
+      return op.emitOpError("requires an i32 UB index tile");
+
+    auto viewInfo = extractDmaViewInfo(op.getOperation(), op.getMem());
+    if (failed(viewInfo))
+      return op.emitOpError("requires a supported GM tensor view");
+    if (viewInfo->sizes.size() != viewInfo->strides.size())
+      return op.emitOpError("requires one stride per GM table dimension");
+
+    Value byteOff = computeGMByteOffset(op.getLoc(), b, *viewInfo,
+                                        getMGatherElementSize(elemTy));
+    Value gmPtr = offsetGMPtrByBytes(op.getLoc(), b, viewInfo->gmPtr, byteOff);
+
+    auto coalesceAttr =
+        dyn_cast_or_null<pto::CoalesceAttr>(op.getProperties().coalesce);
+    pto::Coalesce coalesce;
+    if (coalesceAttr) {
+      coalesce = coalesceAttr.getValue();
+    } else if (idxIt->second.validShape == dstIt->second.validShape) {
+      coalesce = pto::Coalesce::Elem;
+    } else {
+      coalesce = pto::Coalesce::Row;
+    }
+
+    pto::GatherOOB oob = op.getGatherOob();
+    if (coalesce == pto::Coalesce::Row)
+      return emitMGatherRow(op, b, *viewInfo, gmPtr, op.getIdx(), op.getDst(),
+                            idxIt->second, dstIt->second, elemTy, oob);
+    return emitMGatherElem(op, b, *viewInfo, gmPtr, op.getIdx(), op.getDst(),
+                           idxIt->second, dstIt->second, elemTy, oob);
   }
 
   LogicalResult lowerTLoad(pto::TLoadOp op, OpBuilder &b,

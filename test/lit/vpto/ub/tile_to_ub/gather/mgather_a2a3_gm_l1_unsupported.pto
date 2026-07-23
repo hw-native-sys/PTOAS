@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto-llvm-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @mgather_gm_l1_unsupported(
+      %mem: memref<1x1x1x64x32xf16, #pto.address_space<gm>>,
+      %idx: memref<1x1x1x1x32xi32, #pto.address_space<gm>>) attributes {pto.aicore} {
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    // CHECK: error: 'pto.mgather' op A2/A3 VPTO lowering currently supports only GM->UB mgather; GM->L1 is deferred
+    pto.mgather ins(%mem, %idx : memref<1x1x1x64x32xf16, #pto.address_space<gm>>, memref<1x1x1x1x32xi32, #pto.address_space<gm>>)
+      outs(%dst : !pto.tile_buf<loc=mat, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    return
+  }
+}
