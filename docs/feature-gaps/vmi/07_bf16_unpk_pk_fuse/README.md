@@ -10,7 +10,7 @@ must lower to the same full unpack/pack form for ASC-level BW.
 
 ## Current slow path
 
-Continuous L=64 strip (`current_slow_vmi.pto`). Checked-in dump:
+Continuous L=64 strip (`current_slow_vmi.pto` / `current_slow_vmi.py`). Checked-in dump:
 `lowered_vpto.pto` — already emits `pto.vlds {dist = "UNPK_B16"}` and
 `pto.vsts {dist = "PK_B32"}`, but only feeds **`part = "EVEN"`** after UNPK
 (half of the unpacked load is unused). That half-utilized form is what residual-mix
@@ -24,7 +24,7 @@ $PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 
 ## Desired VMI + current failure
 
-Explicit unpack load (`desired_vmi.pto`) so authors can request UNPK without
+Explicit unpack load (`desired_vmi.pto` / `desired_vmi.py`) so authors can request UNPK without
 relying on continuous-load heuristics:
 
 ```

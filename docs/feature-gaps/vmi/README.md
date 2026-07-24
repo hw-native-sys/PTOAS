@@ -10,10 +10,22 @@ Each subdirectory has:
 |---|---|
 | `README.md` | Algorithm need, current slow path + reproduce, desired failure, target MI / bisheng status |
 | `current_slow_vmi.pto` | Compiles and runs today, but slow / non-optimal; **must** lower with `pto-test-opt` + `$PASS` |
+| `current_slow_vmi.py` | PTODSL Python form of the slow path (`@pto.jit` + `pto.vmi.*`) |
 | `lowered_vpto.pto` | Checked-in dump from that lower |
 | `desired_vmi.pto` | Idiomatic ask (may fail — README pastes the error) |
+| `desired_vmi.py` | PTODSL Python form of the idiomatic ask (may fail to emit/lower) |
 | `target_mi.pto` | Desired `pto.mi` / VPTO shape; exercised with `ptoas` + `bisheng` |
 | `reference_asc_cce.asc` | Gaps **03–06**: minimal ASC/CCE kernel that `bisheng --cce-aicore-only` accepts (e2e CCE proof; required where `target_mi` HIVM still crashes — **03–05**) |
+
+Python fixtures use **PTODSL** (`from ptodsl import pto`). Canonical semantics stay in
+the `.pto` siblings when a Python surface lag exists (e.g. missing `dcache_bypass`
+or `pto.vmi.vpack`). Emit MLIR with:
+
+```bash
+# From repo root, with PTODSL + MLIR Python bindings on PYTHONPATH:
+python docs/feature-gaps/vmi/<gap_dir>/current_slow_vmi.py
+python docs/feature-gaps/vmi/<gap_dir>/desired_vmi.py
+```
 
 ## Gaps
 

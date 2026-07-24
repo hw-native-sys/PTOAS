@@ -22,7 +22,7 @@ $PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 
 ## Desired VMI + current failure
 
-Compact `vbrc` from `num_groups=8, slots=1` (see `desired_vmi.pto`):
+Compact `vbrc` from `num_groups=8, slots=1` (see `desired_vmi.pto` / `desired_vmi.py`):
 
 ```
 error: VMI-LAYOUT-CONTRACT: pto.vmi.group_broadcast has no registered layout support:

@@ -16,7 +16,7 @@ Consumers today:
 
 ## Current slow path
 
-`block_k = 512`, single-stage Persistent tile (`current_slow_vmi.pto`). Checked-in
+`block_k = 512`, single-stage Persistent tile (`current_slow_vmi.pto` / `current_slow_vmi.py`). Checked-in
 dump: `lowered_vpto.pto` — chunked `pto.vlds` / `pto.vcvt` / `pto.vmul` /
 `pto.vsts` over the 512-wide tile.
 
@@ -28,7 +28,7 @@ $PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 
 ## Desired VMI + current failure
 
-`stages = 2` and `block_k = 1024` with dual UB buffers (`desired_vmi.pto`).
+`stages = 2` and `block_k = 1024` with dual UB buffers (`desired_vmi.pto` / `desired_vmi.py`).
 Layout assignment rejects the 1024-wide multiply:
 
 ```

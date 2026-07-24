@@ -12,7 +12,7 @@ Reference for the working L=256 shape:
 
 ## Current slow path
 
-L=256 `pto.vmi.vcvt` ui8→ui16 (`current_slow_vmi.pto`). Checked-in dump:
+L=256 `pto.vmi.vcvt` ui8→ui16 (`current_slow_vmi.pto` / `current_slow_vmi.py`). Checked-in dump:
 `lowered_vpto.pto` — key ops `pto.vcvt ... {part = "EVEN"}` and `{part = "ODD"}`.
 
 Reproduce:
@@ -23,7 +23,7 @@ $PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 
 ## Desired VMI + current failure
 
-L=8 group-slot widen (`desired_vmi.pto`):
+L=8 group-slot widen (`desired_vmi.pto` / `desired_vmi.py`):
 
 ```
 error: failed to legalize operation 'pto.vmi.extui' that was explicitly marked illegal

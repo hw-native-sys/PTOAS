@@ -8,7 +8,7 @@ packed storage and blocks ASC-level BW on that pipe.
 
 ## Current slow path
 
-Store SF as unpacked `ui8` only (`current_slow_vmi.pto`). Checked-in dump:
+Store SF as unpacked `ui8` only (`current_slow_vmi.pto` / `current_slow_vmi.py`). Checked-in dump:
 `lowered_vpto.pto` — key op `pto.vsts ... {dist = "PK4_B32"}` into `!pto.ptr<ui8, ub>`
 (byte store of the unpacked tensor, not a packed `ui16` SF layout).
 
@@ -20,7 +20,7 @@ $PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 
 ## Desired VMI + current failure
 
-First-class pack into `ui16` then store (see `desired_vmi.pto`):
+First-class pack into `ui16` then store (see `desired_vmi.pto` / `desired_vmi.py`):
 
 ```
 error: custom op 'pto.vmi.vpack' is unknown

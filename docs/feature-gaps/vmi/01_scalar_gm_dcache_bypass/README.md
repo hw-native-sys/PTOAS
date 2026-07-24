@@ -24,7 +24,7 @@ $PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 ## Desired VMI + current failure
 
 Direct `pto.vmi.vstore` of a slots=1 vector to `!pto.ptr<f32, gm>` with
-`dcache_bypass` (see `desired_vmi.pto`):
+`dcache_bypass` (see `desired_vmi.pto` / `desired_vmi.py`):
 
 ```
 error: 'pto.vmi.group_store' op requires memory destination to be UB-backed
