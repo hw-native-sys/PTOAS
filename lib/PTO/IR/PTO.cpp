@@ -3589,11 +3589,15 @@ LogicalResult mlir::pto::SyncSetOp::verify() {
     }
     switch (getPipe().getPipe()) {
     case PIPE::PIPE_FIX:
+    case PIPE::PIPE_MTE1:
+    case PIPE::PIPE_MTE2:
     case PIPE::PIPE_MTE3:
+    case PIPE::PIPE_V:
       return success();
     default:
       return emitOpError()
-             << "A5 sync.set expects pipe to be one of <PIPE_FIX>, <PIPE_MTE3>";
+             << "A5 sync.set expects pipe to be one of <PIPE_FIX>, <PIPE_MTE1>, "
+                "<PIPE_MTE2>, <PIPE_MTE3>, or <PIPE_V>";
     }
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
@@ -17712,10 +17716,114 @@ LogicalResult InitializeL2LPipeOp::verify() {
   return success();
 }
 
+static LogicalResult verifyPipeStateOperand(Operation *op, Value state,
+                                             bool required = false) {
+  if (!state) {
+    if (required)
+      return op->emitOpError("requires pipe_state");
+    return success();
+  }
+
+  auto stateType = dyn_cast<StructType>(state.getType());
+  if (!stateType || stateType.getNumFields() != 2 ||
+      !stateType.getFieldType(0).isSignlessInteger(32) ||
+      !stateType.getFieldType(1).isSignlessInteger(32)) {
+    return op->emitOpError()
+           << "pipe_state must have type !pto.struct<i32, i32>";
+  }
+  return success();
+}
+
+static bool isPipeStateOperation(Operation *op) {
+  return isa<TAllocOp, TPushOp, TPopOp, TFreeOp, TDrainOp>(op);
+}
+
+static Value getPipeStateHandle(Operation *op) {
+  if (auto alloc = dyn_cast<TAllocOp>(op))
+    return alloc.getPipeHandle();
+  if (auto push = dyn_cast<TPushOp>(op))
+    return push.getPipeHandle();
+  if (auto pop = dyn_cast<TPopOp>(op))
+    return pop.getPipeHandle();
+  if (auto free = dyn_cast<TFreeOp>(op))
+    return free.getPipeHandle();
+  return cast<TDrainOp>(op).getPipeHandle();
+}
+
+static Value getPipeStateOperandForVerification(Operation *op) {
+  if (auto alloc = dyn_cast<TAllocOp>(op))
+    return alloc.getPipeState();
+  if (auto push = dyn_cast<TPushOp>(op))
+    return push.getPipeState();
+  if (auto pop = dyn_cast<TPopOp>(op))
+    return pop.getPipeState();
+  if (auto free = dyn_cast<TFreeOp>(op))
+    return free.getPipeState();
+  return cast<TDrainOp>(op).getPipeState();
+}
+
+static LogicalResult verifyPipeStateAssociation(Operation *op,
+                                                Value pipeHandle) {
+  Operation *firstStateUser = nullptr;
+  Value commonState;
+  bool hasMissingState = false;
+
+  for (Operation *user : pipeHandle.getUsers()) {
+    if (!isPipeStateOperation(user) || getPipeStateHandle(user) != pipeHandle)
+      continue;
+    if (!firstStateUser)
+      firstStateUser = user;
+
+    Value state = getPipeStateOperandForVerification(user);
+    if (!state) {
+      hasMissingState = true;
+      continue;
+    }
+    if (commonState && commonState != state) {
+      if (firstStateUser == op)
+        return op->emitOpError()
+               << "requires all stateful users of the same pipe to share "
+                  "one pipe_state";
+      return success();
+    }
+    commonState = state;
+  }
+
+  if (commonState && hasMissingState && firstStateUser == op)
+    return op->emitOpError()
+           << "requires every stateful user of a materialized pipe to carry "
+              "the shared pipe_state";
+  return success();
+}
+
+static LogicalResult verifyTDrainSplit(Operation *op, Value pipeHandle,
+                                       int64_t split) {
+  BoolAttr noSplit;
+  if (auto init = pipeHandle.getDefiningOp<InitializeL2LPipeOp>())
+    noSplit = init.getNosplitAttr();
+  else if (auto init = pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>())
+    noSplit = init.getNosplitAttr();
+
+  if (!noSplit)
+    return op->emitOpError()
+           << "requires the pipe initializer to have resolved 'nosplit'";
+
+  const int64_t expectedSplit = noSplit.getValue() ? 0 : 1;
+  if (split != expectedSplit)
+    return op->emitOpError() << "requires split = " << expectedSplit
+                             << " to match the pipe initializer's nosplit = "
+                             << (noSplit.getValue() ? "true" : "false");
+  return success();
+}
+
 LogicalResult TPushOp::verify() {
   if (!isInsideSectionOrAttributedKernel(getOperation()))
     return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
+    return failure();
+  if (failed(verifyPipeStateOperand(getOperation(), getPipeState())))
+    return failure();
+  if (failed(verifyPipeStateAssociation(getOperation(), getPipeHandle())))
     return failure();
   if (failed(verifySplitAttr(getOperation(), getSplit())))
     return failure();
@@ -17736,6 +17844,10 @@ LogicalResult TAllocOp::verify() {
     return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
+  if (failed(verifyPipeStateOperand(getOperation(), getPipeState())))
+    return failure();
+  if (failed(verifyPipeStateAssociation(getOperation(), getPipeHandle())))
+    return failure();
   if (failed(verifyTensorEntryMatchesInternalPipeInit(
           getOperation(), getPipeHandle(), getEntry().getType())))
     return failure();
@@ -17746,6 +17858,10 @@ LogicalResult TPopOp::verify() {
   if (!isInsideSectionOrAttributedKernel(getOperation()))
     return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
+    return failure();
+  if (failed(verifyPipeStateOperand(getOperation(), getPipeState())))
+    return failure();
+  if (failed(verifyPipeStateAssociation(getOperation(), getPipeHandle())))
     return failure();
   if (failed(verifySplitAttr(getOperation(), getSplit())))
     return failure();
@@ -17767,6 +17883,10 @@ LogicalResult TFreeOp::verify() {
     return emitOpError("must be inside pto.section.cube/vector or a kernel_kind function");
   if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
     return failure();
+  if (failed(verifyPipeStateOperand(getOperation(), getPipeState())))
+    return failure();
+  if (failed(verifyPipeStateAssociation(getOperation(), getPipeHandle())))
+    return failure();
   if (getEntry() &&
       failed(verifyTensorEntryMatchesInternalPipeInit(
           getOperation(), getPipeHandle(), getEntry().getType())))
@@ -17774,12 +17894,31 @@ LogicalResult TFreeOp::verify() {
   return verifySplitAttr(getOperation(), getSplit());
 }
 
+LogicalResult TDrainOp::verify() {
+  if (!isInsideSectionOrAttributedKernel(getOperation()))
+    return emitOpError(
+        "must be inside pto.section.cube/vector or a kernel_kind function");
+  if (failed(verifyPipeHandleProducer(getOperation(), getPipeHandle())))
+    return failure();
+  if (failed(verifyPipeStateOperand(getOperation(), getPipeState(),
+                                    /*required=*/true)))
+    return failure();
+  if (failed(verifyPipeStateAssociation(getOperation(), getPipeHandle())))
+    return failure();
+  if (failed(verifySplitAttr(getOperation(), getSplit())))
+    return failure();
+  return verifyTDrainSplit(getOperation(), getPipeHandle(), getSplit());
+}
+
 ParseResult TFreeOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand first;
   OpAsmParser::UnresolvedOperand pipe;
   Type firstTy;
   Type pipeTy;
+  OpAsmParser::UnresolvedOperand state;
+  Type stateTy;
   bool hasEntry = false;
+  bool hasState = false;
 
   if (parser.parseLParen() || parser.parseOperand(first))
     return failure();
@@ -17802,14 +17941,29 @@ ParseResult TFreeOp::parse(OpAsmParser &parser, OperationState &result) {
   IntegerAttr splitAttr;
   if (parser.parseAttribute(splitAttr, parser.getBuilder().getI8Type(),
                             "split", attrs) ||
-      parser.parseRBrace() || parser.parseOptionalAttrDict(attrs))
+      parser.parseRBrace())
+    return failure();
+
+  if (succeeded(parser.parseOptionalKeyword("pipe_state"))) {
+    hasState = true;
+    if (parser.parseLParen() || parser.parseOperand(state) ||
+        parser.parseColonType(stateTy) || parser.parseRParen())
+      return failure();
+  }
+
+  if (parser.parseOptionalAttrDict(attrs))
     return failure();
 
   result.addAttributes(attrs);
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(
+                          {hasEntry ? 1 : 0, 1, hasState ? 1 : 0}));
   if (hasEntry &&
       parser.resolveOperand(first, firstTy, result.operands))
     return failure();
   if (parser.resolveOperand(pipe, pipeTy, result.operands))
+    return failure();
+  if (hasState && parser.resolveOperand(state, stateTy, result.operands))
     return failure();
   return success();
 }
@@ -17823,8 +17977,11 @@ void TFreeOp::print(OpAsmPrinter &p) {
     p << getPipeHandle() << " : " << getPipeHandle().getType();
   }
   p << ") {split = " << static_cast<int32_t>(getSplit()) << "}";
+  if (getPipeState())
+    p << " pipe_state(" << getPipeState() << " : "
+      << getPipeState().getType() << ")";
   p.printOptionalAttrDict((*this)->getAttrs(),
-                          /*elidedAttrs=*/{"split"});
+                          /*elidedAttrs=*/{"split", "operandSegmentSizes"});
 }
 
 static func::FuncOp getParentFunc(Operation *op) {
@@ -18294,6 +18451,11 @@ void TPushOp::getEffects(
   auto aivSubblockId = getAivSubblockidMutable();
   if (!aivSubblockId.empty())
     addEffect(effects, &*aivSubblockId.begin(), MemoryEffects::Read::get());
+  auto pipeState = getPipeStateMutable();
+  if (!pipeState.empty()) {
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Write::get());
+  }
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
   effects.emplace_back(MemoryEffects::Read::get(),
@@ -18349,6 +18511,11 @@ void TAllocOp::getEffects(
   addEffect(effects, &getEntryMutable(), MemoryEffects::Write::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+  auto pipeState = getPipeStateMutable();
+  if (!pipeState.empty()) {
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Write::get());
+  }
 }
 
 void TPopOp::getEffects(
@@ -18359,6 +18526,11 @@ void TPopOp::getEffects(
   auto aivSubblockId = getAivSubblockidMutable();
   if (!aivSubblockId.empty())
     addEffect(effects, &*aivSubblockId.begin(), MemoryEffects::Read::get());
+  auto pipeState = getPipeStateMutable();
+  if (!pipeState.empty()) {
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Write::get());
+  }
   addEffect(effects, &getTileMutable(), MemoryEffects::Write::get());
 }
 
@@ -18370,6 +18542,20 @@ void TFreeOp::getEffects(
     addEffect(effects, &*entry.begin(), MemoryEffects::Read::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+  auto pipeState = getPipeStateMutable();
+  if (!pipeState.empty()) {
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*pipeState.begin(), MemoryEffects::Write::get());
+  }
+}
+
+void TDrainOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getPipeStateMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPipeStateMutable(), MemoryEffects::Write::get());
 }
 
 void SetQuantScalarOp::getEffects(

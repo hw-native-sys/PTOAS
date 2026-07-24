@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The test-only daemon validates PipeSpec fields, ordered resources, the
+// shared state operand, and the defaulted subblock argument before returning a
+// candidate. It is deliberately outside ptodsl/tilelib so this remains a
+// compiler ABI regression rather than a TileLib implementation test.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/Inputs/pipe_metadata_mock --enable-pipe-tilelib-expand --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @pipe_metadata()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %slots = pto.declare_global -> !pto.tensor_view<16x16xf32>
+    %pipe = "pto.initialize_l2g2l_pipe"(%slots) <{
+      dir_mask = 1 : i8,
+      slot_size = 1024 : i32,
+      slot_num = 8 : i32,
+      flag_base = 4 : i32,
+      operandSegmentSizes = array<i32: 1, 0, 0>
+    }> : (!pto.tensor_view<16x16xf32>) -> !pto.pipe
+    %entry = pto.declare_global -> !pto.tensor_view<16x16xf32>
+    pto.talloc(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    pto.tpush(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    pto.tpush(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 2}
+    pto.tpop(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    pto.tfree(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    return
+  }
+
+  func.func @pipe_metadata_explicit_subblock()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %local_addr = arith.constant 17 : i32
+    %peer_local_addr = arith.constant 29 : i32
+    %pipe = pto.initialize_l2l_pipe {
+      dir_mask = 3,
+      slot_size = 512,
+      slot_num = 4,
+      flag_base = 8,
+      nosplit = false
+    }(%local_addr : i32, %peer_local_addr : i32) -> !pto.pipe
+    %entry = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %subblock = arith.constant 7 : i64
+    pto.tpush(%entry, %pipe : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.pipe) {split = 1} aiv_subblockid(%subblock)
+    pto.tpop(%entry, %pipe : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.pipe) {split = 1} aiv_subblockid(%subblock)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @pipe_metadata
+// CHECK-COUNT-9: name = "mock_pipe_template"

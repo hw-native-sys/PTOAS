@@ -484,6 +484,25 @@ def PTOInferValidatePipeInit : Pass<"pto-infer-validate-pipe-init", "ModuleOp"> 
   ];
 }
 
+def PTOMaterializePipeState : Pass<"pto-materialize-pipe-state", "func::FuncOp"> {
+  let summary = "Materialize explicit PipeState operands for unified pipe ops";
+  let description = [{
+    Creates one `!pto.struct<i32, i32>` state object per internal pipe handle,
+    initializes its producer and consumer counters to zero, attaches it to
+    unified `talloc` / `tpush` / `tpop` / `tfree` operations, and inserts a
+    terminal `tdrain` for every pipe with producer pushes. The terminal drain
+    follows the resolved pipe-level `nosplit` configuration (`split = 0` when
+    true, otherwise `split = 1`), so producer operations on a split-capable
+    pipe may use different split axes.
+  }];
+  let constructor = "mlir::pto::createPTOMaterializePipeStatePass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
 def PTOResolveReservedBuffers : Pass<"pto-resolve-reserved-buffers", "ModuleOp"> {
   let summary = "Resolve reserved local buffer addresses and peer pipe flag bases";
   let description = [{
@@ -533,7 +552,13 @@ def InsertTemplateAttributes
            "PYTHONPATH root for PTODSL">,
     Option<"daemonHelperModule", "daemon-helper-module", "std::string",
            /*default=*/"\"ptodsl.tilelib.serving.helper\"",
-           "Python module used for daemon metadata RPC calls">
+           "Python module used for daemon metadata RPC calls">,
+    Option<"pipeOnly", "pipe-only", "bool",
+           /*default=*/"false",
+           "Attach candidates only to unified internal pipe operations">,
+    Option<"skipPipeOps", "skip-pipe-ops", "bool",
+           /*default=*/"false",
+           "Exclude unified internal pipe operations from this metadata pass">
   ];
 }
 

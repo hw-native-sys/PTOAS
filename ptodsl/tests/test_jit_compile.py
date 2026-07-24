@@ -11,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 import os
 import re
-import sys
 from tempfile import TemporaryDirectory
 from importlib.util import module_from_spec, spec_from_file_location
 from typing import Optional
@@ -4294,6 +4293,14 @@ def main() -> None:
         "func.func public @process_tile_module__ptodsl_" in kernel_module_call_text,
         "kernel-module callee definition should be materialized as a public ABI-specialized symbol",
     )
+    kernel_module_primary_index = kernel_module_call_text.index(
+        "func.func public @process_tile_module__ptodsl_"
+    )
+    expect(
+        "pto.kernel_kind = #pto.kernel_kind<vector>"
+        in kernel_module_call_text[kernel_module_primary_index : kernel_module_primary_index + 500],
+        "VPTO kernel-module primary definitions should preserve their vector kernel kind",
+    )
     expect(
         'pto.visibility = "external"' in kernel_module_call_text,
         "kernel-module ABI-specialized primary definitions should carry explicit external artifact visibility",
@@ -4503,7 +4510,16 @@ def main() -> None:
                 manifest_path=cache_dir / "manifest.json",
             )
 
-        def fake_run_ptoas(mlir_path, kernel_object, *, target_arch, insert_sync=None, backend=None, pto_level=None):
+        def fake_run_ptoas(
+            mlir_path,
+            kernel_object,
+            *,
+            target_arch,
+            insert_sync=None,
+            backend=None,
+            pto_level=None,
+            extra_args=(),
+        ):
             native_build_observations.append(
                 {
                     "mlir_path": mlir_path,
@@ -4512,6 +4528,7 @@ def main() -> None:
                     "insert_sync": insert_sync,
                     "backend": backend,
                     "pto_level": pto_level,
+                    "extra_args": extra_args,
                     "mlir_text": mlir_path.read_text(encoding="utf-8"),
                 }
             )
@@ -4595,6 +4612,10 @@ def main() -> None:
             f"{label} native build should derive the PTOAS level from the authored mode",
         )
         expect(
+            observation["extra_args"] == (),
+            f"{label} native build should not add PTOAS options when PTOAS_FLAGS is unset",
+        )
+        expect(
             observation["mlir_text"] == compiled.mlir_text(),
             f"{label} native build should hand the backend-partitioned container MLIR to ptoas unchanged",
         )
@@ -4643,6 +4664,27 @@ def main() -> None:
         expect(
             "--enable-tile-op-expand" in ptoas_cmd and str(mlir_path) in ptoas_cmd and str(kernel_object) in ptoas_cmd,
             "native build should still pass the shared PTOAS compile inputs and output path",
+        )
+        ptoas_cmds.clear()
+        with mock.patch.dict(os.environ, {"PTOAS_FLAGS": "--tile-lib-backend=ptodsl --enable-pipe-tilelib-expand"}), mock.patch.object(
+            native_build_runtime, "resolve_ptoas_binary", return_value=Path("/tmp/fake-ptoas")
+        ), mock.patch.object(native_build_runtime, "_run", side_effect=fake_run_ptoas_cmd):
+            configured_ptoas_flags = native_build_runtime._configured_ptoas_flags()
+            native_build_runtime._run_ptoas(
+                mlir_path,
+                kernel_object,
+                target_arch="a5",
+                extra_args=configured_ptoas_flags,
+            )
+        expect(
+            ptoas_cmds[0].count("--tile-lib-backend=ptodsl") == 1
+            and ptoas_cmds[0].count("--enable-pipe-tilelib-expand") == 1,
+            "native build should forward PTOAS_FLAGS as individual PTOAS arguments",
+        )
+        expect(
+            configured_ptoas_flags
+            == ("--tile-lib-backend=ptodsl", "--enable-pipe-tilelib-expand"),
+            "native build should retain PTOAS_FLAGS in its cache-keyed PTOAS arguments",
         )
         ptoas_cmds.clear()
         with mock.patch.object(native_build_runtime, "resolve_ptoas_binary", return_value=Path("/tmp/fake-ptoas")), mock.patch.object(

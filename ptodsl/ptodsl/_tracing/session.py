@@ -834,11 +834,7 @@ class TraceSession:
             self._attach_ptodsl_logical_name_attr(helper, spec.symbol_name)
             helper.attributes["sym_visibility"] = StringAttr.get("public")
             helper.attributes["pto.visibility"] = StringAttr.get("external")
-            if (
-                module_spec.backend == "emitc"
-                and not module_spec.entry
-                and module_spec.kernel_kind in {"cube", "vector"}
-            ):
+            if not module_spec.entry and module_spec.kernel_kind in {"cube", "vector"}:
                 helper.attributes["pto.kernel_kind"] = Attribute.parse(
                     f"#pto.kernel_kind<{module_spec.kernel_kind}>"
                 )

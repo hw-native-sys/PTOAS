@@ -462,7 +462,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
                                                    alloc.getEntry().getType());
       propagateGlobalTensorStrides(decl, handles.c2vSlotStrides, rewriter);
       rewriter.create<TAllocOp>(alloc.getLoc(), decl.getEntry(),
-                                handles.c2vPipe, alloc.getSplitAttr());
+                                handles.c2vPipe, Value{}, alloc.getSplitAttr());
       rewriter.replaceOp(alloc, decl.getEntry());
       continue;
     }
@@ -481,7 +481,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
                                                    alloc.getEntry().getType());
       propagateGlobalTensorStrides(decl, handles.v2cSlotStrides, rewriter);
       rewriter.create<TAllocOp>(alloc.getLoc(), decl.getEntry(),
-                                handles.v2cPipe, alloc.getSplitAttr());
+                                handles.v2cPipe, Value{}, alloc.getSplitAttr());
       rewriter.replaceOp(alloc, decl.getEntry());
       continue;
     }
@@ -497,7 +497,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
         return failure();
       }
       rewriter.replaceOpWithNewOp<TPushOp>(push, push.getTile(), handles.c2vPipe,
-                                           Value{}, push.getSplitAttr());
+                                           Value{}, Value{}, push.getSplitAttr());
       continue;
     }
 
@@ -513,6 +513,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
       }
       rewriter.replaceOpWithNewOp<TPushOp>(push, push.getTile(), handles.v2cPipe,
                                            push.getAivSubblockid(),
+                                           Value{},
                                            push.getSplitAttr());
       continue;
     }
@@ -543,7 +544,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
         }
       }
       rewriter.create<TPopOp>(pop.getLoc(), entry, handles.c2vPipe,
-                              pop.getAivSubblockid(), pop.getSplitAttr());
+                              pop.getAivSubblockid(), Value{}, pop.getSplitAttr());
       rewriter.replaceOp(pop, entry);
       continue;
     }
@@ -574,7 +575,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
         }
       }
       rewriter.create<TPopOp>(pop.getLoc(), entry, handles.v2cPipe,
-                              Value{}, pop.getSplitAttr());
+                              Value{}, Value{}, pop.getSplitAttr());
       rewriter.replaceOp(pop, entry);
       continue;
     }
@@ -591,6 +592,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
       }
       rewriter.replaceOpWithNewOp<TFreeOp>(free, free.getEntry(),
                                            handles.c2vPipe,
+                                           Value{},
                                            free.getSplitAttr());
       continue;
     }
@@ -607,6 +609,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
     }
     rewriter.replaceOpWithNewOp<TFreeOp>(free, free.getEntry(),
                                          handles.v2cPipe,
+                                         Value{},
                                          free.getSplitAttr());
   }
 

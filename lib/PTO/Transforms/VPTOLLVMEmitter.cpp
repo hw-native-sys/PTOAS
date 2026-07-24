@@ -137,7 +137,33 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
   return normalizePayloadTypeForLLVMLowering(type, builder);
 }
 
+static Type convertVPTOType(Type type, Builder &builder);
+
+static Type convertVPTOStructStorageType(pto::StructType type,
+                                         Builder &builder) {
+  SmallVector<Type> fields;
+  fields.reserve(type.getNumFields());
+  for (Type fieldType : type.getFieldTypes()) {
+    if (auto nested = dyn_cast<pto::StructType>(fieldType)) {
+      fields.push_back(convertVPTOStructStorageType(nested, builder));
+      continue;
+    }
+    Type converted = convertVPTOType(fieldType, builder);
+    if (!converted)
+      return {};
+    fields.push_back(converted);
+  }
+  return LLVM::LLVMStructType::getLiteral(builder.getContext(), fields);
+}
+
 static Type convertVPTOType(Type type, Builder &builder) {
+  if (auto structType = dyn_cast<pto::StructType>(type)) {
+    if (!convertVPTOStructStorageType(structType, builder))
+      return {};
+    return LLVM::LLVMPointerType::get(builder.getContext());
+  }
+  if (isa<pto::TensorViewType>(type))
+    return LLVM::LLVMPointerType::get(builder.getContext());
   if (auto vecType = dyn_cast<pto::VRegType>(type)) {
     Type elementType =
         normalizePayloadTypeForLLVMLowering(vecType.getElementType(), builder);
@@ -182,7 +208,8 @@ static unsigned getNaturalByteAlignment(Type type) {
 }
 
 static bool hasVPTOConvertibleType(Type type) {
-  return isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType>(type);
+  return isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType,
+             pto::StructType, pto::TensorViewType>(type);
 }
 
 static bool hasVPTOConvertibleType(TypeRange types) {
@@ -10327,6 +10354,199 @@ public:
   }
 };
 
+static FailureOr<Value> getVPTOStructFieldAddress(
+    ConversionPatternRewriter &rewriter, Location loc, Value base,
+    pto::StructType rootType, ArrayRef<int64_t> path) {
+  if (path.empty())
+    return failure();
+
+  auto pointerType = dyn_cast<LLVM::LLVMPointerType>(base.getType());
+  if (!pointerType)
+    return failure();
+
+  Builder builder(rewriter.getContext());
+  Type storageType = convertVPTOStructStorageType(rootType, builder);
+  if (!storageType)
+    return failure();
+
+  Value cursor = base;
+  pto::StructType cursorType = rootType;
+  for (auto [depth, fieldIndex] : llvm::enumerate(path)) {
+    if (fieldIndex < 0 ||
+        static_cast<unsigned>(fieldIndex) >= cursorType.getNumFields())
+      return failure();
+
+    cursor = rewriter.create<LLVM::GEPOp>(
+        loc, pointerType, storageType, cursor,
+        ArrayRef<LLVM::GEPArg>{0, static_cast<int32_t>(fieldIndex)});
+
+    if (depth + 1 == path.size())
+      return cursor;
+
+    auto nestedType = dyn_cast<pto::StructType>(
+        cursorType.getFieldType(static_cast<unsigned>(fieldIndex)));
+    if (!nestedType)
+      return failure();
+    cursorType = nestedType;
+    storageType = convertVPTOStructStorageType(cursorType, builder);
+    if (!storageType)
+      return failure();
+  }
+  return failure();
+}
+
+class ConvertPtoDeclareStructOp final
+    : public OpConversionPattern<pto::DeclareStructOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::DeclareStructOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    auto pointerType = dyn_cast<LLVM::LLVMPointerType>(
+        getTypeConverter()->convertType(op.getS().getType()));
+    if (!pointerType)
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to convert !pto.struct type");
+
+    Builder builder(rewriter.getContext());
+    Type storageType =
+        convertVPTOStructStorageType(op.getS().getType(), builder);
+    if (!storageType)
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert !pto.struct storage type");
+
+    Value one = rewriter.create<LLVM::ConstantOp>(
+        op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(1));
+    rewriter.replaceOpWithNewOp<LLVM::AllocaOp>(op, pointerType, storageType,
+                                                one, /*alignment=*/0);
+    return success();
+  }
+};
+
+class ConvertPtoStructGetOp final
+    : public OpConversionPattern<pto::StructGetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::StructGetOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type resultType = getTypeConverter()->convertType(op.getValue().getType());
+    if (!resultType)
+      return rewriter.notifyMatchFailure(op, "failed to convert struct field type");
+
+    FailureOr<Value> address = getVPTOStructFieldAddress(
+        rewriter, op.getLoc(), adaptor.getS(), op.getS().getType(), op.getPath());
+    if (failed(address))
+      return rewriter.notifyMatchFailure(op, "failed to address struct field");
+
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(
+        op, resultType, *address, getNaturalByteAlignment(resultType));
+    return success();
+  }
+};
+
+class ConvertPtoStructSetOp final
+    : public OpConversionPattern<pto::StructSetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::StructSetOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    FailureOr<Value> address = getVPTOStructFieldAddress(
+        rewriter, op.getLoc(), adaptor.getS(), op.getS().getType(), op.getPath());
+    if (failed(address))
+      return rewriter.notifyMatchFailure(op, "failed to address struct field");
+
+    rewriter.create<LLVM::StoreOp>(
+        op.getLoc(), adaptor.getValue(), *address,
+        getNaturalByteAlignment(adaptor.getValue().getType()));
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class ConvertPtoDeclareGlobalOp final
+    : public OpConversionPattern<pto::DeclareGlobalOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::DeclareGlobalOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    auto descriptorType = dyn_cast<LLVM::LLVMPointerType>(
+        getTypeConverter()->convertType(op.getEntry().getType()));
+    if (!descriptorType)
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert declared global descriptor type");
+
+    Type storageType = LLVM::LLVMPointerType::get(
+        rewriter.getContext(), static_cast<unsigned>(pto::AddressSpace::GM));
+    Value one = rewriter.create<LLVM::ConstantOp>(
+        op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(1));
+    rewriter.replaceOpWithNewOp<LLVM::AllocaOp>(
+        op, descriptorType, storageType, one, /*alignment=*/8);
+    return success();
+  }
+};
+
+class ConvertPtoTAssignOp final : public OpConversionPattern<pto::TAssignOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::TAssignOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!isa<pto::TensorViewType>(op.getTile().getType()))
+      return failure();
+    auto descriptorType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getTile().getType());
+    if (!descriptorType)
+      return rewriter.notifyMatchFailure(op,
+                                         "expected a global descriptor pointer");
+
+    Value address = adaptor.getAddr();
+    if (address.getType().isIndex())
+      address = rewriter.create<arith::IndexCastUIOp>(
+          op.getLoc(), rewriter.getI64Type(), address);
+    if (!address.getType().isInteger(64))
+      return rewriter.notifyMatchFailure(op,
+                                         "expected an i64 global descriptor address");
+
+    Type valueType = LLVM::LLVMPointerType::get(
+        rewriter.getContext(), static_cast<unsigned>(pto::AddressSpace::GM));
+    Value pointer =
+        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), valueType, address);
+    rewriter.create<LLVM::StoreOp>(op.getLoc(), pointer, adaptor.getTile(),
+                                   /*alignment=*/8);
+    rewriter.replaceOp(op, adaptor.getTile());
+    return success();
+  }
+};
+
+class ConvertPtoTensorViewAddrOp final
+    : public OpConversionPattern<pto::TensorViewAddrOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::TensorViewAddrOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!isa<pto::TensorViewType>(op.getSrc().getType()))
+      return failure();
+    Type resultType = getTypeConverter()->convertType(op.getDst().getType());
+    if (!resultType)
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to convert tensor view address type");
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(op, resultType, adaptor.getSrc(),
+                                              /*alignment=*/8);
+    return success();
+  }
+};
+
 class ConvertPtoTileBufAddrOp final
     : public OpConversionPattern<pto::TileBufAddrOp> {
 public:
@@ -11437,6 +11657,10 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
   });
 
   populateVPTOStructuralTypePatterns(typeConverter, patterns, target);
+  patterns.add<ConvertPtoDeclareStructOp, ConvertPtoStructGetOp,
+               ConvertPtoStructSetOp>(typeConverter, context);
+  patterns.add<ConvertPtoDeclareGlobalOp, ConvertPtoTAssignOp,
+               ConvertPtoTensorViewAddrOp>(typeConverter, context);
   patterns.add<ConvertPtoTileBufAddrOp, ConvertPointerCastToCastPtrOp,
                ConvertPtoAddPtrOp, ConvertPtoCastPtrOp, ConvertPtoLoadScalarOp,
                ConvertPtoStoreScalarOp>(typeConverter, context);

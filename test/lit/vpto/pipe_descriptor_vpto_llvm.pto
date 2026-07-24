@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @pipe_descriptor_lowering(%descriptor_addr: i64)
+      attributes {pto.kernel} {
+    %state = pto.declare_struct -> !pto.struct<i32, i32>
+    %zero = arith.constant 0 : i32
+    pto.struct_set %state[0], %zero : !pto.struct<i32, i32>, i32
+    pto.struct_set %state[1], %zero : !pto.struct<i32, i32>, i32
+    %counter = pto.struct_get %state[0] : !pto.struct<i32, i32> -> i32
+
+    %entry = pto.declare_global -> !pto.tensor_view<16x16xi32>
+    %bound_entry = pto.tassign %entry, %descriptor_addr
+      : !pto.tensor_view<16x16xi32> -> !pto.tensor_view<16x16xi32>
+    %addr = pto.tensor_view_addr %bound_entry
+      : !pto.tensor_view<16x16xi32> -> !pto.ptr<i32, gm>
+    %c0 = arith.constant 0 : index
+    pto.store_scalar %counter, %addr[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+
+// CHECK-LABEL: llvm.func @pipe_descriptor_lowering_mix_aiv
+// CHECK: llvm.alloca {{.*}} x !llvm.struct<(i32, i32)>
+// CHECK: llvm.getelementptr
+// CHECK: llvm.store {{.*}} : i32, !llvm.ptr
+// CHECK: llvm.load {{.*}} : !llvm.ptr -> i32
+// CHECK: llvm.alloca {{.*}} x !llvm.ptr<1>
+// CHECK: llvm.inttoptr
+// CHECK: llvm.store {{.*}} : !llvm.ptr<1>, !llvm.ptr
+// CHECK: llvm.load {{.*}} : !llvm.ptr -> !llvm.ptr<1>
+// CHECK-NOT: builtin.unrealized_conversion_cast

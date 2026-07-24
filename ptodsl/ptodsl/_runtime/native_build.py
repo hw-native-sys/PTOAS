@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def _run_ptoas(
     insert_sync: bool | None = None,
     backend: str | None = None,
     pto_level: str | None = None,
+    extra_args: tuple[str, ...] = (),
 ) -> None:
     ptoas = resolve_ptoas_binary()
     cmd = [
@@ -59,6 +61,7 @@ def _run_ptoas(
         cmd.append(f"--pto-level={pto_level}")
     if insert_sync is True:
         cmd.append("--enable-insert-sync")
+    cmd.extend(extra_args)
     cmd.extend([
         "--enable-tile-op-expand",
         str(mlir_path),
@@ -86,12 +89,17 @@ def _source_ptoas_overrides(module_spec) -> dict:
     return {"backend": module_spec.backend}
 
 
+def _configured_ptoas_flags() -> tuple[str, ...]:
+    return tuple(shlex.split(os.environ.get("PTOAS_FLAGS", "")))
+
+
 def _compile_config_text(
     *,
     module_spec,
     effective_insert_sync: bool,
     effective_pto_level: str | None,
     ptoas_overrides: dict,
+    ptoas_flags: tuple[str, ...],
 ) -> str:
     return "\n".join(
         [
@@ -101,6 +109,7 @@ def _compile_config_text(
             f"insert_sync={effective_insert_sync}",
             f"pto_level={effective_pto_level}",
             f"backend={ptoas_overrides.get('backend')}",
+            f"ptoas_flags={shlex.join(ptoas_flags)}",
             "enable_tile_op_expand=True",
         ]
     )
@@ -219,11 +228,13 @@ def build_native_library(
     )
     effective_pto_level = _effective_pto_level(mode=module_spec.mode)
     ptoas_overrides = _source_ptoas_overrides(module_spec)
+    ptoas_flags = _configured_ptoas_flags()
     compile_config_text = _compile_config_text(
         module_spec=module_spec,
         effective_insert_sync=effective_insert_sync,
         effective_pto_level=effective_pto_level,
         ptoas_overrides=ptoas_overrides,
+        ptoas_flags=ptoas_flags,
     )
     sim_mode = bool(os.environ.get("MSPROF_SIMULATOR_MODE"))
     link_config_text = "\n".join(runtime_library_flags(sim_mode=sim_mode))
@@ -247,6 +258,7 @@ def build_native_library(
         target_arch=module_spec.target_arch,
         insert_sync=effective_insert_sync,
         pto_level=effective_pto_level,
+        extra_args=ptoas_flags,
         **ptoas_overrides,
     )
 

@@ -31,6 +31,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Support/PythonExecutable.h"
 #include "PTO/Transforms/Passes.h"
+#include "Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -62,6 +63,7 @@
 #include <optional>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 extern "C" {
 extern char **environ;
@@ -85,10 +87,11 @@ constexpr llvm::StringLiteral kCandidatesAttr = "candidates";
 // ============================================================================
 // OperandTypeInfo: describes one operand for template specialization.
 //
-// Four kinds of operands:
+// Eight kinds of operands:
 //   Tile   — from TileBufType.  dtype + shape + memorySpace + config
 //            all participate in the specialization key (SpecKey).
-//   View   — from MemRefType (lowered PartitionTensorViewType). The element
+//   View   — from MemRefType, TensorViewType, or PartitionTensorViewType. The
+//            element
 //            dtype, shape, strides, memory space, and optional explicit layout
 //            participate in SpecKey. PTODSL templates compile ViewSpec metadata
 //            into helper bodies, so helpers with different view strides must not
@@ -98,8 +101,22 @@ constexpr llvm::StringLiteral kCandidatesAttr = "candidates";
 //            distinguish auxiliary vector operands such as tmrgsort's
 //            `excuted : vector<4xi16>`.
 //   Scalar — from a scalar element type.  Only dtype participates in SpecKey.
+//   Pipe — compile-time FIFO configuration only; never a helper argument.
+//   PipeResources — the initializer's runtime storage operands, flattened into
+//                   physical helper arguments.
+//   PipeState — fixed !pto.struct<i32, i32> cursor state.
+//   PipeEntry — mutable !pto.tensor_view descriptor for a GM pipe entry.
 // ============================================================================
-enum class OperandKind { Tile, View, Vector, Scalar };
+enum class OperandKind {
+  Tile,
+  View,
+  Vector,
+  Scalar,
+  Pipe,
+  PipeResources,
+  PipeState,
+  PipeEntry,
+};
 
 struct OperandTypeInfo {
   OperandKind kind = OperandKind::Tile;
@@ -126,6 +143,20 @@ struct OperandTypeInfo {
   // --- Scalar-only ---
   std::optional<int64_t> scalarValue;
 
+  // --- Pipe-only ---
+  std::string pipeInitKind;
+  int64_t pipeDirMask = 0;
+  int64_t pipeSlotSize = 0;
+  int64_t pipeSlotNum = 0;
+  std::optional<int64_t> pipeLocalSlotNum;
+  int64_t pipeFlagBase = 0;
+  bool pipeNoSplit = false;
+  int64_t pipeSplit = 0;
+  std::vector<std::string> pipeResourceNames;
+
+  // --- PipeResources-only ---
+  std::vector<OperandTypeInfo> pipeResources;
+
   /// Equality for SpecKey caching — only compares fields relevant to each kind.
   bool operator==(const OperandTypeInfo &rhs) const {
     if (kind != rhs.kind || dtype != rhs.dtype)
@@ -140,6 +171,19 @@ struct OperandTypeInfo {
       return vectorShape == rhs.vectorShape;
     if (kind == OperandKind::Scalar)
       return scalarValue == rhs.scalarValue;
+    if (kind == OperandKind::Pipe)
+      return pipeInitKind == rhs.pipeInitKind &&
+             pipeDirMask == rhs.pipeDirMask &&
+             pipeSlotSize == rhs.pipeSlotSize &&
+             pipeSlotNum == rhs.pipeSlotNum &&
+             pipeLocalSlotNum == rhs.pipeLocalSlotNum &&
+             pipeFlagBase == rhs.pipeFlagBase &&
+             pipeNoSplit == rhs.pipeNoSplit && pipeSplit == rhs.pipeSplit &&
+             pipeResourceNames == rhs.pipeResourceNames;
+    if (kind == OperandKind::PipeResources)
+      return pipeResources == rhs.pipeResources;
+    if (kind == OperandKind::PipeState)
+      return true;
     return viewShape == rhs.viewShape &&
            viewStrides == rhs.viewStrides &&
            viewMemorySpace == rhs.viewMemorySpace &&
@@ -185,8 +229,17 @@ struct SpecKeyInfo : public llvm::DenseMapInfo<SpecKey> {
         h = llvm::hash_combine(h, op.scalarValue.has_value());
         if (op.scalarValue)
           h = llvm::hash_combine(h, *op.scalarValue);
+      } else if (op.kind == OperandKind::Pipe) {
+        h = llvm::hash_combine(
+            h, op.pipeInitKind, op.pipeDirMask, op.pipeSlotSize,
+            op.pipeSlotNum, op.pipeLocalSlotNum.has_value(), op.pipeFlagBase,
+            op.pipeNoSplit, op.pipeSplit);
+        if (op.pipeLocalSlotNum)
+          h = llvm::hash_combine(h, *op.pipeLocalSlotNum);
+        for (const std::string &name : op.pipeResourceNames)
+          h = llvm::hash_combine(h, name);
       }
-      if (op.kind == OperandKind::View) {
+      if (op.kind == OperandKind::View || op.kind == OperandKind::PipeEntry) {
         h = llvm::hash_combine(h, op.viewMemorySpace);
         for (int64_t d : op.viewShape)
           h = llvm::hash_combine(h, d);
@@ -295,6 +348,12 @@ static std::string getMemorySpaceString(MemRefType mrTy) {
   return msAttr ? stringifyMemorySpace(msAttr.getAddressSpace()) : "gm";
 }
 
+static std::string getMemorySpaceString(pto::PartitionTensorViewType) {
+  return "gm";
+}
+
+static std::string getMemorySpaceString(pto::TensorViewType) { return "gm"; }
+
 static std::string getBLayoutString(int32_t blayout) {
   if (blayout == static_cast<int32_t>(pto::BLayout::ColMajor))
     return "col_major";
@@ -325,6 +384,11 @@ static std::optional<pto::Layout> resolveViewLayout(Value value) {
 
   Operation *def = value.getDefiningOp();
   while (def) {
+    if (auto part = dyn_cast<pto::PartitionViewOp>(def)) {
+      value = part.getSource();
+      def = value.getDefiningOp();
+      continue;
+    }
     if (auto layout = getLayoutAttrFromOp(def))
       return layout;
     if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
@@ -479,6 +543,23 @@ static std::string getTRandomRoundsString(pto::TRandomOp op) {
 static void appendOpContextAttrs(
     Operation *op,
     SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
+  if (isa<pto::TAllocOp, pto::TPushOp, pto::TPopOp, pto::TFreeOp,
+          pto::TDrainOp>(op)) {
+    auto func = op->getParentOfType<mlir::func::FuncOp>();
+    auto kernelKind =
+        func ? func->getAttrOfType<pto::FunctionKernelKindAttr>(
+                   pto::FunctionKernelKindAttr::name)
+             : pto::FunctionKernelKindAttr();
+    if (!kernelKind) {
+      op->emitError(
+          "requires a cube or vector kernel_kind for TileLib pipe expansion");
+      return;
+    }
+    attrs.emplace_back(
+        "kernel_kind",
+        kernelKind.getKernelKind() == pto::FunctionKernelKind::Cube ? "cube"
+                                                                    : "vector");
+  }
   if (auto tcvt = dyn_cast<pto::TCvtOp>(op)) {
     std::optional<std::string> roundMode = getTCvtRoundModeString(tcvt);
     if (roundMode)
@@ -622,6 +703,81 @@ static void populateViewShapeAndStrides(Value value,
   }
 }
 
+static void populateTensorViewShapeAndStrides(
+    Value value, SmallVectorImpl<int64_t> &shape,
+    SmallVectorImpl<int64_t> &strides) {
+  if (!value)
+    return;
+
+  if (auto make = value.getDefiningOp<pto::MakeTensorViewOp>()) {
+    if (shape.empty()) {
+      if (auto viewTy =
+              dyn_cast<pto::TensorViewType>(make.getResult().getType()))
+        shape.assign(viewTy.getShape().begin(), viewTy.getShape().end());
+    }
+    if (strides.empty()) {
+      strides.reserve(make.getStrides().size());
+      for (Value strideValue : make.getStrides()) {
+        int64_t stride = ShapedType::kDynamic;
+        (void)getStaticIntFromValue(strideValue, stride);
+        strides.push_back(stride);
+      }
+    }
+    return;
+  }
+
+  if (auto viewTy = dyn_cast<pto::TensorViewType>(value.getType())) {
+    if (shape.empty())
+      shape.assign(viewTy.getShape().begin(), viewTy.getShape().end());
+  }
+}
+
+static void populatePTOViewShapeAndStrides(
+    Value value, SmallVectorImpl<int64_t> &shape,
+    SmallVectorImpl<int64_t> &strides) {
+  if (!value)
+    return;
+
+  if (auto part = value.getDefiningOp<pto::PartitionViewOp>()) {
+    if (shape.empty()) {
+      shape.reserve(part.getSizes().size());
+      for (Value sizeValue : part.getSizes()) {
+        int64_t size = ShapedType::kDynamic;
+        (void)getStaticIntFromValue(sizeValue, size);
+        shape.push_back(size);
+      }
+    }
+    SmallVector<int64_t> sourceShape;
+    SmallVector<int64_t> sourceStrides;
+    populatePTOViewShapeAndStrides(part.getSource(), sourceShape,
+                                   sourceStrides);
+    if (strides.empty() && !sourceStrides.empty())
+      strides = sourceStrides;
+    return;
+  }
+
+  if (auto make = value.getDefiningOp<pto::MakeTensorViewOp>()) {
+    if (shape.empty()) {
+      if (auto viewTy = dyn_cast<pto::TensorViewType>(make.getResult().getType()))
+        shape.assign(viewTy.getShape().begin(), viewTy.getShape().end());
+    }
+    if (strides.empty()) {
+      strides.reserve(make.getStrides().size());
+      for (Value strideValue : make.getStrides()) {
+        int64_t stride = ShapedType::kDynamic;
+        (void)getStaticIntFromValue(strideValue, stride);
+        strides.push_back(stride);
+      }
+    }
+    return;
+  }
+
+  if (auto viewTy = dyn_cast<pto::TensorViewType>(value.getType())) {
+    if (shape.empty())
+      shape.assign(viewTy.getShape().begin(), viewTy.getShape().end());
+  }
+}
+
 static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
   Type ty = value.getType();
   // Tile operand — from TileBufType.
@@ -671,6 +827,34 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
     return info;
   }
 
+  if (auto viewTy = dyn_cast<pto::TensorViewType>(ty)) {
+    OperandTypeInfo info;
+    info.kind = OperandKind::View;
+    info.dtype = getDtypeString(viewTy.getElementType());
+    if (info.dtype.empty())
+      return std::nullopt;
+    info.viewMemorySpace = getMemorySpaceString(viewTy);
+    info.viewLayout = resolveViewLayout(value);
+    populateTensorViewShapeAndStrides(value, info.viewShape, info.viewStrides);
+    if (info.viewShape.empty())
+      info.viewShape.assign(viewTy.getShape().begin(), viewTy.getShape().end());
+    return info;
+  }
+
+  if (auto viewTy = dyn_cast<pto::PartitionTensorViewType>(ty)) {
+    OperandTypeInfo info;
+    info.kind = OperandKind::View;
+    info.dtype = getDtypeString(viewTy.getElementType());
+    if (info.dtype.empty())
+      return std::nullopt;
+    info.viewMemorySpace = getMemorySpaceString(viewTy);
+    info.viewLayout = resolveViewLayout(value);
+    populatePTOViewShapeAndStrides(value, info.viewShape, info.viewStrides);
+    if (info.viewShape.empty())
+      info.viewShape.assign(viewTy.getShape().begin(), viewTy.getShape().end());
+    return info;
+  }
+
   // Auxiliary vector operand — from builtin VectorType (e.g. vector<4xi16>).
   if (auto vecTy = dyn_cast<VectorType>(ty)) {
     OperandTypeInfo info;
@@ -694,7 +878,201 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
   return info;
 }
 
+static std::optional<OperandTypeInfo> buildPipeEntryTypeInfo(Value value) {
+  if (!isa<pto::TensorViewType>(value.getType()))
+    return buildOperandTypeInfo(value);
+  if (!value.getDefiningOp<pto::DeclareGlobalOp>())
+    return std::nullopt;
+  auto info = buildOperandTypeInfo(value);
+  if (!info)
+    return std::nullopt;
+  info->kind = OperandKind::PipeEntry;
+  return info;
+}
+
+struct PipeWireInfo {
+  bool isL2G2L = false;
+  int64_t dirMask = 0;
+  int64_t slotSize = 0;
+  int64_t slotNum = 0;
+  std::optional<int64_t> localSlotNum;
+  int64_t flagBase = 0;
+  bool noSplit = false;
+  int64_t split = 0;
+  SmallVector<std::pair<std::string, Value>, 3> resources;
+  Value state;
+  Value subblock;
+};
+
+static FailureOr<PipeWireInfo> getPipeWireInfo(Operation *op) {
+  Value pipe;
+  PipeWireInfo info;
+  if (auto push = dyn_cast<pto::TPushOp>(op)) {
+    pipe = push.getPipeHandle();
+    info.state = push.getPipeState();
+    info.subblock = push.getAivSubblockid();
+    info.split = push.getSplit();
+  } else if (auto pop = dyn_cast<pto::TPopOp>(op)) {
+    pipe = pop.getPipeHandle();
+    info.state = pop.getPipeState();
+    info.subblock = pop.getAivSubblockid();
+    info.split = pop.getSplit();
+  } else if (auto alloc = dyn_cast<pto::TAllocOp>(op)) {
+    pipe = alloc.getPipeHandle();
+    info.state = alloc.getPipeState();
+    info.split = alloc.getSplit();
+  } else if (auto free = dyn_cast<pto::TFreeOp>(op)) {
+    pipe = free.getPipeHandle();
+    info.state = free.getPipeState();
+    info.split = free.getSplit();
+  } else if (auto drain = dyn_cast<pto::TDrainOp>(op)) {
+    pipe = drain.getPipeHandle();
+    info.state = drain.getPipeState();
+    info.split = drain.getSplit();
+  } else {
+    return op->emitError("is not a unified internal pipe operation");
+  }
+
+  if (!info.state)
+    return op->emitError(
+        "requires a materialized !pto.struct<i32, i32> pipe_state");
+
+  Operation *init = mlir::pto::getPipeInitDef(pipe);
+  if (!init)
+    return op->emitError("cannot resolve its pipe initializer");
+  if (mlir::pto::getPipeInitAccPushEpilogue(init))
+    return op->emitError(
+        "does not support acc_push_epilogue with --enable-pipe-tilelib-expand");
+
+  auto addResource = [&](StringRef name, Value value) {
+    if (value)
+      info.resources.emplace_back(name.str(), value);
+  };
+  if (auto l2l = dyn_cast<pto::InitializeL2LPipeOp>(init)) {
+    if (!l2l.getFlagBaseAttr())
+      return op->emitError(
+          "requires resolved pipe flag_base before TileLib expansion");
+    info.dirMask = l2l.getDirMask();
+    info.slotSize = l2l.getSlotSize();
+    info.slotNum = l2l.getSlotNum();
+    info.flagBase = l2l.getFlagBaseAttr().getInt();
+    info.noSplit = l2l.getNosplitAttr() && l2l.getNosplitAttr().getValue();
+    addResource("local_addr", l2l.getLocalAddr());
+    addResource("peer_local_addr", l2l.getPeerLocalAddr());
+    return info;
+  }
+
+  auto l2g2l = dyn_cast<pto::InitializeL2G2LPipeOp>(init);
+  if (!l2g2l)
+    return op->emitError("requires an l2l or l2g2l pipe initializer");
+  if (!l2g2l.getFlagBaseAttr())
+    return op->emitError(
+        "requires resolved pipe flag_base before TileLib expansion");
+  info.isL2G2L = true;
+  info.dirMask = l2g2l.getDirMask();
+  info.slotSize = l2g2l.getSlotSize();
+  info.slotNum = l2g2l.getSlotNum();
+  if (auto attr = l2g2l.getLocalSlotNumAttr())
+    info.localSlotNum = attr.getInt();
+  info.flagBase = l2g2l.getFlagBaseAttr().getInt();
+  info.noSplit = l2g2l.getNosplitAttr() && l2g2l.getNosplitAttr().getValue();
+  addResource("gm_addr", l2g2l.getGmAddr());
+  addResource("local_addr", l2g2l.getLocalAddr());
+  addResource("peer_local_addr", l2g2l.getPeerLocalAddr());
+  return info;
+}
+
+static OperandTypeInfo buildPipeTypeInfo(const PipeWireInfo &wire) {
+  OperandTypeInfo info;
+  info.kind = OperandKind::Pipe;
+  info.pipeInitKind = wire.isL2G2L ? "l2g2l" : "l2l";
+  info.pipeDirMask = wire.dirMask;
+  info.pipeSlotSize = wire.slotSize;
+  info.pipeSlotNum = wire.slotNum;
+  info.pipeLocalSlotNum = wire.localSlotNum;
+  info.pipeFlagBase = wire.flagBase;
+  info.pipeNoSplit = wire.noSplit;
+  info.pipeSplit = wire.split;
+  for (const auto &resource : wire.resources)
+    info.pipeResourceNames.push_back(resource.first);
+  return info;
+}
+
+static std::optional<OperandTypeInfo>
+buildPipeResourcesTypeInfo(const PipeWireInfo &wire) {
+  OperandTypeInfo info;
+  info.kind = OperandKind::PipeResources;
+  for (const auto &resource : wire.resources) {
+    auto resourceInfo = buildOperandTypeInfo(resource.second);
+    if (!resourceInfo)
+      return std::nullopt;
+    info.pipeResourceNames.push_back(resource.first);
+    info.pipeResources.push_back(*resourceInfo);
+  }
+  return info;
+}
+
+static std::optional<SpecKey> buildPipeSpecKey(Operation *op) {
+  FailureOr<PipeWireInfo> wire = getPipeWireInfo(op);
+  if (failed(wire))
+    return std::nullopt;
+
+  SpecKey key;
+  key.opName = getTileOpName(op).str();
+  key.targetArch = getTargetArchString(op);
+  auto appendPipeEntry = [&](Value value) -> bool {
+    auto info = buildPipeEntryTypeInfo(value);
+    if (!info)
+      return false;
+    key.operands.push_back(*info);
+    return true;
+  };
+
+  if (auto push = dyn_cast<pto::TPushOp>(op)) {
+    if (!appendPipeEntry(push.getTile()))
+      return std::nullopt;
+  } else if (auto pop = dyn_cast<pto::TPopOp>(op)) {
+    if (!appendPipeEntry(pop.getTile()))
+      return std::nullopt;
+  } else if (auto alloc = dyn_cast<pto::TAllocOp>(op)) {
+    if (!appendPipeEntry(alloc.getEntry()))
+      return std::nullopt;
+  } else if (auto free = dyn_cast<pto::TFreeOp>(op)) {
+    if (free.getEntry() && !appendPipeEntry(free.getEntry()))
+      return std::nullopt;
+  }
+
+  key.operands.push_back(buildPipeTypeInfo(*wire));
+  auto resources = buildPipeResourcesTypeInfo(*wire);
+  if (!resources)
+    return std::nullopt;
+  key.operands.push_back(*resources);
+  OperandTypeInfo state;
+  state.kind = OperandKind::PipeState;
+  key.operands.push_back(state);
+  if (isa<pto::TPushOp, pto::TPopOp>(op)) {
+    if (wire->subblock) {
+      auto subblock = buildOperandTypeInfo(wire->subblock);
+      if (!subblock)
+        return std::nullopt;
+      key.operands.push_back(*subblock);
+    } else {
+      OperandTypeInfo subblock;
+      subblock.kind = OperandKind::Scalar;
+      subblock.dtype = "i64";
+      subblock.scalarValue = 0;
+      key.operands.push_back(subblock);
+    }
+  }
+  appendOpContextAttrs(op, key.contextAttrs);
+  return key;
+}
+
 static std::optional<SpecKey> buildSpecKey(Operation *op) {
+  if (isa<pto::TAllocOp, pto::TPushOp, pto::TPopOp, pto::TFreeOp,
+          pto::TDrainOp>(op))
+    return buildPipeSpecKey(op);
+
   SpecKey key;
   key.opName = getTileOpName(op).str();
   key.targetArch = getTargetArchString(op);
@@ -775,14 +1153,9 @@ static void appendJsonDimArray(std::string &json, ArrayRef<int64_t> arr,
   json += "]";
 }
 
-static std::string buildOperandSpecsJson(const SpecKey &key) {
-  std::string json = "[";
-  for (size_t i = 0; i < key.operands.size(); ++i) {
-    const auto &op = key.operands[i];
-    if (i > 0)
-      json += ",";
-
-    if (op.kind == OperandKind::Tile) {
+static void appendOperandSpecJson(std::string &json,
+                                  const OperandTypeInfo &op) {
+  if (op.kind == OperandKind::Tile) {
       json += "{\"kind\":\"tile\",\"dtype\":\"" + op.dtype + "\",\"shape\":";
       appendJsonIntArray(json, op.tileShape);
       json += ",\"valid_shape\":";
@@ -799,11 +1172,13 @@ static std::string buildOperandSpecsJson(const SpecKey &key) {
       json += ",\"pad_value\":\"0x";
       json += llvm::utohexstr(op.pad, /*LowerCase=*/false);
       json += "\"}}";
-      continue;
-    }
+    return;
+  }
 
-    if (op.kind == OperandKind::View) {
-      json += "{\"kind\":\"view\",\"dtype\":\"" + op.dtype + "\",\"shape\":";
+  if (op.kind == OperandKind::View || op.kind == OperandKind::PipeEntry) {
+      json += "{\"kind\":\"";
+      json += op.kind == OperandKind::PipeEntry ? "pipe_entry" : "view";
+      json += "\",\"dtype\":\"" + op.dtype + "\",\"shape\":";
       appendJsonDimArray(json, op.viewShape);
       if (!op.viewStrides.empty()) {
         json += ",\"strides\":[";
@@ -824,23 +1199,75 @@ static std::string buildOperandSpecsJson(const SpecKey &key) {
         json += "\"}";
       }
       json += "}";
-      continue;
-    }
+    return;
+  }
 
-    if (op.kind == OperandKind::Vector) {
+  if (op.kind == OperandKind::Vector) {
       json += "{\"kind\":\"vector\",\"dtype\":\"" + op.dtype + "\",\"shape\":";
       appendJsonIntArray(json, op.vectorShape);
       json += "}";
-      continue;
-    }
+    return;
+  }
 
-    // Scalar
+  if (op.kind == OperandKind::Scalar) {
     json += "{\"kind\":\"scalar\",\"dtype\":\"" + op.dtype + "\"";
     if (op.scalarValue) {
       json += ",\"value\":";
       json += std::to_string(*op.scalarValue);
     }
     json += "}";
+    return;
+  }
+
+  if (op.kind == OperandKind::Pipe) {
+    json += "{\"kind\":\"pipe\",\"init_kind\":\"" +
+            op.pipeInitKind + "\",\"dir_mask\":" +
+            std::to_string(op.pipeDirMask);
+    json += ",\"slot_size\":" + std::to_string(op.pipeSlotSize);
+    json += ",\"slot_num\":" + std::to_string(op.pipeSlotNum);
+    json += ",\"local_slot_num\":";
+    json += op.pipeLocalSlotNum ? std::to_string(*op.pipeLocalSlotNum) : "null";
+    json += ",\"flag_base\":" + std::to_string(op.pipeFlagBase);
+    json += ",\"nosplit\":";
+    json += op.pipeNoSplit ? "true" : "false";
+    json += ",\"split\":" + std::to_string(op.pipeSplit);
+    json += ",\"resource_names\":[";
+    for (auto [index, name] : llvm::enumerate(op.pipeResourceNames)) {
+      if (index != 0)
+        json += ",";
+      json += "\"" + name + "\"";
+    }
+    json += "]}";
+    return;
+  }
+
+  if (op.kind == OperandKind::PipeResources) {
+    json += "{\"kind\":\"pipe_resources\",\"names\":[";
+    for (auto [index, name] : llvm::enumerate(op.pipeResourceNames)) {
+      if (index != 0)
+        json += ",";
+      json += "\"" + name + "\"";
+    }
+    json += "]";
+    json += ",\"values\":[";
+    for (auto [index, resource] : llvm::enumerate(op.pipeResources)) {
+      if (index != 0)
+        json += ",";
+      appendOperandSpecJson(json, resource);
+    }
+    json += "]}";
+    return;
+  }
+
+  json += "{\"kind\":\"pipe_state\",\"fields\":[\"i32\",\"i32\"]}";
+}
+
+static std::string buildOperandSpecsJson(const SpecKey &key) {
+  std::string json = "[";
+  for (size_t i = 0; i < key.operands.size(); ++i) {
+    if (i != 0)
+      json += ",";
+    appendOperandSpecJson(json, key.operands[i]);
   }
   json += "]";
   return json;
@@ -857,8 +1284,12 @@ static std::string buildUniqueFunctionBaseName(const SpecKey &key) {
   for (const auto &op : key.operands) {
     uniqueName += op.kind == OperandKind::Tile   ? "_tile"
                  : op.kind == OperandKind::View ? "_view"
+                 : op.kind == OperandKind::PipeEntry ? "_pipe_entry"
                  : op.kind == OperandKind::Vector ? "_vector"
-                                                  : "_scalar";
+                 : op.kind == OperandKind::Scalar ? "_scalar"
+                 : op.kind == OperandKind::Pipe ? "_pipe"
+                 : op.kind == OperandKind::PipeResources ? "_pipe_resources"
+                                                        : "_pipe_state";
     uniqueName += "_" + op.dtype;
     if (op.kind == OperandKind::Tile) {
       for (int64_t d : op.tileShape)
@@ -869,7 +1300,8 @@ static std::string buildUniqueFunctionBaseName(const SpecKey &key) {
       uniqueName += "_sl" + std::to_string(op.slayout);
       uniqueName += "_fr" + std::to_string(op.fractal);
       uniqueName += "_pd" + llvm::utohexstr(op.pad, /*LowerCase=*/false);
-    } else if (op.kind == OperandKind::View) {
+    } else if (op.kind == OperandKind::View ||
+               op.kind == OperandKind::PipeEntry) {
       uniqueName += "_ms_" + op.viewMemorySpace;
       uniqueName += "_shape";
       for (int64_t d : op.viewShape)
@@ -884,6 +1316,25 @@ static std::string buildUniqueFunctionBaseName(const SpecKey &key) {
         uniqueName += "_" + std::to_string(d);
     } else if (op.kind == OperandKind::Scalar && op.scalarValue) {
       uniqueName += "_sv" + std::to_string(*op.scalarValue);
+    } else if (op.kind == OperandKind::Pipe) {
+      uniqueName += "_" + op.pipeInitKind;
+      uniqueName += "_d" + std::to_string(op.pipeDirMask);
+      uniqueName += "_ss" + std::to_string(op.pipeSlotSize);
+      uniqueName += "_sn" + std::to_string(op.pipeSlotNum);
+      uniqueName += "_fb" + std::to_string(op.pipeFlagBase);
+      uniqueName += "_ns" + std::to_string(op.pipeNoSplit);
+      uniqueName += "_sp" + std::to_string(op.pipeSplit);
+    } else if (op.kind == OperandKind::PipeResources) {
+      for (const auto &resource : op.pipeResources) {
+        uniqueName += "_" + resource.dtype;
+        if (resource.kind == OperandKind::Tile) {
+          for (int64_t dim : resource.tileShape)
+            uniqueName += "_" + dimSuffix(dim);
+        } else if (resource.kind == OperandKind::View) {
+          for (int64_t dim : resource.viewShape)
+            uniqueName += "_" + dimSuffix(dim);
+        }
+      }
     }
   }
   for (const auto &[attrName, attrValue] : key.contextAttrs)
@@ -1361,23 +1812,108 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
       return failure();
     }
 
-    // Replace tile op with func.call.  For view operands whose caller type
-    // (memref) differs from the template parameter type (tensor_view /
-    // partition_tensor_view), insert an unrealized_conversion_cast bridge.
-    // FoldTileBufIntrinsics will later resolve these casts.
+    // Replace the TileOp with a helper call.  Pipe configuration is metadata
+    // only: the helper receives the initializer's storage values, PipeState,
+    // and (for push/pop) an explicit subblock id instead of !pto.pipe.
     builder.setInsertionPoint(op);
     SmallVector<Value> operands;
     auto fnArgTypes = dslFn.getArgumentTypes();
-    for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-      Value operand = op->getOperand(i);
-      if (i < fnArgTypes.size() && operand.getType() != fnArgTypes[i]) {
+    auto appendOperand = [&](Value operand) -> LogicalResult {
+      if (operands.size() >= fnArgTypes.size())
+        return op->emitError(
+            "ExpandTileOp: generated helper has fewer physical arguments "
+            "than the pipe operation requires");
+      Type expectedType = fnArgTypes[operands.size()];
+      if (operand.getType() != expectedType) {
         operand = bridgeOperandToType(builder, op->getLoc(), operand,
-                                      fnArgTypes[i]);
+                                      expectedType);
       }
       operands.push_back(operand);
+      return success();
+    };
+
+    const bool isPipeOp = isa<pto::TAllocOp, pto::TPushOp, pto::TPopOp,
+                              pto::TFreeOp, pto::TDrainOp>(op);
+    if (!isPipeOp) {
+      for (Value operand : op->getOperands()) {
+        if (failed(appendOperand(operand)))
+          return failure();
+      }
+    } else {
+      FailureOr<PipeWireInfo> wire = getPipeWireInfo(op);
+      if (failed(wire))
+        return failure();
+      if (auto push = dyn_cast<pto::TPushOp>(op)) {
+        if (failed(appendOperand(push.getTile())))
+          return failure();
+      } else if (auto pop = dyn_cast<pto::TPopOp>(op)) {
+        if (failed(appendOperand(pop.getTile())))
+          return failure();
+      } else if (auto alloc = dyn_cast<pto::TAllocOp>(op)) {
+        if (failed(appendOperand(alloc.getEntry())))
+          return failure();
+      } else if (auto free = dyn_cast<pto::TFreeOp>(op)) {
+        if (free.getEntry() && failed(appendOperand(free.getEntry())))
+          return failure();
+      }
+
+      for (const auto &resource : wire->resources) {
+        if (failed(appendOperand(resource.second)))
+          return failure();
+      }
+      if (failed(appendOperand(wire->state)))
+        return failure();
+
+      if (isa<pto::TPushOp, pto::TPopOp>(op)) {
+        Value subblock = wire->subblock;
+        if (!subblock)
+          subblock = builder
+                         .create<arith::ConstantIntOp>(op->getLoc(), 0, 64)
+                         .getResult();
+        if (failed(appendOperand(subblock)))
+          return failure();
+      }
+    }
+    if (operands.size() != fnArgTypes.size()) {
+      op->emitError("ExpandTileOp: generated helper physical argument count "
+                    "does not match the expanded operation");
+      return failure();
     }
     builder.create<func::CallOp>(op->getLoc(), dslFn, operands);
     op->erase();
+  }
+
+  // The pipe handle is intentionally not passed through the TileLib helper.
+  // Once all owned pipe ops have become calls, erase the now-dead initializer
+  // so the VPTO path cannot retain !pto.pipe or EmitC's TPipe dependency.
+  SmallVector<Operation *> deadInitializers;
+  func.walk([&](Operation *candidate) {
+    if (!candidate->hasAttr("pto.pipe_tilelib_owned"))
+      return;
+    if (!isa<pto::InitializeL2LPipeOp, pto::InitializeL2G2LPipeOp>(candidate))
+      return;
+    if (llvm::all_of(candidate->getResults(),
+                     [](Value result) { return result.use_empty(); }))
+      deadInitializers.push_back(candidate);
+  });
+  for (Operation *initializer : deadInitializers)
+    initializer->erase();
+
+  bool residualPipe = false;
+  func.walk([&](Operation *candidate) {
+    if (candidate->hasAttr("pto.pipe_tilelib_owned") &&
+        (isa<pto::InitializeL2LPipeOp, pto::InitializeL2G2LPipeOp,
+             pto::TAllocOp, pto::TPushOp, pto::TPopOp, pto::TFreeOp,
+             pto::TDrainOp>(candidate) ||
+         llvm::any_of(candidate->getResultTypes(), [](Type type) {
+           return isa<pto::PipeType>(type);
+         })))
+      residualPipe = true;
+  });
+  if (residualPipe) {
+    func.emitError(
+        "ExpandTileOp left feature-owned !pto.pipe operations after expansion");
+    return failure();
   }
 
   return success();

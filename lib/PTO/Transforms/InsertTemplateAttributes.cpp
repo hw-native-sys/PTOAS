@@ -10,6 +10,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Support/PythonExecutable.h"
 #include "PTO/Transforms/Passes.h"
+#include "Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -53,6 +54,11 @@ namespace pto {
 namespace {
 
 constexpr llvm::StringLiteral kCandidatesAttr = "candidates";
+
+static bool isUnifiedInternalPipeOperation(Operation *operation) {
+  return isa<pto::TAllocOp, pto::TPushOp, pto::TPopOp, pto::TFreeOp,
+             pto::TDrainOp>(operation);
+}
 
 struct CandidateMetadata {
   int64_t id;
@@ -150,6 +156,8 @@ static std::string getMemorySpaceString(MemRefType memrefType) {
 static std::string getMemorySpaceString(pto::PartitionTensorViewType) {
   return "gm";
 }
+
+static std::string getMemorySpaceString(pto::TensorViewType) { return "gm"; }
 
 static StringRef getBLayoutString(pto::BLayout layout) {
   return layout == pto::BLayout::ColMajor ? "col_major" : "row_major";
@@ -481,6 +489,22 @@ static bool tryAppendPrecisionType(
 
 static void appendOpContextAttrs(
     Operation *op, SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
+  if (isUnifiedInternalPipeOperation(op)) {
+    auto func = op->getParentOfType<mlir::func::FuncOp>();
+    auto kernelKind =
+        func ? func->getAttrOfType<pto::FunctionKernelKindAttr>(
+                   pto::FunctionKernelKindAttr::name)
+             : pto::FunctionKernelKindAttr();
+    if (!kernelKind) {
+      op->emitError(
+          "requires a cube or vector kernel_kind for TileLib pipe expansion");
+      return;
+    }
+    attrs.emplace_back(
+        "kernel_kind",
+        kernelKind.getKernelKind() == pto::FunctionKernelKind::Cube ? "cube"
+                                                                    : "vector");
+  }
   if (auto tcvt = dyn_cast<pto::TCvtOp>(op)) {
     if (auto roundMode = getTCvtRoundModeString(tcvt))
       attrs.emplace_back("round_mode", *roundMode);
@@ -571,6 +595,35 @@ static void appendTileOperandSpecJson(std::string &json,
   json += "\"}}";
 }
 
+static std::optional<pto::TileBufType> getBoundTileType(Value value) {
+  auto bind = value.getDefiningOp<pto::BindTileOp>();
+  if (!bind)
+    return std::nullopt;
+
+  auto memrefType = dyn_cast<MemRefType>(value.getType());
+  if (!memrefType || memrefType.getRank() != 2)
+    return std::nullopt;
+
+  SmallVector<int64_t, 2> validShape(memrefType.getShape().begin(),
+                                     memrefType.getShape().end());
+  auto updateValidDim = [&](Value validDim, unsigned dimension) {
+    if (!validDim)
+      return;
+    int64_t staticValue = 0;
+    validShape[dimension] = getStaticIntFromValue(validDim, staticValue)
+                                ? staticValue
+                                : ShapedType::kDynamic;
+  };
+  updateValidDim(bind.getValidRow(), 0);
+  updateValidDim(bind.getValidCol(), 1);
+
+  return pto::TileBufType::get(value.getType().getContext(),
+                                memrefType.getShape(),
+                                memrefType.getElementType(),
+                                memrefType.getMemorySpace(), validShape,
+                                bind.getConfig());
+}
+
 static void appendViewOperandSpecJson(std::string &json, Value operand,
                                       MemRefType memrefType) {
   std::string dtype = getDtypeString(memrefType.getElementType());
@@ -621,6 +674,33 @@ static void appendViewOperandSpecJson(std::string &json, Value operand,
   json += "}";
 }
 
+static void appendViewOperandSpecJson(std::string &json, Value operand,
+                                      pto::TensorViewType viewType,
+                                      StringRef kind = "view") {
+  std::string dtype = getDtypeString(viewType.getElementType());
+  json += "{\"kind\":\"" + kind.str() + "\",\"dtype\":\"" +
+          dtype + "\",\"shape\":";
+  SmallVector<int64_t> shape;
+  SmallVector<int64_t> strides;
+  populatePTOViewShapeAndStrides(operand, shape, strides);
+  if (shape.empty())
+    shape.assign(viewType.getShape().begin(), viewType.getShape().end());
+  appendJsonDimArray(json, shape);
+  if (!strides.empty()) {
+    json += ",\"strides\":";
+    appendJsonDimArray(json, strides);
+  }
+  json += ",\"memory_space\":\"";
+  json += getMemorySpaceString(viewType);
+  json += "\"";
+  if (auto layout = getViewLayoutString(resolveViewLayout(operand))) {
+    json += ",\"config\":{\"layout\":\"";
+    json += *layout;
+    json += "\"}";
+  }
+  json += "}";
+}
+
 static void appendVectorOperandSpecJson(std::string &json,
                                         VectorType vectorType) {
   std::string dtype = getDtypeString(vectorType.getElementType());
@@ -640,63 +720,271 @@ static void appendScalarOperandSpecJson(std::string &json, Value operand) {
   json += "}";
 }
 
+static LogicalResult appendOperandSpecJson(std::string &json,
+                                           Operation *operation,
+                                           Value operand) {
+  Type type = operand.getType();
+  if (auto tileType = dyn_cast<pto::TileBufType>(type)) {
+    if (getDtypeString(tileType.getElementType()).empty())
+      return operation->emitError(
+          "InsertTemplateAttributes encountered an unsupported tile dtype");
+    appendTileOperandSpecJson(json, tileType);
+    return success();
+  }
+
+  if (auto memrefType = dyn_cast<MemRefType>(type)) {
+    if (getDtypeString(memrefType.getElementType()).empty())
+      return operation->emitError(
+          "InsertTemplateAttributes encountered an unsupported view dtype");
+    appendViewOperandSpecJson(json, operand, memrefType);
+    return success();
+  }
+
+  if (auto viewType = dyn_cast<pto::PartitionTensorViewType>(type)) {
+    if (getDtypeString(viewType.getElementType()).empty())
+      return operation->emitError(
+          "InsertTemplateAttributes encountered an unsupported view dtype");
+    appendViewOperandSpecJson(json, operand, viewType);
+    return success();
+  }
+
+  if (auto viewType = dyn_cast<pto::TensorViewType>(type)) {
+    if (getDtypeString(viewType.getElementType()).empty())
+      return operation->emitError(
+          "InsertTemplateAttributes encountered an unsupported view dtype");
+    appendViewOperandSpecJson(json, operand, viewType);
+    return success();
+  }
+
+  if (auto vectorType = dyn_cast<VectorType>(type)) {
+    if (getDtypeString(vectorType.getElementType()).empty())
+      return operation->emitError(
+          "InsertTemplateAttributes encountered an unsupported vector dtype");
+    appendVectorOperandSpecJson(json, vectorType);
+    return success();
+  }
+
+  if (!getDtypeString(type).empty()) {
+    appendScalarOperandSpecJson(json, operand);
+    return success();
+  }
+
+  return operation->emitError(
+      "InsertTemplateAttributes encountered an unsupported operand type ")
+         << type;
+}
+
+struct PipeWireInfo {
+  bool isL2G2L = false;
+  int64_t dirMask = 0;
+  int64_t slotSize = 0;
+  int64_t slotNum = 0;
+  std::optional<int64_t> localSlotNum;
+  int64_t flagBase = 0;
+  bool noSplit = false;
+  int64_t split = 0;
+  SmallVector<std::pair<std::string, Value>> resources;
+};
+
+static FailureOr<PipeWireInfo> getPipeWireInfo(Operation *operation) {
+  Value pipe;
+  Value state;
+  int64_t split = 0;
+  if (auto push = dyn_cast<pto::TPushOp>(operation)) {
+    pipe = push.getPipeHandle();
+    state = push.getPipeState();
+    split = push.getSplit();
+  } else if (auto pop = dyn_cast<pto::TPopOp>(operation)) {
+    pipe = pop.getPipeHandle();
+    state = pop.getPipeState();
+    split = pop.getSplit();
+  } else if (auto alloc = dyn_cast<pto::TAllocOp>(operation)) {
+    pipe = alloc.getPipeHandle();
+    state = alloc.getPipeState();
+    split = alloc.getSplit();
+  } else if (auto free = dyn_cast<pto::TFreeOp>(operation)) {
+    pipe = free.getPipeHandle();
+    state = free.getPipeState();
+    split = free.getSplit();
+  } else if (auto drain = dyn_cast<pto::TDrainOp>(operation)) {
+    pipe = drain.getPipeHandle();
+    state = drain.getPipeState();
+    split = drain.getSplit();
+  } else {
+    return operation->emitError("is not a unified internal pipe operation");
+  }
+
+  if (!state)
+    return operation->emitError(
+        "requires a materialized !pto.struct<i32, i32> pipe_state");
+
+  Operation *init = mlir::pto::getPipeInitDef(pipe);
+  if (!init)
+    return operation->emitError("cannot resolve its pipe initializer");
+  if (mlir::pto::getPipeInitAccPushEpilogue(init))
+    return operation->emitError(
+        "does not support acc_push_epilogue with --enable-pipe-tilelib-expand");
+
+  PipeWireInfo info;
+  info.split = split;
+  auto addResource = [&](StringRef name, Value value) {
+    if (value)
+      info.resources.emplace_back(name.str(), value);
+  };
+  if (auto l2l = dyn_cast<pto::InitializeL2LPipeOp>(init)) {
+    if (!l2l.getFlagBaseAttr())
+      return operation->emitError(
+          "requires resolved pipe flag_base before TileLib expansion");
+    info.dirMask = l2l.getDirMask();
+    info.slotSize = l2l.getSlotSize();
+    info.slotNum = l2l.getSlotNum();
+    info.flagBase = l2l.getFlagBaseAttr().getInt();
+    info.noSplit = l2l.getNosplitAttr() && l2l.getNosplitAttr().getValue();
+    addResource("local_addr", l2l.getLocalAddr());
+    addResource("peer_local_addr", l2l.getPeerLocalAddr());
+    return info;
+  }
+
+  auto l2g2l = dyn_cast<pto::InitializeL2G2LPipeOp>(init);
+  if (!l2g2l)
+    return operation->emitError("requires an l2l or l2g2l pipe initializer");
+  if (!l2g2l.getFlagBaseAttr())
+    return operation->emitError(
+        "requires resolved pipe flag_base before TileLib expansion");
+  info.isL2G2L = true;
+  info.dirMask = l2g2l.getDirMask();
+  info.slotSize = l2g2l.getSlotSize();
+  info.slotNum = l2g2l.getSlotNum();
+  if (auto attr = l2g2l.getLocalSlotNumAttr())
+    info.localSlotNum = attr.getInt();
+  info.flagBase = l2g2l.getFlagBaseAttr().getInt();
+  info.noSplit = l2g2l.getNosplitAttr() && l2g2l.getNosplitAttr().getValue();
+  addResource("gm_addr", l2g2l.getGmAddr());
+  addResource("local_addr", l2g2l.getLocalAddr());
+  addResource("peer_local_addr", l2g2l.getPeerLocalAddr());
+  return info;
+}
+
+static void appendPipeSpecJson(std::string &json, const PipeWireInfo &info) {
+  json += "{\"kind\":\"pipe\",\"init_kind\":\"";
+  json += info.isL2G2L ? "l2g2l" : "l2l";
+  json += "\",\"dir_mask\":" + std::to_string(info.dirMask);
+  json += ",\"slot_size\":" + std::to_string(info.slotSize);
+  json += ",\"slot_num\":" + std::to_string(info.slotNum);
+  json += ",\"local_slot_num\":";
+  json += info.localSlotNum ? std::to_string(*info.localSlotNum) : "null";
+  json += ",\"flag_base\":" + std::to_string(info.flagBase);
+  json += ",\"nosplit\":";
+  json += info.noSplit ? "true" : "false";
+  json += ",\"split\":" + std::to_string(info.split);
+  json += ",\"resource_names\":[";
+  for (auto [index, resource] : llvm::enumerate(info.resources)) {
+    if (index != 0)
+      json += ",";
+    json += "\"" + resource.first + "\"";
+  }
+  json += "]}";
+}
+
+static std::optional<std::string>
+buildPipeOperandSpecsJson(Operation *operation) {
+  FailureOr<PipeWireInfo> info = getPipeWireInfo(operation);
+  if (failed(info))
+    return std::nullopt;
+
+  std::string json = "[";
+  auto appendComma = [&]() {
+    if (json.size() != 1)
+      json += ",";
+  };
+  auto appendPipeEntry = [&](Value value) -> LogicalResult {
+    appendComma();
+    if (auto tileType = getBoundTileType(value)) {
+      if (getDtypeString(tileType->getElementType()).empty())
+        return operation->emitError(
+            "InsertTemplateAttributes encountered an unsupported bound pipe tile dtype");
+      appendTileOperandSpecJson(json, *tileType);
+      return success();
+    }
+    auto viewType = dyn_cast<pto::TensorViewType>(value.getType());
+    if (!viewType)
+      return appendOperandSpecJson(json, operation, value);
+    if (!value.getDefiningOp<pto::DeclareGlobalOp>())
+      return operation->emitError(
+          "requires a pto.declare_global tensor_view entry for pipe TileLib expansion");
+    if (getDtypeString(viewType.getElementType()).empty())
+      return operation->emitError(
+          "InsertTemplateAttributes encountered an unsupported pipe entry dtype");
+    appendViewOperandSpecJson(json, value, viewType, "pipe_entry");
+    return success();
+  };
+
+  if (auto push = dyn_cast<pto::TPushOp>(operation)) {
+    if (failed(appendPipeEntry(push.getTile())))
+      return std::nullopt;
+  } else if (auto pop = dyn_cast<pto::TPopOp>(operation)) {
+    if (failed(appendPipeEntry(pop.getTile())))
+      return std::nullopt;
+  } else if (auto alloc = dyn_cast<pto::TAllocOp>(operation)) {
+    if (failed(appendPipeEntry(alloc.getEntry())))
+      return std::nullopt;
+  } else if (auto free = dyn_cast<pto::TFreeOp>(operation)) {
+    if (free.getEntry() && failed(appendPipeEntry(free.getEntry())))
+      return std::nullopt;
+  }
+
+  appendComma();
+  appendPipeSpecJson(json, *info);
+  appendComma();
+  json += "{\"kind\":\"pipe_resources\",\"names\":[";
+  for (auto [index, resource] : llvm::enumerate(info->resources)) {
+    if (index != 0)
+      json += ",";
+    json += "\"" + resource.first + "\"";
+  }
+  json += "],\"values\":[";
+  for (auto [index, resource] : llvm::enumerate(info->resources)) {
+    if (index != 0)
+      json += ",";
+    if (failed(appendOperandSpecJson(json, operation, resource.second)))
+      return std::nullopt;
+  }
+  json += "]}";
+  appendComma();
+  json += "{\"kind\":\"pipe_state\",\"fields\":[\"i32\",\"i32\"]}";
+
+  if (auto push = dyn_cast<pto::TPushOp>(operation)) {
+    appendComma();
+    if (Value subblock = push.getAivSubblockid()) {
+      if (failed(appendOperandSpecJson(json, operation, subblock)))
+        return std::nullopt;
+    } else {
+      json += "{\"kind\":\"scalar\",\"dtype\":\"i64\",\"value\":0}";
+    }
+  } else if (auto pop = dyn_cast<pto::TPopOp>(operation)) {
+    appendComma();
+    if (Value subblock = pop.getAivSubblockid()) {
+      if (failed(appendOperandSpecJson(json, operation, subblock)))
+        return std::nullopt;
+    } else {
+      json += "{\"kind\":\"scalar\",\"dtype\":\"i64\",\"value\":0}";
+    }
+  }
+  json += "]";
+  return json;
+}
+
 static std::optional<std::string>
 buildOperandSpecsJson(Operation *operation) {
+  if (isUnifiedInternalPipeOperation(operation))
+    return buildPipeOperandSpecsJson(operation);
+
   std::string json = "[";
   for (auto [index, operand] : llvm::enumerate(operation->getOperands())) {
     if (index != 0)
       json += ",";
-
-    Type type = operand.getType();
-    if (auto tileType = dyn_cast<pto::TileBufType>(type)) {
-      if (getDtypeString(tileType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported tile dtype");
-        return std::nullopt;
-      }
-      appendTileOperandSpecJson(json, tileType);
-      continue;
-    }
-
-    if (auto memrefType = dyn_cast<MemRefType>(type)) {
-      if (getDtypeString(memrefType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported view dtype");
-        return std::nullopt;
-      }
-      appendViewOperandSpecJson(json, operand, memrefType);
-      continue;
-    }
-
-    if (auto viewType = dyn_cast<pto::PartitionTensorViewType>(type)) {
-      if (getDtypeString(viewType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported view dtype");
-        return std::nullopt;
-      }
-      appendViewOperandSpecJson(json, operand, viewType);
-      continue;
-    }
-
-    if (auto vectorType = dyn_cast<VectorType>(type)) {
-      if (getDtypeString(vectorType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported vector dtype");
-        return std::nullopt;
-      }
-      appendVectorOperandSpecJson(json, vectorType);
-      continue;
-    }
-
-    if (!getDtypeString(type).empty()) {
-      appendScalarOperandSpecJson(json, operand);
-      continue;
-    }
-
-    operation->emitError(
-        "InsertTemplateAttributes encountered an unsupported operand type ")
-        << type;
-    return std::nullopt;
+    if (failed(appendOperandSpecJson(json, operation, operand)))
+      return std::nullopt;
   }
   json += "]";
   return json;
@@ -947,6 +1235,11 @@ struct InsertTemplateAttributesPass
     SmallVector<Operation *> tileOperations;
     module.walk([&](Operation *operation) {
       if (isa<pto::TReshapeOp>(operation))
+        return;
+      const bool isPipeOperation = isUnifiedInternalPipeOperation(operation);
+      if (skipPipeOps && isPipeOperation)
+        return;
+      if (pipeOnly != isPipeOperation)
         return;
       if (isa<pto::OpPipeInterface>(operation))
         tileOperations.push_back(operation);

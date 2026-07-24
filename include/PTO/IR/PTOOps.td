@@ -40,6 +40,14 @@ def TensorOrMemref :
 def PTODpsType :
   AnyTypeOf<[AnyRankedTensor, AnyMemRef, PartitionTensorViewType, TileBufType]>;
 
+// TASSIGN also rebases a declared GlobalTensor descriptor. Keep this separate
+// from PTODpsType: ordinary DPS operations must not accept a raw TensorViewType
+// in place of their logical partition view.
+def PTOTAssignType :
+  AnyTypeOf<[AnyRankedTensor, AnyMemRef, TensorViewType,
+             PartitionTensorViewType, TileBufType],
+            "TensorView, PartitionTensorView, TileBuf, Tensor, or MemRef">;
+
 def PTOPipeEntryType :
   AnyTypeOf<[AnyRankedTensor, AnyMemRef, TensorViewType, TileBufType],
             "TensorView, TileBuf, Tensor, or MemRef">;
@@ -2437,6 +2445,7 @@ def InitializeL2LPipeOp : PTO_Op<"initialize_l2l_pipe", [
 }
 
 def TPushOp : PTO_TOp<"tpush", [
+    AttrSizedOperandSegments,
     OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2446,6 +2455,7 @@ def TPushOp : PTO_TOp<"tpush", [
       PTOPipeEntryType:$tile,
       PipeType:$pipe_handle,
       Optional<I64>:$aiv_subblockid,
+      Optional<StructType>:$pipe_state,
       I8Attr:$split
   );
 
@@ -2456,6 +2466,7 @@ def TPushOp : PTO_TOp<"tpush", [
     `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
     `{` `split` `=` $split `}`
     (`aiv_subblockid` `(` $aiv_subblockid^ `)`)?
+    (`pipe_state` `(` $pipe_state^ `:` qualified(type($pipe_state)) `)`)?
     attr-dict
   }];
 
@@ -2519,6 +2530,7 @@ def TAllocOp : PTO_TOp<"talloc", [
   let arguments = (ins
       TensorViewType:$entry,
       PipeType:$pipe_handle,
+      Optional<StructType>:$pipe_state,
       I8Attr:$split
   );
 
@@ -2527,7 +2539,9 @@ def TAllocOp : PTO_TOp<"talloc", [
 
   let assemblyFormat = [{
     `(` $entry `,` $pipe_handle `:` qualified(type($entry)) `,` qualified(type($pipe_handle)) `)`
-    `{` `split` `=` $split `}` attr-dict
+    `{` `split` `=` $split `}`
+    (`pipe_state` `(` $pipe_state^ `:` qualified(type($pipe_state)) `)`)?
+    attr-dict
   }];
 
   let extraClassDeclaration = [{
@@ -2535,9 +2549,7 @@ def TAllocOp : PTO_TOp<"talloc", [
   }];
 }
 
-def TAssignOp : PTO_Op<"tassign", [
-    Pure
-  ]> {
+def TAssignOp : PTO_Op<"tassign"> {
   let summary = "Rebind a declared tile handle to a runtime address";
   let description = [{
     Rebinds an existing tile handle to a new address. This op is intended for
@@ -2546,10 +2558,10 @@ def TAssignOp : PTO_Op<"tassign", [
   }];
 
   let arguments = (ins
-    PTODpsType:$tile,
+    PTOTAssignType:$tile,
     I64:$addr
   );
-  let results = (outs PTODpsType:$result);
+  let results = (outs PTOTAssignType:$result);
 
   let assemblyFormat = [{
     $tile `,` $addr attr-dict `:` qualified(type($tile)) `->` qualified(type($result))
@@ -2790,6 +2802,7 @@ def DeclareTileMemRefOp : PTO_Op<"declare_tile_memref"> {
 
 def TPopOp : PTO_TOp<"tpop", [
     PTO_DpsInitOpInterface,
+    AttrSizedOperandSegments,
     OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2799,6 +2812,7 @@ def TPopOp : PTO_TOp<"tpop", [
       PTOPipeEntryType:$tile,
       PipeType:$pipe_handle,
       Optional<I64>:$aiv_subblockid,
+      Optional<StructType>:$pipe_state,
       I8Attr:$split
   );
 
@@ -2809,6 +2823,7 @@ def TPopOp : PTO_TOp<"tpop", [
     `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
     `{` `split` `=` $split `}`
     (`aiv_subblockid` `(` $aiv_subblockid^ `)`)?
+    (`pipe_state` `(` $pipe_state^ `:` qualified(type($pipe_state)) `)`)?
     attr-dict
   }];
 
@@ -2864,6 +2879,7 @@ def TPopOp : PTO_TOp<"tpop", [
 }
 
 def TFreeOp : PTO_TOp<"tfree", [
+    AttrSizedOperandSegments,
     OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2872,6 +2888,7 @@ def TFreeOp : PTO_TOp<"tfree", [
   let arguments = (ins
       Optional<PTOPipeEntryType>:$entry,
       PipeType:$pipe_handle,
+      Optional<StructType>:$pipe_state,
       I8Attr:$split
   );
 
@@ -2881,6 +2898,35 @@ def TFreeOp : PTO_TOp<"tfree", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
+}
+
+def TDrainOp : PTO_TOp<"tdrain", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Complete producer-side cleanup for a stateful unified pipe";
+  let description = [{
+    Internal operation materialized only by the VPTO PipeState path. It models
+    the terminal producer-side synchronization performed by the EmitC `TPipe`
+    object during destruction.
+  }];
+
+  let arguments = (ins
+      PipeType:$pipe_handle,
+      StructType:$pipe_state,
+      I8Attr:$split
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `,` $pipe_state `:` qualified(type($pipe_handle)) `,` qualified(type($pipe_state)) `)`
+    `{` `split` `=` $split `}` attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE3; }
   }];
 }
 

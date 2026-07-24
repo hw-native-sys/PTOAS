@@ -411,6 +411,12 @@ static llvm::cl::opt<bool> enableTileOpExpand(
         "--pto-backend=vpto."),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> enablePipeTileLibExpand(
+    "enable-pipe-tilelib-expand",
+    llvm::cl::desc(
+        "Expand unified pipe operations through PTODSL TileLib on A5 VPTO"),
+    llvm::cl::init(false));
+
 #ifndef PTOAS_DEFAULT_TILELANG_PATH
 #define PTOAS_DEFAULT_TILELANG_PATH ""
 #endif
@@ -1118,6 +1124,9 @@ struct SerialFrontendPipeLoweringPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
       SerialFrontendPipeLoweringPass)
 
+  explicit SerialFrontendPipeLoweringPass(bool lowerNestedPipeFunctions)
+      : lowerNestedPipeFunctions(lowerNestedPipeFunctions) {}
+
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<func::FuncDialect, pto::PTODialect>();
   }
@@ -1132,7 +1141,52 @@ struct SerialFrontendPipeLoweringPass
     // adaptor allows one function to be verified while another function is
     // still mutating its pipe ops. Keep these two small passes serial so every
     // verifier observes either the complete frontend or complete lowered form.
-    for (func::FuncOp funcOp : getOperation().getOps<func::FuncOp>()) {
+    SmallVector<func::FuncOp> functions;
+    if (lowerNestedPipeFunctions) {
+      getOperation().walk(
+          [&](func::FuncOp funcOp) { functions.push_back(funcOp); });
+    } else {
+      for (func::FuncOp funcOp : getOperation().getOps<func::FuncOp>())
+        functions.push_back(funcOp);
+    }
+    for (func::FuncOp funcOp : functions) {
+      if (failed(runPipeline(functionPM, funcOp))) {
+        signalPassFailure();
+        return;
+      }
+    }
+  }
+
+private:
+  bool lowerNestedPipeFunctions;
+};
+} // namespace
+
+static std::unique_ptr<Pass>
+createSerialFrontendPipeLoweringPass(bool lowerNestedPipeFunctions) {
+  return std::make_unique<SerialFrontendPipeLoweringPass>(
+      lowerNestedPipeFunctions);
+}
+
+namespace {
+struct RecursivePipeStateMaterializationPass
+    : public PassWrapper<RecursivePipeStateMaterializationPass,
+                         OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      RecursivePipeStateMaterializationPass)
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<func::FuncDialect, pto::PTODialect>();
+  }
+
+  void runOnOperation() override {
+    OpPassManager functionPM(func::FuncOp::getOperationName());
+    functionPM.addPass(pto::createPTOMaterializePipeStatePass());
+
+    SmallVector<func::FuncOp> functions;
+    getOperation().walk(
+        [&](func::FuncOp funcOp) { functions.push_back(funcOp); });
+    for (func::FuncOp funcOp : functions) {
       if (failed(runPipeline(functionPM, funcOp))) {
         signalPassFailure();
         return;
@@ -1142,8 +1196,8 @@ struct SerialFrontendPipeLoweringPass
 };
 } // namespace
 
-static std::unique_ptr<Pass> createSerialFrontendPipeLoweringPass() {
-  return std::make_unique<SerialFrontendPipeLoweringPass>();
+static std::unique_ptr<Pass> createRecursivePipeStateMaterializationPass() {
+  return std::make_unique<RecursivePipeStateMaterializationPass>();
 }
 
 static void collectNonEntryBlocksInSourceOrder(
@@ -2929,6 +2983,21 @@ int mlir::pto::compilePTOASModule(
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
     return 1;
   }
+  if (enablePipeTileLibExpand && arch != "a5") {
+    llvm::errs() << "Error: --enable-pipe-tilelib-expand requires "
+                    "--pto-arch=a5.\n";
+    return 1;
+  }
+  if (enablePipeTileLibExpand && effectiveBackend != PTOBackend::VPTO) {
+    llvm::errs() << "Error: --enable-pipe-tilelib-expand requires "
+                    "--pto-backend=vpto.\n";
+    return 1;
+  }
+  if (enablePipeTileLibExpand && tileLibBackend != TileLibBackend::PTODSL) {
+    llvm::errs() << "Error: --enable-pipe-tilelib-expand requires "
+                    "--tile-lib-backend=ptodsl.\n";
+    return 1;
+  }
 
   module->getOperation()->setAttr("pto.target_arch",
                                   mlir::StringAttr::get(module->getContext(), arch));
@@ -3076,7 +3145,8 @@ int mlir::pto::compilePTOASModule(
     }
   }
 
-  const bool hasTileOpsToExpand = hasUnexpandedTileOps(*module);
+  const bool hasTileOpsToExpand =
+      enablePipeTileLibExpand || hasUnexpandedTileOps(*module);
   std::optional<pto::ExpandTileOpOptions> expandOptions;
   if (effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand &&
       tileLibBackend == TileLibBackend::PTODSL)
@@ -3109,9 +3179,11 @@ int mlir::pto::compilePTOASModule(
   // lifted to make it unconditional for all backends.
   if (effectiveBackend == PTOBackend::VPTO)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
-  pm.addPass(createSerialFrontendPipeLoweringPass());
+  pm.addPass(createSerialFrontendPipeLoweringPass(enablePipeTileLibExpand));
   //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
+  if (enablePipeTileLibExpand)
+    pm.addPass(createRecursivePipeStateMaterializationPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
@@ -3131,6 +3203,7 @@ int mlir::pto::compilePTOASModule(
       expandOptions->tileLibBackend == "ptodsl") {
     auto insertOptions =
         buildInsertTemplateAttributesOptions(*expandOptions);
+    insertOptions.skipPipeOps = enablePipeTileLibExpand;
     pm.addPass(
         pto::createInsertTemplateAttributesPass(insertOptions));
   }
@@ -3170,6 +3243,13 @@ int mlir::pto::compilePTOASModule(
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
+  if (enablePipeTileLibExpand && expandOptions &&
+      expandOptions->tileLibBackend == "ptodsl") {
+    auto pipeInsertOptions =
+        buildInsertTemplateAttributesOptions(*expandOptions);
+    pipeInsertOptions.pipeOnly = true;
+    pm.addPass(pto::createInsertTemplateAttributesPass(pipeInsertOptions));
+  }
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
   // Conditionally add one automatic synchronization mode. Barrier-all is a

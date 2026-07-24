@@ -9,7 +9,7 @@
 import unittest
 import inspect
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import ptodsl._ops as _ops
 import ptodsl._pipe_namespace as _pipe_namespace
@@ -704,8 +704,8 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         cases = [
             (_ops.set_cross_flag, (pto.Pipe.V, 0), "set_cross_flag(pipe, event_id)", "<PIPE_FIX>", "<PIPE_V>"),
             (_ops.wait_cross_flag, (pto.Pipe.MTE3, 0), "wait_cross_flag(pipe, event_id)", "<PIPE_FIX>", "<PIPE_MTE3>"),
-            (_ops.set_intra_flag, (pto.Pipe.V, 0), "set_intra_flag(pipe, event_id)", "<PIPE_FIX>, <PIPE_MTE3>", "<PIPE_V>"),
-            (_ops.wait_intra_flag, (pto.Pipe.MTE3, 0), "wait_intra_flag(pipe, event_id)", "<PIPE_FIX>, <PIPE_V>", "<PIPE_MTE3>"),
+            (_ops.set_intra_flag, (pto.Pipe.M, 0), "set_intra_flag(pipe, event_id)", "<PIPE_FIX>, <PIPE_MTE1>, <PIPE_MTE2>, <PIPE_MTE3>, <PIPE_V>, <PIPE_S>", "<PIPE_M>"),
+            (_ops.wait_intra_flag, (pto.Pipe.ALL, 0), "wait_intra_flag(pipe, event_id)", "<PIPE_FIX>, <PIPE_MTE1>, <PIPE_MTE2>, <PIPE_MTE3>, <PIPE_V>, <PIPE_S>", "<PIPE_ALL>"),
         ]
 
         with patch.object(_ops._pto, "sync_set") as sync_set_op, \
@@ -721,6 +721,29 @@ class VectorCubeSurfaceTest(unittest.TestCase):
 
         sync_set_op.assert_not_called()
         sync_wait_op.assert_not_called()
+
+    def test_intra_sync_accepts_pipe_tilelib_endpoints(self):
+        supported_pipes = (
+            pto.Pipe.FIX,
+            pto.Pipe.MTE1,
+            pto.Pipe.MTE2,
+            pto.Pipe.MTE3,
+            pto.Pipe.V,
+            pto.Pipe.S,
+        )
+
+        with patch.object(_ops, "_pipe_attr", side_effect=lambda pipe: f"pipe:{pipe}") as pipe_attr, \
+             patch.object(_ops._pto, "sync_set") as sync_set_op, \
+             patch.object(_ops._pto, "sync_wait") as sync_wait_op:
+            for pipe in supported_pipes:
+                with self.subTest(kind="set", pipe=pipe):
+                    _ops.set_intra_flag(pipe, 31)
+                with self.subTest(kind="wait", pipe=pipe):
+                    _ops.wait_intra_flag(pipe, 16)
+
+        self.assertEqual(pipe_attr.call_count, 2 * len(supported_pipes))
+        self.assertEqual(sync_set_op.call_count, len(supported_pipes))
+        self.assertEqual(sync_wait_op.call_count, len(supported_pipes))
 
     def test_intra_sync_mixed_writeback_event_ranges(self):
         with patch.object(_ops, "_pipe_attr", side_effect=lambda pipe: f"pipe:{pipe}") as pipe_attr, \
@@ -756,21 +779,20 @@ class VectorCubeSurfaceTest(unittest.TestCase):
 
         self.assertTrue(hasattr(pto, "gm_ptr"), "gm_ptr")
 
-    def test_global_pipe_methods_dispatch_to_matching_frontend_ops(self):
-        alloc_entry = object()
-        pop_entry = object()
+    def test_global_pipe_methods_preserve_nonzero_split_per_transaction(self):
+        alloc_entries = (object(), object())
+        pop_entries = (object(), object())
 
         with make_context():
             gm_slot_type = _pipe_namespace._pto.TensorViewType.get([16, 16], F32Type.get())
         gm_slot = SimpleNamespace(type=gm_slot_type)
 
         with patch.object(_pipe_namespace, "unwrap_surface_value", side_effect=_identity), \
-             patch.object(_pipe_namespace, "wrap_surface_value", side_effect=_identity), \
-             patch.object(_pipe_namespace, "_infer_unambiguous_global_slot_size", return_value=1024):
+             patch.object(_pipe_namespace, "wrap_surface_value", side_effect=_identity):
             pipe = pto.pipe.c2v(
                 gm_slot_tensor=gm_slot,
+                slot_size=1024,
                 id=7,
-                nosplit=True,
             )
 
         self.assertEqual(pipe.id, 7)
@@ -779,32 +801,58 @@ class VectorCubeSurfaceTest(unittest.TestCase):
 
         with patch.object(_pipe_namespace._pto, "AicInitializePipeOp") as aic_init, \
              patch.object(_pipe_namespace._pto, "AivInitializePipeOp") as aiv_init, \
-             patch.object(_pipe_namespace._pto, "TAllocToAivOp", return_value=SimpleNamespace(result=alloc_entry)) as alloc_op, \
+             patch.object(_pipe_namespace._pto, "TAllocToAivOp", side_effect=[
+                 SimpleNamespace(result=alloc_entries[0]),
+                 SimpleNamespace(result=alloc_entries[1]),
+             ]) as alloc_op, \
              patch.object(_pipe_namespace._pto, "TPushToAivOp") as push_op, \
-             patch.object(_pipe_namespace._pto, "TPopFromAicOp", return_value=SimpleNamespace(result=pop_entry)) as pop_op, \
+             patch.object(_pipe_namespace._pto, "TPopFromAicOp", side_effect=[
+                 SimpleNamespace(result=pop_entries[0]),
+                 SimpleNamespace(result=pop_entries[1]),
+             ]) as pop_op, \
              patch.object(_pipe_namespace._pto, "TFreeFromAicOp") as free_op, \
              patch.object(_pipe_namespace, "wrap_surface_value", side_effect=_identity), \
              patch.object(_pipe_namespace, "unwrap_surface_value", side_effect=_identity):
             pipe.init_cube()
             pipe.init_simd()
-            alloc_result = pipe.alloc()
-            pipe.push(alloc_result, split=1)
-            pop_result = pipe.pop()
-            pipe.free(pop_result, split=2)
+            alloc_up_down = pipe.alloc(split=1)
+            pipe.push(alloc_up_down, split=1)
+            alloc_left_right = pipe.alloc(split=2)
+            pipe.push(alloc_left_right, split=2)
+            pop_up_down = pipe.pop(split=1)
+            pipe.free(pop_up_down, split=1)
+            pop_left_right = pipe.pop(split=2)
+            pipe.free(pop_left_right, split=2)
 
         expected_init_kwargs = {
             "id": 7,
-            "nosplit": True,
             "gm_slot_tensor": gm_slot,
         }
         aic_init.assert_called_once_with(1, 1024, **expected_init_kwargs)
         aiv_init.assert_called_once_with(1, 1024, **expected_init_kwargs)
-        alloc_op.assert_called_once_with(gm_slot_type, 0, id=7)
-        push_op.assert_called_once_with(alloc_entry, 1, id=7)
-        pop_op.assert_called_once_with(gm_slot_type, 0, id=7)
-        free_op.assert_called_once_with(2, entry=pop_entry, id=7)
-        self.assertIs(alloc_result, alloc_entry)
-        self.assertIs(pop_result, pop_entry)
+        self.assertEqual(
+            alloc_op.call_args_list,
+            [call(gm_slot_type, 1, id=7), call(gm_slot_type, 2, id=7)],
+        )
+        self.assertEqual(
+            push_op.call_args_list,
+            [call(alloc_entries[0], 1, id=7), call(alloc_entries[1], 2, id=7)],
+        )
+        self.assertEqual(
+            pop_op.call_args_list,
+            [call(gm_slot_type, 1, id=7), call(gm_slot_type, 2, id=7)],
+        )
+        self.assertEqual(
+            free_op.call_args_list,
+            [
+                call(1, entry=pop_entries[0], id=7),
+                call(2, entry=pop_entries[1], id=7),
+            ],
+        )
+        self.assertIs(alloc_up_down, alloc_entries[0])
+        self.assertIs(alloc_left_right, alloc_entries[1])
+        self.assertIs(pop_up_down, pop_entries[0])
+        self.assertIs(pop_left_right, pop_entries[1])
 
     def test_local_pipe_constructors_route_consumer_buffers(self):
         c2v_buf = object()

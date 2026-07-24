@@ -403,7 +403,7 @@ pto.wait_cross_flag(pto.Pipe.FIX, 0)
 
 ### 10.5.2 Intra-block sync: `set_intra_flag`, `wait_intra_flag`
 
-The Cube unit (matrix pipeline) has a dedicated synchronization channel separate from the standard pipe-flag mechanism used by MTE and Vector pipelines. `set_intra_flag` and `wait_intra_flag` synchronize Cube and Vector within the same block, ensuring that shared UB tile data is not accessed before the producer finishes.
+The Cube unit (matrix pipeline) has a dedicated synchronization channel separate from the standard pipe-flag mechanism used by MTE and Vector pipelines. `set_intra_flag` and `wait_intra_flag` synchronize Cube, Vector, and MTE pipelines within the same block, ensuring that shared UB tile data is not accessed before the producer finishes.
 
 Cross-core flags use the public `0`-`7` event range. A5 intra-block sync uses a separate
 physical event range, described below.
@@ -418,7 +418,7 @@ Unlike `wait_cross_flag`, `wait_intra_flag` only stalls the specified pipeline �
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pipe` | `Pipe` | Trigger endpoint for the synchronization event. The public DSL accepts `Pipe.FIX` and `Pipe.MTE3` here. |
+| `pipe` | `Pipe` | Trigger endpoint for the synchronization event. The public DSL accepts `Pipe.FIX`, `Pipe.MTE1`, `Pipe.MTE2`, `Pipe.MTE3`, `Pipe.V`, and `Pipe.S`. |
 | `event_id` | `int` or scalar expression | Physical event identifier (`0`–`31` for static IDs). |
 
 For A5 mixed C/V writeback code that must notify both AIV subblocks, emit two signals
@@ -442,7 +442,7 @@ pto.set_intra_flag(pto.Pipe.MTE3, 0)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pipe` | `Pipe` | Waiting endpoint for the synchronization event. The public DSL accepts `Pipe.FIX` and `Pipe.V` here. |
+| `pipe` | `Pipe` | Waiting endpoint for the synchronization event. The public DSL accepts `Pipe.FIX`, `Pipe.MTE1`, `Pipe.MTE2`, `Pipe.MTE3`, `Pipe.V`, and `Pipe.S`. |
 | `event_id` | `int` or scalar expression | Physical event identifier to wait on (`0`–`31` for static IDs). |
 
 For A5 mixed C/V writeback code that must synchronize with both AIV subblocks, wait on both

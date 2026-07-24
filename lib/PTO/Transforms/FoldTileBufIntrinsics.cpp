@@ -170,6 +170,27 @@ static std::pair<Value, Value> findSetValidShapeOverride(Value tileBuf) {
   return {Value(), Value()};
 }
 
+static std::optional<Value>
+findActiveTileAddress(Value tileBuf, Operation *user) {
+  Operation *producer = tileBuf.getDefiningOp();
+  if (!producer || !user || producer->getBlock() != user->getBlock())
+    return std::nullopt;
+
+  pto::TAssignOp latestAssign;
+  for (Operation *candidate : tileBuf.getUsers()) {
+    auto assign = dyn_cast<pto::TAssignOp>(candidate);
+    if (!assign || assign.getTile() != tileBuf ||
+        assign->getBlock() != user->getBlock() ||
+        !assign->isBeforeInBlock(user))
+      continue;
+    if (!latestAssign || latestAssign->isBeforeInBlock(assign))
+      latestAssign = assign;
+  }
+  if (!latestAssign)
+    return std::nullopt;
+  return latestAssign.getAddr();
+}
+
 // Walk through value-conversion casts that preserve the underlying producer.
 // ExpandTileOp / PTOInlineLibCall and other passes may wrap tile_buf values in
 // UnrealizedConversionCastOp / arith.index_cast / memref.cast when bridging
@@ -229,7 +250,19 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
           "FoldTileBufIntrinsics: pto.alloc_tile must produce !pto.tile_buf");
       return std::nullopt;
     }
-    return TileHandleInfo{Value(), alloc.getAddr(), alloc.getValidRow(),
+    Value addr = alloc.getAddr();
+    if (!addr) {
+      auto reboundAddr = findActiveTileAddress(tileBuf, user);
+      if (!reboundAddr) {
+        user->emitError(
+            "FoldTileBufIntrinsics: pto.alloc_tile without an addr operand "
+            "must be rebound by a dominating pto.tassign before its "
+            "tile-buffer intrinsic use");
+        return std::nullopt;
+      }
+      addr = *reboundAddr;
+    }
+    return TileHandleInfo{Value(), addr, alloc.getValidRow(),
                           alloc.getValidCol(), tileTy.getConfigAttr()};
   }
 
@@ -237,6 +270,25 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
     return TileHandleInfo{materialize.getSource(), Value(),
                           materialize.getValidRow(), materialize.getValidCol(),
                           materialize.getConfig()};
+  }
+
+  if (auto declare = tileBuf.getDefiningOp<pto::DeclareTileOp>()) {
+    auto tileTy = dyn_cast<pto::TileBufType>(declare.getTile().getType());
+    if (!tileTy) {
+      user->emitError(
+          "FoldTileBufIntrinsics: pto.declare_tile must produce !pto.tile_buf");
+      return std::nullopt;
+    }
+    auto addr = findActiveTileAddress(tileBuf, user);
+    if (!addr) {
+      user->emitError(
+          "FoldTileBufIntrinsics: pto.declare_tile must be rebound by a "
+          "dominating pto.tassign before its tile-buffer intrinsic use");
+      return std::nullopt;
+    }
+    auto [validRow, validCol] = findSetValidShapeOverride(tileBuf);
+    return TileHandleInfo{Value(), *addr, validRow, validCol,
+                          tileTy.getConfigAttr()};
   }
 
   if (auto reshape = tileBuf.getDefiningOp<pto::TReshapeOp>()) {
@@ -261,7 +313,8 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
 
   user->emitError("FoldTileBufIntrinsics: expected tile_buf to be defined by "
                   "the active materialized tile-handle bridge "
-                  "(pto.alloc_tile, pto.materialize_tile, or pto.treshape, "
+                  "(pto.alloc_tile, pto.materialize_tile, a rebound "
+                  "pto.declare_tile, or pto.treshape, "
                   "or a pto.fusion_region result that yields one of them)");
   return std::nullopt;
 }
@@ -314,8 +367,10 @@ static std::optional<ViewChain> traceViewChain(Value tensorView,
 
   auto subviewOp = memrefVal.getDefiningOp<memref::SubViewOp>();
   if (!subviewOp) {
+    if (auto rcOp = memrefVal.getDefiningOp<memref::ReinterpretCastOp>())
+      return ViewChain{castOp, {}, rcOp, rcOp.getSource()};
     user->emitError("FoldTileBufIntrinsics: expected memref to be defined by "
-                    "memref.subview, got ")
+                    "memref.subview or memref.reinterpret_cast, got ")
         << (memrefVal.getDefiningOp()
                 ? memrefVal.getDefiningOp()->getName().getStringRef()
                 : StringRef("block argument"));
@@ -433,6 +488,56 @@ static Value computeLinearOffset(OpBuilder &builder, Location loc,
   if (rcPart && svPart)
     return builder.create<arith::AddIOp>(loc, rcPart, svPart);
   return rcPart ? rcPart : svPart;
+}
+
+struct PTOViewAddress {
+  Value basePtr;
+  Value linearOffset;
+};
+
+// PTODSL TileLib ViewSpec parameters are ABI-lowered as memrefs while their
+// callers retain TensorView / PartitionTensorView values. Recover the original
+// descriptor here so the inlined helper can use the same address-folding path
+// as a mainline-lowered memref view.
+static std::optional<PTOViewAddress>
+tracePTOViewAddress(Value value, OpBuilder &builder, Location loc,
+                    Operation *user) {
+  if (isa<MemRefType>(value.getType())) {
+    auto bridge = value.getDefiningOp<UnrealizedConversionCastOp>();
+    if (!bridge || bridge.getNumOperands() != 1 ||
+        !isa<pto::TensorViewType, pto::PartitionTensorViewType>(
+            bridge.getOperand(0).getType()))
+      return std::nullopt;
+    value = bridge.getOperand(0);
+  }
+
+  Value source = value;
+  SmallVector<OpFoldResult> offsets;
+  if (auto part = value.getDefiningOp<pto::PartitionViewOp>()) {
+    source = part.getSource();
+    offsets.append(part.getOffsets().begin(), part.getOffsets().end());
+  } else if (!isa<pto::TensorViewType>(value.getType())) {
+    return std::nullopt;
+  }
+
+  auto make = source.getDefiningOp<pto::MakeTensorViewOp>();
+  if (!make) {
+    user->emitError("FoldTileBufIntrinsics: expected PTODSL view bridge to "
+                    "originate from pto.make_tensor_view");
+    return std::nullopt;
+  }
+  if (offsets.size() != make.getStrides().size()) {
+    user->emitError("FoldTileBufIntrinsics: partition view rank does not "
+                    "match its source tensor-view strides");
+    return std::nullopt;
+  }
+
+  SmallVector<OpFoldResult> strides;
+  strides.append(make.getStrides().begin(), make.getStrides().end());
+  return PTOViewAddress{make.getPtr(),
+                        computeLinearOffset(builder, loc,
+                                            ArrayRef<OpFoldResult>{}, offsets,
+                                            strides)};
 }
 
 struct FoldTileBufIntrinsicsPass
@@ -703,7 +808,9 @@ struct FoldTileBufIntrinsicsPass
           return signalPassFailure();
         }
 
-        auto svTy = cast<MemRefType>(chain->subview.getType());
+        auto viewValue = chain->subview ? chain->subview.getResult()
+                                        : chain->reinterpretCast.getResult();
+        auto svTy = cast<MemRefType>(viewValue.getType());
         if (dimIdx < 0 || dimIdx >= svTy.getRank()) {
           dimOp.emitError(
               "FoldTileBufIntrinsics: get_tensor_view_dim dim index out of "
@@ -719,7 +826,9 @@ struct FoldTileBufIntrinsicsPass
                                                      svTy.getDimSize(dimIdx));
         } else {
           replacement = getValueOrCreateConstant(
-              builder, dimOp.getLoc(), chain->subview.getMixedSizes()[dimIdx]);
+              builder, dimOp.getLoc(),
+              chain->subview ? chain->subview.getMixedSizes()[dimIdx]
+                             : chain->reinterpretCast.getMixedSizes()[dimIdx]);
         }
 
         dimOp.getResult().replaceAllUsesWith(replacement);
@@ -739,7 +848,9 @@ struct FoldTileBufIntrinsicsPass
           return signalPassFailure();
         }
 
-        auto svTy = cast<MemRefType>(chain->subview.getType());
+        auto viewValue = chain->subview ? chain->subview.getResult()
+                                        : chain->reinterpretCast.getResult();
+        auto svTy = cast<MemRefType>(viewValue.getType());
         if (dimIdx < 0 || dimIdx >= svTy.getRank()) {
           strideOp.emitError(
               "FoldTileBufIntrinsics: get_tensor_view_stride dim index out of "
@@ -751,7 +862,8 @@ struct FoldTileBufIntrinsicsPass
         Value replacement = computeResultStride(
             builder, strideOp.getLoc(),
             chain->reinterpretCast.getMixedStrides()[dimIdx],
-            chain->subview.getMixedStrides()[dimIdx]);
+            chain->subview ? chain->subview.getMixedStrides()[dimIdx]
+                           : OpFoldResult(builder.getIndexAttr(1)));
 
         strideOp.getResult().replaceAllUsesWith(replacement);
         strideOp.erase();
@@ -760,6 +872,32 @@ struct FoldTileBufIntrinsicsPass
 
     if (shouldFoldAddrFamily(*mode)) {
       for (auto addrOp : tvAddrOps) {
+        builder.setInsertionPoint(addrOp);
+        if (auto directView = tracePTOViewAddress(addrOp.getSrc(), builder,
+                                                  addrOp.getLoc(), addrOp)) {
+          auto resultPtrType = dyn_cast<pto::PtrType>(addrOp.getDst().getType());
+          if (!resultPtrType) {
+            addrOp.emitError(
+                "FoldTileBufIntrinsics: PTODSL view bridge requires "
+                "tensor_view_addr to produce !pto.ptr");
+            return signalPassFailure();
+          }
+
+          Value basePtr = directView->basePtr;
+          if (basePtr.getType() != resultPtrType)
+            basePtr = builder.create<pto::CastPtrOp>(addrOp.getLoc(),
+                                                      resultPtrType, basePtr);
+          Value replacement =
+              directView->linearOffset
+                  ? builder.create<pto::AddPtrOp>(addrOp.getLoc(),
+                                                  resultPtrType, basePtr,
+                                                  directView->linearOffset)
+                  : basePtr;
+          addrOp.getDst().replaceAllUsesWith(replacement);
+          addrOp.erase();
+          continue;
+        }
+
         auto chain = traceViewChain(addrOp.getSrc(), addrOp);
         if (!chain)
           return signalPassFailure();
@@ -783,11 +921,17 @@ struct FoldTileBufIntrinsicsPass
           return signalPassFailure();
         }
 
-        Value linearOffset =
-            computeLinearOffset(builder, addrOp.getLoc(),
-                                chain->reinterpretCast.getMixedOffsets(),
-                                chain->subview.getMixedOffsets(),
-                                chain->reinterpretCast.getMixedStrides());
+        Value linearOffset = chain->subview
+                                 ? computeLinearOffset(
+                                       builder, addrOp.getLoc(),
+                                       chain->reinterpretCast.getMixedOffsets(),
+                                       chain->subview.getMixedOffsets(),
+                                       chain->reinterpretCast.getMixedStrides())
+                                 : computeLinearOffset(
+                                       builder, addrOp.getLoc(),
+                                       chain->reinterpretCast.getMixedOffsets(),
+                                       ArrayRef<OpFoldResult>{},
+                                       chain->reinterpretCast.getMixedStrides());
 
         Value basePtr = builder.create<pto::CastPtrOp>(
             addrOp.getLoc(), resultPtrType, chain->baseMemref);
