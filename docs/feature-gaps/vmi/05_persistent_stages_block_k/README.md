@@ -38,22 +38,27 @@ pto.vmi.ensure_layout cannot materialize this conversion
 
 ## Target MI + bisheng status
 
-`target_mi.pto` sketches a stages=2 / block_k=1024 module with UNPK load,
-mul, and PK4 store inside `vecscope`.
+`target_mi.pto` expresses the full stages=2 / `block_k=1024` Persistent
+schedule (aligned with `desired_vmi.pto` + ASC HardEvent shell):
+
+- dual UB args (`x_ub0/1`, `y_ub0/1`) selected by `slot = i % 2`
+- prime / drain `pto.set_flag` / `pto.wait_flag` on `EVENT_ID0/1`
+- in-loop `pto.wait_flag_dyn` / `pto.set_flag_dyn` on `%slot`
+- VF body: `UNPK_B16` load → `vmul` → `PK4_B32` store
 
 | Step | Result |
 |---|---|
-| `ptoas ... --emit-vpto` | OK |
+| `ptoas ... --emit-vpto` | OK (schedule + flags preserved) |
 | `ptoas ... --emit-vpto-llvm-ir` | OK |
-| `bisheng ... -c -x ir` → `.o` | **FAIL** — bisheng crashes (exit 139) on the emitted HIVM IR |
+| `bisheng ... -c -x ir` → `.o` | **FAIL** — bisheng crashes on the emitted HIVM IR |
 
 ## ASC/CCE working baseline
 
-`reference_asc_cce.asc` is a stages=2 ping-pong shell (`SetFlag`/`WaitFlag` on
-slots `w & 1`) with `block_k=1024` and a VF body of `UNPK_B16` / `vmul` /
-`PK_B32`. It compiles to a non-empty `.o` with `bisheng --cce-aicore-only`,
-proving multi-stage Persistent is legal on the Ascend CCE path while
-`target_mi` HIVM still crashes.
+`reference_asc_cce.asc` is the same schedule on the Ascend CCE path:
+stages=2 ping-pong (`SetFlag`/`WaitFlag` on slots `w & 1`), `block_k=1024`,
+VF body `UNPK_B16` / `vmul` / `PK_B32`. It compiles to a non-empty `.o` with
+`bisheng --cce-aicore-only`, proving the pattern is legal while `target_mi`
+HIVM still crashes.
 
 ```bash
 BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}

@@ -33,21 +33,24 @@ error: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
 
 ## Target MI + bisheng status
 
-`target_mi.pto` is the MI shape the L=256 path already reaches (`vcvt` EVEN +
-ui16 store). Small-L VMI should lower here instead of leaving `extui`.
+`target_mi.pto` is the small-L MI shape fused quant→dequant needs: load,
+`vcvt` `{part = "EVEN"}` under `PAT_VL8`, then ui16 store. Small-L VMI
+(`desired_vmi.pto`) should lower here instead of leaving `extui`.
 
 | Step | Result |
 |---|---|
 | `ptoas ... --emit-vpto` | OK |
 | `ptoas ... --emit-vpto-llvm-ir` | OK |
-| `bisheng ... -c -x ir` → `.o` | **FAIL** — bisheng crashes (exit 139) on the emitted HIVM IR |
+| `bisheng ... -c -x ir` → `.o` | **OK** |
+
+Remaining gap is **VMI legalization** of L=8 (desired → residual `extui`), not
+HIVM/bisheng on this MI shape.
 
 ## ASC/CCE working baseline
 
 `reference_asc_cce.asc` widens `ui8→ui16` under `PAT_VL8` with `vcvt` /
 `PART_EVEN` then stores. It compiles to a non-empty `.o` with
-`bisheng --cce-aicore-only`, proving the small-L widen shape is legal on the
-Ascend CCE path while `target_mi` HIVM still crashes.
+`bisheng --cce-aicore-only` (CCE twin of the MI path above).
 
 ```bash
 BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}

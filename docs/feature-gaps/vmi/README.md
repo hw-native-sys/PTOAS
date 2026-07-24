@@ -13,7 +13,7 @@ Each subdirectory has:
 | `lowered_vpto.pto` | Checked-in dump from that lower |
 | `desired_vmi.pto` | Idiomatic ask (may fail — README pastes the error) |
 | `target_mi.pto` | Desired `pto.mi` / VPTO shape; exercised with `ptoas` + `bisheng` |
-| `reference_asc_cce.asc` | Gaps **03–06** only: minimal ASC/CCE kernel that `bisheng --cce-aicore-only` accepts (e2e proof while `target_mi` HIVM still crashes) |
+| `reference_asc_cce.asc` | Gaps **03–06**: minimal ASC/CCE kernel that `bisheng --cce-aicore-only` accepts (e2e CCE proof; required where `target_mi` HIVM still crashes — **03–05**) |
 
 ## Gaps
 
@@ -30,7 +30,9 @@ Each subdirectory has:
 Tip findings (high level, no external repo names): residual-mix **bwd** still
 pays a reduce pad-to-8 store tax (**03**); residual-mix **fwd** needs full
 UNPK/PK strip fuse (**07**); per-block / cast-back Persistent stay on stages=1 /
-`block_k≤512` (**05**); fused small-L UE8M0 widen hits L=8 `extui` (**06**).
+`block_k≤512` — MI schedule+flags emit but HIVM/bisheng still crash (**05**);
+fused small-L UE8M0 widen hits L=8 VMI `extui` while the MI `PAT_VL8` shape
+already compiles (**06**).
 
 ## How to reproduce
 
@@ -67,9 +69,10 @@ Use `--emit-vpto-llvm-ir` for LLVM IR (not the older `--vpto-emit-hivm-llvm` nam
 
 ## ASC/CCE reference compile (gaps 03–06)
 
-When `target_mi` → HIVM IR → `bisheng -x ir` crashes, the sibling
-`reference_asc_cce.asc` proves the same instruction shape is legal on the
-Ascend CCE path:
+For gaps where `target_mi` → HIVM IR → `bisheng -x ir` still crashes (**03–05**),
+the sibling `reference_asc_cce.asc` proves the same instruction / schedule
+shape is legal on the Ascend CCE path. Gap **06** keeps a CCE twin even though
+its small-L `target_mi` now builds with `-x ir`:
 
 ```bash
 BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}

@@ -28,7 +28,8 @@ error: custom op 'pto.vmi.vpack' is unknown
 
 ## Target MI + bisheng status
 
-`target_mi.pto` uses `pto.vsts {dist = "PK_B16"}` into `!pto.ptr<ui16, ub>`.
+`target_mi.pto` uses `pto.vsts {dist = "PK_B16"}` into `!pto.ptr<ui16, ub>`
+(packed SF word store; ASC baseline also exercises `ONEPT_B16` / `PK_B16`).
 
 | Step | Result |
 |---|---|

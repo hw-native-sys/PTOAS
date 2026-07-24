@@ -30,7 +30,8 @@ padded slow path emits.
 
 ## Target MI + bisheng status
 
-`target_mi.pto` asks for `pto.vsts {dist = "1PT_B32"}` after `pto.vcadd`.
+`target_mi.pto` asks for `pto.vcadd` then `pto.vsts {dist = "1PT_B32"}` —
+the MI form of ASC `ONEPT_B32` (matches `reference_asc_cce.asc`).
 
 | Step | Result |
 |---|---|
