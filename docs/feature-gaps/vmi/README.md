@@ -31,29 +31,33 @@ reduce pad-to-8 store tax; per-block Persistent stays on stages=1 /
 
 ## How to reproduce
 
-Tool paths used when these dumps were refreshed:
+Assumes a local `build/` of this tree (or any install with `pto-test-opt` /
+`ptoas` on `PATH`) and Ascend `bisheng` available:
 
 ```bash
-PTO_TEST_OPT=/home/jzhuang/work_dir/PTOAS-vmi/build/tools/pto-test-opt/pto-test-opt
-PTOAS=/home/jzhuang/work_dir/PTOAS-vmi/build/tools/ptoas/ptoas
-BISHENG=/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng
-export PATH="$(dirname $BISHENG):$PATH"
+# From repo root after a normal build:
+PTO_TEST_OPT=${PTO_TEST_OPT:-$PWD/build/tools/pto-test-opt/pto-test-opt}
+PTOAS=${PTOAS:-$PWD/build/tools/ptoas/ptoas}
+# Example Ascend install; override if yours differs:
+BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}
+export PATH="$(dirname "$BISHENG"):$PATH"
 
 PASS='-vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto'
+cd docs/feature-gaps/vmi/<gap_dir>
 
 # Working workaround (must succeed; refresh lowered_vpto.pto)
-$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+"$PTO_TEST_OPT" buggy_vmi.pto $PASS -o lowered_vpto.pto
 
-# Desired (expect failure for most gaps; paste error into README)
-$PTO_TEST_OPT desired_vmi.pto $PASS -o /tmp/desired.pto
+# Desired (often fails; paste error into README)
+"$PTO_TEST_OPT" desired_vmi.pto $PASS -o /tmp/desired.pto
 
-# Target MI
-$PTOAS --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
+# Target MI → VPTO IR → HIVM LLVM → device object
+"$PTOAS" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
   --emit-vpto -o /tmp/t.emit.pto target_mi.pto
-$PTOAS --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
+"$PTOAS" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
   --emit-vpto-llvm-ir -o /tmp/t.ll target_mi.pto
 "$BISHENG" --target=hiipu64-hisilicon-cce -march=dav-c310-vec \
   --cce-aicore-arch=dav-c310-vec --cce-aicore-only -c -x ir /tmp/t.ll -o /tmp/t.o
 ```
 
-Use `--emit-vpto-llvm-ir` for LLVM IR (not `--vpto-emit-hivm-llvm`).
+Use `--emit-vpto-llvm-ir` for LLVM IR (not the older `--vpto-emit-hivm-llvm` name).
