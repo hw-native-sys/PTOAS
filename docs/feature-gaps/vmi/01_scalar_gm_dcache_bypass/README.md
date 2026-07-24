@@ -2,20 +2,40 @@
 
 ## Algorithm need
 
-Per-block quantization over groups of shape **32×32** produces one f32 scale
-factor (SF) per group. After the scale is computed in UB, that single scalar
-must be written to GM (and later re-read) so consumers see a dense SF tensor.
+Per-block quantization over **32×32** groups produces one f32 scale factor (SF)
+per group. That scalar must land in GM (and later be re-read). Today the tiny
+write still goes through bulk MTE, so setup/alignment/sync dominate and keep
+VMI short of ASC bandwidth on the SF path.
 
-## Current failure
+## Working-today workaround
 
-PTOAS does not expose a scalar GM path with dcache bypass for these tiny
-writes/reads. Authors stage the SF in UB and issue a bulk MTE
-(`pto.copy_ubuf_to_gm` / `pto.copy_gm_to_ubuf`) even when `len_burst` is only a
-few bytes. That adds MTE setup, alignment padding, and pipeline sync out of
-proportion to the payload.
+Stage the SF in UB, then `pto.copy_ubuf_to_gm` with a padded burst (here 32B
+for a 4B payload). Checked-in dump: `lowered_vpto.pto` — key op is
+`pto.copy_ubuf_to_gm` (no scalar GM path).
 
-## Desired PTOAS behavior
+Reproduce:
 
-Allow VMI/PTODSL to store or load a scalar (or compact slots=1 vector) directly
-against `!pto.ptr<T, gm>` with an explicit **dcache-bypass** attribute, lowering
-to a single GM scalar path without a bulk MTE burst.
+```bash
+PTO_TEST_OPT=.../pto-test-opt
+PASS='-vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto'
+$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+```
+
+## Desired VMI + current failure
+
+Direct `pto.vmi.vstore` of a slots=1 vector to `!pto.ptr<f32, gm>` with
+`dcache_bypass` (see `desired_vmi.pto`):
+
+```
+error: 'pto.vmi.group_store' op requires memory destination to be UB-backed
+```
+
+## Target MI + bisheng status
+
+`target_mi.pto` uses `pto.store_scalar ... {dcache_bypass}` on GM.
+
+| Step | Result |
+|---|---|
+| `ptoas ... --emit-vpto` | OK |
+| `ptoas ... --emit-vpto-llvm-ir` | OK |
+| `bisheng ... -c -x ir` → `.o` | OK |

@@ -6,15 +6,22 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Desired MI: scalar GM store with dcache bypass (no bulk MTE).
+// Desired MI: ui8→ui16 widen via vcvt (EVEN/ODD), then dense ui16 store.
+// Small-L VMI should lower to this shape instead of residual pto.vmi.extui.
 
-module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @scale_factor_gm_bypass_mi(
-      %sf_gm: !pto.ptr<f32, gm>,
-      %scale: f32) {
-    %c0 = arith.constant 0 : index
-    pto.store_scalar %scale, %sf_gm[%c0] {dcache_bypass}
-        : !pto.ptr<f32, gm>, f32
+module {
+  func.func @ui8_to_ui16_widen_mi(
+      %input: !pto.vreg<256xui8>,
+      %dst: !pto.ptr<ui16, ub>,
+      %off: index) {
+    pto.vecscope {
+      %m = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+      %even = pto.vcvt %input, %m {part = "EVEN"}
+          : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+      %m16 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      pto.vsts %even, %dst[%off], %m16
+          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+    }
     return
   }
 }

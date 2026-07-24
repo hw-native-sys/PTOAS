@@ -6,15 +6,20 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Desired VPTO / pto.mi: BRC from compact slots, no pad store + reload waste.
+// Desired MI: BRC_B32 from the compact inverse line (no pad store + reload).
 
 module {
   func.func @compact_inv_vbrc_mi(
       %inv_ub: !pto.ptr<f32, ub>,
-      %off: index) -> !pto.vreg<64xf32> {
-    // Direct BRC_B32 from the compact inverse line (8 valid scalars).
-    %inv = pto.vlds %inv_ub[%off] {dist = "BRC_B32"}
-        : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-    return %inv : !pto.vreg<64xf32>
+      %off: index,
+      %dst: !pto.ptr<f32, ub>) {
+    pto.vecscope {
+      %inv = pto.vlds %inv_ub[%off] {dist = "BRC_B32"}
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsts %inv, %dst[%off], %m
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
   }
 }

@@ -1,0 +1,9 @@
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @ui8_to_ui16_l256(%arg0: !pto.vreg<256xui8>) -> (!pto.vreg<128xui16>, !pto.vreg<128xui16>) {
+    %0 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %1 = pto.vcvt %arg0, %0 {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    %2 = pto.vcvt %arg0, %0 {part = "ODD"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %1, %2 : !pto.vreg<128xui16>, !pto.vreg<128xui16>
+  }
+}
+

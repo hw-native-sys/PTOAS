@@ -6,14 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Idiomatic VMI: pack_factor=2 UE8M0 store into ui16 (may not lower today).
+// Idiomatic VMI: pack adjacent UE8M0 bytes into ui16 (pack_factor=2).
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @packed_ue8m0_sf_store(
       %sf_u8: !pto.vmi.vreg<64xui8>,
       %dst: !pto.ptr<ui16, ub>,
       %off: index) {
-    // Desired: element pack of adjacent UE8M0 bytes into ui16 words (pack_factor=2).
     %sf_u16 = pto.vmi.vpack %sf_u8
         : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<32xui16>
     pto.vmi.vstore %sf_u16, %dst[%off]

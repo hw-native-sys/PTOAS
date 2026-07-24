@@ -6,29 +6,29 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Desired VPTO / pto.mi sketch: legal multi-buffer Persistent schedule.
+// Desired MI sketch: multi-buffer Persistent schedule with larger K tile.
 
 module attributes {
   pto.target_arch = "a5",
+  pto.kernel_kind = #pto.kernel_kind<vector>,
   pto.pipeline.stages = 2 : i32,
   pto.block_k = 1024 : i32
 } {
   func.func @persistent_quant_tile_k1024_mi(
       %x_ub0: !pto.ptr<bf16, ub>,
-      %x_ub1: !pto.ptr<bf16, ub>,
       %y_ub0: !pto.ptr<f8E4M3FN, ub>,
-      %y_ub1: !pto.ptr<f8E4M3FN, ub>,
       %scale: !pto.vreg<64xf32>,
       %off: index) {
-    %m16 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-    %m32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-    // Stage 0 buffer pair active this iteration (stage 1 overlaps MTE).
-    %x0 = pto.vlds %x_ub0[%off] {dist = "UNPK_B16"}
-        : !pto.ptr<bf16, ub> -> !pto.vreg<64xf32>
-    %y0 = pto.vmul %x0, %scale, %m32
-        : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-    pto.vsts %y0, %y_ub0[%off], %m32 {dist = "PK4_B32"}
-        : !pto.vreg<64xf32>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+    pto.vecscope {
+      %m32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %x0 = pto.vlds %x_ub0[%off] {dist = "UNPK_B16"}
+          : !pto.ptr<bf16, ub> -> !pto.vreg<64xf32>
+      %y0 = pto.vmul %x0, %scale, %m32
+          : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32>
+          -> !pto.vreg<64xf32>
+      pto.vsts %y0, %y_ub0[%off], %m32 {dist = "PK4_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+    }
     return
   }
 }

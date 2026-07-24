@@ -6,17 +6,18 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Desired VPTO / pto.mi: PK pack of UE8M0 bytes into ui16 storage.
+// Desired MI: PK_B16 store of packed UE8M0 words.
 
 module {
   func.func @packed_ue8m0_sf_store_mi(
-      %sf_u8: !pto.vreg<256xui8>,
+      %sf_u16: !pto.vreg<128xui16>,
       %dst: !pto.ptr<ui16, ub>,
       %off: index) {
-    %m = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-    // Pack adjacent ui8 lanes (pack_factor=2) then store as ui16 / PK path.
-    pto.vsts %sf_u8, %dst[%off], %m {dist = "PK_B16"}
-        : !pto.vreg<256xui8>, !pto.ptr<ui16, ub>, !pto.mask<b8>
+    pto.vecscope {
+      %m = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      pto.vsts %sf_u16, %dst[%off], %m {dist = "PK_B16"}
+          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+    }
     return
   }
 }

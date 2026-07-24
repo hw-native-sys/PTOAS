@@ -1,0 +1,13 @@
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @unpacked_ue8m0_sf_store(%arg0: !pto.vreg<256xui8>, %arg1: !pto.ptr<ui8, ub>, %arg2: index) {
+    %c0 = arith.constant 0 : index
+    %0 = pto.vzunpack %arg0, %c0 : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+    %c0_0 = arith.constant 0 : index
+    %1 = pto.vzunpack %0, %c0_0 : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+    %2 = pto.vbitcast %1 : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
+    %3 = pto.pge_b32 "PAT_VL64" : !pto.mask<b32>
+    pto.vsts %2, %arg1[%arg2], %3 {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+    return
+  }
+}
+

@@ -1,0 +1,10 @@
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @scale_factor_bulk_mte(%arg0: !pto.ptr<f32, ub>, %arg1: !pto.ptr<f32, gm>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c32_i64 = arith.constant 32 : i64
+    pto.copy_ubuf_to_gm %arg0, %arg1, %c0_i64, %c1_i64, %c32_i64, %c0_i64, %c32_i64, %c32_i64 : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+

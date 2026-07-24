@@ -6,15 +6,15 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Desired MI: scalar GM store with dcache bypass (no bulk MTE).
+// Working-today: L=256 ui8→ui16 vcvt (see test/lit/vmi_new/vmi_to_vpto_integer_casts.pto).
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @scale_factor_gm_bypass_mi(
-      %sf_gm: !pto.ptr<f32, gm>,
-      %scale: f32) {
-    %c0 = arith.constant 0 : index
-    pto.store_scalar %scale, %sf_gm[%c0] {dcache_bypass}
-        : !pto.ptr<f32, gm>, f32
-    return
+  func.func @ui8_to_ui16_l256(
+      %input: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<deinterleaved = 2>> {
+    %wide = pto.vmi.vcvt %input
+        : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<deinterleaved = 2>>
+    return %wide : !pto.vmi.vreg<256xui16, #pto.vmi.layout<deinterleaved = 2>>
   }
 }

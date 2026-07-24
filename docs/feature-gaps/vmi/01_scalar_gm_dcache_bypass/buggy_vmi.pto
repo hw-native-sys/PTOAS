@@ -6,25 +6,16 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Compiling-today style workaround: stage one f32 SF in UB, then bulk MTE to GM.
+// Working-today workaround: SF already staged in UB; bulk MTE to GM for a tiny payload.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @scale_factor_bulk_mte(
       %sf_ub: !pto.ptr<f32, ub>,
-      %sf_gm: !pto.ptr<f32, gm>,
-      %scale: !pto.vmi.vreg<1xf32>) {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
+      %sf_gm: !pto.ptr<f32, gm>) {
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
-    %c4_i64 = arith.constant 4 : i64
     %c32_i64 = arith.constant 32 : i64
-
-    // Store the scalar SF into a padded UB slot (MTE wants aligned bursts).
-    pto.vmi.vstore %scale, %sf_ub[%c0], %c1 {group = 1}
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
-
-    // Bulk MTE for a tiny SF payload (4B useful / 32B burst).
+    // 4B useful SF / 32B burst — MTE setup dominates.
     pto.copy_ubuf_to_gm %sf_ub, %sf_gm,
         %c0_i64, %c1_i64, %c32_i64, %c0_i64, %c32_i64, %c32_i64
         : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64

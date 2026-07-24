@@ -1,0 +1,12 @@
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @padded_inv_brc(%arg0: !pto.ptr<f32, ub>, %arg1: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %0 = pto.pge_b32 "PAT_VL8" : !pto.mask<b32>
+    pto.vsts %arg1, %arg0[%c0], %0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    %c0_0 = arith.constant 0 : index
+    %result = pto.vlds %arg0[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}
+

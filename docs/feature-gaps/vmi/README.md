@@ -1,28 +1,59 @@
-# VMI / PTODSL feature gaps
+# VMI feature gaps (docs fixtures)
 
-Minimal reproducers for PTOAS capabilities that VMI/PTODSL authors need when
-writing high-throughput **quantization** and **residual-mix** style vector
-kernels. Each subdirectory documents one gap with:
+Minimal reproducers for PTOAS capabilities that still block VMI from reaching
+ASC bandwidth on quantization and residual-mix style vector kernels. These are
+**documentation fixtures**, not lit tests (no `// RUN:` lines).
+
+Each subdirectory has:
 
 | File | Role |
 |---|---|
-| `README.md` | Algorithm need, current failure, desired PTOAS behavior |
-| `buggy_vmi.pto` | Compiling-today style workaround IR (illustrative) |
-| `desired_vmi.pto` | Idiomatic VMI using the missing feature (may not lower today) |
-| `target_mi.pto` | Desired VPTO / `pto.mi` shape after lowering |
-
-These samples are documentation fixtures, not lit tests (no `// RUN:` lines).
+| `README.md` | Algorithm need, workaround + reproduce, desired failure, target MI / bisheng status |
+| `buggy_vmi.pto` | Working-today workaround that **must** lower with `pto-test-opt` + `$PASS` |
+| `lowered_vpto.pto` | Checked-in dump from that lower |
+| `desired_vmi.pto` | Idiomatic ask (may fail — README pastes the error) |
+| `target_mi.pto` | Desired `pto.mi` / VPTO shape; exercised with `ptoas` + `bisheng` |
 
 ## Gaps
 
-| # | Gap | Why it matters |
+| # | Gap | Why ASC-level BW cares |
 |---|---|---|
-| 01 | [Scalar GM dcache bypass](01_scalar_gm_dcache_bypass/) | Per-block quantization writes one f32 scale per 32×32 group to GM. Forcing bulk MTE for a few bytes burns bandwidth and sync. |
-| 02 | [Compact inverse `vbrc`](02_compact_inv_vbrc/) | Quant kernels fan reciprocal scales across lanes. Padding to a full chunk before `dist_mode=brc` wastes UB and ops. |
-| 03 | [Direct scalar reduce store](03_direct_scalar_reduce_store/) | Residual-mix kernels reduce a tile to one f32 scalar per group. Padding stores to 8 slots pollutes bandwidth and masks `1PT_B32`. |
-| 04 | [Packed UE8M0 scale factors](04_packed_ue8m0_sf/) | Per-token MXFP8 uses UE8M0 scales with `pack_factor=2`. Unpacked `ui8` doubles SF traffic vs packed `ui16`. |
-| 05 | [Persistent stages / `block_k`](05_persistent_stages_block_k/) | Persistent vector loops need multi-buffer stages and `block_k > 512` for long-K quant/cast tiles. Caps leave the pipe underfed. |
+| 01 | [Scalar GM dcache bypass](01_scalar_gm_dcache_bypass/) | Tiny per-block SF writes still force bulk MTE |
+| 02 | [Compact inverse `vbrc`](02_compact_inv_vbrc/) | Padded recip + BRC reload tax on quant |
+| 03 | [Direct scalar / 1PT reduce store](03_direct_scalar_reduce_store/) | Residual-mix post-bwd still pads to 8; ASC uses ONEPT/1PT |
+| 04 | [Packed UE8M0 SF](04_packed_ue8m0_sf/) | Unpacked SF doubles traffic |
+| 05 | [Persistent stages / `block_k`](05_persistent_stages_block_k/) | Per-block capped at stages=1 / `block_k≤512`; stages=2 faults in practice |
+| 06 | [Small-L ui8→ui16 widen](06_small_l_ui8_widen/) | L=8 `vcvt` illegalizes to residual `extui` (blocks fused quant→dequant) |
 
-Closing these gaps improves authoring productivity (fewer workarounds in
-PTODSL) and end-to-end performance of quantization + residual-mix kernels
-without changing their algorithm.
+Tip findings (high level, no external repo names): residual-mix still pays a
+reduce pad-to-8 store tax; per-block Persistent stays on stages=1 /
+`block_k≤512`; fused small-L UE8M0 widen hits the L=8 `extui` residual.
+
+## How to reproduce
+
+Tool paths used when these dumps were refreshed:
+
+```bash
+PTO_TEST_OPT=/home/jzhuang/work_dir/PTOAS-vmi/build/tools/pto-test-opt/pto-test-opt
+PTOAS=/home/jzhuang/work_dir/PTOAS-vmi/build/tools/ptoas/ptoas
+BISHENG=/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng
+export PATH="$(dirname $BISHENG):$PATH"
+
+PASS='-vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto'
+
+# Working workaround (must succeed; refresh lowered_vpto.pto)
+$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+
+# Desired (expect failure for most gaps; paste error into README)
+$PTO_TEST_OPT desired_vmi.pto $PASS -o /tmp/desired.pto
+
+# Target MI
+$PTOAS --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
+  --emit-vpto -o /tmp/t.emit.pto target_mi.pto
+$PTOAS --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
+  --emit-vpto-llvm-ir -o /tmp/t.ll target_mi.pto
+"$BISHENG" --target=hiipu64-hisilicon-cce -march=dav-c310-vec \
+  --cce-aicore-arch=dav-c310-vec --cce-aicore-only -c -x ir /tmp/t.ll -o /tmp/t.o
+```
+
+Use `--emit-vpto-llvm-ir` for LLVM IR (not `--vpto-emit-hivm-llvm`).
