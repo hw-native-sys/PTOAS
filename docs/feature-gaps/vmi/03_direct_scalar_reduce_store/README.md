@@ -26,7 +26,7 @@ Idiomatic mask1 store after `vcadd` (mirrors
 **This lowers today** to `pto.vcadd` + `pto.vsts` under a `PAT_VL1` mask
 (no explicit `dist = "1PT_B32"` in the dump). The remaining gap is practical:
 residual-mix authoring still pads to 8, and ASC's ONEPT path is not what the
-padded workaround emits.
+padded slow path emits.
 
 ## Target MI + bisheng status
 
