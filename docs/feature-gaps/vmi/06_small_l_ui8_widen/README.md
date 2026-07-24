@@ -10,15 +10,15 @@ compose / larger tiles.
 Reference for the working L=256 shape:
 `test/lit/vmi_new/vmi_to_vpto_integer_casts.pto`.
 
-## Working-today workaround
+## Current slow path
 
-L=256 `pto.vmi.vcvt` ui8→ui16 (`buggy_vmi.pto`). Checked-in dump:
+L=256 `pto.vmi.vcvt` ui8→ui16 (`current_slow_vmi.pto`). Checked-in dump:
 `lowered_vpto.pto` — key ops `pto.vcvt ... {part = "EVEN"}` and `{part = "ODD"}`.
 
 Reproduce:
 
 ```bash
-$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+$PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 ```
 
 ## Desired VMI + current failure

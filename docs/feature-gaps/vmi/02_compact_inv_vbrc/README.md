@@ -7,7 +7,7 @@ across the group's lanes before the multiply. A **compact** inverse (one slot
 per group, no pad) fan-out is what ASC-level BW wants; padding + BRC reload
 adds UB traffic and ops on the hot path.
 
-## Working-today workaround
+## Current slow path
 
 Materialize recip scales as `#pto.vmi.layout<num_groups=8, slots=8>`,
 `group_store` them, then reload with `dist_mode = "brc"`. Checked-in dump:
@@ -17,7 +17,7 @@ Materialize recip scales as `#pto.vmi.layout<num_groups=8, slots=8>`,
 Reproduce:
 
 ```bash
-$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+$PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 ```
 
 ## Desired VMI + current failure

@@ -8,8 +8,8 @@ Each subdirectory has:
 
 | File | Role |
 |---|---|
-| `README.md` | Algorithm need, workaround + reproduce, desired failure, target MI / bisheng status |
-| `buggy_vmi.pto` | Working-today workaround that **must** lower with `pto-test-opt` + `$PASS` |
+| `README.md` | Algorithm need, current slow path + reproduce, desired failure, target MI / bisheng status |
+| `current_slow_vmi.pto` | Compiles and runs today, but slow / non-optimal; **must** lower with `pto-test-opt` + `$PASS` |
 | `lowered_vpto.pto` | Checked-in dump from that lower |
 | `desired_vmi.pto` | Idiomatic ask (may fail — README pastes the error) |
 | `target_mi.pto` | Desired `pto.mi` / VPTO shape; exercised with `ptoas` + `bisheng` |
@@ -45,8 +45,8 @@ export PATH="$(dirname "$BISHENG"):$PATH"
 PASS='-vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto'
 cd docs/feature-gaps/vmi/<gap_dir>
 
-# Working workaround (must succeed; refresh lowered_vpto.pto)
-"$PTO_TEST_OPT" buggy_vmi.pto $PASS -o lowered_vpto.pto
+# Current slow path (must succeed; refresh lowered_vpto.pto)
+"$PTO_TEST_OPT" current_slow_vmi.pto $PASS -o lowered_vpto.pto
 
 # Desired (often fails; paste error into README)
 "$PTO_TEST_OPT" desired_vmi.pto $PASS -o /tmp/desired.pto

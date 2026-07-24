@@ -6,16 +6,16 @@ Per-token MXFP8 stores UE8M0 scales with **pack_factor=2**: two `ui8` exponents
 share one `ui16` element. Unpacked `ui8` SF doubles scale-factor traffic versus
 packed storage and blocks ASC-level BW on that pipe.
 
-## Working-today workaround
+## Current slow path
 
-Store SF as unpacked `ui8` only (`buggy_vmi.pto`). Checked-in dump:
+Store SF as unpacked `ui8` only (`current_slow_vmi.pto`). Checked-in dump:
 `lowered_vpto.pto` — key op `pto.vsts ... {dist = "PK4_B32"}` into `!pto.ptr<ui8, ub>`
 (byte store of the unpacked tensor, not a packed `ui16` SF layout).
 
 Reproduce:
 
 ```bash
-$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+$PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 ```
 
 ## Desired VMI + current failure

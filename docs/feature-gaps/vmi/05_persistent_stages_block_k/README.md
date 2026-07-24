@@ -7,16 +7,16 @@ stages=2) and `block_k > 512` so MTE and vector stay overlapped. Caps at
 stages=1 / `block_k ≤ 512` leave the pipe underfed versus ASC on large hidden
 sizes. Raising stages in the host schedule has also faulted in practice.
 
-## Working-today workaround
+## Current slow path
 
-`block_k = 512`, single-stage Persistent tile (`buggy_vmi.pto`). Checked-in
+`block_k = 512`, single-stage Persistent tile (`current_slow_vmi.pto`). Checked-in
 dump: `lowered_vpto.pto` — chunked `pto.vlds` / `pto.vcvt` / `pto.vmul` /
 `pto.vsts` over the 512-wide tile.
 
 Reproduce:
 
 ```bash
-$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+$PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 ```
 
 ## Desired VMI + current failure

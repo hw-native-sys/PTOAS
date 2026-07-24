@@ -6,9 +6,9 @@ Residual-mix post-bwd reduces a tile to **one f32 scalar per group**. ASC uses
 a ONEPT/1PT-style store. If VMI still pads that result to 8 slots before store,
 extra UB traffic shows up on the residual-mix path and keeps VMI below ASC BW.
 
-## Working-today workaround
+## Current slow path
 
-Group-reduce with `{group = 8}` and store the 8-slot result (`buggy_vmi.pto`).
+Group-reduce with `{group = 8}` and store the 8-slot result (`current_slow_vmi.pto`).
 High-level kernels also keep a pad-to-8 habit because dense adjacent size-1
 stores have been unreliable in practice. Checked-in dump: `lowered_vpto.pto` —
 key ops `pto.vcgadd` + `pto.vsts` with `PAT_VL8`.
@@ -16,7 +16,7 @@ key ops `pto.vcgadd` + `pto.vsts` with `PAT_VL8`.
 Reproduce:
 
 ```bash
-$PTO_TEST_OPT buggy_vmi.pto $PASS -o lowered_vpto.pto
+$PTO_TEST_OPT current_slow_vmi.pto $PASS -o lowered_vpto.pto
 ```
 
 ## Desired VMI + current failure
