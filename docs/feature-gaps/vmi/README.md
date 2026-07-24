@@ -22,12 +22,14 @@ Each subdirectory has:
 | 02 | [Compact inverse `vbrc`](02_compact_inv_vbrc/) | Padded recip + BRC reload tax on quant |
 | 03 | [Direct scalar / 1PT reduce store](03_direct_scalar_reduce_store/) | Residual-mix post-bwd still pads to 8; ASC uses ONEPT/1PT |
 | 04 | [Packed UE8M0 SF](04_packed_ue8m0_sf/) | Unpacked SF doubles traffic |
-| 05 | [Persistent stages / `block_k`](05_persistent_stages_block_k/) | Per-block capped at stages=1 / `block_k≤512`; stages=2 faults in practice |
+| 05 | [Persistent stages / `block_k`](05_persistent_stages_block_k/) | Per-block + cast-back capped at stages=1 / `block_k≤512`; stages=2 faults in practice |
 | 06 | [Small-L ui8→ui16 widen](06_small_l_ui8_widen/) | L=8 `vcvt` illegalizes to residual `extui` (blocks fused quant→dequant) |
+| 07 | [bf16 UNPK / PK fuse](07_bf16_unpk_pk_fuse/) | Residual-mix **fwd** strips: continuous load only feeds EVEN after UNPK; `dist_mode=unpack` illegal |
 
-Tip findings (high level, no external repo names): residual-mix still pays a
-reduce pad-to-8 store tax; per-block Persistent stays on stages=1 /
-`block_k≤512`; fused small-L UE8M0 widen hits the L=8 `extui` residual.
+Tip findings (high level, no external repo names): residual-mix **bwd** still
+pays a reduce pad-to-8 store tax (**03**); residual-mix **fwd** needs full
+UNPK/PK strip fuse (**07**); per-block / cast-back Persistent stay on stages=1 /
+`block_k≤512` (**05**); fused small-L UE8M0 widen hits L=8 `extui` (**06**).
 
 ## How to reproduce
 

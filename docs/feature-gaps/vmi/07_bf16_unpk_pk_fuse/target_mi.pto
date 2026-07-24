@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Desired MI: UNPK_B16 load, BOTH EVEN+ODD widen, compute, PK_B32 store.
+// ASC residual-mix strips use this full unpack/pack form; continuous VMI
+// today only feeds EVEN after UNPK_B16.
+
+module {
+  func.func @bf16_strip_unpk_pk_mi(
+      %src: !pto.ptr<bf16, ub>,
+      %dst: !pto.ptr<bf16, ub>,
+      %scale: f32,
+      %off: index) {
+    pto.vecscope {
+      %raw = pto.vlds %src[%off] {dist = "UNPK_B16"}
+          : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+      %m16 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %even = pto.vcvt %raw, %m16 {part = "EVEN"}
+          : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+      %odd = pto.vcvt %raw, %m16 {part = "ODD"}
+          : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+      %m32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %s = pto.vdup %scale, %m32 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %ye = pto.vmul %even, %s, %m32
+          : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %yo = pto.vmul %odd, %s, %m32
+          : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %ne = pto.vcvt %ye, %m32 {part = "EVEN", rnd = "R", sat = "SAT"}
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xbf16>
+      %no = pto.vcvt %yo, %m32 {part = "ODD", rnd = "R", sat = "SAT"}
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xbf16>
+      %packed = pto.vor %ne, %no, %m16
+          : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16>
+          -> !pto.vreg<128xbf16>
+      %store_m = pto.pge_b32 "PAT_VL64" : !pto.mask<b32>
+      pto.vsts %packed, %dst[%off], %store_m {dist = "PK_B32"}
+          : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}

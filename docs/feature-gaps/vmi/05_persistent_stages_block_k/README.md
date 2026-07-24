@@ -2,10 +2,17 @@
 
 ## Algorithm need
 
-Long-K quant / cast-back Persistent loops want multi-buffer stages (e.g.
-stages=2) and `block_k > 512` so MTE and vector stay overlapped. Caps at
-stages=1 / `block_k ≤ 512` leave the pipe underfed versus ASC on large hidden
-sizes. Raising stages in the host schedule has also faulted in practice.
+Long-K quant / **cast-back (dequant)** Persistent loops want multi-buffer
+stages (e.g. stages=2) and `block_k > 512` so MTE and vector stay overlapped.
+Caps at stages=1 / `block_k ≤ 512` leave the pipe underfed versus ASC on large
+hidden sizes. Raising stages in the host schedule has also faulted in practice.
+
+Consumers today:
+
+- **Per-block quant** — stuck on stages=1 and `block_k ≤ 512` on large shapes.
+- **Cast-back / dequant** — sweet spot is stages=1 + tile_k=512; tile_k=1024
+  regresses until larger K / deeper Persistent is legal and fast. Closing this
+  gap is the main lever to push cast-back toward ASC BW.
 
 ## Current slow path
 
