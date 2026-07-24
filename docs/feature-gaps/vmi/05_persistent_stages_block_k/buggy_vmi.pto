@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Compiling-today style Persistent vector module.
+// Constraint comment: stages=1 / block_k<=512 required for legal lowering today.
+
+module attributes {
+  pto.target_arch = "a5",
+  pto.kernel_kind = #pto.kernel_kind<vector>
+  // stages = 1
+  // block_k = 512
+} {
+  func.func @persistent_quant_tile_k512(
+      %x_ub: !pto.ptr<bf16, ub>,
+      %y_ub: !pto.ptr<f8E4M3FN, ub>,
+      %scale_slot: !pto.vmi.vreg<1xf32>,
+      %block_count: index)
+      attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c512 = arith.constant 512 : index
+
+    pto.vecscope {
+      %scale = pto.vmi.vbrc %scale_slot
+          : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<512xf32>
+      scf.for %i = %c0 to %block_count step %c1 {
+        %off = arith.muli %i, %c512 : index
+        %x_bf16 = pto.vmi.vload %x_ub[%off]
+            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<512xbf16>
+        %x_f32 = pto.vmi.vcvt %x_bf16
+            : !pto.vmi.vreg<512xbf16> -> !pto.vmi.vreg<512xf32>
+        %scaled = pto.vmi.vmul %x_f32, %scale
+            : !pto.vmi.vreg<512xf32>, !pto.vmi.vreg<512xf32>
+            -> !pto.vmi.vreg<512xf32>
+        %y = pto.vmi.vcvt %scaled {saturate = "SAT"}
+            : !pto.vmi.vreg<512xf32> -> !pto.vmi.vreg<512xf8E4M3FN>
+        pto.vmi.vstore %y, %y_ub[%off]
+            : !pto.vmi.vreg<512xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+      }
+    }
+    return
+  }
+}

@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Compiling-today style: store UE8M0 scales as unpacked ui8 only.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @unpacked_ue8m0_sf_store(
+      %sf_u8: !pto.vmi.vreg<64xui8>,
+      %dst: !pto.ptr<ui8, ub>,
+      %off: index) {
+    // No pack_factor=2 path — write raw ui8 SF tensor.
+    pto.vmi.vstore %sf_u8, %dst[%off]
+        : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+    return
+  }
+}

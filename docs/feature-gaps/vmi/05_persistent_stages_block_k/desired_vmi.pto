@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Idiomatic Persistent VMI: stages=2, block_k=1024 (may not lower today).
+
+module attributes {
+  pto.target_arch = "a5",
+  pto.kernel_kind = #pto.kernel_kind<vector>,
+  pto.pipeline.stages = 2 : i32,
+  pto.block_k = 1024 : i32
+} {
+  func.func @persistent_quant_tile_k1024(
+      %x_ub0: !pto.ptr<bf16, ub>,
+      %x_ub1: !pto.ptr<bf16, ub>,
+      %y_ub0: !pto.ptr<f8E4M3FN, ub>,
+      %y_ub1: !pto.ptr<f8E4M3FN, ub>,
+      %scale_slot: !pto.vmi.vreg<1xf32>,
+      %block_count: index)
+      attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c1024 = arith.constant 1024 : index
+
+    pto.vecscope {
+      %scale = pto.vmi.vbrc %scale_slot
+          : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<1024xf32>
+      scf.for %i = %c0 to %block_count step %c1 {
+        %off = arith.muli %i, %c1024 : index
+        %stage = arith.remui %i, %c2 : index
+        %use1 = arith.cmpi eq, %stage, %c1 : index
+        %x_ub = scf.if %use1 -> (!pto.ptr<bf16, ub>) {
+          scf.yield %x_ub1 : !pto.ptr<bf16, ub>
+        } else {
+          scf.yield %x_ub0 : !pto.ptr<bf16, ub>
+        }
+        %y_ub = scf.if %use1 -> (!pto.ptr<f8E4M3FN, ub>) {
+          scf.yield %y_ub1 : !pto.ptr<f8E4M3FN, ub>
+        } else {
+          scf.yield %y_ub0 : !pto.ptr<f8E4M3FN, ub>
+        }
+        %x_bf16 = pto.vmi.vload %x_ub[%off]
+            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<1024xbf16>
+        %x_f32 = pto.vmi.vcvt %x_bf16
+            : !pto.vmi.vreg<1024xbf16> -> !pto.vmi.vreg<1024xf32>
+        %scaled = pto.vmi.vmul %x_f32, %scale
+            : !pto.vmi.vreg<1024xf32>, !pto.vmi.vreg<1024xf32>
+            -> !pto.vmi.vreg<1024xf32>
+        %y = pto.vmi.vcvt %scaled {saturate = "SAT"}
+            : !pto.vmi.vreg<1024xf32> -> !pto.vmi.vreg<1024xf8E4M3FN>
+        pto.vmi.vstore %y, %y_ub[%off]
+            : !pto.vmi.vreg<1024xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+      }
+    }
+    return
+  }
+}

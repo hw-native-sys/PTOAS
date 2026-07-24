@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Desired VPTO / pto.mi: PK pack of UE8M0 bytes into ui16 storage.
+
+module {
+  func.func @packed_ue8m0_sf_store_mi(
+      %sf_u8: !pto.vreg<256xui8>,
+      %dst: !pto.ptr<ui16, ub>,
+      %off: index) {
+    %m = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    // Pack adjacent ui8 lanes (pack_factor=2) then store as ui16 / PK path.
+    pto.vsts %sf_u8, %dst[%off], %m {dist = "PK_B16"}
+        : !pto.vreg<256xui8>, !pto.ptr<ui16, ub>, !pto.mask<b8>
+    return
+  }
+}
