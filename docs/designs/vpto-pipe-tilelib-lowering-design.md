@@ -314,6 +314,10 @@ the descriptor storage rather than leaving a memref bridge or an
 for the TileLib ABI, not an implementation of FIFO address or synchronization
 semantics.
 
+A global pipe entry may be a `pto.declare_global` result or a result reached
+through one or more `pto.tassign` operations from that declaration. The
+rebinding result remains the operand passed to the pipe operation.
+
 ## 9. TileLib Handoff
 
 The following work intentionally belongs to the TileLib owner and is not

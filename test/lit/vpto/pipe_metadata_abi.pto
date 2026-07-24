@@ -10,7 +10,7 @@
 // shared state operand, and the defaulted subblock argument before returning a
 // candidate. It is deliberately outside ptodsl/tilelib so this remains a
 // compiler ABI regression rather than a TileLib implementation test.
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/Inputs/pipe_metadata_mock --enable-pipe-tilelib-expand --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/Inputs/pipe_metadata_mock --enable-pipe-tilelib-expand --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @pipe_metadata()
@@ -24,11 +24,14 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
       operandSegmentSizes = array<i32: 1, 0, 0>
     }> : (!pto.tensor_view<16x16xf32>) -> !pto.pipe
     %entry = pto.declare_global -> !pto.tensor_view<16x16xf32>
-    pto.talloc(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
-    pto.tpush(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
-    pto.tpush(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 2}
-    pto.tpop(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
-    pto.tfree(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    %entry_addr = arith.constant 0 : i64
+    %bound_entry = pto.tassign %entry, %entry_addr
+      : !pto.tensor_view<16x16xf32> -> !pto.tensor_view<16x16xf32>
+    pto.talloc(%bound_entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    pto.tpush(%bound_entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    pto.tpush(%bound_entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 2}
+    pto.tpop(%bound_entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    pto.tfree(%bound_entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
     return
   }
 

@@ -243,6 +243,17 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
   }
 
   tileBuf = unwrapBridgingCasts(tileBuf);
+  if (auto assign = tileBuf.getDefiningOp<pto::TAssignOp>()) {
+    auto sourceInfo = resolveTileHandle(assign.getTile(), user);
+    if (!sourceInfo)
+      return std::nullopt;
+
+    // TAssign rebinds the handle, so its result must use the new address even
+    // when the source was originally materialized from a memref.
+    return TileHandleInfo{Value(), assign.getAddr(), sourceInfo->validRow,
+                          sourceInfo->validCol, sourceInfo->config};
+  }
+
   if (auto alloc = tileBuf.getDefiningOp<pto::AllocTileOp>()) {
     auto tileTy = dyn_cast<pto::TileBufType>(alloc.getResult().getType());
     if (!tileTy) {

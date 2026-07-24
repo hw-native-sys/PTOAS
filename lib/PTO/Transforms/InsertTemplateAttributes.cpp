@@ -786,6 +786,12 @@ struct PipeWireInfo {
   SmallVector<std::pair<std::string, Value>> resources;
 };
 
+static bool isDeclaredGlobalPipeEntry(Value value) {
+  while (auto assign = value.getDefiningOp<pto::TAssignOp>())
+    value = assign.getTile();
+  return value.getDefiningOp<pto::DeclareGlobalOp>() != nullptr;
+}
+
 static FailureOr<PipeWireInfo> getPipeWireInfo(Operation *operation) {
   Value pipe;
   Value state;
@@ -909,9 +915,10 @@ buildPipeOperandSpecsJson(Operation *operation) {
     auto viewType = dyn_cast<pto::TensorViewType>(value.getType());
     if (!viewType)
       return appendOperandSpecJson(json, operation, value);
-    if (!value.getDefiningOp<pto::DeclareGlobalOp>())
+    if (!isDeclaredGlobalPipeEntry(value))
       return operation->emitError(
-          "requires a pto.declare_global tensor_view entry for pipe TileLib expansion");
+          "requires a pto.declare_global tensor_view entry, optionally "
+          "rebound by pto.tassign, for pipe TileLib expansion");
     if (getDtypeString(viewType.getElementType()).empty())
       return operation->emitError(
           "InsertTemplateAttributes encountered an unsupported pipe entry dtype");

@@ -284,6 +284,9 @@ storage lower，不留下 memref bridge 或 VPTO pipeline 中的
 `unrealized_conversion_cast`。这是 TileLib ABI 的编译器支持，不是 FIFO address 或
 synchronization 语义的实现。
 
+global pipe entry 可以直接使用 `pto.declare_global` 的结果，也可以使用从该声明
+经过一个或多个 `pto.tassign` 得到的结果。传给 pipe op 的仍是重绑定后的结果值。
+
 ## 9. TileLib 交接
 
 以下工作明确属于 TileLib owner，不包含在此 PR：
