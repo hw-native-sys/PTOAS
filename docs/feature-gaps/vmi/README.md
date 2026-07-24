@@ -13,6 +13,7 @@ Each subdirectory has:
 | `lowered_vpto.pto` | Checked-in dump from that lower |
 | `desired_vmi.pto` | Idiomatic ask (may fail — README pastes the error) |
 | `target_mi.pto` | Desired `pto.mi` / VPTO shape; exercised with `ptoas` + `bisheng` |
+| `reference_asc_cce.asc` | Gaps **03–06** only: minimal ASC/CCE kernel that `bisheng --cce-aicore-only` accepts (e2e proof while `target_mi` HIVM still crashes) |
 
 ## Gaps
 
@@ -63,3 +64,22 @@ cd docs/feature-gaps/vmi/<gap_dir>
 ```
 
 Use `--emit-vpto-llvm-ir` for LLVM IR (not the older `--vpto-emit-hivm-llvm` name).
+
+## ASC/CCE reference compile (gaps 03–06)
+
+When `target_mi` → HIVM IR → `bisheng -x ir` crashes, the sibling
+`reference_asc_cce.asc` proves the same instruction shape is legal on the
+Ascend CCE path:
+
+```bash
+BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}
+ASCEND=${ASCEND:-/usr/local/Ascend/cann-9.0.0}
+cd docs/feature-gaps/vmi/<gap_dir>   # 03..06
+"$BISHENG" -O2 -fPIC -std=c++17 --npu-arch=dav-3510 --cce-aicore-only -c \
+  reference_asc_cce.asc -o /tmp/ref.o \
+  -I"$ASCEND/include" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw/impl" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw/interface"
+test -s /tmp/ref.o
+```

@@ -41,3 +41,22 @@ ui16 store). Small-L VMI should lower here instead of leaving `extui`.
 | `ptoas ... --emit-vpto` | OK |
 | `ptoas ... --emit-vpto-llvm-ir` | OK |
 | `bisheng ... -c -x ir` → `.o` | **FAIL** — bisheng crashes (exit 139) on the emitted HIVM IR |
+
+## ASC/CCE working baseline
+
+`reference_asc_cce.asc` widens `ui8→ui16` under `PAT_VL8` with `vcvt` /
+`PART_EVEN` then stores. It compiles to a non-empty `.o` with
+`bisheng --cce-aicore-only`, proving the small-L widen shape is legal on the
+Ascend CCE path while `target_mi` HIVM still crashes.
+
+```bash
+BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}
+ASCEND=${ASCEND:-/usr/local/Ascend/cann-9.0.0}
+"$BISHENG" -O2 -fPIC -std=c++17 --npu-arch=dav-3510 --cce-aicore-only -c \
+  reference_asc_cce.asc -o /tmp/ref_gap06.o \
+  -I"$ASCEND/include" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw/impl" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw/interface"
+test -s /tmp/ref_gap06.o
+```

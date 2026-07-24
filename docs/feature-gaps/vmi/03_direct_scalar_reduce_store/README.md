@@ -37,3 +37,22 @@ padded slow path emits.
 | `ptoas ... --emit-vpto` | OK |
 | `ptoas ... --emit-vpto-llvm-ir` | OK |
 | `bisheng ... -c -x ir` → `.o` | **FAIL** — bisheng crashes (exit 139) on the emitted HIVM IR (`vcadd` / `vstsx1`) |
+
+## ASC/CCE working baseline
+
+`reference_asc_cce.asc` is a minimal hand-written Ascend CCE kernel:
+`vcadd` then `vsts(..., ONEPT_B32)`. It compiles to a non-empty `.o` with
+`bisheng --cce-aicore-only` (same CCE path ASC uses), proving the instruction
+pattern is legal while `target_mi` HIVM still crashes.
+
+```bash
+BISHENG=${BISHENG:-/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/bisheng}
+ASCEND=${ASCEND:-/usr/local/Ascend/cann-9.0.0}
+"$BISHENG" -O2 -fPIC -std=c++17 --npu-arch=dav-3510 --cce-aicore-only -c \
+  reference_asc_cce.asc -o /tmp/ref_gap03.o \
+  -I"$ASCEND/include" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw/impl" \
+  -I"$ASCEND/compiler/tikcpp/tikcfw/interface"
+test -s /tmp/ref_gap03.o
+```
