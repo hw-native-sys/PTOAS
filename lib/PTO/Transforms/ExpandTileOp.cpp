@@ -881,7 +881,7 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
 static std::optional<OperandTypeInfo> buildPipeEntryTypeInfo(Value value) {
   if (!isa<pto::TensorViewType>(value.getType()))
     return buildOperandTypeInfo(value);
-  if (!value.getDefiningOp<pto::DeclareGlobalOp>())
+  if (!pto::isDeclaredGlobalOrTAssignResult(value))
     return std::nullopt;
   auto info = buildOperandTypeInfo(value);
   if (!info)

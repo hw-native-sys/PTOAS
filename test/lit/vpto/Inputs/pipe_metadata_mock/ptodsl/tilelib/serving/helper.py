@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""One-shot client for the test-only PipeSpec metadata daemon."""
+"""One-shot client for the test-only PipeSpec metadata and expansion daemon."""
 
 import argparse
 import json
@@ -41,32 +41,40 @@ def main(argv=None):
     parser.add_argument("--op", required=True)
     parser.add_argument("--operand-specs", required=True)
     parser.add_argument("--context-attrs", default=None)
-    parser.add_argument("--method", required=True)
+    parser.add_argument(
+        "--method",
+        choices=("instantiate", "get_metadata"),
+        default="instantiate",
+    )
     parser.add_argument("--candidate-id", default=None)
     args = parser.parse_args(argv)
-    if args.method != "get_metadata":
-        raise SystemExit("only get_metadata is supported by the test daemon")
 
+    params = {
+        "target": args.target,
+        "op": args.op,
+        "operand_specs": json.loads(args.operand_specs),
+        "context_attrs": json.loads(args.context_attrs)
+        if args.context_attrs
+        else {},
+    }
+    if args.method == "instantiate":
+        params["candidate_id"] = args.candidate_id
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.connect(args.socket)
         _send_message(
             client,
             {
                 "method": args.method,
-                "params": {
-                    "target": args.target,
-                    "op": args.op,
-                    "operand_specs": json.loads(args.operand_specs),
-                    "context_attrs": json.loads(args.context_attrs)
-                    if args.context_attrs
-                    else {},
-                },
+                "params": params,
             },
         )
         response = _recv_message(client)
     if not response.get("success"):
         raise SystemExit(response.get("error", "metadata request failed"))
-    sys.stdout.write(json.dumps(response["result"]))
+    if args.method == "get_metadata":
+        sys.stdout.write(json.dumps(response["result"]))
+    else:
+        sys.stdout.write(response["result"])
 
 
 if __name__ == "__main__":

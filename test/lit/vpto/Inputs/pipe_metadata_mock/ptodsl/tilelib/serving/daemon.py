@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Minimal daemon used only to validate the compiler's PipeSpec wire ABI."""
+"""Test-only daemon for PipeSpec metadata and compiler expansion ABI."""
 
 import argparse
 import json
@@ -170,6 +170,54 @@ def _metadata_response():
     }
 
 
+def _mlir_type_for_spec(spec):
+    kind = spec.get("kind")
+    if kind in ("pipe_entry", "view"):
+        shape = spec.get("shape")
+        dtype = spec.get("dtype")
+        if not isinstance(shape, list) or not dtype:
+            raise ValueError(f"incomplete view spec: {spec!r}")
+        dims = "x".join("?" if dim == -1 else str(dim) for dim in shape)
+        return f"!pto.tensor_view<{dims}x{dtype}>"
+    if kind == "pipe_state":
+        return "!pto.struct<i32, i32>"
+    if kind == "scalar" and spec.get("dtype"):
+        return spec["dtype"]
+    raise ValueError(f"unsupported mock helper operand: {spec!r}")
+
+
+def _instantiate_response(params):
+    if params.get("candidate_id") != "mock_pipe_template":
+        raise ValueError(f"unexpected candidate: {params.get('candidate_id')!r}")
+    operands = params.get("operand_specs")
+    if params.get("target") != "a5" or not isinstance(operands, list):
+        raise ValueError("expected an A5 pipe instantiate request")
+
+    argument_types = []
+    for operand in operands:
+        kind = operand.get("kind")
+        if kind == "pipe":
+            continue
+        if kind == "pipe_resources":
+            argument_types.extend(_mlir_type_for_spec(value)
+                                  for value in operand.get("values", ()))
+            continue
+        argument_types.append(_mlir_type_for_spec(operand))
+
+    arguments = ", ".join(
+        f"%arg{index}: {type_name}"
+        for index, type_name in enumerate(argument_types)
+    )
+    return (
+        'module attributes {pto.target_arch = "a5"} {\n'
+        f"  func.func @mock_pipe_template({arguments}) "
+        "attributes {pto.tilelang.instance} {\n"
+        "    return\n"
+        "  }\n"
+        "}\n"
+    )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", required=True)
@@ -202,12 +250,18 @@ def main(argv=None):
                 with connection:
                     try:
                         request = _recv_message(connection)
-                        if request.get("method") != "get_metadata":
-                            raise ValueError("only get_metadata is supported")
-                        _expect_pipe_abi(request.get("params", {}), request_counts)
+                        method = request.get("method")
+                        params = request.get("params", {})
+                        if method == "get_metadata":
+                            _expect_pipe_abi(params, request_counts)
+                            result = _metadata_response()
+                        elif method == "instantiate":
+                            result = _instantiate_response(params)
+                        else:
+                            raise ValueError(f"unsupported method: {method!r}")
                         _send_message(
                             connection,
-                            {"success": True, "result": _metadata_response()},
+                            {"success": True, "result": result},
                         )
                     except Exception as error:
                         _send_message(

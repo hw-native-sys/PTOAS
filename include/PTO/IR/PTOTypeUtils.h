@@ -36,6 +36,10 @@ inline LogicalResult getPTOMemRefStridesAndOffset(
   return detail::getPTOMemRefStridesAndOffsetImpl(memTy, strides, offset, 0);
 }
 
+/// Returns whether `value` is a pto.declare_global result or a result of one
+/// or more pto.tassign operations rooted at that declaration.
+bool isDeclaredGlobalOrTAssignResult(Value value);
+
 bool isPTOFloat8Type(Type t);
 bool isPTOFloat8E4M3LikeType(Type t);
 bool isPTOFloat8E5M2LikeType(Type t);

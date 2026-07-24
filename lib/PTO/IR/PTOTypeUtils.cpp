@@ -17,6 +17,12 @@ namespace {
 constexpr unsigned kBitsPerByte = 8;
 } // namespace
 
+bool mlir::pto::isDeclaredGlobalOrTAssignResult(Value value) {
+  while (auto assign = value.getDefiningOp<TAssignOp>())
+    value = assign.getTile();
+  return value.getDefiningOp<DeclareGlobalOp>() != nullptr;
+}
+
 bool mlir::pto::isPTOFloat8Type(Type t) {
   return isPTOFloat8E4M3LikeType(t) || isPTOFloat8E5M2LikeType(t);
 }
