@@ -1,0 +1,40 @@
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @store_atomic_ctrl_probe() {
+    pto.set_atomic_s32
+    pto.set_atomic_add
+    pto.set_atomic_max
+    pto.set_atomic_min
+    pto.set_atomic_f32
+    pto.set_atomic_f16
+    pto.set_atomic_bf16
+    pto.set_atomic_s16
+    pto.set_atomic_s8
+    pto.set_atomic_none
+    return
+  }
+}
+
+// ROUNDTRIP-LABEL: func.func @store_atomic_ctrl_probe
+// ROUNDTRIP: pto.set_atomic_s32
+// ROUNDTRIP: pto.set_atomic_add
+// ROUNDTRIP: pto.set_atomic_max
+// ROUNDTRIP: pto.set_atomic_min
+// ROUNDTRIP: pto.set_atomic_none
+
+// EXPAND-LABEL: func.func @store_atomic_ctrl_probe
+// EXPAND-NOT: pto.set_atomic_
+// EXPAND: pto.get_ctrl
+// EXPAND: arith.andi
+// EXPAND: arith.ori
+// EXPAND: pto.set_ctrl
+// EXPAND: pto.get_ctrl
+// EXPAND: arith.andi
+// EXPAND: arith.ori
+// EXPAND: pto.set_ctrl
+// EXPAND: pto.get_ctrl
+// EXPAND: arith.andi
+// EXPAND: arith.ori
+// EXPAND: pto.set_ctrl

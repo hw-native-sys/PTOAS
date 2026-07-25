@@ -496,7 +496,13 @@ def PTO_SetLoop3ParaOp : PTO_BinaryI64ConfigOp<"set_loop3_para">;
 def PTO_SetChannelParaOp : PTO_BinaryI64ConfigOp<"set_channel_para">;
 def PTO_SetMte2NzParaOp : PTO_UnaryI64ConfigOp<"set_mte2_nz_para">;
 def PTO_SetPadValOutToL1Op : PTO_UnaryI64ConfigOp<"set_pad_val_outtol1">;
-def PTO_GetCtrlOp : PTO_NullaryI64PureOp<"get_ctrl">;
+// Reading CTRL is ordered with respect to set_ctrl. It must not be modeled as
+// Pure, otherwise CSE can reuse a value read before an intervening write.
+def PTO_GetCtrlOp : PTO_Op<"get_ctrl"> {
+  let arguments = (ins);
+  let results = (outs I64:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
 def PTO_GetVms4SrOp : PTO_Op<"get_vms4_sr", [Pure]> {
   let arguments = (ins);
   let results = (outs I16:$list0, I16:$list1, I16:$list2, I16:$list3);
@@ -543,7 +549,15 @@ def PTO_SetQuantPreOp : PTO_UnaryI64ConfigOp<"set_quant_pre">;
 def PTO_SetReluAlphaOp : PTO_UnaryI64ConfigOp<"set_relu_alpha">;
 def PTO_SetFixClipReluOp : PTO_UnaryI64ConfigOp<"set_fix_clip_relu">;
 def PTO_SetFpcOp : PTO_UnaryI64ConfigOp<"set_fpc">;
+def PTO_SetAtomicAddOp : PTO_NullaryConfigOp<"set_atomic_add">;
+def PTO_SetAtomicMaxOp : PTO_NullaryConfigOp<"set_atomic_max">;
+def PTO_SetAtomicMinOp : PTO_NullaryConfigOp<"set_atomic_min">;
+def PTO_SetAtomicNoneOp : PTO_NullaryConfigOp<"set_atomic_none">;
+def PTO_SetAtomicF32Op : PTO_NullaryConfigOp<"set_atomic_f32">;
+def PTO_SetAtomicF16Op : PTO_NullaryConfigOp<"set_atomic_f16">;
+def PTO_SetAtomicBF16Op : PTO_NullaryConfigOp<"set_atomic_bf16">;
 def PTO_SetAtomicS32Op : PTO_NullaryConfigOp<"set_atomic_s32">;
+def PTO_SetAtomicS16Op : PTO_NullaryConfigOp<"set_atomic_s16">;
 def PTO_SetAtomicS8Op : PTO_NullaryConfigOp<"set_atomic_s8">;
 def PTO_GetTidXOp : PTO_DirectSimtNullaryI32PureOp<"get_tid_x">;
 def PTO_GetTidYOp : PTO_DirectSimtNullaryI32PureOp<"get_tid_y">;

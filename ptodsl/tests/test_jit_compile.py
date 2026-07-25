@@ -3089,6 +3089,16 @@ def public_data_movement_surface_probe():
     pto.set_store_atomic_cfg(4)
     pto.mte_ub_gm(ub_src, gm_dst, 128, nburst=(1, 128, 128), l2_cache="nared")
     pto.set_store_atomic_cfg(0)
+    pto.set_atomic_s32()
+    pto.set_atomic_add()
+    pto.set_atomic_max()
+    pto.set_atomic_min()
+    pto.set_atomic_f32()
+    pto.set_atomic_f16()
+    pto.set_atomic_bf16()
+    pto.set_atomic_s16()
+    pto.set_atomic_s8()
+    pto.set_atomic_none()
     pto.mte_ub_gm(ub_src, gm_dst, 64, nburst=(1, 64, 64), l2_cache="wtsred")
     pto.mte_ub_ub(ub_src, ub_dst, 8, nburst=(16, 0, 4))
     pto.mte_ub_l1(ub_src, l1_dst, 8, nburst=(16, 0, 4))
@@ -6510,6 +6520,22 @@ def main() -> None:
         data_movement_surface_text.count("pto.set_store_atomic_cfg") == 2,
         "set_store_atomic_cfg should lower the requested config and reset",
     )
+    for atomic_api in (
+        "set_atomic_s32",
+        "set_atomic_add",
+        "set_atomic_max",
+        "set_atomic_min",
+        "set_atomic_f32",
+        "set_atomic_f16",
+        "set_atomic_bf16",
+        "set_atomic_s16",
+        "set_atomic_s8",
+        "set_atomic_none",
+    ):
+        expect(
+            f"pto.{atomic_api}" in data_movement_surface_text,
+            f"{atomic_api} should lower through the explicit PTODSL surface",
+        )
     expect(
         re.search(r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) l2_cache_ctl\(%c7[^)\n]*\)", data_movement_surface_text) is not None,
         "mte_ub_gm(..., l2_cache='nared') should map to the l2_cache_ctl group",
