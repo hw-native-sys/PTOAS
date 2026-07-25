@@ -4061,6 +4061,12 @@ StringRef buildUnaryConfigCallee<pto::SetFpcOp>(MLIRContext *context) {
 }
 
 template <>
+StringRef buildUnaryConfigCallee<pto::SetStoreAtomicCfgOp>(
+    MLIRContext *context) {
+  return StringAttr::get(context, "llvm.hivm.SET.ST.ATOMIC.CFG").getValue();
+}
+
+template <>
 StringRef buildNullaryConfigCallee<pto::SetAtomicS32Op>(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.SET.ATOMIC.S32").getValue();
 }
@@ -10425,6 +10431,7 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerUnaryI64ConfigOpPattern<pto::SetMte2NzParaOp>,
                LowerUnaryI64ConfigOpPattern<pto::SetPadValOutToL1Op>,
                LowerUnaryI64ConfigOpPattern<pto::SetFpcOp>,
+               LowerUnaryI64ConfigOpPattern<pto::SetStoreAtomicCfgOp>,
                LowerNullaryConfigOpPattern<pto::SetAtomicS32Op>,
                LowerNullaryConfigOpPattern<pto::SetAtomicS8Op>,
                LowerPipeEventSyncOpPattern<pto::SetFlagOp>,
@@ -10538,6 +10545,7 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::SetLoopSizeOutToL1Op, pto::SetMte2NzParaOp,
                       pto::SetPadValOutToL1Op, pto::SetReluAlphaOp,
                       pto::SetFixClipReluOp, pto::SetFpcOp,
+                      pto::SetStoreAtomicCfgOp,
                       pto::SetAtomicS32Op, pto::SetAtomicS8Op, pto::SetCtrlOp,
                       pto::StoreVfSimtInfoOp,
                       pto::SetMovPadValOp, pto::SetQuantPreOp>();

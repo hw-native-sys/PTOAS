@@ -506,6 +506,7 @@ def PTO_GetVms4SrOp : PTO_Op<"get_vms4_sr", [Pure]> {
   }];
 }
 def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<"set_ctrl">;
+def PTO_SetStoreAtomicCfgOp : PTO_UnaryI64ConfigOp<"set_store_atomic_cfg">;
 def PTO_StoreVfSimtInfoOp : PTO_SimtOp<"store_vfsimt_info"> {
   let summary = "Configure SIMT VF launch dimensions";
   let arguments = (ins I32:$dimZ, I32:$dimY, I32:$dimX);

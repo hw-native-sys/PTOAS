@@ -4892,6 +4892,14 @@ def mte_gm_ub(source, destination, l2_cache_ctl, len_burst, *, nburst, loops=Non
     )
 
 
+@_explicit_mode_only("pto.set_store_atomic_cfg(...)")
+def set_store_atomic_cfg(config):
+    """Configure store atomic mode for subsequent UB-to-GM DMA stores."""
+    _pto.SetStoreAtomicCfgOp(
+        _coerce_i64(config, context="set_store_atomic_cfg config")
+    )
+
+
 @_explicit_mode_only("pto.mte_ub_gm(...)")
 def mte_ub_gm(
     source,
@@ -6285,6 +6293,7 @@ __all__ = [
     "as_ptr",
     "mte_load", "mte_store", "mte_gm_ub", "mte_ub_gm", "mte_ub_ub", "mte_ub_l1",
     "mte_gm_l1", "mte_l1_ub", "mte_gm_l1_frac", "mte_l1_bt", "mte_l1_fb", "mem_bar",
+    "set_store_atomic_cfg",
     "mte_l1_l0a", "mte_l1_l0b", "mte_l1_l0a_mx", "mte_l1_l0b_mx",
     "mte_l0c_l1", "mte_l0c_gm", "mte_l0c_ub",
     "mad", "mad_acc", "mad_bias", "mad_mx", "mad_mx_acc", "mad_mx_bias",
