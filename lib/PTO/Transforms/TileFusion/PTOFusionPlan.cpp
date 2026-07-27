@@ -253,6 +253,31 @@ countConnectionsToGroup(const pto::FusionBlockAnalysis &blockAnalysis,
   return connections;
 }
 
+static unsigned
+countInternalEdges(const pto::FusionBlockAnalysis &blockAnalysis,
+                   ArrayRef<const pto::FusionComputeNode *> group) {
+  DenseSet<unsigned> memberIds;
+  for (const pto::FusionComputeNode *member : group)
+    memberIds.insert(member->id);
+
+  return llvm::count_if(blockAnalysis.edges,
+                        [&](const pto::FusionDFGEdge &edge) {
+                          return memberIds.contains(edge.producerNode) &&
+                                 memberIds.contains(edge.consumerNode);
+                        });
+}
+
+static unsigned
+countInternalConnections(const pto::FusionBlockAnalysis &blockAnalysis,
+                         ArrayRef<const pto::FusionComputeNode *> group) {
+  unsigned connections = 0;
+  for (auto [index, lhs] : llvm::enumerate(group))
+    for (const pto::FusionComputeNode *rhs : group.drop_front(index + 1))
+      if (nodesHaveDirectDataFlowConnection(blockAnalysis, *lhs, *rhs))
+        ++connections;
+  return connections;
+}
+
 static GroupFootprint
 computeGroupFootprint(ArrayRef<const pto::FusionComputeNode *> members) {
   DenseSet<Value> producedTiles;
@@ -280,6 +305,22 @@ computeGroupFootprint(ArrayRef<const pto::FusionComputeNode *> members) {
   return footprint;
 }
 
+static PlanningCost
+computePlanningCost(ArrayRef<const pto::FusionComputeNode *> members,
+                    unsigned connectionCount, int64_t loopMergeBenefit,
+                    unsigned liveTileLimit, unsigned vfParameterLimit) {
+  GroupFootprint footprint = computeGroupFootprint(members);
+
+  PlanningCost cost;
+  cost.dependencyBenefit = 4 * static_cast<int64_t>(connectionCount);
+  cost.loopMergeBenefit = loopMergeBenefit;
+  cost.liveTilePenalty = std::max<int64_t>(
+      0, static_cast<int64_t>(footprint.liveTileCount) - liveTileLimit);
+  cost.vfParameterPenalty = std::max<int64_t>(
+      0, static_cast<int64_t>(footprint.vfParameterCount) - vfParameterLimit);
+  return cost;
+}
+
 class CostModel {
 public:
   virtual ~CostModel() = default;
@@ -287,6 +328,10 @@ public:
   virtual PlanningDecision evaluateSeed(const PlanningContext &ctx,
                                         const pto::FusionComputeNode &candidate)
       const = 0;
+
+  virtual PlanningCost
+  evaluateGroup(const PlanningContext &ctx,
+                ArrayRef<const pto::FusionComputeNode *> members) const = 0;
 
   virtual PlanningDecision
   evaluateAppend(const PlanningContext &ctx,
@@ -310,6 +355,14 @@ public:
 
     decision.accept = true;
     return decision;
+  }
+
+  PlanningCost evaluateGroup(
+      const PlanningContext &ctx,
+      ArrayRef<const pto::FusionComputeNode *> members) const override {
+    return computePlanningCost(
+        members, countInternalEdges(ctx.blockAnalysis, members),
+        /*loopMergeBenefit=*/2, /*liveTileLimit=*/4, /*vfParameterLimit=*/6);
   }
 
   PlanningDecision
@@ -339,16 +392,10 @@ public:
     SmallVector<const pto::FusionComputeNode *, 8> proposedGroup(
         currentGroup.begin(), currentGroup.end());
     proposedGroup.push_back(&candidate);
-    GroupFootprint footprint = computeGroupFootprint(proposedGroup);
-
-    decision.cost.dependencyBenefit =
-        4 * static_cast<int64_t>(
-                countEdgesFromGroup(ctx.blockAnalysis, currentGroup, candidate));
-    decision.cost.loopMergeBenefit = 2;
-    decision.cost.liveTilePenalty =
-        std::max<int64_t>(0, static_cast<int64_t>(footprint.liveTileCount) - 4);
-    decision.cost.vfParameterPenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.vfParameterCount) - 6);
+    decision.cost = computePlanningCost(
+        proposedGroup,
+        countEdgesFromGroup(ctx.blockAnalysis, currentGroup, candidate),
+        /*loopMergeBenefit=*/2, /*liveTileLimit=*/4, /*vfParameterLimit=*/6);
     decision.accept = decision.cost.total() > 0;
     return decision;
   }
@@ -370,6 +417,15 @@ public:
 
     decision.accept = true;
     return decision;
+  }
+
+  PlanningCost evaluateGroup(
+      const PlanningContext &ctx,
+      ArrayRef<const pto::FusionComputeNode *> members) const override {
+    return computePlanningCost(
+        members, countInternalConnections(ctx.blockAnalysis, members),
+        /*loopMergeBenefit=*/4, /*liveTileLimit=*/10,
+        /*vfParameterLimit=*/12);
   }
 
   PlanningDecision
@@ -401,14 +457,9 @@ public:
     SmallVector<const pto::FusionComputeNode *, 8> proposedGroup(
         currentGroup.begin(), currentGroup.end());
     proposedGroup.push_back(&candidate);
-    GroupFootprint footprint = computeGroupFootprint(proposedGroup);
-
-    decision.cost.dependencyBenefit = 4 * static_cast<int64_t>(connectionCount);
-    decision.cost.loopMergeBenefit = 4;
-    decision.cost.liveTilePenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.liveTileCount) - 10);
-    decision.cost.vfParameterPenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.vfParameterCount) - 12);
+    decision.cost = computePlanningCost(
+        proposedGroup, connectionCount, /*loopMergeBenefit=*/4,
+        /*liveTileLimit=*/10, /*vfParameterLimit=*/12);
     decision.accept = decision.cost.total() > 0;
     return decision;
   }
