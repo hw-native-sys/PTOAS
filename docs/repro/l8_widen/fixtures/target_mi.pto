@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Desired MI: small-L (L=8) ui8→ui16 widen via vcvt PART_EVEN, then ui16 store.
+// Fused quant→dequant needs this shape; VMI currently illegalizes to extui.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @ui8_to_ui16_widen_l8_mi(
+      %src: !pto.ptr<ui8, ub>,
+      %dst: !pto.ptr<ui16, ub>,
+      %off: index) attributes {pto.kernel} {
+    pto.vecscope {
+      %m8 = pto.pset_b8 "PAT_VL8" : !pto.mask<b8>
+      %in = pto.vlds %src[%off] {dist = "NORM"}
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %even = pto.vcvt %in, %m8 {part = "EVEN"}
+          : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+      %m16 = pto.pset_b16 "PAT_VL8" : !pto.mask<b16>
+      pto.vsts %even, %dst[%off], %m16
+          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+    }
+    return
+  }
+}
