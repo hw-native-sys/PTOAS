@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Guards cost-guided FusionPlan search across competing block-local DFG paths.
+//
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --enable-op-fusion --emit-pto-ir %s --mlir-print-ir-after=pto-fusion-plan -o /dev/null 2>&1 | FileCheck %s
+
+module {
+  // The six-op prefix has live-tile/VF-parameter footprint 12. The first
+  // branch is immediately profitable, but raises the footprint enough to
+  // reject both later appends:
+  //
+  //   cost(prefix + first)          = 24
+  //   cost(prefix + second + join)  = 28
+  //
+  // Candidate-group search must therefore choose the later, higher-cost path.
+  // The independent two-op component must still form the next fusion group.
+  func.func @prefer_higher_group_cost(
+      %arg0: !pto.tile_buf<vec, 32x32xf32>,
+      %arg1: !pto.tile_buf<vec, 32x32xf32>,
+      %arg2: !pto.tile_buf<vec, 32x32xf32>,
+      %arg3: !pto.tile_buf<vec, 32x32xf32>,
+      %arg4: !pto.tile_buf<vec, 32x32xf32>,
+      %arg5: !pto.tile_buf<vec, 32x32xf32>,
+      %arg6: !pto.tile_buf<vec, 32x32xf32>,
+      %arg7: !pto.tile_buf<vec, 32x32xf32>,
+      %arg8: !pto.tile_buf<vec, 32x32xf32>) {
+    %tmp0 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp1 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp2 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp3 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp4 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp5 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %first = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %second = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %join = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %independent0 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %independent1 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+
+    pto.tadd ins(%arg0, %arg1 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp0 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp0, %arg2 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp1 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp1, %arg3 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp2 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp2, %arg4 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp3 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp3, %arg5 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp4 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.texp ins(%tmp4 : !pto.tile_buf<vec, 32x32xf32>) outs(%tmp5 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.texp ins(%tmp5 : !pto.tile_buf<vec, 32x32xf32>) outs(%first : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp5, %arg6 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%second : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%second, %tmp0 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%join : !pto.tile_buf<vec, 32x32xf32>)
+
+    pto.tadd ins(%arg7, %arg8 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%independent0 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.texp ins(%independent0 : !pto.tile_buf<vec, 32x32xf32>) outs(%independent1 : !pto.tile_buf<vec, 32x32xf32>)
+    return
+  }
+
+  // Both branches have the same whole-group cost, and accepting either one
+  // makes the other append unprofitable. Stable block order must break the tie.
+  func.func @stable_equal_cost_tie(
+      %arg0: !pto.tile_buf<vec, 32x32xf32>,
+      %arg1: !pto.tile_buf<vec, 32x32xf32>,
+      %arg2: !pto.tile_buf<vec, 32x32xf32>,
+      %arg3: !pto.tile_buf<vec, 32x32xf32>,
+      %arg4: !pto.tile_buf<vec, 32x32xf32>,
+      %arg5: !pto.tile_buf<vec, 32x32xf32>,
+      %arg6: !pto.tile_buf<vec, 32x32xf32>) {
+    %tmp0 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp1 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp2 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp3 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp4 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %tmp5 = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %first = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %second = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+
+    pto.tadd ins(%arg0, %arg1 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp0 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp0, %arg2 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp1 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp1, %arg3 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp2 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp2, %arg4 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp3 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp3, %arg5 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp4 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.tadd ins(%tmp4, %arg6 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp5 : !pto.tile_buf<vec, 32x32xf32>)
+    pto.texp ins(%tmp5 : !pto.tile_buf<vec, 32x32xf32>) outs(%first : !pto.tile_buf<vec, 32x32xf32>)
+    pto.texp ins(%tmp5 : !pto.tile_buf<vec, 32x32xf32>) outs(%second : !pto.tile_buf<vec, 32x32xf32>)
+    return
+  }
+}
+
+// CHECK: // -----// IR Dump After FusionPlan (pto-fusion-plan) //----- //
+// CHECK-LABEL: func.func @prefer_higher_group_cost(
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 0 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 1 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 2 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 3 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 4 : i64}
+// CHECK: pto.texp{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 5 : i64}
+// CHECK: pto.texp
+// CHECK-NOT: pto.fusion.group_id
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 6 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 7 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 1 : i64, pto.fusion.order = 0 : i64}
+// CHECK: pto.texp{{.*}}{pto.fusion.group_id = 1 : i64, pto.fusion.order = 1 : i64}
+
+// CHECK-LABEL: func.func @stable_equal_cost_tie(
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 0 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 1 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 2 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 3 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 4 : i64}
+// CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 5 : i64}
+// CHECK: pto.texp{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 6 : i64}
+// CHECK: pto.texp
+// CHECK-NOT: pto.fusion.group_id
