@@ -116,7 +116,7 @@ jobs:
       VPTO_SIM_WORKSPACE: ${{ github.workspace }}/.work/vpto-sim-ci
       TILELANG_DSL_WORKSPACE: ${{ github.workspace }}/.work/tilelang-dsl-ci
       TILELANG_DSL_UT_WORKSPACE: ${{ github.workspace }}/.work/tilelang-dsl-ut-ci
-      PYPTO_REF: main
+      PYPTO_REF: ef6ce7cd8bd33b4c93b58dc34830a20b145736ac
       PYPTO_WORKSPACE: ${{ github.workspace }}/.work/pypto-ci
       PYPTO_RUN_WORKSPACE: ${{ github.workspace }}/.work/pypto-run-ci
       PTO_ISA_COMMIT: 016396b57e2c17093f1194e6acd89bb112b0ab24
