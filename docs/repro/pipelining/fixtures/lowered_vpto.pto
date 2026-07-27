@@ -1,0 +1,100 @@
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @persistent_quant_tile_k512(%arg0: !pto.ptr<bf16, ub>, %arg1: !pto.ptr<f8E4M3FN, ub>, %arg2: !pto.vreg<64xf32>, %arg3: index) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c512 = arith.constant 512 : index
+    pto.vecscope {
+      %0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %1 = pto.vdup %arg2, %0 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %2 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %3 = pto.vdup %arg2, %2 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %4 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %5 = pto.vdup %arg2, %4 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %6 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %7 = pto.vdup %arg2, %6 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %8 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %9 = pto.vdup %arg2, %8 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %10 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %11 = pto.vdup %arg2, %10 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %12 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %13 = pto.vdup %arg2, %12 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %14 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %15 = pto.vdup %arg2, %14 {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      scf.for %arg4 = %c0 to %arg3 step %c1 {
+        %16 = arith.muli %arg4, %c512 : index
+        %result = pto.vlds %arg0[%16] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+        %c128 = arith.constant 128 : index
+        %17 = arith.addi %16, %c128 : index
+        %result_0 = pto.vlds %arg0[%17] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+        %c256 = arith.constant 256 : index
+        %18 = arith.addi %16, %c256 : index
+        %result_1 = pto.vlds %arg0[%18] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+        %c384 = arith.constant 384 : index
+        %19 = arith.addi %16, %c384 : index
+        %result_2 = pto.vlds %arg0[%19] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+        %20 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+        %21 = pto.vcvt %result, %20 {part = "EVEN"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %22 = pto.vcvt %result_0, %20 {part = "EVEN"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %23 = pto.vcvt %result_1, %20 {part = "EVEN"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %24 = pto.vcvt %result_2, %20 {part = "EVEN"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %25 = pto.vcvt %result, %20 {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %26 = pto.vcvt %result_0, %20 {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %27 = pto.vcvt %result_1, %20 {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %28 = pto.vcvt %result_2, %20 {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+        %low, %high = pto.vintlv %21, %25 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_3, %high_4 = pto.vintlv %22, %26 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_5, %high_6 = pto.vintlv %23, %27 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_7, %high_8 = pto.vintlv %24, %28 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_9, %high_10 = pto.vdintlv %low, %high : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_11, %high_12 = pto.vdintlv %low_3, %high_4 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_13, %high_14 = pto.vdintlv %low_9, %low_11 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_15, %high_16 = pto.vdintlv %high_10, %high_12 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_17, %high_18 = pto.vdintlv %low_5, %high_6 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_19, %high_20 = pto.vdintlv %low_7, %high_8 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_21, %high_22 = pto.vdintlv %low_17, %low_19 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %low_23, %high_24 = pto.vdintlv %high_18, %high_20 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+        %29 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %30 = pto.vmul %low_13, %1, %29 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %31 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %32 = pto.vmul %low_21, %3, %31 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %33 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %34 = pto.vmul %low_15, %5, %33 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %35 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %36 = pto.vmul %low_23, %7, %35 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %37 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %38 = pto.vmul %high_14, %9, %37 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %39 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %40 = pto.vmul %high_22, %11, %39 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %41 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %42 = pto.vmul %high_16, %13, %41 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %43 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %44 = pto.vmul %high_24, %15, %43 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %45 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %46 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+        %47 = pto.vcvt %30, %45 {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %48 = pto.vcvt %34, %45 {part = "P1", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %49 = pto.vcvt %38, %45 {part = "P2", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %50 = pto.vcvt %42, %45 {part = "P3", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %51 = pto.vor %47, %48, %46 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+        %52 = pto.vor %51, %49, %46 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+        %53 = pto.vor %52, %50, %46 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+        %54 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+        %55 = pto.vcvt %32, %45 {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %56 = pto.vcvt %36, %45 {part = "P1", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %57 = pto.vcvt %40, %45 {part = "P2", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %58 = pto.vcvt %44, %45 {part = "P3", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+        %59 = pto.vor %55, %56, %54 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+        %60 = pto.vor %59, %57, %54 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+        %61 = pto.vor %60, %58, %54 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+        %62 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+        pto.vsts %53, %arg1[%16], %62 : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+        %63 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+        %c256_25 = arith.constant 256 : index
+        %64 = arith.addi %16, %c256_25 : index
+        pto.vsts %61, %arg1[%64], %63 : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+      }
+    }
+    return
+  }
+}
+

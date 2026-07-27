@@ -1,0 +1,10 @@
+build/
+sim_outputs/
+*.so
+*.o
+log_ca/
+instr.bin
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
