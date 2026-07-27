@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
+#include <optional>
 
 #ifdef PTO_ENABLE_VFSIM_IR_PLANNER
 #include "native/IRPlanner.h"
@@ -522,6 +523,56 @@ public:
 };
 
 class ConservativeDAGGreedyStrategyEngine final : public StrategyEngine {
+  static constexpr unsigned kMaxCandidatesPerGroupSize = 64;
+
+  struct GroupCandidate {
+    SmallVector<const pto::FusionComputeNode *, 8> members;
+    DenseSet<unsigned> memberIds;
+    PlanningCost cost;
+  };
+
+  static bool haveSameMembers(const GroupCandidate &lhs,
+                              const GroupCandidate &rhs) {
+    if (lhs.members.size() != rhs.members.size())
+      return false;
+    return llvm::equal(
+        lhs.members, rhs.members,
+        [](const pto::FusionComputeNode *lhsNode,
+           const pto::FusionComputeNode *rhsNode) {
+          return lhsNode->id == rhsNode->id;
+        });
+  }
+
+  static bool isBetterCandidate(const GroupCandidate &lhs,
+                                const GroupCandidate &rhs) {
+    if (lhs.cost.total() != rhs.cost.total())
+      return lhs.cost.total() > rhs.cost.total();
+    if (lhs.members.size() != rhs.members.size())
+      return lhs.members.size() > rhs.members.size();
+
+    for (auto [lhsNode, rhsNode] : llvm::zip(lhs.members, rhs.members)) {
+      if (lhsNode->blockOrder != rhsNode->blockOrder)
+        return lhsNode->blockOrder < rhsNode->blockOrder;
+      if (lhsNode->id != rhsNode->id)
+        return lhsNode->id < rhsNode->id;
+    }
+    return false;
+  }
+
+  static void
+  addOrUpdateCandidate(SmallVectorImpl<GroupCandidate> &candidates,
+                       GroupCandidate candidate) {
+    auto existing = llvm::find_if(candidates, [&](const GroupCandidate &other) {
+      return haveSameMembers(candidate, other);
+    });
+    if (existing == candidates.end()) {
+      candidates.push_back(std::move(candidate));
+      return;
+    }
+    if (isBetterCandidate(candidate, *existing))
+      *existing = std::move(candidate);
+  }
+
 public:
   SmallVector<PlannedFusionGroup, 8>
   planBlock(const PlanningContext &ctx,
@@ -537,36 +588,57 @@ public:
       if (!seedDecision.accept)
         continue;
 
-      SmallVector<const pto::FusionComputeNode *, 8> groupMembers;
-      DenseSet<unsigned> groupNodeIds;
-      groupMembers.push_back(&seed);
-      groupNodeIds.insert(seed.id);
+      GroupCandidate seedCandidate;
+      seedCandidate.members.push_back(&seed);
+      seedCandidate.memberIds.insert(seed.id);
+      seedCandidate.cost =
+          costModel.evaluateGroup(ctx, seedCandidate.members);
 
-      bool changed = true;
-      while (changed) {
-        changed = false;
-        for (const pto::FusionComputeNode &candidate :
-             ctx.blockAnalysis.computeNodes) {
-          if (assignedNodes.contains(candidate.id) ||
-              groupNodeIds.contains(candidate.id))
-            continue;
+      SmallVector<GroupCandidate, 64> frontier;
+      frontier.push_back(std::move(seedCandidate));
+      std::optional<GroupCandidate> bestCandidate;
 
-          PlanningDecision appendDecision =
-              costModel.evaluateAppend(ctx, groupMembers, candidate);
-          if (!appendDecision.accept)
-            continue;
+      while (!frontier.empty()) {
+        SmallVector<GroupCandidate, 64> nextFrontier;
+        for (const GroupCandidate &current : frontier) {
+          for (const pto::FusionComputeNode &candidate :
+               ctx.blockAnalysis.computeNodes) {
+            if (assignedNodes.contains(candidate.id) ||
+                current.memberIds.contains(candidate.id))
+              continue;
 
-          groupMembers.push_back(&candidate);
-          groupNodeIds.insert(candidate.id);
-          changed = true;
+            PlanningDecision appendDecision =
+                costModel.evaluateAppend(ctx, current.members, candidate);
+            if (!appendDecision.accept)
+              continue;
+
+            GroupCandidate successor = current;
+            successor.members.push_back(&candidate);
+            successor.members = buildStableInGroupOrder(successor.members);
+            successor.memberIds.insert(candidate.id);
+            successor.cost =
+                costModel.evaluateGroup(ctx, successor.members);
+            addOrUpdateCandidate(nextFrontier, std::move(successor));
+          }
         }
+
+        llvm::stable_sort(nextFrontier, isBetterCandidate);
+        if (nextFrontier.size() > kMaxCandidatesPerGroupSize)
+          nextFrontier.resize(kMaxCandidatesPerGroupSize);
+
+        for (const GroupCandidate &candidate : nextFrontier)
+          if (!bestCandidate ||
+              isBetterCandidate(candidate, *bestCandidate))
+            bestCandidate = candidate;
+
+        frontier = std::move(nextFrontier);
       }
 
-      if (groupMembers.size() < 2)
+      if (!bestCandidate || bestCandidate->members.size() < 2)
         continue;
 
       PlannedFusionGroup group;
-      group.members = buildStableInGroupOrder(groupMembers);
+      group.members = bestCandidate->members;
       groups.push_back(group);
       for (const pto::FusionComputeNode *member : group.members)
         assignedNodes.insert(member->id);
