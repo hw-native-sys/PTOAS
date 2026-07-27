@@ -99,3 +99,12 @@ test/samples/**/npu_validation/*
 .planning/
 .work/
 .local/
+
+# local cannsim / build junk under docs/repro
+docs/repro/**/build/
+docs/repro/**/sim_outputs/
+docs/repro/**/*.so
+docs/repro/**/traces/
+docs/repro/**/*.zip
+docs/repro/**/route_table.txt
+docs/repro/**/rtb_debug.txt
