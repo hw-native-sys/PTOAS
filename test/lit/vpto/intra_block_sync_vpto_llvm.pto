@@ -14,6 +14,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.sync.wait <PIPE_MTE3>, 0
     pto.sync.set <PIPE_FIX>, %event_id
     pto.sync.wait <PIPE_MTE3>, %event_id
+    pto.sync.set <PIPE_S>, 16
+    pto.sync.wait <PIPE_S>, %event_id
     return
   }
 }

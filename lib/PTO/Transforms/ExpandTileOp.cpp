@@ -942,7 +942,7 @@ static FailureOr<PipeWireInfo> getPipeWireInfo(Operation *op) {
     return op->emitError("cannot resolve its pipe initializer");
   if (mlir::pto::getPipeInitAccPushEpilogue(init))
     return op->emitError(
-        "does not support acc_push_epilogue with --enable-pipe-tilelib-expand");
+        "does not support acc_push_epilogue for TileLib pipe expansion");
 
   auto addResource = [&](StringRef name, Value value) {
     if (value)

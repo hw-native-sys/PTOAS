@@ -4666,7 +4666,7 @@ def main() -> None:
             "native build should still pass the shared PTOAS compile inputs and output path",
         )
         ptoas_cmds.clear()
-        with mock.patch.dict(os.environ, {"PTOAS_FLAGS": "--tile-lib-backend=ptodsl --enable-pipe-tilelib-expand"}), mock.patch.object(
+        with mock.patch.dict(os.environ, {"PTOAS_FLAGS": "--tile-lib-backend=ptodsl"}), mock.patch.object(
             native_build_runtime, "resolve_ptoas_binary", return_value=Path("/tmp/fake-ptoas")
         ), mock.patch.object(native_build_runtime, "_run", side_effect=fake_run_ptoas_cmd):
             configured_ptoas_flags = native_build_runtime._configured_ptoas_flags()
@@ -4677,13 +4677,11 @@ def main() -> None:
                 extra_args=configured_ptoas_flags,
             )
         expect(
-            ptoas_cmds[0].count("--tile-lib-backend=ptodsl") == 1
-            and ptoas_cmds[0].count("--enable-pipe-tilelib-expand") == 1,
+            ptoas_cmds[0].count("--tile-lib-backend=ptodsl") == 1,
             "native build should forward PTOAS_FLAGS as individual PTOAS arguments",
         )
         expect(
-            configured_ptoas_flags
-            == ("--tile-lib-backend=ptodsl", "--enable-pipe-tilelib-expand"),
+            configured_ptoas_flags == ("--tile-lib-backend=ptodsl",),
             "native build should retain PTOAS_FLAGS in its cache-keyed PTOAS arguments",
         )
         ptoas_cmds.clear()

@@ -9,7 +9,7 @@
 // Run the complete VPTO TileLib path for a global pipe entry that is rebound by
 // pto.tassign. The test-only daemon renders no-op helpers so it isolates the
 // compiler's metadata, expansion, and helper-wiring contract from FIFO semantics.
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/Inputs/pipe_metadata_mock --enable-pipe-tilelib-expand --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/Inputs/pipe_metadata_mock --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s
 
 // CHECK: IR Dump After ExpandTileOp
 // CHECK-LABEL: func.func @pipe_tassign_tilelib_expand

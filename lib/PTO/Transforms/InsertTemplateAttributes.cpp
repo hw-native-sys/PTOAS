@@ -823,7 +823,7 @@ static FailureOr<PipeWireInfo> getPipeWireInfo(Operation *operation) {
     return operation->emitError("cannot resolve its pipe initializer");
   if (mlir::pto::getPipeInitAccPushEpilogue(init))
     return operation->emitError(
-        "does not support acc_push_epilogue with --enable-pipe-tilelib-expand");
+        "does not support acc_push_epilogue for TileLib pipe expansion");
 
   PipeWireInfo info;
   info.split = split;

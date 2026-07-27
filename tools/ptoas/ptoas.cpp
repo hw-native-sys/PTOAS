@@ -411,12 +411,6 @@ static llvm::cl::opt<bool> enableTileOpExpand(
         "--pto-backend=vpto."),
     llvm::cl::init(false));
 
-static llvm::cl::opt<bool> enablePipeTileLibExpand(
-    "enable-pipe-tilelib-expand",
-    llvm::cl::desc(
-        "Expand unified pipe operations through PTODSL TileLib on A5 VPTO"),
-    llvm::cl::init(false));
-
 #ifndef PTOAS_DEFAULT_TILELANG_PATH
 #define PTOAS_DEFAULT_TILELANG_PATH ""
 #endif
@@ -745,6 +739,20 @@ static bool hasUnexpandedTileOps(ModuleOp module) {
     // tile_buf_addr folding before VPTO emission.
     if (auto func = dyn_cast<func::FuncOp>(op);
         func && func->hasAttr("pto.tileop.helper"))
+      found = true;
+  });
+  return found;
+}
+
+static bool hasPipeTransactions(ModuleOp module) {
+  bool found = false;
+  module.walk([&](Operation *op) {
+    if (found)
+      return;
+    if (isa<pto::TAllocToAivOp, pto::TAllocToAicOp, pto::TPushToAivOp,
+            pto::TPushToAicOp, pto::TPopFromAivOp, pto::TPopFromAicOp,
+            pto::TFreeFromAivOp, pto::TFreeFromAicOp, pto::TAllocOp,
+            pto::TPushOp, pto::TPopOp, pto::TFreeOp, pto::TDrainOp>(op))
       found = true;
   });
   return found;
@@ -2983,22 +2991,6 @@ int mlir::pto::compilePTOASModule(
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
     return 1;
   }
-  if (enablePipeTileLibExpand && arch != "a5") {
-    llvm::errs() << "Error: --enable-pipe-tilelib-expand requires "
-                    "--pto-arch=a5.\n";
-    return 1;
-  }
-  if (enablePipeTileLibExpand && effectiveBackend != PTOBackend::VPTO) {
-    llvm::errs() << "Error: --enable-pipe-tilelib-expand requires "
-                    "--pto-backend=vpto.\n";
-    return 1;
-  }
-  if (enablePipeTileLibExpand && tileLibBackend != TileLibBackend::PTODSL) {
-    llvm::errs() << "Error: --enable-pipe-tilelib-expand requires "
-                    "--tile-lib-backend=ptodsl.\n";
-    return 1;
-  }
-
   module->getOperation()->setAttr("pto.target_arch",
                                   mlir::StringAttr::get(module->getContext(), arch));
 
@@ -3145,8 +3137,12 @@ int mlir::pto::compilePTOASModule(
     }
   }
 
+  const bool enableA5VPTOPipeExpansion =
+      arch == "a5" && effectiveBackend == PTOBackend::VPTO &&
+      hasPipeTransactions(*module);
+
   const bool hasTileOpsToExpand =
-      enablePipeTileLibExpand || hasUnexpandedTileOps(*module);
+      enableA5VPTOPipeExpansion || hasUnexpandedTileOps(*module);
   std::optional<pto::ExpandTileOpOptions> expandOptions;
   if (effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand &&
       tileLibBackend == TileLibBackend::PTODSL)
@@ -3179,11 +3175,10 @@ int mlir::pto::compilePTOASModule(
   // lifted to make it unconditional for all backends.
   if (effectiveBackend == PTOBackend::VPTO)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
-  pm.addPass(createSerialFrontendPipeLoweringPass(enablePipeTileLibExpand));
+  pm.addPass(
+      createSerialFrontendPipeLoweringPass(enableA5VPTOPipeExpansion));
   //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
-  if (enablePipeTileLibExpand)
-    pm.addPass(createRecursivePipeStateMaterializationPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
@@ -3203,7 +3198,7 @@ int mlir::pto::compilePTOASModule(
       expandOptions->tileLibBackend == "ptodsl") {
     auto insertOptions =
         buildInsertTemplateAttributesOptions(*expandOptions);
-    insertOptions.skipPipeOps = enablePipeTileLibExpand;
+    insertOptions.skipPipeOps = enableA5VPTOPipeExpansion;
     pm.addPass(
         pto::createInsertTemplateAttributesPass(insertOptions));
   }
@@ -3243,7 +3238,13 @@ int mlir::pto::compilePTOASModule(
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
-  if (enablePipeTileLibExpand && expandOptions &&
+  // PipeState is needed only by pipe metadata and expansion. Materialize it
+  // after the shared layout/fusion/memory-planning prefix so those passes keep
+  // consuming the pre-existing pipe IR, but before pipe-only metadata needs
+  // the state and resolved pipe resources.
+  if (enableA5VPTOPipeExpansion)
+    pm.addPass(createRecursivePipeStateMaterializationPass());
+  if (enableA5VPTOPipeExpansion && expandOptions &&
       expandOptions->tileLibBackend == "ptodsl") {
     auto pipeInsertOptions =
         buildInsertTemplateAttributesOptions(*expandOptions);

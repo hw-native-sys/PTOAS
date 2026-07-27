@@ -46,7 +46,7 @@ PTODSL Pipe object
   arbitrary `tpush` operation.
 - Supply `ExpandTileOp` with complete, resolved pipe metadata and resource
   operands after memory planning.
-- Keep the EmitC `TPipe` path unchanged when the VPTO feature gate is off.
+- Keep the EmitC `TPipe` path unchanged outside the A5 VPTO backend.
 - Provide a narrow ABI that an independently developed TileLib implementation
   can consume without depending on opaque `!pto.pipe` values.
 
@@ -108,29 +108,53 @@ For a split-capable GM pipe, the caller must provide an explicit full-slot
 `slot_size`. This prevents a split subregion from being mistaken for the FIFO
 slot size during frontend lowering.
 
-## 5. Feature Gate and Compatibility
+### 4.3 Pipe operations and the template boundary
 
-The compiler-side path is enabled only by:
+PTODSL source and frontend helpers use the public `Pipe` object. Its complete
+operation surface is:
 
-```text
---enable-pipe-tilelib-expand
-```
+| Category | Public surface | Contract |
+|---|---|---|
+| constructors | `pto.pipe.c2v(...)`, `pto.pipe.v2c(...)`, `pto.pipe.bidirectional(...)` | Create C2V, V2C, or bidirectional logical pipes. `id` is required and remains the stable pipe identity. |
+| initialization | `init_cube()`, `init_simd()` | Initialize the pipe from the Cube or SIMD side. A bidirectional pipe uses its root object for initialization. |
+| producer transaction | `alloc(split=0)` | Global-entry pipes only. Returns the descriptor for the next FIFO entry. |
+| producer transaction | `push(entry, split=0)` | Publishes a filled global entry or local tile to the consumer. |
+| consumer transaction | `pop(split=0, result_type=None, valid_shape=None, valid_row=None, valid_col=None)` | Returns the next global-entry descriptor or local tile. Local tile-entry pipes require `result_type`; `valid_shape` is mutually exclusive with `valid_row` / `valid_col`. |
+| consumer transaction | `free(entry=None, split=0)` | Releases a consumed FIFO entry. Global-entry pipes require the entry returned by the corresponding `pop`; local tile-entry pipes may omit it. |
+| read-only properties | `id`, `slot_size`, `entry_type` | Expose compile-time identity, full logical slot size in bytes, and the global-entry descriptor type when applicable. |
 
-The driver requires all of the following:
+`c2v` and `v2c` expose only directionally valid transactions. A bidirectional
+pipe must select `.c2v` or `.v2c` before calling `alloc`, `push`, `pop`, or
+`free`; its root object has no unambiguous transaction direction. `split` is a
+per-transaction compile-time value, not mutable Pipe-object state. It is `0`
+for no split, `1` for up/down split, and `2` for left/right split.
 
-```text
---pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl
-```
+These are PTODSL APIs, not TileLib template APIs. During expansion, a template
+does not receive a Python `Pipe` object and cannot call its methods. PTOAS
+passes the operation-specific `PipeSpec`, ordered `PipeResources`, shared
+`PipeState`, the entry when present, and the optional AIV subblock value
+through the ABI in Section 7. The TileLib owner implements the transaction's
+FIFO address, synchronization, and counter behavior from those ABI values;
+this change neither adds a template-side Pipe wrapper nor modifies
+`ptodsl/tilelib/**`.
 
-With the flag off, frontend pipe lowering and the existing EmitC path retain
-their prior behavior. In particular, PipeState is not materialized for that
-path. With the flag on, the driver performs the pipe-specific validation,
-state materialization, candidate discovery, and expansion preparation
-described below.
+## 5. A5 VPTO Default Behavior and Compatibility
 
-If the installed TileLib has not yet implemented a legal pipe candidate,
-candidate discovery/expansion fails explicitly. PTOAS must not silently fall
-back to C++ `TPipe` or to the legacy TileLang implementation.
+There is no pipe-expansion feature flag. When a module containing frontend or
+unified pipe transactions is compiled with `--pto-arch=a5 --pto-backend=vpto`,
+the driver automatically performs pipe-specific validation, PipeState
+materialization, candidate discovery, and expansion preparation. The default
+TileLib backend is PTODSL, so this default path uses PTODSL metadata and
+expansion.
+
+The PipeState materialization pass is inserted only for the A5 VPTO backend.
+All EmitC paths, including A5 EmitC, retain the existing `TPipe` lowering and
+do not materialize PipeState or terminal `tdrain`. A2/A3 behavior is also
+unchanged.
+
+If the selected TileLib has not implemented a legal pipe candidate, candidate
+discovery/expansion fails explicitly. PTOAS must not silently fall back to C++
+`TPipe` or to another TileLib implementation.
 
 ## 6. PTO IR Contract
 
@@ -194,7 +218,11 @@ initializer has not resolved `nosplit` yet.
 ### 6.3 Materialization pass
 
 `pto-materialize-pipe-state` runs per `func.func` after
-`pto-infer-validate-pipe-init` has resolved `nosplit`.
+`pto-infer-validate-pipe-init` has resolved `nosplit`. The A5 VPTO driver
+schedules it after layout, fusion, memory planning, and reserved-buffer
+resolution, immediately before pipe-only candidate discovery. This keeps the
+existing shared passes on their pre-existing pipe IR while providing
+PipeState, resolved `flag_base`, and resources together to pipe metadata.
 
 For each initialized pipe with stateful users, it:
 
@@ -348,7 +376,6 @@ The compiler provides actionable failures for these boundary violations:
 
 | Condition | Diagnostic direction |
 |---|---|
-| invalid feature-gate combination | require A5, VPTO, and PTODSL TileLib backend |
 | invalid PipeState type | require `!pto.struct<i32, i32>` |
 | inconsistent PipeState association | require every stateful user of one pipe to share one state |
 | invalid authored `tdrain.split` | require the split derived from resolved `nosplit` |
@@ -382,9 +409,9 @@ Focused compiler lit coverage additionally verifies PipeState materialization,
 the PipeSpec RPC payload (using a test-only mock daemon outside
 `ptodsl/tilelib/**`), defaulted and explicit AIV subblock operands, ordered
 GM and local/peer-local resource lists, VPTO LLVM lowering for mutable
-descriptors, verifier diagnostics, and feature-gate/flag-off EmitC
-compatibility. It does not claim that the mock daemon validates a TileLib
-template or FIFO runtime behavior.
+descriptors, verifier diagnostics, default A5 VPTO activation, and A5/A3
+EmitC compatibility. It does not claim that the mock daemon validates a
+TileLib template or FIFO runtime behavior.
 
 ### 11.2 Required TileLib follow-up coverage
 

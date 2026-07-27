@@ -39,7 +39,7 @@ PTODSL Pipe object
 - 为 A5 VPTO 路径显式表示可变 FIFO state。
 - materialize terminal producer cleanup，且不从任意一条 `tpush` 推导其策略。
 - 在内存规划后，向 `ExpandTileOp` 提供完整、已解析的 pipe metadata 与资源 operand。
-- feature gate 关闭时，保持 EmitC 的 `TPipe` 路径不变。
+- 在 A5 VPTO backend 之外，保持 EmitC 的 `TPipe` 路径不变。
 - 提供收敛的 ABI，使独立开发的 TileLib 可消费该信息，而不依赖 opaque
   `!pto.pipe` value。
 
@@ -97,26 +97,46 @@ transaction，但仍须满足既有 pipe configuration 校验。
 `gm_slot_tensor` shape 就是一个完整 FIFO slot。对于 split-capable GM pipe，调用方
 必须显式传入完整 slot 的 `slot_size`。这避免把 split subregion 误认为 FIFO slot size。
 
-## 5. 功能开关与兼容性
+### 4.3 Pipe 操作与 template 边界
 
-编译器侧路径仅由以下开关启用：
+PTODSL 源码和 frontend helper 使用公开的 `Pipe` object。其完整 operation surface
+如下：
 
-```text
---enable-pipe-tilelib-expand
-```
+| 类别 | 公开 surface | 契约 |
+|---|---|---|
+| constructor | `pto.pipe.c2v(...)`、`pto.pipe.v2c(...)`、`pto.pipe.bidirectional(...)` | 创建 C2V、V2C 或双向 logical pipe。`id` 必填，且始终是稳定的 pipe identity。 |
+| initialization | `init_cube()`、`init_simd()` | 从 Cube 或 SIMD 侧初始化 pipe。双向 pipe 使用 root object 初始化。 |
+| producer transaction | `alloc(split=0)` | 仅适用于 global-entry pipe；返回下一个 FIFO entry 的 descriptor。 |
+| producer transaction | `push(entry, split=0)` | 将填充完成的 global entry 或 local tile 发布给 consumer。 |
+| consumer transaction | `pop(split=0, result_type=None, valid_shape=None, valid_row=None, valid_col=None)` | 返回下一个 global-entry descriptor 或 local tile。local tile-entry pipe 必须提供 `result_type`；`valid_shape` 与 `valid_row` / `valid_col` 互斥。 |
+| consumer transaction | `free(entry=None, split=0)` | 释放已消费的 FIFO entry。global-entry pipe 必须传入相应 `pop` 返回的 entry；local tile-entry pipe 可省略。 |
+| read-only property | `id`、`slot_size`、`entry_type` | 暴露 compile-time identity、完整 logical slot 的 byte size，以及适用时的 global-entry descriptor type。 |
 
-driver 要求同时满足：
+`c2v` 和 `v2c` 只暴露方向合法的 transaction。双向 pipe 必须在调用 `alloc`、
+`push`、`pop` 或 `free` 前选择 `.c2v` 或 `.v2c`；其 root object 没有无歧义的
+transaction direction。`split` 是逐 transaction 的 compile-time value，不是可变的
+Pipe-object state：`0` 表示不切分，`1` 表示上下切分，`2` 表示左右切分。
 
-```text
---pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl
-```
+这些是 PTODSL API，并非 TileLib template API。template expansion 时，template 不会
+收到 Python `Pipe` object，也不能调用其方法。PTOAS 通过第 7 节 ABI 提供每条
+operation 的 `PipeSpec`、有序 `PipeResources`、共享 `PipeState`、存在时的 entry，以及
+可选 AIV subblock value。TileLib owner 根据这些 ABI value 实现 transaction 的 FIFO
+address、synchronization 和 counter 行为；本次变更既不新增 template-side Pipe wrapper，
+也不修改 `ptodsl/tilelib/**`。
 
-关闭开关后，frontend pipe lowering 和既有 EmitC 路径保持原行为，尤其不会为该路径
-materialize PipeState。打开开关后，driver 执行下文描述的 pipe-specific 校验、state
-materialization、candidate discovery 与 expansion preparation。
+## 5. A5 VPTO 默认行为与兼容性
 
-若已安装的 TileLib 尚未实现合法 pipe candidate，candidate discovery/expansion 会明确
-失败。PTOAS 不得静默回退到 C++ `TPipe` 或 legacy TileLang implementation。
+不存在 pipe expansion feature flag。当包含 frontend 或 unified pipe transaction 的 module
+使用 `--pto-arch=a5 --pto-backend=vpto` 编译时，driver 会自动执行 pipe-specific validation、
+PipeState materialization、candidate discovery 和 expansion preparation。默认 TileLib backend
+是 PTODSL，因此默认路径使用 PTODSL metadata 和 expansion。
+
+PipeState materialization pass 只插入到 A5 VPTO backend。所有 EmitC 路径（包括 A5
+EmitC）仍使用既有 `TPipe` lowering，且不会 materialize PipeState 或 terminal `tdrain`。
+A2/A3 行为同样保持不变。
+
+若所选 TileLib 尚未实现合法 pipe candidate，candidate discovery/expansion 会明确失败。
+PTOAS 不得静默回退到 C++ `TPipe` 或另一套 TileLib implementation。
 
 ## 6. PTO IR 契约
 
@@ -174,7 +194,10 @@ producer operation 推导：
 ### 6.3 Materialization pass
 
 `pto-materialize-pipe-state` 在 `pto-infer-validate-pipe-init` 已解析 `nosplit`
-之后，以每个 `func.func` 为单位运行。
+之后，以每个 `func.func` 为单位运行。A5 VPTO driver 将其安排在 layout、fusion、
+memory planning 和 reserved-buffer resolution 之后、pipe-only candidate discovery 之前。
+这样既有 shared pass 继续消费原有 pipe IR，同时 pipe metadata 能同时获得 PipeState、
+已解析的 `flag_base` 与资源。
 
 对于每个有 stateful user 的 initialized pipe，它会：
 
@@ -311,7 +334,6 @@ TileLib 实现必须把 PipeSpec 视为不可变 configuration，按声明顺序
 
 | 条件 | 诊断方向 |
 |---|---|
-| feature gate 组合非法 | 要求 A5、VPTO 和 PTODSL TileLib backend |
 | PipeState 类型非法 | 要求 `!pto.struct<i32, i32>` |
 | PipeState 关联不一致 | 要求同一 pipe 的全部 stateful user 共享一个 state |
 | hand-authored `tdrain.split` 非法 | 要求使用由已解析 `nosplit` 推导的 split |
@@ -342,8 +364,8 @@ ptodsl/tests/test_vector_cube_ops.py -v
 额外的 focused compiler lit coverage 覆盖 PipeState materialization、PipeSpec RPC
 payload（使用位于 `ptodsl/tilelib/**` 之外的 test-only mock daemon）、默认与显式 AIV
 subblock operand、有序的 GM 和 local/peer-local resource list、可变 descriptor 的
-VPTO LLVM lowering、verifier 诊断，以及 feature gate/flag-off EmitC compatibility。
-mock daemon 不代表 TileLib template 或 FIFO runtime 行为已经得到验证。
+VPTO LLVM lowering、verifier 诊断、默认 A5 VPTO activation，以及 A5/A3 EmitC
+compatibility。mock daemon 不代表 TileLib template 或 FIFO runtime 行为已经得到验证。
 
 ### 11.2 TileLib 必需的后续覆盖
 

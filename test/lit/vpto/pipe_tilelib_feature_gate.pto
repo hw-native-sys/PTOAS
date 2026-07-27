@@ -6,13 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --tile-lib-backend=ptodsl --enable-pipe-tilelib-expand --emit-vpto %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARCH
-// RUN: not ptoas --pto-arch=a5 --pto-backend=emitc --tile-lib-backend=ptodsl --enable-pipe-tilelib-expand %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=BACKEND
-// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=tilelang --enable-pipe-tilelib-expand --emit-vpto %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=TILELIB
-// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=EMITC
+// A5 EmitC retains the legacy pipe path: PipeState materialization and its
+// terminal tdrain are only inserted for the A5 VPTO backend.
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc %s 2>&1 | FileCheck %s --check-prefix=EMITC
 
 module {
-  func.func @emitc_pipe_unchanged()
+  func.func @a5_emitc_pipe_unchanged()
       attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
     %slots = pto.declare_global -> !pto.tensor_view<16x16xf32>
     %pipe = "pto.initialize_l2g2l_pipe"(%slots) <{
@@ -29,11 +28,8 @@ module {
   }
 }
 
-// ARCH: Error: --enable-pipe-tilelib-expand requires --pto-arch=a5.
-// BACKEND: Error: --enable-pipe-tilelib-expand requires --pto-backend=vpto.
-// TILELIB: Error: --enable-pipe-tilelib-expand requires --tile-lib-backend=ptodsl.
-// EMITC-LABEL: AICORE void emitc_pipe_unchanged(
-// EMITC: TPipe<0, Direction::DIR_C2V, 1024, 8, 8, true>
+// EMITC-LABEL: AICORE void a5_emitc_pipe_unchanged(
+// EMITC: TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>
 // EMITC: TALLOC<
 // EMITC: TPUSH<
 // EMITC-NOT: TDrain

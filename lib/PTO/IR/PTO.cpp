@@ -3593,11 +3593,12 @@ LogicalResult mlir::pto::SyncSetOp::verify() {
     case PIPE::PIPE_MTE2:
     case PIPE::PIPE_MTE3:
     case PIPE::PIPE_V:
+    case PIPE::PIPE_S:
       return success();
     default:
       return emitOpError()
              << "A5 sync.set expects pipe to be one of <PIPE_FIX>, <PIPE_MTE1>, "
-                "<PIPE_MTE2>, <PIPE_MTE3>, or <PIPE_V>";
+                "<PIPE_MTE2>, <PIPE_MTE3>, <PIPE_V>, or <PIPE_S>";
     }
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
@@ -3767,11 +3768,12 @@ LogicalResult mlir::pto::SyncWaitOp::verify() {
     case PIPE::PIPE_MTE2:
     case PIPE::PIPE_MTE3:
     case PIPE::PIPE_V:
+    case PIPE::PIPE_S:
       return success();
     default:
       return emitOpError() << "A5 sync.wait expects pipe to be one of "
                               "<PIPE_FIX>, <PIPE_MTE1>, <PIPE_MTE2>, "
-                              "<PIPE_MTE3>, <PIPE_V>";
+                              "<PIPE_MTE3>, <PIPE_V>, <PIPE_S>";
     }
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
