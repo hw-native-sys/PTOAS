@@ -584,6 +584,8 @@ jobs:
           import nanobind
           import numpy
           import pybind11
+          import pytest
+          import xdist
           import yaml
           import torch
           import torch_npu  # noqa: F401
@@ -595,6 +597,8 @@ jobs:
           print("numpy", numpy.__version__)
           print("nanobind", getattr(nanobind, "__version__", "unknown"))
           print("pybind11", pybind11.__version__)
+          print("pytest", pytest.__version__)
+          print("pytest-xdist", xdist.__version__)
           PY
           }
 
@@ -608,6 +612,8 @@ jobs:
               ("nanobind", "nanobind"),
               ("numpy", "numpy"),
               ("ml_dtypes", "ml-dtypes"),
+              ("pytest", "pytest"),
+              ("xdist", "pytest-xdist"),
               ("yaml", "PyYAML"),
           ]
 
@@ -896,9 +902,12 @@ jobs:
           export TORCH_DEVICE_BACKEND_AUTOLOAD=0
           source "${ASCEND_HOME_PATH}/bin/setenv.bash"
 
+          TILELIB_ST_OUTPUT_ROOT="${TILELANG_DSL_WORKSPACE}/tilelib-st-a5" \
           ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
           PTOAS_BIN="${PTO_DSL_ST_PTOAS_BIN}" \
-          scripts/sim_dsl.sh test/tilelib-st/run_tilelib_st.py -- test/tilelib-st/a5 \
+          "${PTO_DSL_ST_PYTHON_BIN}" -m pytest \
+            -n "${TILELIB_ST_JOBS:-16}" --dist=worksteal -v \
+            test/tilelib-st/test_tilelib_st.py \
             2>&1 | tee "${TILELANG_DSL_WORKSPACE}/tilelib-st-a5.log"
 
       - name: Run PTODSL ST CI
@@ -926,6 +935,7 @@ jobs:
             ${{ env.TILELANG_DSL_WORKSPACE }}/run_ci.log
             ${{ env.TILELANG_DSL_WORKSPACE }}/ptodsl-dsl-st.log
             ${{ env.TILELANG_DSL_WORKSPACE }}/tilelib-st-a5.log
+            ${{ env.TILELANG_DSL_WORKSPACE }}/tilelib-st-a5/**
             ${{ env.TILELANG_DSL_WORKSPACE }}/ptodsl-python-probe.log
           if-no-files-found: warn
 
