@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile-check CCE stages=2 vs VMI stages×block_k isolate + cast-back matrix.
+# Compile-check CCE stages=2 vs VMI stages×block_k isolate matrix (kernel-agnostic).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KERNEL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -96,10 +96,8 @@ ptodsl_py() {
   echo | tee -a "${LOG}"
 }
 
-# --- CCE baselines ---
+# --- CCE baseline ---
 compile_asc "reference_asc_cce.asc"
-compile_asc "reference_asc_cce_f8.asc"
-compile_asc "reference_asc_cce_cast_back.asc"
 
 echo "=== device/scale_stages2.asc (bisheng --cce-aicore-only) ===" | tee -a "${LOG}"
 set +e
@@ -120,11 +118,10 @@ else
 fi
 echo | tee -a "${LOG}"
 
-
 # --- VMI matrix: stages × block_k ---
-# stages=1 block_k=512 (current_slow) — emit OK on vmi-v0.1.3; lowered_vpto is chunked MI twin
 ptodsl_py "current_slow_vmi.py"
 emit_vpto "current_slow_vmi.pto" "pass"
+
 echo "=== lowered_vpto.pto (stages=1 chunked MI -> LLVM IR) ===" | tee -a "${LOG}"
 set +e
 ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
@@ -140,24 +137,14 @@ else
 fi
 echo | tee -a "${LOG}"
 
-# isolate stages=2 / block_k=512 — dual-buffer OK; separates stages from wide-tile fail
 ptodsl_py "isolate_stages2_blockk512_vmi.py"
 emit_vpto "isolate_stages2_blockk512_vmi.pto" "pass"
 
-# isolate stages=1 / block_k=1024 — wide tile layout reject
 ptodsl_py "isolate_stages1_blockk1024_vmi.py"
 emit_vpto "isolate_stages1_blockk1024_vmi.pto" "fail"
 
-# desired stages=2 / block_k=1024 — stages+wide (layout reject)
 ptodsl_py "desired_vmi.py"
 emit_vpto "desired_vmi.pto" "fail"
-
-# cast-back cells (f8->bf16); wide / dual-buffer cells reject today
-ptodsl_py "cast_back_stages1_k512_vmi.py"
-emit_vpto "cast_back_stages1_k512_vmi.pto" "fail"
-ptodsl_py "cast_back_stages2_k1024_vmi.py"
-emit_vpto "cast_back_stages2_k1024_vmi.pto" "fail"
-
 
 # target_mi: emit OK, bisheng object often crashes
 echo "=== target_mi.pto (emit-vpto + LLVM IR + bisheng .o) ===" | tee -a "${LOG}"
