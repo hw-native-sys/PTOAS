@@ -65,8 +65,8 @@ def main() -> None:
     expect(
         'pto.backend = "vpto"' in wrapper_text
         and 'pto.target_arch = "a5"' in wrapper_text
-        and 'pto.kernel_kind = #pto.kernel_kind<vector>' in wrapper_text,
-        "flash attention wrapper compile should encode the VPTO backend directly on the child module",
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in wrapper_text,
+        "flash attention wrapper compile should encode VPTO routing without asserting a physical kind",
     )
     expect("func.func @materialize_tile_bounds" in wrapper_text, "wrapper compile should emit the SIMT helper function")
     expect("pto.store_vfsimt_info" in wrapper_text, "wrapper compile should materialize SIMT caller metadata setup")
@@ -98,8 +98,8 @@ def main() -> None:
     expect(
         'pto.backend = "vpto"' in specialized_text
         and 'pto.target_arch = "a5"' in specialized_text
-        and 'pto.kernel_kind = #pto.kernel_kind<vector>' in specialized_text,
-        "direct compile should encode the VPTO backend directly on the child module",
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in specialized_text,
+        "direct compile should encode VPTO routing without asserting a physical kind",
     )
     expect("!pto.tile_buf<mat, 64x128xf32" in specialized_text, "BLOCK_Q=64 specialization should change the physical Q tile shape")
     expect("func.call @materialize_tile_bounds" in specialized_text, "direct compile should still route SIMT helpers through func.call")

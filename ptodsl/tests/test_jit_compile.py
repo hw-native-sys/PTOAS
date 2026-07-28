@@ -4149,14 +4149,14 @@ def main() -> None:
     expect(
         'pto.backend = "vpto"' in default_text
         and 'pto.target_arch = "a5"' in default_text
-        and 'pto.kernel_kind = #pto.kernel_kind<vector>' in default_text,
-        "primary VPTO child module should carry PTOAS-facing backend metadata directly on the child module",
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in default_text,
+        "default VPTO child module should preserve backend metadata without serializing the internal vector default as authored kernel kind",
     )
     expect(
         'pto.backend = "vpto"' in explicit_text
         and 'pto.target_arch = "a5"' in explicit_text
-        and 'pto.kernel_kind = #pto.kernel_kind<vector>' in explicit_text,
-        "explicit specialization child module should keep the same VPTO child metadata shape",
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in explicit_text,
+        "explicit-mode specialization should not serialize the default vector kind as authored intent",
     )
     expect(
         "ptodsl.compile_options" not in default_text,
@@ -4317,8 +4317,8 @@ def main() -> None:
     )
     expect(
         kernel_module_call_text.count('pto.backend = "vpto"') >= 2
-        and kernel_module_call_text.count('pto.kernel_kind = #pto.kernel_kind<vector>') >= 2,
-        "entry-plus-helper specialization should materialize separate child modules for caller and callee",
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in kernel_module_call_text,
+        "default entry-plus-helper specialization should materialize separate VPTO children without asserting a physical kind",
     )
     ast_rewrite_kernel_module_text = entry_calls_ast_rewrite_kernel_module_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(
@@ -4362,8 +4362,8 @@ def main() -> None:
     expect(
         'pto.backend = "vpto"' in mixed_backend_text
         and 'pto.target_arch = "a5"' in mixed_backend_text
-        and 'pto.kernel_kind = #pto.kernel_kind<vector>' in mixed_backend_text,
-        "mixed-backend callee child should preserve the callee's VPTO backend through child pto.backend metadata",
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in mixed_backend_text,
+        "default mixed-backend VPTO callee child should preserve backend metadata without asserting a physical kind",
     )
     expect(
         "pto.tload" in mixed_backend_text and "pto.tstore" in mixed_backend_text,
@@ -4960,9 +4960,13 @@ def main() -> None:
         and "pto.section.vector {" not in explicit_vector_inline_tileop_text,
         "inline pto.tileop() scopes should defer physical section materialization to PTOAS",
     )
-
     INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.clear()
     inline_subkernel_scope_text = inline_subkernel_scope_probe.compile(TRACE_TOKEN=1).mlir_text()
+    expect(
+        'pto.backend = "vpto"' in inline_subkernel_scope_text
+        and 'pto.kernel_kind = #pto.kernel_kind<' not in inline_subkernel_scope_text,
+        "default inline TileOp entries should leave physical section selection to PTOAS",
+    )
     expect_parse_roundtrip_and_verify(inline_subkernel_scope_text, "inline subkernel scope specialization")
     expect(
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS == [

@@ -77,7 +77,10 @@ def _apply_child_module_attrs(child_op, spec: KernelModuleSpec) -> None:
     child_op.attributes["pto.backend"] = StringAttr.get(spec.backend)
     if (
         spec.kernel_kind in {"cube", "vector"}
-        and (spec.backend == "vpto" or (spec.backend == "emitc" and not spec.entry))
+        and (
+            (spec.backend == "vpto" and spec.kernel_kind_explicit)
+            or (spec.backend == "emitc" and not spec.entry)
+        )
     ):
         child_op.attributes["pto.kernel_kind"] = Attribute.parse(
             f"#pto.kernel_kind<{spec.kernel_kind}>"
