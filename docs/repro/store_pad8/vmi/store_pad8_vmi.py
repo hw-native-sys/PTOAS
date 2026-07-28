@@ -1,9 +1,9 @@
 """PTO VMI port of the store_pad8 reduce epilogue (pad-8 workaround).
 
 ASC/CCE: vcadd + scalar vsts ONEPT_B32 per accumulator (see
-../cce/csrc/store_pad8_vf_sim_kernel.cpp). This PTOAS pin has no scalar-store
-primitive on VMI, so the reduced value is broadcast back to 8 lanes
-(vbrc size=8) and stored under an 8-wide mask.
+../cce/csrc/store_pad8_vf_sim_kernel.cpp). Product VMI workaround: broadcast
+the reduced value to 8 lanes (vbrc size=8) and store under an 8-wide mask.
+See store_mask1_vmi.py for the compact 1-lane store form.
 
 Output is the full padded [N_ACC, 8] buffer (lane 0 of each row holds the
 reduced value). Host-side compaction is out of scope here.

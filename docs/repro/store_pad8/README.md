@@ -2,36 +2,38 @@
 
 Self-contained cannsim microbench for PTOAS gap 03: after a cross-lane
 `vcadd`, CCE stores one f32 scalar per group with `vsts ... ONEPT_B32`.
-VMI on tag **vmi-v0.1.3** has no working scalar store, so kernels broadcast
-the reduced value to 8 lanes (`vbrc`) and store under an 8-wide mask — extra
-vector work and UB traffic on every accumulator row.
+Product VMI kernels often broadcast the reduced value to 8 lanes (`vbrc`)
+and store under an 8-wide mask — extra vector work and UB traffic on every
+accumulator row.
 
-This repro isolates that epilogue pattern. Fixing it lets VMI match CCE on
-small-tile paths (e.g. MHC post_bwd with small tiles). Large-tile main loops
-may still need separate follow-up work.
+This repro isolates that epilogue pattern and splits **kernel formulation**
+(pad-8 vs compact mask1) from **compiler lowering** (still not CCE-quality
+ONEPT / `1PT_B32` on tag **vmi-v0.1.3**).
 
 ## What breaks
 
 | Path | Store shape | Notes |
 |------|-------------|-------|
 | CCE (`cce/`) | ONEPT / 1 scalar | Baseline — see `fixtures/reference_asc_cce.asc` |
-| VMI current (`vmi/`) | pad-8 + mask8 | Workaround used in production kernels |
-| VMI desired (`fixtures/desired_vmi.*`) | mask-1 after `vcadd` | Lowers in IR but kernels still pad in practice |
+| VMI pad-8 (`vmi/store_pad8_vmi.py`) | pad-8 + mask8 | Product workaround; cannsim-runnable |
+| VMI mask1 (`vmi/store_mask1_vmi.py`) | compact `[N]` + mask1 | Same math; cannsim-runnable (`STORE_PAD8_VARIANT=mask1`) |
+| VMI desired (`fixtures/desired_vmi.*`) | mask-1 after `vcadd` | Compile-only single-tile fixture |
 | VMI target MI (`fixtures/target_mi.pto`) | `dist = "1PT_B32"` | ptoas LLVM IR OK; **bisheng crashes** on emitted HIVM |
 
-Run `./scripts/check_desired.sh` to record compile results for desired/target
-fixtures.
+`mask1` shows VMI can express and run a compact 1-lane store. It is still
+much slower than CCE because lowering keeps a fat `vdup`/`vadd` + masked
+`vsts` path, not ONEPT. True parity needs `1PT_B32` / ONEPT through bisheng.
 
 ## Layout
 
 ```
 store_pad8/
   cce/          CCE ONEPT kernel + ctypes launcher
-  vmi/          VMI pad-8 kernel (ptodsl)
+  vmi/          VMI pad-8 and mask1 kernels (ptodsl)
   common/       torch runtime, golden ref, build helper, top launcher
   fixtures/     IR dumps and reference ASC from gap 03
   test/         correctness test
-  scripts/      env, cannsim runners, check_desired
+  scripts/      env, cannsim runners, check_desired, run_three_way
 ```
 
 ## Prerequisites
@@ -49,13 +51,15 @@ From this directory (`docs/repro/store_pad8/`):
 ```bash
 source scripts/env.sh
 
-# Correctness + RVEC (default N_ACC=20 LARGE)
-STORE_PAD8_CASE=large ./scripts/run_cannsim.sh cce
-STORE_PAD8_CASE=large ./scripts/run_cannsim.sh vmi
+# Three-way: CCE ONEPT + VMI pad8 + VMI mask1 (default N_ACC=20)
+STORE_PAD8_CASE=large ./scripts/run_three_way.sh
+STORE_PAD8_CASE=small ./scripts/run_three_way.sh
 
-# Optional smoke (N_ACC=4)
-STORE_PAD8_CASE=small ./scripts/run_cannsim.sh cce
-STORE_PAD8_CASE=small ./scripts/run_cannsim.sh vmi
+# Or one backend
+STORE_PAD8_CASE=large ./scripts/run_cannsim.sh cce
+STORE_PAD8_CASE=large ./scripts/run_cannsim.sh vmi          # pad8
+STORE_PAD8_VARIANT=mask1 STORE_PAD8_CASE=large \
+  ./scripts/run_sim.sh test/test_store_pad8.py sim_outputs/store_pad8_large_vmi_mask1
 
 # Record desired/target compile attempts
 ./scripts/check_desired.sh
@@ -66,25 +70,40 @@ Correctness only (no cannsim):
 ```bash
 source scripts/env.sh
 TLVF_VMI_BACKEND=cce STORE_PAD8_CASE=large python3 test/test_store_pad8.py
-TLVF_VMI_BACKEND=vmi STORE_PAD8_CASE=large python3 test/test_store_pad8.py
+TLVF_VMI_BACKEND=vmi STORE_PAD8_VARIANT=pad8 STORE_PAD8_CASE=large python3 test/test_store_pad8.py
+TLVF_VMI_BACKEND=vmi STORE_PAD8_VARIANT=mask1 STORE_PAD8_CASE=large python3 test/test_store_pad8.py
 ```
 
-## Expected RVEC (N_ACC=20, Ascend950)
+## Measured RVEC (Ascend950 cannsim, 2026-07-28)
 
-| Backend | RVEC span | Top ops (approx.) |
-|---------|----------:|-------------------|
-| CCE | **63** | `RV_VLDI=20, RV_VCADD=20, RV_VSTI=20, RV_PSET=1` |
-| VMI | **281** | `RV_VCADD=20, RV_VADD=20, RV_VDUP=20, RV_VSTI=20, RV_VLDI=16, RV_PSET=4` |
+All three paths PASS correctness (`maxDiff≈1e-6`).
 
-Ratio **4.46×** (281 / 63) — almost entirely from the pad-8 broadcast+store per accumulator.
+### N_ACC=20 (LARGE)
 
-Measured on Ascend950 cannsim (2026-07-27): both backends PASS correctness for N_ACC=20 (`maxDiff≈1.43e-06`).
+| Backend | RVEC span | vs CCE | Top ops (approx.) |
+|---------|----------:|-------:|-------------------|
+| CCE ONEPT | **63** | 1.00× | `RV_VLDI=20, RV_VCADD=20, RV_VSTI=20, RV_PSET=1` |
+| VMI pad8 | **281** | 4.46× | `RV_VCADD=20, RV_VADD=20, RV_VDUP=20, RV_VSTI=20, RV_VLDI=16, RV_PSET=4` |
+| VMI mask1 | **267** | 4.24× | `RV_VCADD=20, RV_VADD=20, RV_VSTS=17, RV_VLDI=16, RV_VLDS=4, RV_PSET=3` |
+
+### N_ACC=4 (SMALL)
+
+| Backend | RVEC span | vs CCE | Top ops (approx.) |
+|---------|----------:|-------:|-------------------|
+| CCE ONEPT | **38** | 1.00× | `RV_VLDI=4, RV_VCADD=4, RV_VSTI=4, RV_PSET=1` |
+| VMI pad8 | **83** | 2.18× | `RV_PSET=4, RV_VLDI=4, RV_VCADD=4, RV_VADD=4, RV_VDUP=4, RV_VSTI=4` |
+| VMI mask1 | **75** | 1.97× | `RV_VLDI=4, RV_VCADD=4, RV_VADD=4, RV_PSET=3, RV_VSTS=3, RV_PLT=1` |
+
+**Read:** dropping pad-8 for compact mask1 barely helps (~5% at N=20). Most of
+the gap vs CCE is left in PTOAS lowering of the serial 1-lane store, not in
+the `vbrc×8` formulation alone. Simulator may log `check_addr_aligned` on
+some mask1 `RV_VSTS` ops; results still match golden.
 
 ## Done when
 
-VMI can emit and run `vcadd` + ONEPT/1PT scalar store without pad-8 — same
-instruction shape as CCE and `fixtures/target_mi.pto`. Until bisheng accepts
-the 1PT HIVM path, production kernels keep the pad-8 workaround.
+VMI can emit and run `vcadd` + ONEPT/1PT scalar store — same instruction
+shape as CCE and `fixtures/target_mi.pto`. Until bisheng accepts the 1PT
+HIVM path, mask1 is a useful formulation check but not a performance fix.
 
 ## Pin
 

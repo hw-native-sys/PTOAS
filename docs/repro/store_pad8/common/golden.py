@@ -1,8 +1,9 @@
 """Torch reference for the store_pad8 microbench.
 
 Each of N_ACC live f32 accumulator vectors (length VL) is reduced to one
-scalar. CCE stores compactly (vcadd + vsts ONEPT_B32). VMI on vmi-v0.1.3 has
-no scalar store, so it broadcasts to 8 lanes and stores under an 8-wide mask.
+scalar. CCE stores compactly (vcadd + vsts ONEPT_B32). VMI pad-8 broadcasts
+to 8 lanes under an 8-wide mask; VMI mask1 stores compactly under a 1-lane
+mask (still not CCE ONEPT lowering on vmi-v0.1.3).
 
 N_ACC=20 (LARGE) matches a typical residual-mix epilogue row count.
 N_ACC=4 (SMALL) is a quick smoke case.

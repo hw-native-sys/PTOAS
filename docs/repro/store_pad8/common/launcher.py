@@ -29,27 +29,51 @@ def launch_cce(acc: torch.Tensor, n_acc: int) -> torch.Tensor:
     return mod.launch(acc, n_acc)
 
 
-def launch_vmi(acc: torch.Tensor, n_acc: int) -> torch.Tensor:
-    key = f"vmi:{n_acc}"
+def launch_vmi(acc: torch.Tensor, n_acc: int, variant: str | None = None) -> torch.Tensor:
+    """VMI backends.
+
+    variant:
+      pad8  — product workaround; output [N,8], host gathers lane 0
+      mask1 — vcadd + 1-lane vstore; compact [N] out
+    """
+    variant = (variant or os.environ.get("STORE_PAD8_VARIANT", "pad8")).lower()
+    if variant not in ("pad8", "mask1"):
+        raise ValueError(f"unsupported STORE_PAD8_VARIANT={variant!r}")
+    if n_acc not in (4, 20):
+        raise ValueError(f"unsupported n_acc={n_acc}")
+
+    key = f"vmi:{variant}:{n_acc}"
     if key not in _COMPILED:
         sys.path.insert(0, str(ROOT / "vmi"))
-        from store_pad8_vmi import store_pad8_vmi_large, store_pad8_vmi_small
+        if variant == "pad8":
+            from store_pad8_vmi import store_pad8_vmi_large, store_pad8_vmi_small
 
-        kn = store_pad8_vmi_large if n_acc == 20 else store_pad8_vmi_small
-        if n_acc not in (4, 20):
-            raise ValueError(f"unsupported n_acc={n_acc}")
+            kn = store_pad8_vmi_large if n_acc == 20 else store_pad8_vmi_small
+        else:
+            from store_mask1_vmi import store_mask1_vmi_large, store_mask1_vmi_small
+
+            kn = store_mask1_vmi_large if n_acc == 20 else store_mask1_vmi_small
         _COMPILED[key] = kn.compile()
+
     compiled = _COMPILED[key]
-    pad = empty_npu((n_acc * 8,), torch.float32)
-    compiled[1, stream_ptr()](acc.data_ptr(), pad.data_ptr())
+    if variant == "pad8":
+        out = empty_npu((n_acc * 8,), torch.float32)
+    else:
+        out = empty_npu((n_acc,), torch.float32)
+    compiled[1, stream_ptr()](acc.data_ptr(), out.data_ptr())
     sync()
-    return pad
+    return out
 
 
-def launch(acc: torch.Tensor, n_acc: int, backend: str | None = None) -> torch.Tensor:
+def launch(
+    acc: torch.Tensor,
+    n_acc: int,
+    backend: str | None = None,
+    variant: str | None = None,
+) -> torch.Tensor:
     backend = (backend or os.environ.get("TLVF_VMI_BACKEND", "vmi")).lower()
     if backend == "cce":
         return launch_cce(acc, n_acc)
     if backend == "vmi":
-        return launch_vmi(acc, n_acc)
+        return launch_vmi(acc, n_acc, variant=variant)
     raise ValueError(f"unsupported backend: {backend}")
