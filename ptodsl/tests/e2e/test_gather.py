@@ -27,8 +27,10 @@ import pytest
 from .common import (
     make_gather_index_kernel,
     make_gatherb_kernel,
+    make_mgather_kernel,
     launch_and_check_gather,
     launch_and_check_gather_index,
+    launch_and_check_mgather,
 )
 
 
@@ -85,6 +87,17 @@ GATHER_INDEX_PARAMS = [
     )
     for dtype_str in ("float32", "float16")
     for rows, cols, desc in GATHER_INDEX_SHAPES
+]
+
+MGATHER_PARAMS = [
+    pytest.param(6, 16, 3, 16, "row", "undefined", "float16", id="mgather-row-undefined-f16"),
+    pytest.param(6, 8, 6, 8, "row", "zero", "float32", id="mgather-row-zero-f32"),
+    pytest.param(6, 16, 6, 16, "row", "clamp", "float16", id="mgather-row-clamp-f16"),
+    pytest.param(6, 8, 6, 8, "row", "wrap", "float32", id="mgather-row-wrap-f32"),
+    pytest.param(4, 8, 2, 8, "elem", "undefined", "float32", id="mgather-elem-undefined-f32"),
+    pytest.param(4, 16, 2, 16, "elem", "zero", "float16", id="mgather-elem-zero-f16"),
+    pytest.param(4, 8, 2, 8, "elem", "clamp", "float32", id="mgather-elem-clamp-f32"),
+    pytest.param(4, 16, 2, 16, "elem", "wrap", "float16", id="mgather-elem-wrap-f16"),
 ]
 
 
@@ -146,3 +159,49 @@ def test_gather_index(case, torch, target_arch, backend):
     )
     print(f"  PASS gather index {dtype_str} {rows}x{cols} ({desc}) "
           f"compile={compile_s:.3f}s launch={launch_s:.3f}s")
+
+
+@pytest.mark.require_npu
+@pytest.mark.parametrize(
+    "src_rows,src_cols,dst_rows,dst_cols,coalesce,gather_oob,dtype_str",
+    MGATHER_PARAMS,
+)
+def test_mgather(
+    src_rows,
+    src_cols,
+    dst_rows,
+    dst_cols,
+    coalesce,
+    gather_oob,
+    dtype_str,
+    torch,
+    target_arch,
+    backend,
+):
+    kernel = make_mgather_kernel(
+        src_rows=src_rows,
+        src_cols=src_cols,
+        dst_rows=dst_rows,
+        dst_cols=dst_cols,
+        coalesce=coalesce,
+        gather_oob=gather_oob,
+        dtype_str=dtype_str,
+        target=target_arch,
+        backend=backend,
+    )
+    compile_s, launch_s = launch_and_check_mgather(
+        kernel_handle=kernel,
+        src_rows=src_rows,
+        src_cols=src_cols,
+        dst_rows=dst_rows,
+        dst_cols=dst_cols,
+        coalesce=coalesce,
+        gather_oob=gather_oob,
+        dtype_str=dtype_str,
+        torch=torch,
+    )
+    print(
+        f"  PASS mgather {coalesce}/{gather_oob} {dtype_str} "
+        f"{src_rows}x{src_cols}->{dst_rows}x{dst_cols} "
+        f"compile={compile_s:.3f}s launch={launch_s:.3f}s"
+    )

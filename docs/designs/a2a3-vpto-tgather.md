@@ -100,8 +100,14 @@ intrinsic:
 - `Coalesce::Elem` performs scalar indexed GM loads and UB stores for each valid
   destination element, with the same four OOB policies.
 - The lowering accepts the A2/A3 payload set
-  (`i8/ui8/i16/ui16/i32/ui32/f16/bf16/f32`) and preserves arbitrary row-major
-  GM view strides by flattening logical indices through extracted metadata.
+  (`i8/ui8/i16/ui16/i32/ui32/f16/bf16/f32`) with signless `i32` indices and
+  row-major, none-box UB tiles. Source and destination element types must match.
+- `Coalesce::Row` requires a statically positive effective rank-2 ND table,
+  exact source/destination row-width agreement, unit innermost stride, and a
+  32-byte-aligned row transfer. `Coalesce::Elem` requires a statically positive,
+  dense contiguous table and treats each index as a direct flat element offset.
+- Unsupported dynamic, empty, strided Elem, column-major, row-plus-one, scratch,
+  and implicit-coalesce forms fail at the A2/A3 VPTO lowering boundary.
 - GM-to-L1 MGATHER is rejected explicitly at the A2/A3 VPTO lowering boundary
   until its separate NZ/scratch path is implemented.
 
@@ -208,8 +214,8 @@ bisheng-unverified model (drops strides, no suffix, no bisheng test) — not use
 
 ### 4. End-to-end tests (`ptodsl/tests/e2e/test_gather.py`)
 
-PTODSL-authored via `pto.tile.gatherb` (block form) and `pto.tile.gather`
-(index form), a3/vpto, numpy goldens, reusing the
+PTODSL-authored via `pto.tile.gatherb` (block form), `pto.tile.gather`
+(index form), and `pto.tile.mgather` (GM-to-UB Row/Elem), a3/vpto, numpy goldens, reusing the
 `ptodsl/tests/e2e/common.py` harness. Run on NPU manually; there is no CI NPU
 job for these today.
 

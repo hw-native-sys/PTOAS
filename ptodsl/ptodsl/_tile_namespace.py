@@ -181,6 +181,7 @@ class _TileNamespace:
     gather = staticmethod(_ops.tgather)
     gatherb = staticmethod(_ops.tgatherb)
     scatter = staticmethod(_ops.tscatter)
+    mgather = staticmethod(_ops.mgather)
 
     tri = staticmethod(_ops.ttri)
     histogram = staticmethod(_ops.tthistogram)

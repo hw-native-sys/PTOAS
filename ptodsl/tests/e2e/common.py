@@ -716,3 +716,158 @@ def launch_and_check_gather_index(
     actual = dst_dev.cpu().numpy().reshape(rows, cols)
     np.testing.assert_allclose(actual, golden, rtol=rtol, atol=atol)
     return compile_s, launch_s
+
+
+def make_mgather_kernel(
+    *,
+    src_rows: int,
+    src_cols: int,
+    dst_rows: int,
+    dst_cols: int,
+    coalesce: str,
+    gather_oob: str,
+    dtype_str: str = "float32",
+    target: str = "a3",
+    backend: str = "vpto",
+    kernel_kind: str = "vector",
+):
+    """Return a ``@pto.jit`` KernelHandle for GM-to-UB ``pto.tile.mgather``."""
+    pto_dtype = getattr(pto, dtype_str)
+    idx_dtype = pto.i32
+    idx_rows = 1 if coalesce == "row" else dst_rows
+    idx_cols = dst_rows if coalesce == "row" else dst_cols
+    idx_physical_cols = ((idx_cols + 7) // 8) * 8
+    fn_name = (
+        f"mgather_{coalesce}_{gather_oob}_{dtype_str}_"
+        f"{src_rows}x{src_cols}_{dst_rows}x{dst_cols}"
+    )
+
+    def kernel_body(
+        Src_ptr: pto.ptr(pto_dtype, "gm"),
+        Idx_ptr: pto.ptr(idx_dtype, "gm"),
+        Dst_ptr: pto.ptr(pto_dtype, "gm"),
+    ) -> None:
+        c0 = pto.const(0)
+        c1 = pto.const(1)
+        c_src_rows = pto.const(src_rows)
+        c_src_cols = pto.const(src_cols)
+        c_src_elems = pto.const(src_rows * src_cols)
+        c_idx_rows = pto.const(idx_rows)
+        c_idx_cols = pto.const(idx_physical_cols)
+        c_idx_elems = pto.const(idx_rows * idx_physical_cols)
+        c_dst_rows = pto.const(dst_rows)
+        c_dst_cols = pto.const(dst_cols)
+        c_dst_elems = pto.const(dst_rows * dst_cols)
+
+        src_shape = [c1, c1, c1, c_src_rows, c_src_cols]
+        src_strides = [c_src_elems, c_src_elems, c_src_elems, c_src_cols, c1]
+        idx_shape = [c1, c1, c1, c_idx_rows, c_idx_cols]
+        idx_strides = [c_idx_elems, c_idx_elems, c_idx_elems, c_idx_cols, c1]
+        dst_shape = [c1, c1, c1, c_dst_rows, c_dst_cols]
+        dst_strides = [c_dst_elems, c_dst_elems, c_dst_elems, c_dst_cols, c1]
+        off = [c0, c0, c0, c0, c0]
+
+        src_view = pto.make_tensor_view(Src_ptr, shape=src_shape, strides=src_strides)
+        idx_view = pto.make_tensor_view(Idx_ptr, shape=idx_shape, strides=idx_strides)
+        dst_view = pto.make_tensor_view(Dst_ptr, shape=dst_shape, strides=dst_strides)
+        src_part = pto.partition_view(src_view, offsets=off, sizes=src_shape)
+        idx_part = pto.partition_view(idx_view, offsets=off, sizes=idx_shape)
+        dst_part = pto.partition_view(dst_view, offsets=off, sizes=dst_shape)
+
+        idx_tile = pto.alloc_tile(
+            shape=[idx_rows, idx_physical_cols],
+            valid_shape=[idx_rows, idx_cols],
+            dtype=idx_dtype,
+        )
+        dst_tile = pto.alloc_tile(shape=[dst_rows, dst_cols], dtype=pto_dtype)
+        pto.tile.load(idx_part, idx_tile)
+        pto.tile.mgather(
+            src_part,
+            idx_tile,
+            dst_tile,
+            coalesce,
+            gather_oob=gather_oob,
+        )
+        pto.tile.store(dst_tile, dst_part)
+
+    kernel_body.__name__ = fn_name
+    return pto.jit(
+        name=fn_name,
+        kernel_kind=kernel_kind,
+        target=target,
+        backend=backend,
+    )(kernel_body)
+
+
+def launch_and_check_mgather(
+    *,
+    kernel_handle,
+    src_rows: int,
+    src_cols: int,
+    dst_rows: int,
+    dst_cols: int,
+    coalesce: str,
+    gather_oob: str,
+    dtype_str: str,
+    torch,
+    seed: int = 42,
+):
+    """Compile, launch, and numerical-check one GM-to-UB mgather kernel."""
+    rng = np.random.RandomState(seed)
+    np_dtype = np.float32 if dtype_str == "float32" else np.float16
+    src = rng.randint(1, 10, size=(src_rows, src_cols)).astype(np_dtype)
+    idx_rows = 1 if coalesce == "row" else dst_rows
+    idx_cols = dst_rows if coalesce == "row" else dst_cols
+    idx_physical_cols = ((idx_cols + 7) // 8) * 8
+    idx_count = idx_rows * idx_cols
+    limit = src_rows if coalesce == "row" else src_rows * src_cols
+    if gather_oob == "undefined":
+        idx = rng.randint(0, limit, size=(idx_count,), dtype=np.int32)
+    else:
+        pattern = np.array([-2, -1, 0, limit - 1, limit, limit + 1], dtype=np.int32)
+        idx = np.resize(pattern, idx_count)
+
+    if gather_oob == "clamp":
+        normalized = np.clip(idx, 0, limit - 1)
+    elif gather_oob == "wrap":
+        normalized = idx % limit
+    else:
+        normalized = idx
+
+    if coalesce == "row":
+        golden = np.zeros((dst_rows, dst_cols), dtype=np_dtype)
+        valid = (idx >= 0) & (idx < limit)
+        if gather_oob in {"clamp", "wrap"}:
+            valid[:] = True
+        golden[valid] = src[normalized[valid], :dst_cols]
+    else:
+        src_flat = src.reshape(-1)
+        golden_flat = np.zeros((idx_count,), dtype=np_dtype)
+        valid = (idx >= 0) & (idx < limit)
+        if gather_oob in {"clamp", "wrap"}:
+            valid[:] = True
+        golden_flat[valid] = src_flat[normalized[valid]]
+        golden = golden_flat.reshape(dst_rows, dst_cols)
+
+    torch_dt = _torch_dtype(torch, dtype_str)
+    idx_storage = np.zeros((idx_rows, idx_physical_cols), dtype=np.int32)
+    if coalesce == "row":
+        idx_storage[0, :idx_cols] = idx
+    else:
+        idx_storage[:, :dst_cols] = idx.reshape(dst_rows, dst_cols)
+    src_dev = torch.from_numpy(src).to(device="npu:0", dtype=torch_dt)
+    idx_dev = torch.from_numpy(idx_storage).to(device="npu:0", dtype=torch.int32)
+    dst_dev = torch.empty((dst_rows, dst_cols), dtype=torch_dt, device="npu:0")
+    stream = _npu_stream(torch)
+
+    t0 = time.perf_counter()
+    compiled = kernel_handle.compile()
+    compile_s = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    compiled[1, stream](src_dev.data_ptr(), idx_dev.data_ptr(), dst_dev.data_ptr())
+    torch.npu.synchronize()
+    launch_s = time.perf_counter() - t0
+
+    np.testing.assert_array_equal(dst_dev.cpu().numpy(), golden)
+    return compile_s, launch_s

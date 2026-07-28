@@ -4147,6 +4147,32 @@ def tscatter(src, dst, *, indexes=None, axis=None, mask_pattern=None):
     )
 
 
+def mgather(mem, idx, dst, coalesce, *, scratch=None, gather_oob=None):
+    """``pto.mgather`` from a GM tensor view into a destination tile."""
+    if not isinstance(coalesce, Attribute):
+        coalesce = _enum_attr(
+            "coalesce",
+            coalesce,
+            supported={"row", "elem"},
+            context="tile.mgather(..., coalesce=...)",
+        )
+    if gather_oob is not None and not isinstance(gather_oob, Attribute):
+        gather_oob = _enum_attr(
+            "gather_oob",
+            gather_oob,
+            supported={"undefined", "clamp", "wrap", "zero"},
+            context="tile.mgather(..., gather_oob=...)",
+        )
+    _pto.mgather(
+        unwrap_surface_value(mem),
+        unwrap_surface_value(idx),
+        unwrap_surface_value(dst),
+        coalesce,
+        scratch=None if scratch is None else unwrap_surface_value(scratch),
+        gather_oob=gather_oob,
+    )
+
+
 def tsel(mask, src0, src1, dst, *, tmp=None):
     """``pto.tsel ins(mask, src0, src1, tmp) outs(dst)`` with synthesized scratch when omitted."""
     resolved_tmp = tmp if tmp is not None else _resolve_selection_tmp(dst, tmp, context="tsel")
