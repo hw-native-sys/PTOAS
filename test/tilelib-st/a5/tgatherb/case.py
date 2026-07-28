@@ -47,16 +47,18 @@ def npy_dtype(pto_type) -> np.dtype:
 # The offset tile has shape [dst_rows, dst_cols // elems_per_block] and contains
 # byte offsets into the flat src tile.
 # elems_per_block = 32 // dtype.itemsize
+# Keep at least two template-loop iterations for the reduced wide cases while
+# covering every supported dtype and both single-row and multi-row tiles.
 CASE_SHAPES = [
     ("f32_2x128", pto.f32, (2, 128), (2, 128)),
     ("i32_2x128", pto.i32, (2, 128), (2, 128)),
     ("ui32_2x128", pto.ui32, (2, 128), (2, 128)),
-    ("i16_1x32768", pto.i16, (1, 32768), (1, 32768)),
-    ("ui16_257x128", pto.ui16, (257, 128), (257, 128)),
-    ("f16_1x32768", pto.f16, (1, 32768), (1, 32768)),
+    ("i16_1x256", pto.i16, (1, 256), (1, 256)),
+    ("ui16_3x128", pto.ui16, (3, 128), (3, 128)),
+    ("f16_1x256", pto.f16, (1, 256), (1, 256)),
     ("i8_2x256", pto.i8, (2, 256), (2, 256)),
-    ("i8_2x32768", pto.i8, (2, 32768), (2, 32768)),
-    ("ui8_2x32768", pto.ui8, (2, 32768), (2, 32768)),
+    ("i8_2x512", pto.i8, (2, 512), (2, 512)),
+    ("ui8_2x512", pto.ui8, (2, 512), (2, 512)),
 ]
 
 

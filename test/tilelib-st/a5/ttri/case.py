@@ -43,56 +43,58 @@ def _aligned_cols(cols, elem_bytes):
 # Static cases: tile_shape == valid_shape (matches TTRIParams in pto-isa reference)
 # Dynamic cases: tile_shape != valid_shape (matches TTRIDynParams in pto-isa reference)
 _TRIL_CASES = [
+    # The 32x91 cases retain unaligned valid widths; the 32x64 cases cover the
+    # aligned path without repeating the former 128x128 simulator workload.
     # ── static cases (16) ──
     ((20, 32),   (20, 32),   np.float16, "lower", 0),
     ((20, 32),   (20, 32),   np.uint8,   "lower", 0),
     ((32, 91),   (32, 91),   np.float32, "lower", 0),
-    ((128, 128), (128, 128), np.float32, "lower", 0),
+    ((32, 64),   (32, 64),   np.float32, "lower", 0),
     ((32, 91),   (32, 91),   np.float32, "lower", 3),
-    ((128, 128), (128, 128), np.float32, "lower", 3),
+    ((32, 64),   (32, 64),   np.float32, "lower", 3),
     ((32, 91),   (32, 91),   np.float32, "lower", -3),
-    ((128, 128), (128, 128), np.float32, "lower", -3),
+    ((32, 64),   (32, 64),   np.float32, "lower", -3),
     ((32, 91),   (32, 91),   np.float32, "upper", 0),
-    ((128, 128), (128, 128), np.float32, "upper", 0),
+    ((32, 64),   (32, 64),   np.float32, "upper", 0),
     ((32, 91),   (32, 91),   np.float32, "upper", 3),
-    ((128, 128), (128, 128), np.float32, "upper", 3),
+    ((32, 64),   (32, 64),   np.float32, "upper", 3),
     ((32, 91),   (32, 91),   np.float32, "upper", -3),
-    ((128, 128), (128, 128), np.float32, "upper", -3),
-    ((763, 32),  (763, 32),  np.float32, "lower", -41),
-    ((763, 32),  (763, 32),  np.float32, "upper", -41),
+    ((32, 64),   (32, 64),   np.float32, "upper", -3),
+    ((48, 32),   (48, 32),   np.float32, "lower", -41),
+    ((48, 32),   (48, 32),   np.float32, "upper", -41),
 
     # ── dynamic cases (9) ──
-    ((30, 208),  (30, 208),  np.float16, "upper", 0),
-    ((30, 208),  (30, 176),  np.float16, "upper", 0),
-    ((293, 16),  (269, 16),  np.float16, "lower", -41),
-    ((293, 16),  (293, 16),  np.float16, "lower", -41),
-    ((293, 16),  (287, 16),  np.float16, "lower", -41),
-    ((32, 128),  (32, 128),  np.int8,    "lower", 0),
-    ((32, 128),  (24, 112),  np.int8,    "lower", 0),
-    ((293, 16),  (1, 16),    np.float16, "lower", 0),
-    ((293, 16),  (2, 16),    np.float16, "lower", 0),
+    ((4, 80),    (4, 80),    np.float16, "upper", 0),
+    ((4, 80),    (3, 67),    np.float16, "upper", 0),
+    ((48, 16),   (43, 16),   np.float16, "lower", -41),
+    ((48, 16),   (48, 16),   np.float16, "lower", -41),
+    ((48, 16),   (47, 16),   np.float16, "lower", -41),
+    ((8, 64),    (8, 64),    np.int8,    "lower", 0),
+    ((8, 64),    (5, 48),    np.int8,    "lower", 0),
+    ((8, 16),    (1, 16),    np.float16, "lower", 0),
+    ((8, 16),    (2, 16),    np.float16, "lower", 0),
 ]
 
 _TRIL_KERNELS = {}
 CASES = []
 
 for _tile, _valid, _np_dtype, _upper, _diag in _TRIL_CASES:
+    _tr, _tc = _tile
     _vr, _vc = _valid
     _elem_bytes = _DTYPE_MAP[_np_dtype]["bytes"]
-    _ac = _aligned_cols(_vc, _elem_bytes)
-    _tile_shape = (_vr, _ac)
+    _ac = _aligned_cols(_tc, _elem_bytes)
     _pdsl = _DTYPE_MAP[_np_dtype]["ptodsl"]
     _dname = _DTYPE_MAP[_np_dtype]["name"]
     _ulab = _upper
     _dstr = str(_diag) if _diag >= 0 else f"m{abs(_diag)}"
     _kname = f"ttri_{_ulab}_{_dname}_{_vr}x{_vc}_d{_dstr}"
 
-    def _make(vr=_vr, vc=_vc, ac=_ac, pdsl=_pdsl, upper=_upper,
+    def _make(tr=_tr, vr=_vr, vc=_vc, ac=_ac, pdsl=_pdsl, upper=_upper,
               diag=_diag, kname=_kname):
         @pto.jit(name=kname, target="a5")
         def _kernel(out_ptr: pto.ptr(pdsl, "gm")):
             out_view = pto.make_tensor_view(out_ptr, shape=[vr, vc], strides=[vc, 1])
-            out_tile = pto.alloc_tile(shape=[vr, ac], dtype=pdsl,
+            out_tile = pto.alloc_tile(shape=[tr, ac], dtype=pdsl,
                                       valid_shape=[vr, vc])
             pto.tile.tri(diag, out_tile, upper_or_lower=upper)
             pto.tile.store(out_tile, out_view)

@@ -38,28 +38,19 @@ def npy_dtype(pto_type) -> np.dtype:
     """Return the numpy dtype corresponding to a pto scalar-dtype name."""
     return PTO_TO_NP_DTYPE[pto_type]
 
+# Cover short tails, an aligned vector span, a cross-256 span, both directions,
+# and every supported integer width/sign.  Larger spans exercise the same
+# scalar-store loop and only add simulator pressure.
 CASE_SHAPES = [
     ("i32_1x7", pto.i32, (1, 7), False),
     ("i32_1x128_desc", pto.i32, (1, 128), True),
-    ("i32_1x192", pto.i32, (1, 192), False),
-    ("i32_1x600_desc", pto.i32, (1, 600), True),
-    ("i32_1x800", pto.i32, (1, 800), False),
-    ("i32_1x1408_desc", pto.i32, (1, 1408), True),
-    ("i32_1x2560", pto.i32, (1, 2560), False),
-    ("i32_1x3200_desc", pto.i32, (1, 3200), True),
-    ("i32_1x3840", pto.i32, (1, 3840), False),
+    ("i32_1x257", pto.i32, (1, 257), False),
     ("i16_1x7", pto.i16, (1, 7), False),
     ("i16_1x192_desc", pto.i16, (1, 192), True),
-    ("i16_1x800", pto.i16, (1, 800), False),
-    ("i16_1x1408_desc", pto.i16, (1, 1408), True),
-    ("i16_1x3200", pto.i16, (1, 3200), False),
+    ("i16_1x257", pto.i16, (1, 257), False),
     ("ui32_1x7", pto.ui32, (1, 7), False),
-    ("ui32_1x7_desc", pto.ui32, (1, 7), True),
-    ("ui32_1x128", pto.ui32, (1, 128), False),
     ("ui32_1x128_desc", pto.ui32, (1, 128), True),
     ("ui16_1x7", pto.ui16, (1, 7), False),
-    ("ui16_1x7_desc", pto.ui16, (1, 7), True),
-    ("ui16_1x128", pto.ui16, (1, 128), False),
     ("ui16_1x128_desc", pto.ui16, (1, 128), True),
 ]
 
