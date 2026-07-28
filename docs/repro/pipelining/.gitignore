@@ -1,5 +1,7 @@
 build/
 sim_outputs/
+device/build/
+
 *.so
 *.o
 log_ca/

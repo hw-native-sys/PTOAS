@@ -14,8 +14,19 @@ if [ -n "${PTOAS_ROOT}" ] && [ -f "${PTOAS_ROOT}/scripts/ptoas_env.sh" ]; then
   export PTOAS_ENV_SKIP_SMOKE_TEST="${PTOAS_ENV_SKIP_SMOKE_TEST:-1}"
   # shellcheck disable=SC1091
   source "${PTOAS_ROOT}/scripts/ptoas_env.sh"
-  [ -d "${PTOAS_ROOT}/build/tools/ptoas" ] && export PATH="${PTOAS_ROOT}/build/tools/ptoas:${PATH}"
+  # Prefer build/tools wrappers over install/bin (install wrappers often miss MLIR libs).
   [ -d "${PTOAS_ROOT}/install/bin" ] && export PATH="${PTOAS_ROOT}/install/bin:${PATH}"
+  [ -d "${PTOAS_ROOT}/build/tools/ptoas" ] && export PATH="${PTOAS_ROOT}/build/tools/ptoas:${PATH}"
+fi
+
+# Optional: point at a known-good ptoas tree (e.g. built at tag vmi-v0.1.3).
+if [ -n "${PTOAS_TOOLS_ROOT:-}" ]; then
+  [ -d "${PTOAS_TOOLS_ROOT}/build/tools/ptoas" ] && export PATH="${PTOAS_TOOLS_ROOT}/build/tools/ptoas:${PATH}"
+fi
+
+# Prefer in-tree ptodsl when present (else site-packages).
+if [ -d "${PTOAS_ROOT}/ptodsl" ]; then
+  export PYTHONPATH="${PTOAS_ROOT}/ptodsl${PYTHONPATH:+:${PYTHONPATH}}"
 fi
 
 export ASCEND_NPU_ARCH="${ASCEND_NPU_ARCH:-dav-3510}"

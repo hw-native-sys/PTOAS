@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile-check CCE stages=2 vs VMI stages=1/2 Persistent paths; record pass/fail.
+# Compile-check CCE stages=2 vs VMI stages×block_k isolate + cast-back matrix.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KERNEL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -19,175 +19,180 @@ echo "PTOAS_ROOT=${PTOAS_ROOT}" | tee -a "${LOG}"
 echo "BISHENG=${BISHENG}" | tee -a "${LOG}"
 echo | tee -a "${LOG}"
 
-# --- reference_asc_cce.asc: CCE stages=2 ping-pong (expect PASS) ---
-echo "=== reference_asc_cce.asc (bisheng --cce-aicore-only) ===" | tee -a "${LOG}"
-REF="${FIXTURES}/reference_asc_cce.asc"
-REF_OBJ="${OUT}/reference_asc_cce.o"
+compile_asc() {
+  local name="$1"
+  local src="${FIXTURES}/${name}"
+  local obj="${OUT}/${name%.asc}.o"
+  local logf="${OUT}/${name%.asc}.log"
+  echo "=== ${name} (bisheng --cce-aicore-only) ===" | tee -a "${LOG}"
+  set +e
+  "${BISHENG}" -O2 -fPIC -std=c++17 --npu-arch="${NPU_ARCH}" --cce-aicore-only -c \
+    "${src}" -o "${obj}" \
+    -I"${ASCEND}/include" \
+    -I"${ASCEND}/compiler/tikcpp/tikcfw" \
+    -I"${ASCEND}/compiler/tikcpp/tikcfw/impl" \
+    -I"${ASCEND}/compiler/tikcpp/tikcfw/interface" \
+    > "${logf}" 2>&1
+  local rc=$?
+  set -e
+  if [ "${rc}" -eq 0 ] && [ -s "${obj}" ]; then
+    echo "PASS: ${name} -> non-empty .o" | tee -a "${LOG}"
+  else
+    echo "FAIL: ${name} compile exit ${rc}" | tee -a "${LOG}"
+    tail -20 "${logf}" | tee -a "${LOG}"
+  fi
+  echo | tee -a "${LOG}"
+}
+
+emit_vpto() {
+  local name="$1"
+  local expect="$2"  # pass|fail
+  local src="${FIXTURES}/${name}"
+  local outf="${OUT}/${name%.pto}.vpto"
+  local logf="${OUT}/${name%.pto}_emit.log"
+  echo "=== ${name} (ptoas --emit-vpto) expect=${expect} ===" | tee -a "${LOG}"
+  set +e
+  if command -v ptoas >/dev/null 2>&1; then
+    ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+      --emit-vpto "${src}" -o "${outf}" > "${logf}" 2>&1
+    local rc=$?
+  else
+    echo "SKIP: ptoas not on PATH" | tee -a "${LOG}"
+    rc=127
+  fi
+  set -e
+  if [ "${rc}" -eq 0 ] && [ -s "${outf}" ]; then
+    if [ "${expect}" = "pass" ]; then
+      echo "PASS: ${name} --emit-vpto" | tee -a "${LOG}"
+    else
+      echo "PASS: ${name} --emit-vpto (unexpected — gap may be closed)" | tee -a "${LOG}"
+    fi
+  else
+    if [ "${expect}" = "fail" ]; then
+      echo "FAIL: ${name} --emit-vpto exit ${rc} (expected layout/lower reject)" | tee -a "${LOG}"
+    else
+      echo "FAIL: ${name} --emit-vpto exit ${rc}" | tee -a "${LOG}"
+    fi
+    tail -12 "${logf}" | tee -a "${LOG}"
+  fi
+  echo | tee -a "${LOG}"
+}
+
+ptodsl_py() {
+  local name="$1"
+  local outf="${OUT}/${name%.py}.mlir"
+  local errf="${OUT}/${name%.py}.err"
+  echo "=== ${name} (ptodsl frontend) ===" | tee -a "${LOG}"
+  set +e
+  python3 "${FIXTURES}/${name}" > "${outf}" 2> "${errf}"
+  local rc=$?
+  set -e
+  if [ "${rc}" -eq 0 ]; then
+    echo "PASS: ${name} emitted MLIR (frontend only)" | tee -a "${LOG}"
+  else
+    echo "FAIL: ${name} exit ${rc}" | tee -a "${LOG}"
+    tail -20 "${errf}" | tee -a "${LOG}"
+  fi
+  echo | tee -a "${LOG}"
+}
+
+# --- CCE baselines ---
+compile_asc "reference_asc_cce.asc"
+compile_asc "reference_asc_cce_f8.asc"
+compile_asc "reference_asc_cce_cast_back.asc"
+
+echo "=== device/scale_stages2.asc (bisheng --cce-aicore-only) ===" | tee -a "${LOG}"
 set +e
 "${BISHENG}" -O2 -fPIC -std=c++17 --npu-arch="${NPU_ARCH}" --cce-aicore-only -c \
-  "${REF}" -o "${REF_OBJ}" \
+  "${KERNEL_ROOT}/device/scale_stages2.asc" -o "${OUT}/scale_stages2_aicore.o" \
   -I"${ASCEND}/include" \
   -I"${ASCEND}/compiler/tikcpp/tikcfw" \
   -I"${ASCEND}/compiler/tikcpp/tikcfw/impl" \
   -I"${ASCEND}/compiler/tikcpp/tikcfw/interface" \
-  > "${OUT}/reference_asc_cce.log" 2>&1
-ref_rc=$?
+  > "${OUT}/scale_stages2_aicore.log" 2>&1
+rc=$?
 set -e
-if [ "${ref_rc}" -eq 0 ] && [ -s "${REF_OBJ}" ]; then
-  echo "PASS: reference_asc_cce.asc -> non-empty .o (CCE stages=2 ping-pong is legal)" | tee -a "${LOG}"
+if [ "${rc}" -eq 0 ] && [ -s "${OUT}/scale_stages2_aicore.o" ]; then
+  echo "PASS: device/scale_stages2.asc -> non-empty .o" | tee -a "${LOG}"
 else
-  echo "FAIL: reference_asc_cce.asc compile exit ${ref_rc}" | tee -a "${LOG}"
-  tail -20 "${OUT}/reference_asc_cce.log" | tee -a "${LOG}"
+  echo "FAIL: device/scale_stages2.asc compile exit ${rc}" | tee -a "${LOG}"
+  tail -20 "${OUT}/scale_stages2_aicore.log" | tee -a "${LOG}"
 fi
 echo | tee -a "${LOG}"
 
-# --- desired_vmi.py: ptodsl frontend + full lower (expect layout reject at lower) ---
-echo "=== desired_vmi.py (ptodsl -> MLIR frontend) ===" | tee -a "${LOG}"
+
+# --- VMI matrix: stages × block_k ---
+# stages=1 block_k=512 (current_slow) — emit OK on vmi-v0.1.3; lowered_vpto is chunked MI twin
+ptodsl_py "current_slow_vmi.py"
+emit_vpto "current_slow_vmi.pto" "pass"
+echo "=== lowered_vpto.pto (stages=1 chunked MI -> LLVM IR) ===" | tee -a "${LOG}"
 set +e
-python3 "${FIXTURES}/desired_vmi.py" > "${OUT}/desired_vmi.mlir" 2> "${OUT}/desired_vmi_py.err"
-py_rc=$?
+ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+  --emit-vpto-llvm-ir "${FIXTURES}/lowered_vpto.pto" -o "${OUT}/lowered_vpto.ll" \
+  > "${OUT}/lowered_vpto_ptoas.log" 2>&1
+lowered_rc=$?
 set -e
-if [ "${py_rc}" -eq 0 ]; then
-  echo "PASS: desired_vmi.py emitted MLIR (frontend only)" | tee -a "${LOG}"
+if [ "${lowered_rc}" -eq 0 ] && [ -s "${OUT}/lowered_vpto.ll" ]; then
+  echo "PASS: lowered_vpto.pto -> LLVM IR" | tee -a "${LOG}"
 else
-  echo "FAIL: desired_vmi.py compile exit ${py_rc}" | tee -a "${LOG}"
-  tail -30 "${OUT}/desired_vmi_py.err" | tee -a "${LOG}"
+  echo "FAIL: lowered_vpto.pto exit ${lowered_rc}" | tee -a "${LOG}"
+  tail -15 "${OUT}/lowered_vpto_ptoas.log" | tee -a "${LOG}"
 fi
 echo | tee -a "${LOG}"
 
-echo "=== desired_vmi.py MLIR (ptoas -> LLVM IR, stages=2 block_k=1024) ===" | tee -a "${LOG}"
-DESIRED_LL="${OUT}/desired_vmi.ll"
+# isolate stages=2 / block_k=512 — dual-buffer OK; separates stages from wide-tile fail
+ptodsl_py "isolate_stages2_blockk512_vmi.py"
+emit_vpto "isolate_stages2_blockk512_vmi.pto" "pass"
+
+# isolate stages=1 / block_k=1024 — wide tile layout reject
+ptodsl_py "isolate_stages1_blockk1024_vmi.py"
+emit_vpto "isolate_stages1_blockk1024_vmi.pto" "fail"
+
+# desired stages=2 / block_k=1024 — stages+wide (layout reject)
+ptodsl_py "desired_vmi.py"
+emit_vpto "desired_vmi.pto" "fail"
+
+# cast-back cells (f8->bf16); wide / dual-buffer cells reject today
+ptodsl_py "cast_back_stages1_k512_vmi.py"
+emit_vpto "cast_back_stages1_k512_vmi.pto" "fail"
+ptodsl_py "cast_back_stages2_k1024_vmi.py"
+emit_vpto "cast_back_stages2_k1024_vmi.pto" "fail"
+
+
+# target_mi: emit OK, bisheng object often crashes
+echo "=== target_mi.pto (emit-vpto + LLVM IR + bisheng .o) ===" | tee -a "${LOG}"
 set +e
-if command -v ptoas >/dev/null 2>&1 && [ -f "${OUT}/desired_vmi.mlir" ]; then
-  ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
-    --emit-vpto-llvm-ir "${OUT}/desired_vmi.mlir" -o "${DESIRED_LL}" \
-    > "${OUT}/desired_vmi_lower.log" 2>&1
-  desired_lower_rc=$?
-else
-  desired_lower_rc=127
-fi
+ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+  --emit-vpto "${FIXTURES}/target_mi.pto" -o "${OUT}/target_mi.vpto" \
+  > "${OUT}/target_mi_emit_vpto.log" 2>&1
+emit_rc=$?
 set -e
-if [ "${desired_lower_rc}" -eq 0 ]; then
-  echo "PASS: desired_vmi full lower (unexpected — gap may be closed)" | tee -a "${LOG}"
-else
-  echo "FAIL: desired_vmi full lower exit ${desired_lower_rc} (layout reject on 1024-wide vmul)" | tee -a "${LOG}"
-  tail -15 "${OUT}/desired_vmi_lower.log" | tee -a "${LOG}"
-fi
-echo | tee -a "${LOG}"
-
-# --- desired_vmi.pto: ptoas --emit-vpto (expect layout / lower fail) ---
-echo "=== desired_vmi.pto (ptoas --emit-vpto) ===" | tee -a "${LOG}"
-DESIRED_PTO="${FIXTURES}/desired_vmi.pto"
-DESIRED_VPTO="${OUT}/desired_vmi.vpto"
-set +e
-if command -v ptoas >/dev/null 2>&1; then
-  ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
-    --emit-vpto "${DESIRED_PTO}" -o "${DESIRED_VPTO}" \
-    > "${OUT}/desired_vmi_ptoas.log" 2>&1
-  desired_pto_rc=$?
-else
-  echo "SKIP: ptoas not on PATH" | tee -a "${LOG}"
-  desired_pto_rc=127
-fi
-set -e
-if [ "${desired_pto_rc}" -eq 0 ] && [ -s "${DESIRED_VPTO}" ]; then
-  echo "PASS: desired_vmi.pto --emit-vpto (unexpected — gap may be closed)" | tee -a "${LOG}"
-else
-  echo "FAIL: desired_vmi.pto --emit-vpto exit ${desired_pto_rc}" | tee -a "${LOG}"
-  tail -15 "${OUT}/desired_vmi_ptoas.log" | tee -a "${LOG}"
-fi
-echo | tee -a "${LOG}"
-
-# --- target_mi.pto: emit-vpto then LLVM IR -> bisheng (expect bisheng crash) ---
-echo "=== target_mi.pto (ptoas --emit-vpto) ===" | tee -a "${LOG}"
-TARGET_MI="${FIXTURES}/target_mi.pto"
-TARGET_VPTO="${OUT}/target_mi.vpto"
-LLVM_IR="${OUT}/target_mi.ll"
-OBJ="${OUT}/target_mi.o"
-
-set +e
-if command -v ptoas >/dev/null 2>&1; then
-  ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
-    --emit-vpto "${TARGET_MI}" -o "${TARGET_VPTO}" \
-    > "${OUT}/target_mi_emit_vpto.log" 2>&1
-  emit_vpto_rc=$?
-else
-  echo "SKIP: ptoas not on PATH" | tee -a "${LOG}"
-  emit_vpto_rc=127
-fi
-set -e
-
-if [ "${emit_vpto_rc}" -eq 0 ] && [ -s "${TARGET_VPTO}" ]; then
+if [ "${emit_rc}" -eq 0 ] && [ -s "${OUT}/target_mi.vpto" ]; then
   echo "PASS: target_mi.pto --emit-vpto" | tee -a "${LOG}"
 else
-  echo "FAIL: target_mi.pto --emit-vpto exit ${emit_vpto_rc}" | tee -a "${LOG}"
-  tail -20 "${OUT}/target_mi_emit_vpto.log" | tee -a "${LOG}"
+  echo "FAIL: target_mi.pto --emit-vpto exit ${emit_rc}" | tee -a "${LOG}"
 fi
-echo | tee -a "${LOG}"
-
-echo "=== target_mi.pto (ptoas -> LLVM IR -> bisheng object) ===" | tee -a "${LOG}"
 set +e
-if command -v ptoas >/dev/null 2>&1; then
-  ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
-    --emit-vpto-llvm-ir "${TARGET_MI}" -o "${LLVM_IR}" \
-    > "${OUT}/target_mi_ptoas.log" 2>&1
-  pto_rc=$?
-else
-  pto_rc=127
-fi
+ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+  --emit-vpto-llvm-ir "${FIXTURES}/target_mi.pto" -o "${OUT}/target_mi.ll" \
+  > "${OUT}/target_mi_ptoas.log" 2>&1
+ll_rc=$?
 set -e
-
-if [ "${pto_rc}" -eq 0 ]; then
-  echo "PASS: ptoas --emit-vpto-llvm-ir target_mi.pto" | tee -a "${LOG}"
+if [ "${ll_rc}" -eq 0 ]; then
+  echo "PASS: target_mi.pto --emit-vpto-llvm-ir" | tee -a "${LOG}"
   set +e
   "${BISHENG}" -O2 -fPIC -std=c++17 --npu-arch="${NPU_ARCH}" -c -x ir \
-    "${LLVM_IR}" -o "${OBJ}" > "${OUT}/target_mi_bisheng.log" 2>&1
+    "${OUT}/target_mi.ll" -o "${OUT}/target_mi.o" > "${OUT}/target_mi_bisheng.log" 2>&1
   b_rc=$?
   set -e
-  if [ "${b_rc}" -eq 0 ] && [ -s "${OBJ}" ]; then
-    echo "PASS: bisheng object compile (unexpected — gap may be closed)" | tee -a "${LOG}"
+  if [ "${b_rc}" -eq 0 ] && [ -s "${OUT}/target_mi.o" ]; then
+    echo "PASS: bisheng object (unexpected — gap may be closed)" | tee -a "${LOG}"
   else
-    echo "FAIL: bisheng object compile exit ${b_rc} (expected on vmi-v0.1.3)" | tee -a "${LOG}"
-    tail -10 "${OUT}/target_mi_bisheng.log" | tee -a "${LOG}"
+    echo "FAIL: bisheng object exit ${b_rc} (expected on vmi-v0.1.3)" | tee -a "${LOG}"
+    tail -8 "${OUT}/target_mi_bisheng.log" | tee -a "${LOG}"
   fi
 else
-  echo "FAIL: ptoas emit-vpto-llvm-ir exit ${pto_rc}" | tee -a "${LOG}"
-  tail -20 "${OUT}/target_mi_ptoas.log" | tee -a "${LOG}"
-fi
-echo | tee -a "${LOG}"
-
-# --- current_slow_vmi stages=1: lowered_vpto.pto is the working MI path ---
-echo "=== current_slow_vmi.py (ptodsl -> MLIR frontend, stages=1 block_k=512) ===" | tee -a "${LOG}"
-set +e
-python3 "${FIXTURES}/current_slow_vmi.py" > "${OUT}/current_slow_vmi.mlir" 2> "${OUT}/current_slow_vmi_py.err"
-slow_py_rc=$?
-set -e
-if [ "${slow_py_rc}" -eq 0 ]; then
-  echo "PASS: current_slow_vmi.py emitted MLIR (frontend only)" | tee -a "${LOG}"
-else
-  echo "FAIL: current_slow_vmi.py compile exit ${slow_py_rc}" | tee -a "${LOG}"
-  tail -20 "${OUT}/current_slow_vmi_py.err" | tee -a "${LOG}"
-fi
-echo | tee -a "${LOG}"
-
-echo "=== lowered_vpto.pto (stages=1 chunked MI, ptoas -> LLVM IR) ===" | tee -a "${LOG}"
-LOWERED_PTO="${FIXTURES}/lowered_vpto.pto"
-SLOW_LL="${OUT}/lowered_vpto.ll"
-set +e
-if command -v ptoas >/dev/null 2>&1; then
-  ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
-    --emit-vpto-llvm-ir "${LOWERED_PTO}" -o "${SLOW_LL}" \
-    > "${OUT}/lowered_vpto_ptoas.log" 2>&1
-  lowered_rc=$?
-else
-  lowered_rc=127
-fi
-set -e
-if [ "${lowered_rc}" -eq 0 ] && [ -s "${SLOW_LL}" ]; then
-  echo "PASS: lowered_vpto.pto -> LLVM IR (stages=1 working MI path)" | tee -a "${LOG}"
-else
-  echo "FAIL: lowered_vpto.pto emit-vpto-llvm-ir exit ${lowered_rc}" | tee -a "${LOG}"
-  tail -20 "${OUT}/lowered_vpto_ptoas.log" | tee -a "${LOG}"
+  echo "FAIL: target_mi llvm-ir exit ${ll_rc}" | tee -a "${LOG}"
 fi
 
 echo | tee -a "${LOG}"
