@@ -244,6 +244,31 @@ static ModuleOp cloneModuleForKind(ModuleOp source, FunctionKernelKind kind,
   return cloned;
 }
 
+// PTODSL and raw VPTO inputs may use an outer routing module that contains one
+// untyped kernel module. Split that child in its parent instead of cloning the
+// routing module: VPTO's downstream nested pass pipeline expects each direct
+// child of the container to be a kernel-kind module with direct functions.
+static LogicalResult splitNestedSectionModule(ModuleOp child) {
+  if (!hasCVSections(child))
+    return success();
+  if (failed(verifyNoNestedSections(child)) ||
+      failed(verifySectionSplitCandidatesUseSections(child)))
+    return failure();
+
+  bool needVector = hasSectionKind(child, FunctionKernelKind::Vector);
+  bool needCube = hasSectionKind(child, FunctionKernelKind::Cube);
+  if (!needVector && !needCube)
+    return success();
+
+  OpBuilder builder(child);
+  if (needVector)
+    cloneModuleForKind(child, FunctionKernelKind::Vector, builder);
+  if (needCube)
+    cloneModuleForKind(child, FunctionKernelKind::Cube, builder);
+  child.erase();
+  return success();
+}
+
 static LogicalResult materializeExplicitKernelKindSections(ModuleOp module) {
   auto kindAttr = module->getAttrOfType<FunctionKernelKindAttr>(
       FunctionKernelKindAttr::name);
@@ -259,6 +284,19 @@ static LogicalResult materializeExplicitKernelKindSections(ModuleOp module) {
 static LogicalResult splitCVModule(ModuleOp module) {
   if (hasKernelKind(module))
     return materializeExplicitKernelKindSections(module);
+
+  SmallVector<ModuleOp> untypedSectionChildren;
+  for (ModuleOp child : module.getOps<ModuleOp>()) {
+    if (!hasKernelKind(child) && hasCVSections(child))
+      untypedSectionChildren.push_back(child);
+  }
+  if (!untypedSectionChildren.empty()) {
+    for (ModuleOp child : untypedSectionChildren)
+      if (failed(splitNestedSectionModule(child)))
+        return failure();
+    return success();
+  }
+
   if (hasKernelKindChildModule(module)) {
     for (ModuleOp child : module.getOps<ModuleOp>()) {
       if (!hasKernelKind(child))

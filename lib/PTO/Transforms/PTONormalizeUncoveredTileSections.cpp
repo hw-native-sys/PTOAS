@@ -62,33 +62,38 @@ static bool isExplicitSection(Operation *op) {
   return isa<SectionCubeOp, SectionVectorOp>(op);
 }
 
-static bool isTileLikeOp(Operation *op) {
-  if (!op)
-    return false;
-  return isa<OpPipeInterface>(op) &&
-         op->getName().getStringRef().starts_with("pto.t");
-}
-
-static bool isPipeLikeOp(Operation *op) {
-  return op && isa<OpPipeInterface>(op);
-}
-
 static bool isRawVPTOVectorTransientType(Type type) {
   return isa<VRegType, MaskType, AlignType>(type);
 }
 
-static bool isRawVPTOVectorLikeOp(Operation *op) {
-  if (!op)
-    return false;
+// Raw VPTO micro-instructions predate OpPipeInterface. Prefer their ODS
+// instruction-class interfaces, then retain type evidence for out-of-tree
+// operations that have not adopted the markers yet.
+static std::optional<InferredSectionKind>
+inferRawVPTOComputeKind(Operation *op) {
+  if (isa<CubeMicroOpInterface>(op))
+    return InferredSectionKind::Cube;
+  if (isa<VectorMicroOpInterface>(op))
+    return InferredSectionKind::Vector;
+  if (isa<MadSemanticOpInterface, MadRawOpInterface>(op))
+    return InferredSectionKind::Cube;
+
   for (Value operand : op->getOperands()) {
     if (isRawVPTOVectorTransientType(operand.getType()))
-      return true;
+      return InferredSectionKind::Vector;
   }
   for (Value result : op->getResults()) {
     if (isRawVPTOVectorTransientType(result.getType()))
-      return true;
+      return InferredSectionKind::Vector;
   }
-  return false;
+  return std::nullopt;
+}
+
+static bool isTileLikeOp(Operation *op) {
+  if (!op)
+    return false;
+  return op->getName().getStringRef().starts_with("pto.t") ||
+         inferRawVPTOComputeKind(op).has_value();
 }
 
 static bool hasAnySection(func::FuncOp funcOp) {
@@ -338,6 +343,8 @@ classifyTStoreBySourceAddressSpace(Operation *op) {
 }
 
 static std::optional<InferredSectionKind> classifyTileOp(Operation *op) {
+  if (std::optional<InferredSectionKind> kind = inferRawVPTOComputeKind(op))
+    return kind;
   if (std::optional<InferredSectionKind> kind = classifyTileOpByName(op))
     return kind;
   if (std::optional<InferredSectionKind> kind = classifyInternalPipeTileOp(op))
@@ -372,17 +379,15 @@ static void inspectModuleKindOperation(Operation *op, ModuleKindSummary &summary
   if (isExplicitSection(op))
     return;
 
-  if (isPipeLikeOp(op)) {
+  if (isTileLikeOp(op)) {
     if (std::optional<InferredSectionKind> kind = classifyTileOp(op)) {
       if (*kind == InferredSectionKind::Vector)
         ++summary.vectorCount;
       else
         ++summary.cubeCount;
-    } else if (isTileLikeOp(op)) {
+    } else {
       summary.ambiguousOps.push_back(op);
     }
-  } else if (isRawVPTOVectorLikeOp(op)) {
-    ++summary.vectorCount;
   }
 
   for (Region &region : op->getRegions()) {
