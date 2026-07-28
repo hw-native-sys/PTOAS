@@ -162,7 +162,7 @@ Run every A5 suite:
 python3 test/tilelib-st/run_tilelib_st.py test/tilelib-st/a5
 ```
 
-Run every A5 operator suite in isolated simulator processes with pytest-xdist:
+Run every A5 case in isolated simulator processes with pytest-xdist:
 
 ```bash
 TILELIB_ST_OUTPUT_ROOT="$PWD/build/tilelib-st-a5" \
@@ -170,11 +170,10 @@ python3 -m pytest -n 16 --dist=worksteal -v \
   test/tilelib-st/test_tilelib_st.py
 ```
 
-The parallel entry requires `pytest` and `pytest-xdist`. Each pytest item is
-one operator `case.py` suite: it launches one `scripts/sim_dsl.sh` subprocess
-and runs every case in that suite in the same CA model session. Simulator
+The parallel entry requires `pytest` and `pytest-xdist`. Each pytest item
+launches one `scripts/sim_dsl.sh` subprocess for one `--case <name>`. Simulator
 output and logs are written below `TILELIB_ST_OUTPUT_ROOT`. Use the serial
-runner above with `--case <name>` when debugging one parameterized case.
+runner above when debugging several cases in one simulator session.
 
 Run a single suite directly:
 
@@ -338,7 +337,7 @@ scripts/sim_dsl.sh --soc-version Ascend950PR_9599 \
 ```
 
 For the parallel CI-equivalent flow, run pytest outside `sim_dsl.sh` so every
-operator suite gets an independent simulator process:
+case can be scheduled independently:
 
 ```bash
 TILELIB_ST_OUTPUT_ROOT="$PWD/build/tilelib-st-a5" \

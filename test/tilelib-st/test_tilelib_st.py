@@ -5,12 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Run each TileLib ST operator suite in an isolated simulator subprocess.
-
-All cases declared by one ``case.py`` run in the same simulator session.  This
-keeps operator suites independently schedulable while avoiding one CA model
-startup per parameterized case.
-"""
+"""Run each TileLib ST case in an isolated simulator subprocess."""
 
 from __future__ import annotations
 
@@ -27,24 +22,11 @@ _REPO_ROOT = _TEST_ROOT.parents[1]
 _CASE_ROOT = _TEST_ROOT / "a5"
 
 sys.path.insert(0, str(_TEST_ROOT))
-from common import discover_case_modules  # noqa: E402
+from common import discover_cases  # noqa: E402
 
 
-def _suite_params() -> tuple:
-    params = []
-    seen_names = set()
-    for module in discover_case_modules(_CASE_ROOT):
-        case_path = Path(module.__file__).resolve()
-        relative_path = case_path.relative_to(_CASE_ROOT)
-        suite_name = relative_path.parent.as_posix()
-        if suite_name == ".":
-            suite_name = relative_path.stem
-        if suite_name in seen_names:
-            raise RuntimeError(f"Duplicate TileLib ST suite name {suite_name!r}")
-        seen_names.add(suite_name)
-        case_names = tuple(case["name"] for case in module.CASES)
-        params.append(pytest.param(suite_name, case_path, case_names, id=suite_name))
-    return tuple(params)
+def _case_names() -> tuple[str, ...]:
+    return tuple(case["name"] for case in discover_cases(_CASE_ROOT))
 
 
 def _output_root() -> Path:
@@ -54,19 +36,19 @@ def _output_root() -> Path:
     return _REPO_ROOT / "build" / "tilelib-st"
 
 
-def _safe_name(suite_name: str) -> str:
-    return suite_name.replace("/", "_").replace("\\", "_")
+def _safe_name(case_name: str) -> str:
+    return case_name.replace("/", "_").replace("\\", "_")
 
 
-@pytest.mark.parametrize(("suite_name", "case_path", "case_names"), _suite_params())
-def test_tilelib_suite(suite_name: str, case_path: Path, case_names: tuple[str, ...]) -> None:
+@pytest.mark.parametrize("case_name", _case_names(), ids=lambda name: name)
+def test_tilelib_case(case_name: str) -> None:
     output_root = _output_root()
-    safe_name = _safe_name(suite_name)
-    suite_output = output_root / "suites" / safe_name
+    safe_name = _safe_name(case_name)
+    case_output = output_root / "cases" / safe_name
     log_path = output_root / "logs" / f"{safe_name}.log"
     msprof_root = output_root / ".msprof"
-    cache_root = suite_output / "ptodsl-cache"
-    tmp_root = suite_output / "tmp"
+    cache_root = case_output / "ptodsl-cache"
+    tmp_root = case_output / "tmp"
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     msprof_root.mkdir(parents=True, exist_ok=True)
@@ -83,8 +65,12 @@ def test_tilelib_suite(suite_name: str, case_path: Path, case_names: tuple[str, 
     command = [
         str(_REPO_ROOT / "scripts" / "sim_dsl.sh"),
         "--output",
-        str(suite_output),
-        str(case_path),
+        str(case_output),
+        str(_TEST_ROOT / "run_tilelib_st.py"),
+        "--",
+        str(_CASE_ROOT),
+        "--case",
+        case_name,
     ]
     completed = subprocess.run(
         command,
@@ -98,7 +84,6 @@ def test_tilelib_suite(suite_name: str, case_path: Path, case_names: tuple[str, 
     log_path.write_text(completed.stdout, encoding="utf-8")
 
     assert completed.returncode == 0, (
-        f"TileLib ST suite {suite_name!r} failed with exit code {completed.returncode}.\n"
-        f"Cases: {', '.join(case_names)}\n"
+        f"TileLib ST case {case_name!r} failed with exit code {completed.returncode}.\n"
         f"Log: {log_path}\n\n{completed.stdout}"
     )
