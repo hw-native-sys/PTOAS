@@ -1,14 +1,18 @@
-# pipelining — VMI Persistent stages vs CCE ping-pong
+# pipelining — SoftPipeline stages with ≤256-lane VF
 
-Minimal, **kernel-agnostic** compile (+ optional on-device CCE) repro for the
-PTOAS gap: long-K Persistent loops want `stages=2` and `block_k > 512` so MTE
-and vector stay overlapped. Ascend CCE can express and **run** stages=2
-ping-pong; VMI on tag **vmi-v0.1.3** cannot reach the same wide-tile schedule
-— layout assignment rejects 1024-wide tiles, and the hand-written MI path
-crashes bisheng even after ptoas emits LLVM IR.
+Minimal, **kernel-agnostic** compile (+ optional on-device CCE) repro for
+Persistent SoftPipeline. ASC/CCE uses **chunked SIMD (≤256)** + `stages≥2` +
+real MTE; TileKernels VMI already authors that way. The remaining asks are
+healthy multi-stage launch / fatobj, not “must have single-op `size=1024` VMI”.
 
-Product-shaped MHC / quant patterns and ASC↔CCE **bandwidth** live in the
-companion study under `vmi-demo-pipeline/pipeline_study` (separate repo).
+Product TK measurements (2026-07-28 stages sweep):
+
+| Kernel | After sweep | Remaining gap |
+|--------|-------------|---------------|
+| `per_block_cast` | landed **stages=2 / `block_k=1024`** (chunked strip 128) | still ~0.85× historical ASC GB/s @ 8192×2048 |
+| `cast_back` | keep **stages=1 / `tile_k=512`** (HALF_TILE=256); stages=2 regresses BW | ~0.82× ASC |
+| MHC `pre_fwd` / `post_fwd` | keep **stages=2**; stages=3 regresses N=8192 | ~0.84–0.87× ASC (gap **07** UNPK) |
+| MHC `post_bwd` | SoftPipeline out of scope | gap **03** reduce pad |
 
 ## Pin
 
@@ -25,72 +29,59 @@ If `install/bin/ptoas` crashes on missing MLIR libs, point tools at a build tree
 export PTOAS_TOOLS_ROOT=/path/to/PTOAS-built-at-vmi-v0.1.3
 ```
 
-## What breaks
+## Structure (report shape)
 
-| Path | stages | block_k | Fault mode |
-|------|-------:|--------:|------------|
-| CCE (`fixtures/reference_asc_cce.asc`, `device/scale_stages2.asc`) | 2 | 512–1024 | **OK** — compile; device host numerical OK |
-| VMI stages=1 / 512 (`current_slow_vmi.*`) | 1 | 512 | **emit-vpto OK** |
-| VMI stages=2 / 512 (`isolate_stages2_blockk512_vmi.*`) | 2 | 512 | **emit-vpto OK** (dual-buffer alone is fine) |
-| VMI stages=1 / 1024 (`isolate_stages1_blockk1024_vmi.*`) | 1 | 1024 | **Layout reject** on 1024-wide vmul |
-| VMI stages=2 / 1024 (`desired_vmi.*`) | 2 | 1024 | **Layout reject** (stages+wide) |
-| VMI target MI (`target_mi.pto`) | 2 | 1024 | **Bisheng crash** after LLVM IR emit |
+1. **Working ASC/CCE baseline** — `fixtures/reference_asc_cce.asc`,
+   `device/scale_stages2.asc`: stages=2, HardEvent ping-pong, device numerical OK.
+2. **Desired VMI** — same outer schedule (`stages=2`, DMA `block_k=512`) with
+   **chunked ≤256** VF body (`isolate_stages2_chunked256_vmi.py`). Primary ask.
+3. **Current slow / isolate** — stages=1 chunked (`isolate_stages1_chunked256_vmi.py`);
+   stages=2 with size=512 single-op still emit-OK (`isolate_stages2_blockk512_vmi.*`).
+4. **Optional wide VF** — `desired_vmi.*` / `isolate_stages1_blockk1024_*` single-op
+   `size=1024` layout reject. Demoted: ASC SoftPipeline parity does **not** require this.
+5. **Remaining PTOAS asks after TK sweep** — healthy fatobj/HIVM for multi-stage
+   product kernels on some pins (`bisheng` exit 139); gap **03** for `post_bwd`;
+   gap **07** for MHC fwd UNPK. Not “need 512/1024-wide logical VF”.
 
-The blocker for the desired schedule is **wide `block_k=1024` layout**, not
-dual-buffer stages alone. Fixtures use a trivial scale body so the failure
-stays schedule/layout — not a product kernel.
+## What breaks / what works
 
-## Check results (vmi-v0.1.3 tools, 2026-07-28)
+| Path | stages | VF body | Fault mode |
+|------|-------:|---------|------------|
+| CCE (`reference_asc_cce.asc`, `device/scale_stages2.asc`) | 2 | chunked | **OK** device |
+| VMI chunked-256 stages=1/2 (`.py` fixtures) | 1–2 | 256×2 over 512 | frontend emit (primary cells) |
+| VMI stages=2 / single-op 512 | 2 | size=512 | **emit-vpto OK** |
+| VMI stages=1 / single-op 1024 | 1 | size=1024 | **Layout reject** (optional feature) |
+| VMI `desired_vmi` stages=2 / 1024 | 2 | size=1024 | **Layout reject** (optional) |
+| VMI `target_mi` | 2 | wide MI | emit OK; **bisheng** often exit 139 |
+
+## Check
 
 ```bash
 source scripts/env.sh
-# optional: export PTOAS_TOOLS_ROOT=...
 ./scripts/check_stages.sh
 ```
 
-| Step | Result |
-|------|--------|
-| `reference_asc_cce.asc` | **PASS** bisheng `--cce-aicore-only` |
-| `device/scale_stages2.asc` aicore object | **PASS** |
-| `current_slow_vmi.pto` `--emit-vpto` | **PASS** |
-| `isolate_stages2_blockk512_vmi.pto` | **PASS** |
-| `isolate_stages1_blockk1024_vmi.pto` | **FAIL** layout |
-| `desired_vmi.pto` | **FAIL** layout |
-| `lowered_vpto.pto` → LLVM IR | **PASS** |
-| `target_mi.pto` → emit + LLVM IR | **PASS**; bisheng `.o` **FAIL** |
-
 Full log: `sim_outputs/check_stages/compile_results.txt`
 
-## On-device CCE (correctness only)
+## On-device CCE
 
 ```bash
 cd device
-./run.sh                 # build + launch stages=2 f32 scale, check max_err
-MSOPPROF=1 ./run.sh      # optional msopprof wrap if installed
+./run.sh
 ```
-
-Measured 2026-07-28:
 
 ```
 scale_stages2: N=2048 mism=0 max_err=0 OK
 ```
 
-CCE stages=2 runs with dual-buffer HardEvent overlap. VMI stages=2 /
-`block_k=1024` does not compile through layout — that is the PTOAS gap.
+TileLang SoftPipeline isolate (ASC stages 1→2 BW gain with max_err=0; PTO fatobj
+bisheng 139): `tilelang-vmi-pipelining_issue/examples/vmi_pipelining_repro`
+(`micro_stages256.py` / `run_micro_stages.py`).
 
-For e2e bandwidth (stages=1 vs stages=2, MHC / quant-shaped bodies), see
-`pipeline_study` in the vmi-demo-pipeline repo.
-
-## Layout
-
-```
-pipelining/
-  fixtures/     CCE shell, VMI stages×block_k isolate, target_mi
-  device/       AscendC host for stages=2 CCE numerical check
-  scripts/      env.sh, check_stages.sh
-```
+E2E product patterns: `vmi-demo-pipeline/pipeline_study`.
 
 ## Done when
 
-VMI can compile and run stages=2 / `block_k=1024` Persistent tiles with
-dual-buffer ping-pong — same overlap pattern as CCE and `target_mi.pto`.
+VMI SoftPipeline with **chunked ≤256** VF + `stages≥2` + real MTE is healthy
+end-to-end (including fatobj) for the TK schedules above. Wide single-op
+`size=1024` is optional sugar, not the SoftPipeline blocker.

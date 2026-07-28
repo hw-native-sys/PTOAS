@@ -137,9 +137,14 @@ else
 fi
 echo | tee -a "${LOG}"
 
+# Primary SoftPipeline ask: chunked ≤256 VF × stages 1/2 (not single-op size=1024).
+ptodsl_py "isolate_stages1_chunked256_vmi.py"
+ptodsl_py "isolate_stages2_chunked256_vmi.py"
+
 ptodsl_py "isolate_stages2_blockk512_vmi.py"
 emit_vpto "isolate_stages2_blockk512_vmi.pto" "pass"
 
+# Secondary / optional: wide single-op VF (layout reject on vmi-v0.1.3).
 ptodsl_py "isolate_stages1_blockk1024_vmi.py"
 emit_vpto "isolate_stages1_blockk1024_vmi.pto" "fail"
 
