@@ -523,6 +523,9 @@ public:
 };
 
 class ConservativeDAGGreedyStrategyEngine final : public StrategyEngine {
+  // Keep a bounded, deterministically ranked frontier to prevent exponential
+  // compile-time growth. This selects the best group among retained candidates;
+  // it does not guarantee the global optimum across every connected subset.
   static constexpr unsigned kMaxCandidatesPerGroupSize = 64;
 
   struct GroupCandidate {
