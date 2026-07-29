@@ -1257,6 +1257,11 @@ def VMIvcmaxOp : VMI_Op<"vcmax", [Pure]> {
     - Inactive lanes are treated as -INF (floating-point) or the type's
       minimum representable value (integer).
     - `pmode` controls inactive-result behaviour as for `vcadd`.
+    - Optional second result `$index` requests a packed dual-output form:
+      result 0 is the 1-lane maximum (`f32`), result 1 is the 1-lane first
+      argmax lane index (`i32`). Backend lowers through physical
+      `pto.vcmax` → `pto.vdintlv` → `pto.vbitcast` (two VLs, one-point
+      elements). Currently restricted to ungrouped contiguous `64xf32`.
   }];
   let arguments = (ins
     VMI_VRegTypeConstraint:$source,
@@ -1264,9 +1269,15 @@ def VMIvcmaxOp : VMI_Op<"vcmax", [Pure]> {
     OptionalAttr<I64Attr>:$group,
     OptionalAttr<StrAttr>:$pmode
   );
-  let results = (outs VMI_VRegTypeConstraint:$result);
+  let results = (outs
+    VMI_VRegTypeConstraint:$result,
+    Optional<VMI_VRegTypeConstraint>:$index
+  );
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = [{
+    $source `,` $mask attr-dict `:` type($source) `,` type($mask)
+      `->` type($result) (`,` type($index)^)?
+  }];
 }
 
 def VMIvcminOp : VMI_Op<"vcmin", [Pure]> {

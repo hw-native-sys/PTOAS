@@ -487,8 +487,41 @@ def _emit_reduce(
     loc=None,
     ip=None,
     reassoc=_UNSPECIFIED,
+    return_index=False,
 ):
     context = f"pto.vmi.{op_name}(...)"
+    if return_index:
+        if op_name != "vcmax":
+            raise TypeError(f"{context} does not support return_index=True")
+        if group is not None:
+            raise TypeError(f"{context} return_index=True does not support group=")
+        source_elem_type = _vmi_element_type(_type_of(source), context=context)
+        if not F32Type.isinstance(source_elem_type):
+            raise TypeError(
+                f"{context} return_index=True currently requires f32 source, "
+                f"got {source_elem_type}"
+            )
+        source_lanes = _vmi_vreg_element_count(_type_of(source), context=context)
+        # One physical VL for f32 is 64 lanes (256B / 4B).
+        if source_lanes != 64:
+            raise TypeError(
+                f"{context} return_index=True currently requires a single "
+                f"physical 64-lane f32 chunk, got lanes={source_lanes}"
+            )
+        value_type = _pto.VMIVRegType.get(1, source_elem_type)
+        index_type = _pto.VMIVRegType.get(1, IntegerType.get_signless(32))
+        # Generated ODS: vmi_vcmax(result, index, source, mask, ...)
+        return _call_value(
+            op_name,
+            value_type,
+            index_type,
+            _raw(source),
+            _required_mask(mask, context=context),
+            group=group,
+            pmode=pmode,
+            loc=loc,
+            ip=ip,
+        )
     if op_name == "vcadd":
         source_elem_type = _vmi_element_type(_type_of(source), context=context)
         if reassoc is _UNSPECIFIED:
@@ -505,9 +538,21 @@ def _emit_reduce(
     kwargs = {"group": group, "pmode": pmode, "loc": loc, "ip": ip}
     if reassoc is not _UNSPECIFIED:
         kwargs["reassoc"] = reassoc
+    result_type = _derive_vmi_reduce_result_type(source, group, context=context)
+    # After optional-index ODS regen, vcmax takes (result, index, source, mask)
+    # with index=None for the value-only form.
+    if op_name == "vcmax":
+        return _call_value(
+            op_name,
+            result_type,
+            None,
+            _raw(source),
+            _required_mask(mask, context=context),
+            **kwargs,
+        )
     return _call_value(
         op_name,
-        _derive_vmi_reduce_result_type(source, group, context=context),
+        result_type,
         _raw(source),
         _required_mask(mask, context=context),
         **kwargs,
@@ -731,7 +776,7 @@ class _VMINamespace:
         return _call_value("vbrc", result_type, raw_value, group=group, loc=loc, ip=ip)
 
     vcadd = staticmethod(lambda source, mask, *, group=None, pmode=None, reassoc=_UNSPECIFIED, loc=None, ip=None: _emit_reduce("vcadd", source, mask, group=group, pmode=pmode, reassoc=reassoc, loc=loc, ip=ip))
-    vcmax = staticmethod(lambda source, mask, *, group=None, pmode=None, loc=None, ip=None: _emit_reduce("vcmax", source, mask, group=group, pmode=pmode, loc=loc, ip=ip))
+    vcmax = staticmethod(lambda source, mask, *, group=None, pmode=None, return_index=False, loc=None, ip=None: _emit_reduce("vcmax", source, mask, group=group, pmode=pmode, return_index=return_index, loc=loc, ip=ip))
     vcmin = staticmethod(lambda source, mask, *, group=None, pmode=None, loc=None, ip=None: _emit_reduce("vcmin", source, mask, group=group, pmode=pmode, loc=loc, ip=ip))
 
     @staticmethod

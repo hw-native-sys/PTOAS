@@ -9924,6 +9924,76 @@ struct OneToNVMIReduceMinMaxOpPattern : OpConversionPattern<SourceOp> {
   }
 };
 
+/// Dual-output ``pto.vmi.vcmax`` → packed ``pto.vcmax`` + ``vdintlv`` +
+/// ``vbitcast`` (value: 1xf32, index: 1xi32 as physical one-point VLs).
+struct OneToNVMIVcmaxReturnIndexOpPattern : OpConversionPattern<VMIvcmaxOp> {
+  using OpConversionPattern<VMIvcmaxOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(VMIvcmaxOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (op.getNumResults() != 2)
+      return rewriter.notifyMatchFailure(
+          op, "value-only vcmax lowers through legacy reduce_max");
+
+    ValueRange sourceParts = adaptor.getSource();
+    ValueRange maskParts = adaptor.getMask();
+    FailureOr<SmallVector<Type>> maybeValueTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    FailureOr<SmallVector<Type>> maybeIndexTypes =
+        getConvertedResultTypes(op, 1, *this->getTypeConverter());
+    if (failed(maybeValueTypes) || failed(maybeIndexTypes))
+      return failure();
+    if (sourceParts.size() != 1 || maskParts.size() != 1 ||
+        maybeValueTypes->size() != 1 || maybeIndexTypes->size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "return_index vcmax requires one physical source/mask/result "
+              "chunk");
+
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    auto valueType = dyn_cast<VRegType>(maybeValueTypes->front());
+    auto indexType = dyn_cast<VRegType>(maybeIndexTypes->front());
+    if (!sourceType || !valueType || !indexType)
+      return rewriter.notifyMatchFailure(
+          op, "return_index vcmax requires physical vreg parts");
+    if (sourceType != valueType)
+      return rewriter.notifyMatchFailure(
+          op, "return_index vcmax value part must match source vreg type");
+    if (!isa<Float32Type>(sourceType.getElementType()))
+      return rewriter.notifyMatchFailure(
+          op, "return_index vcmax currently requires f32 source");
+    if (!isa<IntegerType>(indexType.getElementType()) ||
+        cast<IntegerType>(indexType.getElementType()).getWidth() != 32)
+      return rewriter.notifyMatchFailure(
+          op, "return_index vcmax index part must be i32 vreg");
+
+    Location loc = op.getLoc();
+    Value packed =
+        rewriter
+            .create<VcmaxOp>(loc, sourceType, sourceParts.front(),
+                             maskParts.front())
+            .getResult();
+    Value zeroScalar =
+        rewriter
+            .create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0))
+            .getResult();
+    Value zeroVec =
+        rewriter.create<VbrOp>(loc, sourceType, zeroScalar).getResult();
+    auto dintlv =
+        rewriter.create<VdintlvOp>(loc, sourceType, sourceType, packed, zeroVec);
+    FailureOr<Value> indexBits =
+        bitcastVReg(loc, dintlv.getHigh(), indexType, rewriter);
+    if (failed(indexBits))
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast packed vcmax index lanes to i32");
+
+    replaceOpWithFlatConvertedValues(
+        rewriter, op, ValueRange{dintlv.getLow(), *indexBits},
+        *this->getTypeConverter());
+    return success();
+  }
+};
+
 struct OneToNVMIExtFOpPattern : OpConversionPattern<VMIExtFOp> {
   using OpConversionPattern<VMIExtFOp>::OpConversionPattern;
 
@@ -11378,7 +11448,7 @@ void populateVMIConversionPatterns(
       OneToNVMICompressOpPattern, OneToNVMICompressStoreOpPattern,
       OneToNVMIReduceAddIOpPattern, OneToNVMIReduceAddFOpPattern,
       OneToNVMIGroupBroadcastOpPattern, OneToNVMIVdhistOpPattern,
-      OneToNVMIVchistOpPattern,
+      OneToNVMIVchistOpPattern, OneToNVMIVcmaxReturnIndexOpPattern,
       OneToNVMIReduceMinMaxOpPattern<VMIReduceMaxFOp, VcmaxOp, VmaxOp>,
       OneToNVMIReduceMinMaxOpPattern<VMIReduceMinFOp, VcminOp, VminOp>,
       OneToNVMIReduceMinMaxOpPattern<VMIReduceMaxIOp, VcmaxOp, VmaxOp>,

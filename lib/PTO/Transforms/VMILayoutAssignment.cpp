@@ -803,6 +803,24 @@ struct LayoutSolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
+      if (auto vcmax = dyn_cast<VMIvcmaxOp>(op)) {
+        // Indexed dual-output form survives unified→legacy; assign contiguous
+        // layouts so VMI→VPTO can unpack to physical one-point VLs.
+        if (vcmax.getNumResults() == 2) {
+          requestDataUse(vcmax.getSourceMutable(), getContiguousLayout(),
+                         /*late=*/false, DataLayoutSeedPhase::Reduce);
+          if (failed(requestMaskUse(vcmax.getMaskMutable(),
+                                    getContiguousLayout(), op)))
+            return WalkResult::interrupt();
+          if (failed(setNaturalLayout(vcmax.getResult(), getContiguousLayout(),
+                                      op, DataLayoutSeedPhase::Reduce)))
+            return WalkResult::interrupt();
+          if (failed(setNaturalLayout(vcmax.getIndex(), getContiguousLayout(),
+                                      op, DataLayoutSeedPhase::Reduce)))
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
       if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);

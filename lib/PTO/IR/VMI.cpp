@@ -3054,6 +3054,37 @@ LogicalResult VMIvcmaxOp::verify() {
   if (failed(verifyMaskMatchesData(getOperation(), maskType, sourceType)))
     return failure();
 
+  // Dual-output form: (max: 1xf32, index: 1xi32) via packed vcmax+vdintlv.
+  if (Value indexVal = getIndex()) {
+    auto indexType = cast<VMIVRegType>(indexVal.getType());
+    if (getGroupAttr())
+      return emitOpError("return_index / optional index result does not "
+                         "support group=");
+    if (!isa<Float32Type>(elemTy))
+      return emitOpError("optional index result currently requires f32 source");
+    FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elemTy);
+    if (failed(lanesPerPart) ||
+        sourceType.getElementCount() != *lanesPerPart)
+      return emitOpError("optional index result currently requires a single "
+                         "physical f32 chunk (")
+             << (succeeded(lanesPerPart) ? *lanesPerPart : 64)
+             << " lanes), got " << sourceType.getElementCount();
+    if (resultType.getElementCount() != 1 ||
+        !isa<Float32Type>(resultType.getElementType()))
+      return emitOpError("optional index form requires 1xf32 value result");
+    if (indexType.getElementCount() != 1 ||
+        !isa<IntegerType>(indexType.getElementType()) ||
+        cast<IntegerType>(indexType.getElementType()).getWidth() != 32)
+      return emitOpError("optional index form requires 1xi32 index result");
+    if (auto pmode = getPmode()) {
+      StringRef val = *pmode;
+      if (val != "zero" && val != "merge")
+        return emitOpError("pmode must be \"zero\" or \"merge\", got \"")
+               << val << "\"";
+    }
+    return success();
+  }
+
   if (auto groupAttr = getGroupAttr()) {
     int64_t C = groupAttr.getInt();
     if (sourceType.getElementCount() % C != 0)

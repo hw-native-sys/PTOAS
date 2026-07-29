@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  // Dual-output vcmax stays on the unified op (not rewritten to reduce_maxf)
+  // and lowers through packed pto.vcmax → vdintlv → vbitcast.
+  func.func @vmi_vcmax_return_index(
+      %source: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xi32>) {
+    // CHECK-LABEL: @vmi_vcmax_return_index
+    // CHECK: %[[PACKED:.*]] = pto.vcmax
+    // CHECK: %[[ZERO:.*]] = pto.vbr
+    // CHECK: %[[EVEN:.*]], %[[ODD:.*]] = pto.vdintlv %[[PACKED]], %[[ZERO]]
+    // CHECK: %[[IDX:.*]] = pto.vbitcast %[[ODD]]
+    // CHECK: return %[[EVEN]], %[[IDX]]
+    %mx, %idx = pto.vmi.vcmax %source, %mask
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
+    %mx_part = "pto.vmi.unpack"(%mx)
+        : (!pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<64xf32>
+    %idx_part = "pto.vmi.unpack"(%idx)
+        : (!pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<64xi32>
+    return %mx_part, %idx_part : !pto.vreg<64xf32>, !pto.vreg<64xi32>
+  }
+}

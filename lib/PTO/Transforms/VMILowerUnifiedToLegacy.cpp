@@ -851,6 +851,10 @@ static LogicalResult lowerVCadd(VMIvcaddOp op, OpBuilder &builder) {
 
 /// Lower vcmax to legacy full or grouped float/integer maximum reduction.
 static LogicalResult lowerVcmax(VMIvcmaxOp op, OpBuilder &builder) {
+  // Dual-output (value, index) stays on the unified op for direct VMI→VPTO
+  // lowering through packed pto.vcmax + vdintlv + vbitcast.
+  if (op.getNumResults() > 1)
+    return failure();
   if (hasMergePmode(op))
     return failure();
 
