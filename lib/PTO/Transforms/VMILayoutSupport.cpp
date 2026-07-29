@@ -486,8 +486,6 @@ static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
     {bits<16>(), bits<32>(), gs(8, 2), gs(8)},
     {bits<8>(), bits<32>(), gs(1), gs(1)},
     {bits<8>(), bits<32>(), gs(8, 4), gs(8)},
-    {bits<16>(), bits<32>(), gs(8), gs(8)},
-    {bits<8>(), bits<32>(), gs(8), gs(8)},
     {bits<16>(), bits<8>(), gs(1), gs(1)},
     {bits<16>(), bits<8>(), gs(8), gs(8, 2)},
     {bits<32>(), bits<16>(), gs(1), gs(1)},
@@ -529,8 +527,6 @@ static constexpr LegalMaskGranularityCastLayoutPattern
         {mb16(), mb32(), gs(8, 2), gs(8)},
         {mb8(), mb32(), gs(1), gs(1)},
         {mb8(), mb32(), gs(8, 4), gs(8)},
-        {mb16(), mb32(), gs(8), gs(8)},
-        {mb8(), mb32(), gs(8), gs(8)},
         {mb16(), mb8(), gs(1), gs(1)},
         {mb16(), mb8(), gs(8), gs(8, 2)},
         {mb32(), mb16(), gs(1), gs(1)},
@@ -563,25 +559,6 @@ static constexpr InterleaveLayoutPattern kVintlvLayoutPatterns[] = {
     {bits<8, 16, 32, 64>(), chunk<1>(), 0, c(), c(), c(), c(), c()},
     {bits<8, 16>(), chunk<1>(), 1, ls(2), ls(2), ls(2), ls(2), ls(2)},
     {bits<8>(), chunk<1>(), 1, ls(4), ls(4), ls(4), ls(4), ls(4)},
-};
-
-struct SupplementalCastLayoutPattern {
-  ElementBitsPattern sourceBits;
-  ElementBitsPattern resultBits;
-  LayoutPattern sourceLayout;
-  LayoutPattern resultLayout;
-};
-
-static constexpr SupplementalCastLayoutPattern
-    kSupplementalIntegerExtLayoutPatterns[] = {
-    {bits<8>(), bits<32>(), gs(8), gs(8)},
-    {bits<16>(), bits<32>(), gs(8), gs(8)},
-};
-
-static constexpr SupplementalCastLayoutPattern
-    kSupplementalNarrowCastLayoutPatterns[] = {
-    {bits<32>(), bits<8>(), gs(8), gs(8)},
-    {bits<32>(), bits<16>(), gs(8), gs(8)},
 };
 
 struct DenseMemoryLayoutPattern {
@@ -2675,53 +2652,12 @@ LogicalResult VMILayoutSupport::getGroupBroadcastSupport(
       sourceType, resultType, numGroups, reason)));
 }
 
-static LogicalResult matchSupplementalCastLayoutPattern(
-    VMIVRegType sourceType, VMIVRegType resultType,
-    ArrayRef<SupplementalCastLayoutPattern> patterns,
-    std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
-    if (reason)
-      *reason = message.str();
-    return failure();
-  };
-
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
-    return fail("requires assigned source/result layouts");
-
-  auto [sourceBits, resultBits] = getCastElementBits(sourceType, resultType);
-  int64_t numGroups =
-      sourceLayout.isGroupSlots()
-          ? sourceLayout.getNumGroups()
-          : (resultLayout.isGroupSlots() ? resultLayout.getNumGroups() : 0);
-  MLIRContext *ctx = sourceType.getContext();
-  for (const SupplementalCastLayoutPattern &pattern : patterns) {
-    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
-        !matchesElementBitsPattern(pattern.resultBits, resultBits))
-      continue;
-    if (!matchesLayoutPattern(ctx, pattern.sourceLayout, sourceLayout,
-                              numGroups))
-      continue;
-    if (!matchesLayoutPattern(ctx, pattern.resultLayout, resultLayout,
-                              numGroups))
-      continue;
-    return success();
-  }
-
-  return fail("source/result layouts do not match a supplemental cast table row");
-}
-
 static LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
                                           VMIVRegType resultType,
                                           std::string *reason) {
-  VMILayoutSupport support;
-  if (succeeded(support.getCastLayoutFactForLayouts(
-          sourceType, resultType, sourceType.getLayoutAttr(),
-          resultType.getLayoutAttr(), reason)))
-    return success();
-  return matchSupplementalCastLayoutPattern(
-      sourceType, resultType, kSupplementalNarrowCastLayoutPatterns, reason);
+  return success(succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
+      sourceType, resultType, sourceType.getLayoutAttr(),
+      resultType.getLayoutAttr(), reason)));
 }
 
 LogicalResult VMILayoutSupport::getTruncFSupport(VMITruncFOp op,
@@ -2744,16 +2680,9 @@ template <typename OpT>
 static LogicalResult getExtISupportImpl(OpT op, std::string *reason) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-
-  FailureOr<VMICastLayoutFact> fact =
-      VMILayoutSupport().getCastLayoutFactForLayouts(
-          sourceType, resultType, sourceType.getLayoutAttr(),
-          resultType.getLayoutAttr(), reason);
-  if (succeeded(fact))
-    return success();
-
-  return matchSupplementalCastLayoutPattern(
-      sourceType, resultType, kSupplementalIntegerExtLayoutPatterns, reason);
+  return success(succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
+      sourceType, resultType, sourceType.getLayoutAttr(),
+      resultType.getLayoutAttr(), reason)));
 }
 
 LogicalResult VMILayoutSupport::getExtSISupport(VMIExtSIOp op,
