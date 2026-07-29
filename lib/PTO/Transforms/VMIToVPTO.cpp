@@ -279,8 +279,6 @@ static FailureOr<Type> getVMIVRegPhysicalElementType(VMIVRegType type) {
     return elementType;
   if (!integerType)
     return failure();
-  if (!integerType.isUnsigned())
-    return failure();
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   int64_t laneStride = layout.getLaneStride();
   if (elementBits == 0 || laneStride <= 1)
@@ -3562,10 +3560,12 @@ FailureOr<Value> packToPreviousCarrier(Location loc, Value source,
 FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
-  if (sourceParts.size() != resultTypes.size()) {
+  if (sourceParts.empty() || resultTypes.empty() ||
+      (resultTypes.size() + laneStride - 1) / laneStride !=
+          sourceParts.size()) {
     (void)rewriter.notifyMatchFailure(
-        op, "dense lane_stride unpack materialization requires matching "
-            "source/result physical arity");
+        op, "dense lane_stride unpack materialization requires result parts "
+            "to form one partial or complete stride group per source part");
     return failure();
   }
 
@@ -3621,13 +3621,12 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
-  bool sameArity = sourceParts.size() == resultTypes.size();
-  bool pairwisePack = laneStride == 2 &&
-                      sourceParts.size() == resultTypes.size() * 2;
-  if (!sameArity && !pairwisePack) {
+  if (sourceParts.empty() || resultTypes.empty() ||
+      (sourceParts.size() + laneStride - 1) / laneStride !=
+          resultTypes.size()) {
     (void)rewriter.notifyMatchFailure(
-        op, "dense lane_stride pack materialization requires matching arity "
-            "or two source parts per result part");
+        op, "dense lane_stride pack materialization requires one partial or "
+            "complete stride group of source parts per result part");
     return failure();
   }
 
@@ -3650,44 +3649,51 @@ FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
-    int64_t sourceIndex = pairwisePack ? resultIndex * 2 : resultIndex;
-    FailureOr<Value> current =
-        bitcastVReg(op->getLoc(), sourceParts[sourceIndex], *sourceCarrier,
-                    rewriter);
-    if (failed(current))
-      return failure();
-    FailureOr<Value> packed = packToPreviousCarrier(op->getLoc(), *current,
-                                                    carrierBits / 2, "LOWER",
-                                                    rewriter);
-    if (failed(packed))
-      return failure();
-    current = *packed;
-    if (pairwisePack) {
-      FailureOr<Value> highCarrier =
-          bitcastVReg(op->getLoc(), sourceParts[sourceIndex + 1],
-                      *sourceCarrier, rewriter);
-      if (failed(highCarrier))
+    size_t sourceBegin = resultIndex * laneStride;
+    size_t sourceEnd = std::min(sourceBegin + laneStride, sourceParts.size());
+    SmallVector<Value> currentLevel;
+    currentLevel.reserve(sourceEnd - sourceBegin);
+    for (Value source : sourceParts.slice(sourceBegin, sourceEnd - sourceBegin)) {
+      FailureOr<Value> carrier =
+          bitcastVReg(op->getLoc(), source, *sourceCarrier, rewriter);
+      if (failed(carrier))
         return failure();
-      FailureOr<Value> high = packToPreviousCarrier(
-          op->getLoc(), *highCarrier, carrierBits / 2, "HIGHER", rewriter);
-      FailureOr<Value> mask = createAllTrueMaskForVReg(
-          op->getLoc(), cast<VRegType>((*packed).getType()), rewriter);
-      if (failed(high) || failed(mask))
-        return failure();
-      current = rewriter
-                    .create<VorOp>(op->getLoc(), (*packed).getType(), *packed,
-                                   *high, *mask)
-                    .getResult();
+      currentLevel.push_back(*carrier);
     }
-    if (laneStride == 4) {
-      packed = packToPreviousCarrier(op->getLoc(), *current, elementBits,
-                                     "LOWER", rewriter);
-      if (failed(packed))
-        return failure();
-      current = *packed;
+
+    unsigned currentBits = carrierBits;
+    while (currentBits > elementBits) {
+      SmallVector<Value> nextLevel;
+      nextLevel.reserve((currentLevel.size() + 1) / 2);
+      for (size_t index = 0; index < currentLevel.size(); index += 2) {
+        FailureOr<Value> low = packToPreviousCarrier(
+            op->getLoc(), currentLevel[index], currentBits / 2, "LOWER",
+            rewriter);
+        if (failed(low))
+          return failure();
+        Value merged = *low;
+        if (index + 1 < currentLevel.size()) {
+          FailureOr<Value> high = packToPreviousCarrier(
+              op->getLoc(), currentLevel[index + 1], currentBits / 2,
+              "HIGHER", rewriter);
+          FailureOr<Value> mask = createAllTrueMaskForVReg(
+              op->getLoc(), cast<VRegType>((*low).getType()), rewriter);
+          if (failed(high) || failed(mask))
+            return failure();
+          merged = rewriter
+                       .create<VorOp>(op->getLoc(), (*low).getType(), *low,
+                                      *high, *mask)
+                       .getResult();
+        }
+        nextLevel.push_back(merged);
+      }
+      currentLevel = std::move(nextLevel);
+      currentBits /= 2;
     }
+    if (currentLevel.size() != 1)
+      return failure();
     FailureOr<Value> result =
-        bitcastVReg(op->getLoc(), *current, resultType, rewriter);
+        bitcastVReg(op->getLoc(), currentLevel.front(), resultType, rewriter);
     if (failed(result))
       return failure();
     results.push_back(*result);

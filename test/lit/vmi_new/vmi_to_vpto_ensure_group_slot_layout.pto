@@ -125,6 +125,30 @@ module {
           !pto.ptr<ui8, ub>
     return
   }
+
+  func.func @gs8_i8_roundtrip(
+      %v: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %s = pto.vmi.ensure_layout %v
+        : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    %r = pto.vmi.ensure_layout %s
+        : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+        -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %r : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+
+  func.func @gs8_f16_roundtrip_multichunk(
+      %v: !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>>)
+      -> !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>> {
+    %s = pto.vmi.ensure_layout %v
+        : !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>>
+        -> !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>
+    %r = pto.vmi.ensure_layout %s
+        : !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>
+        -> !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>>
+    return %r : !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>>
+  }
 }
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls2_ui8(
@@ -180,3 +204,15 @@ module {
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @gs8_i8_roundtrip(
+// CHECK-COUNT-2: pto.vzunpack
+// CHECK-COUNT-2: pto.vpack
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+
+// CHECK-LABEL: func.func @gs8_f16_roundtrip_multichunk(
+// CHECK-COUNT-2: pto.vzunpack
+// CHECK-COUNT-2: pto.vpack
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.

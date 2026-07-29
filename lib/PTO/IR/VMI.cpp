@@ -234,8 +234,6 @@ static FailureOr<Type> getVMIPhysicalElementType(VMIVRegType type) {
     return elementType;
   if (!integerType)
     return failure();
-  if (!integerType.isUnsigned())
-    return failure();
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   int64_t laneStride = layout.getLaneStride();
   if (elementBits == 0 || laneStride <= 1)
