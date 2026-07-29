@@ -14,7 +14,10 @@ if [ -n "${PTOAS_ROOT}" ] && [ -f "${PTOAS_ROOT}/scripts/ptoas_env.sh" ]; then
   export PTOAS_ENV_SKIP_SMOKE_TEST="${PTOAS_ENV_SKIP_SMOKE_TEST:-1}"
   # shellcheck disable=SC1091
   source "${PTOAS_ROOT}/scripts/ptoas_env.sh"
-  [ -d "${PTOAS_ROOT}/build/tools/ptoas" ] && export PATH="${PTOAS_ROOT}/build/tools/ptoas:${PATH}"
+  # ptoas_env prepends build/tools/ptoas; that stub can clash with the pip/wheel
+  # launcher (LLVM CL option double-register). Prefer the wheel on PATH.
+  PATH="$(echo "${PATH}" | tr ':' '\n' | grep -v "/build/tools/ptoas$" | paste -sd:)"
+  export PATH
 fi
 
 export ASCEND_NPU_ARCH="${ASCEND_NPU_ARCH:-dav-3510}"
