@@ -24,6 +24,7 @@
 //       the row loop body.
 //
 // REQUIRES: vfsim-costmodel
+// RUN: pto-test-opt --pto-fusion-plan-search='enable-vfsim-costmodel-optimization=true' --mlir-print-ir-after=pto-fusion-plan-search %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SEARCH
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-vfsim-costmodel-optimization --emit-pto-ir %s --mlir-print-ir-after=pto-fusion-region-gen -o /dev/null 2>&1 | FileCheck %s --check-prefix=REGION
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-vfsim-costmodel-optimization --emit-vpto %s --mlir-print-ir-after=pto-low-level-loop-fusion -o /dev/null 2>&1 | FileCheck %s --check-prefix=LLF
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-vfsim-costmodel-optimization --enable-unroll-after-loop-fusion --emit-vpto %s --mlir-print-ir-after=pto-unroll-after-loop-fusion -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNROLL
@@ -75,6 +76,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 }
+
+// SEARCH-LABEL: func.func @vfsim_unroll_tadd_tmul_32x128(
+// SEARCH: pto.tadd{{.*}}{pto.fusion.col_unroll_factor = 2 : i64, pto.fusion.group_id = 0 : i64, pto.fusion.order = 0 : i64, pto.fusion.row_unroll_factor = 1 : i64}
+// SEARCH: pto.tmul{{.*}}{pto.fusion.col_unroll_factor = 2 : i64, pto.fusion.group_id = 0 : i64, pto.fusion.order = 1 : i64, pto.fusion.row_unroll_factor = 1 : i64}
 
 // REGION-LABEL: func.func @vfsim_unroll_tadd_tmul_32x128(
 // REGION: pto.fusion_region {

@@ -9,6 +9,9 @@
 // This pass owns the bounded, cost-ranked search across competing DFG paths.
 // PTOFusionPlan.cpp intentionally retains the original single-path greedy
 // planner used by the production fusion pipeline.
+// Apart from group selection, this pass must preserve FusionPlan's metadata
+// lifecycle and optional post-planning integrations, including the VfSimulator
+// unroll planner.
 
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
 #include "PTO/Transforms/TileFusion/FusionOpSemantics.h"
@@ -26,6 +29,10 @@
 
 #include <algorithm>
 #include <optional>
+
+#ifdef PTO_ENABLE_VFSIM_IR_PLANNER
+#include "native/IRPlanner.h"
+#endif
 
 namespace mlir {
 namespace pto {
@@ -45,6 +52,10 @@ namespace {
 
 static constexpr llvm::StringLiteral kFusionGroupIdAttr = "pto.fusion.group_id";
 static constexpr llvm::StringLiteral kFusionOrderAttr = "pto.fusion.order";
+static constexpr llvm::StringLiteral kFusionRowUnrollAttr =
+    "pto.fusion.row_unroll_factor";
+static constexpr llvm::StringLiteral kFusionColUnrollAttr =
+    "pto.fusion.col_unroll_factor";
 
 struct PlannedFusionGroup {
   SmallVector<const pto::FusionComputeNode *, 8> members;
@@ -593,7 +604,22 @@ static void clearPlanningAttrs(func::FuncOp func) {
   func.walk([](Operation *op) {
     op->removeAttr(kFusionGroupIdAttr);
     op->removeAttr(kFusionOrderAttr);
+    op->removeAttr(kFusionRowUnrollAttr);
+    op->removeAttr(kFusionColUnrollAttr);
   });
+}
+
+static LogicalResult runVfSimFusionPlanner(func::FuncOp func,
+                                           bool dumpCandidates) {
+#ifdef PTO_ENABLE_VFSIM_IR_PLANNER
+  vfsim::PlannerOptions options;
+  options.dumpCandidates = dumpCandidates;
+  return vfsim::planTileFusionIR(func.getOperation(), options);
+#else
+  return func.emitError() << "--enable-vfsim-costmodel-optimization requires "
+                             "configuring PTOAS with "
+                             "-DPTO_ENABLE_VFSIM_COSTMODEL=ON";
+#endif
 }
 
 struct FusionPlanSearchPass
@@ -640,6 +666,12 @@ struct FusionPlanSearchPass
       SmallVector<PlannedFusionGroup, 8> groups =
           strategyEngine.planBlock(planningCtx, costModel);
       assignStableGroupMetadata(groups, ctx, nextGroupId);
+    }
+
+    if (enableVfSimCostmodelOptimization &&
+        failed(runVfSimFusionPlanner(func, dumpVfSimUnrollTest))) {
+      signalPassFailure();
+      return;
     }
 
     // The fusion metadata we annotate (group_id/order) is a planning *output*;

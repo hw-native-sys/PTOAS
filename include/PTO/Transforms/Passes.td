@@ -277,7 +277,8 @@ def FusionPlan : Pass<"pto-fusion-plan", "func::FuncOp"> {
            "bool", /*default=*/"false",
            "Enable shape inference (ShapeConstraintSolver) for tile fusion. "
            "When disabled (default), fall back to static/direct-bound "
-           "iteration-domain inference.  Only FusionPlan consumes this option; "
+           "iteration-domain inference. Only fusion planning passes consume "
+           "this option; "
            "FusionRegionGen consumes only the shared pre-fusion dataflow graph "
            "(cached by the analysis manager) and never consults iteration-domain "
            "classes, so it does not need the option.">,
@@ -303,6 +304,8 @@ def FusionPlanSearch : Pass<"pto-fusion-plan-search", "func::FuncOp"> {
     members with:
       - pto.fusion.group_id
       - pto.fusion.order
+    When enabled, the optional VfSimulator post-planning step may also annotate
+    pto.fusion.row_unroll_factor and pto.fusion.col_unroll_factor.
   }];
   let constructor = "mlir::pto::createFusionPlanSearchPass()";
   let dependentDialects = ["mlir::pto::PTODialect"];
@@ -311,7 +314,17 @@ def FusionPlanSearch : Pass<"pto-fusion-plan-search", "func::FuncOp"> {
            "bool", /*default=*/"false",
            "Enable shape inference (ShapeConstraintSolver) for tile fusion. "
            "When disabled (default), fall back to static/direct-bound "
-           "iteration-domain inference.">
+           "iteration-domain inference.">,
+    Option<"enableVfSimCostmodelOptimization",
+           "enable-vfsim-costmodel-optimization",
+           "bool", /*default=*/"false",
+           "Invoke the optional VfSimulator costmodel planner after PTOAS has "
+           "emitted FusionPlanSearch group/order metadata.">,
+    Option<"dumpVfSimUnrollTest", "dump-vfsim-unroll-test",
+           "bool", /*default=*/"false",
+           "Print VfSimulator unroll candidate timings for accepted fusion "
+           "groups. This is a debug dump only and does not enable or disable "
+           "the VfSimulator planner.">
   ];
 }
 

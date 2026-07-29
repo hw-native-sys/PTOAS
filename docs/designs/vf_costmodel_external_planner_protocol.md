@@ -1,12 +1,14 @@
-# PTOAS + VfSim Costmodel 接口设计
+# PTOAS + VfSim Cost Model Interface Design
 
-本文描述 PTOAS 以源码级 submodule 方式接入 VfSimulator costmodel 的当前接口形式。
-当前实现面向 A5 tile fusion 路径：PTOAS 负责生成合法 fusion group，VfSim 基于
-已选 group 做 costmodel 优化决策，并把结果写回同一份 MLIR IR。
+This document describes the current interface through which PTOAS integrates the
+VfSimulator cost model as a source-level submodule. The current implementation
+targets the A5 tile-fusion path: PTOAS generates legal fusion groups, VfSim uses
+the selected groups to make cost-model optimization decisions, and VfSim writes
+the results back to the same MLIR IR.
 
-## 接入形式
+## Integration Model
 
-VfSimulator 作为 PTOAS 的 git submodule 引入：
+VfSimulator is included in PTOAS as a git submodule:
 
 ```text
 PTOAS/
@@ -14,20 +16,21 @@ PTOAS/
     VfSimulator/
 ```
 
-PTOAS 仓库只记录 submodule commit；VfSimulator 的源码历史仍由 VfSimulator 仓库维护。
-当前 `PTO_ENABLE_VFSIM_COSTMODEL=ON` 只支持 build-tree/source-tree 开发使用，
-尚不支持 install/export。
+The PTOAS repository records only the submodule commit. The source history of
+VfSimulator remains in the VfSimulator repository. Currently,
+`PTO_ENABLE_VFSIM_COSTMODEL=ON` supports only build-tree/source-tree development;
+install/export use is not yet supported.
 
-## 控制选项
+## Control Options
 
-| 选项 | 类型 | 作用 |
+| Option | Type | Purpose |
 |---|---|---|
-| `-DPTO_ENABLE_VFSIM_COSTMODEL=ON` | CMake 编译期选项 | 编译并链接 VfSim native planner。默认 `OFF`。 |
-| `--enable-vfsim-costmodel-optimization` | `ptoas` 运行期选项 | 启用 VfSim costmodel 优化，负责生成/标注 costmodel 决策 attrs。 |
-| `--enable-unroll-after-loop-fusion` | `ptoas` 运行期选项 | 启用 VPTO 后端 unroll pass，负责消费已有 `pto.fusion.row/col_unroll_factor` attrs。 |
-| `--dump-vfsim-unroll-test` | `ptoas` 运行期调试选项 | 只打印 VfSim 对各个 unroll candidate 的预测 cycle，不控制优化是否启用。 |
+| `-DPTO_ENABLE_VFSIM_COSTMODEL=ON` | CMake configure-time option | Builds and links the native VfSim planner. Defaults to `OFF`. |
+| `--enable-vfsim-costmodel-optimization` | `ptoas` runtime option | Enables VfSim cost-model optimization, which generates and annotates cost-model decision attributes. |
+| `--enable-unroll-after-loop-fusion` | `ptoas` runtime option | Enables the VPTO backend unroll pass, which consumes existing `pto.fusion.row/col_unroll_factor` attributes. |
+| `--dump-vfsim-unroll-test` | `ptoas` runtime debugging option | Prints the cycle prediction for each VfSim unroll candidate. It does not control whether optimization is enabled. |
 
-用户侧常用命令形态：
+A typical command is:
 
 ```bash
 ptoas \
@@ -40,60 +43,62 @@ ptoas \
   input.pto
 ```
 
-## 构建接入
+## Build Integration
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| `CMakeLists.txt` | 引入 `cmake/VfSimulator.cmake`。 |
-| `cmake/VfSimulator.cmake` | 定义 `PTO_ENABLE_VFSIM_COSTMODEL`，校验 submodule，加入 `3rdparty/VfSimulator/native`。 |
-| `lib/PTO/Transforms/CMakeLists.txt` | 将 `vfsim::native_core` 和 `vfsim::ir_planner` 链接进 `PTOTransforms`。 |
+| `CMakeLists.txt` | Includes `cmake/VfSimulator.cmake`. |
+| `cmake/VfSimulator.cmake` | Defines `PTO_ENABLE_VFSIM_COSTMODEL`, validates the submodule, and adds `3rdparty/VfSimulator/native`. |
+| `lib/PTO/Transforms/CMakeLists.txt` | Links `vfsim::native_core` and `vfsim::ir_planner` into `PTOTransforms`. |
 
-VfSim native 侧主要 target：
+The main native VfSim targets are:
 
 ```text
 vfsim::native_core
 vfsim::ir_planner
 ```
 
-## 编译链路
+## Compilation Pipeline
 
 ```text
 PreFusionAnalysis
   -> FusionPlan
-       - PTOAS 生成合法 fusion group
-       - PTOAS 写入 pto.fusion.group_id / pto.fusion.order
-       - 启用 --enable-vfsim-costmodel-optimization 时调用 VfSim planner
-       - VfSim 写回 pto.fusion.row_unroll_factor / pto.fusion.col_unroll_factor
+       - PTOAS generates legal fusion groups
+       - PTOAS writes pto.fusion.group_id / pto.fusion.order
+       - When --enable-vfsim-costmodel-optimization is enabled, calls the VfSim planner
+       - VfSim writes back pto.fusion.row_unroll_factor / pto.fusion.col_unroll_factor
   -> OpScheduling
   -> FusionRegionGen
-       - 将 tileop group 包成 pto.fusion_region
-       - 将一致的 row/col unroll attrs 提升到 pto.fusion_region
+       - Wraps each tileop group in a pto.fusion_region
+       - Promotes consistent row/col unroll attributes to pto.fusion_region
   -> ExpandTileOp / Inline / shape-only fold
   -> PTOLowLevelLoopFusion
   -> PTOUnrollAfterLoopFusion
-       - 启用 --enable-unroll-after-loop-fusion 时消费 row/col unroll attrs
-       - 成功消费后将对应 factor 复位为 1
+       - When --enable-unroll-after-loop-fusion is enabled, consumes the row/col unroll attributes
+       - Resets a successfully consumed factor to 1
   -> FlattenFusionRegion
 ```
 
-EmitC 路径可以运行 FusionPlan 和 VfSim planner，但当前 unroll attrs 只由 VPTO
-后端的 `PTOUnrollAfterLoopFusion` 消费。
+The EmitC path can run `FusionPlan` and the VfSim planner, but the unroll
+attributes are currently consumed only by `PTOUnrollAfterLoopFusion` in the
+VPTO backend.
 
-## PTOAS 调用点
+## PTOAS Call Sites
 
-| 文件 | 符号 | 作用 |
+| File | Symbol | Purpose |
 |---|---|---|
-| `include/PTO/Transforms/Passes.td` | `FusionPlan` options | 定义 `enableVfSimCostmodelOptimization` 和 `dumpVfSimUnrollTest` pass options。 |
-| `tools/ptoas/ptoas.cpp` | `enableVfSimCostmodelOptimization` | 定义用户侧 `--enable-vfsim-costmodel-optimization`。 |
-| `tools/ptoas/ptoas.cpp` | `enableUnrollAfterLoopFusion` | 定义用户侧 `--enable-unroll-after-loop-fusion`。 |
-| `tools/ptoas/ptoas.cpp` | `compilePTOASModule` | 将 costmodel 选项传入 `FusionPlanOptions`；将 unroll 选项用于 VPTO 后端 pass 插入。 |
-| `lib/PTO/Transforms/TileFusion/PTOFusionPlan.cpp` | `runVfSimFusionPlanner` | 调用 `vfsim::planTileFusionIR`。 |
-| `lib/PTO/Transforms/TileFusion/PTOFusionRegionGen.cpp` | `getCommonSpanI64Attr` | 校验并提升 row/col unroll attrs 到 `pto.fusion_region`。 |
-| `lib/PTO/Transforms/TileFusion/PTOUnrollAfterLoopFusion.cpp` | `PTOUnrollAfterLoopFusion` | 消费 `pto.fusion_region` 上的 row/col unroll attrs。 |
+| `include/PTO/Transforms/Passes.td` | `FusionPlan` and `FusionPlanSearch` options | Defines the `enableVfSimCostmodelOptimization` and `dumpVfSimUnrollTest` pass options. |
+| `tools/ptoas/ptoas.cpp` | `enableVfSimCostmodelOptimization` | Defines the user-facing `--enable-vfsim-costmodel-optimization` option. |
+| `tools/ptoas/ptoas.cpp` | `enableUnrollAfterLoopFusion` | Defines the user-facing `--enable-unroll-after-loop-fusion` option. |
+| `tools/ptoas/ptoas.cpp` | `compilePTOASModule` | Passes the cost-model option to `FusionPlanOptions` and uses the unroll option to insert the VPTO backend pass. |
+| `lib/PTO/Transforms/TileFusion/PTOFusionPlan.cpp` | `runVfSimFusionPlanner` | Calls `vfsim::planTileFusionIR`. |
+| `lib/PTO/Transforms/TileFusion/PTOFusionPlanSearch.cpp` | `runVfSimFusionPlanner` | Calls `vfsim::planTileFusionIR` after selecting the highest-ranked fusion groups. |
+| `lib/PTO/Transforms/TileFusion/PTOFusionRegionGen.cpp` | `getCommonSpanI64Attr` | Validates and promotes the row/col unroll attributes to `pto.fusion_region`. |
+| `lib/PTO/Transforms/TileFusion/PTOUnrollAfterLoopFusion.cpp` | `PTOUnrollAfterLoopFusion` | Consumes the row/col unroll attributes on `pto.fusion_region`. |
 
 ## VfSim C++ API
 
-VfSim 向 PTOAS 暴露源码级 C++ API：
+VfSim exposes a source-level C++ API to PTOAS:
 
 ```cpp
 namespace vfsim {
@@ -110,39 +115,39 @@ mlir::LogicalResult planTileFusionIR(
 } // namespace vfsim
 ```
 
-接口约定：
+Interface contract:
 
-| 项 | 约定 |
+| Item | Contract |
 |---|---|
-| 输入 IR | FusionPlan 后的 MLIR operation；当前自动 tileop fusion 路线传入 `func::FuncOp`。 |
-| 输入内容 | PTOAS 已写好 `pto.fusion.group_id` 和 `pto.fusion.order` 的 tileop-level IR。 |
-| 输出方式 | VfSim 原地写回 `pto.fusion.row_unroll_factor` / `pto.fusion.col_unroll_factor`。 |
-| 返回值 | `success()` 表示 planner 完成、没有可处理 group，或某些 group 被 warning 降级跳过；`failure()` 表示接口级错误。 |
-| 修改范围 | Planner 只能写 attrs，不允许增删、替换、移动 op，也不允许修改 operand/result/type。 |
+| Input IR | An MLIR operation after `FusionPlan` or `FusionPlanSearch`; both paths pass a `func::FuncOp`. |
+| Input contents | Tileop-level IR on which PTOAS has already written `pto.fusion.group_id` and `pto.fusion.order`. |
+| Output method | VfSim writes `pto.fusion.row_unroll_factor` / `pto.fusion.col_unroll_factor` in place. |
+| Return value | `success()` means that the planner completed, found no processable groups, or skipped some groups after warning and falling back. `failure()` means an interface-level error. |
+| Allowed modifications | The planner may write attributes only. It must not add, remove, replace, or move operations, or modify operands, results, or types. |
 
-## 输入 IR
+## Input IR
 
-PTOAS 传给 VfSim 的 IR 必须已经包含：
+The IR passed from PTOAS to VfSim must already contain:
 
-| 属性 | 含义 |
+| Attribute | Meaning |
 |---|---|
-| `pto.fusion.group_id` | PTOAS 已选择的 fusion group ID。 |
-| `pto.fusion.order` | group 内 tileop 的执行顺序。 |
+| `pto.fusion.group_id` | The fusion-group ID selected by PTOAS. |
+| `pto.fusion.order` | The execution order of a tileop within the group. |
 
-VfSim 从 IR 中读取：
+VfSim reads the following information from the IR:
 
-| 信息 | 来源 |
+| Information | Source |
 |---|---|
-| group 边界 | `pto.fusion.group_id` |
-| group 内顺序 | `pto.fusion.order` |
-| tileop 类型 | MLIR op name，例如 `pto.tadd` |
-| 数据依赖 | SSA use-def |
-| 输入输出 value | tileop operands |
-| dtype | operand/result type |
-| shape | tile buffer type |
-| 模板参数 | tileop attrs |
+| Group boundaries | `pto.fusion.group_id` |
+| Order within a group | `pto.fusion.order` |
+| Tileop type | MLIR operation name, for example `pto.tadd` |
+| Data dependencies | SSA use-def chains |
+| Input and output values | Tileop operands |
+| Data type | Operand/result types |
+| Shape | Tile-buffer types |
+| Template parameters | Tileop attributes |
 
-示例：
+Example:
 
 ```mlir
 pto.tadd ins(%b, %c : !pto.tile_buf<vec, 32x128xf32>,
@@ -158,25 +163,27 @@ pto.tmul ins(%a, %b : !pto.tile_buf<vec, 32x128xf32>,
           pto.fusion.order = 1 : i64}
 ```
 
-VfSim 不重新判断这组 tileop 是否可以融合，只基于 PTOAS 已选 group 生成优化决策。
+VfSim does not reassess whether the tileops in a group may be fused. It makes
+optimization decisions only for groups already selected by PTOAS.
 
-## 输出 IR
+## Output IR
 
-VfSim 输出仍然是同一份 tileop-level IR，通过 attrs 表示优化计划：
+VfSim outputs the same tileop-level IR and represents its optimization plan
+through attributes:
 
-| 属性 | 含义 |
+| Attribute | Meaning |
 |---|---|
-| `pto.fusion.row_unroll_factor` | 当 row loop 是实际最内层 loop 时使用的 unroll factor。 |
-| `pto.fusion.col_unroll_factor` | 当 col loop 是实际最内层 loop 时使用的 unroll factor。 |
+| `pto.fusion.row_unroll_factor` | The unroll factor to use when the row loop is the actual innermost loop. |
+| `pto.fusion.col_unroll_factor` | The unroll factor to use when the column loop is the actual innermost loop. |
 
-当前 unroll 语义：
+Current unroll semantics:
 
-| 情况 | VfSim 输出 |
+| Condition | VfSim output |
 |---|---|
-| col trip count 为 1 | `row_unroll_factor > 1`，`col_unroll_factor = 1` |
-| col trip count 大于 1 | `row_unroll_factor = 1`，`col_unroll_factor > 1` |
+| Column trip count is 1 | `row_unroll_factor > 1`, `col_unroll_factor = 1` |
+| Column trip count is greater than 1 | `row_unroll_factor = 1`, `col_unroll_factor > 1` |
 
-示例：
+Example:
 
 ```mlir
 pto.tadd ... {
@@ -194,10 +201,10 @@ pto.tmul ... {
 }
 ```
 
-## RegionGen 属性提升
+## Attribute Promotion in RegionGen
 
-`FusionRegionGen` 会把同一个 group 包成 `pto.fusion_region`，并将一致的
-row/col unroll attrs 从 tileop 提升到 region：
+`FusionRegionGen` wraps each group in a `pto.fusion_region` and promotes
+consistent row/column unroll attributes from the tileops to the region:
 
 ```mlir
 %0 = pto.fusion_region {
@@ -211,33 +218,38 @@ row/col unroll attrs 从 tileop 提升到 region：
 } : !pto.tile_buf<vec, 32x128xf32>
 ```
 
-提升规则：
+Promotion rules:
 
-- 同一个 group 内，某个 unroll attr 要么所有成员都没有，要么所有成员都有。
-- 如果所有成员都有，值必须一致。
-- factor 必须是正整数。
-- 部分成员有、部分成员没有，或者值不一致，会报错。
+- For a given unroll attribute, either every member of a group has the
+  attribute or none of them do.
+- If every member has the attribute, all values must be identical.
+- The factor must be a positive integer.
+- An error is reported if only some members have the attribute or if their
+  values differ.
 
-## VPTO Unroll 消费
+## VPTO Unroll Consumption
 
-`PTOUnrollAfterLoopFusion` 在 VPTO low-level loop fusion 后运行。它读取
-`pto.fusion_region` 上的：
+`PTOUnrollAfterLoopFusion` runs after VPTO low-level loop fusion. It reads the
+following attributes from `pto.fusion_region`:
 
 ```text
 pto.fusion.row_unroll_factor
 pto.fusion.col_unroll_factor
 ```
 
-消费规则：
+Consumption rules:
 
-- 只展开当前最内层 `scf.for`。
-- 只处理常量 trip count，且 trip count 必须能被 factor 整除。
-- 当前约定下，col loop 存在时消费 `col_unroll_factor`；col loop 已被折叠后，
-  row loop 成为最内层时消费 `row_unroll_factor`。
-- 成功消费某个 factor 后，将该 region 上对应 attr 复位为 `1`，避免同一 factor
-  在后续 greedy/walk 过程中被重复应用。
+- Only the current innermost `scf.for` is unrolled.
+- Only constant trip counts are supported, and the trip count must be divisible
+  by the factor.
+- Under the current convention, `col_unroll_factor` is consumed when a column
+  loop exists. If the column loop has been folded, the row loop becomes the
+  innermost loop and `row_unroll_factor` is consumed.
+- After a factor is successfully consumed, the corresponding attribute on the
+  region is reset to `1` to prevent the same factor from being applied again
+  during subsequent greedy/walk processing.
 
-示意：
+Illustration:
 
 ```mlir
 // Before PTOUnrollAfterLoopFusion
@@ -267,41 +279,42 @@ pto.fusion_region {
 }
 ```
 
-## VfSim Planner 行为
+## VfSim Planner Behavior
 
-VfSim native planner 位于 `3rdparty/VfSimulator/native`。
+The native VfSim planner is located in `3rdparty/VfSimulator/native`.
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| `IRPlanner.h` | 定义 `PlannerOptions` 和 `planTileFusionIR`。 |
-| `IRPlanner.cpp` | 收集 fusion group，枚举 unroll candidate，调用 native VfInfo simulator，写回 attrs。 |
-| `TileOpTemplates.h/cpp` | 将 PTOAS tileop group lower 成 VfSim `VfInfo` micro-op program。 |
-| `ParamDB.h/cpp` | 加载 ISA/uarch/forwarding/initiation-interval 参数。 |
+| `IRPlanner.h` | Defines `PlannerOptions` and `planTileFusionIR`. |
+| `IRPlanner.cpp` | Collects fusion groups, enumerates unroll candidates, invokes the native `VfInfo` simulator, and writes the attributes back. |
+| `TileOpTemplates.h/cpp` | Lowers PTOAS tileop groups to VfSim `VfInfo` micro-op programs. |
+| `ParamDB.h/cpp` | Loads ISA, microarchitecture, forwarding, and initiation-interval parameters. |
 
-候选枚举规则：
+Candidate enumeration rules:
 
-- 搜索范围是 `1..maxUnroll`。
-- 当前默认 `maxUnroll = 8`。
-- 只考虑能够整除目标 loop trip count 的 factor。
+- The search range is `1..maxUnroll`.
+- The current default is `maxUnroll = 8`.
+- Only factors that evenly divide the target loop trip count are considered.
 
-降级诊断：
+Fallback diagnostics:
 
-| 场景 | 行为 |
+| Scenario | Behavior |
 |---|---|
-| 参数表加载失败 | 打印 warning，planner 对本次编译降级，不写 unroll attrs，PTOAS 继续编译。 |
-| group 中存在不支持的 tileop/template | 打印 warning，跳过该 group。 |
-| micro-op/dtype 参数缺失或所有 candidate 仿真失败 | 打印 warning，跳过该 group。 |
+| Parameter-table loading fails | Prints a warning, falls back for this compilation without writing unroll attributes, and allows PTOAS compilation to continue. |
+| A group contains an unsupported tileop/template | Prints a warning and skips that group. |
+| Micro-op/data-type parameters are missing, or simulation fails for every candidate | Prints a warning and skips that group. |
 
-`--dump-vfsim-unroll-test` 只额外打印候选值预测结果，例如：
+`--dump-vfsim-unroll-test` additionally prints predicted candidate results, for
+example:
 
 ```text
 unroll=1 trip=2 dtype=fp32 cycles=278
 unroll=2 trip=2 dtype=fp32 cycles=131
 ```
 
-## 当前模板覆盖范围
+## Current Template Coverage
 
-当前源码级 planner 主要覆盖 elementwise 风格 tileop。
+The current source-level planner primarily covers elementwise-style tileops.
 
 | TileOp | Micro-op |
 |---|---|
@@ -314,25 +327,26 @@ unroll=2 trip=2 dtype=fp32 cycles=131
 | `tabs` | `VABS` |
 | `texp` | `VEXP` |
 | `tadds` | `VADDS` |
-| `tsubs` | `VSUB`，标量通过 `VBR` 转成向量 |
+| `tsubs` | `VSUB`; the scalar is converted to a vector through `VBR` |
 | `tmuls` | `VMULS` |
-| `tdivs` | `VDIV`，标量通过 `VBR` 转成向量 |
+| `tdivs` | `VDIV`; the scalar is converted to a vector through `VBR` |
 | `tmaxs` | `VMAXS` |
 | `tmins` | `VMINS` |
-| `tcvt` | `VCVT_F16_TO_F32` 或 `VCVT_F32_TO_F16` |
+| `tcvt` | `VCVT_F16_TO_F32` or `VCVT_F32_TO_F16` |
 
-模板选择原则：
+Template-selection rules:
 
-- 根据 op name 选择 tileop 模板族。
-- 根据 dtype 选择 micro-op 参数和 vector lanes。
-- 根据 shape / valid shape 推导 row/col loop 结构。
-- 模板语义需要与 VPTO 后端 tileop template 保持一致。
+- Select the tileop template family based on the operation name.
+- Select micro-op parameters and vector lanes based on the data type.
+- Derive the row/column loop structure from the shape and valid shape.
+- Keep template semantics consistent with the VPTO backend tileop templates.
 
-## 手写 VF IR 扩展方向
+## Future Direction for Hand-Written VF IR
 
-除自动 tileop fusion 路线外，后续也可以支持开发者直接提供 VF/micro-op IR。
-该路线仍可复用源码级 submodule 接入方式，但输入不再是 tileop group，而是开发者
-已经写好的 VF IR。
+In addition to the automatic tileop-fusion path, a future extension could allow
+developers to provide VF/micro-op IR directly. This path could reuse the
+source-level submodule integration, but its input would be developer-authored VF
+IR rather than a tileop group.
 
 ```text
 developer VF IR
@@ -340,4 +354,5 @@ developer VF IR
   -> VF IR with cost/advice attrs or diagnostic report
 ```
 
-该路线不决定 fusion group，而是评估已有 VF 实现，并给出预测和优化建议。
+This path would not select fusion groups. It would evaluate an existing VF
+implementation and provide predictions and optimization advice.

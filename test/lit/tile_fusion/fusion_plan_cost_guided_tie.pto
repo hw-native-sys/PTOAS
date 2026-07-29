@@ -30,7 +30,8 @@ module {
     %first = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
     %second = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
 
-    pto.tadd ins(%arg0, %arg1 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp0 : !pto.tile_buf<vec, 32x32xf32>)
+    // FusionPlanSearch must clear stale decisions before selecting new groups.
+    pto.tadd ins(%arg0, %arg1 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp0 : !pto.tile_buf<vec, 32x32xf32>) {pto.fusion.col_unroll_factor = 5 : i64, pto.fusion.row_unroll_factor = 7 : i64}
     pto.tadd ins(%tmp0, %arg2 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp1 : !pto.tile_buf<vec, 32x32xf32>)
     pto.tadd ins(%tmp1, %arg3 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp2 : !pto.tile_buf<vec, 32x32xf32>)
     pto.tadd ins(%tmp2, %arg4 : !pto.tile_buf<vec, 32x32xf32>, !pto.tile_buf<vec, 32x32xf32>) outs(%tmp3 : !pto.tile_buf<vec, 32x32xf32>)
