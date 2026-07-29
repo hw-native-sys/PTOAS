@@ -704,8 +704,7 @@ jobs:
           echo "PTO_DSL_ST_LLVM_DIR=${PTO_DSL_ST_LLVM_DIR}" >> "${GITHUB_ENV}"
 
       - name: Run TileLang DSL CI
-        # Temporarily run unmaintained TileLang ST only as a PR smoke test.
-        if: ${{ github.event_name == 'pull_request' }}
+        # Temporarily keep unmaintained TileLang ST in smoke mode for every trigger.
         shell: bash
         run: |
           set -euo pipefail
