@@ -294,6 +294,27 @@ def FusionPlan : Pass<"pto-fusion-plan", "func::FuncOp"> {
   ];
 }
 
+def FusionPlanSearch : Pass<"pto-fusion-plan-search", "func::FuncOp"> {
+  let summary = "Search competing tile-fusion groups from block-local analysis";
+  let description = [{
+    Consumes PreFusionAnalysis results, explores a bounded frontier of
+    competing block-local fusion groups for currently supported tile-native
+    compute ops, chooses the highest-ranked group, and annotates accepted group
+    members with:
+      - pto.fusion.group_id
+      - pto.fusion.order
+  }];
+  let constructor = "mlir::pto::createFusionPlanSearchPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+  let options = [
+    Option<"enableShapeInference", "enable-shape-inference",
+           "bool", /*default=*/"false",
+           "Enable shape inference (ShapeConstraintSolver) for tile fusion. "
+           "When disabled (default), fall back to static/direct-bound "
+           "iteration-domain inference.">
+  ];
+}
+
 def OpScheduling : Pass<"pto-op-scheduling", "func::FuncOp"> {
   let summary = "Compact planned fusion groups into block-local contiguous spans";
   let description = [{

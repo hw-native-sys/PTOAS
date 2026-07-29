@@ -6,9 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Guards cost-guided FusionPlan search across competing block-local DFG paths.
+// Guards cost-guided FusionPlanSearch across competing block-local DFG paths.
 //
-// RUN: ptoas --pto-arch=a5 --pto-level=level2 --enable-op-fusion --emit-pto-ir %s --mlir-print-ir-after=pto-fusion-plan -o /dev/null 2>&1 | FileCheck %s
+// RUN: pto-test-opt --pto-fusion-plan-search --mlir-print-ir-after=pto-fusion-plan-search %s -o /dev/null 2>&1 | FileCheck %s
 
 module {
   // The six-op prefix has live-tile/VF-parameter footprint 12. The first
@@ -59,7 +59,7 @@ module {
 
 }
 
-// CHECK: // -----// IR Dump After FusionPlan (pto-fusion-plan) //----- //
+// CHECK: // -----// IR Dump After FusionPlanSearch (pto-fusion-plan-search) //----- //
 // CHECK-LABEL: func.func @prefer_higher_group_cost(
 // CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 0 : i64}
 // CHECK: pto.tadd{{.*}}{pto.fusion.group_id = 0 : i64, pto.fusion.order = 1 : i64}

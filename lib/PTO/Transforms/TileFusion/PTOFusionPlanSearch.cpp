@@ -6,6 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+// This pass owns the bounded, cost-ranked search across competing DFG paths.
+// PTOFusionPlan.cpp intentionally retains the original single-path greedy
+// planner used by the production fusion pipeline.
+
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
 #include "PTO/Transforms/TileFusion/FusionOpSemantics.h"
 
@@ -21,19 +25,16 @@
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
-
-#ifdef PTO_ENABLE_VFSIM_IR_PLANNER
-#include "native/IRPlanner.h"
-#endif
+#include <optional>
 
 namespace mlir {
 namespace pto {
 // Passes.h (included above) pulls in the global GEN_PASS_DECL block, which
-// defines GEN_PASS_DECL_FUSIONPLAN and leaves it set.  Undef it before
+// defines GEN_PASS_DECL_FUSIONPLANSEARCH and leaves it set.  Undef it before
 // re-including the .inc for GEN_PASS_DEF so the options struct is not defined
 // twice.
-#undef GEN_PASS_DECL_FUSIONPLAN
-#define GEN_PASS_DEF_FUSIONPLAN
+#undef GEN_PASS_DECL_FUSIONPLANSEARCH
+#define GEN_PASS_DEF_FUSIONPLANSEARCH
 #include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
@@ -42,13 +43,8 @@ using namespace mlir;
 
 namespace {
 
-static constexpr llvm::StringLiteral kFusionGroupIdAttr =
-    "pto.fusion.group_id";
+static constexpr llvm::StringLiteral kFusionGroupIdAttr = "pto.fusion.group_id";
 static constexpr llvm::StringLiteral kFusionOrderAttr = "pto.fusion.order";
-static constexpr llvm::StringLiteral kFusionRowUnrollAttr =
-    "pto.fusion.row_unroll_factor";
-static constexpr llvm::StringLiteral kFusionColUnrollAttr =
-    "pto.fusion.col_unroll_factor";
 
 struct PlannedFusionGroup {
   SmallVector<const pto::FusionComputeNode *, 8> members;
@@ -88,9 +84,9 @@ static bool isCurrentlyPlannableOp(StringRef opName) {
       .Default(false);
 }
 
-static bool isProvenIterationDomain(
-    const pto::FusionBlockAnalysis &blockAnalysis,
-    const pto::FusionComputeNode &node) {
+static bool
+isProvenIterationDomain(const pto::FusionBlockAnalysis &blockAnalysis,
+                        const pto::FusionComputeNode &node) {
   if (node.iterationDomainClass >= blockAnalysis.iterationDomainClasses.size())
     return false;
   return blockAnalysis.iterationDomainClasses[node.iterationDomainClass]
@@ -99,10 +95,8 @@ static bool isProvenIterationDomain(
 
 static bool hasHardBoundaryBetween(const pto::FusionComputeNode &a,
                                    const pto::FusionComputeNode &b) {
-  const pto::FusionComputeNode &earlier =
-      a.blockOrder < b.blockOrder ? a : b;
-  const pto::FusionComputeNode &later =
-      a.blockOrder < b.blockOrder ? b : a;
+  const pto::FusionComputeNode &earlier = a.blockOrder < b.blockOrder ? a : b;
+  const pto::FusionComputeNode &later = a.blockOrder < b.blockOrder ? b : a;
 
   Operation *cursor = earlier.op->getNextNode();
   while (cursor && cursor != later.op) {
@@ -114,19 +108,18 @@ static bool hasHardBoundaryBetween(const pto::FusionComputeNode &a,
   return false;
 }
 
-static bool hasHardBoundaryToGroup(
-    ArrayRef<const pto::FusionComputeNode *> group,
-    const pto::FusionComputeNode &candidate) {
+static bool
+hasHardBoundaryToGroup(ArrayRef<const pto::FusionComputeNode *> group,
+                       const pto::FusionComputeNode &candidate) {
   for (const pto::FusionComputeNode *member : group)
     if (hasHardBoundaryBetween(*member, candidate))
       return true;
   return false;
 }
 
-static bool dependsOnPreviousNode(
-    const pto::FusionBlockAnalysis &blockAnalysis,
-    const pto::FusionComputeNode &previous,
-    const pto::FusionComputeNode &current) {
+static bool dependsOnPreviousNode(const pto::FusionBlockAnalysis &blockAnalysis,
+                                  const pto::FusionComputeNode &previous,
+                                  const pto::FusionComputeNode &current) {
   for (unsigned edgeId : current.incomingEdges) {
     if (edgeId >= blockAnalysis.edges.size())
       continue;
@@ -155,8 +148,7 @@ buildStableInGroupOrder(ArrayRef<const pto::FusionComputeNode *> members) {
 }
 
 static void assignStableGroupMetadata(ArrayRef<PlannedFusionGroup> groups,
-                                      MLIRContext *ctx,
-                                      int64_t &nextGroupId) {
+                                      MLIRContext *ctx, int64_t &nextGroupId) {
   SmallVector<const PlannedFusionGroup *, 8> orderedGroups;
   orderedGroups.reserve(groups.size());
   for (const PlannedFusionGroup &group : groups)
@@ -178,10 +170,9 @@ static void assignStableGroupMetadata(ArrayRef<PlannedFusionGroup> groups,
     for (auto [order, node] : llvm::enumerate(stableOrder)) {
       node->op->setAttr(kFusionGroupIdAttr,
                         IntegerAttr::get(IntegerType::get(ctx, 64), groupId));
-      node->op->setAttr(
-          kFusionOrderAttr,
-          IntegerAttr::get(IntegerType::get(ctx, 64),
-                           static_cast<int64_t>(order)));
+      node->op->setAttr(kFusionOrderAttr,
+                        IntegerAttr::get(IntegerType::get(ctx, 64),
+                                         static_cast<int64_t>(order)));
     }
   }
 }
@@ -214,9 +205,10 @@ struct GroupFootprint {
   unsigned vfParameterCount = 0;
 };
 
-static bool nodesHaveDirectDataFlowConnection(
-    const pto::FusionBlockAnalysis &blockAnalysis,
-    const pto::FusionComputeNode &lhs, const pto::FusionComputeNode &rhs) {
+static bool
+nodesHaveDirectDataFlowConnection(const pto::FusionBlockAnalysis &blockAnalysis,
+                                  const pto::FusionComputeNode &lhs,
+                                  const pto::FusionComputeNode &rhs) {
   for (unsigned edgeId : lhs.outgoingEdges) {
     if (edgeId >= blockAnalysis.edges.size())
       continue;
@@ -253,6 +245,31 @@ countConnectionsToGroup(const pto::FusionBlockAnalysis &blockAnalysis,
   return connections;
 }
 
+static unsigned
+countInternalEdges(const pto::FusionBlockAnalysis &blockAnalysis,
+                   ArrayRef<const pto::FusionComputeNode *> group) {
+  DenseSet<unsigned> memberIds;
+  for (const pto::FusionComputeNode *member : group)
+    memberIds.insert(member->id);
+
+  return llvm::count_if(blockAnalysis.edges,
+                        [&](const pto::FusionDFGEdge &edge) {
+                          return memberIds.contains(edge.producerNode) &&
+                                 memberIds.contains(edge.consumerNode);
+                        });
+}
+
+static unsigned
+countInternalConnections(const pto::FusionBlockAnalysis &blockAnalysis,
+                         ArrayRef<const pto::FusionComputeNode *> group) {
+  unsigned connections = 0;
+  for (auto [index, lhs] : llvm::enumerate(group))
+    for (const pto::FusionComputeNode *rhs : group.drop_front(index + 1))
+      if (nodesHaveDirectDataFlowConnection(blockAnalysis, *lhs, *rhs))
+        ++connections;
+  return connections;
+}
+
 static GroupFootprint
 computeGroupFootprint(ArrayRef<const pto::FusionComputeNode *> members) {
   DenseSet<Value> producedTiles;
@@ -280,13 +297,33 @@ computeGroupFootprint(ArrayRef<const pto::FusionComputeNode *> members) {
   return footprint;
 }
 
+static PlanningCost
+computePlanningCost(ArrayRef<const pto::FusionComputeNode *> members,
+                    unsigned connectionCount, int64_t loopMergeBenefit,
+                    unsigned liveTileLimit, unsigned vfParameterLimit) {
+  GroupFootprint footprint = computeGroupFootprint(members);
+
+  PlanningCost cost;
+  cost.dependencyBenefit = 4 * static_cast<int64_t>(connectionCount);
+  cost.loopMergeBenefit = loopMergeBenefit;
+  cost.liveTilePenalty = std::max<int64_t>(
+      0, static_cast<int64_t>(footprint.liveTileCount) - liveTileLimit);
+  cost.vfParameterPenalty = std::max<int64_t>(
+      0, static_cast<int64_t>(footprint.vfParameterCount) - vfParameterLimit);
+  return cost;
+}
+
 class CostModel {
 public:
   virtual ~CostModel() = default;
 
-  virtual PlanningDecision evaluateSeed(const PlanningContext &ctx,
-                                        const pto::FusionComputeNode &candidate)
-      const = 0;
+  virtual PlanningDecision
+  evaluateSeed(const PlanningContext &ctx,
+               const pto::FusionComputeNode &candidate) const = 0;
+
+  virtual PlanningCost
+  evaluateGroup(const PlanningContext &ctx,
+                ArrayRef<const pto::FusionComputeNode *> members) const = 0;
 
   virtual PlanningDecision
   evaluateAppend(const PlanningContext &ctx,
@@ -310,6 +347,14 @@ public:
 
     decision.accept = true;
     return decision;
+  }
+
+  PlanningCost evaluateGroup(
+      const PlanningContext &ctx,
+      ArrayRef<const pto::FusionComputeNode *> members) const override {
+    return computePlanningCost(
+        members, countInternalEdges(ctx.blockAnalysis, members),
+        /*loopMergeBenefit=*/2, /*liveTileLimit=*/4, /*vfParameterLimit=*/6);
   }
 
   PlanningDecision
@@ -339,16 +384,10 @@ public:
     SmallVector<const pto::FusionComputeNode *, 8> proposedGroup(
         currentGroup.begin(), currentGroup.end());
     proposedGroup.push_back(&candidate);
-    GroupFootprint footprint = computeGroupFootprint(proposedGroup);
-
-    decision.cost.dependencyBenefit =
-        4 * static_cast<int64_t>(
-                countEdgesFromGroup(ctx.blockAnalysis, currentGroup, candidate));
-    decision.cost.loopMergeBenefit = 2;
-    decision.cost.liveTilePenalty =
-        std::max<int64_t>(0, static_cast<int64_t>(footprint.liveTileCount) - 4);
-    decision.cost.vfParameterPenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.vfParameterCount) - 6);
+    decision.cost = computePlanningCost(
+        proposedGroup,
+        countEdgesFromGroup(ctx.blockAnalysis, currentGroup, candidate),
+        /*loopMergeBenefit=*/2, /*liveTileLimit=*/4, /*vfParameterLimit=*/6);
     decision.accept = decision.cost.total() > 0;
     return decision;
   }
@@ -370,6 +409,15 @@ public:
 
     decision.accept = true;
     return decision;
+  }
+
+  PlanningCost evaluateGroup(
+      const PlanningContext &ctx,
+      ArrayRef<const pto::FusionComputeNode *> members) const override {
+    return computePlanningCost(
+        members, countInternalConnections(ctx.blockAnalysis, members),
+        /*loopMergeBenefit=*/4, /*liveTileLimit=*/10,
+        /*vfParameterLimit=*/12);
   }
 
   PlanningDecision
@@ -401,14 +449,9 @@ public:
     SmallVector<const pto::FusionComputeNode *, 8> proposedGroup(
         currentGroup.begin(), currentGroup.end());
     proposedGroup.push_back(&candidate);
-    GroupFootprint footprint = computeGroupFootprint(proposedGroup);
-
-    decision.cost.dependencyBenefit = 4 * static_cast<int64_t>(connectionCount);
-    decision.cost.loopMergeBenefit = 4;
-    decision.cost.liveTilePenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.liveTileCount) - 10);
-    decision.cost.vfParameterPenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.vfParameterCount) - 12);
+    decision.cost = computePlanningCost(
+        proposedGroup, connectionCount, /*loopMergeBenefit=*/4,
+        /*liveTileLimit=*/10, /*vfParameterLimit=*/12);
     decision.accept = decision.cost.total() > 0;
     return decision;
   }
@@ -470,7 +513,58 @@ public:
   }
 };
 
-class ConservativeDAGGreedyStrategyEngine final : public StrategyEngine {
+class CostGuidedSearchStrategyEngine final : public StrategyEngine {
+  // Keep a bounded, deterministically ranked frontier to prevent exponential
+  // compile-time growth. This selects the best group among retained candidates;
+  // it does not guarantee the global optimum across every connected subset.
+  static constexpr unsigned kMaxCandidatesPerGroupSize = 64;
+
+  struct GroupCandidate {
+    SmallVector<const pto::FusionComputeNode *, 8> members;
+    DenseSet<unsigned> memberIds;
+    PlanningCost cost;
+  };
+
+  static bool haveSameMembers(const GroupCandidate &lhs,
+                              const GroupCandidate &rhs) {
+    if (lhs.members.size() != rhs.members.size())
+      return false;
+    return llvm::equal(lhs.members, rhs.members,
+                       [](const pto::FusionComputeNode *lhsNode,
+                          const pto::FusionComputeNode *rhsNode) {
+                         return lhsNode->id == rhsNode->id;
+                       });
+  }
+
+  static bool isBetterCandidate(const GroupCandidate &lhs,
+                                const GroupCandidate &rhs) {
+    if (lhs.cost.total() != rhs.cost.total())
+      return lhs.cost.total() > rhs.cost.total();
+    if (lhs.members.size() != rhs.members.size())
+      return lhs.members.size() > rhs.members.size();
+
+    for (auto [lhsNode, rhsNode] : llvm::zip(lhs.members, rhs.members)) {
+      if (lhsNode->blockOrder != rhsNode->blockOrder)
+        return lhsNode->blockOrder < rhsNode->blockOrder;
+      if (lhsNode->id != rhsNode->id)
+        return lhsNode->id < rhsNode->id;
+    }
+    return false;
+  }
+
+  static void addOrUpdateCandidate(SmallVectorImpl<GroupCandidate> &candidates,
+                                   GroupCandidate candidate) {
+    auto existing = llvm::find_if(candidates, [&](const GroupCandidate &other) {
+      return haveSameMembers(candidate, other);
+    });
+    if (existing == candidates.end()) {
+      candidates.push_back(std::move(candidate));
+      return;
+    }
+    if (isBetterCandidate(candidate, *existing))
+      *existing = std::move(candidate);
+  }
+
 public:
   SmallVector<PlannedFusionGroup, 8>
   planBlock(const PlanningContext &ctx,
@@ -486,36 +580,54 @@ public:
       if (!seedDecision.accept)
         continue;
 
-      SmallVector<const pto::FusionComputeNode *, 8> groupMembers;
-      DenseSet<unsigned> groupNodeIds;
-      groupMembers.push_back(&seed);
-      groupNodeIds.insert(seed.id);
+      GroupCandidate seedCandidate;
+      seedCandidate.members.push_back(&seed);
+      seedCandidate.memberIds.insert(seed.id);
+      seedCandidate.cost = costModel.evaluateGroup(ctx, seedCandidate.members);
 
-      bool changed = true;
-      while (changed) {
-        changed = false;
-        for (const pto::FusionComputeNode &candidate :
-             ctx.blockAnalysis.computeNodes) {
-          if (assignedNodes.contains(candidate.id) ||
-              groupNodeIds.contains(candidate.id))
-            continue;
+      SmallVector<GroupCandidate, 64> frontier;
+      frontier.push_back(std::move(seedCandidate));
+      std::optional<GroupCandidate> bestCandidate;
 
-          PlanningDecision appendDecision =
-              costModel.evaluateAppend(ctx, groupMembers, candidate);
-          if (!appendDecision.accept)
-            continue;
+      while (!frontier.empty()) {
+        SmallVector<GroupCandidate, 64> nextFrontier;
+        for (const GroupCandidate &current : frontier) {
+          for (const pto::FusionComputeNode &candidate :
+               ctx.blockAnalysis.computeNodes) {
+            if (assignedNodes.contains(candidate.id) ||
+                current.memberIds.contains(candidate.id))
+              continue;
 
-          groupMembers.push_back(&candidate);
-          groupNodeIds.insert(candidate.id);
-          changed = true;
+            PlanningDecision appendDecision =
+                costModel.evaluateAppend(ctx, current.members, candidate);
+            if (!appendDecision.accept)
+              continue;
+
+            GroupCandidate successor = current;
+            successor.members.push_back(&candidate);
+            successor.members = buildStableInGroupOrder(successor.members);
+            successor.memberIds.insert(candidate.id);
+            successor.cost = costModel.evaluateGroup(ctx, successor.members);
+            addOrUpdateCandidate(nextFrontier, std::move(successor));
+          }
         }
+
+        llvm::stable_sort(nextFrontier, isBetterCandidate);
+        if (nextFrontier.size() > kMaxCandidatesPerGroupSize)
+          nextFrontier.resize(kMaxCandidatesPerGroupSize);
+
+        for (const GroupCandidate &candidate : nextFrontier)
+          if (!bestCandidate || isBetterCandidate(candidate, *bestCandidate))
+            bestCandidate = candidate;
+
+        frontier = std::move(nextFrontier);
       }
 
-      if (groupMembers.size() < 2)
+      if (!bestCandidate || bestCandidate->members.size() < 2)
         continue;
 
       PlannedFusionGroup group;
-      group.members = buildStableInGroupOrder(groupMembers);
+      group.members = bestCandidate->members;
       groups.push_back(group);
       for (const pto::FusionComputeNode *member : group.members)
         assignedNodes.insert(member->id);
@@ -529,28 +641,15 @@ static void clearPlanningAttrs(func::FuncOp func) {
   func.walk([](Operation *op) {
     op->removeAttr(kFusionGroupIdAttr);
     op->removeAttr(kFusionOrderAttr);
-    op->removeAttr(kFusionRowUnrollAttr);
-    op->removeAttr(kFusionColUnrollAttr);
   });
 }
 
-static LogicalResult runVfSimFusionPlanner(func::FuncOp func,
-                                           bool dumpCandidates) {
-#ifdef PTO_ENABLE_VFSIM_IR_PLANNER
-  vfsim::PlannerOptions options;
-  options.dumpCandidates = dumpCandidates;
-  return vfsim::planTileFusionIR(func.getOperation(), options);
-#else
-  return func.emitError()
-         << "--enable-vfsim-costmodel-optimization requires configuring PTOAS with "
-            "-DPTO_ENABLE_VFSIM_COSTMODEL=ON";
-#endif
-}
+struct FusionPlanSearchPass
+    : public pto::impl::FusionPlanSearchBase<FusionPlanSearchPass> {
+  using pto::impl::FusionPlanSearchBase<
+      FusionPlanSearchPass>::FusionPlanSearchBase;
 
-struct FusionPlanPass : public pto::impl::FusionPlanBase<FusionPlanPass> {
-  using pto::impl::FusionPlanBase<FusionPlanPass>::FusionPlanBase;
-
-  FusionPlanPass() = default;
+  FusionPlanSearchPass() = default;
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
@@ -573,7 +672,8 @@ struct FusionPlanPass : public pto::impl::FusionPlanBase<FusionPlanPass> {
       return;
     }
     pto::PreFusionAnalysisResult analysis = sharedAnalysis.getResult();
-    if (failed(pto::inferIterationDomainClasses(analysis, enableShapeInference))) {
+    if (failed(
+            pto::inferIterationDomainClasses(analysis, enableShapeInference))) {
       signalPassFailure();
       return;
     }
@@ -581,19 +681,13 @@ struct FusionPlanPass : public pto::impl::FusionPlanBase<FusionPlanPass> {
     MLIRContext *ctx = &getContext();
     int64_t nextGroupId = 0;
     ConservativeDAGGreedyCostModel costModel;
-    ConservativeDAGGreedyStrategyEngine strategyEngine;
+    CostGuidedSearchStrategyEngine strategyEngine;
 
     for (const pto::FusionBlockAnalysis &blockAnalysis : analysis.blocks) {
       PlanningContext planningCtx{blockAnalysis};
       SmallVector<PlannedFusionGroup, 8> groups =
           strategyEngine.planBlock(planningCtx, costModel);
       assignStableGroupMetadata(groups, ctx, nextGroupId);
-    }
-
-    if (enableVfSimCostmodelOptimization &&
-        failed(runVfSimFusionPlanner(func, dumpVfSimUnrollTest))) {
-      signalPassFailure();
-      return;
     }
 
     // The fusion metadata we annotate (group_id/order) is a planning *output*;
@@ -607,11 +701,11 @@ struct FusionPlanPass : public pto::impl::FusionPlanBase<FusionPlanPass> {
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createFusionPlanPass() {
-  return std::make_unique<FusionPlanPass>();
+std::unique_ptr<Pass> mlir::pto::createFusionPlanSearchPass() {
+  return std::make_unique<FusionPlanSearchPass>();
 }
 
-std::unique_ptr<Pass>
-mlir::pto::createFusionPlanPass(const pto::FusionPlanOptions &options) {
-  return std::make_unique<FusionPlanPass>(options);
+std::unique_ptr<Pass> mlir::pto::createFusionPlanSearchPass(
+    const pto::FusionPlanSearchOptions &options) {
+  return std::make_unique<FusionPlanSearchPass>(options);
 }
