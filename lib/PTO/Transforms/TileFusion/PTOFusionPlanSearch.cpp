@@ -465,54 +465,6 @@ public:
   planBlock(const PlanningContext &ctx, const CostModel &costModel) const = 0;
 };
 
-class ConservativeGreedyStrategyEngine final : public StrategyEngine {
-public:
-  SmallVector<PlannedFusionGroup, 8>
-  planBlock(const PlanningContext &ctx,
-            const CostModel &costModel) const override {
-    SmallVector<PlannedFusionGroup, 8> groups;
-    SmallVector<const pto::FusionComputeNode *, 8> chain;
-
-    auto flushChain = [&]() {
-      if (chain.size() < 2) {
-        chain.clear();
-        return;
-      }
-
-      PlannedFusionGroup group;
-      group.members = chain;
-      groups.push_back(std::move(group));
-      chain.clear();
-    };
-
-    for (const pto::FusionComputeNode &node : ctx.blockAnalysis.computeNodes) {
-      PlanningDecision seedDecision = costModel.evaluateSeed(ctx, node);
-      if (!seedDecision.accept) {
-        flushChain();
-        continue;
-      }
-
-      if (chain.empty()) {
-        chain.push_back(&node);
-        continue;
-      }
-
-      PlanningDecision appendDecision =
-          costModel.evaluateAppend(ctx, chain, node);
-      if (!appendDecision.accept) {
-        flushChain();
-        chain.push_back(&node);
-        continue;
-      }
-
-      chain.push_back(&node);
-    }
-
-    flushChain();
-    return groups;
-  }
-};
-
 class CostGuidedSearchStrategyEngine final : public StrategyEngine {
   // Keep a bounded, deterministically ranked frontier to prevent exponential
   // compile-time growth. This selects the best group among retained candidates;
