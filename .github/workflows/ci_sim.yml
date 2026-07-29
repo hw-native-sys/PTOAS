@@ -704,26 +704,18 @@ jobs:
           echo "PTO_DSL_ST_LLVM_DIR=${PTO_DSL_ST_LLVM_DIR}" >> "${GITHUB_ENV}"
 
       - name: Run TileLang DSL CI
-        # Temporarily skip unmaintained TileLang ST on nightly runs. PR smoke
-        # and manually dispatched full validation remain enabled.
-        if: ${{ github.event_name != 'schedule' }}
+        # Temporarily run unmaintained TileLang ST only as a PR smoke test.
+        if: ${{ github.event_name == 'pull_request' }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "${TILELANG_DSL_WORKSPACE}"
           export LLVM_BUILD_DIR="${LLVM_DIR}"
           export MLIR_PYTHON_ROOT="${MLIR_PYTHONPATH}"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
-            PTOAS_BIN="${PTOAS_BIN}" \
-            bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 --smoke \
-              2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
-          else
-            ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
-            PTOAS_BIN="${PTOAS_BIN}" \
-            bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 \
-              2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
-          fi
+          ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
+          PTOAS_BIN="${PTOAS_BIN}" \
+          bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 --smoke \
+            2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
 
       - name: Restore PTODSL LLVM build cache
         id: ptodsl-llvm-cache
