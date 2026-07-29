@@ -10,8 +10,9 @@ name: ci-sim
 
 on:
   pull_request:
-  # Nightly runs are temporarily disabled until TileLang ST has an active maintainer.
-  # Keep manual dispatch available for on-demand full simulator validation.
+  # Nightly self-hosted simulator validation (GitHub cron is UTC).
+  schedule:
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 permissions:
@@ -703,6 +704,9 @@ jobs:
           echo "PTO_DSL_ST_LLVM_DIR=${PTO_DSL_ST_LLVM_DIR}" >> "${GITHUB_ENV}"
 
       - name: Run TileLang DSL CI
+        # Temporarily skip unmaintained TileLang ST on nightly runs. PR smoke
+        # and manually dispatched full validation remain enabled.
+        if: ${{ github.event_name != 'schedule' }}
         shell: bash
         run: |
           set -euo pipefail
