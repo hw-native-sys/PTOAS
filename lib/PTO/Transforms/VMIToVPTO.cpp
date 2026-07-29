@@ -3547,6 +3547,7 @@ FailureOr<Value> unpackToNextCarrier(Location loc, Value source,
 
 FailureOr<Value> packToPreviousCarrier(Location loc, Value source,
                                        unsigned resultBits,
+                                       StringRef part,
                                        PatternRewriter &rewriter) {
   FailureOr<VRegType> resultType =
       getUnsignedCarrierVRegType(rewriter.getContext(), resultBits);
@@ -3554,7 +3555,7 @@ FailureOr<Value> packToPreviousCarrier(Location loc, Value source,
     return failure();
   return rewriter
       .create<VpackOp>(loc, *resultType, source,
-                       rewriter.getStringAttr("LOWER"))
+                       rewriter.getStringAttr(part))
       .getResult();
 }
 
@@ -3620,10 +3621,13 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
-  if (sourceParts.size() != resultTypes.size()) {
+  bool sameArity = sourceParts.size() == resultTypes.size();
+  bool pairwisePack = laneStride == 2 &&
+                      sourceParts.size() == resultTypes.size() * 2;
+  if (!sameArity && !pairwisePack) {
     (void)rewriter.notifyMatchFailure(
-        op, "dense lane_stride pack materialization requires matching "
-            "source/result physical arity");
+        op, "dense lane_stride pack materialization requires matching arity "
+            "or two source parts per result part");
     return failure();
   }
 
@@ -3644,20 +3648,40 @@ FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     return failure();
 
   SmallVector<Value> results;
-  results.reserve(sourceParts.size());
-  for (auto [source, resultType] : llvm::zip_equal(sourceParts, resultTypes)) {
+  results.reserve(resultTypes.size());
+  for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
+    int64_t sourceIndex = pairwisePack ? resultIndex * 2 : resultIndex;
     FailureOr<Value> current =
-        bitcastVReg(op->getLoc(), source, *sourceCarrier, rewriter);
+        bitcastVReg(op->getLoc(), sourceParts[sourceIndex], *sourceCarrier,
+                    rewriter);
     if (failed(current))
       return failure();
     FailureOr<Value> packed = packToPreviousCarrier(op->getLoc(), *current,
-                                                    carrierBits / 2, rewriter);
+                                                    carrierBits / 2, "LOWER",
+                                                    rewriter);
     if (failed(packed))
       return failure();
     current = *packed;
+    if (pairwisePack) {
+      FailureOr<Value> highCarrier =
+          bitcastVReg(op->getLoc(), sourceParts[sourceIndex + 1],
+                      *sourceCarrier, rewriter);
+      if (failed(highCarrier))
+        return failure();
+      FailureOr<Value> high = packToPreviousCarrier(
+          op->getLoc(), *highCarrier, carrierBits / 2, "HIGHER", rewriter);
+      FailureOr<Value> mask = createAllTrueMaskForVReg(
+          op->getLoc(), cast<VRegType>((*packed).getType()), rewriter);
+      if (failed(high) || failed(mask))
+        return failure();
+      current = rewriter
+                    .create<VorOp>(op->getLoc(), (*packed).getType(), *packed,
+                                   *high, *mask)
+                    .getResult();
+    }
     if (laneStride == 4) {
-      packed =
-          packToPreviousCarrier(op->getLoc(), *current, elementBits, rewriter);
+      packed = packToPreviousCarrier(op->getLoc(), *current, elementBits,
+                                     "LOWER", rewriter);
       if (failed(packed))
         return failure();
       current = *packed;
@@ -3719,7 +3743,7 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
     }
     while (currentStride > resultStride) {
       FailureOr<Value> packed = packToPreviousCarrier(
-          op->getLoc(), *current, carrierBits / 2, rewriter);
+          op->getLoc(), *current, carrierBits / 2, "LOWER", rewriter);
       if (failed(packed))
         return fail("failed to pack group-slot lane_stride carrier");
       current = *packed;

@@ -100,6 +100,24 @@ module {
     return %compact : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
   }
 
+  func.func @vmi_ensure_lane_stride_to_contiguous_f16_two_parts(
+      %value: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> {
+    %compact = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+    return %compact : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vmi_ensure_lane_stride_to_contiguous_ui8_two_parts(
+      %value: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>> {
+    %compact = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+    return %compact : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+  }
+
   func.func @vmi_ensure_contiguous_to_lane_stride4_ui8(
       %value: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>)
       -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>> {
@@ -179,6 +197,22 @@ module {
 // LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xf16> -> !pto.vreg<64xui32>
 // LOWER: pto.vpack {{.*}} "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xui16> -> !pto.vreg<128xf16>
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+
+// LOWER-LABEL: func.func @vmi_ensure_lane_stride_to_contiguous_f16_two_parts(
+// LOWER-DAG: %[[LOW16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// LOWER-DAG: %[[HIGH16:.*]] = pto.vpack {{.*}}, "HIGHER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// LOWER: %[[MERGED16:.*]] = pto.vor %[[LOW16]], %[[HIGH16]]
+// LOWER: pto.vbitcast %[[MERGED16]] : !pto.vreg<128xui16> -> !pto.vreg<128xf16>
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+
+// LOWER-LABEL: func.func @vmi_ensure_lane_stride_to_contiguous_ui8_two_parts(
+// LOWER-DAG: %[[LOW8:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// LOWER-DAG: %[[HIGH8:.*]] = pto.vpack {{.*}}, "HIGHER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// LOWER: %[[MERGED8:.*]] = pto.vor %[[LOW8]], %[[HIGH8]]
+// LOWER: return %[[MERGED8]] : !pto.vreg<256xui8>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 
