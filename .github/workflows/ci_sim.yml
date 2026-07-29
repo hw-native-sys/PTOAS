@@ -10,9 +10,8 @@ name: ci-sim
 
 on:
   pull_request:
-  # Nightly self-hosted simulator validation (GitHub cron is UTC).
-  schedule:
-    - cron: "0 14 * * *"
+  # Nightly runs are temporarily disabled until TileLang ST has an active maintainer.
+  # Keep manual dispatch available for on-demand full simulator validation.
   workflow_dispatch:
 
 permissions:
