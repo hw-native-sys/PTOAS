@@ -190,3 +190,5 @@ The fix was in the specialization design, not in the row-arg template:
 
 This pattern can affect any PTODSL template that bakes `ViewSpec` metadata into
 the rendered helper body.
+
+<!-- CI health-probe: this file is unchanged in behavior; touched only to exercise the vpto-sim-validation path filter. -->
