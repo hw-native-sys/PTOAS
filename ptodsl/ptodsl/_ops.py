@@ -97,10 +97,10 @@ _PIPE_ALIASES = {
     "MTE2": "PIPE_MTE2",
     "MTE3": "PIPE_MTE3",
     "MTE4": "PIPE_MTE4",
-    "V":    "PIPE_V",
-    "M":    "PIPE_M",
-    "S":    "PIPE_S",
-    "ALL":  "PIPE_ALL",
+    "V": "PIPE_V",
+    "M": "PIPE_M",
+    "S": "PIPE_S",
+    "ALL": "PIPE_ALL",
 }
 
 
@@ -125,8 +125,16 @@ def _canonical_pipe_token(pipe):
         return canonical
 
     for canonical in (
-        "PIPE_FIX", "PIPE_MTE1", "PIPE_MTE2", "PIPE_MTE3", "PIPE_MTE4",
-        "PIPE_V", "PIPE_M", "PIPE_S", "PIPE_V2", "PIPE_ALL",
+        "PIPE_FIX",
+        "PIPE_MTE1",
+        "PIPE_MTE2",
+        "PIPE_MTE3",
+        "PIPE_MTE4",
+        "PIPE_V",
+        "PIPE_M",
+        "PIPE_S",
+        "PIPE_V2",
+        "PIPE_ALL",
     ):
         pipe_attr = getattr(_pto.PIPE, canonical, None)
         if pipe_attr is not None and pipe == pipe_attr:
@@ -148,11 +156,15 @@ def _validate_static_buf_id(buf_id, *, context: str):
         raise ValueError(f"{context} expects static buf_id in [0, 31], got {buf_id}")
 
 
-def _validate_static_event_id_range(event_id, *, context: str, lo: int, hi: int, meaning: str = "event_id"):
+def _validate_static_event_id_range(
+    event_id, *, context: str, lo: int, hi: int, meaning: str = "event_id"
+):
     if isinstance(event_id, bool):
         raise TypeError(f"{context} does not accept bool values")
     if isinstance(event_id, int) and not lo <= event_id <= hi:
-        raise ValueError(f"{context} expects static {meaning} in [{lo}, {hi}], got {event_id}")
+        raise ValueError(
+            f"{context} expects static {meaning} in [{lo}, {hi}], got {event_id}"
+        )
 
 
 def _validate_sync_pipe(pipe, *, context: str, allowed: tuple[str, ...]):
@@ -161,19 +173,24 @@ def _validate_sync_pipe(pipe, *, context: str, allowed: tuple[str, ...]):
         raise TypeError(f"{context} expects a concrete Pipe value, got {pipe!r}")
     if canonical not in allowed:
         expected = ", ".join(f"<{name}>" for name in allowed)
-        raise ValueError(f"{context} expects pipe to be one of {expected}, got <{canonical}>")
+        raise ValueError(
+            f"{context} expects pipe to be one of {expected}, got <{canonical}>"
+        )
     return canonical
 
 
 def _require_explicit_mode(surface: str):
     try:
         from ._tracing.active import current_session
+
         session = current_session()
     except Exception:
         session = None
     if session is None:
         return
-    current_module_spec = getattr(session, "current_function_module_spec", session.module_spec)
+    current_module_spec = getattr(
+        session, "current_function_module_spec", session.module_spec
+    )
     current_mode = getattr(current_module_spec, "mode", None)
     if current_mode != "explicit":
         raise explicit_mode_required_with_context_error(surface, current_module_spec)
@@ -182,12 +199,15 @@ def _require_explicit_mode(surface: str):
 def _current_target_arch():
     try:
         from ._tracing.active import current_session
+
         session = current_session()
     except Exception:
         return None
     if session is None:
         return None
-    current_module_spec = getattr(session, "current_function_module_spec", session.module_spec)
+    current_module_spec = getattr(
+        session, "current_function_module_spec", session.module_spec
+    )
     return getattr(current_module_spec, "target_arch", None)
 
 
@@ -198,12 +218,15 @@ def _require_target_arch(surface: str, allowed: set[str]):
     normalized = str(target).lower()
     if normalized not in allowed:
         expected = ", ".join(f"target='{name}'" for name in sorted(allowed))
-        raise ValueError(f"{surface} is only supported for {expected}; got target={target!r}")
+        raise ValueError(
+            f"{surface} is only supported for {expected}; got target={target!r}"
+        )
 
 
 def _require_simt_subkernel(surface: str):
     try:
         from ._tracing.active import current_session
+
         session = current_session()
     except Exception:
         session = None
@@ -231,6 +254,7 @@ def _explicit_mode_only(surface: str):
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+
 def const(value: int, *, dtype=None):
     """
     Emit an ``arith.constant``.
@@ -239,9 +263,12 @@ def const(value: int, *, dtype=None):
     Defaults to ``index`` when omitted.
     """
     from ._types import index as _idx_dtype
+
     mlir_type = _resolve(dtype) if dtype is not None else _resolve(_idx_dtype)
     if any(cls.isinstance(mlir_type) for cls in (F16Type, BF16Type, F32Type)):
-        return wrap_surface_value(arith.ConstantOp(mlir_type, FloatAttr.get(mlir_type, value)).result)
+        return wrap_surface_value(
+            arith.ConstantOp(mlir_type, FloatAttr.get(mlir_type, value)).result
+        )
     if IntegerType.isinstance(mlir_type):
         return wrap_surface_value(_materialize_integer_literal(mlir_type, value))
     return wrap_surface_value(arith.ConstantOp(mlir_type, value).result)
@@ -259,6 +286,7 @@ def get_op_attr(name: str, default=None):
 
 
 # ── Pointer ops ───────────────────────────────────────────────────────────────
+
 
 def castptr(int_addr, result_ptr_type):
     """``pto.castptr`` – cast an integer address to a typed PTO pointer."""
@@ -281,12 +309,20 @@ def addptr(base_ptr, index_offset):
 
 _VLOAD_DIST_TOKENS = {
     "NORM",
-    "UNPK_B8", "UNPK_B16", "UNPK_B32",
-    "BRC_B8", "BRC_B16", "BRC_B32", "BRC_BLK",
-    "US_B8", "US_B16",
-    "DS_B8", "DS_B16",
+    "UNPK_B8",
+    "UNPK_B16",
+    "UNPK_B32",
+    "BRC_B8",
+    "BRC_B16",
+    "BRC_B32",
+    "BRC_BLK",
+    "US_B8",
+    "US_B16",
+    "DS_B8",
+    "DS_B16",
     # Extra load distributions already supported by the backend lowering.
-    "E2B_B16", "E2B_B32",
+    "E2B_B16",
+    "E2B_B32",
     "UNPK4",
     "SPLT4CHN",
 }
@@ -294,12 +330,16 @@ _VLOAD_DIST_TOKENS = {
 
 def vlds(src_ptr, offset=None, result_vreg_type=None, *, dist=None, post_update="OFF"):
     """``pto.vlds`` – vector load from a tile slice or from *src_ptr* at *offset*."""
-    post_mode = _normalize_post_update_mode(post_update, context="vlds(..., post_update=...)")
+    post_mode = _normalize_post_update_mode(
+        post_update, context="vlds(..., post_update=...)"
+    )
     if isinstance(src_ptr, TileSliceValue):
         if offset is not None or result_vreg_type is not None:
             raise TypeError("vlds(tile[row, col:]) infers its pointer slice and vreg type; do not pass offset/result_vreg_type")
         if post_mode != "NO_POST_UPDATE":
-            raise TypeError("vlds(tile[...], post_update=...) only supports post_update=PostUpdate.OFF; use the pointer form for stateful loads")
+            raise TypeError(
+                "vlds(tile[...], post_update=...) only supports post_update=PostUpdate.OFF; use the pointer form for stateful loads"
+            )
         kwargs = {}
         if dist is not None:
             kwargs["dist"] = _normalize_dist_token(
@@ -320,7 +360,9 @@ def vlds(src_ptr, offset=None, result_vreg_type=None, *, dist=None, post_update=
         )
 
     if offset is None:
-        raise TypeError("vlds(ptr, offset, result_vreg_type=None) requires an explicit offset")
+        raise TypeError(
+            "vlds(ptr, offset, result_vreg_type=None) requires an explicit offset"
+        )
     if result_vreg_type is None:
         result_vreg_type = _infer_vreg_type_from_address_source(src_ptr)
     kwargs = {}
@@ -394,10 +436,19 @@ def vldus(source, align):
 _DEINTERLEAVE_DIST_TOKENS = {"DINTLV_B8", "DINTLV_B16", "DINTLV_B32", "BDINTLV"}
 _INTERLEAVE_DIST_TOKENS = {"INTLV_B8", "INTLV_B16", "INTLV_B32"}
 _VSTORE_DIST_TOKENS = {
-    "NORM_B8", "NORM_B16", "NORM_B32",
-    "1PT_B8", "1PT_B16", "1PT_B32",
-    "PK_B16", "PK_B32", "PK_B64", "PK4_B32",
-    "MRG4CHN_B8", "MRG2CHN_B8", "MRG2CHN_B16",
+    "NORM_B8",
+    "NORM_B16",
+    "NORM_B32",
+    "1PT_B8",
+    "1PT_B16",
+    "1PT_B32",
+    "PK_B16",
+    "PK_B32",
+    "PK_B64",
+    "PK4_B32",
+    "MRG4CHN_B8",
+    "MRG2CHN_B8",
+    "MRG2CHN_B16",
 }
 
 
@@ -412,7 +463,9 @@ def _normalize_dist_token(dist, *, allowed: set[str], context: str):
         normalized = normalized[1:]
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
-        raise ValueError(f"{context} does not support dist {dist!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support dist {dist!r}; expected one of {expected}"
+        )
     return normalized
 
 
@@ -420,7 +473,9 @@ def vldsx2(source, offset_or_dist, dist=None, *, result_vreg_type=None):
     """``pto.vldsx2`` – dual vector load with deinterleave."""
     if isinstance(source, TileSliceValue):
         if dist is not None:
-            raise TypeError("vldsx2(tile[row, col:], dist) does not accept a separate offset argument")
+            raise TypeError(
+                "vldsx2(tile[row, col:], dist) does not accept a separate offset argument"
+            )
         result_type = _infer_vreg_type_from_tile_slice(source)
         source, source_offset = _tile_slice_address(source)
         op = _pto.Vldsx2Op(
@@ -437,7 +492,9 @@ def vldsx2(source, offset_or_dist, dist=None, *, result_vreg_type=None):
         return wrap_surface_value(op.low), wrap_surface_value(op.high)
 
     if dist is None:
-        raise TypeError("vldsx2(ptr, offset, dist) requires an explicit offset and dist")
+        raise TypeError(
+            "vldsx2(ptr, offset, dist) requires an explicit offset and dist"
+        )
     if result_vreg_type is not None:
         result_type = _resolve(result_vreg_type)
     else:
@@ -488,7 +545,9 @@ def _normalize_vcvt_round_mode(mode, *, context: str):
     allowed = {"R", "A", "F", "C", "Z", "O", "H"}
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
-        raise ValueError(f"{context} does not support rnd {mode!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support rnd {mode!r}; expected one of {expected}"
+        )
     return normalized
 
 
@@ -516,7 +575,9 @@ def _normalize_vcvt_part_mode(mode, *, context: str):
     allowed = {"EVEN", "ODD", "P0", "P1", "P2", "P3"}
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
-        raise ValueError(f"{context} does not support part {mode!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support part {mode!r}; expected one of {expected}"
+        )
     return normalized
 
 
@@ -529,7 +590,9 @@ def _normalize_enum_attr(value, *, enum_cls, attr_cls, context: str):
             value = getattr(enum_cls, token)
         except AttributeError as exc:
             allowed = ", ".join(name for name in dir(enum_cls) if name.isupper())
-            raise ValueError(f"{context} does not support {value!r}; expected one of {allowed}") from exc
+            raise ValueError(
+                f"{context} does not support {value!r}; expected one of {allowed}"
+            ) from exc
     return attr_cls.get(value)
 
 
@@ -543,7 +606,9 @@ def _normalize_vpack_part(part, *, context: str):
     allowed = {"LOWER", "HIGHER"}
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
-        raise ValueError(f"{context} does not support part {part!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support part {part!r}; expected one of {expected}"
+        )
     return normalized
 
 
@@ -578,7 +643,9 @@ def _classify_vcvt_elem_kind(elem_type):
     return None
 
 
-def _vcvt_contract(requires_rnd, requires_sat, requires_part, *, part_family=None, allowed_rnd=None):
+def _vcvt_contract(
+    requires_rnd, requires_sat, requires_part, *, part_family=None, allowed_rnd=None
+):
     return {
         "requires_rnd": requires_rnd,
         "requires_sat": requires_sat,
@@ -589,9 +656,15 @@ def _vcvt_contract(requires_rnd, requires_sat, requires_part, *, part_family=Non
 
 
 _VCVT_CONTRACTS = {
-    ("f32", "f8e4m3"): _vcvt_contract(True, True, True, part_family="packed4", allowed_rnd="RAHZ"),
-    ("f32", "f8e5m2"): _vcvt_contract(True, True, True, part_family="packed4", allowed_rnd="RAHZ"),
-    ("f32", "hif8"): _vcvt_contract(True, True, True, part_family="packed4", allowed_rnd="AH"),
+    ("f32", "f8e4m3"): _vcvt_contract(
+        True, True, True, part_family="packed4", allowed_rnd="RAHZ"
+    ),
+    ("f32", "f8e5m2"): _vcvt_contract(
+        True, True, True, part_family="packed4", allowed_rnd="RAHZ"
+    ),
+    ("f32", "hif8"): _vcvt_contract(
+        True, True, True, part_family="packed4", allowed_rnd="AH"
+    ),
     ("f32", "f16"): _vcvt_contract(True, True, True),
     ("f32", "bf16"): _vcvt_contract(True, True, True),
     ("f32", "s16"): _vcvt_contract(True, True, True),
@@ -607,8 +680,12 @@ _VCVT_CONTRACTS = {
     ("f16", "u8"): _vcvt_contract(True, True, True),
     ("bf16", "f8e4m3"): _vcvt_contract(True, True, True, allowed_rnd="RAFZC"),
     ("bf16", "f8e5m2"): _vcvt_contract(True, True, True, allowed_rnd="RAFZC"),
-    ("bf16", "f4e1m2x2"): _vcvt_contract(True, False, True, part_family="packed4", allowed_rnd="RAFZC"),
-    ("bf16", "f4e2m1x2"): _vcvt_contract(True, False, True, part_family="packed4", allowed_rnd="RAFZC"),
+    ("bf16", "f4e1m2x2"): _vcvt_contract(
+        True, False, True, part_family="packed4", allowed_rnd="RAFZC"
+    ),
+    ("bf16", "f4e2m1x2"): _vcvt_contract(
+        True, False, True, part_family="packed4", allowed_rnd="RAFZC"
+    ),
     ("bf16", "f16"): _vcvt_contract(True, True, False),
     ("bf16", "f32"): _vcvt_contract(False, False, True),
     ("bf16", "s32"): _vcvt_contract(True, True, True),
@@ -676,24 +753,38 @@ def _infer_vcvt_part_family(src_kind, result_kind):
     return None
 
 
-def _validate_vcvt_attrs(src_kind, result_kind, contract, *, rnd, sat, part, context: str):
+def _validate_vcvt_attrs(
+    src_kind, result_kind, contract, *, rnd, sat, part, context: str
+):
     if rnd is None:
         if contract["requires_rnd"]:
-            raise ValueError(f"{context} requires rnd for dtype pair {src_kind} -> {result_kind}")
+            raise ValueError(
+                f"{context} requires rnd for dtype pair {src_kind} -> {result_kind}"
+            )
     elif not contract["requires_rnd"]:
-        raise ValueError(f"{context} does not support rnd for dtype pair {src_kind} -> {result_kind}")
+        raise ValueError(
+            f"{context} does not support rnd for dtype pair {src_kind} -> {result_kind}"
+        )
 
     if sat is None:
         if contract["requires_sat"]:
-            raise ValueError(f"{context} requires sat for dtype pair {src_kind} -> {result_kind}")
+            raise ValueError(
+                f"{context} requires sat for dtype pair {src_kind} -> {result_kind}"
+            )
     elif not contract["requires_sat"]:
-        raise ValueError(f"{context} does not support sat for dtype pair {src_kind} -> {result_kind}")
+        raise ValueError(
+            f"{context} does not support sat for dtype pair {src_kind} -> {result_kind}"
+        )
 
     if part is None:
         if contract["requires_part"]:
-            raise ValueError(f"{context} requires part for dtype pair {src_kind} -> {result_kind}")
+            raise ValueError(
+                f"{context} requires part for dtype pair {src_kind} -> {result_kind}"
+            )
     elif not contract["requires_part"]:
-        raise ValueError(f"{context} does not support part for dtype pair {src_kind} -> {result_kind}")
+        raise ValueError(
+            f"{context} does not support part for dtype pair {src_kind} -> {result_kind}"
+        )
 
     allowed_rnd = contract["allowed_rnd"]
     if rnd is not None and allowed_rnd is not None and rnd not in allowed_rnd:
@@ -705,7 +796,9 @@ def _validate_vcvt_attrs(src_kind, result_kind, contract, *, rnd, sat, part, con
 
     if part is None:
         return
-    part_family = contract["part_family"] or _infer_vcvt_part_family(src_kind, result_kind)
+    part_family = contract["part_family"] or _infer_vcvt_part_family(
+        src_kind, result_kind
+    )
     if part_family == "even_odd":
         if part not in {"EVEN", "ODD"}:
             raise ValueError(
@@ -719,10 +812,14 @@ def _validate_vcvt_attrs(src_kind, result_kind, contract, *, rnd, sat, part, con
                 f"{src_kind} -> {result_kind}"
             )
     elif part_family is None:
-        raise ValueError(f"{context} part is not supported for dtype pair {src_kind} -> {result_kind}")
+        raise ValueError(
+            f"{context} part is not supported for dtype pair {src_kind} -> {result_kind}"
+        )
 
 
-def _validate_vcvt_dtype_pair(src, result_dtype, *, rnd=None, sat=None, part=None, context: str):
+def _validate_vcvt_dtype_pair(
+    src, result_dtype, *, rnd=None, sat=None, part=None, context: str
+):
     _, src_elem_type = _infer_vreg_metadata(src)
     resolved_result_dtype = _resolve(result_dtype)
     src_kind = _classify_vcvt_elem_kind(src_elem_type)
@@ -738,11 +835,15 @@ def _validate_vcvt_dtype_pair(src, result_dtype, *, rnd=None, sat=None, part=Non
             f"{context} currently does not support the dtype pair "
             f"{src_kind} -> {result_kind}"
         )
-    _validate_vcvt_attrs(src_kind, result_kind, contract, rnd=rnd, sat=sat, part=part, context=context)
+    _validate_vcvt_attrs(
+        src_kind, result_kind, contract, rnd=rnd, sat=sat, part=part, context=context
+    )
     return resolved_result_dtype
 
 
-def _infer_result_vreg_type_for_element_dtype(src, result_dtype, *, rnd=None, sat=None, part=None, context: str):
+def _infer_result_vreg_type_for_element_dtype(
+    src, result_dtype, *, rnd=None, sat=None, part=None, context: str
+):
     resolved_type = _validate_vcvt_dtype_pair(
         src,
         result_dtype,
@@ -770,7 +871,9 @@ def _infer_result_vreg_type_for_element_dtype(src, result_dtype, *, rnd=None, sa
 def _infer_vpack_result_type(src):
     lanes, elem_type = _infer_vreg_metadata(src)
     if not IntegerType.isinstance(elem_type):
-        raise TypeError(f"vpack(src, part) expects an integer source vreg, got {elem_type}")
+        raise TypeError(
+            f"vpack(src, part) expects an integer source vreg, got {elem_type}"
+        )
     src_int_type = IntegerType(elem_type)
     src_width = src_int_type.width
     if src_width not in {16, 32}:
@@ -793,9 +896,13 @@ def _infer_vpack_result_type(src):
             "the source element width"
         )
     if not result_int_type.is_unsigned:
-        raise TypeError("vpack(src, part) requires an unsigned packed result element type")
-    if not ((src_width == 32 and result_int_type.width == 16) or
-            (src_width == 16 and result_int_type.width == 8)):
+        raise TypeError(
+            "vpack(src, part) requires an unsigned packed result element type"
+        )
+    if not (
+        (src_width == 32 and result_int_type.width == 16)
+        or (src_width == 16 and result_int_type.width == 8)
+    ):
         raise TypeError(
             "vpack(src, part) currently supports only the source/result shape pairs "
             "s32/u32 -> u16 and s16/u16 -> u8"
@@ -851,7 +958,9 @@ def vmulscvt(src, scalar, mask, *, rnd, part):
         )
     round_mode = _normalize_vcvt_round_mode(rnd, context="vmulscvt(..., rnd=...)")
     if round_mode != "A":
-        raise ValueError("vmulscvt(..., rnd=...) currently only supports A on the current PTO backend")
+        raise ValueError(
+            "vmulscvt(..., rnd=...) currently only supports A on the current PTO backend"
+        )
     lanes, elem_type = _infer_vreg_metadata(src)
     if not F32Type.isinstance(elem_type):
         raise TypeError(
@@ -874,12 +983,18 @@ def vmulscvt(src, scalar, mask, *, rnd, part):
 
 def vsts(val, dst_ptr, offset, mask=None, *, dist=None, post_update="OFF"):
     """``pto.vsts`` – vector store to a tile slice or to *dst_ptr* at *offset*."""
-    post_mode = _normalize_post_update_mode(post_update, context="vsts(..., post_update=...)")
+    post_mode = _normalize_post_update_mode(
+        post_update, context="vsts(..., post_update=...)"
+    )
     if isinstance(dst_ptr, TileSliceValue):
         if mask is not None:
-            raise TypeError("vsts(vec, tile[row, col:], mask) does not accept a separate offset argument")
+            raise TypeError(
+                "vsts(vec, tile[row, col:], mask) does not accept a separate offset argument"
+            )
         if post_mode != "NO_POST_UPDATE":
-            raise TypeError("vsts(vec, tile[...], post_update=...) only supports post_update=PostUpdate.OFF; use the pointer form for stateful stores")
+            raise TypeError(
+                "vsts(vec, tile[...], post_update=...) only supports post_update=PostUpdate.OFF; use the pointer form for stateful stores"
+            )
         kwargs = {}
         if dist is not None:
             kwargs["dist"] = _normalize_dist_token(
@@ -961,7 +1076,9 @@ def vstsx2(low, high, dst_ptr, offset_or_dist, dist_or_mask=None, mask=None):
         return
 
     if mask is None:
-        raise TypeError("vstsx2(low, high, ptr, offset, dist, mask) requires an explicit offset, dist, and mask")
+        raise TypeError(
+            "vstsx2(low, high, ptr, offset, dist, mask) requires an explicit offset, dist, and mask"
+        )
     _pto.Vstsx2Op(
         unwrap_surface_value(low),
         unwrap_surface_value(high),
@@ -978,7 +1095,11 @@ def vstsx2(low, high, dst_ptr, offset_or_dist, dist_or_mask=None, mask=None):
 
 def vgather2(buf, offsets, mask, result_vreg_type=None):
     """``pto.vgather2`` – indexed gather from UB."""
-    rt = result_vreg_type if result_vreg_type is not None else _infer_vreg_type_from_address_source(buf)
+    rt = (
+        result_vreg_type
+        if result_vreg_type is not None
+        else _infer_vreg_type_from_address_source(buf)
+    )
     return wrap_surface_value(
         _pto.Vgather2Op(
             _resolve(rt),
@@ -991,7 +1112,11 @@ def vgather2(buf, offsets, mask, result_vreg_type=None):
 
 def vgather2_bc(buf, offsets, mask, result_vreg_type=None):
     """``pto.vgather2_bc`` – indexed gather from UB with masked zero-fill."""
-    rt = result_vreg_type if result_vreg_type is not None else _infer_vreg_type_from_address_source(buf)
+    rt = (
+        result_vreg_type
+        if result_vreg_type is not None
+        else _infer_vreg_type_from_address_source(buf)
+    )
     return wrap_surface_value(
         _pto.Vgather2BcOp(
             _resolve(rt),
@@ -1004,7 +1129,11 @@ def vgather2_bc(buf, offsets, mask, result_vreg_type=None):
 
 def vgatherb(buf, offsets, mask, result_vreg_type=None):
     """``pto.vgatherb`` – block gather from UB using byte offsets."""
-    rt = result_vreg_type if result_vreg_type is not None else _infer_vreg_type_from_address_source(buf)
+    rt = (
+        result_vreg_type
+        if result_vreg_type is not None
+        else _infer_vreg_type_from_address_source(buf)
+    )
     return wrap_surface_value(
         _pto.VgatherbOp(
             _resolve(rt),
@@ -1032,7 +1161,9 @@ def vscatter(value, destination, offsets, mask):
 
 def _coerce_i16(value, *, context: str):
     raw_value = unwrap_surface_value(value)
-    return coerce_runtime_integer_value(raw_value, IntegerType.get_signless(16), context=context)
+    return coerce_runtime_integer_value(
+        raw_value, IntegerType.get_signless(16), context=context
+    )
 
 
 def vsldb(source, block_stride, repeat_stride, mask):
@@ -1048,8 +1179,12 @@ def vsldb(source, block_stride, repeat_stride, mask):
         _pto.VsldbOp(
             result_type,
             unwrap_surface_value(source),
-            _coerce_i16(block_stride, context="vsldb(..., block_stride, repeat_stride, mask)"),
-            _coerce_i16(repeat_stride, context="vsldb(..., block_stride, repeat_stride, mask)"),
+            _coerce_i16(
+                block_stride, context="vsldb(..., block_stride, repeat_stride, mask)"
+            ),
+            _coerce_i16(
+                repeat_stride, context="vsldb(..., block_stride, repeat_stride, mask)"
+            ),
             unwrap_surface_value(mask),
         ).result
     )
@@ -1057,15 +1192,21 @@ def vsldb(source, block_stride, repeat_stride, mask):
 
 def vsstb(value, destination, block_stride, repeat_stride, mask, *, post_update="OFF"):
     """``pto.vsstb`` – block-strided store."""
-    post_mode = _normalize_post_update_mode(post_update, context="vsstb(..., post_update=...)")
+    post_mode = _normalize_post_update_mode(
+        post_update, context="vsstb(..., post_update=...)"
+    )
     if post_mode == "POST_UPDATE":
         raw_destination = unwrap_surface_value(destination)
         op = _pto.VsstbOp(
             raw_destination.type,
             unwrap_surface_value(value),
             raw_destination,
-            _coerce_i16(block_stride, context="vsstb(..., block_stride, repeat_stride, mask)"),
-            _coerce_i16(repeat_stride, context="vsstb(..., block_stride, repeat_stride, mask)"),
+            _coerce_i16(
+                block_stride, context="vsstb(..., block_stride, repeat_stride, mask)"
+            ),
+            _coerce_i16(
+                repeat_stride, context="vsstb(..., block_stride, repeat_stride, mask)"
+            ),
             unwrap_surface_value(mask),
         )
         return wrap_surface_value(op.updated_base)
@@ -1073,8 +1214,12 @@ def vsstb(value, destination, block_stride, repeat_stride, mask, *, post_update=
         None,
         unwrap_surface_value(value),
         unwrap_surface_value(destination),
-        _coerce_i16(block_stride, context="vsstb(..., block_stride, repeat_stride, mask)"),
-        _coerce_i16(repeat_stride, context="vsstb(..., block_stride, repeat_stride, mask)"),
+        _coerce_i16(
+            block_stride, context="vsstb(..., block_stride, repeat_stride, mask)"
+        ),
+        _coerce_i16(
+            repeat_stride, context="vsstb(..., block_stride, repeat_stride, mask)"
+        ),
         unwrap_surface_value(mask),
     )
 
@@ -1170,7 +1315,9 @@ def _normalize_predicate_part(part):
             token = token.rsplit(".", 1)[-1]
     normalized = token.strip().upper()
     if normalized not in _PREDICATE_PART_TOKENS:
-        raise ValueError(f"unsupported predicate part {part!r}; expected LOWER or HIGHER")
+        raise ValueError(
+            f"unsupported predicate part {part!r}; expected LOWER or HIGHER"
+        )
     return normalized
 
 
@@ -1183,7 +1330,9 @@ def _normalize_predicate_dist(dist, *, allowed: set[str], context: str):
     normalized = token.strip().upper()
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
-        raise ValueError(f"{context} does not support dist {dist!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support dist {dist!r}; expected one of {expected}"
+        )
     return normalized
 
 
@@ -1199,7 +1348,9 @@ def _normalize_post_update_mode(mode, *, context: str):
     if normalized in {"ON", "POST_UPDATE"}:
         return "POST_UPDATE"
     expected = ", ".join(sorted(_POST_UPDATE_TOKENS))
-    raise ValueError(f"{context} does not support mode {mode!r}; expected one of ON/OFF ({expected})")
+    raise ValueError(
+        f"{context} does not support mode {mode!r}; expected one of ON/OFF ({expected})"
+    )
 
 
 def _mask_type_from_bits(mask_bits: int):
@@ -1213,7 +1364,9 @@ def _resolve_mask_result_type(result_type, *, context: str):
     try:
         _pto.MaskType(resolved)
     except Exception as exc:
-        raise TypeError(f"{context} expects to_type to resolve to a PTO mask type, got {resolved}") from exc
+        raise TypeError(
+            f"{context} expects to_type to resolve to a PTO mask type, got {resolved}"
+        ) from exc
     return resolved
 
 
@@ -1232,7 +1385,9 @@ def _require_same_mask_types(values, *, context: str):
     first = raw_types[0]
     for other in raw_types[1:]:
         if other != first:
-            raise TypeError(f"{context} expects masks of the same granularity, got {first} and {other}")
+            raise TypeError(
+                f"{context} expects masks of the same granularity, got {first} and {other}"
+            )
     return first
 
 
@@ -1244,7 +1399,9 @@ def _pointer_element_type(ptr_value, *, context: str):
         try:
             return MemRefType(raw_type).element_type
         except Exception as exc:
-            raise TypeError(f"{context} expects a PTO pointer or memref-backed address, got {raw_type}") from exc
+            raise TypeError(
+                f"{context} expects a PTO pointer or memref-backed address, got {raw_type}"
+            ) from exc
 
 
 def _coerce_index(value, *, context: str):
@@ -1253,7 +1410,9 @@ def _coerce_index(value, *, context: str):
         return coerce_runtime_index_value(raw_value, context=context)
     except TypeError as exc:
         if hasattr(raw_value, "type"):
-            raise TypeError(f"{context} expects an index-like scalar, got {raw_value.type}") from exc
+            raise TypeError(
+                f"{context} expects an index-like scalar, got {raw_value.type}"
+            ) from exc
         raise
 
 
@@ -1349,7 +1508,9 @@ def pge_b32(pattern):
 
 def pand(src0, src1, mask):
     """``pto.pand`` – gated mask AND."""
-    result_type = _require_same_mask_types((src0, src1, mask), context="pand(src0, src1, mask)")
+    result_type = _require_same_mask_types(
+        (src0, src1, mask), context="pand(src0, src1, mask)"
+    )
     return wrap_surface_value(
         _pto.PandOp(
             result_type,
@@ -1362,7 +1523,9 @@ def pand(src0, src1, mask):
 
 def por(src0, src1, mask):
     """``pto.por`` – gated mask OR."""
-    result_type = _require_same_mask_types((src0, src1, mask), context="por(src0, src1, mask)")
+    result_type = _require_same_mask_types(
+        (src0, src1, mask), context="por(src0, src1, mask)"
+    )
     return wrap_surface_value(
         _pto.PorOp(
             result_type,
@@ -1375,7 +1538,9 @@ def por(src0, src1, mask):
 
 def pxor(src0, src1, mask):
     """``pto.pxor`` – gated mask XOR."""
-    result_type = _require_same_mask_types((src0, src1, mask), context="pxor(src0, src1, mask)")
+    result_type = _require_same_mask_types(
+        (src0, src1, mask), context="pxor(src0, src1, mask)"
+    )
     return wrap_surface_value(
         _pto.PxorOp(
             result_type,
@@ -1400,7 +1565,9 @@ def pnot(src, mask):
 
 def psel(src0, src1, sel):
     """``pto.psel`` – per-lane mask select."""
-    result_type = _require_same_mask_types((src0, src1, sel), context="psel(src0, src1, sel)")
+    result_type = _require_same_mask_types(
+        (src0, src1, sel), context="psel(src0, src1, sel)"
+    )
     return wrap_surface_value(
         _pto.PselOp(
             result_type,
@@ -1414,7 +1581,9 @@ def psel(src0, src1, sel):
 def ppack(mask_value, part, to_type=None):
     """``pto.ppack`` – pack predicate bits into the selected half."""
     _, inferred_type = _infer_mask_metadata(mask_value, context="ppack(mask, part)")
-    result_type = _resolve_mask_result_type(to_type, context="ppack(mask, part, to_type=...)")
+    result_type = _resolve_mask_result_type(
+        to_type, context="ppack(mask, part, to_type=...)"
+    )
     if result_type is None:
         result_type = inferred_type
     return wrap_surface_value(
@@ -1429,7 +1598,9 @@ def ppack(mask_value, part, to_type=None):
 def punpack(mask_value, part, to_type=None):
     """``pto.punpack`` – unpack predicate bits from the selected half."""
     _, inferred_type = _infer_mask_metadata(mask_value, context="punpack(mask, part)")
-    result_type = _resolve_mask_result_type(to_type, context="punpack(mask, part, to_type=...)")
+    result_type = _resolve_mask_result_type(
+        to_type, context="punpack(mask, part, to_type=...)"
+    )
     if result_type is None:
         result_type = inferred_type
     return wrap_surface_value(
@@ -1460,7 +1631,9 @@ def _pdintlv_op_for_mask_bits(mask_bits: int):
 def _mask_pair_op(op_resolver, lhs, rhs, *, expected_mask_bits: int, context: str):
     mask_bits, result_type = _infer_mask_metadata(lhs, context=context)
     if mask_bits != expected_mask_bits:
-        raise TypeError(f"{context} expects mask_b{expected_mask_bits} operands, got mask_b{mask_bits}")
+        raise TypeError(
+            f"{context} expects mask_b{expected_mask_bits} operands, got mask_b{mask_bits}"
+        )
     _require_same_mask_types((lhs, rhs), context=context)
     op = op_resolver(mask_bits)(
         result_type,
@@ -1615,7 +1788,9 @@ def pstu(align_in, mask_value, buf):
     """``pto.pstu`` – unaligned predicate store with threaded alignment state."""
     mask_bits, _ = _infer_mask_metadata(mask_value, context="pstu(align_in, mask, buf)")
     if mask_bits not in {16, 32}:
-        raise TypeError("pstu(align_in, mask, buf) currently supports only mask_b16 and mask_b32")
+        raise TypeError(
+            "pstu(align_in, mask, buf) currently supports only mask_b16 and mask_b32"
+        )
     elem_type = _pointer_element_type(buf, context="pstu(align_in, mask, buf)")
     expected_bytes = mask_bits // 8
     actual_bytes = _element_bytewidth(elem_type)
@@ -1679,7 +1854,35 @@ def vstus(align_in, offset, value, base):
     )
 
 
+def vsqz(input_value, mask):
+    """``pto.vsqz`` – vector squeeze: compress active lanes into a contiguous result."""
+    raw_input = unwrap_surface_value(input_value)
+    result_type = raw_input.type
+    return wrap_surface_value(
+        _pto.VsqzOp(
+            result_type,
+            raw_input,
+            unwrap_surface_value(mask),
+        ).result
+    )
+
+
+def sprclr(spr):
+    """``pto.sprclr`` – clear the specified SPR register."""
+    _pto.SprclrOp(spr=str(spr))
+
+
+def sprsts(spr, destination, offset):
+    """``pto.sprsts`` – store SPR count to memory at the given byte offset."""
+    _pto.SprstsOp(
+        spr=str(spr),
+        destination=unwrap_surface_value(destination),
+        offset=_coerce_i32(offset, context="sprsts(spr, destination, offset)"),
+    )
+
+
 # ── Vector math (result type inferred from first operand) ─────────────────────
+
 
 def vbr(value):
     """``pto.vbr`` – broadcast one scalar value to all vector lanes."""
@@ -1699,8 +1902,12 @@ def vbr(value):
         elif isinstance(raw_value, int):
             elem_type = IntegerType.get_signless(32)
         else:
-            raise TypeError("vbr(value) expects a runtime scalar or one Python int/float literal")
-        scalar_value = materialize_scalar_literal(raw_value, elem_type, context="vbr(value)")
+            raise TypeError(
+                "vbr(value) expects a runtime scalar or one Python int/float literal"
+            )
+        scalar_value = materialize_scalar_literal(
+            raw_value, elem_type, context="vbr(value)"
+        )
 
     try:
         result_type = _resolve(vreg_type(_elements_per_vreg(elem_type), elem_type))
@@ -1711,7 +1918,9 @@ def vbr(value):
 
 
 def _emit_unary_vec_op(op_ctor, inp, mask):
-    _reject_low_precision_vreg_operands(inp, context=f"pto.{_surface_name_for_op_ctor(op_ctor)}(...)")
+    _reject_low_precision_vreg_operands(
+        inp, context=f"pto.{_surface_name_for_op_ctor(op_ctor)}(...)"
+    )
     return wrap_surface_value(
         op_ctor(
             unwrap_surface_value(inp).type,
@@ -1883,7 +2092,9 @@ def _normalize_vdup_position_mode(position, *, context: str):
     allowed = {"LOWEST", "HIGHEST"}
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
-        raise ValueError(f"{context} does not support position {position!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support position {position!r}; expected one of {expected}"
+        )
     return normalized
 
 
@@ -1905,7 +2116,9 @@ def _normalize_acc_to_vec_mode(mode, *, context: str):
         normalized = aliases.get(token)
         if normalized is None:
             expected = ", ".join(sorted(aliases))
-            raise ValueError(f"{context} expects mode to be one of {expected}, got {mode!r}")
+            raise ValueError(
+                f"{context} expects mode to be one of {expected}, got {mode!r}"
+            )
         return Attribute.parse(f"#pto<acc_to_vec_mode {normalized}>")
     return mode
 
@@ -1929,11 +2142,15 @@ def _infer_vdup_scalar_result_type(input_value, mask_value, *, context: str):
         element_type = scalar_type.type
     elif F16Type.isinstance(scalar_type) or BF16Type.isinstance(scalar_type):
         if mask_bits != 16:
-            raise TypeError(f"{context} expects f16/bf16 scalar input to pair with mask_b16, got mask_b{mask_bits}")
+            raise TypeError(
+                f"{context} expects f16/bf16 scalar input to pair with mask_b16, got mask_b{mask_bits}"
+            )
         element_type = scalar_type
     elif F32Type.isinstance(scalar_type):
         if mask_bits != 32:
-            raise TypeError(f"{context} expects f32 scalar input to pair with mask_b32, got mask_b{mask_bits}")
+            raise TypeError(
+                f"{context} expects f32 scalar input to pair with mask_b32, got mask_b{mask_bits}"
+            )
         element_type = scalar_type
     else:
         raise TypeError(
@@ -1956,9 +2173,13 @@ def _coerce_vdup_scalar_input(input_value, mask_value, *, context: str):
         elif mask_bits == 32:
             target_type = F32Type.get()
         else:
-            raise TypeError(f"{context} cannot materialize a float literal for mask_b{mask_bits}")
+            raise TypeError(
+                f"{context} cannot materialize a float literal for mask_b{mask_bits}"
+            )
         return coerce_scalar_to_type(raw_input, target_type, context=context)
-    return coerce_scalar_to_type(raw_input, IntegerType.get_signless(mask_bits), context=context)
+    return coerce_scalar_to_type(
+        raw_input, IntegerType.get_signless(mask_bits), context=context
+    )
 
 
 def vdup(input_value, mask, position=None):
@@ -1966,18 +2187,28 @@ def vdup(input_value, mask, position=None):
     raw_input = unwrap_surface_value(input_value)
     try:
         _pto.VRegType(raw_input.type)
-        _reject_low_precision_vreg_operands(input_value, context="pto.vdup(vec, mask, position=...)")
+        _reject_low_precision_vreg_operands(
+            input_value, context="pto.vdup(vec, mask, position=...)"
+        )
         result_type = raw_input.type
         normalized_position = (
-            _normalize_vdup_position_mode(position, context="vdup(vec, mask, position=...)")
+            _normalize_vdup_position_mode(
+                position, context="vdup(vec, mask, position=...)"
+            )
             if position is not None
             else "LOWEST"
         )
     except Exception:
         if position is not None:
-            raise TypeError("vdup(scalar, mask, position=...) does not support position; position is only valid for vector input")
-        raw_input = _coerce_vdup_scalar_input(input_value, mask, context="vdup(scalar, mask)")
-        result_type = _infer_vdup_scalar_result_type(raw_input, mask, context="vdup(scalar, mask)")
+            raise TypeError(
+                "vdup(scalar, mask, position=...) does not support position; position is only valid for vector input"
+            )
+        raw_input = _coerce_vdup_scalar_input(
+            input_value, mask, context="vdup(scalar, mask)"
+        )
+        result_type = _infer_vdup_scalar_result_type(
+            raw_input, mask, context="vdup(scalar, mask)"
+        )
         normalized_position = None
     return wrap_surface_value(
         _pto.VdupOp(
@@ -2380,6 +2611,7 @@ def vmula(acc, lhs, rhs, mask):
         ).result
     )
 
+
 def vmadd(acc, lhs, rhs, mask):
     """``pto.vmadd`` – fused multiply-add: ``acc * lhs + rhs`` (single rounding)."""
     _reject_low_precision_vreg_operands(acc, lhs, rhs, context="pto.vmadd(...)")
@@ -2393,6 +2625,7 @@ def vmadd(acc, lhs, rhs, mask):
         ).result
     )
 
+
 def vci(base, order=None):
     """``pto.vci`` – generate lane indices from a scalar base."""
     raw_base = unwrap_surface_value(base)
@@ -2401,7 +2634,9 @@ def vci(base, order=None):
         elem_type = raw_base.type
     elif isinstance(raw_base, int):
         elem_type = IntegerType.get_signless(32)
-        scalar_value = materialize_scalar_literal(raw_base, elem_type, context="vci(base)")
+        scalar_value = materialize_scalar_literal(
+            raw_base, elem_type, context="vci(base)"
+        )
     else:
         raise TypeError("vci(base) expects a runtime scalar or Python int")
 
@@ -2426,6 +2661,7 @@ def vsel(true_v, false_v, mask):
 
 
 # ── Tile-domain operations ────────────────────────────────────────────────────
+
 
 def _coerce_tensor_view_layout_attr(layout):
     if layout is None:
@@ -2456,12 +2692,10 @@ def make_tensor_view(ptr, *, shape=None, strides=None, layout=None):
     raw_ptr = unwrap_surface_value(ptr)
     elem = _pto.PtrType(raw_ptr.type).element_type
     normalized_shape = [
-        _coerce_index(dim, context="make_tensor_view(shape=...)")
-        for dim in shape
+        _coerce_index(dim, context="make_tensor_view(shape=...)") for dim in shape
     ]
     normalized_strides = [
-        _coerce_index(dim, context="make_tensor_view(strides=...)")
-        for dim in strides
+        _coerce_index(dim, context="make_tensor_view(strides=...)") for dim in strides
     ]
     static_dims = _static_index_dims(normalized_shape)
     tv_type = (
@@ -2513,7 +2747,9 @@ def _split_valid_shape(shape, valid_shape):
         dim = valid_shape[0]
         surface_valid_shape.append(dim)
         if isinstance(dim, bool):
-            raise TypeError("alloc_tile(valid_shape=...) does not accept bool dimensions")
+            raise TypeError(
+                "alloc_tile(valid_shape=...) does not accept bool dimensions"
+            )
         if isinstance(dim, int):
             return (1, dim), None, None, tuple(surface_valid_shape)
         return (-1, -1), 1, dim, tuple(surface_valid_shape)
@@ -2524,7 +2760,9 @@ def _split_valid_shape(shape, valid_shape):
     for index, dim in enumerate(valid_shape):
         surface_valid_shape.append(dim)
         if isinstance(dim, bool):
-            raise TypeError("alloc_tile(valid_shape=...) does not accept bool dimensions")
+            raise TypeError(
+                "alloc_tile(valid_shape=...) does not accept bool dimensions"
+            )
         if isinstance(dim, int):
             type_valid_shape.append(dim)
             continue
@@ -2587,8 +2825,7 @@ def partition_view(tv, *, offsets, sizes):
         for offset in offsets
     ]
     normalized_sizes = [
-        _coerce_index(size, context="partition_view(sizes=...)")
-        for size in sizes
+        _coerce_index(size, context="partition_view(sizes=...)") for size in sizes
     ]
     static_dims = _static_index_dims(normalized_sizes)
     ptv_type = (
@@ -2631,7 +2868,9 @@ def _source_view_rank(tv, *, context: str) -> int:
         try:
             return _pto.PartitionTensorViewType(raw_type).rank
         except Exception as exc:
-            raise TypeError(f"{context} expects a tensor view or partition tensor view, got {raw_type}") from exc
+            raise TypeError(
+                f"{context} expects a tensor view or partition tensor view, got {raw_type}"
+            ) from exc
 
 
 def _is_partition_tensor_view(value) -> bool:
@@ -2742,21 +2981,27 @@ def _static_alloc_buffer_element_count(shape):
     elif isinstance(shape, (list, tuple)):
         dims = tuple(shape)
     else:
-        raise TypeError("pto.alloc_buffer(shape, ...) expects an int or a tuple/list of static dimensions")
+        raise TypeError(
+            "pto.alloc_buffer(shape, ...) expects an int or a tuple/list of static dimensions"
+        )
     if not dims:
         raise ValueError("pto.alloc_buffer(shape, ...) expects at least one dimension")
     count = 1
     for dim in dims:
         raw_dim = unwrap_surface_value(dim)
         if isinstance(raw_dim, bool):
-            raise TypeError("pto.alloc_buffer(shape, ...) does not accept bool dimensions")
+            raise TypeError(
+                "pto.alloc_buffer(shape, ...) does not accept bool dimensions"
+            )
         if not isinstance(raw_dim, int):
             raise TypeError(
                 "pto.alloc_buffer(shape, ...) requires static integer dimensions; "
                 f"got {getattr(raw_dim, 'type', type(raw_dim).__name__)}"
             )
         if raw_dim <= 0:
-            raise ValueError(f"pto.alloc_buffer(shape, ...) dimensions must be positive, got {raw_dim}")
+            raise ValueError(
+                f"pto.alloc_buffer(shape, ...) dimensions must be positive, got {raw_dim}"
+            )
         count *= raw_dim
     return count
 
@@ -2789,6 +3034,7 @@ def _alloc_local_buffer(shape, dtype, element_type, element_count, byte_size):
 def _is_persistent_alloc_buffer_candidate() -> bool:
     try:
         from ._tracing.active import current_session
+
         session = current_session()
     except Exception:
         session = None
@@ -2834,11 +3080,15 @@ def alloc_tile(
     ``alloc_tile(tile_type, addr=..., valid_row=..., valid_col=...)``.
     """
     if tile_type is not None and shape is not None:
-        raise TypeError("alloc_tile() accepts either tile_type or shape=/dtype=, not both")
+        raise TypeError(
+            "alloc_tile() accepts either tile_type or shape=/dtype=, not both"
+        )
 
     if tile_type is None:
         if shape is None or dtype is None:
-            raise TypeError("alloc_tile() requires either tile_type or both shape= and dtype=")
+            raise TypeError(
+                "alloc_tile() requires either tile_type or both shape= and dtype="
+            )
         if valid_row is not None or valid_col is not None:
             raise TypeError(
                 "alloc_tile(shape=..., dtype=...) uses the authored surface form; "
@@ -2846,9 +3096,14 @@ def alloc_tile(
             )
         logical_shape = _normalize_static_tile_shape(shape)
         physical_shape = _authored_tile_physical_shape(logical_shape)
-        _validate_authored_tile_row_alignment(physical_shape, dtype, blayout=blayout, slayout=slayout)
-        type_valid_shape, valid_row, valid_col, surface_valid_shape = _split_valid_shape(logical_shape, valid_shape)
+        _validate_authored_tile_row_alignment(
+            physical_shape, dtype, blayout=blayout, slayout=slayout
+        )
+        type_valid_shape, valid_row, valid_col, surface_valid_shape = (
+            _split_valid_shape(logical_shape, valid_shape)
+        )
         from ._types import tile_buf_type
+
         tile_type = tile_buf_type(
             physical_shape,
             dtype,
@@ -2866,9 +3121,15 @@ def alloc_tile(
 
     value = _pto.AllocTileOp(
         _resolve(tile_type),
-        addr=_coerce_i64(addr, context="alloc_tile(addr)") if addr is not None else None,
-        valid_row=_coerce_index(valid_row, context="alloc_tile(valid_row)") if valid_row is not None else None,
-        valid_col=_coerce_index(valid_col, context="alloc_tile(valid_col)") if valid_col is not None else None,
+        addr=_coerce_i64(addr, context="alloc_tile(addr)")
+        if addr is not None
+        else None,
+        valid_row=_coerce_index(valid_row, context="alloc_tile(valid_row)")
+        if valid_row is not None
+        else None,
+        valid_col=_coerce_index(valid_col, context="alloc_tile(valid_col)")
+        if valid_col is not None
+        else None,
     ).result
     if tile_type is not None and (valid_row is not None or valid_col is not None):
         parsed_tile_type = parse_tile_type_metadata(_resolve(tile_type))
@@ -2897,11 +3158,15 @@ def set_tile_valid_shape(tile, valid_shape):
     if parsed_tile_type is None:
         raise TypeError("tile.valid_shape assignment expects a tile_buf-backed value")
     if len(parsed_tile_type["shape_dims"]) != 2:
-        raise TypeError("tile.valid_shape assignment currently only supports rank-2 tiles")
+        raise TypeError(
+            "tile.valid_shape assignment currently only supports rank-2 tiles"
+        )
     logical_rank = len(tile.shape) if getattr(tile, "shape", None) is not None else 2
     if logical_rank == 1:
         if len(valid_shape) != 1:
-            raise TypeError("rank-1 tile.valid_shape assignment expects exactly one dimension")
+            raise TypeError(
+                "rank-1 tile.valid_shape assignment expects exactly one dimension"
+            )
         if parsed_tile_type["valid_dims"] != (None, None):
             raise TypeError(
                 "rank-1 tile.valid_shape assignment requires a tile allocated with "
@@ -2911,7 +3176,9 @@ def set_tile_valid_shape(tile, valid_shape):
         valid_col = _coerce_index(valid_shape[0], context="tile.valid_shape assignment")
     else:
         if len(valid_shape) != 2:
-            raise TypeError("tile.valid_shape assignment currently expects exactly two dimensions")
+            raise TypeError(
+                "tile.valid_shape assignment currently expects exactly two dimensions"
+            )
         if parsed_tile_type["valid_dims"] != (None, None):
             raise TypeError(
                 "tile.valid_shape assignment requires a tile allocated with fully dynamic "
@@ -2940,7 +3207,9 @@ def tmov(src, dst, *, mode=None):
     """``pto.tmov ins(src) outs(dst)`` – move data between tile domains."""
     kwargs = {}
     if mode is not None:
-        kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(mode, context="tmov(..., mode=...)")
+        kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(
+            mode, context="tmov(..., mode=...)"
+        )
     _pto.TMovOp(None, unwrap_surface_value(src), unwrap_surface_value(dst), **kwargs)
 
 
@@ -3470,7 +3739,9 @@ def treshape(src, *, shape, dtype=None, blayout=None):
 
     result_memory_space = src_memory_space
     result_physical_shape = _authored_tile_physical_shape(result_shape)
-    _validate_authored_tile_row_alignment(result_physical_shape, result_dtype, blayout=result_blayout, slayout="NoneBox")
+    _validate_authored_tile_row_alignment(
+        result_physical_shape, result_dtype, blayout=result_blayout, slayout="NoneBox"
+    )
 
     from ._types import tile_buf_type
 
@@ -3649,11 +3920,15 @@ def _resolve_selection_tmp(dst, tmp, *, context: str):
     session = None
     try:
         from ._tracing.active import current_session
+
         session = current_session()
     except Exception:
         session = None
 
-    if session is not None and getattr(session.module_spec, "target_arch", None) == "a5":
+    if (
+        session is not None
+        and getattr(session.module_spec, "target_arch", None) == "a5"
+    ):
         return dst
 
     return alloc_tile(tile_type=unwrap_surface_value(dst).type)
@@ -3722,11 +3997,14 @@ def tgather(
         indices=None if indices is None else unwrap_surface_value(indices),
         tmp=None if tmp is None else unwrap_surface_value(tmp),
         k_value=None if k_value is None else unwrap_surface_value(k_value),
-        mask_pattern=None if mask_pattern is None else _tile_mask_pattern_attr(mask_pattern),
+        mask_pattern=None
+        if mask_pattern is None
+        else _tile_mask_pattern_attr(mask_pattern),
         axis=None if axis is None else axis,
         cmp_mode=None if cmp_mode is None else _normalize_cmp_mode(cmp_mode),
         offset=offset,
     )
+
 
 def ttri(diagonal, dst, *, upper_or_lower="lower"):
     """``pto.ttri ins(diagonal) outs(dst)``."""
@@ -3740,14 +4018,22 @@ def ttri(diagonal, dst, *, upper_or_lower="lower"):
                 f"upper_or_lower must be 'lower' or 'upper', got {upper_or_lower!r}"
             )
     elif upper_or_lower not in (0, 1):
-        raise ValueError(f"upper_or_lower must be 0 (lower) or 1 (upper), got {upper_or_lower}")
-    if not isinstance(diagonal, int):
-        raise TypeError(
-            f"ttri(diagonal) expects an int, got {type(diagonal).__name__}"
+        raise ValueError(
+            f"upper_or_lower must be 0 (lower) or 1 (upper), got {upper_or_lower}"
         )
+    if not isinstance(diagonal, int):
+        raise TypeError(f"ttri(diagonal) expects an int, got {type(diagonal).__name__}")
     dst_dtype = str(infer_tile_element_type(dst))
     _TRI_ALLOWED_DTYPES = {
-        "i8", "i16", "i32", "ui8", "ui16", "ui32", "f16", "bf16", "f32",
+        "i8",
+        "i16",
+        "i32",
+        "ui8",
+        "ui16",
+        "ui32",
+        "f16",
+        "bf16",
+        "f32",
     }
     if dst_dtype not in _TRI_ALLOWED_DTYPES:
         raise ValueError(
@@ -3759,6 +4045,7 @@ def ttri(diagonal, dst, *, upper_or_lower="lower"):
         unwrap_surface_value(dst),
         upper_or_lower=upper_or_lower,
     )
+
 
 def tthistogram(src, idx, dst, *, byte=None):
     """``pto.thistogram ins(src, idx) outs(dst)``."""
@@ -3773,13 +4060,9 @@ def tthistogram(src, idx, dst, *, byte=None):
             f"thistogram src dtype must be ui16 or ui32, got {src_dtype!r}"
         )
     if idx_dtype != "ui8":
-        raise ValueError(
-            f"thistogram idx dtype must be ui8, got {idx_dtype!r}"
-        )
+        raise ValueError(f"thistogram idx dtype must be ui8, got {idx_dtype!r}")
     if dst_dtype != "ui32":
-        raise ValueError(
-            f"thistogram dst dtype must be ui32, got {dst_dtype!r}"
-        )
+        raise ValueError(f"thistogram dst dtype must be ui32, got {dst_dtype!r}")
     effective_byte = 1 if byte is None else byte
     if src_dtype == "ui16" and effective_byte not in (0, 1):
         raise ValueError(
@@ -3792,6 +4075,7 @@ def tthistogram(src, idx, dst, *, byte=None):
         unwrap_surface_value(dst),
         byte=byte,
     )
+
 
 def tgatherb(src, offsets, dst):
     """``pto.tgatherb`` – tile gather using byte offsets (DPS)."""
@@ -3831,7 +4115,9 @@ def tscatter(src, dst, *, indexes=None, axis=None, mask_pattern=None):
 
 def tsel(mask, src0, src1, dst, *, tmp=None):
     """``pto.tsel ins(mask, src0, src1, tmp) outs(dst)`` with synthesized scratch when omitted."""
-    resolved_tmp = tmp if tmp is not None else _resolve_selection_tmp(dst, tmp, context="tsel")
+    resolved_tmp = (
+        tmp if tmp is not None else _resolve_selection_tmp(dst, tmp, context="tsel")
+    )
     _pto.tsel(
         unwrap_surface_value(mask),
         unwrap_surface_value(src0),
@@ -3843,7 +4129,9 @@ def tsel(mask, src0, src1, dst, *, tmp=None):
 
 def tsels(mask, src, scalar, dst, *, tmp=None):
     """``pto.tsels ins(mask, src, tmp, scalar) outs(dst)`` with synthesized scratch when omitted."""
-    resolved_tmp = tmp if tmp is not None else _resolve_selection_tmp(dst, tmp, context="tsels")
+    resolved_tmp = (
+        tmp if tmp is not None else _resolve_selection_tmp(dst, tmp, context="tsels")
+    )
     _pto.tsels(
         unwrap_surface_value(mask),
         unwrap_surface_value(src),
@@ -3860,7 +4148,9 @@ def tcvt(src, dst, *, tmp=None, rmode=None, sat_mode=None):
     supported by the current PTO backend; passing a non-None value raises.
     """
     if tmp is not None:
-        raise TypeError("pto.tile.cvt(..., tmp=...) is not supported by the current PTO Python bindings")
+        raise TypeError(
+            "pto.tile.cvt(..., tmp=...) is not supported by the current PTO Python bindings"
+        )
     _pto.tcvt(
         unwrap_surface_value(src),
         unwrap_surface_value(dst),
@@ -4065,11 +4355,15 @@ def _tile_slice_linear_offset(tile_slice: TileSliceValue):
     if len(offsets) == 1:
         return offsets[0]
     if len(offsets) != 2:
-        raise RuntimeError("tile slice pointer lowering only supports rank-1 or rank-2 offsets")
+        raise RuntimeError(
+            "tile slice pointer lowering only supports rank-1 or rank-2 offsets"
+        )
 
     physical_shape = getattr(tile_slice.tile, "physical_shape", None)
     if physical_shape is None or len(physical_shape) != 2 or physical_shape[1] is None:
-        raise RuntimeError("tile slice pointer lowering requires static physical column shape metadata")
+        raise RuntimeError(
+            "tile slice pointer lowering requires static physical column shape metadata"
+        )
 
     row, col = offsets
     stride = physical_shape[1]
@@ -4077,7 +4371,9 @@ def _tile_slice_linear_offset(tile_slice: TileSliceValue):
         return row * stride + col
 
     row_value = _coerce_index(row, context="tile slice pointer lowering")
-    row_stride = arith.MulIOp(row_value, arith.ConstantOp(IndexType.get(), stride).result).result
+    row_stride = arith.MulIOp(
+        row_value, arith.ConstantOp(IndexType.get(), stride).result
+    ).result
     col_value = _coerce_index(col, context="tile slice pointer lowering")
     return arith.AddIOp(row_stride, col_value).result
 
@@ -4087,7 +4383,9 @@ def _tile_slice_ptr(tile_slice: TileSliceValue):
     linear_offset = _tile_slice_linear_offset(tile_slice)
     if isinstance(linear_offset, int) and linear_offset == 0:
         return base_ptr
-    return addptr(base_ptr, _coerce_index(linear_offset, context="tile slice pointer lowering"))
+    return addptr(
+        base_ptr, _coerce_index(linear_offset, context="tile slice pointer lowering")
+    )
 
 
 def _tile_slice_address(tile_slice: TileSliceValue):
@@ -4123,7 +4421,9 @@ def _elements_per_vreg(elem_type):
     try:
         bytewidth = _element_bytewidth(elem_type)
     except TypeError as exc:
-        raise TypeError(f"vlds/vsts tile-slice sugar does not support element type {elem_type}")
+        raise TypeError(
+            f"vlds/vsts tile-slice sugar does not support element type {elem_type}"
+        )
     return 256 // bytewidth
 
 
@@ -4136,7 +4436,7 @@ def _infer_vreg_metadata(vector_value):
         text = str(raw_type)
         if not text.startswith("!pto.vreg<") or "x" not in text:
             raise TypeError(f"expected PTO vector-register type, got {raw_type}")
-        body = text[len("!pto.vreg<"):-1]
+        body = text[len("!pto.vreg<") : -1]
         lanes_text, elem_text = body.split("x", 1)
         return int(lanes_text), Type.parse(elem_text)
 
@@ -4183,7 +4483,10 @@ def _element_bytewidth(elem_type):
         return 2
     if Float8E4M3FNType.isinstance(elem_type) or Float8E5M2Type.isinstance(elem_type):
         return 1
-    if any(_isinstance_pto_type(elem_type, name) for name in ("HiF8Type", "F4E1M2x2Type", "F4E2M1x2Type")):
+    if any(
+        _isinstance_pto_type(elem_type, name)
+        for name in ("HiF8Type", "F4E1M2x2Type", "F4E2M1x2Type")
+    ):
         return 1
     if IntegerType.isinstance(elem_type):
         width = IntegerType(elem_type).width
@@ -4233,12 +4536,16 @@ def _plt_op_for_mask_bits(mask_bits: int):
 
 def _coerce_i32(value, *, context: str):
     raw_value = unwrap_surface_value(value)
-    return coerce_runtime_integer_value(raw_value, IntegerType.get_signless(32), context=context)
+    return coerce_runtime_integer_value(
+        raw_value, IntegerType.get_signless(32), context=context
+    )
 
 
 def _coerce_i64(value, *, context: str):
     raw_value = unwrap_surface_value(value)
-    return coerce_runtime_integer_value(raw_value, IntegerType.get_signless(64), context=context)
+    return coerce_runtime_integer_value(
+        raw_value, IntegerType.get_signless(64), context=context
+    )
 
 
 def _coerce_i1(value, *, context: str):
@@ -4258,7 +4565,11 @@ def _coerce_scalar_like_vector_element(vector_value, scalar_value, *, context: s
 def _negate_runtime_scalar(value):
     raw_value = unwrap_surface_value(value)
     kind = classify_runtime_scalar_type(raw_value.type)
-    zero = materialize_scalar_literal(0.0 if kind == "float" else 0, raw_value.type, context="_negate_runtime_scalar(...)")
+    zero = materialize_scalar_literal(
+        0.0 if kind == "float" else 0,
+        raw_value.type,
+        context="_negate_runtime_scalar(...)",
+    )
     return emit_runtime_binary_op("sub", zero, raw_value)
 
 
@@ -4328,7 +4639,9 @@ def _enum_attr(kind, value, *, supported: set[str], context: str):
     normalized = _normalize_token(value, context=context)
     if normalized not in supported:
         expected = ", ".join(sorted(supported))
-        raise ValueError(f"{context} does not support {value!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support {value!r}; expected one of {expected}"
+        )
     return Attribute.parse(f"#pto<{kind} {normalized}>")
 
 
@@ -4351,53 +4664,58 @@ def _acc_store_unit_flag_attr(unit_flag):
         context="acc store unit_flag",
     )
 
-_ACC_STORE_PRE_QUANT_MODES = frozenset({
-    "no_convert",
-    "f32_f16",
-    "qf322hif8_pre_vec",
-    "qf322hif8_pre_scalar",
-    "qf322hif8_pre_hybrid_vec",
-    "qf322hif8_pre_hybrid_scalar",
-    "deqs32_int_vec",
-    "deqs32_int_scalar",
-    "req8_vec",
-    "req8_scalar",
-    "deqf16_vec",
-    "deqf16_scalar",
-    "qf322fp8_pre_vec",
-    "qf322fp8_pre_scalar",
-    "qf322f32_pre_vec",
-    "qf322f32_pre_scalar",
-    "f32_bf16",
-    "qf162b8_pre_vec",
-    "qf162b8_pre_scalar",
-    "qf162s4_pre_vec",
-    "qf162s4_pre_scalar",
-    "req4_vec",
-    "req4_scalar",
-    "qf322b8_pre_vec",
-    "qf322b8_pre_scalar",
-    "qf322s4_pre_vec",
-    "qf322s4_pre_scalar",
-    "deqs16_vec",
-    "deqs16_scalar",
-    "qf162s16_pre_vec",
-    "qf162s16_pre_scalar",
-    "qf322f16_pre_vec",
-    "qf322f16_pre_scalar",
-    "qf322bf16_pre_vec",
-    "qf322bf16_pre_scalar",
-    "qs322bf16_pre_vec",
-    "qs322bf16_pre_scalar",
-})
 
-_ACC_STORE_PRE_QUANT_SKIP_PAYLOAD_KIND_CHECK = frozenset({
-    "no_convert",
-})
+_ACC_STORE_PRE_QUANT_MODES = frozenset(
+    {
+        "no_convert",
+        "f32_f16",
+        "qf322hif8_pre_vec",
+        "qf322hif8_pre_scalar",
+        "qf322hif8_pre_hybrid_vec",
+        "qf322hif8_pre_hybrid_scalar",
+        "deqs32_int_vec",
+        "deqs32_int_scalar",
+        "req8_vec",
+        "req8_scalar",
+        "deqf16_vec",
+        "deqf16_scalar",
+        "qf322fp8_pre_vec",
+        "qf322fp8_pre_scalar",
+        "qf322f32_pre_vec",
+        "qf322f32_pre_scalar",
+        "f32_bf16",
+        "qf162b8_pre_vec",
+        "qf162b8_pre_scalar",
+        "qf162s4_pre_vec",
+        "qf162s4_pre_scalar",
+        "req4_vec",
+        "req4_scalar",
+        "qf322b8_pre_vec",
+        "qf322b8_pre_scalar",
+        "qf322s4_pre_vec",
+        "qf322s4_pre_scalar",
+        "deqs16_vec",
+        "deqs16_scalar",
+        "qf162s16_pre_vec",
+        "qf162s16_pre_scalar",
+        "qf322f16_pre_vec",
+        "qf322f16_pre_scalar",
+        "qf322bf16_pre_vec",
+        "qf322bf16_pre_scalar",
+        "qs322bf16_pre_vec",
+        "qs322bf16_pre_scalar",
+    }
+)
 
-_ACC_STORE_VECTOR_PRE_QUANT_MODES = frozenset({
-    mode for mode in _ACC_STORE_PRE_QUANT_MODES if mode.endswith("_vec")
-})
+_ACC_STORE_PRE_QUANT_SKIP_PAYLOAD_KIND_CHECK = frozenset(
+    {
+        "no_convert",
+    }
+)
+
+_ACC_STORE_VECTOR_PRE_QUANT_MODES = frozenset(
+    {mode for mode in _ACC_STORE_PRE_QUANT_MODES if mode.endswith("_vec")}
+)
 
 
 def _is_acc_store_float_scalar_payload(value) -> bool:
@@ -4423,8 +4741,7 @@ def _is_acc_store_scaling_pointer_payload(value) -> bool:
     ):
         return False
     return any(
-        cls.isinstance(ptr_type.element_type)
-        for cls in (F16Type, BF16Type, F32Type)
+        cls.isinstance(ptr_type.element_type) for cls in (F16Type, BF16Type, F32Type)
     )
 
 
@@ -4464,7 +4781,9 @@ def _acc_store_pre_relu(pre_relu):
     mode, payload, clip = pre_relu
     return (
         None if payload is None else unwrap_surface_value(payload),
-        Attribute.parse(f"#pto<relu_pre_mode {_normalize_token(mode, context='acc store pre_relu mode')}>"),
+        Attribute.parse(
+            f"#pto<relu_pre_mode {_normalize_token(mode, context='acc store pre_relu mode')}>"
+        ),
         None if clip is None else unwrap_surface_value(clip),
     )
 
@@ -4478,13 +4797,23 @@ def _acc_store_layout(layout):
         mode, operand = layout
         normalized = _normalize_token(mode, context="acc store layout")
         if normalized == "nz2dn":
-            return Attribute.parse("#pto<acc_store_mode nz2dn>"), None, _coerce_i64(operand, context="acc store layout nz2dn")
+            return (
+                Attribute.parse("#pto<acc_store_mode nz2dn>"),
+                None,
+                _coerce_i64(operand, context="acc store layout nz2dn"),
+            )
         if normalized == "nz2nz":
-            return Attribute.parse("#pto<acc_store_mode nz2nz>"), _coerce_i64(operand, context="acc store layout nz2nz"), None
+            return (
+                Attribute.parse("#pto<acc_store_mode nz2nz>"),
+                _coerce_i64(operand, context="acc store layout nz2nz"),
+                None,
+            )
         raise ValueError("acc store layout tuple only supports nz2dn or nz2nz")
     normalized = _normalize_token(layout, context="acc store layout")
     if normalized != "nz2nd":
-        raise ValueError("acc store layout string only supports nz2nd; use (mode, operand) for nz2dn/nz2nz")
+        raise ValueError(
+            "acc store layout string only supports nz2nd; use (mode, operand) for nz2dn/nz2nz"
+        )
     return Attribute.parse("#pto<acc_store_mode nz2nd>"), None, None
 
 
@@ -4534,7 +4863,15 @@ def _acc_store_atomic_attrs(atomic):
     )
 
 
-def _acc_store_options(unit_flag=None, pre_quant=None, pre_relu=None, layout=None, loop3=None, sat=None, atomic=None):
+def _acc_store_options(
+    unit_flag=None,
+    pre_quant=None,
+    pre_relu=None,
+    layout=None,
+    loop3=None,
+    sat=None,
+    atomic=None,
+):
     pre_quant_value, pre_quant_mode = _acc_store_pre_quant(pre_quant)
     pre_relu_value, pre_relu_mode, clip_value = _acc_store_pre_relu(pre_relu)
     mode, split, loop0_src_stride = _acc_store_layout(layout)
@@ -4577,16 +4914,24 @@ def _mte_l0c_ub_dst_mode(sub_blockid=0, *, split=None):
     if split is not None:
         token = getattr(sub_blockid, "value", sub_blockid)
         if token not in {0, None}:
-            raise ValueError("mte_l0c_ub split cannot be combined with non-default sub_blockid")
+            raise ValueError(
+                "mte_l0c_ub split cannot be combined with non-default sub_blockid"
+            )
         return _acc_store_ub_dst_mode_attr(_normalize_ub_split(split)), None
     token = getattr(sub_blockid, "value", sub_blockid)
     if isinstance(token, str):
-        raise TypeError("mte_l0c_ub sub_blockid expects 0 or 1; use split='M' or split='N' for dual-destination stores")
+        raise TypeError(
+            "mte_l0c_ub sub_blockid expects 0 or 1; use split='M' or split='N' for dual-destination stores"
+        )
     if isinstance(token, bool):
-        raise TypeError("mte_l0c_ub sub_blockid bool is not supported; use sub-block 0/1 or split='M'/'N'")
+        raise TypeError(
+            "mte_l0c_ub sub_blockid bool is not supported; use sub-block 0/1 or split='M'/'N'"
+        )
     if isinstance(token, int) and token not in {0, 1}:
         raise ValueError("mte_l0c_ub sub_blockid constant must be 0 or 1")
-    return _acc_store_ub_dst_mode_attr("single"), _coerce_i64(token, context="mte_l0c_ub sub_blockid")
+    return _acc_store_ub_dst_mode_attr("single"), _coerce_i64(
+        token, context="mte_l0c_ub sub_blockid"
+    )
 
 
 def _cube_load_frac_mode_attr(mode):
@@ -4610,7 +4955,9 @@ def _normalize_pair(name, pair, *, context: str):
 
 def _normalize_frac_src_layout(src_layout, *, context: str):
     if not isinstance(src_layout, tuple) or len(src_layout) not in (1, 2):
-        raise TypeError(f"{context} expects src_layout=(inner_stride,) or (inner_stride, outer_stride)")
+        raise TypeError(
+            f"{context} expects src_layout=(inner_stride,) or (inner_stride, outer_stride)"
+        )
     inner = _coerce_i64(src_layout[0], context=f"{context} src_layout[0]")
     outer = None
     if len(src_layout) == 2:
@@ -4620,7 +4967,9 @@ def _normalize_frac_src_layout(src_layout, *, context: str):
 
 def _normalize_frac_dst_group(dst_group, *, context: str):
     if not isinstance(dst_group, tuple) or len(dst_group) != 4:
-        raise TypeError(f"{context} expects dst_group=(group_count, loop2_stride, loop3_stride, loop4_stride)")
+        raise TypeError(
+            f"{context} expects dst_group=(group_count, loop2_stride, loop3_stride, loop4_stride)"
+        )
     group_count, loop2_stride, loop3_stride, loop4_stride = dst_group
     return (
         _coerce_i64(group_count, context=f"{context} dst_group[0]"),
@@ -4673,7 +5022,9 @@ def _tf32_mode_attr(tf32_mode):
     )
 
 
-def _mad_options(unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
+def _mad_options(
+    unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False
+):
     if not isinstance(disable_gemv, bool):
         raise TypeError("mad disable_gemv expects bool")
     if not isinstance(n_dir, bool):
@@ -4703,7 +5054,9 @@ def _mad_mx_options(unit_flag=None, disable_gemv=False, sat=None, n_dir=False):
 
 def _infer_dma_partition_row_stride(partition: PartitionTensorViewValue):
     if partition.shape is None or partition.strides is None:
-        raise TypeError("mte_load/mte_store require partition view shape/stride metadata")
+        raise TypeError(
+            "mte_load/mte_store require partition view shape/stride metadata"
+        )
     outer_dims = list(partition.shape[:-1])
     non_unit = [i for i, dim in enumerate(outer_dims) if dim != 1]
     if len(non_unit) > 1:
@@ -4732,8 +5085,18 @@ def _infer_dma_2d_copy_signature(partition, tile, *, direction: str):
     row_count, src_row_stride = _infer_dma_partition_row_stride(partition)
     tile_rows, valid_cols, physical_cols = _infer_dma_tile_geometry(tile)
     if direction == "gm_to_ub":
-        return row_count, valid_cols, _mul_bytes(src_row_stride, infer_tile_element_type(tile)), physical_cols * _element_bytewidth(infer_tile_element_type(tile))
-    return row_count, valid_cols, physical_cols * _element_bytewidth(infer_tile_element_type(tile)), _mul_bytes(src_row_stride, infer_tile_element_type(tile))
+        return (
+            row_count,
+            valid_cols,
+            _mul_bytes(src_row_stride, infer_tile_element_type(tile)),
+            physical_cols * _element_bytewidth(infer_tile_element_type(tile)),
+        )
+    return (
+        row_count,
+        valid_cols,
+        physical_cols * _element_bytewidth(infer_tile_element_type(tile)),
+        _mul_bytes(src_row_stride, infer_tile_element_type(tile)),
+    )
 
 
 def fill_tile(tile, value):
@@ -4750,13 +5113,19 @@ def make_mask(dtype, value):
 
     if isinstance(value, str):
         return wrap_surface_value(
-            _pset_op_for_mask_bits(mask_bits)(result_type, _normalize_mask_pattern(value)).result
+            _pset_op_for_mask_bits(mask_bits)(
+                result_type, _normalize_mask_pattern(value)
+            ).result
         )
 
     raw_value = unwrap_surface_value(value)
-    authored_scalar_type = raw_value.type if hasattr(raw_value, "type") else IntegerType.get_signless(32)
+    authored_scalar_type = (
+        raw_value.type if hasattr(raw_value, "type") else IntegerType.get_signless(32)
+    )
     raw_value = _coerce_i32(raw_value, context="make_mask(..., value)")
-    plt_op = _plt_op_for_mask_bits(mask_bits)(result_type, IntegerType.get_signless(32), raw_value)
+    plt_op = _plt_op_for_mask_bits(mask_bits)(
+        result_type, IntegerType.get_signless(32), raw_value
+    )
     next_value = coerce_scalar_to_type(
         plt_op.scalar_out,
         authored_scalar_type,
@@ -4767,17 +5136,22 @@ def make_mask(dtype, value):
 
 # ── Hardware / sync ───────────────────────────────────────────────────────────
 
+
 def _require_pto_ptr_operand(value, *, context: str):
     raw_value = unwrap_surface_value(value)
     try:
         _pto.PtrType(raw_value.type)
     except Exception as exc:
-        raise TypeError(f"{context} expects PTO ptr operands, got {raw_value.type}") from exc
+        raise TypeError(
+            f"{context} expects PTO ptr operands, got {raw_value.type}"
+        ) from exc
     return raw_value
 
 
 @_explicit_mode_only("pto.mte_load(...)")
-def mte_load(source, destination, l2_cache_ctl, len_burst, *, nburst, loops=None, pad=None):
+def mte_load(
+    source, destination, l2_cache_ctl, len_burst, *, nburst, loops=None, pad=None
+):
     """
     Ptr-based GM->UB DMA wrapper aligned with the underlying ``pto.dma_load`` surface.
 
@@ -4867,7 +5241,9 @@ def _normalize_dma_loops(loops, *, context: str):
     if loops is None:
         return [], [], []
     if not isinstance(loops, (list, tuple)):
-        raise TypeError(f"{context} expects loops to be a list[tuple[int, int, int]] or None")
+        raise TypeError(
+            f"{context} expects loops to be a list[tuple[int, int, int]] or None"
+        )
     counts = []
     src_strides = []
     dst_strides = []
@@ -4887,7 +5263,9 @@ def _normalize_dma_pad(pad, *, context: str):
     if pad is None:
         return None, None, None
     if not isinstance(pad, tuple):
-        raise TypeError(f"{context} expects pad to be tuple[ScalarType] or tuple[ScalarType, int, int]")
+        raise TypeError(
+            f"{context} expects pad to be tuple[ScalarType] or tuple[ScalarType, int, int]"
+        )
     if len(pad) == 1:
         pad_value = pad[0]
         left_count = 0
@@ -4897,15 +5275,20 @@ def _normalize_dma_pad(pad, *, context: str):
     else:
         raise TypeError(f"{context} expects pad to have length 1 or 3")
     return (
-        materialize_scalar_literal(pad_value, F32Type.get(), context=f"{context} pad[0]")
-        if not hasattr(pad_value, "type") else unwrap_surface_value(pad_value),
+        materialize_scalar_literal(
+            pad_value, F32Type.get(), context=f"{context} pad[0]"
+        )
+        if not hasattr(pad_value, "type")
+        else unwrap_surface_value(pad_value),
         _coerce_i64(left_count, context=f"{context} pad[1]"),
         _coerce_i64(right_count, context=f"{context} pad[2]"),
     )
 
 
 @_explicit_mode_only("pto.mte_gm_ub(...)")
-def mte_gm_ub(source, destination, l2_cache_ctl, len_burst, *, nburst, loops=None, pad=None):
+def mte_gm_ub(
+    source, destination, l2_cache_ctl, len_burst, *, nburst, loops=None, pad=None
+):
     """``pto.mte_gm_ub`` – grouped GM-to-UB DMA surface."""
     n_burst, nburst_src_stride, nburst_dst_stride = _normalize_dma_group(
         "nburst",
@@ -4940,9 +5323,7 @@ def mte_gm_ub(source, destination, l2_cache_ctl, len_burst, *, nburst, loops=Non
 @_explicit_mode_only("pto.set_store_atomic_cfg(...)")
 def set_store_atomic_cfg(config):
     """Configure scalar ST atomic mode via ST_ATOMIC_CFG (SU path)."""
-    _pto.SetStoreAtomicCfgOp(
-        _coerce_i64(config, context="set_store_atomic_cfg config")
-    )
+    _pto.SetStoreAtomicCfgOp(_coerce_i64(config, context="set_store_atomic_cfg config"))
 
 
 def _nullary_atomic_config(op_cls, api_name):
@@ -4951,9 +5332,7 @@ def _nullary_atomic_config(op_cls, api_name):
         op_cls()
 
     _impl.__name__ = api_name
-    _impl.__doc__ = (
-        f"``pto.{api_name}`` – configure MTE/FIXP store-atomic CTRL state."
-    )
+    _impl.__doc__ = f"``pto.{api_name}`` – configure MTE/FIXP store-atomic CTRL state."
     return _impl
 
 
@@ -5100,11 +5479,15 @@ def mte_gm_l1_frac(source, destination, mode, *, shape, src_layout, dst_group, c
         src_layout,
         context="mte_gm_l1_frac(...)",
     )
-    group_count, dst_loop2_stride, dst_loop3_stride, dst_loop4_stride = _normalize_frac_dst_group(
-        dst_group,
-        context="mte_gm_l1_frac(...)",
+    group_count, dst_loop2_stride, dst_loop3_stride, dst_loop4_stride = (
+        _normalize_frac_dst_group(
+            dst_group,
+            context="mte_gm_l1_frac(...)",
+        )
     )
-    l2_cache_ctrl, smallc0_en = _normalize_frac_ctrl(ctrl, context="mte_gm_l1_frac(...)")
+    l2_cache_ctrl, smallc0_en = _normalize_frac_ctrl(
+        ctrl, context="mte_gm_l1_frac(...)"
+    )
     _pto.MteGmL1FracOp(
         unwrap_surface_value(source),
         unwrap_surface_value(destination),
@@ -5374,7 +5757,20 @@ def mte_l0c_ub(
     )
 
 
-def mad(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
+def mad(
+    lhs,
+    rhs,
+    dst,
+    m,
+    n,
+    k,
+    *,
+    unit_flag=None,
+    disable_gemv=False,
+    sat=None,
+    tf32_mode=None,
+    n_dir=False,
+):
     """``pto.mad`` – cube matmul accumulate."""
     _pto.MadOp(
         unwrap_surface_value(lhs),
@@ -5393,7 +5789,20 @@ def mad(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None,
     )
 
 
-def mad_acc(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
+def mad_acc(
+    lhs,
+    rhs,
+    dst,
+    m,
+    n,
+    k,
+    *,
+    unit_flag=None,
+    disable_gemv=False,
+    sat=None,
+    tf32_mode=None,
+    n_dir=False,
+):
     """``pto.mad_acc`` – cube matmul accumulate into an existing accumulator."""
     _pto.MadAccOp(
         unwrap_surface_value(lhs),
@@ -5412,7 +5821,21 @@ def mad_acc(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=N
     )
 
 
-def mad_bias(lhs, rhs, dst, bias, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
+def mad_bias(
+    lhs,
+    rhs,
+    dst,
+    bias,
+    m,
+    n,
+    k,
+    *,
+    unit_flag=None,
+    disable_gemv=False,
+    sat=None,
+    tf32_mode=None,
+    n_dir=False,
+):
     """``pto.mad_bias`` – cube matmul initialized from a bias buffer."""
     _pto.MadBiasOp(
         unwrap_surface_value(lhs),
@@ -5432,7 +5855,9 @@ def mad_bias(lhs, rhs, dst, bias, m, n, k, *, unit_flag=None, disable_gemv=False
     )
 
 
-def mad_mx(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, n_dir=False):
+def mad_mx(
+    lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, n_dir=False
+):
     """``pto.mad_mx`` – MX-format cube matmul."""
     _pto.MadMxOp(
         unwrap_surface_value(lhs),
@@ -5450,7 +5875,9 @@ def mad_mx(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=No
     )
 
 
-def mad_mx_acc(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, n_dir=False):
+def mad_mx_acc(
+    lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, n_dir=False
+):
     """``pto.mad_mx_acc`` – MX-format cube matmul accumulate."""
     _pto.MadMxAccOp(
         unwrap_surface_value(lhs),
@@ -5468,7 +5895,20 @@ def mad_mx_acc(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sa
     )
 
 
-def mad_mx_bias(lhs, rhs, dst, bias, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, n_dir=False):
+def mad_mx_bias(
+    lhs,
+    rhs,
+    dst,
+    bias,
+    m,
+    n,
+    k,
+    *,
+    unit_flag=None,
+    disable_gemv=False,
+    sat=None,
+    n_dir=False,
+):
     """``pto.mad_mx_bias`` – MX-format cube matmul initialized from a bias buffer."""
     _pto.MadMxBiasOp(
         unwrap_surface_value(lhs),
@@ -5485,6 +5925,7 @@ def mad_mx_bias(lhs, rhs, dst, bias, m, n, k, *, unit_flag=None, disable_gemv=Fa
             n_dir=n_dir,
         ),
     )
+
 
 def get_block_idx():
     """``pto.get_block_idx`` → i64 block index."""
@@ -5521,11 +5962,14 @@ def simt_launch(body, *args, dims=(1, 1, 1), **kwargs):
     role = getattr(spec, "role", None)
     role_value = getattr(role, "value", role)
     if role_value != "simt":
-        raise TypeError("pto.simt_launch(body, ...) expects body to be a @pto.simt-decorated function")
+        raise TypeError(
+            "pto.simt_launch(body, ...) expects body to be a @pto.simt-decorated function"
+        )
 
     body._validate_simt_launch_invocation(*args, **kwargs)
 
     from ._tracing.active import require_active_session
+
     session = require_active_session("pto.simt_launch")
     session.lower_simt_launch_subkernel(body, *args, dims=dims, **kwargs)
 
@@ -5653,16 +6097,39 @@ def get_lanemask_gt():
 _SIGNEDNESS_TOKENS = {"signed", "unsigned"}
 _L1_CACHE_TOKENS = {"cache", "uncache"}
 _LD_L2_CACHE_TOKENS = {
-    "nmfv", "nmlv", "nmprs", "nmpref",
-    "nakeep", "naclean", "nadrop",
-    "idsfv", "idslv", "idsprs", "idspref",
-    "exfv", "exlv", "exprs", "expref",
+    "nmfv",
+    "nmlv",
+    "nmprs",
+    "nmpref",
+    "nakeep",
+    "naclean",
+    "nadrop",
+    "idsfv",
+    "idslv",
+    "idsprs",
+    "idspref",
+    "exfv",
+    "exlv",
+    "exprs",
+    "expref",
 }
 _ST_L2_CACHE_TOKENS = {
-    "nmfv", "nmlv", "nmprs", "nmred",
-    "naci", "napw", "napi", "nared",
-    "wbhfv", "wbhlv", "wbhprs", "wbhred",
-    "wtsfv", "wtslv", "wtsprs", "wtsred",
+    "nmfv",
+    "nmlv",
+    "nmprs",
+    "nmred",
+    "naci",
+    "napw",
+    "napi",
+    "nared",
+    "wbhfv",
+    "wbhlv",
+    "wbhprs",
+    "wbhred",
+    "wtsfv",
+    "wtslv",
+    "wtsprs",
+    "wtsred",
 }
 _ST_L2_CACHE_CONTROL_VALUES = {
     "nmfv": 0,
@@ -5689,7 +6156,9 @@ _SATURATION_TOKENS = {"sat", "nosat"}
 def _optional_signedness_attr(signedness, *, context: str):
     if signedness is None:
         return None
-    return _simt_enum_attr("signedness", signedness, supported=_SIGNEDNESS_TOKENS, context=context)
+    return _simt_enum_attr(
+        "signedness", signedness, supported=_SIGNEDNESS_TOKENS, context=context
+    )
 
 
 def _required_signedness_attr(signedness, *, context: str):
@@ -5699,27 +6168,37 @@ def _required_signedness_attr(signedness, *, context: str):
 
 
 def _l1_cache_attr(value, *, context: str):
-    return _simt_enum_attr("l1cache", value, supported=_L1_CACHE_TOKENS, context=context)
+    return _simt_enum_attr(
+        "l1cache", value, supported=_L1_CACHE_TOKENS, context=context
+    )
 
 
 def _ld_l2_cache_attr(value, *, context: str):
-    return _simt_enum_attr("ld_l2cache", value, supported=_LD_L2_CACHE_TOKENS, context=context)
+    return _simt_enum_attr(
+        "ld_l2cache", value, supported=_LD_L2_CACHE_TOKENS, context=context
+    )
 
 
 def _st_l2_cache_attr(value, *, context: str):
-    return _simt_enum_attr("st_l2cache", value, supported=_ST_L2_CACHE_TOKENS, context=context)
+    return _simt_enum_attr(
+        "st_l2cache", value, supported=_ST_L2_CACHE_TOKENS, context=context
+    )
 
 
 def _normalize_mte_store_l2_cache(l2_cache, *, context: str):
     token = _normalize_token(l2_cache, context=context)
     if token not in _ST_L2_CACHE_CONTROL_VALUES:
         expected = ", ".join(sorted(_ST_L2_CACHE_CONTROL_VALUES))
-        raise ValueError(f"{context} does not support {l2_cache!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support {l2_cache!r}; expected one of {expected}"
+        )
     return _ST_L2_CACHE_CONTROL_VALUES[token]
 
 
 def _rounding_attr(value, *, context: str):
-    return _simt_enum_attr("rounding", value, supported=_ROUNDING_TOKENS, context=context)
+    return _simt_enum_attr(
+        "rounding", value, supported=_ROUNDING_TOKENS, context=context
+    )
 
 
 def _saturation_attr(value, *, context: str):
@@ -5728,15 +6207,21 @@ def _saturation_attr(value, *, context: str):
     token = aliases.get(normalized)
     if token is None:
         expected = ", ".join(sorted((*_SATURATION_TOKENS, "on", "off")))
-        raise ValueError(f"{context} does not support {value!r}; expected one of {expected}")
-    return _simt_enum_attr("saturation", token, supported=_SATURATION_TOKENS, context=context)
+        raise ValueError(
+            f"{context} does not support {value!r}; expected one of {expected}"
+        )
+    return _simt_enum_attr(
+        "saturation", token, supported=_SATURATION_TOKENS, context=context
+    )
 
 
 def _simt_enum_attr(kind, value, *, supported: set[str], context: str):
     normalized = _normalize_token(value, context=context)
     if normalized not in supported:
         expected = ", ".join(sorted(supported))
-        raise ValueError(f"{context} does not support {value!r}; expected one of {expected}")
+        raise ValueError(
+            f"{context} does not support {value!r}; expected one of {expected}"
+        )
     return Attribute.parse(f"#pto.{kind}<{normalized}>")
 
 
@@ -5761,13 +6246,19 @@ def _same_type_ternary(op_cls, lhs, rhs, acc, *, context: str):
     return wrap_surface_value(op_cls(raw_lhs, raw_rhs, raw_acc).result)
 
 
-def _validate_redux_signedness(value_type, signedness, *, require_for_integer: bool, context: str):
+def _validate_redux_signedness(
+    value_type, signedness, *, require_for_integer: bool, context: str
+):
     if IntegerType.isinstance(value_type):
         if require_for_integer and signedness is None:
-            raise TypeError(f"{context} requires signedness='signed' or 'unsigned' for integer values")
+            raise TypeError(
+                f"{context} requires signedness='signed' or 'unsigned' for integer values"
+            )
         return
     if signedness is not None:
-        raise TypeError(f"{context} does not accept signedness for floating-point values")
+        raise TypeError(
+            f"{context} does not accept signedness for floating-point values"
+        )
 
 
 def _validate_integer_signedness_only(value_type, signedness, *, context: str):
@@ -5782,10 +6273,14 @@ def _validate_convert_signedness(src_type, dst_type, signedness, *, context: str
         raise TypeError(f"{context} does not support integer-to-integer conversion")
     if src_int or dst_int:
         if signedness is None:
-            raise TypeError(f"{context} requires signedness='signed' or 'unsigned' when converting to or from integer types")
+            raise TypeError(
+                f"{context} requires signedness='signed' or 'unsigned' when converting to or from integer types"
+            )
         return
     if signedness is not None:
-        raise TypeError(f"{context} does not accept signedness for floating-point or packed conversion")
+        raise TypeError(
+            f"{context} does not accept signedness for floating-point or packed conversion"
+        )
 
 
 def vote_all(pred):
@@ -5816,81 +6311,112 @@ def _validate_shuffle_width(width, *, context: str):
 
 def shuffle_idx(value, index, *, width=32):
     """``pto.shuffle_idx`` – read a payload from an absolute SIMT lane index."""
-    return wrap_surface_value(_pto.ShuffleIdxOp(
-        unwrap_surface_value(value),
-        _coerce_i32_operand(index, context="shuffle_idx(..., index)"),
-        width=_validate_shuffle_width(width, context="shuffle_idx(..., width)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.ShuffleIdxOp(
+            unwrap_surface_value(value),
+            _coerce_i32_operand(index, context="shuffle_idx(..., index)"),
+            width=_validate_shuffle_width(width, context="shuffle_idx(..., width)"),
+        ).result
+    )
 
 
 def shuffle_up(value, offset, *, width=32):
     """``pto.shuffle_up`` – read a payload from a lower-index SIMT lane."""
-    return wrap_surface_value(_pto.ShuffleUpOp(
-        unwrap_surface_value(value),
-        _coerce_i32_operand(offset, context="shuffle_up(..., offset)"),
-        width=_validate_shuffle_width(width, context="shuffle_up(..., width)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.ShuffleUpOp(
+            unwrap_surface_value(value),
+            _coerce_i32_operand(offset, context="shuffle_up(..., offset)"),
+            width=_validate_shuffle_width(width, context="shuffle_up(..., width)"),
+        ).result
+    )
 
 
 def shuffle_down(value, offset, *, width=32):
     """``pto.shuffle_down`` – read a payload from a higher-index SIMT lane."""
-    return wrap_surface_value(_pto.ShuffleDownOp(
-        unwrap_surface_value(value),
-        _coerce_i32_operand(offset, context="shuffle_down(..., offset)"),
-        width=_validate_shuffle_width(width, context="shuffle_down(..., width)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.ShuffleDownOp(
+            unwrap_surface_value(value),
+            _coerce_i32_operand(offset, context="shuffle_down(..., offset)"),
+            width=_validate_shuffle_width(width, context="shuffle_down(..., width)"),
+        ).result
+    )
 
 
 def shuffle_bfly(value, mask, *, width=32):
     """``pto.shuffle_bfly`` – read a payload from a butterfly-selected SIMT lane."""
-    return wrap_surface_value(_pto.ShuffleBflyOp(
-        unwrap_surface_value(value),
-        _coerce_i32_operand(mask, context="shuffle_bfly(..., mask)"),
-        width=_validate_shuffle_width(width, context="shuffle_bfly(..., width)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.ShuffleBflyOp(
+            unwrap_surface_value(value),
+            _coerce_i32_operand(mask, context="shuffle_bfly(..., mask)"),
+            width=_validate_shuffle_width(width, context="shuffle_bfly(..., width)"),
+        ).result
+    )
 
 
 def redux_add(value, *, signedness=None):
     """``pto.redux_add`` – SIMT lane sum reduction."""
     raw_value = unwrap_surface_value(value)
-    _validate_redux_signedness(raw_value.type, signedness, require_for_integer=False, context="redux_add(value)")
-    return wrap_surface_value(_pto.ReduxAddOp(
-        raw_value,
-        signedness=_optional_signedness_attr(signedness, context="redux_add(..., signedness)"),
-    ).result)
+    _validate_redux_signedness(
+        raw_value.type,
+        signedness,
+        require_for_integer=False,
+        context="redux_add(value)",
+    )
+    return wrap_surface_value(
+        _pto.ReduxAddOp(
+            raw_value,
+            signedness=_optional_signedness_attr(
+                signedness, context="redux_add(..., signedness)"
+            ),
+        ).result
+    )
 
 
 def redux_max(value, *, signedness=None):
     """``pto.redux_max`` – SIMT lane max reduction."""
     raw_value = unwrap_surface_value(value)
-    _validate_redux_signedness(raw_value.type, signedness, require_for_integer=True, context="redux_max(value)")
-    return wrap_surface_value(_pto.ReduxMaxOp(
-        raw_value,
-        signedness=_optional_signedness_attr(signedness, context="redux_max(..., signedness)"),
-    ).result)
+    _validate_redux_signedness(
+        raw_value.type, signedness, require_for_integer=True, context="redux_max(value)"
+    )
+    return wrap_surface_value(
+        _pto.ReduxMaxOp(
+            raw_value,
+            signedness=_optional_signedness_attr(
+                signedness, context="redux_max(..., signedness)"
+            ),
+        ).result
+    )
 
 
 def redux_min(value, *, signedness=None):
     """``pto.redux_min`` – SIMT lane min reduction."""
     raw_value = unwrap_surface_value(value)
-    _validate_redux_signedness(raw_value.type, signedness, require_for_integer=True, context="redux_min(value)")
-    return wrap_surface_value(_pto.ReduxMinOp(
-        raw_value,
-        signedness=_optional_signedness_attr(signedness, context="redux_min(..., signedness)"),
-    ).result)
+    _validate_redux_signedness(
+        raw_value.type, signedness, require_for_integer=True, context="redux_min(value)"
+    )
+    return wrap_surface_value(
+        _pto.ReduxMinOp(
+            raw_value,
+            signedness=_optional_signedness_attr(
+                signedness, context="redux_min(..., signedness)"
+            ),
+        ).result
+    )
 
 
 def ldg(ptr_or_ref, offset=None, *, l1cache="cache", l2cache="nmfv"):
     """``pto.ldg`` – scalar GM load with cache controls."""
     buffer_value, index_value = resolve_address_access(ptr_or_ref, offset)
     result_type = _pointer_element_type(buffer_value, context="ldg(ptr, offset)")
-    return wrap_surface_value(_pto.PTOLdgOp(
-        result_type,
-        buffer_value,
-        index_value,
-        l1cache=_l1_cache_attr(l1cache, context="ldg(..., l1cache)"),
-        l2cache=_ld_l2_cache_attr(l2cache, context="ldg(..., l2cache)"),
-    ).value)
+    return wrap_surface_value(
+        _pto.PTOLdgOp(
+            result_type,
+            buffer_value,
+            index_value,
+            l1cache=_l1_cache_attr(l1cache, context="ldg(..., l1cache)"),
+            l2cache=_ld_l2_cache_attr(l2cache, context="ldg(..., l2cache)"),
+        ).value
+    )
 
 
 def stg(value, ptr_or_ref, offset=None, *, l1cache="cache", l2cache="nmfv"):
@@ -5908,7 +6434,9 @@ def stg(value, ptr_or_ref, offset=None, *, l1cache="cache", l2cache="nmfv"):
             f"expected {elem_type}"
         )
     else:
-        stored_value = coerce_scalar_to_type(value, elem_type, context="stg(value, ...)")
+        stored_value = coerce_scalar_to_type(
+            value, elem_type, context="stg(value, ...)"
+        )
     _pto.PTOStgOp(
         buffer_value,
         index_value,
@@ -5923,98 +6451,176 @@ def _atomic_binary(op_cls, ptr, value, *, l2cache, signedness, context: str):
     elem_type = _pointer_element_type(raw_ptr, context=context)
     _validate_integer_signedness_only(elem_type, signedness, context=context)
     raw_value = coerce_scalar_to_type(value, elem_type, context=context)
-    return wrap_surface_value(op_cls(
-        raw_value.type,
-        raw_ptr,
-        raw_value,
-        l2cache=_st_l2_cache_attr(l2cache, context=f"{context} l2cache"),
-        signedness=_optional_signedness_attr(signedness, context=f"{context} signedness"),
-    ).old)
+    return wrap_surface_value(
+        op_cls(
+            raw_value.type,
+            raw_ptr,
+            raw_value,
+            l2cache=_st_l2_cache_attr(l2cache, context=f"{context} l2cache"),
+            signedness=_optional_signedness_attr(
+                signedness, context=f"{context} signedness"
+            ),
+        ).old
+    )
 
 
 def atomic_exch(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_exch`` – SIMT scalar atomic exchange."""
-    return _atomic_binary(_pto.AtomicExchOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_exch(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicExchOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_exch(ptr, value)",
+    )
 
 
 def atomic_add(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_add`` – SIMT scalar atomic add."""
-    return _atomic_binary(_pto.AtomicAddOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_add(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicAddOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_add(ptr, value)",
+    )
 
 
 def atomic_sub(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_sub`` – SIMT scalar atomic subtract."""
-    return _atomic_binary(_pto.AtomicSubOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_sub(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicSubOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_sub(ptr, value)",
+    )
 
 
 def atomic_min(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_min`` – SIMT scalar atomic min."""
-    return _atomic_binary(_pto.AtomicMinOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_min(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicMinOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_min(ptr, value)",
+    )
 
 
 def atomic_max(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_max`` – SIMT scalar atomic max."""
-    return _atomic_binary(_pto.AtomicMaxOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_max(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicMaxOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_max(ptr, value)",
+    )
 
 
 def atomic_and(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_and`` – SIMT scalar atomic bitwise and."""
-    return _atomic_binary(_pto.AtomicAndOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_and(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicAndOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_and(ptr, value)",
+    )
 
 
 def atomic_or(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_or`` – SIMT scalar atomic bitwise or."""
-    return _atomic_binary(_pto.AtomicOrOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_or(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicOrOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_or(ptr, value)",
+    )
 
 
 def atomic_xor(ptr, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_xor`` – SIMT scalar atomic bitwise xor."""
-    return _atomic_binary(_pto.AtomicXorOp, ptr, value, l2cache=l2cache, signedness=signedness, context="atomic_xor(ptr, value)")
+    return _atomic_binary(
+        _pto.AtomicXorOp,
+        ptr,
+        value,
+        l2cache=l2cache,
+        signedness=signedness,
+        context="atomic_xor(ptr, value)",
+    )
 
 
 def atomic_cas(ptr, compare, value, *, l2cache="nmfv", signedness=None):
     """``pto.atomic_cas`` – SIMT scalar atomic compare-and-swap."""
     raw_ptr = unwrap_surface_value(ptr)
-    elem_type = _pointer_element_type(raw_ptr, context="atomic_cas(ptr, compare, value)")
-    _validate_integer_signedness_only(elem_type, signedness, context="atomic_cas(ptr, compare, value)")
-    raw_compare = coerce_scalar_to_type(compare, elem_type, context="atomic_cas(compare)")
+    elem_type = _pointer_element_type(
+        raw_ptr, context="atomic_cas(ptr, compare, value)"
+    )
+    _validate_integer_signedness_only(
+        elem_type, signedness, context="atomic_cas(ptr, compare, value)"
+    )
+    raw_compare = coerce_scalar_to_type(
+        compare, elem_type, context="atomic_cas(compare)"
+    )
     raw_value = coerce_scalar_to_type(value, elem_type, context="atomic_cas(value)")
-    return wrap_surface_value(_pto.AtomicCasOp(
-        raw_ptr,
-        raw_compare,
-        raw_value,
-        l2cache=_st_l2_cache_attr(l2cache, context="atomic_cas(..., l2cache)"),
-        signedness=_optional_signedness_attr(signedness, context="atomic_cas(..., signedness)"),
-    ).old)
+    return wrap_surface_value(
+        _pto.AtomicCasOp(
+            raw_ptr,
+            raw_compare,
+            raw_value,
+            l2cache=_st_l2_cache_attr(l2cache, context="atomic_cas(..., l2cache)"),
+            signedness=_optional_signedness_attr(
+                signedness, context="atomic_cas(..., signedness)"
+            ),
+        ).old
+    )
 
 
 def prmt(lhs, rhs, selector):
     """``pto.prmt`` – SIMT scalar byte permutation."""
-    return wrap_surface_value(_pto.PrmtOp(
-        _coerce_i32_operand(lhs, context="prmt(lhs, ...)"),
-        _coerce_i32_operand(rhs, context="prmt(..., rhs, ...)"),
-        _coerce_i32_operand(selector, context="prmt(..., selector)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.PrmtOp(
+            _coerce_i32_operand(lhs, context="prmt(lhs, ...)"),
+            _coerce_i32_operand(rhs, context="prmt(..., rhs, ...)"),
+            _coerce_i32_operand(selector, context="prmt(..., selector)"),
+        ).result
+    )
 
 
 def mulhi(lhs, rhs, *, signedness):
     """``pto.mulhi`` – high half of an integer product."""
     raw_lhs = unwrap_surface_value(lhs)
     raw_rhs = coerce_scalar_to_type(rhs, raw_lhs.type, context="mulhi(lhs, rhs)")
-    return wrap_surface_value(_pto.MulhiOp(
-        raw_lhs,
-        raw_rhs,
-        _required_signedness_attr(signedness, context="mulhi(..., signedness)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.MulhiOp(
+            raw_lhs,
+            raw_rhs,
+            _required_signedness_attr(signedness, context="mulhi(..., signedness)"),
+        ).result
+    )
 
 
 def mul_i32toi64(lhs, rhs, *, signedness):
     """``pto.mul_i32toi64`` – widened i32 product."""
-    return wrap_surface_value(_pto.MulI32ToI64Op(
-        _coerce_i32_operand(lhs, context="mul_i32toi64(lhs, ...)"),
-        _coerce_i32_operand(rhs, context="mul_i32toi64(..., rhs)"),
-        _required_signedness_attr(signedness, context="mul_i32toi64(..., signedness)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.MulI32ToI64Op(
+            _coerce_i32_operand(lhs, context="mul_i32toi64(lhs, ...)"),
+            _coerce_i32_operand(rhs, context="mul_i32toi64(..., rhs)"),
+            _required_signedness_attr(
+                signedness, context="mul_i32toi64(..., signedness)"
+            ),
+        ).result
+    )
 
 
 def absf(value):
@@ -6081,14 +6687,20 @@ def convert(src, dst_type, *, rounding, saturation, signedness=None):
     """``pto.convert`` – SIMT scalar or packed conversion."""
     raw_src = unwrap_surface_value(src)
     raw_dst_type = _resolve(dst_type)
-    _validate_convert_signedness(raw_src.type, raw_dst_type, signedness, context="convert(src, dst_type)")
-    return wrap_surface_value(_pto.ConvertOp(
-        raw_dst_type,
-        raw_src,
-        _rounding_attr(rounding, context="convert(..., rounding)"),
-        _saturation_attr(saturation, context="convert(..., saturation)"),
-        signedness=_optional_signedness_attr(signedness, context="convert(..., signedness)"),
-    ).dst)
+    _validate_convert_signedness(
+        raw_src.type, raw_dst_type, signedness, context="convert(src, dst_type)"
+    )
+    return wrap_surface_value(
+        _pto.ConvertOp(
+            raw_dst_type,
+            raw_src,
+            _rounding_attr(rounding, context="convert(..., rounding)"),
+            _saturation_attr(saturation, context="convert(..., saturation)"),
+            signedness=_optional_signedness_attr(
+                signedness, context="convert(..., signedness)"
+            ),
+        ).dst
+    )
 
 
 def syncthreads():
@@ -6116,15 +6728,19 @@ def _slot_attr_value(slot, *, context: str):
 
 def keep(payload, *, slot):
     """``pto.keep`` – preserve a SIMT scalar payload in an explicit slot."""
-    _pto.KeepOp(unwrap_surface_value(payload), _slot_attr_value(slot, context="keep(..., slot)"))
+    _pto.KeepOp(
+        unwrap_surface_value(payload), _slot_attr_value(slot, context="keep(..., slot)")
+    )
 
 
 def resume(result_type, *, slot):
     """``pto.resume`` – restore a SIMT scalar payload from an explicit slot."""
-    return wrap_surface_value(_pto.ResumeOp(
-        _resolve(result_type),
-        _slot_attr_value(slot, context="resume(..., slot)"),
-    ).result)
+    return wrap_surface_value(
+        _pto.ResumeOp(
+            _resolve(result_type),
+            _slot_attr_value(slot, context="resume(..., slot)"),
+        ).result
+    )
 
 
 def pipe_barrier(pipe):
@@ -6182,8 +6798,12 @@ def _sync_event_id_operand(event_id, *, context: str):
     return event_id if isinstance(event_id, int) else unwrap_surface_value(event_id)
 
 
-def _sync_event_id_operand_in_range(event_id, *, context: str, lo: int, hi: int, meaning: str = "event_id"):
-    _validate_static_event_id_range(event_id, context=context, lo=lo, hi=hi, meaning=meaning)
+def _sync_event_id_operand_in_range(
+    event_id, *, context: str, lo: int, hi: int, meaning: str = "event_id"
+):
+    _validate_static_event_id_range(
+        event_id, context=context, lo=lo, hi=hi, meaning=meaning
+    )
     return event_id if isinstance(event_id, int) else unwrap_surface_value(event_id)
 
 
@@ -6196,15 +6816,23 @@ def _flag_event_id_operand(event_id, *, context: str):
 
 def set_cross_flag(pipe, event_id):
     """``pto.set_cross_flag(pipe, event_id)`` – cross-core sync facade for ``pto.sync.set``."""
-    _validate_sync_pipe(pipe, context="set_cross_flag(pipe, event_id)", allowed=("PIPE_FIX",))
-    event_operand = _sync_event_id_operand(event_id, context="set_cross_flag(..., event_id=...)")
+    _validate_sync_pipe(
+        pipe, context="set_cross_flag(pipe, event_id)", allowed=("PIPE_FIX",)
+    )
+    event_operand = _sync_event_id_operand(
+        event_id, context="set_cross_flag(..., event_id=...)"
+    )
     _pto.sync_set(_pipe_attr(pipe), event_operand)
 
 
 def wait_cross_flag(pipe, event_id):
     """``pto.wait_cross_flag(pipe, event_id)`` – cross-core sync facade for ``pto.sync.wait``."""
-    _validate_sync_pipe(pipe, context="wait_cross_flag(pipe, event_id)", allowed=("PIPE_FIX",))
-    event_operand = _sync_event_id_operand(event_id, context="wait_cross_flag(..., event_id=...)")
+    _validate_sync_pipe(
+        pipe, context="wait_cross_flag(pipe, event_id)", allowed=("PIPE_FIX",)
+    )
+    event_operand = _sync_event_id_operand(
+        event_id, context="wait_cross_flag(..., event_id=...)"
+    )
     _pto.sync_wait(_pipe_attr(pipe), event_operand)
 
 
@@ -6300,42 +6928,124 @@ def import_reserved_buffer(name, *, peer_func):
         role_value = getattr(role, "value", role)
         if role_value == "simt":
             from ._tracing.active import require_active_session
+
             session = require_active_session("pto.import_reserved_buffer")
             peer_func = session.resolve_simt_peer_symbol(peer_func)
         else:
-            peer_func = getattr(spec, "symbol_name", None) \
-                or getattr(peer_func, "__name__", None) \
+            peer_func = (
+                getattr(spec, "symbol_name", None)
+                or getattr(peer_func, "__name__", None)
                 or str(peer_func)
+            )
     op = _pto.ImportReservedBufferOp(name, peer_func)
     return wrap_surface_value(op.result)
 
 
 __all__ = [
     "const",
-    "castptr", "addptr",
-    "vlds", "vldas", "vldus", "vldsx2", "vsts", "vstsx2",
+    "castptr",
+    "addptr",
+    "vlds",
+    "vldas",
+    "vldus",
+    "vldsx2",
+    "vsts",
+    "vstsx2",
     "init_align",
-    "plt_b8", "plt_b16", "plt_b32",
-    "pset_b8", "pset_b16", "pset_b32",
-    "pge_b8", "pge_b16", "pge_b32",
+    "plt_b8",
+    "plt_b16",
+    "plt_b32",
+    "pset_b8",
+    "pset_b16",
+    "pset_b32",
+    "pge_b8",
+    "pge_b16",
+    "pge_b32",
     "make_mask",
-    "pand", "por", "pxor", "pnot", "psel",
-    "pbitcast", "vcvt", "vpack", "vmulscvt", "ppack", "punpack",
-    "pintlv_b8", "pintlv_b16", "pintlv_b32",
-    "pdintlv_b8", "pdintlv_b16", "pdintlv_b32",
-    "vintlv", "vdintlv",
-    "vgather2", "vgather2_bc", "vgatherb", "vscatter", "vsldb", "vsstb",
-    "vcmp", "vcmps",
-    "plds", "psts", "pstu", "vstar", "vstas", "vstur", "vstus",
+    "pand",
+    "por",
+    "pxor",
+    "pnot",
+    "psel",
+    "pbitcast",
+    "vcvt",
+    "vpack",
+    "vmulscvt",
+    "ppack",
+    "punpack",
+    "pintlv_b8",
+    "pintlv_b16",
+    "pintlv_b32",
+    "pdintlv_b8",
+    "pdintlv_b16",
+    "pdintlv_b32",
+    "vintlv",
+    "vdintlv",
+    "vgather2",
+    "vgather2_bc",
+    "vgatherb",
+    "vscatter",
+    "vsldb",
+    "vsstb",
+    "vcmp",
+    "vcmps",
+    "plds",
+    "psts",
+    "pstu",
+    "vstar",
+    "vstas",
+    "vstur",
+    "vstus",
+    "vsqz",
+    "sprclr",
+    "sprsts",
     "vbitcast",
     "vbr",
-    "vadd", "vsub", "vmul", "vdiv", "vmax", "vmin",
-    "vand", "vor", "vxor", "vshl", "vshr",
-    "vcmax", "vcadd", "vcmin", "vdup", "vexpdif",
-    "vexp", "vln", "vsqrt", "vabs", "vneg", "vrec", "vrsqrt", "vrelu", "vnot",
-    "vcgmax", "vcgadd", "vcgmin", "vcpadd",
-    "vadds", "vsubs", "vmuls", "vmaxs", "vmins", "vlrelu", "vshrs", "vshls", "vands", "vors", "vxors",
-    "vaxpy", "vmula", "vci", "vaddrelu", "vsubrelu",
+    "vadd",
+    "vsub",
+    "vmul",
+    "vdiv",
+    "vmax",
+    "vmin",
+    "vand",
+    "vor",
+    "vxor",
+    "vshl",
+    "vshr",
+    "vcmax",
+    "vcadd",
+    "vcmin",
+    "vdup",
+    "vexpdif",
+    "vexp",
+    "vln",
+    "vsqrt",
+    "vabs",
+    "vneg",
+    "vrec",
+    "vrsqrt",
+    "vrelu",
+    "vnot",
+    "vcgmax",
+    "vcgadd",
+    "vcgmin",
+    "vcpadd",
+    "vadds",
+    "vsubs",
+    "vmuls",
+    "vmaxs",
+    "vmins",
+    "vlrelu",
+    "vshrs",
+    "vshls",
+    "vands",
+    "vors",
+    "vxors",
+    "vaxpy",
+    "vmula",
+    "vci",
+    "vaddrelu",
+    "vsubrelu",
     "vsel",
     "make_tensor_view", "partition_view",
     "alloc_buffer", "alloc_tile",
@@ -6360,36 +7070,124 @@ __all__ = [
     "ttri", "tthistogram",
     "chistv2",
     "as_ptr",
-    "mte_load", "mte_store", "mte_gm_ub", "mte_ub_gm", "mte_ub_ub", "mte_ub_l1",
-    "mte_gm_l1", "mte_l1_ub", "mte_gm_l1_frac", "mte_l1_bt", "mte_l1_fb", "mem_bar",
+    "mte_load",
+    "mte_store",
+    "mte_gm_ub",
+    "mte_ub_gm",
+    "mte_ub_ub",
+    "mte_ub_l1",
+    "mte_gm_l1",
+    "mte_l1_ub",
+    "mte_gm_l1_frac",
+    "mte_l1_bt",
+    "mte_l1_fb",
+    "mem_bar",
     "set_store_atomic_cfg",
-    "set_atomic_add", "set_atomic_max", "set_atomic_min", "set_atomic_none",
-    "set_atomic_f32", "set_atomic_f16", "set_atomic_bf16",
-    "set_atomic_s32", "set_atomic_s16", "set_atomic_s8",
-    "mte_l1_l0a", "mte_l1_l0b", "mte_l1_l0a_mx", "mte_l1_l0b_mx",
-    "mte_l0c_l1", "mte_l0c_gm", "mte_l0c_ub",
-    "mad", "mad_acc", "mad_bias", "mad_mx", "mad_mx_acc", "mad_mx_bias",
-    "get_block_idx", "get_block_num", "get_subblock_idx", "get_subblock_num",
-    "store_vfsimt_info", "simt_launch",
-    "get_tid", "get_tid_x", "get_tid_y", "get_tid_z",
-    "get_block_dim", "get_block_dim_x", "get_block_dim_y", "get_block_dim_z",
-    "get_grid_dim", "get_grid_dim_x", "get_grid_dim_y", "get_grid_dim_z",
-    "get_block_idx_x", "get_block_idx_y", "get_block_idx_z",
-    "get_veccoreid", "get_clock32", "get_clock64",
-    "get_laneid", "get_lanemask_eq", "get_lanemask_le", "get_lanemask_lt",
-    "get_lanemask_ge", "get_lanemask_gt",
-    "vote_all", "vote_any", "vote_uni", "vote_ballot",
-    "shuffle_idx", "shuffle_up", "shuffle_down", "shuffle_bfly",
-    "redux_add", "redux_max", "redux_min",
-    "ldg", "stg",
-    "atomic_exch", "atomic_add", "atomic_sub", "atomic_min", "atomic_max",
-    "atomic_and", "atomic_or", "atomic_xor", "atomic_cas",
-    "prmt", "mulhi", "mul_i32toi64",
-    "absf", "sqrt", "exp", "log", "pow", "ceil", "floor", "rint", "round",
-    "fmin", "fmax", "fma", "convert",
-    "syncthreads", "threadfence", "threadfence_block", "keep", "resume",
-    "pipe_barrier", "get_buf", "rls_buf",
-    "set_cross_flag", "wait_cross_flag", "set_intra_flag", "wait_intra_flag",
-    "set_flag", "wait_flag",
-    "reserve_buffer", "import_reserved_buffer",
+    "set_atomic_add",
+    "set_atomic_max",
+    "set_atomic_min",
+    "set_atomic_none",
+    "set_atomic_f32",
+    "set_atomic_f16",
+    "set_atomic_bf16",
+    "set_atomic_s32",
+    "set_atomic_s16",
+    "set_atomic_s8",
+    "mte_l1_l0a",
+    "mte_l1_l0b",
+    "mte_l1_l0a_mx",
+    "mte_l1_l0b_mx",
+    "mte_l0c_l1",
+    "mte_l0c_gm",
+    "mte_l0c_ub",
+    "mad",
+    "mad_acc",
+    "mad_bias",
+    "mad_mx",
+    "mad_mx_acc",
+    "mad_mx_bias",
+    "get_block_idx",
+    "get_block_num",
+    "get_subblock_idx",
+    "get_subblock_num",
+    "store_vfsimt_info",
+    "simt_launch",
+    "get_tid",
+    "get_tid_x",
+    "get_tid_y",
+    "get_tid_z",
+    "get_block_dim",
+    "get_block_dim_x",
+    "get_block_dim_y",
+    "get_block_dim_z",
+    "get_grid_dim",
+    "get_grid_dim_x",
+    "get_grid_dim_y",
+    "get_grid_dim_z",
+    "get_block_idx_x",
+    "get_block_idx_y",
+    "get_block_idx_z",
+    "get_veccoreid",
+    "get_clock32",
+    "get_clock64",
+    "get_laneid",
+    "get_lanemask_eq",
+    "get_lanemask_le",
+    "get_lanemask_lt",
+    "get_lanemask_ge",
+    "get_lanemask_gt",
+    "vote_all",
+    "vote_any",
+    "vote_uni",
+    "vote_ballot",
+    "shuffle_idx",
+    "shuffle_up",
+    "shuffle_down",
+    "shuffle_bfly",
+    "redux_add",
+    "redux_max",
+    "redux_min",
+    "ldg",
+    "stg",
+    "atomic_exch",
+    "atomic_add",
+    "atomic_sub",
+    "atomic_min",
+    "atomic_max",
+    "atomic_and",
+    "atomic_or",
+    "atomic_xor",
+    "atomic_cas",
+    "prmt",
+    "mulhi",
+    "mul_i32toi64",
+    "absf",
+    "sqrt",
+    "exp",
+    "log",
+    "pow",
+    "ceil",
+    "floor",
+    "rint",
+    "round",
+    "fmin",
+    "fmax",
+    "fma",
+    "convert",
+    "syncthreads",
+    "threadfence",
+    "threadfence_block",
+    "keep",
+    "resume",
+    "pipe_barrier",
+    "get_buf",
+    "rls_buf",
+    "set_cross_flag",
+    "wait_cross_flag",
+    "set_intra_flag",
+    "wait_intra_flag",
+    "set_flag",
+    "wait_flag",
+    "reserve_buffer",
+    "import_reserved_buffer",
 ]
