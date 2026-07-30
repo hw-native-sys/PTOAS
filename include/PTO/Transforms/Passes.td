@@ -1114,13 +1114,10 @@ def VMILowerUnifiedToLegacy : Pass<"vmi-lower-unified-to-legacy", "ModuleOp"> {
       C2: vcvt        →  legacy extf/truncf/fptosi/sitofp/extsi/extui/trunci
       C3: vload/vstore  →  legacy load/store variants
       C4: pset/pge    →  create_mask/create_group_mask
-      C5: vadds/vmaxs/vmins/vshls/vshrs
-          →  broadcast + legacy binary, discarding mask/pmode; vshrs selects
-             shrui for explicit unsigned elements and shrsi otherwise
       C6: vcadd/vcmax/vcmin  →  legacy reduce variants
 
     Ops NOT lowered (no legacy equivalent — require direct VMIToVPTO 1:N patterns):
-      plt, vmuls, vhist, vintlv, vdintlv, vselr,
+      plt, vadds, vmuls, vmaxs, vmins, vshls, vshrs, vhist, vintlv, vdintlv, vselr,
       vgather, vgatherb, vscatter,
       vexpdif, vaxpy, vlrelu, vprelu, vmull, vmula
   }];

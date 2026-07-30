@@ -577,8 +577,33 @@ struct LayoutSolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
-      if (auto vmuls = dyn_cast<VMIMulSOp>(op)) {
-        if (failed(unite(vmuls.getSrc(), vmuls.getResult(), op)))
+      if (auto vecScalar = dyn_cast<VMIAddSOp>(op)) {
+        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIMulSOp>(op)) {
+        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIMaxSOp>(op)) {
+        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIMinSOp>(op)) {
+        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIShlSOp>(op)) {
+        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIShrSOp>(op)) {
+        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }

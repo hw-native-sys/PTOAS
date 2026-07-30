@@ -231,9 +231,39 @@ struct MaskGranularitySolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
-      if (auto vmuls = dyn_cast<VMIMulSOp>(op)) {
-        if (failed(requestMaskUseForSource(vmuls.getMaskMutable(),
-                                           vmuls.getSrc(), op)))
+      if (auto vecScalar = dyn_cast<VMIAddSOp>(op)) {
+        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
+                                           vecScalar.getSrc(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIMulSOp>(op)) {
+        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
+                                           vecScalar.getSrc(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIMaxSOp>(op)) {
+        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
+                                           vecScalar.getSrc(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIMinSOp>(op)) {
+        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
+                                           vecScalar.getSrc(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIShlSOp>(op)) {
+        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
+                                           vecScalar.getSrc(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto vecScalar = dyn_cast<VMIShrSOp>(op)) {
+        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
+                                           vecScalar.getSrc(), op)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }

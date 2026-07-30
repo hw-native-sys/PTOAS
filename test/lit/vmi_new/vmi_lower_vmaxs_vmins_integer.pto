@@ -36,19 +36,23 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmaxs_integer(
-// CHECK: pto.vmi.broadcast
-// CHECK: pto.vmi.maxi
-// CHECK-NOT: pto.vmi.maxf
+// CHECK: pto.vmi.vmaxs
+// CHECK-NOT: pto.vmi.broadcast
+// CHECK-NOT: pto.vmi.maxi
 
 // CHECK-LABEL: func.func @vmins_integer(
-// CHECK: pto.vmi.broadcast
-// CHECK: pto.vmi.mini
-// CHECK-NOT: pto.vmi.minf
+// CHECK: pto.vmi.vmins
+// CHECK-NOT: pto.vmi.broadcast
+// CHECK-NOT: pto.vmi.mini
 
 // LOWER-LABEL: func.func @vmaxs_integer(
-// LOWER: pto.vmax
+// LOWER: pto.vmaxs
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vmax {{.*}} : !pto.vreg
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @vmins_integer(
-// LOWER: pto.vmin
+// LOWER: pto.vmins
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vmin {{.*}} : !pto.vreg
 // LOWER-NOT: pto.vmi.

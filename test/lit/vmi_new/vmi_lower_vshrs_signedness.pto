@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 module {
   func.func @vshrs_signed(
@@ -58,20 +59,42 @@ module {
 }
 
 // CHECK-LABEL: func.func @vshrs_signed(
-// CHECK: pto.vmi.broadcast
-// CHECK: pto.vmi.shrsi
-// CHECK-NOT: pto.vmi.shrui
+// CHECK: pto.vmi.vshrs
+// CHECK-NOT: pto.vmi.broadcast
+// CHECK-NOT: pto.vmi.shrsi
 
 // CHECK-LABEL: func.func @vshrs_signless(
-// CHECK: pto.vmi.broadcast
-// CHECK: pto.vmi.shrui
-// CHECK-NOT: pto.vmi.shrsi
+// CHECK: pto.vmi.vshrs
+// CHECK-NOT: pto.vmi.broadcast
+// CHECK-NOT: pto.vmi.shrui
 
 // CHECK-LABEL: func.func @vshrs_unsigned(
-// CHECK: pto.vmi.broadcast
-// CHECK: pto.vmi.shrui
-// CHECK-NOT: pto.vmi.shrsi
+// CHECK: pto.vmi.vshrs
+// CHECK-NOT: pto.vmi.broadcast
+// CHECK-NOT: pto.vmi.shrui
 
 // CHECK-LABEL: func.func @vshr_signless(
 // CHECK: pto.vmi.shrui
 // CHECK-NOT: pto.vmi.shrsi
+
+// LOWER-LABEL: func.func @vshrs_signed(
+// LOWER: unrealized_conversion_cast {{.*}} : si16 to i16
+// LOWER: pto.vshrs {{.*}} : !pto.vreg<128xsi16>, i16, !pto.mask<b16> -> !pto.vreg<128xsi16>
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vshr {{.*}} : !pto.vreg
+
+// LOWER-LABEL: func.func @vshrs_signless(
+// LOWER-NOT: unrealized_conversion_cast
+// LOWER: pto.vshrs {{.*}} : !pto.vreg<128xi16>, i16, !pto.mask<b16> -> !pto.vreg<128xi16>
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vshr {{.*}} : !pto.vreg
+
+// LOWER-LABEL: func.func @vshrs_unsigned(
+// LOWER: unrealized_conversion_cast {{.*}} : ui16 to i16
+// LOWER: pto.vshrs {{.*}} : !pto.vreg<128xui16>, i16, !pto.mask<b16> -> !pto.vreg<128xui16>
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vshr {{.*}} : !pto.vreg
+
+// LOWER-LABEL: func.func @vshr_signless(
+// LOWER: pto.vshr
+// LOWER-NOT: pto.vmi.

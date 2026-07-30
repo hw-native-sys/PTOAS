@@ -55,13 +55,6 @@
 //   pge  → create_mask(N lanes)
 //   plt  → create_mask(min(rem, L))
 //
-// Category C5 — vector-scalar ops, one-step to legacy (5 ops):
-//   vadds/vmaxs/vmins/vshls/vshrs
-//     → broadcast scalar → legacy binary
-//   vshrs selects shrui for unsigned/signless elements and shrsi for
-//   explicitly signed elements.
-//   vmuls is kept unified for direct VMI-to-VPTO lowering.
-//
 // Category C3 — unified load/store (2 ops, dispatch by dist_mode/group):
 //   vload → load / deinterleave_load / group_load
 //   vstore → store / masked_store / interleave_store / group_store
@@ -85,8 +78,9 @@
 //   vprelu  → maxf + minf + mulf + addf
 //   Category C7/C8/C9 bypass mask/pmode synthesis here and skip pmode="merge".
 //
-// Category D — no legacy equivalent (explicitly skipped, 6 ops):
-//   vmuls vintlv vdintlv vselr vgatherb vmull
+// Category D — no legacy equivalent (explicitly skipped, 11 ops):
+//   vadds/vmuls/vmaxs/vmins/vshls/vshrs
+//   vintlv vdintlv vselr vgatherb vmull
 //
 //===----------------------------------------------------------------------===//
 
@@ -796,30 +790,6 @@ static LogicalResult lowerPge(VMIPgeOp op, OpBuilder &builder) {
 }
 
 //===----------------------------------------------------------------------===//
-// Category C5 helpers: vector-scalar ops (one-step to legacy)
-//===----------------------------------------------------------------------===//
-
-/// Lower a unified vector-scalar op (vadds, vmaxs, ...) to a legacy chain:
-///   %brc  = vmi.broadcast %scalar
-///   %raw  = legacy.op %src, %brc
-template <typename VecScalarOp>
-static LogicalResult
-lowerVecScalar(VecScalarOp op, OpBuilder &builder,
-               function_ref<Value(Location, Type, Value, Value)> createLegacy) {
-  Location loc = op.getLoc();
-  Type srcVmiType = op.getSrc().getType();
-  Value src = op.getSrc();
-  Value scalar = op.getScalar();
-
-  Value brc = builder.create<VMIBroadcastOp>(loc, srcVmiType, scalar)
-                  .getResult();
-  Value raw = createLegacy(loc, srcVmiType, src, brc);
-  op.getResult().replaceAllUsesWith(raw);
-  op->erase();
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
 // Category C6 helpers: vcadd / vcmax / vcmin
 //===----------------------------------------------------------------------===//
 
@@ -1223,8 +1193,6 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
         isa<VMIvLoadOp, VMIvStoreOp>(op) ||
         // Category C4
         isa<VMIPsetOp, VMIPgeOp, VMIPltOp>(op) ||
-        // Category C5
-        isa<VMIAddSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp>(op) ||
         // Category C6 — unified reduce (partial coverage)
         isa<VMIvcaddOp, VMIvcmaxOp, VMIvcminOp>(op) ||
         // Category C7 — fused multiply-add family → legacy fma
@@ -1236,11 +1204,12 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
       worklist.push_back(op);
 
     // Category D — no legacy equivalent (require direct VMIToVPTO lowering):
-    //   plt, vmuls, vintlv, vdintlv, vselr, vgatherb, vmull
+    //   plt, vector-scalar ops, vintlv, vdintlv, vselr, vgatherb, vmull
     // These are intentionally NOT added to the worklist — they flow through
     // to VMIToVPTO which must provide direct 1:N lowering patterns.
-    if (isa<VMIMulSOp, VMIVintlvOp, VMIVdintlvOp, VMIVselrOp,
-            VMIVgatherbOp, VMIVmullOp>(op)) {
+    if (isa<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp,
+            VMIVintlvOp, VMIVdintlvOp, VMIVselrOp, VMIVgatherbOp, VMIVmullOp>(
+            op)) {
       op->emitRemark("VMI unified op has no legacy equivalent — "
                      "requires direct VMIToVPTO 1:N lowering");
     }
@@ -1366,65 +1335,6 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
 
     if (auto vop = dyn_cast<VMIvStoreOp>(op)) {
       (void)lowerVStore(vop, builder);
-      continue;
-    }
-
-    // ---- Category C5: vector-scalar ops ----
-
-    if (auto vop = dyn_cast<VMIAddSOp>(op)) {
-      Type elemType = getVMIElementType(vop.getSrc());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs, Value rhs) -> Value {
-        if (isFloatType(elemType))
-          return builder.create<VMIAddFOp>(loc, ty, lhs, rhs).getResult();
-        return builder.create<VMIAddIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerVecScalar(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIMaxSOp>(op)) {
-      Type elemType = getVMIElementType(vop.getSrc());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        if (isFloatType(elemType))
-          return builder.create<VMIMaxFOp>(loc, ty, lhs, rhs).getResult();
-        return builder.create<VMIMaxIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerVecScalar(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIMinSOp>(op)) {
-      Type elemType = getVMIElementType(vop.getSrc());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        if (isFloatType(elemType))
-          return builder.create<VMIMinFOp>(loc, ty, lhs, rhs).getResult();
-        return builder.create<VMIMinIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerVecScalar(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIShlSOp>(op)) {
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        return builder.create<VMIShLIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerVecScalar(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIShrSOp>(op)) {
-      Type elemType = getVMIElementType(vop.getSrc());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        auto intType = cast<IntegerType>(elemType);
-        if (!intType.isSigned())
-          return builder.create<VMIShRUIOp>(loc, ty, lhs, rhs).getResult();
-        return builder.create<VMIShRSIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerVecScalar(vop, builder, createLegacy);
       continue;
     }
 

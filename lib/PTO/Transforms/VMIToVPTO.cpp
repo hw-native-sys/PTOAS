@@ -8209,6 +8209,20 @@ struct OneToNVMIVecScalarOpPattern : OpConversionPattern<SourceOp> {
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
     if (failed(scalar) || failed(maybeResultTypes))
       return failure();
+    Value scalarValue = *scalar;
+    if constexpr (std::is_same_v<TargetOp, VshlsOp> ||
+                  std::is_same_v<TargetOp, VshrsOp>) {
+      auto scalarType = dyn_cast<IntegerType>(scalarValue.getType());
+      if (!scalarType || scalarType.getWidth() != 16)
+        return rewriter.notifyMatchFailure(
+            op, "physical vector-scalar shift requires a 16-bit scalar");
+      if (!scalarType.isSignless())
+        scalarValue =
+            rewriter
+                .create<UnrealizedConversionCastOp>(
+                    op.getLoc(), TypeRange{rewriter.getI16Type()}, scalarValue)
+                .getResult(0);
+    }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
     if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
         sourceParts.size() != resultTypes.size())
@@ -8221,14 +8235,19 @@ struct OneToNVMIVecScalarOpPattern : OpConversionPattern<SourceOp> {
          llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
       auto vregType = dyn_cast<VRegType>(resultType);
       auto maskType = dyn_cast<MaskType>(mask.getType());
+      bool scalarTypeMatches =
+          vregType && vregType.getElementType() == scalarValue.getType();
+      if constexpr (std::is_same_v<TargetOp, VshlsOp> ||
+                    std::is_same_v<TargetOp, VshrsOp>)
+        scalarTypeMatches = scalarValue.getType().isSignlessInteger(16);
       if (!vregType || !maskType || source.getType() != resultType ||
-          vregType.getElementType() != (*scalar).getType())
+          !scalarTypeMatches)
         return rewriter.notifyMatchFailure(
             op, "physical vector-scalar part type mismatch");
-      results.push_back(
-          rewriter
-              .create<TargetOp>(op.getLoc(), resultType, source, *scalar, mask)
-              .getResult());
+      results.push_back(rewriter
+                            .create<TargetOp>(op.getLoc(), resultType, source,
+                                              scalarValue, mask)
+                            .getResult());
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results,
@@ -11331,8 +11350,12 @@ void populateVMIConversionPatterns(
       OneToNVMIBinaryOpPattern<VMISubIOp, VsubOp>,
       OneToNVMIBinaryOpPattern<VMIMulFOp, VmulOp>,
       OneToNVMIBinaryOpPattern<VMIMulIOp, VmulOp>,
+      OneToNVMIVecScalarOpPattern<VMIAddSOp, VaddsOp>,
       OneToNVMIVecScalarOpPattern<VMIMulSOp, VmulsOp>,
-      OneToNVMIVmullOpPattern,
+      OneToNVMIVecScalarOpPattern<VMIMaxSOp, VmaxsOp>,
+      OneToNVMIVecScalarOpPattern<VMIMinSOp, VminsOp>,
+      OneToNVMIVecScalarOpPattern<VMIShlSOp, VshlsOp>,
+      OneToNVMIVecScalarOpPattern<VMIShrSOp, VshrsOp>, OneToNVMIVmullOpPattern,
       OneToNVMIFmaOpPattern, OneToNVMIBinaryOpPattern<VMIDivFOp, VdivOp>,
       OneToNVMIBinaryOpPattern<VMIMinFOp, VminOp>,
       OneToNVMIBinaryOpPattern<VMIMinIOp, VminOp>,
@@ -12398,18 +12421,29 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     if (auto muli = dyn_cast<VMIMulIOp>(op))
       return emitMaskableUnsupported(
           op, "pto.vmi.muli", cast<VMIVRegType>(muli.getResult().getType()));
-    if (auto vmuls = dyn_cast<VMIMulSOp>(op)) {
-      if (vmuls.getPmode().has_value() && *vmuls.getPmode() == "merge") {
-        vmuls.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "pto.vmi.vmuls with pmode=merge requires an explicit "
-               "passthru lowering";
+    auto verifyVecScalar = [&](auto vecScalar, StringRef opName) -> WalkResult {
+      if (vecScalar.getPmode().has_value() &&
+          *vecScalar.getPmode() == "merge") {
+        vecScalar.emitError() << kVMIDiagUnsupportedPrefix << opName
+                              << " with pmode=merge requires an explicit "
+                                 "passthru lowering";
         return WalkResult::interrupt();
       }
       return emitMaskableUnsupported(
-          op, "pto.vmi.vmuls",
-          cast<VMIVRegType>(vmuls.getResult().getType()));
-    }
+          op, opName, cast<VMIVRegType>(vecScalar.getResult().getType()));
+    };
+    if (auto vecScalar = dyn_cast<VMIAddSOp>(op))
+      return verifyVecScalar(vecScalar, "pto.vmi.vadds");
+    if (auto vecScalar = dyn_cast<VMIMulSOp>(op))
+      return verifyVecScalar(vecScalar, "pto.vmi.vmuls");
+    if (auto vecScalar = dyn_cast<VMIMaxSOp>(op))
+      return verifyVecScalar(vecScalar, "pto.vmi.vmaxs");
+    if (auto vecScalar = dyn_cast<VMIMinSOp>(op))
+      return verifyVecScalar(vecScalar, "pto.vmi.vmins");
+    if (auto vecScalar = dyn_cast<VMIShlSOp>(op))
+      return verifyVecScalar(vecScalar, "pto.vmi.vshls");
+    if (auto vecScalar = dyn_cast<VMIShrSOp>(op))
+      return verifyVecScalar(vecScalar, "pto.vmi.vshrs");
     if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVmullShape(vmull, &reason)))
