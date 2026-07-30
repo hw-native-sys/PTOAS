@@ -61,6 +61,18 @@ PRODUCTION_UNARY_1D = {
     ),
 }
 
+PRODUCTION_BINARY_1D = {
+    "pto.tadd": ("template_tadd_1d", "template_tadd", "pto.vadd", "f32"),
+    "pto.tand": ("template_tand_1d", "template_tand", "pto.vand", "i8"),
+    "pto.tmax": ("template_tmax_1d", "template_tmax", "pto.vmax", "f16"),
+    "pto.tmin": ("template_tmin_1d", "template_tmin", "pto.vmin", "i16"),
+    "pto.tmul": ("template_tmul_1d", "template_tmul", "pto.vmul", "bf16"),
+    "pto.tor": ("template_tor_1d", "template_tor", "pto.vor", "ui8"),
+    "pto.tshl": ("template_tshl_1d", "template_tshl", "pto.vshl", "ui16"),
+    "pto.tshr": ("template_tshr_1d", "template_tshr", "pto.vshr", "ui32"),
+    "pto.tsub": ("template_tsub_1d", "template_tsub", "pto.vsub", "i32"),
+}
+
 # Structured abstraction every elementwise template must preserve.
 SHARED_OPS = ["pto.tile_buf_addr", "!pto.ptr<f32, ub>", "scf.for", "iter_args",
               "pto.plt_b32", "pto.vlds", "pto.vsts", "pto.tilelang.instance"]
@@ -172,6 +184,22 @@ def _unary_specs(
         compact_mode=compact_mode,
     )
     return {"src": tile, "dst": tile}
+
+
+def _binary_specs(
+    dtype_name,
+    *,
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+):
+    tile = TileSpec(
+        shape=shape,
+        valid_shape=valid_shape,
+        dtype=ScalarType(dtype_name),
+        compact_mode=compact_mode,
+    )
+    return {"src0": tile, "src1": tile, "dst": tile}
 
 
 class TileLibElementwiseTest(unittest.TestCase):
@@ -449,6 +477,70 @@ class TileLibElementwiseTest(unittest.TestCase):
                         specs,
                         context_attrs=context_attrs,
                     )
+                    self.assertEqual(
+                        selected.name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        selected.metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
+
+    def test_production_binary_ops_register_preferred_1d_and_fallback_2d(self):
+        for op, (
+            name_1d,
+            name_2d,
+            vector_op,
+            dtype_name,
+        ) in PRODUCTION_BINARY_1D.items():
+            with self.subTest(op=op):
+                specs = _binary_specs(dtype_name)
+                candidates = legal_candidates(op, "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_1d, name_2d],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+                self.assertEqual(
+                    candidates[0].metadata.dtypes,
+                    candidates[1].metadata.dtypes,
+                )
+
+                mlir = candidates[0].specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn(vector_op, mlir)
+                self.assertNotIn("memref.subview", mlir)
+
+    def test_production_binary_selection_uses_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        for op, (
+            name_1d,
+            name_2d,
+            _,
+            dtype_name,
+        ) in PRODUCTION_BINARY_1D.items():
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _binary_specs(
+                        dtype_name,
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    selected = select(op, "a5", specs)
                     self.assertEqual(
                         selected.name,
                         name_1d if expect_1d else name_2d,

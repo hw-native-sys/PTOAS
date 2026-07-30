@@ -17,9 +17,23 @@ def _vmul(lhs, rhs, mask):
     return pto.vmul(lhs, rhs, mask)
 
 
+_DTYPES = same_dtype_signatures(3)
+
+
 template_tmul = register_binary(
     op="pto.tmul",
     name="template_tmul",
     vector_op=_vmul,
-    dtypes=same_dtype_signatures(3),
+    dtypes=_DTYPES,
+)
+
+
+template_tmul_1d = register_binary(
+    op="pto.tmul",
+    name="template_tmul_1d",
+    vector_op=_vmul,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

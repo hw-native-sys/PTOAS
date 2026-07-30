@@ -13,9 +13,23 @@ from ._common import INT_DTYPES
 from ._elementwise import register_binary
 
 
+_DTYPES = [(dtype, dtype, dtype) for dtype in INT_DTYPES]
+
+
 template_tshr = register_binary(
     op="pto.tshr",
     name="template_tshr",
     vector_op=pto.vshr,
-    dtypes=[(dtype, dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+
+template_tshr_1d = register_binary(
+    op="pto.tshr",
+    name="template_tshr_1d",
+    vector_op=pto.vshr,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

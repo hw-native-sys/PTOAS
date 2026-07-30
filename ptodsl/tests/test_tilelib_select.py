@@ -229,12 +229,15 @@ class TileLibSelectTest(unittest.TestCase):
                 },
             )
 
-    def test_tadd_uses_single_elementwise_candidate(self):
+    def test_tadd_prefers_1d_and_retains_2d_fallback(self):
         candidates = legal_candidates("pto.tadd", "a5", _f32_specs())
-        self.assertEqual([candidate.name for candidate in candidates], ["template_tadd"])
+        self.assertEqual(
+            [candidate.name for candidate in candidates],
+            ["template_tadd_1d", "template_tadd"],
+        )
 
         chosen = select("pto.tadd", "a5", _f32_specs())
-        self.assertEqual(chosen.name, "template_tadd")
+        self.assertEqual(chosen.name, "template_tadd_1d")
         self.assertEqual(
             chosen.metadata.dtypes,
             (
@@ -250,7 +253,7 @@ class TileLibSelectTest(unittest.TestCase):
             ),
         )
         self.assertFalse(chosen.metadata.is_post_update)
-        self.assertEqual(chosen.metadata.loop_depth, 2)
+        self.assertEqual(chosen.metadata.loop_depth, 1)
         self.assertIsNone(chosen.metadata.Tail)
         self.assertEqual(chosen.metadata.iteration_axis, "none")
         self.assertEqual(chosen.metadata.op_engine, "vector")

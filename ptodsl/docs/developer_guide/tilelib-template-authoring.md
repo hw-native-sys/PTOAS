@@ -241,6 +241,12 @@ The first production users of this pattern are the ordinary unary operations
 candidate names and ID 0 remain the 2D fallbacks; their `_1d` candidates use
 ID 1 and higher priority.
 
+The ordinary Tile-Tile operations `tadd`, `tand`, `tmax`, `tmin`, `tmul`,
+`tor`, `tshl`, `tshr`, and `tsub` follow the same pattern through
+`register_binary`. Even when an operation previously had an equivalent local
+row-wise body, as `tmin` did, keep the ordinary computation as the vector
+callback and let the shared registrar own both traversal forms.
+
 For bespoke computation, use the lower-level `emit_elementwise_1d` and
 `emit_elementwise_2d` chunk callbacks or the family emitters. The flattened
 form supplies one linear element offset; do not convert it back into row and

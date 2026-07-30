@@ -57,6 +57,7 @@ def _view_spec(dtype="f32", shape=(1, 1, 1, 8, 64), strides=(512, 512, 512, 64, 
 # template parameter order (src0, src1, dst).
 TADD_OPERANDS = [_tile_spec(), _tile_spec(), _tile_spec()]
 TADD = "template_tadd"
+TADD_1D = "template_tadd_1d"
 
 
 def _metadata_descriptor(name, priority, candidate_id):
@@ -172,20 +173,20 @@ class TileLibDaemonTest(unittest.TestCase):
             self.assertIn(operation, mlir)
         self.assertNotIn("pto.castptr", mlir)
 
-    def test_instantiate_uses_single_tadd_candidate_without_explicit_id(self):
+    def test_instantiate_uses_preferred_tadd_candidate_without_explicit_id(self):
         mlir = self.client.instantiate("a5", "pto.tadd", TADD_OPERANDS)
-        self.assertIn(f"func.func @{TADD}", mlir)
+        self.assertIn(f"func.func @{TADD_1D}", mlir)
 
     def test_get_metadata_returns_legal_candidates(self):
         metadata = self.client.get_metadata("a5", "pto.tadd", TADD_OPERANDS)
         candidates = metadata["candidates"]
         self.assertEqual(
             [candidate["name"] for candidate in candidates],
-            [TADD],
+            [TADD_1D, TADD],
         )
 
         selected = candidates[0]
-        self.assertEqual(selected["loop_depth"], 2)
+        self.assertEqual(selected["loop_depth"], 1)
         self.assertIsNone(selected["Tail"])
         self.assertFalse(selected["has_tail"])
         self.assertFalse(selected["is_post_update"])

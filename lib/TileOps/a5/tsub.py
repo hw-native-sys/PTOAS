@@ -17,9 +17,23 @@ def _vsub(lhs, rhs, mask):
     return pto.vsub(lhs, rhs, mask)
 
 
+_DTYPES = same_dtype_signatures(3)
+
+
 template_tsub = register_binary(
     op="pto.tsub",
     name="template_tsub",
     vector_op=_vsub,
-    dtypes=same_dtype_signatures(3),
+    dtypes=_DTYPES,
+)
+
+
+template_tsub_1d = register_binary(
+    op="pto.tsub",
+    name="template_tsub_1d",
+    vector_op=_vsub,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

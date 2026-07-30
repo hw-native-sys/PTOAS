@@ -17,9 +17,23 @@ def _vmax(lhs, rhs, mask):
     return pto.vmax(lhs, rhs, mask)
 
 
+_DTYPES = same_dtype_signatures(3)
+
+
 template_tmax = register_binary(
     op="pto.tmax",
     name="template_tmax",
     vector_op=_vmax,
-    dtypes=same_dtype_signatures(3),
+    dtypes=_DTYPES,
+)
+
+
+template_tmax_1d = register_binary(
+    op="pto.tmax",
+    name="template_tmax_1d",
+    vector_op=_vmax,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

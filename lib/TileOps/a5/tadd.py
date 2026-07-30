@@ -17,9 +17,23 @@ def _vadd(lhs, rhs, mask):
     return pto.vadd(lhs, rhs, mask)
 
 
+_DTYPES = same_dtype_signatures(3)
+
+
 template_tadd = register_binary(
     op="pto.tadd",
     name="template_tadd",
     vector_op=_vadd,
-    dtypes=same_dtype_signatures(3),
+    dtypes=_DTYPES,
+)
+
+
+template_tadd_1d = register_binary(
+    op="pto.tadd",
+    name="template_tadd_1d",
+    vector_op=_vadd,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

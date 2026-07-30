@@ -13,9 +13,23 @@ from ._common import INT_DTYPES
 from ._elementwise import register_binary
 
 
+_DTYPES = [(dtype, dtype, dtype) for dtype in INT_DTYPES]
+
+
 template_tor = register_binary(
     op="pto.tor",
     name="template_tor",
     vector_op=pto.vor,
-    dtypes=[(dtype, dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+
+template_tor_1d = register_binary(
+    op="pto.tor",
+    name="template_tor_1d",
+    vector_op=pto.vor,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

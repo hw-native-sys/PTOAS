@@ -34,8 +34,15 @@ register preferred shared 1D candidates while preserving their original shared
 2D candidates as fallbacks. `tlog` and `trecip` keep their algorithms local to
 their operation modules and use only the shared unary traversal emitters. This
 raises the current unary candidate count to 20 and the current scoped candidate
-count to 92. The other operation families, functional execution tests, and
-performance measurements remain subsequent steps.
+count to 92.
+
+The ordinary Tile-Tile operations `tadd`, `tand`, `tmax`, `tmin`, `tmul`,
+`tor`, `tshl`, `tshr`, and `tsub` also register preferred shared 1D candidates
+and preserve their ID-0 2D fallbacks. `tmin` now uses the same shared binary
+registrar instead of duplicating its row-wise loop. This raises the current
+Tile-Tile candidate count to 23 and the current scoped candidate count to 101.
+The specialized Tile-Tile operations, other operation families, functional
+execution tests, and performance measurements remain subsequent steps.
 
 ## Goals
 
@@ -73,11 +80,11 @@ PTODSL candidates:
 | Total | 43 | 82 |
 
 At that baseline, all 82 candidates declared `loop_depth=2`. All nine unary
-operations have since gained explicit `loop_depth=1` candidates. The important
-baseline exception is `tcmps`: its f32/i32 branch already traverses
-`valid_rows * valid_cols` as a flat range even though the containing candidate
-is marked as two-dimensional. That mixed candidate must be separated into
-explicit 1D and 2D forms.
+operations and nine ordinary Tile-Tile operations have since gained explicit
+`loop_depth=1` candidates. The important baseline exception is `tcmps`: its
+f32/i32 branch already traverses `valid_rows * valid_cols` as a flat range even
+though the containing candidate is marked as two-dimensional. That mixed
+candidate must be separated into explicit 1D and 2D forms.
 
 Each operation is loaded from
 `ptodsl/ptodsl/tilelib/templates/a5/<op>.py`, except that `texpands` is
@@ -137,19 +144,19 @@ parity is approved as separate work.
 
 | Op | Existing candidate and operands | Dtypes | Current form | Provisional 1D classification |
 |---|---|---|---|---|
-| `tadd` | `template_tadd(src0, src1, dst)` | same `N9` | shared 2D | Shared |
-| `tand` | `template_tand(src0, src1, dst)` | same `I6` | shared 2D | Shared |
+| `tadd` | `template_tadd`/`template_tadd_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tand` | `template_tand`/`template_tand_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `tdiv` | `template_tdiv(src0, src1, dst)` | same `F2` | bespoke precision-aware 2D | Algorithm-specific |
 | `tfmod` | `template_tfmod(src0, src1, dst)` | same `f32`, `f16`, `i16`, or `ui16` | shared remainder 2D | Algorithm-specific |
-| `tmax` | `template_tmax(src0, src1, dst)` | same `N9` | shared 2D | Shared |
-| `tmin` | `template_tmin(src0, src1, dst)` | same `N9` | bespoke registration, ordinary 2D compute | Shared |
-| `tmul` | `template_tmul(src0, src1, dst)` | same `N9` | shared 2D | Shared |
-| `tor` | `template_tor(src0, src1, dst)` | same `I6` | shared 2D | Shared |
+| `tmax` | `template_tmax`/`template_tmax_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tmin` | `template_tmin`/`template_tmin_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tmul` | `template_tmul`/`template_tmul_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tor` | `template_tor`/`template_tor_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `tprelu` | `template_tprelu(src0, src1, tmp, dst)` | data/dst `f16` or `f32`; `tmp` is the data dtype or `i8` | shared binary 2D with temporary tile | Algorithm-specific |
 | `trem` | `template_trem(src0, src1, tmp, dst)` | all `f32`, all `f16`, or all `i32` | shared remainder 2D with temporary tile | Algorithm-specific |
-| `tshl` | `template_tshl(src0, src1, dst)` | same `I6` | shared 2D | Shared |
-| `tshr` | `template_tshr(src0, src1, dst)` | same `I6` | shared 2D | Shared |
-| `tsub` | `template_tsub(src0, src1, dst)` | same `N9` | shared 2D | Shared |
+| `tshl` | `template_tshl`/`template_tshl_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
+| `tshr` | `template_tshr`/`template_tshr_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
+| `tsub` | `template_tsub`/`template_tsub_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
 | `txor` | `template_txor(src0, src1, tmp, dst)` | same `I6` across all operands | shared binary 2D with temporary tile | Algorithm-specific |
 
 `precisionType` is forwarded and consumed by `tdiv`. A 1D form must preserve
@@ -284,11 +291,11 @@ The ordinary implementations are concentrated in:
 `_elementwise.py` registers unary, Tile-Tile, Tile-Scalar, and scalar-fill
 templates. Unmigrated operation call sites retain the default 2D form, which
 restarts `remained = valid_cols` for every row and then walks columns by vector
-lane count. Migrated unary operations add an explicit 1D registration next to
-that unchanged fallback. Their specialized algorithms remain outside
-`_elementwise.py` and call the lower-level unary traversal emitters.
-`_remainder.py` uses the same row-wise traversal around a more complex vector
-computation.
+lane count. Migrated unary and ordinary Tile-Tile operations add an explicit 1D
+registration next to that unchanged fallback. Specialized unary algorithms
+remain outside `_elementwise.py` and call the lower-level unary traversal
+emitters. `_remainder.py` uses the same row-wise traversal around a more
+complex vector computation.
 
 The reusable ordinary traversal foundation consists of:
 
@@ -315,8 +322,7 @@ registration order.
 The operation-specific files that cannot be migrated by replacing a shared
 registrar alone are:
 
-- `tdiv.py`, `tdivs.py`, `tlog.py`, `trecip.py`, `tlrelu.py`, `tmin.py`, and
-  `tsubs.py`;
+- `tdiv.py`, `tdivs.py`, `tlog.py`, `trecip.py`, `tlrelu.py`, and `tsubs.py`;
 - `tcmp.py`, `tcmps.py`, `tsel.py`, and `tsels.py`;
 - `tcvt.py`.
 
