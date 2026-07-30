@@ -3359,6 +3359,16 @@ std::optional<std::string> getPointStoreDistToken(Type elementType) {
   return (Twine("1PT_B") + Twine(elementBits)).str();
 }
 
+/// Size-1 VMI loads must lower to ``BRC_B*`` (natural element align), not
+/// default NORM ``vlds`` (32B align). Camodel rejects unaligned NORM/VLDS.
+/// Hardware has no load-side ``1PT_B*``; BRC is the one-element load token.
+std::optional<std::string> getPointLoadDistToken(Type elementType) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  if (elementBits != 8 && elementBits != 16 && elementBits != 32)
+    return std::nullopt;
+  return (Twine("BRC_B") + Twine(elementBits)).str();
+}
+
 /// Size-1 VMI stores must lower to ``1PT_B*`` (4B/2B/1B natural align), not
 /// default NORM ``vsts`` (32B align). Camodel rejects unaligned NORM/VLDS.
 static StringAttr getContiguousStoreDistAttr(ConversionPatternRewriter &rewriter,
@@ -3367,6 +3377,17 @@ static StringAttr getContiguousStoreDistAttr(ConversionPatternRewriter &rewriter
     return nullptr;
   std::optional<std::string> point =
       getPointStoreDistToken(valueVMIType.getElementType());
+  if (!point)
+    return nullptr;
+  return rewriter.getStringAttr(*point);
+}
+
+static StringAttr getContiguousLoadDistAttr(ConversionPatternRewriter &rewriter,
+                                            VMIVRegType resultVMIType) {
+  if (resultVMIType.getElementCount() != 1)
+    return nullptr;
+  std::optional<std::string> point =
+      getPointLoadDistToken(resultVMIType.getElementType());
   if (!point)
     return nullptr;
   return rewriter.getStringAttr(*point);
@@ -5935,6 +5956,7 @@ struct OneToNVMILoadOpPattern : OpConversionPattern<VMILoadOp> {
 
     SmallVector<Value> contiguousParts;
     contiguousParts.reserve(contiguousTypes.size());
+    StringAttr loadDist = getContiguousLoadDistAttr(rewriter, resultVMIType);
     for (auto [index, resultType] : llvm::enumerate(contiguousTypes)) {
       auto vregType = dyn_cast<VRegType>(resultType);
       if (!vregType)
@@ -5945,7 +5967,7 @@ struct OneToNVMILoadOpPattern : OpConversionPattern<VMILoadOp> {
                                     .create<VldsOp>(op.getLoc(), resultType,
                                                     /*updated_base=*/Type{},
                                                     *source, chunkOffset,
-                                                    /*dist=*/nullptr)
+                                                    loadDist)
                                     .getResult());
     }
 
@@ -6699,6 +6721,7 @@ struct OneToNVMIMaskedLoadOpPattern
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
+    StringAttr loadDist = getContiguousLoadDistAttr(rewriter, resultVMIType);
     for (auto [index, maskPassthruAndType] : llvm::enumerate(
              llvm::zip_equal(maskParts, passthruParts, resultTypes))) {
       auto [mask, passthru, resultType] = maskPassthruAndType;
@@ -6713,7 +6736,7 @@ struct OneToNVMIMaskedLoadOpPattern
           rewriter
               .create<VldsOp>(op.getLoc(), resultType,
                               /*updated_base=*/Type{}, *source, chunkOffset,
-                              /*dist=*/nullptr)
+                              loadDist)
               .getResult();
       results.push_back(
           rewriter

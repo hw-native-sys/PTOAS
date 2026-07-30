@@ -1340,6 +1340,12 @@ def VMIvLoadOp : VMI_Op<"vload",
     - "dintlv":             deinterleaved dual load      → 2 results (%lo, %hi)
     - "unpack":             widening unpack load         → 1 result
     - "brc":                broadcast load               → 1 result
+    - "1pt":                size-1 one-element load      → size-1 result
+                            (lowers to ``vlds`` ``BRC_B*``, natural align;
+                            VLDS has no ``1PT_B*`` token — that is store-only)
+
+    Size-1 continuous loads (``!pto.vmi.vreg<1xT>``) also auto-select
+    ``BRC_B*`` so packed / unaligned UB addresses are legal (NORM needs 32B).
 
     group mode (mutually exclusive with dist-mode):
     - {group = C}: grouped vector load with row stride  → 1 result
@@ -1378,7 +1384,8 @@ def VMIvStoreOp : VMI_Op<"vstore",
     - "continuous" (default): contiguous stride-1 store  → 1 value
     - "dintlv":             interleaved dual store        → 2 values (%lo, %hi)
     - "1pt":                first-element-only store      → size-1 value
-                            (lowers to ``vsts`` ``1PT_B*``, 4B/2B/1B align)
+                            (lowers to ``vsts`` ``1PT_B*``, 4B/2B/1B align;
+                            size-1 continuous stores auto-select the same)
 
     group mode (mutually exclusive with dist-mode):
     - {group = C}: grouped vector store with row stride

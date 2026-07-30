@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+// Size-1 continuous / 1pt loads must emit BRC_B32 (natural align), not NORM.
+// VLDS has no 1PT_B* token; BRC is the one-element load distribution.
+
+module {
+  func.func @vmi_to_vpto_size1_continuous_load_brc(
+      %src: !pto.ptr<i32, ub>,
+      %offset: index) -> !pto.vmi.vreg<1xi32> {
+    %v = pto.vmi.vload %src[%offset]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    return %v : !pto.vmi.vreg<1xi32>
+  }
+
+  func.func @vmi_to_vpto_size1_explicit_1pt_load(
+      %src: !pto.ptr<i32, ub>,
+      %offset: index) -> !pto.vmi.vreg<1xi32> {
+    %v = pto.vmi.vload %src[%offset] {dist_mode = "1pt"}
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    return %v : !pto.vmi.vreg<1xi32>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_size1_continuous_load_brc(
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vmi_to_vpto_size1_explicit_1pt_load(
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
+// CHECK-NOT: pto.vmi.

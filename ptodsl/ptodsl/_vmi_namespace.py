@@ -536,8 +536,13 @@ class _VMINamespace:
             block_stride=block_stride,
             repeat_stride=repeat_stride,
             allow_group_brc=True,
-            allowed_dist_modes={None, "continuous", "dintlv", "unpack", "brc"},
+            allowed_dist_modes={None, "continuous", "dintlv", "unpack", "brc", "1pt"},
         )
+        if dist_mode == "1pt" and size != 1:
+            raise TypeError('pto.vmi.vload(...) with dist_mode="1pt" requires size=1')
+        # Size-1 continuous loads need BRC_B* (natural align); auto-promote.
+        if dist_mode is None and size == 1:
+            dist_mode = "1pt"
         result_types = _resolve_vmi_vload_result_types(
             source,
             size,

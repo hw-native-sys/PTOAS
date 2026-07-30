@@ -578,7 +578,9 @@ static LogicalResult lowerVLoad(VMIvLoadOp op, OpBuilder &builder) {
   Value source = op.getSource();
   Value offset = op.getOffset();
 
-  if (distMode == "continuous") {
+  if (distMode == "continuous" || distMode == "1pt") {
+    // "1pt" is the size-1 spelling; VMIToVPTO emits BRC_B* for element_count==1
+    // (VLDS has no 1PT token). Verifier already requires size-1 for "1pt".
     auto loadOp = builder.create<VMILoadOp>(
         loc, op.getResults().front().getType(), source, offset);
     op.getResults().front().replaceAllUsesWith(loadOp.getResult());
