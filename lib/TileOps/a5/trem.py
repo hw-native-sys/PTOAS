@@ -17,3 +17,14 @@ template_trem = register_binary_remainder(
     round_mode="F",
     has_tmp=True,
 )
+
+template_trem_1d = register_binary_remainder(
+    op="pto.trem",
+    name="template_trem_1d",
+    dtypes=REM_DTYPES,
+    round_mode="F",
+    has_tmp=True,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

@@ -47,8 +47,16 @@ keeps its default and IEEE high-precision algorithms in `tdiv.py`, while
 `tfmod` keeps its dtype-sensitive computation in the remainder family module;
 both use shared binary traversal emitters. This raises the current Tile-Tile
 candidate count to 25 and the current scoped candidate count to 103.
-Temporary-operand Tile-Tile operations, other operation families, functional
-execution tests, and performance measurements remain subsequent steps.
+
+The remaining temporary-operand Tile-Tile operations are now migrated:
+`tprelu`, `trem`, and `txor` preserve their existing ID-0 2D candidates and
+register preferred ID-1 1D candidates. All four tile operands (`src0`, `src1`,
+`tmp`, and `dst`) participate in flattened-traversal legality, including the
+ABI temporary when the current generated body does not access it. This raises
+the Tile-Tile candidate count to 28 and the current scoped candidate count to
+106, completing 1D/2D coverage for all 14 Tile-Tile operations. Other
+operation families, functional execution tests, and performance measurements
+remain subsequent steps.
 
 ## Goals
 
@@ -86,7 +94,7 @@ PTODSL candidates:
 | Total | 43 | 82 |
 
 At that baseline, all 82 candidates declared `loop_depth=2`. All nine unary
-operations and nine ordinary Tile-Tile operations have since gained explicit
+operations and all 14 Tile-Tile operations have since gained explicit
 `loop_depth=1` candidates. The important baseline exception is `tcmps`: its
 f32/i32 branch already traverses `valid_rows * valid_cols` as a flat range even
 though the containing candidate is marked as two-dimensional. That mixed
@@ -158,12 +166,12 @@ parity is approved as separate work.
 | `tmin` | `template_tmin`/`template_tmin_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
 | `tmul` | `template_tmul`/`template_tmul_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
 | `tor` | `template_tor`/`template_tor_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
-| `tprelu` | `template_tprelu(src0, src1, tmp, dst)` | data/dst `f16` or `f32`; `tmp` is the data dtype or `i8` | shared binary 2D with temporary tile | Algorithm-specific |
-| `trem` | `template_trem(src0, src1, tmp, dst)` | all `f32`, all `f16`, or all `i32` | shared remainder 2D with temporary tile | Algorithm-specific |
+| `tprelu` | `template_tprelu`/`template_tprelu_1d(src0, src1, tmp, dst)` | data/dst `f16` or `f32`; `tmp` is the data dtype or `i8` | shared binary 2D fallback and preferred 1D; temporary included in legality | Algorithm-specific |
+| `trem` | `template_trem`/`template_trem_1d(src0, src1, tmp, dst)` | all `f32`, all `f16`, or all `i32` | remainder-family 2D fallback and preferred 1D; temporary included in legality | Algorithm-specific |
 | `tshl` | `template_tshl`/`template_tshl_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `tshr` | `template_tshr`/`template_tshr_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `tsub` | `template_tsub`/`template_tsub_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
-| `txor` | `template_txor(src0, src1, tmp, dst)` | same `I6` across all operands | shared binary 2D with temporary tile | Algorithm-specific |
+| `txor` | `template_txor`/`template_txor_1d(src0, src1, tmp, dst)` | same `I6` across all operands | shared binary 2D fallback and preferred 1D; temporary included in legality | Algorithm-specific |
 
 `precisionType` is forwarded and consumed by `tdiv`. A 1D form must preserve
 both its ordinary `vdiv` path and its high-precision helper path.

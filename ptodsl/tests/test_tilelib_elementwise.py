@@ -73,6 +73,27 @@ PRODUCTION_BINARY_1D = {
     "pto.tsub": ("template_tsub_1d", "template_tsub", "pto.vsub", "i32"),
 }
 
+PRODUCTION_TEMP_BINARY_1D = {
+    "pto.tprelu": (
+        "template_tprelu_1d",
+        "template_tprelu",
+        "pto.vprelu",
+        "f32",
+    ),
+    "pto.trem": (
+        "template_trem_1d",
+        "template_trem",
+        "pto.vtrc",
+        "f32",
+    ),
+    "pto.txor": (
+        "template_txor_1d",
+        "template_txor",
+        "pto.vxor",
+        "i16",
+    ),
+}
+
 # Structured abstraction every elementwise template must preserve.
 SHARED_OPS = ["pto.tile_buf_addr", "!pto.ptr<f32, ub>", "scf.for", "iter_args",
               "pto.plt_b32", "pto.vlds", "pto.vsts", "pto.tilelang.instance"]
@@ -200,6 +221,34 @@ def _binary_specs(
         compact_mode=compact_mode,
     )
     return {"src0": tile, "src1": tile, "dst": tile}
+
+
+def _binary_tmp_specs(
+    data_dtype,
+    *,
+    tmp_dtype=None,
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+    tmp_compact_mode=None,
+):
+    data = TileSpec(
+        shape=shape,
+        valid_shape=valid_shape,
+        dtype=ScalarType(data_dtype),
+        compact_mode=compact_mode,
+    )
+    tmp = TileSpec(
+        shape=shape,
+        valid_shape=valid_shape,
+        dtype=ScalarType(tmp_dtype or data_dtype),
+        compact_mode=(
+            compact_mode
+            if tmp_compact_mode is None
+            else tmp_compact_mode
+        ),
+    )
+    return {"src0": data, "src1": data, "tmp": tmp, "dst": data}
 
 
 class TileLibElementwiseTest(unittest.TestCase):
@@ -660,6 +709,117 @@ class TileLibElementwiseTest(unittest.TestCase):
                         selected.metadata.loop_depth,
                         1 if expect_1d else 2,
                     )
+
+    def test_temporary_binary_ops_register_preferred_1d_and_fallback_2d(self):
+        for op, (
+            name_1d,
+            name_2d,
+            vector_op,
+            dtype_name,
+        ) in PRODUCTION_TEMP_BINARY_1D.items():
+            with self.subTest(op=op):
+                specs = _binary_tmp_specs(dtype_name)
+                candidates = legal_candidates(op, "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_1d, name_2d],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+                self.assertEqual(
+                    candidates[0].metadata.dtypes,
+                    candidates[1].metadata.dtypes,
+                )
+
+                mlir = candidates[0].specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn(vector_op, mlir)
+                self.assertNotIn("memref.subview", mlir)
+
+    def test_temporary_binary_selection_uses_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        for op, (
+            name_1d,
+            name_2d,
+            _,
+            dtype_name,
+        ) in PRODUCTION_TEMP_BINARY_1D.items():
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _binary_tmp_specs(
+                        dtype_name,
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    selected = select(op, "a5", specs)
+                    self.assertEqual(
+                        selected.name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        selected.metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
+
+    def test_temporary_tile_alone_can_disqualify_1d(self):
+        for op, (
+            _,
+            name_2d,
+            _,
+            dtype_name,
+        ) in PRODUCTION_TEMP_BINARY_1D.items():
+            with self.subTest(op=op):
+                specs = _binary_tmp_specs(
+                    dtype_name,
+                    tmp_compact_mode=2,
+                )
+                candidates = legal_candidates(op, "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_2d],
+                )
+                self.assertEqual(candidates[0].metadata.loop_depth, 2)
+
+    def test_tprelu_1d_accepts_i8_temporary_representation(self):
+        specs = _binary_tmp_specs("f32", tmp_dtype="i8")
+        candidates = legal_candidates("pto.tprelu", "a5", specs)
+
+        self.assertEqual(
+            [candidate.name for candidate in candidates],
+            ["template_tprelu_1d", "template_tprelu"],
+        )
+        mlir = candidates[0].specialize(**specs).mlir_text()
+        self.assertEqual(mlir.count("scf.for"), 1)
+        self.assertIn("pto.vprelu", mlir)
+
+    def test_trem_1d_preserves_floor_remainder_computation(self):
+        specs = _binary_tmp_specs("f32")
+        descriptor = select("pto.trem", "a5", specs)
+        mlir = descriptor.specialize(**specs).mlir_text()
+
+        self.assertEqual(descriptor.name, "template_trem_1d")
+        self.assertEqual(mlir.count("scf.for"), 1)
+        for vector_op in (
+            "pto.vdiv",
+            "pto.vtrc",
+            "pto.vmul",
+            "pto.vsub",
+        ):
+            self.assertIn(vector_op, mlir)
 
     def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
         specs = {

@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A temporary TileOp operand participates in flattened-traversal legality even
+// when the generated computation does not access it. The first PReLU has four
+// contiguous logical ranges and prefers the 1D helper. In the second, only the
+// i8 temporary has a row-plus-one stride, so only the 2D fallback is legal.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
+
+// META-LABEL: func.func @TPRELU_1D
+// META: pto.tprelu
+// META-SAME: candidates = [{
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tprelu_1d"
+// META-SAME: }, {
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tprelu"
+
+// META-LABEL: func.func @TPRELU_TMP_2D
+// META: pto.tprelu
+// META-SAME: candidates = [{
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tprelu"
+// META-NOT: name = "template_tprelu_1d"
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tprelu_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vprelu
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tprelu(
+// SELECT: scf.for
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vprelu
+// SELECT: return
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TPRELU_1D() {
+    %src0 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tprelu ins(
+      %src0, %src1, %tmp
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=i8, rows=4, cols=96, v_row=4, v_col=96,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TPRELU_TMP_2D() {
+    %src0 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                      compact=2>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tprelu ins(
+      %src0, %src1, %tmp
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=i8, rows=4, cols=96, v_row=4, v_col=96,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                        compact=2>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=96, v_row=4, v_col=96,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

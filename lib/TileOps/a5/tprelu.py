@@ -11,15 +11,29 @@ from ._elementwise import register_binary
 from ptodsl import pto
 
 
+_TPRELU_DTYPES = [
+    ("f16", "f16", "f16", "f16"),
+    ("f32", "f32", "f32", "f32"),
+    ("f16", "f16", "i8", "f16"),
+    ("f32", "f32", "i8", "f32"),
+]
+
+
 template_tprelu = register_binary(
     op="pto.tprelu",
     name="template_tprelu",
     vector_op=pto.vprelu,
-    dtypes=[
-        ("f16", "f16", "f16", "f16"),
-        ("f32", "f32", "f32", "f32"),
-        ("f16", "f16", "i8", "f16"),
-        ("f32", "f32", "i8", "f32"),
-    ],
+    dtypes=_TPRELU_DTYPES,
     has_tmp=True,
+)
+
+template_tprelu_1d = register_binary(
+    op="pto.tprelu",
+    name="template_tprelu_1d",
+    vector_op=pto.vprelu,
+    dtypes=_TPRELU_DTYPES,
+    has_tmp=True,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

@@ -265,6 +265,14 @@ instruction sequences and their family registrars. These modules may call
 shared binary traversal emitters, but their algorithms do not belong in
 `_elementwise.py`.
 
+Temporary-operand Tile-Tile forms follow the same registration pattern, but
+the 1D constraint must include the temporary explicitly. For example,
+`tprelu`, `trem`, and `txor` call their family registrar with `has_tmp=True`;
+the registrar passes `src0`, `src1`, `tmp`, and `dst` to
+`require_elementwise_1d`. Keep the temporary in that proof even when the
+current generated helper does not read it. A non-contiguous or insufficiently
+described temporary must independently disqualify the 1D candidate.
+
 ## View And Valid-Shape Rules
 
 Do not assume the logical valid shape is the same as the physical view shape.

@@ -138,11 +138,11 @@ CATALOG = {
     "pto.tpartmax": ("template_tpartmax", "pto.vmax", ("src0", "src1", "dst"), "f32"),
     "pto.tpartmin": ("template_tpartmin", "pto.vmin", ("src0", "src1", "dst"), "f32"),
     "pto.tpartmul": ("template_tpartmul", "pto.vmul", ("src0", "src1", "dst"), "f32"),
-    "pto.tprelu": ("template_tprelu", "pto.vprelu", ("src0", "src1", "tmp", "dst"), "f32"),
+    "pto.tprelu": ("template_tprelu_1d", "pto.vprelu", ("src0", "src1", "tmp", "dst"), "f32"),
     "pto.trandom": ("template_trandom", "pto.vmull", ("key0", "key1", "counter0", "counter1", "counter2", "counter3", "dst"), "ui32"),
     "pto.trelu": ("template_trelu_1d", "pto.vrelu", ("src", "dst"), "f32"),
     "pto.trecip": ("template_trecip_1d", "pto.vdiv", ("src", "dst"), "f32"),
-    "pto.trem": ("template_trem", "pto.vtrc", ("src0", "src1", "tmp", "dst"), "f32"),
+    "pto.trem": ("template_trem_1d", "pto.vtrc", ("src0", "src1", "tmp", "dst"), "f32"),
     "pto.trems": ("template_trems", "pto.vtrc", ("src", "scalar", "tmp", "dst"), "f32"),
     "pto.trsqrt": ("template_trsqrt_1d", "pto.vsqrt", ("src", "dst"), "f32"),
     "pto.trowargmax": ("template_trowargmax", "pto.vdintlv", ("src", "tmp", "dst"), "f32"),
@@ -197,7 +197,7 @@ CATALOG = {
         "f32",
     ),
     "pto.txor": (
-        "template_txor",
+        "template_txor_1d",
         "pto.vxor",
         ("src0", "src1", "tmp", "dst"),
         "i32",
@@ -301,6 +301,9 @@ OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {
     "pto.tsub",
     "pto.tdiv",
     "pto.tfmod",
+    "pto.tprelu",
+    "pto.trem",
+    "pto.txor",
 }
 OPS_WITHOUT_LOOP = {"pto.tmrgsort"}
 OPS_WITHOUT_LOOP = OPS_WITHOUT_LOOP | {"pto.tstore_fp", "pto.textract_fp"}

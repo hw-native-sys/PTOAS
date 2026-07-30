@@ -13,10 +13,27 @@ from ._common import INT_DTYPES
 from ._elementwise import register_binary
 
 
+_TXOR_DTYPES = [
+    (dtype, dtype, dtype, dtype)
+    for dtype in INT_DTYPES
+]
+
+
 template_txor = register_binary(
     op="pto.txor",
     name="template_txor",
     vector_op=pto.vxor,
-    dtypes=[(dtype, dtype, dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_TXOR_DTYPES,
     has_tmp=True,
+)
+
+template_txor_1d = register_binary(
+    op="pto.txor",
+    name="template_txor_1d",
+    vector_op=pto.vxor,
+    dtypes=_TXOR_DTYPES,
+    has_tmp=True,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )
