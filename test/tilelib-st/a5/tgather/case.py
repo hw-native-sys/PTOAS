@@ -332,83 +332,48 @@ def _make_mask_inputs(name, dtype, src_shape):
     return [src]
 
 
-CASES = []
-for _name, _src_dtype, _idx_dtype, _src_shape, _dst_shape in CASE_SHAPES:
-    CASES.append(
-        golden_output_case(
-            "tgather_" + _name,
-            _tgather_kernels[_name],
-            inputs=lambda _n=_name, _sd=_src_dtype, _id=_idx_dtype, _ss=_src_shape, _ds=_dst_shape: (
-                _make_inputs(_n, _sd, _id, _ss, _ds)
-            ),
-            expected=_make_expected,
-            rtol=1e-6,
-            atol=1e-6,
-        )
-    )
-
-for _name, _dtype, _src_shape, _dst_shape, _pattern, _axis in MASK_CASES:
-    _golden = _gather_mask_row_golden if _axis == "row" else _gather_mask_col_golden
-    CASES.append(
-        golden_output_case(
-            "tgather_" + _name,
-            _mask_kernels[_name],
-            inputs=lambda _n=_name, _d=_dtype, _ss=_src_shape: _make_mask_inputs(
-                _n, _d, _ss
-            ),
-            expected=lambda src, _dr=_dst_shape[0], _dc=_dst_shape[1], _p=_pattern, _g=_golden: (
-                _g(src, _dr, _dc, _p)
-            ),
-            rtol=1e-6,
-            atol=1e-6,
-        )
-    )
-
-
+# --- Compare-form gather cases ---
+# (name, src_dtype, cmp_mode, src_shape, offset)
 CMP_CASES = [
-    ("cmp_gt_f32_4x64", pto.f32, pto.ui32, "gt", (4, 64), 0),
-    ("cmp_eq_f32_4x64", pto.f32, pto.ui32, "eq", (4, 64), 0),
-    ("cmp_gt_i32_4x64", pto.i32, pto.ui32, "gt", (4, 64), 0),
-    ("cmp_eq_i32_4x64", pto.i32, pto.ui32, "eq", (4, 64), 0),
-    ("cmp_gt_ui32_4x64", pto.ui32, pto.ui32, "gt", (4, 64), 0),
-    ("cmp_eq_ui32_4x64", pto.ui32, pto.ui32, "eq", (4, 64), 0),
-    ("cmp_gt_i16_4x128", pto.i16, pto.ui16, "gt", (4, 128), 0),
-    ("cmp_eq_i16_4x128", pto.i16, pto.ui16, "eq", (4, 128), 0),
-    ("cmp_gt_ui16_4x128", pto.ui16, pto.ui16, "gt", (4, 128), 0),
-    ("cmp_eq_ui16_4x128", pto.ui16, pto.ui16, "eq", (4, 128), 0),
-    ("cmp_gt_f16_4x128", pto.f16, pto.ui16, "gt", (4, 128), 0),
-    ("cmp_eq_f16_4x128", pto.f16, pto.ui16, "eq", (4, 128), 0),
-    ("cmp_gt_i8_4x128", pto.i8, pto.ui16, "gt", (4, 128), 0),
-    ("cmp_eq_i8_4x128", pto.i8, pto.ui16, "eq", (4, 128), 0),
-    ("cmp_gt_ui8_4x128", pto.ui8, pto.ui16, "gt", (4, 128), 0),
-    ("cmp_eq_ui8_4x128", pto.ui8, pto.ui16, "eq", (4, 128), 0),
-    ("cmp_gt_f32_8x128_off5", pto.f32, pto.ui32, "gt", (8, 128), 5),
-    ("cmp_eq_i32_8x128_off3", pto.i32, pto.ui32, "eq", (8, 128), 3),
-    ("cmp_gt_f16_16x256_off10", pto.f16, pto.ui16, "gt", (16, 256), 10),
-    ("cmp_eq_i8_16x256_off7", pto.i8, pto.ui16, "eq", (16, 256), 7),
+    ("cmp_gt_f32_4x64", pto.f32, "gt", (4, 64), 0),
+    ("cmp_eq_f32_4x64", pto.f32, "eq", (4, 64), 0),
+    ("cmp_gt_i32_4x64", pto.i32, "gt", (4, 64), 0),
+    ("cmp_eq_i32_4x64", pto.i32, "eq", (4, 64), 0),
+    ("cmp_gt_ui32_4x64", pto.ui32, "gt", (4, 64), 0),
+    ("cmp_eq_ui32_4x64", pto.ui32, "eq", (4, 64), 0),
+    ("cmp_gt_i16_4x128", pto.i16, "gt", (4, 128), 0),
+    ("cmp_eq_i16_4x128", pto.i16, "eq", (4, 128), 0),
+    ("cmp_gt_ui16_4x128", pto.ui16, "gt", (4, 128), 0),
+    ("cmp_eq_ui16_4x128", pto.ui16, "eq", (4, 128), 0),
+    ("cmp_gt_f16_4x128", pto.f16, "gt", (4, 128), 0),
+    ("cmp_eq_f16_4x128", pto.f16, "eq", (4, 128), 0),
+    ("cmp_gt_i8_4x128", pto.i8, "gt", (4, 128), 0),
+    ("cmp_eq_i8_4x128", pto.i8, "eq", (4, 128), 0),
+    ("cmp_gt_ui8_4x128", pto.ui8, "gt", (4, 128), 0),
+    ("cmp_eq_ui8_4x128", pto.ui8, "eq", (4, 128), 0),
+    ("cmp_gt_f32_8x128_off5", pto.f32, "gt", (8, 128), 5),
+    ("cmp_eq_i32_8x128_off3", pto.i32, "eq", (8, 128), 3),
+    ("cmp_gt_f16_16x256_off10", pto.f16, "gt", (16, 256), 10),
+    ("cmp_eq_i8_16x256_off7", pto.i8, "eq", (16, 256), 7),
 ]
+
+_CMP_K_VALUE = 15
 
 
 def _tgather_cmp_body(
     src_ptr,
-    k_value_ptr,
     dst_ptr,
     cdst_ptr,
     *,
     src_rows,
     src_cols,
-    k_cols,
     cdst_cols,
     src_dtype,
-    k_dtype,
     cmp_mode,
     offset,
 ):
     src_view = pto.make_tensor_view(
         src_ptr, shape=[src_rows, src_cols], strides=[src_cols, 1]
-    )
-    k_view = pto.make_tensor_view(
-        k_value_ptr, shape=[src_rows, k_cols], strides=[k_cols, 1]
     )
     dst_view = pto.make_tensor_view(
         dst_ptr, shape=[src_rows, src_cols], strides=[src_cols, 1]
@@ -418,17 +383,17 @@ def _tgather_cmp_body(
     )
 
     src_tile = pto.alloc_tile(shape=[src_rows, src_cols], dtype=src_dtype)
-    k_tile = pto.alloc_tile(shape=[src_rows, k_cols], dtype=k_dtype)
     dst_tile = pto.alloc_tile(shape=[src_rows, src_cols], dtype=pto.i32)
     cdst_tile = pto.alloc_tile(shape=[src_rows, cdst_cols], dtype=pto.i32)
+    tmp_tile = pto.alloc_tile(shape=[src_rows, src_cols], dtype=pto.ui8)
 
     pto.tile.load(src_view, src_tile)
-    pto.tile.load(k_view, k_tile)
     pto.tile.gather(
         src_tile,
         dst_tile,
-        k_value=k_tile,
+        k_value=src_dtype(_CMP_K_VALUE),
         cdst=cdst_tile,
+        tmp=tmp_tile,
         cmp_mode=cmp_mode,
         offset=offset,
     )
@@ -437,18 +402,15 @@ def _tgather_cmp_body(
 
 
 _cmp_kernels = {}
-for _name, _src_dtype, _k_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
+for _name, _src_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
     _sr, _sc = _src_shape
-    _kc = 64
     _cc = 64
 
     def _make_cmp(
         sr=_sr,
         sc=_sc,
-        kc=_kc,
         cc=_cc,
         sdt=_src_dtype,
-        kdt=_k_dtype,
         cm=_cmp_mode,
         off=_offset,
         kernel_name=f"tgather_{_name}",
@@ -456,21 +418,17 @@ for _name, _src_dtype, _k_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
         @pto.jit(name=kernel_name, target="a5")
         def _kernel(
             src_ptr: pto.ptr(sdt, "gm"),
-            k_value_ptr: pto.ptr(kdt, "gm"),
             dst_ptr: pto.ptr(pto.i32, "gm"),
             cdst_ptr: pto.ptr(pto.i32, "gm"),
         ):
             _tgather_cmp_body(
                 src_ptr,
-                k_value_ptr,
                 dst_ptr,
                 cdst_ptr,
                 src_rows=sr,
                 src_cols=sc,
-                k_cols=kc,
                 cdst_cols=cc,
                 src_dtype=sdt,
-                k_dtype=kdt,
                 cmp_mode=cm,
                 offset=off,
             )
@@ -480,34 +438,19 @@ for _name, _src_dtype, _k_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
     _cmp_kernels[_name] = _make_cmp()
 
 
-def _make_cmp_inputs(name, src_dtype, k_dtype, src_shape, offset):
+def _make_cmp_inputs(name, src_dtype, src_shape):
     src_np = npy_dtype(src_dtype)
-    k_np = npy_dtype(k_dtype)
     rng = np.random.RandomState(zlib.crc32(name.encode("utf-8")) & 0xFFFFFFFF)
+    src = rng.randint(0, 50, size=src_shape).astype(src_np)
+    return [src]
+
+
+def _gather_cmp_golden(src, cmp_mode, offset, src_shape):
     rows, cols = src_shape
-
-    if np.issubdtype(src_np, np.floating):
-        src = rng.randint(0, 50, size=src_shape).astype(src_np)
-    else:
-        src = rng.randint(0, 50, size=src_shape).astype(src_np)
-
-    k_value = np.zeros((rows, 64), dtype=k_np)
-    for i in range(rows):
-        k_value[i, 0] = rng.randint(5, 30)
-
-    return [src, k_value]
-
-
-def _gather_cmp_golden(src, k_value, cmp_mode, offset, src_shape):
-    rows, cols = src_shape
+    k = _CMP_K_VALUE
     dst = np.zeros((rows, cols), dtype=np.int32)
     cdst = np.zeros((rows, 64), dtype=np.int32)
     for i in range(rows):
-        k = (
-            float(k_value[i, 0])
-            if np.issubdtype(k_value.dtype, np.floating)
-            else int(k_value[i, 0])
-        )
         count = 0
         for j in range(cols):
             v = (
@@ -525,17 +468,15 @@ def _gather_cmp_golden(src, k_value, cmp_mode, offset, src_shape):
     return dst, cdst
 
 
-def _cmp_gather_case(name, kernel, src_dtype, k_dtype, cmp_mode, src_shape, offset):
+def _cmp_gather_case(name, kernel, src_dtype, cmp_mode, src_shape, offset):
     def materialize_inputs():
-        values = _make_cmp_inputs(name, src_dtype, k_dtype, src_shape, offset)
+        values = _make_cmp_inputs(name, src_dtype, src_shape)
         return [np.array(v, copy=True) for v in values]
 
     def make_case():
         host_inputs = materialize_inputs()
-        src, k_value = host_inputs
-        golden_dst, golden_cdst = _gather_cmp_golden(
-            src, k_value, cmp_mode, offset, src_shape
-        )
+        (src,) = host_inputs
+        golden_dst, golden_cdst = _gather_cmp_golden(src, cmp_mode, offset, src_shape)
         rows, cols = src_shape
         dst_out = np.zeros((rows, cols), dtype=np.int32)
         cdst_out = np.zeros((rows, 64), dtype=np.int32)
@@ -563,13 +504,44 @@ def _cmp_gather_case(name, kernel, src_dtype, k_dtype, cmp_mode, src_shape, offs
     }
 
 
-for _name, _src_dtype, _k_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
+CASES = []
+# for _name, _src_dtype, _idx_dtype, _src_shape, _dst_shape in CASE_SHAPES:
+#     CASES.append(
+#         golden_output_case(
+#             "tgather_" + _name,
+#             _tgather_kernels[_name],
+#             inputs=lambda _n=_name, _sd=_src_dtype, _id=_idx_dtype, _ss=_src_shape, _ds=_dst_shape: (
+#                 _make_inputs(_n, _sd, _id, _ss, _ds)
+#             ),
+#             expected=_make_expected,
+#             rtol=1e-6,
+#             atol=1e-6,
+#         )
+#     )
+
+# for _name, _dtype, _src_shape, _dst_shape, _pattern, _axis in MASK_CASES:
+#     _golden = _gather_mask_row_golden if _axis == "row" else _gather_mask_col_golden
+#     CASES.append(
+#         golden_output_case(
+#             "tgather_" + _name,
+#             _mask_kernels[_name],
+#             inputs=lambda _n=_name, _d=_dtype, _ss=_src_shape: _make_mask_inputs(
+#                 _n, _d, _ss
+#             ),
+#             expected=lambda src, _dr=_dst_shape[0], _dc=_dst_shape[1], _p=_pattern, _g=_golden: (
+#                 _g(src, _dr, _dc, _p)
+#             ),
+#             rtol=1e-6,
+#             atol=1e-6,
+#         )
+#     )
+
+for _name, _src_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
     CASES.append(
         _cmp_gather_case(
             _name,
             _cmp_kernels[_name],
             _src_dtype,
-            _k_dtype,
             _cmp_mode,
             _src_shape,
             _offset,

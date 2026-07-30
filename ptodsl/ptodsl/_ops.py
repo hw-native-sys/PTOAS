@@ -4001,7 +4001,7 @@ def tgather(
         if mask_pattern is None
         else _tile_mask_pattern_attr(mask_pattern),
         axis=None if axis is None else axis,
-        cmp_mode=None if cmp_mode is None else _normalize_cmp_mode(cmp_mode),
+        cmp_mode=None if cmp_mode is None else _cmp_mode_attr(cmp_mode),
         offset=offset,
     )
 
