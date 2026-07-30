@@ -13,10 +13,24 @@ from ._common import INT_DTYPES
 from ._elementwise import register_scalar_binary
 
 
+_DTYPES = [(dtype, dtype, dtype) for dtype in INT_DTYPES]
+
+
 template_tors = register_scalar_binary(
     op="pto.tors",
     name="template_tors",
     vector_op=pto.vor,
     broadcast_scalar=True,
-    dtypes=[(dtype, dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+template_tors_1d = register_scalar_binary(
+    op="pto.tors",
+    name="template_tors_1d",
+    vector_op=pto.vor,
+    broadcast_scalar=True,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

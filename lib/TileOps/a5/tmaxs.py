@@ -13,9 +13,22 @@ from ._common import same_dtype_signatures
 from ._elementwise import register_scalar_binary
 
 
+_DTYPES = same_dtype_signatures(3)
+
+
 template_tmaxs = register_scalar_binary(
     op="pto.tmaxs",
     name="template_tmaxs",
     vector_op=pto.vmaxs,
-    dtypes=same_dtype_signatures(3),
+    dtypes=_DTYPES,
+)
+
+template_tmaxs_1d = register_scalar_binary(
+    op="pto.tmaxs",
+    name="template_tmaxs_1d",
+    vector_op=pto.vmaxs,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

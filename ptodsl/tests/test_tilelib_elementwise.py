@@ -94,6 +94,72 @@ PRODUCTION_TEMP_BINARY_1D = {
     ),
 }
 
+PRODUCTION_SCALAR_1D = {
+    "pto.tadds": (
+        "template_tadds_1d",
+        "template_tadds",
+        "pto.vadds",
+        "f32",
+        "f32",
+    ),
+    "pto.tands": (
+        "template_tands_1d",
+        "template_tands",
+        "pto.vand",
+        "i8",
+        "i8",
+    ),
+    "pto.tmaxs": (
+        "template_tmaxs_1d",
+        "template_tmaxs",
+        "pto.vmaxs",
+        "f16",
+        "f16",
+    ),
+    "pto.tmins": (
+        "template_tmins_1d",
+        "template_tmins",
+        "pto.vmins",
+        "ui16",
+        "ui16",
+    ),
+    "pto.tmuls": (
+        "template_tmuls_1d",
+        "template_tmuls",
+        "pto.vmuls",
+        "f32",
+        "f32",
+    ),
+    "pto.tors": (
+        "template_tors_1d",
+        "template_tors",
+        "pto.vor",
+        "ui8",
+        "ui8",
+    ),
+    "pto.tshls": (
+        "template_tshls_1d",
+        "template_tshls",
+        "pto.vshls",
+        "ui16",
+        "i16",
+    ),
+    "pto.tshrs": (
+        "template_tshrs_1d",
+        "template_tshrs",
+        "pto.vshrs",
+        "ui32",
+        "i16",
+    ),
+    "pto.tsubs": (
+        "template_tsubs_1d",
+        "template_tsubs",
+        "pto.vsub",
+        "i32",
+        "i32",
+    ),
+}
+
 # Structured abstraction every elementwise template must preserve.
 SHARED_OPS = ["pto.tile_buf_addr", "!pto.ptr<f32, ub>", "scf.for", "iter_args",
               "pto.plt_b32", "pto.vlds", "pto.vsts", "pto.tilelang.instance"]
@@ -249,6 +315,27 @@ def _binary_tmp_specs(
         ),
     )
     return {"src0": data, "src1": data, "tmp": tmp, "dst": data}
+
+
+def _scalar_specs(
+    data_dtype,
+    *,
+    scalar_dtype=None,
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+):
+    tile = TileSpec(
+        shape=shape,
+        valid_shape=valid_shape,
+        dtype=ScalarType(data_dtype),
+        compact_mode=compact_mode,
+    )
+    scalar = ScalarSpec(
+        dtype=ScalarType(scalar_dtype or data_dtype),
+        value=1,
+    )
+    return {"src": tile, "scalar": scalar, "dst": tile}
 
 
 class TileLibElementwiseTest(unittest.TestCase):
@@ -820,6 +907,96 @@ class TileLibElementwiseTest(unittest.TestCase):
             "pto.vsub",
         ):
             self.assertIn(vector_op, mlir)
+
+    def test_production_scalar_ops_register_preferred_1d_and_fallback_2d(self):
+        for op, (
+            name_1d,
+            name_2d,
+            vector_op,
+            data_dtype,
+            scalar_dtype,
+        ) in PRODUCTION_SCALAR_1D.items():
+            with self.subTest(op=op):
+                specs = _scalar_specs(
+                    data_dtype,
+                    scalar_dtype=scalar_dtype,
+                )
+                candidates = legal_candidates(op, "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_1d, name_2d],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+                self.assertEqual(
+                    candidates[0].metadata.dtypes,
+                    candidates[1].metadata.dtypes,
+                )
+
+                for shape in ((4, 64), (4, 65)):
+                    with self.subTest(op=op, shape=shape):
+                        render_specs = _scalar_specs(
+                            data_dtype,
+                            scalar_dtype=scalar_dtype,
+                            shape=shape,
+                        )
+                        mlir = candidates[0].specialize(
+                            **render_specs
+                        ).mlir_text()
+                        self.assertEqual(mlir.count("scf.for"), 1)
+                        self.assertIn(vector_op, mlir)
+                        self.assertNotIn("memref.subview", mlir)
+
+    def test_production_scalar_selection_uses_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        for op, (
+            name_1d,
+            name_2d,
+            _,
+            data_dtype,
+            scalar_dtype,
+        ) in PRODUCTION_SCALAR_1D.items():
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _scalar_specs(
+                        data_dtype,
+                        scalar_dtype=scalar_dtype,
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    selected = select(op, "a5", specs)
+                    self.assertEqual(
+                        selected.name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        selected.metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
+
+    def test_tsubs_shared_traversal_preserves_broadcast_subtraction(self):
+        specs = _scalar_specs("f32")
+        candidates = legal_candidates("pto.tsubs", "a5", specs)
+
+        for candidate, expected_loops in zip(candidates, (1, 2)):
+            with self.subTest(candidate=candidate.name):
+                mlir = candidate.specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), expected_loops)
+                self.assertIn("pto.vbr", mlir)
+                self.assertIn("pto.vsub", mlir)
 
     def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
         specs = {

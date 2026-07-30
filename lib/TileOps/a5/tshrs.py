@@ -13,9 +13,22 @@ from ._common import INT_DTYPES
 from ._elementwise import register_scalar_binary
 
 
+_DTYPES = [(dtype, "i16", dtype) for dtype in INT_DTYPES]
+
+
 template_tshrs = register_scalar_binary(
     op="pto.tshrs",
     name="template_tshrs",
     vector_op=pto.vshrs,
-    dtypes=[(dtype, "i16", dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+template_tshrs_1d = register_scalar_binary(
+    op="pto.tshrs",
+    name="template_tshrs_1d",
+    vector_op=pto.vshrs,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

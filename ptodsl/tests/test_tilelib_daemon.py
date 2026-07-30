@@ -298,7 +298,7 @@ class TileLibDaemonTest(unittest.TestCase):
 
         mlir = self.client.instantiate("a5", "pto.tadds", operands)
 
-        self.assertIn("func.func @template_tadds", mlir)
+        self.assertIn("func.func @template_tadds_1d", mlir)
         self.assertIn("pto.vadds", mlir)
 
     def test_render_passes_context_attributes_into_template_body(self):

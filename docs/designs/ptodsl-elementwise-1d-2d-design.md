@@ -54,9 +54,18 @@ register preferred ID-1 1D candidates. All four tile operands (`src0`, `src1`,
 `tmp`, and `dst`) participate in flattened-traversal legality, including the
 ABI temporary when the current generated body does not access it. This raises
 the Tile-Tile candidate count to 28 and the current scoped candidate count to
-106, completing 1D/2D coverage for all 14 Tile-Tile operations. Other
-operation families, functional execution tests, and performance measurements
-remain subsequent steps.
+106, completing 1D/2D coverage for all 14 Tile-Tile operations.
+
+The ordinary Tile-Scalar operations `tadds`, `tands`, `tmaxs`, `tmins`,
+`tmuls`, `tors`, `tshls`, `tshrs`, and `tsubs` now also preserve their ID-0
+2D candidates and register preferred ID-1 1D candidates. Scalar operands do
+not participate in memory-contiguity checks; the shared rule is applied to
+`src` and `dst`. The shift operations retain their `i16` scalar signatures,
+and `tsubs` now uses the shared registrar while preserving its `vbr` plus
+`vsub` computation. This raises the Tile-Scalar candidate count to 24 and the
+current scoped candidate count to 115. Specialized Tile-Scalar operations,
+other operation families, functional execution tests, and performance
+measurements remain subsequent steps.
 
 ## Goals
 
@@ -185,19 +194,19 @@ is an operation-family decision; it must not be omitted from the predicate.
 
 | Op | Existing candidate(s) and operands | Dtypes | Current form | Provisional 1D classification |
 |---|---|---|---|---|
-| `tadds` | `template_tadds(src, scalar, dst)` | same `N9` | shared 2D | Shared |
-| `tands` | `template_tands(src, scalar, dst)` | same `I6` | shared 2D | Shared |
+| `tadds` | `template_tadds`/`template_tadds_1d(src, scalar, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tands` | `template_tands`/`template_tands_1d(src, scalar, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `tdivs` | `template_tdivs_tile_scalar(src, scalar, dst)`; `template_tdivs_scalar_tile(scalar, src, dst)` | same `F2` | two operand-order-specific, precision-aware 2D candidates | Algorithm-specific |
 | `tfmods` | `template_tfmods(src, scalar, dst)` | same `f32`, `f16`, `i32`, or `i16` | shared scalar remainder 2D | Algorithm-specific |
 | `tlrelu` | `template_tlrelu(src, slope, dst)` | `(f16,f16,f16)`, `(f16,f32,f16)`, `(f32,f32,f32)` | bespoke 2D with scalar coercion | Algorithm-specific |
-| `tmaxs` | `template_tmaxs(src, scalar, dst)` | same `N9` | shared 2D | Shared |
-| `tmins` | `template_tmins(src, scalar, dst)` | same `N9` | shared 2D | Shared |
-| `tmuls` | `template_tmuls(src, scalar, dst)` | same `N9` | shared 2D | Shared |
-| `tors` | `template_tors(src, scalar, dst)` | same `I6` | shared 2D | Shared |
+| `tmaxs` | `template_tmaxs`/`template_tmaxs_1d(src, scalar, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tmins` | `template_tmins`/`template_tmins_1d(src, scalar, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tmuls` | `template_tmuls`/`template_tmuls_1d(src, scalar, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
+| `tors` | `template_tors`/`template_tors_1d(src, scalar, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `trems` | `template_trems(src, scalar, tmp, dst)` | all `f32` or all `f16` | shared scalar remainder 2D with temporary tile | Algorithm-specific |
-| `tshls` | `template_tshls(src, scalar, dst)` | data/dst `I6`; scalar `i16` | shared 2D | Shared |
-| `tshrs` | `template_tshrs(src, scalar, dst)` | data/dst `I6`; scalar `i16` | shared 2D | Shared |
-| `tsubs` | `template_tsubs(src, scalar, dst)` | same `N9` | bespoke tile-minus-scalar 2D | Shared |
+| `tshls` | `template_tshls`/`template_tshls_1d(src, scalar, dst)` | data/dst `I6`; scalar `i16` | shared 2D fallback and preferred shared 1D | Shared |
+| `tshrs` | `template_tshrs`/`template_tshrs_1d(src, scalar, dst)` | data/dst `I6`; scalar `i16` | shared 2D fallback and preferred shared 1D | Shared |
+| `tsubs` | `template_tsubs`/`template_tsubs_1d(src, scalar, dst)` | same `N9` | shared broadcast-scalar 2D fallback and preferred 1D | Shared |
 | `txors` | `template_txors(src, scalar, tmp, dst)` | same `I6` across all operands | shared scalar 2D; current same-shape constraint omits `tmp` | Algorithm-specific |
 
 `tdivs` is the only scoped Tile-Scalar operation with both normal and reverse

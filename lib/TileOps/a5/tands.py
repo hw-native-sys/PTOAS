@@ -13,10 +13,24 @@ from ._common import INT_DTYPES
 from ._elementwise import register_scalar_binary
 
 
+_DTYPES = [(dtype, dtype, dtype) for dtype in INT_DTYPES]
+
+
 template_tands = register_scalar_binary(
     op="pto.tands",
     name="template_tands",
     vector_op=pto.vand,
     broadcast_scalar=True,
-    dtypes=[(dtype, dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+template_tands_1d = register_scalar_binary(
+    op="pto.tands",
+    name="template_tands_1d",
+    vector_op=pto.vand,
+    broadcast_scalar=True,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

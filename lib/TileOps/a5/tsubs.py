@@ -8,36 +8,29 @@
 """PTODSL TileLib template for pto.tsubs."""
 
 from ptodsl import pto
-import ptodsl.tilelib as tilelib
 
 from ._common import same_dtype_signatures
-from ._elementwise import _common_constraints
+from ._elementwise import register_scalar_binary
 
 
-@tilelib.tile_template(
+_DTYPES = same_dtype_signatures(3)
+
+
+template_tsubs = register_scalar_binary(
     op="pto.tsubs",
-    target="a5",
     name="template_tsubs",
-    dtypes=same_dtype_signatures(3),
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    constraints=_common_constraints("src", "dst"),
-    id=0,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("elementwise", "scalar"),
+    vector_op=pto.vsub,
+    broadcast_scalar=True,
+    dtypes=_DTYPES,
 )
-def template_tsubs(src: pto.Tile, scalar, dst: pto.Tile):
-    dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
-    lanes = pto.elements_per_vreg(dtype)
 
-    for row in range(0, valid_rows, 1):
-        remained = valid_cols
-        for col in range(0, valid_cols, lanes):
-            mask, remained = pto.make_mask(dtype, remained)
-            value = pto.vlds(src[row, col:])
-            scalar_value = pto.vbr(scalar)
-            result = pto.vsub(value, scalar_value, mask)
-            pto.vsts(result, dst[row, col:], mask)
+template_tsubs_1d = register_scalar_binary(
+    op="pto.tsubs",
+    name="template_tsubs_1d",
+    vector_op=pto.vsub,
+    broadcast_scalar=True,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

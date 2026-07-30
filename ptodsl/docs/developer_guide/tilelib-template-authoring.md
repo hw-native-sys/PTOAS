@@ -247,6 +247,14 @@ The ordinary Tile-Tile operations `tadd`, `tand`, `tmax`, `tmin`, `tmul`,
 row-wise body, as `tmin` did, keep the ordinary computation as the vector
 callback and let the shared registrar own both traversal forms.
 
+The ordinary Tile-Scalar operations use `register_scalar_binary` with the same
+ID-0 fallback and preferred ID-1 pattern. Flattened legality names only the
+traversed `src` and `dst` tiles; a scalar operand has no layout or continuity
+requirement. Preserve instruction-specific scalar forms: bitwise and
+tile-minus-scalar operations request vector broadcast, while scalar shift
+operations keep their `i16` scalar dtype. `tsubs` is expressed as broadcast
+plus `vsub` through the shared registrar rather than owning separate loops.
+
 For bespoke computation, use the lower-level `emit_elementwise_1d` and
 `emit_elementwise_2d` chunk callbacks or the family emitters. The flattened
 form supplies one linear element offset; do not convert it back into row and
