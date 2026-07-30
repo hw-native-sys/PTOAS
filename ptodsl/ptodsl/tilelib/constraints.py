@@ -52,11 +52,12 @@ class CandidateLegality:
 
 @dataclass(frozen=True)
 class _ConfigView:
-    """The ``{name}_config`` object a constraint sees (``.b_layout`` / ``.s_layout`` strings,
-    which compare equal to the BLayout/SLayout str-enums)."""
+    """The ``{name}_config`` object exposed to constraint predicates."""
 
     b_layout: str
     s_layout: str
+    s_fractal_size: int | None
+    compact_mode: str | int | None
 
 
 def build_context(tile_specs: dict, target: str, op: str) -> dict:
@@ -68,9 +69,12 @@ def build_context(tile_specs: dict, target: str, op: str) -> dict:
     operand_rows = []
     operand_cols = []
     operand_sizes = []
+    operand_valid_rows = []
     operand_valid_cols = []
     operand_b_layouts = []
     operand_s_layouts = []
+    operand_s_fractal_sizes = []
+    operand_compact_modes = []
     for name, spec in tile_specs.items():
         dtype = spec.dtype.name
         operand_dtypes.append(dtype)
@@ -122,33 +126,53 @@ def build_context(tile_specs: dict, target: str, op: str) -> dict:
         memory_space = getattr(spec, "memory_space", "ub")
         b_layout = getattr(spec, "b_layout", "row_major")
         s_layout = getattr(spec, "s_layout", "none_box")
+        s_fractal_size = getattr(spec, "s_fractal_size", None)
+        compact_mode = getattr(spec, "compact_mode", None)
         operand_memory_spaces.append(memory_space)
         operand_sizes.append(_shape_size(shape))
         operand_b_layouts.append(b_layout)
         operand_s_layouts.append(s_layout)
+        operand_s_fractal_sizes.append(s_fractal_size)
+        operand_compact_modes.append(compact_mode)
         context[f"{name}_kind"] = "tile"
         context[f"{name}_shape"] = shape
         context[f"{name}_valid_shape"] = valid
         context[f"{name}_memory_space"] = memory_space
+        context[f"{name}_s_fractal_size"] = s_fractal_size
+        context[f"{name}_compact_mode"] = compact_mode
         context[f"{name}_config"] = _ConfigView(
             b_layout=b_layout,
             s_layout=s_layout,
+            s_fractal_size=s_fractal_size,
+            compact_mode=compact_mode,
         )
         if len(shape) == 2:
             context[f"{name}_rows"], context[f"{name}_cols"] = shape
-            context[f"{name}_valid_rows"], context[f"{name}_valid_cols"] = valid
+            if len(valid) == 2:
+                (
+                    context[f"{name}_valid_rows"],
+                    context[f"{name}_valid_cols"],
+                ) = valid
             operand_rows.append(shape[0])
             operand_cols.append(shape[1])
-            operand_valid_cols.append(valid[1])
+            if len(valid) == 2:
+                operand_valid_rows.append(valid[0])
+                operand_valid_cols.append(valid[1])
+            else:
+                operand_valid_rows.append(None)
+                operand_valid_cols.append(None)
     context["operand_dtypes"] = tuple(operand_dtypes)
     context["operand_kinds"] = tuple(operand_kinds)
     context["operand_memory_spaces"] = tuple(operand_memory_spaces)
     context["operand_rows"] = tuple(operand_rows)
     context["operand_cols"] = tuple(operand_cols)
     context["operand_sizes"] = tuple(operand_sizes)
+    context["operand_valid_rows"] = tuple(operand_valid_rows)
     context["operand_valid_cols"] = tuple(operand_valid_cols)
     context["operand_b_layouts"] = tuple(operand_b_layouts)
     context["operand_s_layouts"] = tuple(operand_s_layouts)
+    context["operand_s_fractal_sizes"] = tuple(operand_s_fractal_sizes)
+    context["operand_compact_modes"] = tuple(operand_compact_modes)
     return context
 
 
@@ -304,11 +328,100 @@ def require_contiguous(required=True):
     def _require_contiguous(operand_rows, operand_cols, operand_valid_cols, **_):
         if not required:
             return True
-        full_cols = all(valid == cols for valid, cols in zip(operand_valid_cols, operand_cols))
+        if (
+            len(operand_valid_cols) != len(operand_cols)
+            or None in operand_valid_cols
+        ):
+            return False
+        full_cols = all(
+            valid == cols
+            for valid, cols in zip(operand_valid_cols, operand_cols)
+        )
         single_row = all(rows == 1 for rows in operand_rows)
         return full_cols or single_row
 
     return _require_contiguous
+
+
+def require_elementwise_1d(*operand_names, memory_spaces=("ub", "vec")):
+    """Require ordinary element-wise operands to describe one flat range.
+
+    The rule is intentionally limited to rank-2 local tiles with a row-major,
+    unboxed, gap-free physical layout. All named tiles must have the same
+    static logical valid shape. A range is flattenable when every tile uses
+    its full physical column axis, or when the logical range occupies only the
+    first row. Predicate and conversion representations need family-specific
+    constraints in addition to, or instead of, this ordinary rule.
+    """
+
+    allowed_memory_spaces = frozenset(memory_spaces)
+
+    def _require_elementwise_1d(**context):
+        if not operand_names:
+            return False
+
+        shapes = []
+        valid_shapes = []
+        for name in operand_names:
+            if context.get(f"{name}_kind") != "tile":
+                return False
+
+            shape = context.get(f"{name}_shape")
+            valid_shape = context.get(f"{name}_valid_shape")
+            if not _is_static_rank2_shape(shape) or not _is_static_rank2_shape(
+                valid_shape
+            ):
+                return False
+            if any(
+                valid > physical
+                for valid, physical in zip(valid_shape, shape)
+            ):
+                return False
+            if context.get(f"{name}_memory_space") not in allowed_memory_spaces:
+                return False
+
+            config = context.get(f"{name}_config")
+            if (
+                config is None
+                or _enum_value(config.b_layout) != BLayout.ROW_MAJOR.value
+                or _enum_value(config.s_layout) != SLayout.NONE_BOX.value
+                or not _has_gap_free_row_stride(config.compact_mode)
+            ):
+                return False
+
+            shapes.append(shape)
+            valid_shapes.append(valid_shape)
+
+        if any(valid_shape != valid_shapes[0] for valid_shape in valid_shapes[1:]):
+            return False
+
+        full_columns = all(
+            valid_shape[1] == shape[1]
+            for shape, valid_shape in zip(shapes, valid_shapes)
+        )
+        single_logical_row = valid_shapes[0][0] == 1
+        return full_columns or single_logical_row
+
+    return _require_elementwise_1d
+
+
+def _is_static_rank2_shape(shape) -> bool:
+    return (
+        isinstance(shape, tuple)
+        and len(shape) == 2
+        and all(isinstance(dim, int) and dim > 0 for dim in shape)
+    )
+
+
+def _has_gap_free_row_stride(compact_mode) -> bool:
+    return _enum_value(compact_mode) in {
+        0,
+        1,
+        "null",
+        "normal",
+        "Null",
+        "Normal",
+    }
 
 
 def passes(predicates, context: dict) -> bool:
@@ -353,6 +466,7 @@ __all__ = [
     "evaluate_candidate",
     "passes",
     "require_contiguous",
+    "require_elementwise_1d",
     "require_same_valid_shape",
     "require_valid_rows",
 ]

@@ -118,7 +118,7 @@ from MLIR. The JSON shape sent to the Python service is deliberately close to
 
 | Operand kind | Required metadata |
 |---|---|
-| tile | dtype, shape, valid shape, memory space, block layout, sub-layout, fractal size, pad value |
+| tile | dtype, shape, valid shape, memory space, block layout, sub-layout, fractal size, pad value, compact mode |
 | view | dtype, shape, strides when known, memory space, optional layout |
 | vector | dtype and vector shape |
 | scalar | dtype and static integer value when recoverable |
@@ -201,7 +201,7 @@ must include every input that can change the rendered helper body:
 - op name
 - target architecture
 - tile operand dtype, shape, valid shape, memory space, layouts, fractal size,
-  and pad value
+  pad value, and compact mode
 - view operand dtype, shape, strides, memory space, and layout
 - vector operand dtype and shape
 - scalar operand dtype and static value when known

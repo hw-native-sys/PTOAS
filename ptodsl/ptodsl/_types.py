@@ -592,7 +592,8 @@ def tile_buf_type(shape, dtype, valid_shape=None, *,
                   address_space: str = "ub",
                   slayout: str = "NoneBox",
                   fractal_size: int = 512,
-                  pad: str = "Null") -> Type:
+                  pad: str = "Null",
+                  compact_mode: str | int = "Null") -> Type:
     """
     Construct a ``!pto.tile_buf<…>`` type via the Python bindings.
 
@@ -615,6 +616,7 @@ def tile_buf_type(shape, dtype, valid_shape=None, *,
         _pto.SLayoutAttr.get(getattr(_pto.SLayout, slayout)),
         fractal_size,
         _pto.PadValueAttr.get(getattr(_pto.PadValue, pad)),
+        compact_mode=_compact_mode_token(compact_mode),
     )
     if valid_shape is None and cfg is None:
         return _pto.TileBufType.get(shape, elem, space_attr)
@@ -623,6 +625,24 @@ def tile_buf_type(shape, dtype, valid_shape=None, *,
     if cfg is None:
         return _pto.TileBufType.get(shape, elem, space_attr, valid_shape=valid_shape)
     return _pto.TileBufType.get(shape, elem, space_attr, valid_shape=valid_shape, config=cfg)
+
+
+def _compact_mode_token(value: str | int):
+    if isinstance(value, int):
+        return value
+    aliases = {
+        "null": "Null",
+        "normal": "Normal",
+        "row_plus_one": "RowPlusOne",
+        "Null": "Null",
+        "Normal": "Normal",
+        "RowPlusOne": "RowPlusOne",
+    }
+    token = aliases.get(str(value), str(value))
+    try:
+        return getattr(_pto.CompactMode, token)
+    except AttributeError as exc:
+        raise ValueError(f"Unknown compact_mode {value!r}") from exc
 
 
 def tensor_view_type(rank: int, elem) -> Type:

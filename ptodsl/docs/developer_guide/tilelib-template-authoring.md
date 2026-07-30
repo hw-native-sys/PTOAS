@@ -66,8 +66,8 @@ errors are faster to read than opaque constraint failures.
 
 Template parameters receive concrete specs built from MLIR operands:
 
-- `TileSpec`: rank-2 tile shape, dtype, memory space, valid shape, layouts, and
-  pad value.
+- `TileSpec`: rank-2 tile shape, dtype, memory space, valid shape, layouts,
+  fractal size, pad value, and compact mode.
 - `ViewSpec`: view shape, dtype, memory space, optional strides, and optional
   layout.
 - `ScalarSpec`: scalar dtype plus static integer value when known.
@@ -94,6 +94,12 @@ ask for values such as:
 Keep predicates small and named by the rule they enforce. A good predicate
 answers one question, such as "is this a row-major vec tile" or "does this
 view have a static stride".
+
+Ordinary element-wise 1D candidates should use
+`require_elementwise_1d(*operand_names)` and explicitly name every traversed
+tile, including temporary operands. It proves a common static logical range on
+gap-free row-major/none-box local storage. Predicate-mask and dtype-width-
+changing conversion families need additional representation-specific rules.
 
 When porting a legacy TileLangDSL version, first write down which rule made the
 legacy version legal. Then encode that rule as metadata or a predicate. Avoid

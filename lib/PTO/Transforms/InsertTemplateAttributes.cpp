@@ -568,12 +568,14 @@ static void appendTileOperandSpecJson(std::string &json,
   pto::SLayout sLayout = pto::SLayout::NoneBox;
   int64_t fractalSize = 0;
   uint64_t padValue = 0;
+  int32_t compactMode = static_cast<int32_t>(pto::CompactMode::Null);
   if (auto config = tileType.getConfigAttr()) {
     bLayout = config.getBLayout().getValue();
     sLayout = config.getSLayout().getValue();
     if (config.getSFractalSize())
       fractalSize = config.getSFractalSize().getInt();
     padValue = static_cast<uint64_t>(config.getPad().getValue());
+    compactMode = static_cast<int32_t>(config.getCompactMode().getValue());
   }
 
   json += "\",\"config\":{\"b_layout\":\"";
@@ -584,7 +586,9 @@ static void appendTileOperandSpecJson(std::string &json,
   json += std::to_string(fractalSize);
   json += ",\"pad_value\":\"0x";
   json += llvm::utohexstr(padValue, /*LowerCase=*/false);
-  json += "\"}}";
+  json += "\",\"compact_mode\":";
+  json += std::to_string(compactMode);
+  json += "}}";
 }
 
 static void appendViewOperandSpecJson(std::string &json, Value operand,

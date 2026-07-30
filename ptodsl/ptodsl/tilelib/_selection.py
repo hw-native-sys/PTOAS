@@ -101,7 +101,9 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
             valid_shape=tuple(valid_shape) if valid_shape is not None else None,
             b_layout=config.get("b_layout", "row_major"),
             s_layout=config.get("s_layout", "none_box"),
+            s_fractal_size=config.get("s_fractal_size", 512),
             pad_value=spec.get("pad_value", config.get("pad_value", "Null")),
+            compact_mode=config.get("compact_mode", "null"),
         )
     return specs
 

@@ -14,7 +14,11 @@ tcolmax is legal only for row-major / none-box operands with a 1-row output
 import unittest
 
 from ptodsl.tilelib import ScalarType, TileSpec, VectorSpec, ViewSpec, select
-from ptodsl.tilelib.constraints import build_context
+from ptodsl.tilelib.constraints import (
+    build_context,
+    passes,
+    require_elementwise_1d,
+)
 from ptodsl.tilelib.registry import NoMatchingTemplate
 
 F32 = ScalarType("f32")
@@ -25,6 +29,31 @@ def _specs(*, dst_valid=(1, 64), dst_blayout="row_major", dst_slayout="none_box"
     dst = TileSpec(shape=(8, 64), dtype=F32, valid_shape=dst_valid,
                    b_layout=dst_blayout, s_layout=dst_slayout)
     return {"src": src, "dst": dst}
+
+
+def _tile(
+    *,
+    shape=(8, 64),
+    valid_shape=None,
+    memory_space="ub",
+    b_layout="row_major",
+    s_layout="none_box",
+    compact_mode="null",
+):
+    return TileSpec(
+        shape=shape,
+        dtype=F32,
+        valid_shape=valid_shape if valid_shape is not None else shape,
+        memory_space=memory_space,
+        b_layout=b_layout,
+        s_layout=s_layout,
+        compact_mode=compact_mode,
+    )
+
+
+def _ordinary_elementwise_1d(specs, *operand_names):
+    context = build_context(specs, "a5", "pto.example")
+    return passes((require_elementwise_1d(*operand_names),), context)
 
 
 class TileLibConstraintTest(unittest.TestCase):
@@ -75,6 +104,108 @@ class TileLibConstraintTest(unittest.TestCase):
         self.assertEqual(context["src_layout"], "ND")
         self.assertEqual(context["aux_shape"], (4,))
         self.assertEqual(context["aux_size"], 4)
+
+    def test_elementwise_1d_accepts_contiguous_multi_row_tiles(self):
+        specs = {
+            "src0": _tile(),
+            "src1": _tile(memory_space="vec"),
+            "dst": _tile(),
+        }
+
+        self.assertTrue(
+            _ordinary_elementwise_1d(specs, "src0", "src1", "dst")
+        )
+
+    def test_elementwise_1d_accepts_a_contiguous_single_logical_row(self):
+        specs = {
+            "src": _tile(valid_shape=(1, 31)),
+            "dst": _tile(valid_shape=(1, 31)),
+        }
+
+        self.assertTrue(_ordinary_elementwise_1d(specs, "src", "dst"))
+
+    def test_elementwise_1d_rejects_partial_columns_across_rows(self):
+        specs = {
+            "src": _tile(valid_shape=(4, 63)),
+            "dst": _tile(valid_shape=(4, 63)),
+        }
+
+        self.assertFalse(_ordinary_elementwise_1d(specs, "src", "dst"))
+
+    def test_elementwise_1d_rejects_mismatched_logical_ranges(self):
+        specs = {
+            "src": _tile(valid_shape=(8, 64)),
+            "dst": _tile(valid_shape=(7, 64)),
+        }
+
+        self.assertFalse(_ordinary_elementwise_1d(specs, "src", "dst"))
+
+    def test_elementwise_1d_rejects_unknown_or_unsupported_metadata(self):
+        cases = {
+            "dynamic valid shape": {
+                "src": _tile(valid_shape=(None, 64)),
+                "dst": _tile(valid_shape=(None, 64)),
+            },
+            "non-local memory": {
+                "src": _tile(memory_space="gm"),
+                "dst": _tile(),
+            },
+            "column-major block layout": {
+                "src": _tile(b_layout="col_major"),
+                "dst": _tile(),
+            },
+            "boxed sub-layout": {
+                "src": _tile(s_layout="row_major"),
+                "dst": _tile(),
+            },
+            "stride gap": {
+                "src": _tile(compact_mode=2),
+                "dst": _tile(),
+            },
+            "unknown compact mode": {
+                "src": _tile(compact_mode=None),
+                "dst": _tile(),
+            },
+        }
+
+        for label, specs in cases.items():
+            with self.subTest(label=label):
+                self.assertFalse(
+                    _ordinary_elementwise_1d(specs, "src", "dst")
+                )
+
+    def test_elementwise_1d_includes_temporary_tiles(self):
+        specs = {
+            "src": _tile(),
+            "tmp": _tile(shape=(8, 65), valid_shape=(8, 64)),
+            "dst": _tile(),
+        }
+
+        self.assertTrue(_ordinary_elementwise_1d(specs, "src", "dst"))
+        self.assertFalse(
+            _ordinary_elementwise_1d(specs, "src", "tmp", "dst")
+        )
+
+    def test_context_carries_complete_tile_layout_metadata(self):
+        context = build_context(
+            {
+                "src": TileSpec(
+                    shape=(8, 64),
+                    dtype=F32,
+                    s_fractal_size=32,
+                    compact_mode=1,
+                )
+            },
+            "a5",
+            "pto.example",
+        )
+
+        self.assertEqual(context["src_s_fractal_size"], 32)
+        self.assertEqual(context["src_compact_mode"], 1)
+        self.assertEqual(context["src_config"].s_fractal_size, 32)
+        self.assertEqual(context["src_config"].compact_mode, 1)
+        self.assertEqual(context["operand_s_fractal_sizes"], (32,))
+        self.assertEqual(context["operand_compact_modes"], (1,))
 
 
 if __name__ == "__main__":

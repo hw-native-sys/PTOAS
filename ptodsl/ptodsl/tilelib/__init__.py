@@ -25,6 +25,7 @@ from .constraints import (
     check_s_layout,
     check_type,
     require_contiguous,
+    require_elementwise_1d,
     require_same_valid_shape,
     require_valid_rows,
 )
@@ -85,6 +86,7 @@ __all__ = [
     "check_layout",
     "check_s_layout",
     "require_contiguous",
+    "require_elementwise_1d",
     "require_same_valid_shape",
     "require_valid_rows",
     "f32",

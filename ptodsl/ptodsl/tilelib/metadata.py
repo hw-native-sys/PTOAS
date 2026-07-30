@@ -118,8 +118,9 @@ def _scalar_type_token(dtype: ScalarType) -> str:
 class TileSpec:
     """Concrete specialization of one tile operand.
 
-    ``valid_shape``/``b_layout``/``s_layout``/``memory_space`` are carried for both
-    constraint evaluation (selection) and the rendered entry ``tile_buf`` type.
+    Shape, valid shape, memory space, and the complete tile configuration are
+    carried for both constraint evaluation (selection) and the rendered entry
+    ``tile_buf`` type.
     """
 
     shape: tuple
@@ -128,7 +129,9 @@ class TileSpec:
     valid_shape: tuple | None = None
     b_layout: str = "row_major"
     s_layout: str = "none_box"
+    s_fractal_size: int = 512
     pad_value: str = "Null"
+    compact_mode: str | int = "null"
 
     def __post_init__(self):
         if len(self.shape) != 2:
@@ -146,8 +149,9 @@ class TileSpec:
             blayout=_layout_token(self.b_layout),
             address_space=self.memory_space,
             slayout=_layout_token(self.s_layout),
-            fractal_size=512,
+            fractal_size=self.s_fractal_size,
             pad=_pad_token(self.pad_value),
+            compact_mode=self.compact_mode,
         )
 
 

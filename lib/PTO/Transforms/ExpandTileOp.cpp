@@ -103,6 +103,7 @@ struct OperandTypeInfo {
   int32_t slayout = 0;
   int32_t fractal = 0;
   uint64_t pad = 0;
+  int32_t compact = 0;
 
   // --- View-only (MemRefType) — for JSON / constraint checking only ---
   SmallVector<int64_t> viewShape;
@@ -125,7 +126,8 @@ struct OperandTypeInfo {
              tileValidShape == rhs.tileValidShape &&
              tileMemorySpace == rhs.tileMemorySpace &&
              blayout == rhs.blayout && slayout == rhs.slayout &&
-             fractal == rhs.fractal && pad == rhs.pad;
+             fractal == rhs.fractal && pad == rhs.pad &&
+             compact == rhs.compact;
     if (kind == OperandKind::Vector)
       return vectorShape == rhs.vectorShape;
     if (kind == OperandKind::Scalar)
@@ -163,7 +165,7 @@ struct SpecKeyInfo : public llvm::DenseMapInfo<SpecKey> {
       h = llvm::hash_combine(h, static_cast<int>(op.kind), op.dtype);
       if (op.kind == OperandKind::Tile) {
         h = llvm::hash_combine(h, op.tileMemorySpace, op.blayout,
-                               op.slayout, op.fractal, op.pad);
+                               op.slayout, op.fractal, op.pad, op.compact);
         for (int64_t d : op.tileShape)
           h = llvm::hash_combine(h, d);
         for (int64_t d : op.tileValidShape)
@@ -694,6 +696,8 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
                          ? static_cast<int32_t>(config.getSFractalSize().getInt())
                          : 0;
       info.pad = static_cast<uint64_t>(config.getPad().getValue());
+      info.compact =
+          static_cast<int32_t>(config.getCompactMode().getValue());
     }
     return info;
   }
@@ -855,7 +859,9 @@ static std::string buildOperandSpecsJson(const SpecKey &key) {
       json += std::to_string(op.fractal);
       json += ",\"pad_value\":\"0x";
       json += llvm::utohexstr(op.pad, /*LowerCase=*/false);
-      json += "\"}}";
+      json += "\",\"compact_mode\":";
+      json += std::to_string(op.compact);
+      json += "}}";
       continue;
     }
 
@@ -926,6 +932,7 @@ static std::string buildUniqueFunctionBaseName(const SpecKey &key) {
       uniqueName += "_sl" + std::to_string(op.slayout);
       uniqueName += "_fr" + std::to_string(op.fractal);
       uniqueName += "_pd" + llvm::utohexstr(op.pad, /*LowerCase=*/false);
+      uniqueName += "_cm" + std::to_string(op.compact);
     } else if (op.kind == OperandKind::View) {
       uniqueName += "_ms_" + op.viewMemorySpace;
       uniqueName += "_shape";
