@@ -1,0 +1,187 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Specialized Tile-Tile algorithms stay in their own modules while using the
+// shared traversal forms. High-precision division remains specialized by
+// precisionType, and fmod retains its remainder instruction sequence.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
+
+// META-LABEL: func.func @TDIV_HIGH_1D
+// META: pto.tdiv
+// META-SAME: candidates = [{
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tdiv_1d"
+// META-SAME: }, {
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tdiv"
+
+// META-LABEL: func.func @TDIV_HIGH_2D
+// META: pto.tdiv
+// META-SAME: candidates = [{
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tdiv"
+// META-NOT: name = "template_tdiv_1d"
+
+// META-LABEL: func.func @TFMOD_1D
+// META: pto.tfmod
+// META-SAME: candidates = [{
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tfmod_1d"
+// META-SAME: }, {
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tfmod"
+
+// META-LABEL: func.func @TFMOD_2D
+// META: pto.tfmod
+// META-SAME: candidates = [{
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tfmod"
+// META-NOT: name = "template_tfmod_1d"
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tdiv_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vdiv
+// SELECT: pto.vbitcast
+// SELECT: pto.vcmp
+// SELECT: pto.vsel
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tdiv(
+// SELECT: scf.for
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vdiv
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tfmod_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vdiv
+// SELECT: pto.vtrc
+// SELECT: pto.vmul
+// SELECT: pto.vsub
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tfmod(
+// SELECT: scf.for
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vdiv
+// SELECT: pto.vtrc
+// SELECT: pto.vmul
+// SELECT: pto.vsub
+// SELECT: return
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TDIV_HIGH_1D() {
+    %lhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tdiv ins(
+      %lhs, %rhs
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {precisionType = #pto<div_precision high_precision>}
+    return
+  }
+
+  func.func @TDIV_HIGH_2D() {
+    %lhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tdiv ins(
+      %lhs, %rhs
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {precisionType = #pto<div_precision high_precision>}
+    return
+  }
+
+  func.func @TFMOD_1D() {
+    %lhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tfmod ins(
+      %lhs, %rhs
+        : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TFMOD_2D() {
+    %lhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rhs = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tfmod ins(
+      %lhs, %rhs
+        : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=64, v_row=4, v_col=63,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=64, v_row=4, v_col=63,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=64, v_row=4, v_col=63,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

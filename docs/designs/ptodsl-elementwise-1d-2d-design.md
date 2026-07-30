@@ -41,7 +41,13 @@ The ordinary Tile-Tile operations `tadd`, `tand`, `tmax`, `tmin`, `tmul`,
 and preserve their ID-0 2D fallbacks. `tmin` now uses the same shared binary
 registrar instead of duplicating its row-wise loop. This raises the current
 Tile-Tile candidate count to 23 and the current scoped candidate count to 101.
-The specialized Tile-Tile operations, other operation families, functional
+
+The non-temporary specialized Tile-Tile operations are also migrated. `tdiv`
+keeps its default and IEEE high-precision algorithms in `tdiv.py`, while
+`tfmod` keeps its dtype-sensitive computation in the remainder family module;
+both use shared binary traversal emitters. This raises the current Tile-Tile
+candidate count to 25 and the current scoped candidate count to 103.
+Temporary-operand Tile-Tile operations, other operation families, functional
 execution tests, and performance measurements remain subsequent steps.
 
 ## Goals
@@ -146,8 +152,8 @@ parity is approved as separate work.
 |---|---|---|---|---|
 | `tadd` | `template_tadd`/`template_tadd_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
 | `tand` | `template_tand`/`template_tand_1d(src0, src1, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
-| `tdiv` | `template_tdiv(src0, src1, dst)` | same `F2` | bespoke precision-aware 2D | Algorithm-specific |
-| `tfmod` | `template_tfmod(src0, src1, dst)` | same `f32`, `f16`, `i16`, or `ui16` | shared remainder 2D | Algorithm-specific |
+| `tdiv` | `template_tdiv`/`template_tdiv_1d(src0, src1, dst)` | same `F2` | operation-local precision-aware computation with shared 2D/1D traversal | Algorithm-specific |
+| `tfmod` | `template_tfmod`/`template_tfmod_1d(src0, src1, dst)` | same `f32`, `f16`, `i16`, or `ui16` | remainder-family 2D fallback and preferred 1D | Algorithm-specific |
 | `tmax` | `template_tmax`/`template_tmax_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
 | `tmin` | `template_tmin`/`template_tmin_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
 | `tmul` | `template_tmul`/`template_tmul_1d(src0, src1, dst)` | same `N9` | shared 2D fallback and preferred shared 1D | Shared |
@@ -291,11 +297,11 @@ The ordinary implementations are concentrated in:
 `_elementwise.py` registers unary, Tile-Tile, Tile-Scalar, and scalar-fill
 templates. Unmigrated operation call sites retain the default 2D form, which
 restarts `remained = valid_cols` for every row and then walks columns by vector
-lane count. Migrated unary and ordinary Tile-Tile operations add an explicit 1D
-registration next to that unchanged fallback. Specialized unary algorithms
-remain outside `_elementwise.py` and call the lower-level unary traversal
-emitters. `_remainder.py` uses the same row-wise traversal around a more
-complex vector computation.
+lane count. Migrated unary and Tile-Tile operations add an explicit 1D
+registration next to that unchanged fallback. Specialized algorithms remain
+outside `_elementwise.py` and call its lower-level family traversal emitters.
+`_remainder.py` owns remainder/fmod computation and exposes traversal-aware
+binary registration without moving that computation into the ordinary module.
 
 The reusable ordinary traversal foundation consists of:
 

@@ -550,6 +550,135 @@ class TileLibElementwiseTest(unittest.TestCase):
                         1 if expect_1d else 2,
                     )
 
+    def test_tdiv_precision_modes_share_ranked_traversal_candidates(self):
+        specs = _binary_specs("f32")
+        cases = (
+            ("default", ("pto.vdiv",)),
+            (
+                "high_precision",
+                (
+                    "pto.vdiv",
+                    "pto.vbitcast",
+                    "pto.vcmp",
+                    "pto.vsel",
+                ),
+            ),
+        )
+        for precision_type, vector_ops in cases:
+            with self.subTest(precision_type=precision_type):
+                context_attrs = {"precisionType": precision_type}
+                candidates = legal_candidates(
+                    "pto.tdiv",
+                    "a5",
+                    specs,
+                    context_attrs=context_attrs,
+                )
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    ["template_tdiv_1d", "template_tdiv"],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+
+                mlir = candidates[0].specialize(
+                    context_attrs=context_attrs,
+                    **specs,
+                ).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertNotIn("memref.subview", mlir)
+                for vector_op in vector_ops:
+                    self.assertIn(vector_op, mlir)
+
+    def test_tfmod_1d_preserves_dtype_specific_remainder_computation(self):
+        cases = (
+            ("f32", True),
+            ("f16", True),
+            ("i16", False),
+            ("ui16", False),
+        )
+        for dtype_name, expects_truncation in cases:
+            with self.subTest(dtype=dtype_name):
+                specs = _binary_specs(dtype_name)
+                candidates = legal_candidates("pto.tfmod", "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    ["template_tfmod_1d", "template_tfmod"],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+
+                mlir = candidates[0].specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertNotIn("memref.subview", mlir)
+                for vector_op in ("pto.vdiv", "pto.vmul", "pto.vsub"):
+                    self.assertIn(vector_op, mlir)
+                if expects_truncation:
+                    self.assertIn("pto.vtrc", mlir)
+                else:
+                    self.assertNotIn("pto.vtrc", mlir)
+
+    def test_specialized_binary_selection_uses_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        operations = (
+            ("pto.tdiv", "template_tdiv_1d", "template_tdiv"),
+            ("pto.tfmod", "template_tfmod_1d", "template_tfmod"),
+        )
+        for op, name_1d, name_2d in operations:
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _binary_specs(
+                        "f32",
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    selected = select(op, "a5", specs)
+                    self.assertEqual(
+                        selected.name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        selected.metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
+
+    def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
+        specs = {
+            "src0": TileSpec(shape=(4, 65), dtype=ScalarType("f32")),
+            "src1": TileSpec(
+                shape=(4, 65),
+                valid_shape=(3, 65),
+                dtype=ScalarType("f32"),
+            ),
+            "dst": TileSpec(shape=(4, 65), dtype=ScalarType("f32")),
+        }
+
+        candidates = legal_candidates("pto.tdiv", "a5", specs)
+        self.assertEqual(
+            [candidate.name for candidate in candidates],
+            ["template_tdiv"],
+        )
+        self.assertEqual(candidates[0].metadata.loop_depth, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

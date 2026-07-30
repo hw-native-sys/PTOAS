@@ -58,7 +58,7 @@ CATALOG = {
     ),
     "pto.tlrelu": ("template_tlrelu", "pto.vlrelu", ("src", "slope", "dst"), "f32"),
     "pto.tlog": ("template_tlog_1d", "pto.vln", ("src", "dst"), "f32"),
-    "pto.tdiv": ("template_tdiv", "pto.vdiv", ("src0", "src1", "dst"), "f32"),
+    "pto.tdiv": ("template_tdiv_1d", "pto.vdiv", ("src0", "src1", "dst"), "f32"),
     "pto.tdivs": (
         "template_tdivs_tile_scalar",
         "pto.vdiv",
@@ -72,7 +72,7 @@ CATALOG = {
     # (the i8 path is exercised by test_tdequant_dtype_versions_render).
     "pto.tdequant": ("template_tdequant_i16", "pto.vmul", ("src", "scale", "offset", "dst"), "i16"),
     "pto.texp": ("template_texp_1d", "pto.vexp", ("src", "dst"), "f32"),
-    "pto.tfmod": ("template_tfmod", "pto.vtrc", ("src0", "src1", "dst"), "f32"),
+    "pto.tfmod": ("template_tfmod_1d", "pto.vtrc", ("src0", "src1", "dst"), "f32"),
     "pto.tfmods": ("template_tfmods", "pto.vtrc", ("src", "scalar", "dst"), "f32"),
     "pto.tfillpad": ("template_tfillpad", "pto.vsts", ("src", "dst"), "f32"),
     "pto.tfillpad_expand": ("template_tfillpad_expand", "pto.vsts", ("src", "dst"), "f32"),
@@ -299,6 +299,8 @@ OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {
     "pto.tshl",
     "pto.tshr",
     "pto.tsub",
+    "pto.tdiv",
+    "pto.tfmod",
 }
 OPS_WITHOUT_LOOP = {"pto.tmrgsort"}
 OPS_WITHOUT_LOOP = OPS_WITHOUT_LOOP | {"pto.tstore_fp", "pto.textract_fp"}

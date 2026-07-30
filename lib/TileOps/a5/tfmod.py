@@ -16,3 +16,14 @@ template_tfmod = register_binary_remainder(
     dtypes=FMOD_DTYPES,
     round_mode="Z",
 )
+
+
+template_tfmod_1d = register_binary_remainder(
+    op="pto.tfmod",
+    name="template_tfmod_1d",
+    dtypes=FMOD_DTYPES,
+    round_mode="Z",
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

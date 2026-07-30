@@ -10,41 +10,74 @@
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
+from ._elementwise import emit_binary_1d, emit_binary_2d
 from .div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
 
 
-@tilelib.tile_template(
-    op="pto.tdiv",
-    target="a5",
-    name="template_tdiv",
-    dtypes=[("f16", "f16", "f16"), ("f32", "f32", "f32")],
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    layouts=["row_major"],
-    memory_spaces=["ub"],
-    priority=0,
-    id=0,
-    loop_depth=2,
-    is_post_update=False,
-)
-def template_tdiv(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
+_DTYPES = [("f16", "f16", "f16"), ("f32", "f32", "f32")]
+
+
+def _emit_tdiv(src0, src1, dst, traversal):
+    """Emit the operation-specific default or high-precision division."""
+
     dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
-    lanes = pto.elements_per_vreg(dtype)
     precision_type = pto.get_op_attr("precisionType", "default")
 
-    for row in range(0, valid_rows, 1):
-        remained = valid_cols
-        for col in range(0, valid_cols, lanes):
-            mask, remained = pto.make_mask(dtype, remained)
-            lhs = pto.vlds(src0[row, col:])
-            rhs = pto.vlds(src1[row, col:])
-            if precision_type == "high_precision":
-                if str(dtype) == "f32":
-                    divided = _div_ieee754_f32_impl(lhs, rhs, mask)
-                else:
-                    divided = _div_ieee754_f16_impl(lhs, rhs, mask)
-            else:
-                divided = pto.vdiv(lhs, rhs, mask)
-            pto.vsts(divided, dst[row, col:], mask)
+    def divide(lhs, rhs, mask):
+        if precision_type == "high_precision":
+            if str(dtype) == "f32":
+                return _div_ieee754_f32_impl(lhs, rhs, mask)
+            return _div_ieee754_f16_impl(lhs, rhs, mask)
+        return pto.vdiv(lhs, rhs, mask)
+
+    if traversal == "1d":
+        emit_binary_1d(src0, src1, dst, divide)
+    else:
+        emit_binary_2d(src0, src1, dst, divide)
+
+
+def _register_tdiv(*, name, traversal, priority, candidate_id):
+    constraints = []
+    loop_depth = 2
+    if traversal == "1d":
+        constraints.append(
+            tilelib.require_elementwise_1d("src0", "src1", "dst")
+        )
+        loop_depth = 1
+
+    @tilelib.tile_template(
+        op="pto.tdiv",
+        target="a5",
+        name=name,
+        dtypes=_DTYPES,
+        iteration_axis="none",
+        op_engine="vector",
+        op_class="elementwise",
+        layouts=["row_major"],
+        memory_spaces=["ub"],
+        constraints=constraints,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
+        is_post_update=False,
+    )
+    def template(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
+        _emit_tdiv(src0, src1, dst, traversal)
+
+    return template
+
+
+template_tdiv = _register_tdiv(
+    name="template_tdiv",
+    traversal="2d",
+    priority=0,
+    candidate_id=0,
+)
+
+
+template_tdiv_1d = _register_tdiv(
+    name="template_tdiv_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

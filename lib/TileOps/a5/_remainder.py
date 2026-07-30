@@ -11,6 +11,7 @@ from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 from ._common import ub_row_major_constraints
+from ._elementwise import emit_binary_1d, emit_binary_2d
 
 
 FMOD_DTYPES = [("f32", "f32", "f32"), ("f16", "f16", "f16"), ("i16", "i16", "i16"), ("ui16", "ui16", "ui16")]
@@ -43,10 +44,26 @@ def _scalar_remainder(lhs, scalar, mask, *, round_mode, dtype):
     return pto.vsub(lhs, product, mask)
 
 
-def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False):
+def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
+                              traversal="2d", priority=0, candidate_id=0):
+    if traversal not in {"1d", "2d"}:
+        raise ValueError(
+            f"unsupported remainder traversal {traversal!r}; "
+            "expected '1d' or '2d'"
+        )
+    loop_depth = 1 if traversal == "1d" else 2
     constraints = ub_row_major_constraints("src0", "src1", "dst")
     if has_tmp:
         constraints = ub_row_major_constraints("src0", "src1", "tmp", "dst")
+        if traversal == "1d":
+            constraints.append(
+                tilelib.require_elementwise_1d(
+                    "src0",
+                    "src1",
+                    "tmp",
+                    "dst",
+                )
+            )
 
         @tilelib.tile_template(
             op=op,
@@ -57,16 +74,22 @@ def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False):
             op_engine="vector",
             op_class="elementwise",
             constraints=constraints,
-            id=0,
-            loop_depth=2,
+            priority=priority,
+            id=candidate_id,
+            loop_depth=loop_depth,
             is_post_update=False,
             tags=("elementwise", "remainder"),
         )
         def template(src0: pto.Tile, src1: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
             _ = tmp
-            _emit_binary(src0, src1, dst, round_mode)
+            _emit_binary(src0, src1, dst, round_mode, traversal)
 
         return template
+
+    if traversal == "1d":
+        constraints.append(
+            tilelib.require_elementwise_1d("src0", "src1", "dst")
+        )
 
     @tilelib.tile_template(
         op=op,
@@ -77,31 +100,34 @@ def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False):
         op_engine="vector",
         op_class="elementwise",
         constraints=constraints,
-        id=0,
-        loop_depth=2,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
         is_post_update=False,
         tags=("elementwise", "remainder"),
     )
     def template(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
-        _emit_binary(src0, src1, dst, round_mode)
+        _emit_binary(src0, src1, dst, round_mode, traversal)
 
     return template
 
 
-def _emit_binary(src0, src1, dst, round_mode):
+def _emit_binary(src0, src1, dst, round_mode, traversal):
     dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
-    lanes = pto.elements_per_vreg(dtype)
-    with pto.for_(0, valid_rows, step=1) as row:
-        col_loop = pto.for_(0, valid_cols, step=lanes).carry(remained=valid_cols)
-        with col_loop:
-            col = col_loop.iv
-            mask, remained = pto.make_mask(dtype, col_loop.remained)
-            lhs = pto.vlds(src0[row, col:])
-            rhs = pto.vlds(src1[row, col:])
-            result = _remainder(lhs, rhs, mask, round_mode=round_mode, dtype=dtype)
-            pto.vsts(result, dst[row, col:], mask)
-            col_loop.update(remained=remained)
+
+    def remainder(lhs, rhs, mask):
+        return _remainder(
+            lhs,
+            rhs,
+            mask,
+            round_mode=round_mode,
+            dtype=dtype,
+        )
+
+    if traversal == "1d":
+        emit_binary_1d(src0, src1, dst, remainder)
+    else:
+        emit_binary_2d(src0, src1, dst, remainder)
 
 
 def register_scalar_remainder(*, op, name, dtypes, round_mode, has_tmp=False):

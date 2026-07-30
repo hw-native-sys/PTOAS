@@ -259,6 +259,12 @@ calculation; both call shared unary traversal emitters. Do not move
 operation-specific constants, precision algorithms, temporary calculations, or
 instruction sequences into `_elementwise.py`.
 
+The same boundary applies to specialized binary families. `tdiv.py` owns its
+precision-dependent division callback, and `_remainder.py` owns fmod/remainder
+instruction sequences and their family registrars. These modules may call
+shared binary traversal emitters, but their algorithms do not belong in
+`_elementwise.py`.
+
 ## View And Valid-Shape Rules
 
 Do not assume the logical valid shape is the same as the physical view shape.
