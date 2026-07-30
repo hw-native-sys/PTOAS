@@ -583,7 +583,7 @@ class _VMINamespace:
             block_stride=block_stride,
             repeat_stride=repeat_stride,
             allow_group_brc=False,
-            allowed_dist_modes={None, "continuous", "dintlv"},
+            allowed_dist_modes={None, "continuous", "dintlv", "1pt"},
         )
         if group is not None and mask is not None:
             raise TypeError("pto.vmi.vstore(...) group mode does not take a mask operand")
@@ -592,6 +592,8 @@ class _VMINamespace:
                 raise TypeError('pto.vmi.vstore(...) with dist_mode="dintlv" requires an (even, odd) pair')
         elif _is_sequence(values):
             raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"dintlv\"")
+        if dist_mode == "1pt" and _is_sequence(values):
+            raise TypeError('pto.vmi.vstore(...) with dist_mode="1pt" expects a single size-1 VMI vector')
         return _generated("vstore")(
             _raw_sequence(values),
             _raw(destination),

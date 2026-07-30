@@ -1377,6 +1377,8 @@ def VMIvStoreOp : VMI_Op<"vstore",
     dist-mode controls the memory access pattern:
     - "continuous" (default): contiguous stride-1 store  → 1 value
     - "dintlv":             interleaved dual store        → 2 values (%lo, %hi)
+    - "1pt":                first-element-only store      → size-1 value
+                            (lowers to ``vsts`` ``1PT_B*``, 4B/2B/1B align)
 
     group mode (mutually exclusive with dist-mode):
     - {group = C}: grouped vector store with row stride

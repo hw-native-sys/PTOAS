@@ -2546,8 +2546,9 @@ static bool isSupportedVCmpPredicate(StringRef cmpMode) {
 //===----------------------------------------------------------------------===//
 
 static const std::set<StringRef> &validDistModes() {
+  // "1pt": size-1 first-element store → VMIToVPTO emits vsts 1PT_B*
   static const std::set<StringRef> modes = {"continuous", "unpack", "dintlv",
-                                            "brc"};
+                                            "brc", "1pt"};
   return modes;
 }
 
@@ -3786,6 +3787,12 @@ LogicalResult VMIvStoreOp::verify() {
   if (distMode && (*distMode == "unpack" || *distMode == "brc"))
     return emitOpError("dist-mode \"")
            << *distMode << "\" is not valid for vstore";
+  if (distMode && *distMode == "1pt") {
+    auto valueType = cast<VMIVRegType>(getValues()[0].getType());
+    if (valueType.getElementCount() != 1)
+      return emitOpError(
+          "dist-mode \"1pt\" requires a size-1 VMI vector value");
+  }
 
   auto pmode = getPmode();
   if (pmode && !validPModes().count(*pmode))
@@ -4140,6 +4147,8 @@ LogicalResult VMIvLoadOp::verify() {
 
   if (distMode && !validDistModes().count(*distMode))
     return emitOpError("invalid dist-mode: \"") << *distMode << "\"";
+  if (distMode && *distMode == "1pt")
+    return emitOpError("dist-mode \"1pt\" is not valid for vload");
   auto pmode = getPmode();
   if (pmode && !validPModes().count(*pmode))
     return emitOpError("invalid pmode: \"") << *pmode << "\"";

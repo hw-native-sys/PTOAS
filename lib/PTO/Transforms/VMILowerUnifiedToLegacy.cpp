@@ -673,6 +673,40 @@ static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
   Value offset = op.getOffset();
   auto values = op.getValues();
 
+  // "1pt": first-element-only store → masked_store; VMIToVPTO emits 1PT_B*
+  // when the semantic vreg has element_count == 1 (topk-style parks).
+  if (distMode == "1pt") {
+    if (values.empty())
+      return failure();
+    auto valueType = cast<VMIVRegType>(values[0].getType());
+    if (valueType.getElementCount() != 1)
+      return op.emitError(
+          "vstore dist_mode=\"1pt\" requires a size-1 VMI vreg "
+          "(use pto.vsts(..., dist=\"1PT_B*\") for VL-wide one-point stores)");
+    Value mask;
+    if (!op.getMask().empty()) {
+      mask = op.getMask().front();
+    } else {
+      auto elemType = valueType.getElementType();
+      unsigned bits = 32;
+      if (auto it = dyn_cast<IntegerType>(elemType))
+        bits = it.getWidth();
+      else if (auto ft = dyn_cast<FloatType>(elemType))
+        bits = ft.getWidth();
+      auto gran = StringAttr::get(builder.getContext(),
+                                  bits <= 8 ? "b8" : bits <= 16 ? "b16" : "b32");
+      auto maskType = VMIMaskType::get(builder.getContext(),
+                                       /*elementCount=*/1, gran,
+                                       valueType.getLayout());
+      auto one = builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(1));
+      mask = builder.create<VMICreateMaskOp>(loc, maskType, one.getResult())
+                 .getResult();
+    }
+    builder.create<VMIMaskedStoreOp>(loc, values[0], dest, offset, mask);
+    op->erase();
+    return success();
+  }
+
   if (distMode == "continuous") {
     if (values.empty())
       return failure();
