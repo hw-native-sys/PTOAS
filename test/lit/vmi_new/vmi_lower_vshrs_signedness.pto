@@ -12,11 +12,11 @@
 module {
   func.func @vshrs_signed(
       %src: !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous>>,
-      %scalar: si16,
+      %scalar: i16,
       %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>)
       -> !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous>> {
     %result = pto.vmi.vshrs %src, %scalar, %mask
-        : !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous>>, si16,
+        : !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous>>, i16,
           !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous>>
     return %result : !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous>>
@@ -36,11 +36,11 @@ module {
 
   func.func @vshrs_unsigned(
       %src: !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>,
-      %scalar: ui16,
+      %scalar: i16,
       %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>)
       -> !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>> {
     %result = pto.vmi.vshrs %src, %scalar, %mask
-        : !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>, ui16,
+        : !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>, i16,
           !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>
     return %result : !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>
@@ -78,7 +78,7 @@ module {
 // CHECK-NOT: pto.vmi.shrsi
 
 // LOWER-LABEL: func.func @vshrs_signed(
-// LOWER: unrealized_conversion_cast {{.*}} : si16 to i16
+// LOWER-NOT: unrealized_conversion_cast
 // LOWER: pto.vshrs {{.*}} : !pto.vreg<128xsi16>, i16, !pto.mask<b16> -> !pto.vreg<128xsi16>
 // LOWER-NOT: pto.vdup
 // LOWER-NOT: pto.vshr {{.*}} : !pto.vreg
@@ -90,7 +90,7 @@ module {
 // LOWER-NOT: pto.vshr {{.*}} : !pto.vreg
 
 // LOWER-LABEL: func.func @vshrs_unsigned(
-// LOWER: unrealized_conversion_cast {{.*}} : ui16 to i16
+// LOWER-NOT: unrealized_conversion_cast
 // LOWER: pto.vshrs {{.*}} : !pto.vreg<128xui16>, i16, !pto.mask<b16> -> !pto.vreg<128xui16>
 // LOWER-NOT: pto.vdup
 // LOWER-NOT: pto.vshr {{.*}} : !pto.vreg

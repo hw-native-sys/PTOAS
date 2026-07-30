@@ -329,9 +329,12 @@ scalar type must match the vector element type.
 
 - **syntax:**
   ```mlir
-  %r = pto.vmi.vshls %src, %scalar, %mask : !pto.vmi.vreg<L×T>, T, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
+  %r = pto.vmi.vshls %src, %shift, %mask : !pto.vmi.vreg<L×T>, i16, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`
+- **datatypes:** `T` is an integer type from 8 to 32 bits. The uniform shift
+  amount is a signless `i16` value independent of `T` and should be in the
+  range `[0, bitwidth(T))`. For `vshrs`, the signedness of `T` determines
+  whether the right shift is arithmetic or logical.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vshls / pto.vshrs

@@ -460,11 +460,16 @@ def _emit_unary(op_name: str, source, mask=None, *, pmode=None, loc=None, ip=Non
 
 def _emit_vec_scalar(op_name: str, source, scalar, mask, *, pmode=None, loc=None, ip=None):
     context = f"pto.vmi.{op_name}(...)"
+    scalar_value = (
+        coerce_scalar_to_type(scalar, IntegerType.get_signless(16), context=context)
+        if op_name in {"vshls", "vshrs"}
+        else _coerce_scalar_like_vmi_element(source, scalar, context=context)
+    )
     return _call_value(
         op_name,
         _type_of(source),
         _raw(source),
-        _coerce_scalar_like_vmi_element(source, scalar, context=context),
+        scalar_value,
         _required_mask(mask, context=context),
         pmode=pmode,
         loc=loc,

@@ -8210,19 +8210,6 @@ struct OneToNVMIVecScalarOpPattern : OpConversionPattern<SourceOp> {
     if (failed(scalar) || failed(maybeResultTypes))
       return failure();
     Value scalarValue = *scalar;
-    if constexpr (std::is_same_v<TargetOp, VshlsOp> ||
-                  std::is_same_v<TargetOp, VshrsOp>) {
-      auto scalarType = dyn_cast<IntegerType>(scalarValue.getType());
-      if (!scalarType || scalarType.getWidth() != 16)
-        return rewriter.notifyMatchFailure(
-            op, "physical vector-scalar shift requires a 16-bit scalar");
-      if (!scalarType.isSignless())
-        scalarValue =
-            rewriter
-                .create<UnrealizedConversionCastOp>(
-                    op.getLoc(), TypeRange{rewriter.getI16Type()}, scalarValue)
-                .getResult(0);
-    }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
     if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
         sourceParts.size() != resultTypes.size())
@@ -8235,13 +8222,7 @@ struct OneToNVMIVecScalarOpPattern : OpConversionPattern<SourceOp> {
          llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
       auto vregType = dyn_cast<VRegType>(resultType);
       auto maskType = dyn_cast<MaskType>(mask.getType());
-      bool scalarTypeMatches =
-          vregType && vregType.getElementType() == scalarValue.getType();
-      if constexpr (std::is_same_v<TargetOp, VshlsOp> ||
-                    std::is_same_v<TargetOp, VshrsOp>)
-        scalarTypeMatches = scalarValue.getType().isSignlessInteger(16);
-      if (!vregType || !maskType || source.getType() != resultType ||
-          !scalarTypeMatches)
+      if (!vregType || !maskType || source.getType() != resultType)
         return rewriter.notifyMatchFailure(
             op, "physical vector-scalar part type mismatch");
       results.push_back(rewriter

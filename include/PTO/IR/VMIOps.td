@@ -1161,7 +1161,8 @@ def VMIVcmpsOp : VMI_Op<"vcmps", [Pure]> {
   }];
 }
 
-class VMI_VecScalarOp<string mnemonic, string summaryText>
+class VMI_VecScalarOp<string mnemonic, string summaryText,
+                      Type scalarType = AnyType>
     : VMI_Op<mnemonic, [Pure]> {
   let summary = summaryText;
   let description = [{
@@ -1180,7 +1181,7 @@ class VMI_VecScalarOp<string mnemonic, string summaryText>
   }];
   let arguments = (ins
     VMI_VRegTypeConstraint:$src,
-    AnyType:$scalar,
+    scalarType:$scalar,
     VMI_MaskTypeConstraint:$mask,
     OptionalAttr<StrAttr>:$pmode
   );
@@ -1195,8 +1196,8 @@ def VMIAddSOp : VMI_VecScalarOp<"vadds", "VMI vector-scalar elementwise add">;
 def VMIMulSOp : VMI_VecScalarOp<"vmuls", "VMI vector-scalar elementwise multiply">;
 def VMIMaxSOp : VMI_VecScalarOp<"vmaxs", "VMI vector-scalar elementwise maximum">;
 def VMIMinSOp : VMI_VecScalarOp<"vmins", "VMI vector-scalar elementwise minimum">;
-def VMIShlSOp : VMI_VecScalarOp<"vshls", "VMI vector-scalar elementwise shift left">;
-def VMIShrSOp : VMI_VecScalarOp<"vshrs", "VMI vector-scalar elementwise shift right">;
+def VMIShlSOp : VMI_VecScalarOp<"vshls", "VMI vector-scalar elementwise shift left", I16>;
+def VMIShrSOp : VMI_VecScalarOp<"vshrs", "VMI vector-scalar elementwise shift right", I16>;
 
 def VMIvSelOp : VMI_Op<"vsel", [Pure]> {
   let summary = "VMI elementwise select";

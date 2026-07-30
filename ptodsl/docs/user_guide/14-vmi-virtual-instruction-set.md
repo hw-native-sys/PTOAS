@@ -614,7 +614,7 @@ lanes.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `source` | `VRegType` | Input vector |
-| `scalar` | `ScalarType` | Scalar operand (Python number or PTODSL scalar). Automatically coerced to the vector element type |
+| `scalar` | `ScalarType` | Scalar operand (Python number or PTODSL scalar). For `vshls` and `vshrs`, this is a signless `i16` shift amount; other operations coerce it to the vector element type |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
 | `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
 
@@ -634,7 +634,9 @@ shifted = pto.vsubs(scores, row_max, col_mask)
 **Constraints**:
 - `mask` is always required for vector-scalar ops — unlike binary and unary
   ops, there is no mask-optional form.
-- `scalar` is coerced to match the element type of `source`.
+- `vshls` and `vshrs` coerce `scalar` to signless `i16`; its type is
+  independent of the source element type. Other vector-scalar ops coerce
+  `scalar` to match the element type of `source`.
 - `vsubs`, `vands`, `vors`, and `vxors` are PTODSL convenience spellings, not
   dedicated formal `pto.vmi` instructions in VMI v0.1.
 - `vdivs` is listed for symmetry with `vdiv`, but it is not currently surfaced
