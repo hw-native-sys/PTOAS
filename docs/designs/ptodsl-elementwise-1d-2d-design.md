@@ -19,10 +19,17 @@ and existing generated-helper behavior.
 
 The shared ordinary-element-wise legality predicate and complete tile-config
 metadata plumbing are now available. Ranked candidate order is also preserved
-from Python through the compact candidate attribute and `ExpandTileOp`, but no
-existing candidate consumes the new predicate yet. Template registrations,
-family implementations, functional tests, and performance measurements remain
-subsequent implementation steps.
+from Python through the compact candidate attribute and `ExpandTileOp`.
+
+`_elementwise.py` now provides reusable flattened 1D and row-wise 2D traversal
+forms for ordinary unary, Tile-Tile, Tile-Scalar, and scalar-fill families.
+Its registration helpers accept an explicit traversal form, derive
+`loop_depth`, and attach `require_elementwise_1d(...)` to 1D candidates. All
+runtime loops use the source-backed Python `for ... in range(...)` syntax and
+are lowered by PTODSL's control-flow AST rewrite. Existing operation call sites
+still use the default 2D form, so operation migration, special-family
+implementations, functional tests, and performance measurements remain
+subsequent steps.
 
 ## Goals
 
@@ -267,9 +274,32 @@ The ordinary implementations are concentrated in:
 - `ptodsl/ptodsl/tilelib/templates/a5/_common.py`
 
 `_elementwise.py` registers unary, Tile-Tile, Tile-Scalar, and scalar-fill
-templates. Each body restarts `remained = valid_cols` for every row and then
-walks columns by vector lane count. `_remainder.py` uses the same traversal
-around a more complex vector computation.
+templates. Existing operation call sites retain the default 2D form, which
+restarts `remained = valid_cols` for every row and then walks columns by vector
+lane count. `_remainder.py` uses the same row-wise traversal around a more
+complex vector computation.
+
+The reusable ordinary traversal foundation consists of:
+
+- `emit_elementwise_1d(anchor, emit_chunk)`, which computes
+  `valid_rows * valid_cols`, carries one remaining-element count, and invokes
+  the chunk emitter from one Python range loop;
+- `emit_elementwise_2d(anchor, emit_chunk)`, which retains the outer row loop
+  and starts a new remaining-column count for each row;
+- unary, Tile-Tile, Tile-Scalar, and scalar-fill wrappers for both forms;
+- registration helpers whose `traversal="1d"` form derives `loop_depth=1`,
+  adds the named-operand 1D legality predicate, and whose `traversal="2d"`
+  form derives `loop_depth=2`.
+
+The 1D family wrappers use a base tile pointer plus the flattened element
+offset. They do not reconstruct row and column indices. The 2D wrappers retain
+row/column addressing so each physical tile's row stride remains respected.
+The two module-level traversal cores opt into `rewrite_jit_function`; this is
+required because only a registered template body and its lexically nested
+helpers are rewritten automatically.
+Candidate IDs and priorities are explicit registrar parameters, allowing a
+future 1D candidate to rank ahead of its stable-ID 2D fallback without relying
+on registration order.
 
 The operation-specific files that cannot be migrated by replacing a shared
 registrar alone are:
@@ -441,8 +471,8 @@ Candidate identity and ranking must remain separate.
    minimizes churn in named-render tests and keeps current IDs stable.
 2. Add `_1d` to each new flattened candidate name.
 3. Give a legal 1D candidate a higher priority than its 2D fallback.
-4. Use `loop_depth=1` and a `1d` tag for flattened candidates.
-5. Retain `loop_depth=2` and add a `2d` tag to fallback candidates.
+4. Use `loop_depth=1` for flattened candidates.
+5. Retain `loop_depth=2` for fallback candidates.
 6. Never rely on the numeric ID to select the winner.
 
 Proposed ID allocation:

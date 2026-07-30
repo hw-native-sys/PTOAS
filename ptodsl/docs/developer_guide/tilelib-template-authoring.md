@@ -159,17 +159,88 @@ rule that matches TileLangDSL behavior.
 Template bodies execute under PTODSL tracing. Python values and PTODSL runtime
 values are not interchangeable.
 
-Use PTODSL control-flow and scalar APIs when a value is runtime-dependent.
+Source-backed TileLib template functions use PTODSL's control-flow AST rewrite.
+Plain Python `if` and `for ... in range(...)` in a template body or its nested
+helpers therefore lower to runtime structured control flow. Prefer that syntax
+for ordinary loops:
+
+```python
+remained = valid_cols
+for col in range(0, valid_cols, lanes):
+    mask, remained = pto.make_mask(dtype, remained)
+    ...
+```
+
+Use `pto.static_range(...)` when a loop should execute during tracing. Keep the
+explicit `pto.if_` and `pto.for_` APIs for unsupported or deliberately explicit
+control-flow patterns.
+
+Module-level Python helpers are outside the registered template function's
+source tree, so their bodies are not rewritten merely because the template
+calls them. A module-level helper that contains runtime Python control flow
+must opt into `rewrite_jit_function`, as the shared element-wise traversal
+cores do, or use the explicit control-flow APIs.
+
 Avoid:
 
-- native Python `if` on a PTODSL runtime value;
-- native Python `range` using runtime bounds;
 - assigning Python integers into runtime branch state;
 - assuming a scalar operand has a compile-time value unless `ScalarSpec.value`
-  is present.
+  is present;
+- relying on native runtime control-flow rewrite for functions without
+  retrievable source.
 
 This class of bug often appears after selection is fixed: the template becomes
 legal, then tracing fails in a larger non-smoke path.
+
+## Shared Element-wise Traversal Forms
+
+Ordinary A5 unary, Tile-Tile, Tile-Scalar, and scalar-fill candidates should
+use the registration helpers in `templates/a5/_elementwise.py`. Each registrar
+accepts `traversal="1d"` or `traversal="2d"`:
+
+- `1d` derives `loop_depth=1`, adds
+  `require_elementwise_1d(*operand_names)`, and emits one vector loop over
+  `valid_rows * valid_cols`;
+- `2d` derives `loop_depth=2` and emits the general row loop plus per-row
+  vector loop.
+
+The default remains `2d`, so adding the shared foundation does not silently
+change existing operation selection. A migrated operation normally preserves
+its existing candidate as the 2D fallback and adds a separately named,
+higher-priority 1D candidate:
+
+```python
+template_tadd = register_binary(
+    op="pto.tadd",
+    name="template_tadd",
+    vector_op=pto.vadd,
+    dtypes=DTYPES,
+    traversal="2d",
+    priority=0,
+    candidate_id=0,
+)
+
+template_tadd_1d = register_binary(
+    op="pto.tadd",
+    name="template_tadd_1d",
+    vector_op=pto.vadd,
+    dtypes=DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)
+```
+
+Candidate ID expresses identity, not preference. Every ID for the same
+operation must remain unique. The 1D registrar constraint must name every tile
+operand that participates in or constrains the traversal, including temporary
+TileOp operands.
+
+For bespoke computation, use the lower-level `emit_elementwise_1d` and
+`emit_elementwise_2d` chunk callbacks or the family emitters. The flattened
+form supplies one linear element offset; do not convert it back into row and
+column indices. Predicate and dtype-width-changing conversion operations need
+their additional representation-specific legality before using the 1D form.
 
 ## View And Valid-Shape Rules
 
