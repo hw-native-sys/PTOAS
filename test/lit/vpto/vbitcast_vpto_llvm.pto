@@ -34,6 +34,6 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: llvm.func @vbitcast_f32_to_i32_store_mix_aiv
-// CHECK: llvm.call @llvm.hivm.vstsx1.v64s32
+// CHECK: llvm.call @llvm.hivm.vstsx1.v64i32
 // CHECK-LABEL: llvm.func @vbitcast_f32_to_i16x128_store_mix_aiv
-// CHECK: llvm.call @llvm.hivm.vstsx1.v128s16
+// CHECK: llvm.call @llvm.hivm.vstsx1.v128i16

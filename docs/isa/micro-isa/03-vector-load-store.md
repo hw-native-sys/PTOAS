@@ -241,6 +241,9 @@ deinterleave forms.
 - **constraints and limitations:**
   This family is only legal for interleave/deinterleave style distributions.
   The two outputs form an ordered pair, and that pairing MUST be preserved.
+  `%source`, `%low`, and `%high` MUST use the same element type. Legal element
+  types are 8/16/32/64-bit integers, `f16`, `bf16`, `f32`, the supported FP8
+  formats, and the packed FP4 pair formats.
   PTO surface accepts deinterleave families. `BDINTLV` is element-width
   agnostic, while `DINTLV_B8` / `DINTLV_B16` / `DINTLV_B32` support only the
   element widths listed in the
@@ -282,7 +285,11 @@ for (int i = 0; i < 64; i++) {
 - **constraints and limitations:**
   PTO surface does not expose the packed control word directly. If a block is
   masked off, the corresponding destination block is zeroed and MUST NOT raise
-  an address overflow exception for that block.
+  an address overflow exception for that block. `%source` and `%result` MUST
+  use the same element type. Legal element types are 8/16/32-bit integers,
+  signed or signless 64-bit integers, `f16`, `bf16`, `f32`, the supported FP8
+  formats, and the packed FP4 pair formats. Unsigned 64-bit elements are not
+  supported.
 - **Latency:** **9** cycles.
 
 ```c
@@ -461,9 +468,12 @@ pto.vsts %v, %ub[%offset], %mask {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.p
 - **constraints and limitations:**
   This family is only legal for interleave distributions. The two source
   vectors form an ordered pair, and the interleave semantics of that pair MUST
-  be preserved. PTO surface accepts the `INTLV` family, which only supports the
-  element widths listed below. For all `INTLV_*` distributions, the predicate
-  register is ignored.
+  be preserved. `%low`, `%high`, and `%dest` MUST use the same element type.
+  Legal element types are 8/16/32-bit integers, `f16`, `bf16`, the supported
+  FP8 formats, and the packed FP4 pair formats; `f32` and 64-bit elements are
+  not supported. PTO surface accepts the `INTLV` family, which only supports
+  the element widths listed below. For all `INTLV_*` distributions, the
+  predicate register is ignored.
 - **latency:** `INTLV` is **12** cycles。
 
 **Distribution families:**
@@ -494,8 +504,11 @@ for (int i = 0; i < 64; i++) {
   form, `%updated_dest` is the destination pointer advanced according to the
   packed stride control word.
 - **constraints and limitations:**
-  PTO surface does not expose the packed control word directly. Masked-off
-  blocks MUST NOT issue memory writes.
+  PTO surface does not expose the packed control word directly. `%value` and
+  `%dest` MUST use the same element type. Legal element types are 8/16/32-bit
+  integers, `f16`, `bf16`, `f32`, and the supported FP8 formats. Packed FP4
+  pair formats and 64-bit elements are not supported. Masked-off blocks MUST
+  NOT issue memory writes.
 - **Latency:** **9** cycles.
 
 ```c

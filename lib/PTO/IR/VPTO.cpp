@@ -1876,6 +1876,42 @@ static Type getBufferElementType(Type type) {
   return {};
 }
 
+static bool isMemoryIntegerElementType(Type type,
+                                       ArrayRef<unsigned> supportedWidths) {
+  auto intType = dyn_cast<IntegerType>(type);
+  return intType && llvm::is_contained(supportedWidths, intType.getWidth());
+}
+
+static bool isProbeVerifiedFP8ElementType(Type type) {
+  return pto::isPTOFloat8Type(type) || pto::isPTOF8E8M0Type(type);
+}
+
+static bool isVldsx2ElementType(Type type) {
+  return isMemoryIntegerElementType(type, {8, 16, 32, 64}) || type.isF16() ||
+         type.isBF16() || type.isF32() ||
+         isProbeVerifiedFP8ElementType(type) ||
+         pto::isPTOFloat4PackedType(type);
+}
+
+static bool isVsldbElementType(Type type) {
+  if (!isVldsx2ElementType(type))
+    return false;
+  auto intType = dyn_cast<IntegerType>(type);
+  return !intType || intType.getWidth() != 64 || !intType.isUnsigned();
+}
+
+static bool isVsstbElementType(Type type) {
+  return isMemoryIntegerElementType(type, {8, 16, 32}) || type.isF16() ||
+         type.isBF16() || type.isF32() ||
+         isProbeVerifiedFP8ElementType(type);
+}
+
+static bool isVstsx2ElementType(Type type) {
+  return isMemoryIntegerElementType(type, {8, 16, 32}) || type.isF16() ||
+         type.isBF16() || isProbeVerifiedFP8ElementType(type) ||
+         pto::isPTOFloat4PackedType(type);
+}
+
 static std::optional<AddressSpace> getBufferAddressSpace(Type type) {
   if (auto ptrType = dyn_cast<pto::PtrType>(type))
     return ptrType.getMemorySpace().getAddressSpace();
@@ -6408,6 +6444,13 @@ LogicalResult Vldsx2Op::verify() {
     return failure();
   if (getLow().getType() != getHigh().getType())
     return emitOpError("requires low/high results to share one vector type");
+  Type elementType = cast<VRegType>(getLow().getType()).getElementType();
+  if (!isVldsx2ElementType(elementType))
+    return emitOpError(
+        "requires s/u8, s/u16, s/u32, s/u64, f16, bf16, f32, FP8, or packed FP4 element type");
+  if (getBufferElementType(getSource().getType()) != elementType)
+    return emitOpError(
+        "requires source and low/high results to share one element type");
   if (!isSupportedVldx2DistToken(getDist()))
     return emitOpError("requires a supported x2 load distribution token");
   if (getUpdatedBase() &&
@@ -6488,6 +6531,13 @@ LogicalResult Vstsx2Op::verify() {
     return emitOpError("requires index offset");
   if (!isSupportedVstsx2DistToken(getDist()))
     return emitOpError("requires a supported x2 store distribution token");
+  Type elementType = cast<VRegType>(getLow().getType()).getElementType();
+  if (!isVstsx2ElementType(elementType))
+    return emitOpError(
+        "requires s/u8, s/u16, s/u32, f16, bf16, FP8, or packed FP4 element type");
+  if (getBufferElementType(getDestination().getType()) != elementType)
+    return emitOpError(
+        "requires low/high values and destination to share one element type");
   return success();
 }
 
@@ -6640,6 +6690,13 @@ LogicalResult VsstbOp::verify() {
     return emitOpError("requires block_stride to be i16");
   if (!getRepeatStride().getType().isSignlessInteger(16))
     return emitOpError("requires repeat_stride to be i16");
+  Type elementType = cast<VRegType>(getValue().getType()).getElementType();
+  if (!isVsstbElementType(elementType))
+    return emitOpError(
+        "requires s/u8, s/u16, s/u32, f16, bf16, f32, or FP8 element type");
+  if (getBufferElementType(getDestination().getType()) != elementType)
+    return emitOpError(
+        "requires value and destination to share one element type");
   if (getUpdatedBase() &&
       getUpdatedBase().getType() != getDestination().getType())
     return emitOpError("requires updated base result to match base type");

@@ -22,14 +22,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @vsldb_hif8(%src: !pto.ptr<!pto.hif8, ub>) attributes {pto.kernel} {
+  func.func @vsldb_f8e8m0(%src: !pto.ptr<!pto.f8E8M0, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c0_i16 = arith.constant 0 : i16
     %c1_i16 = arith.constant 1 : i16
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %value = pto.vsldb %src, %c1_i16, %c0_i16, %mask : !pto.ptr<!pto.hif8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256x!pto.hif8>
-      pto.vsts %value, %src[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, !pto.mask<b8>
+      %value = pto.vsldb %src, %c1_i16, %c0_i16, %mask : !pto.ptr<!pto.f8E8M0, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256x!pto.f8E8M0>
+      pto.vsts %value, %src[%c0], %mask : !pto.vreg<256x!pto.f8E8M0>, !pto.ptr<!pto.f8E8M0, ub>, !pto.mask<b8>
     }
     return
   }
@@ -48,6 +48,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-DAG: declare <128 x bfloat> @llvm.hivm.vsldb.v128bf16
-// CHECK-DAG: declare <256 x i8> @llvm.hivm.vsldb.v256i8
+// CHECK-DAG: declare <256 x float8e8m0> @llvm.hivm.vsldb.v256fp8e8m0
+// CHECK-DAG: declare <256 x float8e4m3> @llvm.hivm.vsldb.v256fp8e4m3
 // CHECK: call <128 x bfloat> @llvm.hivm.vsldb.v128bf16
-// CHECK-COUNT-2: call <256 x i8> @llvm.hivm.vsldb.v256i8
+// CHECK: call <256 x float8e8m0> @llvm.hivm.vsldb.v256fp8e8m0
+// CHECK: call void @llvm.hivm.vstsx1.v256fp8e8m0
+// CHECK: call <256 x float8e4m3> @llvm.hivm.vsldb.v256fp8e4m3

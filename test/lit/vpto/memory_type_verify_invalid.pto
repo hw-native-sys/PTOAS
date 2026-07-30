@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file 2>&1 | FileCheck %s
+
+module {
+  func.func @vldsx2_requires_matching_source(
+      %src: !pto.ptr<f16, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %low, %high = pto.vldsx2 %src[%c0], "DINTLV_B16"
+          : !pto.ptr<f16, ub>, index
+          -> !pto.vreg<128xbf16>, !pto.vreg<128xbf16>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vldsx2' op requires source and low/high results to share one element type
+
+// -----
+
+module {
+  func.func @vstsx2_rejects_f32(
+      %low: !pto.vreg<64xf32>, %high: !pto.vreg<64xf32>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vstsx2 %low, %high, %dst[%c0], "INTLV_B32", %mask
+          : !pto.vreg<64xf32>, !pto.vreg<64xf32>,
+            !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vstsx2' op requires s/u8, s/u16, s/u32, f16, bf16, FP8, or packed FP4 element type
+
+// -----
+
+module {
+  func.func @vstsx2_requires_matching_destination(
+      %low: !pto.vreg<256x!pto.f4E1M2x2>,
+      %high: !pto.vreg<256x!pto.f4E1M2x2>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+      pto.vstsx2 %low, %high, %dst[%c0], "INTLV_B8", %mask
+          : !pto.vreg<256x!pto.f4E1M2x2>,
+            !pto.vreg<256x!pto.f4E1M2x2>,
+            !pto.ptr<!pto.f4E2M1x2, ub>, index, !pto.mask<b8>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vstsx2' op requires low/high values and destination to share one element type
+
+// -----
+
+module {
+  func.func @vsldb_rejects_u64(%src: !pto.ptr<ui64, ub>) {
+    %c0 = arith.constant 0 : i16
+    %c1 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vsldb %src, %c1, %c0, %mask
+          : !pto.ptr<ui64, ub>, i16, i16, !pto.mask<b32>
+          -> !pto.vreg<32xui64>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vsldb' op requires s/u8, s/u16, s/u32, signed i64, f16, bf16, f32, FP8, or packed FP4 element type
+
+// -----
+
+module {
+  func.func @vsldb_requires_matching_source(%src: !pto.ptr<f16, ub>) {
+    %c0 = arith.constant 0 : i16
+    %c1 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %value = pto.vsldb %src, %c1, %c0, %mask
+          : !pto.ptr<f16, ub>, i16, i16, !pto.mask<b16>
+          -> !pto.vreg<128xbf16>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vsldb' op requires source and result to share one element type
+
+// -----
+
+module {
+  func.func @vsstb_rejects_fp4(
+      %value: !pto.vreg<256x!pto.f4E1M2x2>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>) {
+    %c0 = arith.constant 0 : i16
+    %c1 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+      pto.vsstb %value, %dst, %c1, %c0, %mask
+          : !pto.vreg<256x!pto.f4E1M2x2>,
+            !pto.ptr<!pto.f4E1M2x2, ub>, i16, i16, !pto.mask<b8>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vsstb' op requires s/u8, s/u16, s/u32, f16, bf16, f32, or FP8 element type
+
+// -----
+
+module {
+  func.func @vsstb_requires_matching_destination(
+      %value: !pto.vreg<128xf16>, %dst: !pto.ptr<bf16, ub>) {
+    %c0 = arith.constant 0 : i16
+    %c1 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      pto.vsstb %value, %dst, %c1, %c0, %mask
+          : !pto.vreg<128xf16>, !pto.ptr<bf16, ub>,
+            i16, i16, !pto.mask<b16>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vsstb' op requires value and destination to share one element type

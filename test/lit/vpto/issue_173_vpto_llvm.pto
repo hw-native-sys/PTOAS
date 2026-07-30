@@ -31,6 +31,6 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: llvm.func @store_signed_i16_mix_aiv
-// CHECK: llvm.call @llvm.hivm.vstsx1.v128s16
+// CHECK: llvm.call @llvm.hivm.vstsx1.v128i16
 // CHECK-LABEL: llvm.func @store_signless_i16_mix_aiv
-// CHECK: llvm.call @llvm.hivm.vstsx1.v128s16
+// CHECK: llvm.call @llvm.hivm.vstsx1.v128i16

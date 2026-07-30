@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @lowp_vlds_vsts(%f8e4_src: !pto.ptr<f8E4M3FN, ub>,
@@ -29,17 +30,18 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   }
 
   func.func @lowp_x2_and_block(%f4e1_src: !pto.ptr<!pto.f4E1M2x2, ub>,
-                               %f4e2_dst: !pto.ptr<!pto.f4E2M1x2, ub>,
-                               %value: !pto.vreg<256x!pto.f4E2M1x2>) attributes {pto.kernel} {
+                               %f4e1_dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+                               %fp8_dst: !pto.ptr<f8E4M3FN, ub>,
+                               %fp8_value: !pto.vreg<256xf8E4M3FN>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1_i16 = arith.constant 1 : i16
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
       %low, %high = pto.vldsx2 %f4e1_src[%c0], "DINTLV_B8" : !pto.ptr<!pto.f4E1M2x2, ub>, index -> !pto.vreg<256x!pto.f4E1M2x2>, !pto.vreg<256x!pto.f4E1M2x2>
-      pto.vstsx2 %low, %high, %f4e2_dst[%c0], "INTLV_B8", %mask : !pto.vreg<256x!pto.f4E1M2x2>, !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E2M1x2, ub>, index, !pto.mask<b8>
+      pto.vstsx2 %low, %high, %f4e1_dst[%c0], "INTLV_B8", %mask : !pto.vreg<256x!pto.f4E1M2x2>, !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index, !pto.mask<b8>
       %strided = pto.vsldb %f4e1_src, %c1_i16, %c1_i16, %mask : !pto.ptr<!pto.f4E1M2x2, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256x!pto.f4E1M2x2>
-      pto.vsstb %strided, %f4e2_dst, %c1_i16, %c1_i16, %mask : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E2M1x2, ub>, i16, i16, !pto.mask<b8>
-      pto.vsstb %value, %f4e2_dst, %c1_i16, %c1_i16, %mask : !pto.vreg<256x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>, i16, i16, !pto.mask<b8>
+      pto.vsts %strided, %f4e1_dst[%c0], %mask : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b8>
+      pto.vsstb %fp8_value, %fp8_dst, %c1_i16, %c1_i16, %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8>
     }
     return
   }
@@ -72,28 +74,28 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: define void @lowp_vlds_vsts_mix_aiv
-// CHECK: call <256 x i8> @llvm.hivm.vldsx1.v256f8e4m3
-// CHECK: call <256 x i8> @llvm.hivm.vldsx1.v256f8e5m2
-// CHECK: call <256 x i8> @llvm.hivm.vldsx1.v256s8
-// CHECK: call void @llvm.hivm.vstsx1.v256f8e4m3
-// CHECK: call void @llvm.hivm.vstsx1.v256f8e5m2
-// CHECK: call void @llvm.hivm.vstsx1.v256s8
+// CHECK: call <256 x float8e4m3> @llvm.hivm.vldsx1.v256fp8e4m3
+// CHECK: call <256 x float8e5m2> @llvm.hivm.vldsx1.v256fp8e5m2
+// CHECK: call <256 x i8> @llvm.hivm.vldsx1.v256i8
+// CHECK: call void @llvm.hivm.vstsx1.v256fp8e4m3(<256 x float8e4m3>
+// CHECK: call void @llvm.hivm.vstsx1.v256fp8e5m2(<256 x float8e5m2>
+// CHECK: call void @llvm.hivm.vstsx1.v256i8
 
 // CHECK-LABEL: define void @lowp_x2_and_block_mix_aiv
-// CHECK: call { <256 x i8>, <256 x i8> } @llvm.hivm.vldsx2.v256f4e1m2x2
-// CHECK: call void @llvm.hivm.vstsx2.v256f4e1m2x2
-// CHECK: call <256 x i8> @llvm.hivm.vsldb.v256i8
-// CHECK: call void @llvm.hivm.vsstb.v256i8
-// CHECK: call void @llvm.hivm.vsstb.v256i8
+// CHECK: call { <256 x float4e1m2x2>, <256 x float4e1m2x2> } @llvm.hivm.vldsx2.v256fp4e1m2x2
+// CHECK: call void @llvm.hivm.vstsx2.v256i8
+// CHECK: call <256 x float4e1m2x2> @llvm.hivm.vsldb.v256fp4e1m2x2
+// CHECK: call void @llvm.hivm.vstsx1.v256fp4e1m2x2(<256 x float4e1m2x2>
+// CHECK: call void @llvm.hivm.vsstb.v256fp8e4m3(<256 x float8e4m3>
 
 // CHECK-LABEL: define void @lowp_unaligned_state_mix_aiv
 // CHECK: call <32 x i8> @llvm.hivm.vldas
-// CHECK: call { <256 x i8>, <32 x i8>, ptr addrspace(6) } @llvm.hivm.vldus.v256s8
+// CHECK: call { <256 x i8>, <32 x i8>, ptr addrspace(6) } @llvm.hivm.vldus.v256i8
 // CHECK: call <32 x i8> @llvm.hivm.vstus
 // CHECK: call <32 x i8> @llvm.hivm.vstur
 // CHECK: call void @llvm.hivm.vstar
 
 // CHECK-LABEL: define void @lowp_uvld_expansion_mix_aiv
 // CHECK: call <32 x i8> @llvm.hivm.vldas
-// CHECK: call { <256 x i8>, <32 x i8>, ptr addrspace(6) } @llvm.hivm.vldus.v256f8e4m3
-// CHECK: call void @llvm.hivm.vstsx1.v256f8e4m3
+// CHECK: call { <256 x float8e4m3>, <32 x i8>, ptr addrspace(6) } @llvm.hivm.vldus.v256fp8e4m3
+// CHECK: call void @llvm.hivm.vstsx1.v256fp8e4m3(<256 x float8e4m3>

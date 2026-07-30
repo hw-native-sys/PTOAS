@@ -40,7 +40,7 @@ bisheng 内部将候选指令分为两个处理分支：
 | Auto | `pto.plds` | `llvm.hivm.plds.b8` | `llvm.hivm.plds.post.b8` |
 | Auto | `pto.pldi` | `llvm.hivm.pldi.b8` | `llvm.hivm.pldi.post.b8` |
 | Auto | `pto.vsts` | `llvm.hivm.vstsx1.v{N}{ty}` | `llvm.hivm.vstsx1.post.v{N}{ty}` |
-| Auto | `pto.vsstb` | `llvm.hivm.vsstb` | `llvm.hivm.vsstb.post` |
+| Auto | `pto.vsstb` | `llvm.hivm.vsstb.v{N}{llvmTy}` | `llvm.hivm.vsstb.post.v{N}{llvmTy}` |
 | Auto | `pto.psts` | `llvm.hivm.psts.b8` | `llvm.hivm.psts.post.b8` |
 | Auto | `pto.psti` | `llvm.hivm.psti.b8` | `llvm.hivm.psti.post.b8` |
 | Auto | `pto.sprsts` | `llvm.hivm.sprsts` | `llvm.hivm.sprsts.post` |
@@ -157,6 +157,7 @@ struct PostUpdateOpInfo {
 | 指令 | base | strideOperand | strideUnit | unitBytes | 有效地址 |
 |------|------|---------------|-----------|-----------|---------|
 | vlds/vsts | source/destination | offset (Index) | Element | elemBytes | base + offset |
+| vldsx2（Step 4） | source | offset (Index) | Element | elemBytes | base + offset |
 | vsstb/vsldb | destination/source | repeat_stride (I16) | Block | 32 | dest + (32/elemBytes)·repeat_stride |
 | plds/psts（Step 4） | source/destination | offset (Index) | Byte | 1 | base + offset/elemBytes |
 | pldi/psti（Step 4） | source/destination | offset (Index) | Block | 32 | base + (32/elemBytes)·offset |

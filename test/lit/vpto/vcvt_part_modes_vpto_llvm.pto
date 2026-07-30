@@ -30,4 +30,4 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // CHECK-LABEL: llvm.func @vcvt_u32_to_u8_packed_parts_mix_aiv
 // CHECK: llvm.call @llvm.hivm.vcvtii.u322u8.x
-// CHECK: llvm.call @llvm.hivm.vstsx1.v256u8
+// CHECK: llvm.call @llvm.hivm.vstsx1.v256i8

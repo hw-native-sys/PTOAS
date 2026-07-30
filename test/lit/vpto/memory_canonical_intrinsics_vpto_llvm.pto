@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @canonical_integer_memory(
+      %src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value, %next_src = pto.vlds %src[%c0]
+          : !pto.ptr<si32, ub> -> !pto.vreg<64xsi32>, !pto.ptr<si32, ub>
+      %next_dst = pto.vsts %value, %dst[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+          -> !pto.ptr<si32, ub>
+      pto.vsts %value, %next_dst[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @canonical_x2_f16(
+      %src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %low, %high = pto.vldsx2 %src[%c0], "DINTLV_B16"
+          : !pto.ptr<f16, ub>, index
+          -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+      pto.vstsx2 %low, %high, %dst[%c0], "INTLV_B16", %mask
+          : !pto.vreg<128xf16>, !pto.vreg<128xf16>,
+            !pto.ptr<f16, ub>, index, !pto.mask<b16>
+    }
+    return
+  }
+
+  func.func @canonical_fp8_block_post(
+      %value: !pto.vreg<256xf8E4M3FN>,
+      %dst: !pto.ptr<f8E4M3FN, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i16
+    %c1 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+      %next = pto.vsstb %value, %dst, %c1, %c0, %mask
+          : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>,
+            i16, i16, !pto.mask<b8> -> !pto.ptr<f8E4M3FN, ub>
+      pto.vsstb %value, %next, %c1, %c0, %mask
+          : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>,
+            i16, i16, !pto.mask<b8>
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: define void @canonical_integer_memory_mix_aiv
+// CHECK: call { <64 x i32>, ptr addrspace(6) } @llvm.hivm.vldsx1.post.v64i32
+// CHECK: call ptr addrspace(6) @llvm.hivm.vstsx1.post.v64i32
+// CHECK: call void @llvm.hivm.vstsx1.v64i32
+
+// CHECK-LABEL: define void @canonical_x2_f16_mix_aiv
+// CHECK: call { <128 x half>, <128 x half> } @llvm.hivm.vldsx2.v128f16
+// CHECK: call void @llvm.hivm.vstsx2.v128i16(<128 x i16>
+
+// CHECK-LABEL: define void @canonical_fp8_block_post_mix_aiv
+// CHECK: call ptr addrspace(6) @llvm.hivm.vsstb.post.v256fp8e4m3
+// CHECK: call void @llvm.hivm.vsstb.v256fp8e4m3
