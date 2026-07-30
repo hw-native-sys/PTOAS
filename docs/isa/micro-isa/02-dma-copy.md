@@ -12,6 +12,9 @@ This document describes the public grouped DMA interfaces:
 - `pto.mte_ub_ub`
 - `pto.mte_ub_l1`
 
+`pto.mte_gm_ub` / `pto.mte_ub_gm` also accept remote GM pointers (`#pto.remote`)
+for synchronous cross-rank copies. There is no `mte_gm_gm`.
+
 ---
 
 ## DMA Transfer Execution
@@ -29,12 +32,13 @@ pto.mte_gm_ub %gm_src, %ub_dst, %l2_cache_ctl, %len_burst
     [pad T[, i64, i64]]
 ```
 - **semantics:** Grouped GM→UB DMA transfer. `nburst(...)` defines the innermost repeated burst transfer, optional `loop(...)` groups add outer repetition levels, and `pad(...)` controls UB row padding.
+  `%gm_src` may carry `#pto.remote` for a synchronous remote read; nburst / stride / pad are unchanged.
 
 **Parameter Table:**
 
 | Parameter | Width | Description |
 |-----------|-------|-------------|
-| `%gm_src` | ptr | GM source pointer (`!pto.ptr<T, gm>`) |
+| `%gm_src` | ptr | GM source pointer (`!pto.ptr<T, gm>` or with `#pto.remote`) |
 | `%ub_dst` | ptr | UB destination pointer (`!pto.ptr<T, ub>`, 32B-aligned) |
 | `%l2_cache_ctl` | 2 bits | L2 cache allocate control |
 | `%len_burst` | 16 bits | Contiguous bytes transferred per burst row |
@@ -54,6 +58,9 @@ pto.mte_gm_ub %gm_src, %ub_dst, %l2_cache_ctl, %len_burst
 - If either left or right padding count is provided, both counts must be provided.
 - `pad(...)` is independent of the optional `loop(...)` groups.
 - A DMA load may use `nburst(...) pad(...)` without any `loop(...)` group.
+- Remote `%gm_src` must carry `#pto.remote` (caller computes address from
+  `CommDeviceContext.windowsIn[]`); no session or completion-record result.
+- Local completion follows existing MTE / pipe sync. Cross-rank visibility (E3) is not implied.
 
 **Example:**
 
@@ -64,6 +71,15 @@ pto.mte_gm_ub %gm_in, %ub_out, %cache, %len_burst
   pad(%pad)
   : !pto.ptr<f16, gm>, !pto.ptr<f16, ub>, i64, i64,
     loop i64, i64, i64, pad f16
+```
+
+**Example (remote GM → UB):**
+
+```mlir
+%src = pto.castptr %remote_i64 : i64 -> !pto.ptr<f16, gm, #pto.remote>
+pto.mte_gm_ub %src, %ub_out, %cache, %len_burst
+  nburst(%rows, %gm_row_stride, %ub_row_stride)
+  : !pto.ptr<f16, gm, #pto.remote>, !pto.ptr<f16, ub>, i64, i64, i64
 ```
 
 ---
@@ -80,13 +96,14 @@ pto.mte_ub_gm %ub_src, %gm_dst, %len_burst
 ```
 - **semantics:** Grouped UB→GM DMA transfer. `nburst(...)` defines the innermost repeated burst transfer, and optional `loop(...)` groups add outer repetition levels.
   The `l2_cache_ctl(...)` group is optional in textual VPTO IR; when omitted, lowering uses `0`.
+  `%gm_dst` may carry `#pto.remote` for a synchronous remote write; nburst / stride are unchanged.
 
 **Parameter Table:**
 
 | Parameter | Width | Description |
 |-----------|-------|-------------|
 | `%ub_src` | ptr | UB source pointer (`!pto.ptr<T, ub>`, 32B-aligned) |
-| `%gm_dst` | ptr | GM destination pointer (`!pto.ptr<T, gm>`) |
+| `%gm_dst` | ptr | GM destination pointer (`!pto.ptr<T, gm>` or with `#pto.remote`) |
 | `%len_burst` | 16 bits | Contiguous bytes transferred per burst row |
 | `nburst(%n_burst, %src_stride, %dst_stride)` | 16 bits / 21 bits / 40 bits | Required innermost burst group: count, UB source stride, GM destination stride |
 | `l2_cache_ctl(%l2_cache_ctl)` | 4 bits | Optional GM store-side L2 cache control; omitted means `0` |
@@ -100,6 +117,9 @@ pto.mte_ub_gm %ub_src, %gm_dst, %len_burst
 - `loop(...)` groups are ordered from inner to outer.
 - The first `loop(...)` group wraps `nburst(...)`.
 - Each additional `loop(...)` group wraps all earlier groups.
+- Remote `%gm_dst` must carry `#pto.remote` (caller computes address from
+  `CommDeviceContext.windowsIn[]`); no session or completion-record result.
+- Local completion follows existing MTE / pipe sync. Cross-rank visibility (E3) is not implied. No `mte_*_signal` / `mte_*_counter` fused form.
 
 **Example:**
 
@@ -110,6 +130,15 @@ pto.mte_ub_gm %ub_in, %gm_out, %len_burst
   loop(%batches, %ub_batch_stride, %gm_batch_stride)
   : !pto.ptr<f16, ub>, !pto.ptr<f16, gm>, i64, i64, i64, i64, i64,
     loop i64, i64, i64, loop i64, i64, i64
+```
+
+**Example (UB → remote GM):**
+
+```mlir
+%dst = pto.castptr %remote_i64 : i64 -> !pto.ptr<f16, gm, #pto.remote>
+pto.mte_ub_gm %ub_in, %dst, %len_burst
+  nburst(%rows, %ub_row_stride, %gm_row_stride) l2_cache_ctl(%l2_cache_ctl)
+  : !pto.ptr<f16, ub>, !pto.ptr<f16, gm, #pto.remote>, i64, i64, i64, i64, i64
 ```
 
 ---
