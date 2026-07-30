@@ -62,6 +62,7 @@ enum class DataLayoutSeedPhase {
   GroupSlotLoad,
   GroupBroadcast,
   GroupBroadcastLoad,
+  CompactCast,
   GroupStore,
   Cast,
   WeakReduce,
@@ -261,6 +262,12 @@ struct LayoutSolver {
 
   VMILayoutAttr getContiguousLayout() {
     return VMILayoutAttr::getContiguous(ctx);
+  }
+
+  DataLayoutSeedPhase getCastSeedPhase(const VMICastLayoutFact &fact) {
+    return fact.priority == VMICastLayoutPriority::High
+               ? DataLayoutSeedPhase::CompactCast
+               : DataLayoutSeedPhase::Cast;
   }
 
   VMILayoutAttr getPreferredDenseStoreLayout(VMIVRegType type) {
@@ -1059,7 +1066,7 @@ struct LayoutSolver {
             supports.getPreferredCastLayoutFact(sourceType, resultType);
         if (succeeded(fact)) {
           if (failed(setPreferredLayout(extf.getResult(), fact->resultLayout,
-                                        op, DataLayoutSeedPhase::Cast)))
+                                        op, getCastSeedPhase(*fact))))
             return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -1072,7 +1079,7 @@ struct LayoutSolver {
             supports.getPreferredCastLayoutFact(sourceType, resultType);
         if (succeeded(fact)) {
           if (failed(setPreferredLayout(extsi.getResult(), fact->resultLayout,
-                                        op, DataLayoutSeedPhase::Cast)))
+                                        op, getCastSeedPhase(*fact))))
             return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -1085,7 +1092,7 @@ struct LayoutSolver {
             supports.getPreferredCastLayoutFact(sourceType, resultType);
         if (succeeded(fact)) {
           if (failed(setPreferredLayout(extui.getResult(), fact->resultLayout,
-                                        op, DataLayoutSeedPhase::Cast)))
+                                        op, getCastSeedPhase(*fact))))
             return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -1100,8 +1107,12 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
+        DataLayoutSeedPhase phase =
+            succeeded(fact)
+                ? getCastSeedPhase(*fact)
+                : DataLayoutSeedPhase::Cast;
         if (failed(setPreferredLayout(truncf.getResult(), resultLayout, op,
-                                      DataLayoutSeedPhase::Cast)))
+                                      phase)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
@@ -1115,8 +1126,12 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
+        DataLayoutSeedPhase phase =
+            succeeded(fact)
+                ? getCastSeedPhase(*fact)
+                : DataLayoutSeedPhase::Cast;
         if (failed(setPreferredLayout(trunci.getResult(), resultLayout, op,
-                                      DataLayoutSeedPhase::Cast)))
+                                      phase)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }

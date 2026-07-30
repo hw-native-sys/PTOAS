@@ -168,6 +168,16 @@ static bool matchesElementCountPattern(ElementCountPattern pattern,
   return false;
 }
 
+static bool matchesPhysicalChunkCountPattern(
+    PhysicalChunkCountPattern pattern, int64_t chunkCount) {
+  if (chunkCount <= 0)
+    return false;
+  for (int64_t i = 0; i < pattern.count; ++i)
+    if (pattern.values[i] == chunkCount)
+      return true;
+  return false;
+}
+
 static bool matchesMaskGranularityPattern(MaskGranularityPattern pattern,
                                           StringRef granularity) {
   uint8_t mask = granularity == "b8"    ? 1u << 0
@@ -402,6 +412,15 @@ struct PreferredCastLayoutPattern {
   LayoutPattern resultLayout;
 };
 
+struct HighPriorityCastLayoutPattern {
+  ElementBitsPattern sourceBits;
+  ElementBitsPattern resultBits;
+  PhysicalChunkCountPattern sourceChunks;
+  PhysicalChunkCountPattern resultChunks;
+  LayoutPattern sourceLayout;
+  LayoutPattern resultLayout;
+};
+
 struct LegalCastLayoutPattern {
   ElementBitsPattern sourceBits;
   ElementBitsPattern resultBits;
@@ -450,6 +469,19 @@ static constexpr PreferredCastLayoutPattern
         {bits<16>(), bits<8>(), 0, c(), ls(2)},
         {bits<32>(), bits<16>(), 0, c(), ls(2)},
         {bits<32>(), bits<8>(), 0, c(), ls(4)},
+};
+
+static constexpr HighPriorityCastLayoutPattern
+    kHighPriorityCastLayoutPatterns[] = {
+        // One-chunk widening relations.
+        {bits<8>(), bits<16>(), chunk<1>(), chunk<1>(), ls(2), c()},
+        {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), ls(2), c()},
+        {bits<8>(), bits<32>(), chunk<1>(), chunk<1>(), ls(4), c()},
+
+        // One-chunk narrowing relations.
+        {bits<16>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(2)},
+        {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), c(), ls(2)},
+        {bits<32>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(4)},
 };
 
 static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
@@ -884,12 +916,7 @@ struct InterleaveLayoutKey {
 
 static bool matchesPhysicalChunkCountPattern(
     PhysicalChunkCountPattern pattern, InterleaveLayoutKey key) {
-  if (key.physicalChunkCount <= 0)
-    return false;
-  for (int64_t i = 0; i < pattern.count; ++i)
-    if (pattern.values[i] == key.physicalChunkCount)
-      return true;
-  return false;
+  return matchesPhysicalChunkCountPattern(pattern, key.physicalChunkCount);
 }
 
 static bool matchesInterleaveLayoutPattern(
@@ -1409,13 +1436,68 @@ static std::pair<int64_t, int64_t> getCastElementBits(VMIVRegType sourceType,
 static VMICastLayoutFact makeCastLayoutFact(int64_t sourceBits,
                                             int64_t resultBits,
                                             VMILayoutAttr sourceLayout,
-                                            VMILayoutAttr resultLayout) {
+                                            VMILayoutAttr resultLayout,
+                                            VMICastLayoutPriority priority =
+                                                VMICastLayoutPriority::Normal) {
   VMICastLayoutFact fact;
   fact.sourceBits = sourceBits;
   fact.resultBits = resultBits;
   fact.sourceLayout = sourceLayout;
   fact.resultLayout = resultLayout;
+  fact.priority = priority;
   return fact;
+}
+
+static FailureOr<VMICastLayoutFact>
+getHighPriorityCastLayoutFactImpl(VMIVRegType sourceType,
+                                  VMIVRegType resultType,
+                                  bool allowLaneStrideNarrowing,
+                                  std::string *reason) {
+  auto [sourceBits, resultBits] = getCastElementBits(sourceType, resultType);
+  if (!allowLaneStrideNarrowing && sourceBits > resultBits)
+    return failure();
+
+  MLIRContext *ctx = sourceType.getContext();
+  std::optional<VMICastLayoutFact> selected;
+  for (const HighPriorityCastLayoutPattern &pattern :
+       kHighPriorityCastLayoutPatterns) {
+    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
+        !matchesElementBitsPattern(pattern.resultBits, resultBits))
+      continue;
+
+    VMILayoutAttr sourceLayout =
+        materializeLayoutPattern(ctx, pattern.sourceLayout);
+    VMILayoutAttr resultLayout =
+        materializeLayoutPattern(ctx, pattern.resultLayout);
+    auto assignedSourceType = VMIVRegType::get(
+        ctx, sourceType.getElementCount(), sourceType.getElementType(),
+        sourceLayout);
+    auto assignedResultType = VMIVRegType::get(
+        ctx, resultType.getElementCount(), resultType.getElementType(),
+        resultLayout);
+    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(assignedSourceType);
+    FailureOr<int64_t> resultArity = getVMIPhysicalArity(assignedResultType);
+    if (failed(sourceArity) || failed(resultArity) ||
+        !matchesPhysicalChunkCountPattern(pattern.sourceChunks,
+                                          *sourceArity) ||
+        !matchesPhysicalChunkCountPattern(pattern.resultChunks,
+                                          *resultArity))
+      continue;
+    if (selected) {
+      if (reason)
+        *reason = "high-priority cast layout table has ambiguous matching rows";
+      return failure();
+    }
+    selected = makeCastLayoutFact(sourceBits, resultBits, sourceLayout,
+                                  resultLayout,
+                                  VMICastLayoutPriority::High);
+  }
+  if (!selected) {
+    if (reason)
+      *reason = "requires a matching high-priority cast layout table row";
+    return failure();
+  }
+  return *selected;
 }
 
 static int64_t getMaskGranularityBits(StringRef granularity) {
@@ -1493,6 +1575,11 @@ getPreferredLaneStrideNarrowCastLayoutFactImpl(VMIVRegType sourceType,
 
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
     VMIVRegType sourceType, VMIVRegType resultType, std::string *reason) const {
+  FailureOr<VMICastLayoutFact> highPriorityFact =
+      getHighPriorityCastLayoutFactImpl(sourceType, resultType,
+                                        preferLaneStrideNarrowing, reason);
+  if (succeeded(highPriorityFact))
+    return highPriorityFact;
   if (preferLaneStrideNarrowing) {
     FailureOr<VMICastLayoutFact> laneStrideFact =
         getPreferredLaneStrideNarrowCastLayoutFactImpl(sourceType, resultType,
