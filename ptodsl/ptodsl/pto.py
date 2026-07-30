@@ -38,7 +38,7 @@ from ._types import (           # noqa: F401
     _resolve,
 )
 from ._builtin_vector import Vec  # noqa: F401
-from ._surface_types import (   # noqa: F401
+from ._surface_types import (  # noqa: F401
     const_expr,
     BarrierType,
     Pipe,
@@ -82,27 +82,68 @@ from ._tile_namespace import tile  # noqa: F401
 from ._vmi_namespace import vmi  # noqa: F401
 
 # ── Operations ────────────────────────────────────────────────────────────────
-from ._ops import (             # noqa: F401
+from ._ops import (  # noqa: F401
     const,
     declare_struct, struct_get, struct_set,
     get_op_attr,
-    castptr, addptr,
-    vlds, vldas, vldus, vldsx2, vsts, vstsx2,
+    castptr,
+    addptr,
+    vlds,
+    vldas,
+    vldus,
+    vldsx2,
+    vsts,
+    vstsx2,
     init_align,
-    plt_b8, plt_b16, plt_b32,
-    pset_b8, pset_b16, pset_b32,
-    pge_b8, pge_b16, pge_b32,
-    make_mask, bytewidth, elements_per_vreg,
-    pand, por, pxor, pnot, psel,
+    plt_b8,
+    plt_b16,
+    plt_b32,
+    pset_b8,
+    pset_b16,
+    pset_b32,
+    pge_b8,
+    pge_b16,
+    pge_b32,
+    make_mask,
+    bytewidth,
+    elements_per_vreg,
+    pand,
+    por,
+    pxor,
+    pnot,
+    psel,
     pbitcast,
-    vcvt, vpack, vmulscvt,
-    ppack, punpack,
-    pintlv_b8, pintlv_b16, pintlv_b32,
-    pdintlv_b8, pdintlv_b16, pdintlv_b32,
-    vintlv, vdintlv,
-    vgather2, vgather2_bc, vgatherb, vscatter, vsldb, vsstb,
-    vcmp, vcmps,
-    plds, psts, pstu, vstar, vstas, vstur, vstus,
+    vcvt,
+    vpack,
+    vmulscvt,
+    ppack,
+    punpack,
+    pintlv_b8,
+    pintlv_b16,
+    pintlv_b32,
+    pdintlv_b8,
+    pdintlv_b16,
+    pdintlv_b32,
+    vintlv,
+    vdintlv,
+    vgather2,
+    vgather2_bc,
+    vgatherb,
+    vscatter,
+    vsldb,
+    vsstb,
+    vcmp,
+    vcmps,
+    plds,
+    psts,
+    pstu,
+    vstar,
+    vstas,
+    vstur,
+    vstus,
+    vsqz,
+    sprclr,
+    sprsts,
     vbitcast,
     vbr,
     vadd, vsub, vmul, vdiv, vmax, vmin,
@@ -112,11 +153,28 @@ from ._ops import (             # noqa: F401
     vcgmax, vcgadd, vcgmin, vcpadd,
     vtrc, vprelu, vintlv, vdintlv, vselr,
     chistv2,
-    vci, vaddc, vaddcs, vmull, vbitsort, vmrgsort4,
-    load_scalar, store_scalar,
-    vadds, vsubs, vmuls, vmaxs, vmins, vlrelu, vands, vors, vxors,
-    vaxpy, vaddrelu, vsubrelu,
-    vmula, vmadd,
+    vci,
+    vaddc,
+    vaddcs,
+    vmull,
+    vbitsort,
+    vmrgsort4,
+    load_scalar,
+    store_scalar,
+    vadds,
+    vsubs,
+    vmuls,
+    vmaxs,
+    vmins,
+    vlrelu,
+    vands,
+    vors,
+    vxors,
+    vaxpy,
+    vaddrelu,
+    vsubrelu,
+    vmula,
+    vmadd,
     vsel,
     make_tensor_view, partition_view,
     alloc_buffer, alloc_tile,
@@ -150,10 +208,16 @@ from ._ops import (             # noqa: F401
     fmin, fmax, fma, convert,
     syncthreads, threadfence, threadfence_block, trap, keep, resume,
     pipe_barrier,
-    get_buf, rls_buf,
-    set_cross_flag, wait_cross_flag, set_intra_flag, wait_intra_flag,
-    set_flag, wait_flag,
-    reserve_buffer, import_reserved_buffer,
+    get_buf,
+    rls_buf,
+    set_cross_flag,
+    wait_cross_flag,
+    set_intra_flag,
+    wait_intra_flag,
+    set_flag,
+    wait_flag,
+    reserve_buffer,
+    import_reserved_buffer,
 )
 
 # ── Control flow ──────────────────────────────────────────────────────────────
@@ -161,16 +225,18 @@ from ._control_flow import (    # noqa: F401
     section, vecscope,
     for_, if_, yield_,
     static_range,
-    LoopHandle, BranchHandle,
+    LoopHandle,
+    BranchHandle,
 )
 
 # ── All-reduce ─────────────────────────────────────────────────────────────────
 from ._allreduce import simt_allreduce_max, simt_allreduce_min, simt_allreduce_sum  # noqa: F401
 
 # ── Decorator ─────────────────────────────────────────────────────────────────
-from ._jit import jit, KernelHandle, merge_jit_modules      # noqa: F401
-from ._subkernels import cube, simd, simt, tileop     # noqa: F401
+from ._jit import jit, KernelHandle, merge_jit_modules  # noqa: F401
+from ._subkernels import cube, simd, simt, tileop  # noqa: F401
 from ._pipe_namespace import pipe  # noqa: F401
+
 
 # ── Shorthand dtype aliases ───────────────────────────────────────────────────
 def gm_ptr(elem):
@@ -191,6 +257,16 @@ PAT = MaskPattern
 
 
 def __getattr__(name):
-    if name in {"ukernel", "tile_buf_type", "as_ptr", "vbrc_load", "vsts_1pt", "constexpr", "copy_ubuf_to_ubuf", "tensor_spec", "TensorSpec"}:
+    if name in {
+        "ukernel",
+        "tile_buf_type",
+        "as_ptr",
+        "vbrc_load",
+        "vsts_1pt",
+        "constexpr",
+        "copy_ubuf_to_ubuf",
+        "tensor_spec",
+        "TensorSpec",
+    }:
         raise unsupported_public_surface_error(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

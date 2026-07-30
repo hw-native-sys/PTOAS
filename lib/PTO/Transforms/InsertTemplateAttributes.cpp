@@ -514,6 +514,15 @@ static void appendOpContextAttrs(
     if (auto axisAttr = tgather.getAxisAttr()) {
       attrs.emplace_back("axis_value", axisAttr.getValue().str());
     }
+    if (auto cmpModeAttr = tgather.getCmpModeAttr()) {
+      attrs.emplace_back(
+          "cmp_mode",
+          stringifyCmpMode(cmpModeAttr.getValue()).str());
+    }
+    if (auto offsetAttr = tgather.getOffsetAttr()) {
+      attrs.emplace_back("offset",
+                         std::to_string(offsetAttr.getValue().getSExtValue()));
+    }
   }
   if (auto ttri = dyn_cast<pto::TTriOp>(op)) {
     attrs.emplace_back("upper_or_lower", std::to_string(ttri.getUpperOrLower()));
