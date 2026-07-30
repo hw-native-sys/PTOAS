@@ -80,6 +80,22 @@ module {
           !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>>
   }
 
+  func.func @vmi_layout_rematerialize_keeps_wider_source(
+      %src: !pto.ptr<f16, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %x16 = pto.vmi.vload %src[%off]
+        : !pto.ptr<f16, ub>
+        -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+    %x32_d2 = pto.vmi.vcvt %x16
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %x32_c = pto.vmi.ensure_layout %x32_d2
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %x32_c
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
   func.func @vmi_layout_rematerialize_trunci_source_ensure(
       %x32_d4: !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>>)
       -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>> {
@@ -122,6 +138,14 @@ module {
 // REMAT-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // REMAT: pto.vmi.truncf %[[X32_D4]]
 // REMAT-NOT: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+
+// REMAT-LABEL: func.func @vmi_layout_rematerialize_keeps_wider_source(
+// REMAT: %[[X16:.*]] = pto.vmi.load
+// REMAT: %[[X32_D2:.*]] = pto.vmi.extf %[[X16]]
+// REMAT-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// REMAT: %[[X32_C:.*]] = pto.vmi.ensure_layout %[[X32_D2]]
+// REMAT-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// REMAT: return %[[X32_C]]
 
 // REMAT-LABEL: func.func @vmi_layout_rematerialize_trunci_source_ensure(
 // REMAT-SAME: %[[X32_D4:.*]]: !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>>

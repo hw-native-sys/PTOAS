@@ -11,6 +11,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
@@ -70,9 +71,17 @@ rematerializeWidenExt(ExtOp op, VMIVRegType resultType, Location loc,
   auto rematSourceType =
       VMIVRegType::get(sourceType.getContext(), sourceType.getElementCount(),
                        sourceType.getElementType(), *sourceLayout);
-  if (sourceType != rematSourceType &&
-      failed(supports.getEnsureLayoutFact(sourceType, rematSourceType)))
-    return std::nullopt;
+  if (sourceType != rematSourceType) {
+    if (failed(supports.getEnsureLayoutFact(sourceType, rematSourceType)))
+      return std::nullopt;
+
+    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
+    FailureOr<int64_t> rematSourceArity =
+        getVMIPhysicalArity(rematSourceType);
+    if (failed(sourceArity) || failed(rematSourceArity) ||
+        *rematSourceArity > *sourceArity)
+      return std::nullopt;
+  }
   Value rematSource =
       materializeDataLayout(op.getSource(), rematSourceType, loc, builder);
   return builder.create<ExtOp>(loc, resultType, rematSource).getResult();
