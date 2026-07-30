@@ -12,9 +12,23 @@ from ptodsl import pto
 from ._elementwise import register_unary
 
 
+_DTYPES = [("i32", "i32"), ("f16", "f16"), ("f32", "f32")]
+
+
 template_trelu = register_unary(
     op="pto.trelu",
     name="template_trelu",
     vector_op=pto.vrelu,
-    dtypes=[("i32", "i32"), ("f16", "f16"), ("f32", "f32")],
+    dtypes=_DTYPES,
+)
+
+
+template_trelu_1d = register_unary(
+    op="pto.trelu",
+    name="template_trelu_1d",
+    vector_op=pto.vrelu,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

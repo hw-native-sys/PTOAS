@@ -17,7 +17,7 @@ from ptodsl.tilelib import ScalarSpec, ScalarType, TileSpec, VectorSpec, ViewSpe
 
 # op -> (template name, rendered op, parameter names, representative dtype[, candidate id])
 CATALOG = {
-    "pto.tabs": ("template_tabs", "pto.vabs", ("src", "dst"), "f32"),
+    "pto.tabs": ("template_tabs_1d", "pto.vabs", ("src", "dst"), "f32"),
     "pto.tadd": (
         "template_tadd",
         "pto.vadd",
@@ -71,7 +71,7 @@ CATALOG = {
     # tdequant has i16/i8 variants; this entry covers the i16 representative
     # (the i8 path is exercised by test_tdequant_dtype_versions_render).
     "pto.tdequant": ("template_tdequant_i16", "pto.vmul", ("src", "scale", "offset", "dst"), "i16"),
-    "pto.texp": ("template_texp", "pto.vexp", ("src", "dst"), "f32"),
+    "pto.texp": ("template_texp_1d", "pto.vexp", ("src", "dst"), "f32"),
     "pto.tfmod": ("template_tfmod", "pto.vtrc", ("src0", "src1", "dst"), "f32"),
     "pto.tfmods": ("template_tfmods", "pto.vtrc", ("src", "scalar", "dst"), "f32"),
     "pto.tfillpad": ("template_tfillpad", "pto.vsts", ("src", "dst"), "f32"),
@@ -128,10 +128,10 @@ CATALOG = {
         "f8e4m3",
     ),
     "pto.tmax": ("template_tmax", "pto.vmax", ("src0", "src1", "dst"), "f32"),
-    "pto.tneg": ("template_tneg", "pto.vneg", ("src", "dst"), "f32"),
+    "pto.tneg": ("template_tneg_1d", "pto.vneg", ("src", "dst"), "f32"),
     "pto.tmin": ("template_tmin", "pto.vmin", ("src0", "src1", "dst"), "f32"),
     "pto.tmov": ("template_tmov_basic", "pto.vsts", ("src", "dst"), "f32"),
-    "pto.tnot": ("template_tnot", "pto.vnot", ("src", "dst"), "i32"),
+    "pto.tnot": ("template_tnot_1d", "pto.vnot", ("src", "dst"), "i32"),
     "pto.tor": ("template_tor", "pto.vor", ("src0", "src1", "dst"), "i32"),
     "pto.tors": ("template_tors", "pto.vor", ("src", "scalar", "dst"), "i32"),
     "pto.tpartadd": ("template_tpartadd", "pto.vadd", ("src0", "src1", "dst"), "f32"),
@@ -140,11 +140,11 @@ CATALOG = {
     "pto.tpartmul": ("template_tpartmul", "pto.vmul", ("src0", "src1", "dst"), "f32"),
     "pto.tprelu": ("template_tprelu", "pto.vprelu", ("src0", "src1", "tmp", "dst"), "f32"),
     "pto.trandom": ("template_trandom", "pto.vmull", ("key0", "key1", "counter0", "counter1", "counter2", "counter3", "dst"), "ui32"),
-    "pto.trelu": ("template_trelu", "pto.vrelu", ("src", "dst"), "f32"),
+    "pto.trelu": ("template_trelu_1d", "pto.vrelu", ("src", "dst"), "f32"),
     "pto.trecip": ("template_trecip", "pto.vdiv", ("src", "dst"), "f32"),
     "pto.trem": ("template_trem", "pto.vtrc", ("src0", "src1", "tmp", "dst"), "f32"),
     "pto.trems": ("template_trems", "pto.vtrc", ("src", "scalar", "tmp", "dst"), "f32"),
-    "pto.trsqrt": ("template_trsqrt", "pto.vsqrt", ("src", "dst"), "f32"),
+    "pto.trsqrt": ("template_trsqrt_1d", "pto.vsqrt", ("src", "dst"), "f32"),
     "pto.trowargmax": ("template_trowargmax", "pto.vdintlv", ("src", "tmp", "dst"), "f32"),
     "pto.trowargmin": ("template_trowargmin", "pto.vdintlv", ("src", "tmp", "dst"), "f32"),
     "pto.trowexpand": ("template_trowexpand", "pto.vdup", ("src", "dst"), "f32"),
@@ -205,7 +205,7 @@ CATALOG = {
     "pto.txors": ("template_txors", "pto.vxor", ("src", "scalar", "tmp", "dst"), "i32"),
     "pto.tsubs": ("template_tsubs", "pto.vsub", ("src", "scalar", "dst"), "f32"),
     "pto.tsub": ("template_tsub", "pto.vsub", ("src0", "src1", "dst"), "f32"),
-    "pto.tsqrt": ("template_tsqrt", "pto.vsqrt", ("src", "dst"), "f32"),
+    "pto.tsqrt": ("template_tsqrt_1d", "pto.vsqrt", ("src", "dst"), "f32"),
 }
 
 CUBE_OPS = {
@@ -274,6 +274,21 @@ OPS_WITHOUT_TILE_LOAD = OPS_WITHOUT_TILE_LOAD | CUBE_OPS
 OPS_WITHOUT_VECTOR_STORE = {"pto.tcmp", "pto.tcmps", "pto.tsort32"}
 OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | {"pto.tload", "pto.tstore", "pto.tstore_fp", "pto.textract_fp"}
 OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | CUBE_OPS
+OPS_WITHOUT_MEMREF_SUBVIEW = {"pto.tcmps", "pto.tsort32"}
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {"pto.texpands", "pto.tdivs", "pto.tfillpad_inplace"}
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {"pto.tload", "pto.tstore", "pto.tstore_fp", "pto.textract_fp"}
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | ROW_REDUCTIONS
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | ARG_COLUMN_REDUCTIONS
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | CUBE_OPS
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {
+    "pto.tabs",
+    "pto.texp",
+    "pto.tneg",
+    "pto.tnot",
+    "pto.trelu",
+    "pto.trsqrt",
+    "pto.tsqrt",
+}
 OPS_WITHOUT_LOOP = {"pto.tmrgsort"}
 OPS_WITHOUT_LOOP = OPS_WITHOUT_LOOP | {"pto.tstore_fp", "pto.textract_fp"}
 OPS_WITHOUT_LOOP = OPS_WITHOUT_LOOP | CUBE_OPS

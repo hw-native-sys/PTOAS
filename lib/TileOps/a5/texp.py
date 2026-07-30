@@ -12,12 +12,26 @@ from ptodsl import pto
 from ._elementwise import register_unary
 
 
+_DTYPES = [
+    ("f16", "f16"),
+    ("f32", "f32"),
+]
+
+
 template_texp = register_unary(
     op="pto.texp",
     name="template_texp",
     vector_op=pto.vexp,
-    dtypes=[
-        ("f16", "f16"),
-        ("f32", "f32"),
-    ],
+    dtypes=_DTYPES,
+)
+
+
+template_texp_1d = register_unary(
+    op="pto.texp",
+    name="template_texp_1d",
+    vector_op=pto.vexp,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

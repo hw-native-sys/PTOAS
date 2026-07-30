@@ -236,6 +236,11 @@ operation must remain unique. The 1D registrar constraint must name every tile
 operand that participates in or constrains the traversal, including temporary
 TileOp operands.
 
+The first production users of this pattern are the ordinary unary operations
+`tabs`, `texp`, `tneg`, `tnot`, `trelu`, `trsqrt`, and `tsqrt`. Their original
+candidate names and ID 0 remain the 2D fallbacks; their `_1d` candidates use
+ID 1 and higher priority.
+
 For bespoke computation, use the lower-level `emit_elementwise_1d` and
 `emit_elementwise_2d` chunk callbacks or the family emitters. The flattened
 form supplies one linear element offset; do not convert it back into row and

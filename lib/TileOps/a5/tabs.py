@@ -12,9 +12,23 @@ from ptodsl import pto
 from ._elementwise import register_unary
 
 
+_DTYPES = [("f16", "f16"), ("f32", "f32")]
+
+
 template_tabs = register_unary(
     op="pto.tabs",
     name="template_tabs",
     vector_op=pto.vabs,
-    dtypes=[("f16", "f16"), ("f32", "f32")],
+    dtypes=_DTYPES,
+)
+
+
+template_tabs_1d = register_unary(
+    op="pto.tabs",
+    name="template_tabs_1d",
+    vector_op=pto.vabs,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

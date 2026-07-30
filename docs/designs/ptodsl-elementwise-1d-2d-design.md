@@ -26,10 +26,15 @@ forms for ordinary unary, Tile-Tile, Tile-Scalar, and scalar-fill families.
 Its registration helpers accept an explicit traversal form, derive
 `loop_depth`, and attach `require_elementwise_1d(...)` to 1D candidates. All
 runtime loops use the source-backed Python `for ... in range(...)` syntax and
-are lowered by PTODSL's control-flow AST rewrite. Existing operation call sites
-still use the default 2D form, so operation migration, special-family
-implementations, functional tests, and performance measurements remain
-subsequent steps.
+are lowered by PTODSL's control-flow AST rewrite.
+
+The ordinary unary operations `tabs`, `texp`, `tneg`, `tnot`, `trelu`,
+`trsqrt`, and `tsqrt` now each register a preferred shared 1D candidate while
+preserving their original shared 2D candidate as the fallback. This raises the
+current unary candidate count to 17 and the current scoped candidate count to
+89. The algorithm-specific unary operations `tlog` and `trecip`, the other
+operation families, functional execution tests, and performance measurements
+remain subsequent steps.
 
 ## Goals
 
@@ -55,7 +60,8 @@ subsequent steps.
 
 ## Inventory Summary
 
-The scope contains 43 TileOps and 82 currently registered PTODSL candidates:
+At the inventory baseline, the scope contained 43 TileOps and 82 registered
+PTODSL candidates:
 
 | Family | TileOps | Registered candidates |
 |---|---:|---:|
@@ -65,8 +71,9 @@ The scope contains 43 TileOps and 82 currently registered PTODSL candidates:
 | Compare, select, conversion, scalar fill | 6 | 43 |
 | Total | 43 | 82 |
 
-All 82 candidates currently declare `loop_depth=2`. The ordinary shared
-element-wise implementations are row-wise. The important exception is
+At that baseline, all 82 candidates declared `loop_depth=2`. The seven
+ordinary unary operations named in the status section have since gained
+explicit `loop_depth=1` candidates. The important baseline exception is
 `tcmps`: its f32/i32 branch already traverses `valid_rows * valid_cols` as a
 flat range even though the containing candidate is marked as two-dimensional.
 That mixed candidate must be separated into explicit 1D and 2D forms.
@@ -109,15 +116,15 @@ The provisional 1D classifications mean:
 
 | Op | Existing candidate(s) and operands | Dtypes | Current form | Provisional 1D classification |
 |---|---|---|---|---|
-| `tabs` | `template_tabs(src, dst)` | same `F2` | shared 2D | Shared |
-| `texp` | `template_texp(src, dst)` | same `F2` | shared 2D, default precision only | Shared |
+| `tabs` | `template_tabs(src, dst)`; `template_tabs_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D | Shared |
+| `texp` | `template_texp(src, dst)`; `template_texp_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D, default precision only | Shared |
 | `tlog` | `template_tlog(src, dst)`; `template_tlog_high_precision(src, dst)` | same `F2` | two precision-selected 2D candidates | Algorithm-specific |
-| `tneg` | `template_tneg(src, dst)` | same `NEG6` | shared 2D | Shared |
-| `tnot` | `template_tnot(src, dst)` | same `I6` | shared 2D | Shared |
+| `tneg` | `template_tneg(src, dst)`; `template_tneg_1d(src, dst)` | same `NEG6` | shared 2D fallback and preferred shared 1D | Shared |
+| `tnot` | `template_tnot(src, dst)`; `template_tnot_1d(src, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
 | `trecip` | `template_trecip(src, dst)` | same `F2` | bespoke 2D using `1 / src`, default precision only | Algorithm-specific |
-| `trelu` | `template_trelu(src, dst)` | same `RELU3` | shared 2D | Shared |
-| `trsqrt` | `template_trsqrt(src, dst)` | same `F2` | shared 2D, default precision only | Shared |
-| `tsqrt` | `template_tsqrt(src, dst)` | same `F2` | shared 2D, default precision only | Shared |
+| `trelu` | `template_trelu(src, dst)`; `template_trelu_1d(src, dst)` | same `RELU3` | shared 2D fallback and preferred shared 1D | Shared |
+| `trsqrt` | `template_trsqrt(src, dst)`; `template_trsqrt_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D, default precision only | Shared |
+| `tsqrt` | `template_tsqrt(src, dst)`; `template_tsqrt_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D, default precision only | Shared |
 
 `precisionType` is forwarded for `texp`, `tlog`, `trecip`, `trsqrt`, and
 `tsqrt`. In the current PTODSL templates only `tlog` uses it for candidate
@@ -274,10 +281,11 @@ The ordinary implementations are concentrated in:
 - `ptodsl/ptodsl/tilelib/templates/a5/_common.py`
 
 `_elementwise.py` registers unary, Tile-Tile, Tile-Scalar, and scalar-fill
-templates. Existing operation call sites retain the default 2D form, which
+templates. Unmigrated operation call sites retain the default 2D form, which
 restarts `remained = valid_cols` for every row and then walks columns by vector
-lane count. `_remainder.py` uses the same row-wise traversal around a more
-complex vector computation.
+lane count. The migrated ordinary unary operations add an explicit 1D
+registration next to that unchanged fallback. `_remainder.py` uses the same
+row-wise traversal around a more complex vector computation.
 
 The reusable ordinary traversal foundation consists of:
 
@@ -297,9 +305,9 @@ row/column addressing so each physical tile's row stride remains respected.
 The two module-level traversal cores opt into `rewrite_jit_function`; this is
 required because only a registered template body and its lexically nested
 helpers are rewritten automatically.
-Candidate IDs and priorities are explicit registrar parameters, allowing a
-future 1D candidate to rank ahead of its stable-ID 2D fallback without relying
-on registration order.
+Candidate IDs and priorities are explicit registrar parameters, allowing a 1D
+candidate to rank ahead of its stable-ID 2D fallback without relying on
+registration order.
 
 The operation-specific files that cannot be migrated by replacing a shared
 registrar alone are:

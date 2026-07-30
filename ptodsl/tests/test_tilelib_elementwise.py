@@ -15,7 +15,13 @@ from pathlib import Path
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 import ptodsl.tilelib.templates.a5._elementwise as elementwise
-from ptodsl.tilelib import ScalarSpec, ScalarType, TileSpec, select
+from ptodsl.tilelib import (
+    ScalarSpec,
+    ScalarType,
+    TileSpec,
+    legal_candidates,
+    select,
+)
 from ptodsl.tilelib.templates.a5._elementwise import (
     emit_scalar_binary_1d,
     emit_scalar_binary_2d,
@@ -33,6 +39,26 @@ ELEMENTWISE = {
     "pto.tmax": ("template_tmax", "pto.vmax"),
     "pto.tmin": ("template_tmin", "pto.vmin"),
     "pto.tdiv": ("template_tdiv", "pto.vdiv"),
+}
+
+PRODUCTION_UNARY_1D = {
+    "pto.tabs": ("template_tabs_1d", "template_tabs", "pto.vabs", "f32"),
+    "pto.texp": ("template_texp_1d", "template_texp", "pto.vexp", "f32"),
+    "pto.tneg": ("template_tneg_1d", "template_tneg", "pto.vneg", "i8"),
+    "pto.tnot": ("template_tnot_1d", "template_tnot", "pto.vnot", "ui16"),
+    "pto.trelu": ("template_trelu_1d", "template_trelu", "pto.vrelu", "i32"),
+    "pto.trsqrt": (
+        "template_trsqrt_1d",
+        "template_trsqrt",
+        "pto.vsqrt",
+        "f16",
+    ),
+    "pto.tsqrt": (
+        "template_tsqrt_1d",
+        "template_tsqrt",
+        "pto.vsqrt",
+        "f32",
+    ),
 }
 
 # Structured abstraction every elementwise template must preserve.
@@ -130,6 +156,22 @@ def _foundation_specs(param_names, *, shape=(4, 65), valid_shape=None):
         name: scalar if name == "scalar" else tile
         for name in param_names
     }
+
+
+def _unary_specs(
+    dtype_name,
+    *,
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+):
+    tile = TileSpec(
+        shape=shape,
+        valid_shape=valid_shape,
+        dtype=ScalarType(dtype_name),
+        compact_mode=compact_mode,
+    )
+    return {"src": tile, "dst": tile}
 
 
 class TileLibElementwiseTest(unittest.TestCase):
@@ -230,6 +272,66 @@ class TileLibElementwiseTest(unittest.TestCase):
         self.assertEqual(selected_1d.metadata.loop_depth, 1)
         self.assertEqual(selected_2d.name, "test_binary_2d")
         self.assertEqual(selected_2d.metadata.loop_depth, 2)
+
+    def test_production_unary_ops_register_preferred_1d_and_fallback_2d(self):
+        for op, (
+            name_1d,
+            name_2d,
+            vector_op,
+            dtype_name,
+        ) in PRODUCTION_UNARY_1D.items():
+            with self.subTest(op=op):
+                specs = _unary_specs(dtype_name)
+                candidates = legal_candidates(op, "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_1d, name_2d],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+
+                mlir = candidates[0].specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn(vector_op, mlir)
+                self.assertNotIn("memref.subview", mlir)
+
+    def test_production_unary_selection_uses_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        for op, (
+            name_1d,
+            name_2d,
+            _,
+            dtype_name,
+        ) in PRODUCTION_UNARY_1D.items():
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _unary_specs(
+                        dtype_name,
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    selected = select(op, "a5", specs)
+                    self.assertEqual(
+                        selected.name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        selected.metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
 
 
 if __name__ == "__main__":

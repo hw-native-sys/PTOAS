@@ -13,9 +13,23 @@ from ._common import INT_DTYPES
 from ._elementwise import register_unary
 
 
+_DTYPES = [(dtype, dtype) for dtype in INT_DTYPES]
+
+
 template_tnot = register_unary(
     op="pto.tnot",
     name="template_tnot",
     vector_op=pto.vnot,
-    dtypes=[(dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+
+template_tnot_1d = register_unary(
+    op="pto.tnot",
+    name="template_tnot_1d",
+    vector_op=pto.vnot,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

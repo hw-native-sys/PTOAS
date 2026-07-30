@@ -12,12 +12,26 @@ from ptodsl import pto
 from ._elementwise import register_unary
 
 
+_DTYPES = [
+    ("f16", "f16"),
+    ("f32", "f32"),
+]
+
+
 template_tsqrt = register_unary(
     op="pto.tsqrt",
     name="template_tsqrt",
     vector_op=pto.vsqrt,
-    dtypes=[
-        ("f16", "f16"),
-        ("f32", "f32"),
-    ],
+    dtypes=_DTYPES,
+)
+
+
+template_tsqrt_1d = register_unary(
+    op="pto.tsqrt",
+    name="template_tsqrt_1d",
+    vector_op=pto.vsqrt,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

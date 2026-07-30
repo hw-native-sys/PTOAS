@@ -12,16 +12,30 @@ from ptodsl import pto
 from ._elementwise import register_unary
 
 
+_DTYPES = [
+    ("i8", "i8"),
+    ("i16", "i16"),
+    ("i32", "i32"),
+    ("f16", "f16"),
+    ("bf16", "bf16"),
+    ("f32", "f32"),
+]
+
+
 template_tneg = register_unary(
     op="pto.tneg",
     name="template_tneg",
     vector_op=pto.vneg,
-    dtypes=[
-        ("i8", "i8"),
-        ("i16", "i16"),
-        ("i32", "i32"),
-        ("f16", "f16"),
-        ("bf16", "bf16"),
-        ("f32", "f32"),
-    ],
+    dtypes=_DTYPES,
+)
+
+
+template_tneg_1d = register_unary(
+    op="pto.tneg",
+    name="template_tneg_1d",
+    vector_op=pto.vneg,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )
