@@ -333,6 +333,131 @@ class TileLibElementwiseTest(unittest.TestCase):
                         1 if expect_1d else 2,
                     )
 
+    def test_tlog_precision_modes_register_distinct_1d_and_2d_candidates(self):
+        specs = _unary_specs("f32")
+        cases = (
+            (
+                "default",
+                ["template_tlog_1d", "template_tlog"],
+                [2, 0],
+                ("pto.vln",),
+            ),
+            (
+                "high_precision",
+                [
+                    "template_tlog_high_precision_1d",
+                    "template_tlog_high_precision",
+                ],
+                [3, 1],
+                (
+                    "pto.vcmps",
+                    "pto.vmuls",
+                    "pto.vsel",
+                    "pto.vln",
+                    "pto.vadds",
+                ),
+            ),
+        )
+        for precision_type, expected_names, expected_ids, vector_ops in cases:
+            with self.subTest(precision_type=precision_type):
+                context_attrs = {"precisionType": precision_type}
+                candidates = legal_candidates(
+                    "pto.tlog",
+                    "a5",
+                    specs,
+                    context_attrs=context_attrs,
+                )
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    expected_names,
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    expected_ids,
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+
+                mlir = candidates[0].specialize(
+                    context_attrs=context_attrs,
+                    **specs,
+                ).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertNotIn("memref.subview", mlir)
+                for vector_op in vector_ops:
+                    self.assertIn(vector_op, mlir)
+
+    def test_trecip_registers_local_computation_with_shared_traversals(self):
+        specs = _unary_specs("f16")
+        candidates = legal_candidates("pto.trecip", "a5", specs)
+
+        self.assertEqual(
+            [candidate.name for candidate in candidates],
+            ["template_trecip_1d", "template_trecip"],
+        )
+        self.assertEqual(
+            [candidate.metadata.id for candidate in candidates],
+            [1, 0],
+        )
+        self.assertEqual(
+            [candidate.metadata.loop_depth for candidate in candidates],
+            [1, 2],
+        )
+
+        mlir = candidates[0].specialize(**specs).mlir_text()
+        self.assertEqual(mlir.count("scf.for"), 1)
+        self.assertNotIn("memref.subview", mlir)
+        self.assertIn("pto.vbr", mlir)
+        self.assertIn("pto.vdiv", mlir)
+
+    def test_specialized_unary_selection_uses_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        operations = (
+            (
+                "pto.tlog",
+                "template_tlog_high_precision_1d",
+                "template_tlog_high_precision",
+                {"precisionType": "high_precision"},
+            ),
+            (
+                "pto.trecip",
+                "template_trecip_1d",
+                "template_trecip",
+                None,
+            ),
+        )
+        for op, name_1d, name_2d, context_attrs in operations:
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _unary_specs(
+                        "f32",
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    selected = select(
+                        op,
+                        "a5",
+                        specs,
+                        context_attrs=context_attrs,
+                    )
+                    self.assertEqual(
+                        selected.name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        selected.metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Specialized unary algorithms remain in their operation modules while using
+// the common traversal forms. Precision filtering happens before traversal
+// ranking, so high-precision tlog never competes with its default candidates.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
+
+// META-LABEL: func.func @TLOG_HIGH_1D
+// META: pto.tlog
+// META-SAME: candidates = [{
+// META-SAME: id = 3 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tlog_high_precision_1d"
+// META-SAME: }, {
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tlog_high_precision"
+// META-NOT: name = "template_tlog_1d"
+
+// META-LABEL: func.func @TLOG_HIGH_2D
+// META: pto.tlog
+// META-SAME: candidates = [{
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tlog_high_precision"
+// META-NOT: name = "template_tlog_high_precision_1d"
+
+// META-LABEL: func.func @TRECIP_1D
+// META: pto.trecip
+// META-SAME: candidates = [{
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_trecip_1d"
+// META-SAME: }, {
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_trecip"
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tlog_high_precision_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vcmps
+// SELECT: pto.vmuls
+// SELECT: pto.vsel
+// SELECT: pto.vln
+// SELECT: pto.vadds
+// SELECT: pto.vsel
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tlog_high_precision(
+// SELECT: scf.for
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vcmps
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_trecip_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vbr
+// SELECT: pto.vdiv
+// SELECT: return
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TLOG_HIGH_1D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tlog ins(
+      %src
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {precisionType = #pto<log_precision high_precision>}
+    return
+  }
+
+  func.func @TLOG_HIGH_2D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tlog ins(
+      %src
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=63,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {precisionType = #pto<log_precision high_precision>}
+    return
+  }
+
+  func.func @TRECIP_1D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.trecip ins(
+      %src
+        : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=80, v_row=4, v_col=80,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

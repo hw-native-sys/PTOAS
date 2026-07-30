@@ -28,13 +28,14 @@ Its registration helpers accept an explicit traversal form, derive
 runtime loops use the source-backed Python `for ... in range(...)` syntax and
 are lowered by PTODSL's control-flow AST rewrite.
 
-The ordinary unary operations `tabs`, `texp`, `tneg`, `tnot`, `trelu`,
-`trsqrt`, and `tsqrt` now each register a preferred shared 1D candidate while
-preserving their original shared 2D candidate as the fallback. This raises the
-current unary candidate count to 17 and the current scoped candidate count to
-89. The algorithm-specific unary operations `tlog` and `trecip`, the other
-operation families, functional execution tests, and performance measurements
-remain subsequent steps.
+All unary operations now support deterministic 1D/2D selection. The ordinary
+operations `tabs`, `texp`, `tneg`, `tnot`, `trelu`, `trsqrt`, and `tsqrt`
+register preferred shared 1D candidates while preserving their original shared
+2D candidates as fallbacks. `tlog` and `trecip` keep their algorithms local to
+their operation modules and use only the shared unary traversal emitters. This
+raises the current unary candidate count to 20 and the current scoped candidate
+count to 92. The other operation families, functional execution tests, and
+performance measurements remain subsequent steps.
 
 ## Goals
 
@@ -71,12 +72,12 @@ PTODSL candidates:
 | Compare, select, conversion, scalar fill | 6 | 43 |
 | Total | 43 | 82 |
 
-At that baseline, all 82 candidates declared `loop_depth=2`. The seven
-ordinary unary operations named in the status section have since gained
-explicit `loop_depth=1` candidates. The important baseline exception is
-`tcmps`: its f32/i32 branch already traverses `valid_rows * valid_cols` as a
-flat range even though the containing candidate is marked as two-dimensional.
-That mixed candidate must be separated into explicit 1D and 2D forms.
+At that baseline, all 82 candidates declared `loop_depth=2`. All nine unary
+operations have since gained explicit `loop_depth=1` candidates. The important
+baseline exception is `tcmps`: its f32/i32 branch already traverses
+`valid_rows * valid_cols` as a flat range even though the containing candidate
+is marked as two-dimensional. That mixed candidate must be separated into
+explicit 1D and 2D forms.
 
 Each operation is loaded from
 `ptodsl/ptodsl/tilelib/templates/a5/<op>.py`, except that `texpands` is
@@ -118,10 +119,10 @@ The provisional 1D classifications mean:
 |---|---|---|---|---|
 | `tabs` | `template_tabs(src, dst)`; `template_tabs_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D | Shared |
 | `texp` | `template_texp(src, dst)`; `template_texp_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D, default precision only | Shared |
-| `tlog` | `template_tlog(src, dst)`; `template_tlog_high_precision(src, dst)` | same `F2` | two precision-selected 2D candidates | Algorithm-specific |
+| `tlog` | default `template_tlog`/`template_tlog_1d`; high-precision `template_tlog_high_precision`/`template_tlog_high_precision_1d` | same `F2` | precision-selected 2D fallbacks and preferred 1D candidates | Algorithm-specific |
 | `tneg` | `template_tneg(src, dst)`; `template_tneg_1d(src, dst)` | same `NEG6` | shared 2D fallback and preferred shared 1D | Shared |
 | `tnot` | `template_tnot(src, dst)`; `template_tnot_1d(src, dst)` | same `I6` | shared 2D fallback and preferred shared 1D | Shared |
-| `trecip` | `template_trecip(src, dst)` | same `F2` | bespoke 2D using `1 / src`, default precision only | Algorithm-specific |
+| `trecip` | `template_trecip(src, dst)`; `template_trecip_1d(src, dst)` | same `F2` | operation-local `1 / src` computation with shared 2D/1D traversal | Algorithm-specific |
 | `trelu` | `template_trelu(src, dst)`; `template_trelu_1d(src, dst)` | same `RELU3` | shared 2D fallback and preferred shared 1D | Shared |
 | `trsqrt` | `template_trsqrt(src, dst)`; `template_trsqrt_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D, default precision only | Shared |
 | `tsqrt` | `template_tsqrt(src, dst)`; `template_tsqrt_1d(src, dst)` | same `F2` | shared 2D fallback and preferred shared 1D, default precision only | Shared |
@@ -283,9 +284,11 @@ The ordinary implementations are concentrated in:
 `_elementwise.py` registers unary, Tile-Tile, Tile-Scalar, and scalar-fill
 templates. Unmigrated operation call sites retain the default 2D form, which
 restarts `remained = valid_cols` for every row and then walks columns by vector
-lane count. The migrated ordinary unary operations add an explicit 1D
-registration next to that unchanged fallback. `_remainder.py` uses the same
-row-wise traversal around a more complex vector computation.
+lane count. Migrated unary operations add an explicit 1D registration next to
+that unchanged fallback. Their specialized algorithms remain outside
+`_elementwise.py` and call the lower-level unary traversal emitters.
+`_remainder.py` uses the same row-wise traversal around a more complex vector
+computation.
 
 The reusable ordinary traversal foundation consists of:
 

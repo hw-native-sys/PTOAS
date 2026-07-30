@@ -10,7 +10,18 @@
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
-from ._elementwise import _common_constraints, register_unary
+from ._elementwise import (
+    _common_constraints,
+    emit_unary_1d,
+    emit_unary_2d,
+    register_unary,
+)
+
+
+_DTYPES = [
+    ("f16", "f16"),
+    ("f32", "f32"),
+]
 
 
 def _is_default_precision(precisionType="default", **_):
@@ -25,34 +36,27 @@ template_tlog = register_unary(
     op="pto.tlog",
     name="template_tlog",
     vector_op=pto.vln,
-    dtypes=[
-        ("f16", "f16"),
-        ("f32", "f32"),
-    ],
+    dtypes=_DTYPES,
     constraints=[_is_default_precision],
 )
 
 
-@tilelib.tile_template(
+template_tlog_1d = register_unary(
     op="pto.tlog",
-    target="a5",
-    name="template_tlog_high_precision",
-    dtypes=[
-        ("f16", "f16"),
-        ("f32", "f32"),
-    ],
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    constraints=_common_constraints("src", "dst") + [_is_high_precision],
-    id=1,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("elementwise", "unary"),
+    name="template_tlog_1d",
+    vector_op=pto.vln,
+    dtypes=_DTYPES,
+    constraints=[_is_default_precision],
+    traversal="1d",
+    priority=10,
+    candidate_id=2,
 )
-def template_tlog_high_precision(src: pto.Tile, dst: pto.Tile):
+
+
+def _emit_tlog_high_precision(src, dst, traversal):
+    """Emit the operation-specific high-precision logarithm computation."""
+
     dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
     if str(dtype) == "f16":
         subnormal_threshold = pto.f16("0x03FF")
         mul_factor = pto.f16("0x6400")
@@ -62,18 +66,70 @@ def template_tlog_high_precision(src: pto.Tile, dst: pto.Tile):
         mul_factor = pto.f32("0x4B000000")
         compensation = pto.f32(-15.9423851528787421)
 
-    lanes = pto.elements_per_vreg(dtype)
-    with pto.for_(0, valid_rows, step=1) as row:
-        col_loop = pto.for_(0, valid_cols, step=lanes).carry(remained=valid_cols)
-        with col_loop:
-            col = col_loop.iv
-            mask, remained = pto.make_mask(dtype, col_loop.remained)
-            vinput = pto.vlds(src[row, col:])
-            cmp_mask = pto.vcmps(vinput, subnormal_threshold, mask, pto.CmpMode.LT)
-            scaled = pto.vmuls(vinput, mul_factor, mask)
-            selected_input = pto.vsel(scaled, vinput, cmp_mask)
-            log_result = pto.vln(selected_input, mask)
-            compensated = pto.vadds(log_result, compensation, mask)
-            result = pto.vsel(compensated, log_result, cmp_mask)
-            pto.vsts(result, dst[row, col:], mask)
-            col_loop.update(remained=remained)
+    def high_precision_log(value, mask):
+        cmp_mask = pto.vcmps(
+            value,
+            subnormal_threshold,
+            mask,
+            pto.CmpMode.LT,
+        )
+        scaled = pto.vmuls(value, mul_factor, mask)
+        selected_input = pto.vsel(scaled, value, cmp_mask)
+        log_result = pto.vln(selected_input, mask)
+        compensated = pto.vadds(log_result, compensation, mask)
+        return pto.vsel(compensated, log_result, cmp_mask)
+
+    if traversal == "1d":
+        emit_unary_1d(src, dst, high_precision_log)
+    else:
+        emit_unary_2d(src, dst, high_precision_log)
+
+
+def _register_tlog_high_precision(
+    *,
+    name,
+    traversal,
+    priority,
+    candidate_id,
+):
+    constraints = _common_constraints("src", "dst") + [_is_high_precision]
+    loop_depth = 2
+    if traversal == "1d":
+        constraints.append(tilelib.require_elementwise_1d("src", "dst"))
+        loop_depth = 1
+
+    @tilelib.tile_template(
+        op="pto.tlog",
+        target="a5",
+        name=name,
+        dtypes=_DTYPES,
+        iteration_axis="none",
+        op_engine="vector",
+        op_class="elementwise",
+        constraints=constraints,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
+        is_post_update=False,
+        tags=("elementwise", "unary"),
+    )
+    def template(src: pto.Tile, dst: pto.Tile):
+        _emit_tlog_high_precision(src, dst, traversal)
+
+    return template
+
+
+template_tlog_high_precision = _register_tlog_high_precision(
+    name="template_tlog_high_precision",
+    traversal="2d",
+    priority=0,
+    candidate_id=1,
+)
+
+
+template_tlog_high_precision_1d = _register_tlog_high_precision(
+    name="template_tlog_high_precision_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=3,
+)

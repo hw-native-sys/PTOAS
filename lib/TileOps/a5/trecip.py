@@ -10,39 +10,78 @@
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
+from ._elementwise import emit_unary_1d, emit_unary_2d
 
-@tilelib.tile_template(
-    op="pto.trecip",
-    target="a5",
-    name="template_trecip",
-    dtypes=[
-        ("f16", "f16"),
-        ("f32", "f32"),
-    ],
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    constraints=[
+
+_DTYPES = [
+    ("f16", "f16"),
+    ("f32", "f32"),
+]
+
+
+def _base_constraints():
+    return [
         tilelib.check_memory_space("ub"),
         tilelib.check_layout("row_major"),
         tilelib.check_s_layout("none_box"),
-    ],
-    id=0,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("elementwise", "reciprocal"),
-)
-def template_trecip(src: pto.Tile, dst: pto.Tile):
+    ]
+
+
+def _emit_trecip(src, dst, traversal):
+    """Emit the operation-specific reciprocal computation."""
+
     dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
-    lanes = pto.elements_per_vreg(dtype)
     one_scalar = pto.f16(1.0) if str(dtype) == "f16" else pto.f32(1.0)
 
-    for row in range(0, valid_rows, 1):
-        remained = valid_cols
-        for col in range(0, valid_cols, lanes):
-            mask, remained = pto.make_mask(dtype, remained)
-            value = pto.vlds(src[row, col:])
-            one = pto.vbr(one_scalar)
-            result = pto.vdiv(one, value, mask)
-            pto.vsts(result, dst[row, col:], mask)
+    def reciprocal(value, mask):
+        one = pto.vbr(one_scalar)
+        return pto.vdiv(one, value, mask)
+
+    if traversal == "1d":
+        emit_unary_1d(src, dst, reciprocal)
+    else:
+        emit_unary_2d(src, dst, reciprocal)
+
+
+def _register_trecip(*, name, traversal, priority, candidate_id):
+    constraints = _base_constraints()
+    loop_depth = 2
+    if traversal == "1d":
+        constraints.append(tilelib.require_elementwise_1d("src", "dst"))
+        loop_depth = 1
+
+    @tilelib.tile_template(
+        op="pto.trecip",
+        target="a5",
+        name=name,
+        dtypes=_DTYPES,
+        iteration_axis="none",
+        op_engine="vector",
+        op_class="elementwise",
+        constraints=constraints,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
+        is_post_update=False,
+        tags=("elementwise", "reciprocal"),
+    )
+    def template(src: pto.Tile, dst: pto.Tile):
+        _emit_trecip(src, dst, traversal)
+
+    return template
+
+
+template_trecip = _register_trecip(
+    name="template_trecip",
+    traversal="2d",
+    priority=0,
+    candidate_id=0,
+)
+
+
+template_trecip_1d = _register_trecip(
+    name="template_trecip_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

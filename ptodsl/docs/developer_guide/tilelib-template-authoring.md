@@ -247,6 +247,12 @@ form supplies one linear element offset; do not convert it back into row and
 column indices. Predicate and dtype-width-changing conversion operations need
 their additional representation-specific legality before using the 1D form.
 
+Keep bespoke algorithms in their operation modules. For example, `tlog` owns
+its high-precision subnormal compensation and `trecip` owns its `1 / src`
+calculation; both call shared unary traversal emitters. Do not move
+operation-specific constants, precision algorithms, temporary calculations, or
+instruction sequences into `_elementwise.py`.
+
 ## View And Valid-Shape Rules
 
 Do not assume the logical valid shape is the same as the physical view shape.
