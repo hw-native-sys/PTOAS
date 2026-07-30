@@ -1337,7 +1337,8 @@ def VMIvLoadOp : VMI_Op<"vload",
     Unified vector load.  dist-mode selects the memory-access pattern.
 
     dist-mode values:
-    - "continuous" (default): contiguous stride-1 load  → 1 result
+    - "continuous" (default): contiguous stride-1 load  → 1 result;
+      1/2/4/8-lane results alias group=1/2/4/8 with unit stride
     - "dintlv":             deinterleaved dual load      → 2 results (%lo, %hi)
     - "unpack":             widening unpack load         → 1 result
     - "brc":                broadcast load               → 1 result
@@ -1376,7 +1377,8 @@ def VMIvStoreOp : VMI_Op<"vstore",
     masked_store, stride_store, and group_store ops.
 
     dist-mode controls the memory access pattern:
-    - "continuous" (default): contiguous stride-1 store  → 1 value
+    - "continuous" (default): contiguous stride-1 store  → 1 value;
+      1/2/4/8-lane inputs alias group=1/2/4/8 with unit stride
     - "dintlv":             interleaved dual store        → 2 values (%lo, %hi)
 
     group mode (mutually exclusive with dist-mode):

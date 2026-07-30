@@ -13,9 +13,9 @@ module {
       %src: !pto.ptr<f32, ub>, %offset: index)
       -> (!pto.vreg<64xf32>) {
     %value = pto.vmi.vload %src[%offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<3xf32, #pto.vmi.layout<contiguous>>
     %part = "pto.vmi.unpack"(%value)
-        : (!pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>>) -> !pto.vreg<64xf32>
+        : (!pto.vmi.vreg<3xf32, #pto.vmi.layout<contiguous>>) -> !pto.vreg<64xf32>
     return %part : !pto.vreg<64xf32>
   }
 }

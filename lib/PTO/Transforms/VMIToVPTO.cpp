@@ -11868,9 +11868,6 @@ LogicalResult checkSupportedGroupBroadcastShape(
       sourceLayout.getSlots() != 1)
     return fail("supports only slots=8 or slots=1 group_broadcast source "
                 "layouts");
-  if (sourceLayout.getSlots() > 1 && numGroups % sourceLayout.getSlots() != 0)
-    return fail("requires full source group-slot chunks");
-
   VMILayoutSupport supports;
   std::string supportReason;
   if (failed(supports.getGroupBroadcastSupport(op, &supportReason)))
@@ -12121,9 +12118,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
         return WalkResult::advance();
       broadcast.emitError()
           << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_broadcast requires full source chunks with "
-             "#pto.vmi.layout<num_groups = G, slots = K>, a dense full result "
-             "layout, "
+          << "pto.vmi.group_broadcast requires "
+             "#pto.vmi.layout<num_groups = G, slots = K> source, a dense full "
+             "result layout, "
              "and num_groups deriving a group size that divides or is a "
              "multiple of physical chunk lanes ("
           << reason << ")";

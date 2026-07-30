@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=LEGACY
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @compact_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                       %off: index) {
+    %value = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    pto.vmi.vstore %value, %dst[%off]
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @compact_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                       %off: index) {
+    %value = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    pto.vmi.vstore %value, %dst[%off]
+        : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @compact_4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                       %off: index) {
+    %value = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    pto.vmi.vstore %value, %dst[%off]
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @compact_8(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                       %off: index) {
+    %value = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %value, %dst[%off]
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+}
+
+// LEGACY-LABEL: func.func @compact_1(
+// LEGACY: pto.vmi.group_slot_load
+// LEGACY-SAME: {num_groups = 1 : i64}
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 1 : i64}
+
+// LEGACY-LABEL: func.func @compact_2(
+// LEGACY: pto.vmi.group_slot_load
+// LEGACY-SAME: {num_groups = 2 : i64}
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 2 : i64}
+
+// LEGACY-LABEL: func.func @compact_4(
+// LEGACY: pto.vmi.group_slot_load
+// LEGACY-SAME: {num_groups = 4 : i64}
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 4 : i64}
+
+// LEGACY-LABEL: func.func @compact_8(
+// LEGACY: pto.vmi.group_slot_load
+// LEGACY-SAME: {num_groups = 8 : i64}
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 8 : i64}
+
+// LOWER-LABEL: func.func @compact_1(
+// LOWER: pto.pge_b32 "PAT_VL1"
+// LOWER: pto.vsldb
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vmi.
+
+
+// LOWER-LABEL: func.func @compact_2(
+// LOWER: pto.pge_b32 "PAT_VL2"
+// LOWER: pto.vsldb
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vmi.
+
+// LOWER-LABEL: func.func @compact_4(
+// LOWER: pto.pge_b32 "PAT_VL4"
+// LOWER: pto.vsldb
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vmi.
+
+// LOWER-LABEL: func.func @compact_8(
+// LOWER: pto.pge_b32 "PAT_VL8"
+// LOWER: pto.vsldb
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vmi.
