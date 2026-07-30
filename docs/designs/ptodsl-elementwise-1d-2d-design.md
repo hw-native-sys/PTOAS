@@ -18,9 +18,10 @@ of truth for PTODSL integration, registered operand forms, compiler metadata,
 and existing generated-helper behavior.
 
 The shared ordinary-element-wise legality predicate and complete tile-config
-metadata plumbing are now available, but no existing candidate consumes the
-new predicate yet. Template registrations, ranked compiler handoff, family
-implementations, end-to-end tests, and performance measurements remain
+metadata plumbing are now available. Ranked candidate order is also preserved
+from Python through the compact candidate attribute and `ExpandTileOp`, but no
+existing candidate consumes the new predicate yet. Template registrations,
+family implementations, functional tests, and performance measurements remain
 subsequent implementation steps.
 
 ## Goals
@@ -404,14 +405,19 @@ ordinary layout contract.
 ### Candidate ordering
 
 The Python registry and daemon sort legal candidates by descending priority.
-The metadata response currently represents candidates as a JSON object.
-`InsertTemplateAttributes` parses that object and then sorts the compact
-candidates by numeric ID and name. `ExpandTileOp` selects compact candidate
-zero and requests that candidate by name from the daemon.
+Equal-priority reporting is canonicalized by candidate name, while an equal
+top-priority match is rejected as ambiguous.
 
-Consequently, adding a higher-priority 1D candidate is not enough: the C++ ID
-sort can replace Python priority with accidental ID order. This is the concrete
-handoff issue that the deterministic-selection step must fix.
+The daemon metadata response represents candidates as a ranked JSON array.
+`InsertTemplateAttributes` validates unique candidate IDs without reordering
+the array, stores the same order in the compact candidates attribute, and
+`ExpandTileOp` selects candidate zero by name. Candidate IDs are stable identity
+fields only and do not participate in ranking.
+
+A compiler regression supplies a preferred candidate with ID 99 and a fallback
+with ID 0. It verifies both the compact attribute order and that expansion
+requests the ID-99 candidate, preventing an accidental return to ID-based
+selection.
 
 ### Context attributes
 
@@ -448,10 +454,9 @@ Proposed ID allocation:
 | `tdivs` tile-scalar/scalar-tile | `0`, `1` | `2`, `3`, paired in the same order |
 | `tcvt` semantic variants | `0` through `37` | `38 + existing_id`, giving `38` through `75` |
 
-This allocation is provisional until the candidate payload is changed to
-preserve Python ranking. It deliberately makes the preferred 1D IDs larger
-than the fallback IDs, so an accidental ascending-ID sort is exposed by tests
-rather than appearing to work.
+This allocation deliberately makes the preferred 1D IDs larger than the
+fallback IDs, so an accidental ascending-ID sort is exposed by tests rather
+than appearing to work.
 
 ## Open Legality Questions for the Next Step
 

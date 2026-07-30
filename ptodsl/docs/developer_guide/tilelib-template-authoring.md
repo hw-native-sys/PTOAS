@@ -132,6 +132,8 @@ For multi-candidate ops:
 
 - assign stable `id` values;
 - keep ids unique for the op;
+- use `priority` rather than ID to express preference;
+- avoid equal top-priority candidates for the same concrete operands;
 - keep names descriptive enough for IR dumps;
 - add a lit check when candidate ordering matters.
 

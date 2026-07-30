@@ -14,11 +14,14 @@ import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from ptodsl.tilelib import AmbiguousTemplate, TemplateMetadata
 from ptodsl.tilelib.serving.client import DaemonClient, DaemonError
 from ptodsl.tilelib.serving.daemon import (
     TileLibDaemonServer,
     _build_tile_specs,
+    metadata_request,
     _remove_socket_path,
 )
 from ptodsl.tilelib.serving.wire import MAX_MESSAGE_SIZE, recv_message
@@ -54,6 +57,71 @@ def _view_spec(dtype="f32", shape=(1, 1, 1, 8, 64), strides=(512, 512, 512, 64, 
 # template parameter order (src0, src1, dst).
 TADD_OPERANDS = [_tile_spec(), _tile_spec(), _tile_spec()]
 TADD = "template_tadd"
+
+
+def _metadata_descriptor(name, priority, candidate_id):
+    return SimpleNamespace(
+        op="pto.tadd",
+        target="a5",
+        name=name,
+        param_names=("src0", "src1", "dst"),
+        metadata=TemplateMetadata.build(
+            op="pto.tadd",
+            target="a5",
+            name=name,
+            priority=priority,
+            id=candidate_id,
+            loop_depth=1 if priority > 0 else 2,
+        ),
+    )
+
+
+class TileLibMetadataRequestTest(unittest.TestCase):
+    def test_metadata_candidates_preserve_priority_not_id_or_registration_order(self):
+        preferred = _metadata_descriptor(
+            "preferred_1d",
+            priority=10,
+            candidate_id=99,
+        )
+        fallback = _metadata_descriptor(
+            "fallback_2d",
+            priority=0,
+            candidate_id=0,
+        )
+
+        for registered in ((fallback, preferred), (preferred, fallback)):
+            with self.subTest(
+                registered=[candidate.name for candidate in registered]
+            ):
+                with patch(
+                    "ptodsl.tilelib.serving.daemon._registered_candidates",
+                    return_value=registered,
+                ):
+                    metadata = metadata_request(
+                        "a5",
+                        "pto.tadd",
+                        TADD_OPERANDS,
+                    )
+
+                self.assertEqual(
+                    [
+                        (candidate["name"], candidate["id"])
+                        for candidate in metadata["candidates"]
+                    ],
+                    [("preferred_1d", 99), ("fallback_2d", 0)],
+                )
+
+    def test_metadata_rejects_equal_top_priority(self):
+        tied = (
+            _metadata_descriptor("second", priority=1, candidate_id=1),
+            _metadata_descriptor("first", priority=1, candidate_id=0),
+        )
+        with patch(
+            "ptodsl.tilelib.serving.daemon._registered_candidates",
+            return_value=tied,
+        ):
+            with self.assertRaises(AmbiguousTemplate):
+                metadata_request("a5", "pto.tadd", TADD_OPERANDS)
 
 
 class TileLibDaemonTest(unittest.TestCase):
@@ -112,11 +180,11 @@ class TileLibDaemonTest(unittest.TestCase):
         metadata = self.client.get_metadata("a5", "pto.tadd", TADD_OPERANDS)
         candidates = metadata["candidates"]
         self.assertEqual(
-            set(candidates),
-            {TADD},
+            [candidate["name"] for candidate in candidates],
+            [TADD],
         )
 
-        selected = candidates[TADD]
+        selected = candidates[0]
         self.assertEqual(selected["loop_depth"], 2)
         self.assertIsNone(selected["Tail"])
         self.assertFalse(selected["has_tail"])
@@ -261,7 +329,10 @@ class TileLibDaemonTest(unittest.TestCase):
 
         metadata = self.client.get_metadata("a5", "pto.tmrgsort", operands)
 
-        self.assertIn("template_tmrgsort_multi_list2", metadata["candidates"])
+        self.assertIn(
+            "template_tmrgsort_multi_list2",
+            [candidate["name"] for candidate in metadata["candidates"]],
+        )
 
     def test_view_operand_template_instantiates(self):
         operands = [_view_spec(), _tile_spec()]

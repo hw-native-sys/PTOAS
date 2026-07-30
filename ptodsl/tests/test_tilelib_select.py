@@ -11,6 +11,7 @@ import unittest
 from types import SimpleNamespace
 
 from ptodsl.tilelib import (
+    AmbiguousTemplate,
     ScalarSpec,
     ScalarType,
     TemplateMetadata,
@@ -40,6 +41,86 @@ def _plain_specs(*, dtype="f32", memory_space="ub", b_layout="row_major"):
 
 
 class TileLibSelectTest(unittest.TestCase):
+    def test_priority_order_is_independent_of_registration_and_candidate_id(self):
+        def descriptor(name, priority, candidate_id):
+            return SimpleNamespace(
+                op="pto.test_order",
+                target="a5",
+                name=name,
+                param_names=("src0", "src1", "dst"),
+                metadata=TemplateMetadata.build(
+                    op="pto.test_order",
+                    target="a5",
+                    name=name,
+                    priority=priority,
+                    id=candidate_id,
+                ),
+            )
+
+        preferred = descriptor("preferred_1d", priority=10, candidate_id=99)
+        fallback = descriptor("fallback_2d", priority=0, candidate_id=0)
+        for registration_order in (
+            (fallback, preferred),
+            (preferred, fallback),
+        ):
+            with self.subTest(
+                registration_order=[
+                    candidate.name for candidate in registration_order
+                ]
+            ):
+                registry = TileTemplateRegistry()
+                for candidate in registration_order:
+                    registry.register(candidate)
+
+                legal = registry.legal_candidates(
+                    "pto.test_order",
+                    "a5",
+                    _f32_specs(),
+                )
+
+                self.assertEqual(
+                    [candidate.name for candidate in legal],
+                    ["preferred_1d", "fallback_2d"],
+                )
+                self.assertEqual(
+                    registry.select(
+                        "pto.test_order",
+                        "a5",
+                        _f32_specs(),
+                    ).name,
+                    "preferred_1d",
+                )
+
+    def test_equal_top_priority_is_ambiguous_independent_of_registration_order(self):
+        registry = TileTemplateRegistry()
+        for name in ("second", "first"):
+            registry.register(
+                SimpleNamespace(
+                    op="pto.test_tie",
+                    target="a5",
+                    name=name,
+                    param_names=("src0", "src1", "dst"),
+                    metadata=TemplateMetadata.build(
+                        op="pto.test_tie",
+                        target="a5",
+                        name=name,
+                        priority=1,
+                    ),
+                )
+            )
+
+        legal = registry.legal_candidates(
+            "pto.test_tie",
+            "a5",
+            _f32_specs(),
+        )
+        self.assertEqual(
+            [candidate.name for candidate in legal],
+            ["first", "second"],
+        )
+        with self.assertRaises(AmbiguousTemplate):
+            registry.select("pto.test_tie", "a5", _f32_specs())
+
     def test_hard_metadata_legality_is_centralized(self):
         registry = TileTemplateRegistry()
         registry.register(SimpleNamespace(

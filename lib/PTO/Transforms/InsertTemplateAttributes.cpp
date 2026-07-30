@@ -19,6 +19,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -771,7 +772,7 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
   }
 
   auto *root = parsed->getAsObject();
-  auto *candidates = root ? root->getObject("candidates") : nullptr;
+  auto *candidates = root ? root->getArray("candidates") : nullptr;
   if (!candidates || candidates->empty()) {
     operation->emitError("InsertTemplateAttributes found no legal template "
                          "candidates for ")
@@ -781,8 +782,9 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
 
   SmallVector<CandidateMetadata> parsedCandidates;
   parsedCandidates.reserve(candidates->size());
-  for (const auto &entry : *candidates) {
-    auto *metadata = entry.second.getAsObject();
+  llvm::SmallDenseSet<int64_t, 8> candidateIds;
+  for (const llvm::json::Value &entry : *candidates) {
+    auto *metadata = entry.getAsObject();
     if (!metadata) {
       operation->emitError(
           "InsertTemplateAttributes candidate metadata must be an object");
@@ -807,28 +809,20 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
       return failure();
     }
 
+    int64_t candidateId = id.value_or(0);
+    if (!candidateIds.insert(candidateId).second) {
+      operation->emitError(
+          "InsertTemplateAttributes candidate ids must be unique");
+      return failure();
+    }
+
     parsedCandidates.push_back(CandidateMetadata{
-        id.value_or(0),
+        candidateId,
         name->str(),
         *loopDepth,
         *postUpdate,
         *tail,
     });
-  }
-
-  llvm::sort(parsedCandidates,
-             [](const CandidateMetadata &left,
-                const CandidateMetadata &right) {
-               if (left.id != right.id)
-                 return left.id < right.id;
-               return left.name < right.name;
-             });
-  for (auto [index, candidate] : llvm::enumerate(parsedCandidates)) {
-    if (index != 0 && candidate.id == parsedCandidates[index - 1].id) {
-      operation->emitError(
-          "InsertTemplateAttributes candidate ids must be unique");
-      return failure();
-    }
   }
 
   Builder builder(operation->getContext());

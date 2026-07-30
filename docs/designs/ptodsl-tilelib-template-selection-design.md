@@ -158,21 +158,26 @@ then evaluates each registered candidate:
 5. Check layout and memory-space metadata.
 6. Merge context attributes.
 7. Run custom constraint predicates.
-8. Sort legal candidates by descending priority.
+8. Sort legal candidates by descending priority, using name only to make
+   equal-priority reporting deterministic.
 
 If no candidate is legal, the service reports a `NoMatchingTemplate` error with
 per-candidate reasons. If multiple candidates tie for the highest priority and
-no explicit candidate is requested, the registry reports ambiguity rather than
-silently picking one.
+no explicit candidate is requested, both normal selection and metadata
+insertion report ambiguity rather than silently picking one.
 
-For multi-candidate ops, candidate `id` values must be unique. The C++ pass
-sorts persisted candidate metadata by `id` and then by name, so ids should be
-stable and intentionally assigned.
+For multi-candidate ops, candidate `id` values must be unique and stable. IDs
+identify versions; they do not rank them.
+
+The daemon returns legal candidates as a JSON array in Python ranking order.
+`InsertTemplateAttributes` validates the entries and unique IDs while
+preserving that array order. It must not reconstruct ranking from priority,
+candidate ID, JSON object order, registration order, or import order.
 
 ## Compact Candidate Attribute
 
-`InsertTemplateAttributes` stores a compact `candidates` array attribute on the
-TileOp. Each entry contains:
+`InsertTemplateAttributes` stores the daemon's ordered candidates as a compact
+`candidates` array attribute on the TileOp. Each entry contains:
 
 - `id`
 - `name`
@@ -183,7 +188,7 @@ TileOp. Each entry contains:
 This attribute is intentionally not a copy of the full Python metadata object.
 Legality has already happened in the service. The IR only needs a stable list of
 legal render targets and the small amount of metadata consumed by downstream
-passes.
+passes. Array position is meaningful: candidate zero is the selected version.
 
 Do not add fields to the IR candidate payload simply because they exist in
 Python metadata. Add a field only when a C++ pass or IR-level test consumes it.
@@ -219,6 +224,9 @@ faster to inspect.
   enough to accept ST-proven TileLangDSL forms.
 - Forward context attrs before porting a version that depends on them.
 - Use stable candidate ids for multi-candidate ops.
+- Treat candidate ids as identity only; use priority for preference.
+- Reject equal top-priority candidates instead of adding an incidental
+  tie-breaker.
 - Put all helper-code-affecting operand metadata in the specialization key.
 - Add a focused regression for each backend-selection bug.
 - Treat full ST status files as snapshots, not design documentation.
