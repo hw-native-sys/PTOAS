@@ -76,8 +76,6 @@ module {
 
 // CHECK-LABEL: func.func @reduce_max_i8(
 // CHECK: pto.vcmax {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
-// CHECK: pto.vmax {{.*}} : !pto.vreg<256xi8>, !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
 
 // CHECK-LABEL: func.func @reduce_min_i16(
 // CHECK: pto.vcmin {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
-// CHECK: pto.vmin {{.*}} : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>

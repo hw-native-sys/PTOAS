@@ -46,6 +46,22 @@ module {
     return
   }
 
+  func.func @compact_reduce_through_elementwise(
+      %source: !pto.vmi.vreg<64xf32>,
+      %mask: !pto.vmi.mask<64xpred>, %dst: !pto.ptr<f32, ub>, %off: index) {
+    %max = pto.vmi.vcmax %source, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<1xf32>
+    %two_scalar = arith.constant 2.0 : f32
+    %two = pto.vmi.vbrc %two_scalar : f32 -> !pto.vmi.vreg<1xf32>
+    %scaled = pto.vmi.vdiv %max, %two
+        : !pto.vmi.vreg<1xf32>, !pto.vmi.vreg<1xf32>
+        -> !pto.vmi.vreg<1xf32>
+    pto.vmi.vstore %scaled, %dst[%off]
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
 }
 
 // LEGACY-LABEL: func.func @compact_1(
@@ -72,6 +88,13 @@ module {
 // LEGACY: pto.vmi.group_store
 // LEGACY-SAME: {num_groups = 8 : i64}
 
+// LEGACY-LABEL: func.func @compact_reduce_through_elementwise(
+// LEGACY: pto.vmi.group_reduce_maxf
+// LEGACY-SAME: {num_groups = 1 : i64}
+// LEGACY: pto.vmi.divf
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 1 : i64}
+
 // LOWER-LABEL: func.func @compact_1(
 // LOWER: pto.pge_b32 "PAT_VL1"
 // LOWER: pto.vsldb
@@ -94,5 +117,11 @@ module {
 // LOWER-LABEL: func.func @compact_8(
 // LOWER: pto.pge_b32 "PAT_VL8"
 // LOWER: pto.vsldb
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vmi.
+
+// LOWER-LABEL: func.func @compact_reduce_through_elementwise(
+// LOWER: pto.vcmax
+// LOWER: pto.vdiv
 // LOWER: pto.vsts
 // LOWER-NOT: pto.vmi.

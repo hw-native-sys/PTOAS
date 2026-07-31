@@ -320,17 +320,6 @@ static bool isCompactGroupCount(int64_t count) {
   return count == 1 || count == 2 || count == 4 || count == 8;
 }
 
-/// Normalize a full reduction feeding a one-group store to the equivalent
-/// explicit grouped form. The store alias itself is determined only by shape.
-static void normalizeOneGroupReductionProducer(Value value,
-                                               OpBuilder &builder) {
-  Operation *producer = value.getDefiningOp();
-  if (!producer || !isa<VMIvcaddOp, VMIvcmaxOp, VMIvcminOp>(producer))
-    return;
-  if (!producer->hasAttr("group"))
-    producer->setAttr("group", builder.getI64IntegerAttr(1));
-}
-
 /// Lower vcmp to cmpf/cmpi + mask_and.
 static LogicalResult lowerVCmp(VMIVcmpOp op, OpBuilder &builder) {
   if (hasMergePmode(op))
@@ -675,8 +664,6 @@ static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
     bool compact = isCompactGroupCount(numGroups);
 
     if (compact && allActive) {
-      if (numGroups == 1)
-        normalizeOneGroupReductionProducer(values[0], builder);
       Value unitStride = builder.create<arith::ConstantIndexOp>(loc, 1);
       builder.create<VMIGroupStoreOp>(loc, values[0], dest, offset, unitStride,
                                       builder.getI64IntegerAttr(numGroups));
@@ -779,6 +766,19 @@ static LogicalResult lowerPge(VMIPgeOp op, OpBuilder &builder) {
 // Category C6 helpers: vcadd / vcmax / vcmin
 //===----------------------------------------------------------------------===//
 
+template <typename ReductionOp>
+static std::optional<int64_t> getReductionNumGroups(ReductionOp op) {
+  if (auto groupAttr = op.getGroupAttr())
+    return groupAttr.getInt();
+
+  // A full reduction is one logical group. Keep the alias decision local to
+  // the reduction instead of relying on a downstream store to mutate it.
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  if (!resultType.getLayoutAttr())
+    return 1;
+  return std::nullopt;
+}
+
 /// Lower vcadd to legacy reduce_addf/reduce_addi or
 /// group_reduce_addf/group_reduce_addi.  Always succeeds for valid input
 /// (vcadd verifier guarantees reassoc for float, and group 整除 source lanes).
@@ -794,22 +794,21 @@ static LogicalResult lowerVCadd(VMIvcaddOp op, OpBuilder &builder) {
   Value source = op.getSource();
   Value mask = op.getMask();
 
-  if (auto groupAttr = op.getGroupAttr()) {
+  if (std::optional<int64_t> numGroups = getReductionNumGroups(op)) {
     // Group reduce path
-    int64_t C = groupAttr.getInt();
     Value result;
     if (isFloat)
       result =
           builder
               .create<VMIGroupReduceAddFOp>(loc, resultType, source, mask,
-                                            builder.getI64IntegerAttr(C),
+                                            builder.getI64IntegerAttr(*numGroups),
                                             op.getReassocAttr())
               .getResult();
     else
       result =
           builder
               .create<VMIGroupReduceAddIOp>(loc, resultType, source, mask,
-                                            builder.getI64IntegerAttr(C))
+                                            builder.getI64IntegerAttr(*numGroups))
               .getResult();
     op.getResult().replaceAllUsesWith(result);
   } else {
@@ -848,21 +847,20 @@ static LogicalResult lowerVcmax(VMIvcmaxOp op, OpBuilder &builder) {
   Value source = op.getSource();
   Value mask = op.getMask();
 
-  if (auto groupAttr = op.getGroupAttr()) {
+  if (std::optional<int64_t> numGroups = getReductionNumGroups(op)) {
     // Group reduce path
-    int64_t C = groupAttr.getInt();
     Value result;
     if (isFloat)
       result =
           builder
               .create<VMIGroupReduceMaxFOp>(loc, resultType, source, mask,
-                                            builder.getI64IntegerAttr(C))
+                                            builder.getI64IntegerAttr(*numGroups))
               .getResult();
     else
       result =
           builder
               .create<VMIGroupReduceMaxIOp>(loc, resultType, source, mask,
-                                            builder.getI64IntegerAttr(C))
+                                            builder.getI64IntegerAttr(*numGroups))
               .getResult();
     op.getResult().replaceAllUsesWith(result);
     op->erase();
@@ -899,20 +897,19 @@ static LogicalResult lowerVcmin(VMIvcminOp op, OpBuilder &builder) {
   Value source = op.getSource();
   Value mask = op.getMask();
 
-  if (auto groupAttr = op.getGroupAttr()) {
-    int64_t numGroups = groupAttr.getInt();
+  if (std::optional<int64_t> numGroups = getReductionNumGroups(op)) {
     Value result;
     if (isFloat)
       result = builder
                    .create<VMIGroupReduceMinFOp>(
                        loc, resultType, source, mask,
-                       builder.getI64IntegerAttr(numGroups))
+                       builder.getI64IntegerAttr(*numGroups))
                    .getResult();
     else
       result = builder
                    .create<VMIGroupReduceMinIOp>(
                        loc, resultType, source, mask,
-                       builder.getI64IntegerAttr(numGroups))
+                       builder.getI64IntegerAttr(*numGroups))
                    .getResult();
     op.getResult().replaceAllUsesWith(result);
     op->erase();
@@ -1201,8 +1198,7 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
     }
   });
 
-  // Process consumers before producers. Besides avoiding stale producer uses,
-  // this lets a one-group store normalize a full reduction before lowering it.
+  // Process consumers before producers to avoid stale producer uses.
   for (Operation *op : llvm::reverse(worklist)) {
     if (!op->getBlock())
       continue;

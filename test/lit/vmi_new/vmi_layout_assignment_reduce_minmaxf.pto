@@ -31,19 +31,19 @@ module {
 // CHECK-LABEL: func.func @vmi_layout_assignment_reduce_maxf(
 // CHECK-SAME: %[[SRC:.*]]: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: %[[MASK:.*]]: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
-// CHECK-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
-// CHECK: "pto.vmi.constant"() <{value = dense<{{.*}}> : tensor<1xf32>}> : () -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
-// CHECK: %[[MAX:.*]] = pto.vmi.reduce_maxf %[[SRC]], %{{.*}}, %[[MASK]]
-// CHECK: return %[[MAX]] : !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+// CHECK-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>
+// CHECK: %[[MAX:.*]] = pto.vmi.group_reduce_maxf %[[SRC]], %[[MASK]]
+// CHECK-SAME: {num_groups = 1 : i64}
+// CHECK: return %[[MAX]] : !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_reduce_minf(
 // CHECK-SAME: %[[SRC:.*]]: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: %[[MASK:.*]]: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
-// CHECK-SAME: -> !pto.vmi.vreg<1xf16, #pto.vmi.layout<contiguous>>
-// CHECK: "pto.vmi.constant"() <{value = dense<{{.*}}> : tensor<1xf16>}> : () -> !pto.vmi.vreg<1xf16, #pto.vmi.layout<contiguous>>
+// CHECK-SAME: -> !pto.vmi.vreg<1xf16, #pto.vmi.layout<num_groups = 1, slots = 1>>
 // CHECK: %[[MASK_D2:.*]] = pto.vmi.ensure_mask_layout %[[MASK]]
 // CHECK-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: %[[MASK16:.*]] = pto.vmi.ensure_mask_granularity %[[MASK_D2]]
 // CHECK-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
-// CHECK: %[[MIN:.*]] = pto.vmi.reduce_minf %[[SRC]], %{{.*}}, %[[MASK16]]
-// CHECK: return %[[MIN]] : !pto.vmi.vreg<1xf16, #pto.vmi.layout<contiguous>>
+// CHECK: %[[MIN:.*]] = pto.vmi.group_reduce_minf %[[SRC]], %[[MASK16]]
+// CHECK-SAME: {num_groups = 1 : i64}
+// CHECK: return %[[MIN]] : !pto.vmi.vreg<1xf16, #pto.vmi.layout<num_groups = 1, slots = 1>>

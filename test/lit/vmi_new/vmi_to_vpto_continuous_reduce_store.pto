@@ -96,8 +96,9 @@ module {
 // ASSIGN-SAME: {num_groups = 8 : i64}
 
 // ASSIGN-LABEL: func.func @dynamic_mask_keeps_masked_store(
-// ASSIGN: pto.vmi.reduce_addf
-// ASSIGN: pto.vmi.masked_store
+// ASSIGN: %[[GROUP_SUM:.*]] = pto.vmi.group_reduce_addf
+// ASSIGN: %[[DENSE_SUM:.*]] = pto.vmi.ensure_layout %[[GROUP_SUM]]
+// ASSIGN: pto.vmi.masked_store %[[DENSE_SUM]]
 // ASSIGN-NOT: pto.vmi.group_store
 
 // LOWER-LABEL: func.func @continuous_reduce_store_1(
