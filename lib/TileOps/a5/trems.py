@@ -17,3 +17,14 @@ template_trems = register_scalar_remainder(
     round_mode="F",
     has_tmp=True,
 )
+
+template_trems_1d = register_scalar_remainder(
+    op="pto.trems",
+    name="template_trems_1d",
+    dtypes=REMS_DTYPES,
+    round_mode="F",
+    has_tmp=True,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

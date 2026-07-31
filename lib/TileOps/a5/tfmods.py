@@ -16,3 +16,13 @@ template_tfmods = register_scalar_remainder(
     dtypes=FMODS_DTYPES,
     round_mode="Z",
 )
+
+template_tfmods_1d = register_scalar_remainder(
+    op="pto.tfmods",
+    name="template_tfmods_1d",
+    dtypes=FMODS_DTYPES,
+    round_mode="Z",
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

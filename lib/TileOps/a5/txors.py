@@ -13,6 +13,12 @@ from ._common import INT_DTYPES
 from ._elementwise import register_scalar_binary
 
 
+_DTYPES = [
+    (dtype, dtype, dtype, dtype)
+    for dtype in INT_DTYPES
+]
+
+
 template_txors = register_scalar_binary(
     op="pto.txors",
     name="template_txors",
@@ -20,5 +26,18 @@ template_txors = register_scalar_binary(
     broadcast_scalar=True,
     has_tmp=True,
     tmp_matches_src_dst=False,
-    dtypes=[(dtype, dtype, dtype, dtype) for dtype in INT_DTYPES],
+    dtypes=_DTYPES,
+)
+
+template_txors_1d = register_scalar_binary(
+    op="pto.txors",
+    name="template_txors_1d",
+    vector_op=pto.vxor,
+    broadcast_scalar=True,
+    has_tmp=True,
+    tmp_matches_src_dst=False,
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

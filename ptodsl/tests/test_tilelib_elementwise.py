@@ -160,6 +160,40 @@ PRODUCTION_SCALAR_1D = {
     ),
 }
 
+PRODUCTION_SPECIAL_SCALAR_1D = {
+    "pto.tfmods": (
+        "template_tfmods_1d",
+        "template_tfmods",
+        "pto.vtrc",
+        "f32",
+        "f32",
+        "scalar",
+    ),
+    "pto.tlrelu": (
+        "template_tlrelu_1d",
+        "template_tlrelu",
+        "pto.vlrelu",
+        "f16",
+        "f32",
+        "slope",
+    ),
+}
+
+PRODUCTION_TEMP_SCALAR_1D = {
+    "pto.trems": (
+        "template_trems_1d",
+        "template_trems",
+        "pto.vtrc",
+        "f32",
+    ),
+    "pto.txors": (
+        "template_txors_1d",
+        "template_txors",
+        "pto.vxor",
+        "i16",
+    ),
+}
+
 # Structured abstraction every elementwise template must preserve.
 SHARED_OPS = ["pto.tile_buf_addr", "!pto.ptr<f32, ub>", "scf.for", "iter_args",
               "pto.plt_b32", "pto.vlds", "pto.vsts", "pto.tilelang.instance"]
@@ -336,6 +370,60 @@ def _scalar_specs(
         value=1,
     )
     return {"src": tile, "scalar": scalar, "dst": tile}
+
+
+def _named_scalar_specs(
+    data_dtype,
+    *,
+    scalar_dtype=None,
+    scalar_name="scalar",
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+):
+    specs = _scalar_specs(
+        data_dtype,
+        scalar_dtype=scalar_dtype,
+        shape=shape,
+        valid_shape=valid_shape,
+        compact_mode=compact_mode,
+    )
+    specs[scalar_name] = specs.pop("scalar")
+    return specs
+
+
+def _scalar_tmp_specs(
+    data_dtype,
+    *,
+    scalar_dtype=None,
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+    tmp_compact_mode=None,
+):
+    specs = _scalar_specs(
+        data_dtype,
+        scalar_dtype=scalar_dtype,
+        shape=shape,
+        valid_shape=valid_shape,
+        compact_mode=compact_mode,
+    )
+    specs["tmp"] = TileSpec(
+        shape=shape,
+        valid_shape=valid_shape,
+        dtype=ScalarType(data_dtype),
+        compact_mode=(
+            compact_mode
+            if tmp_compact_mode is None
+            else tmp_compact_mode
+        ),
+    )
+    return {
+        "src": specs["src"],
+        "scalar": specs["scalar"],
+        "tmp": specs["tmp"],
+        "dst": specs["dst"],
+    }
 
 
 class TileLibElementwiseTest(unittest.TestCase):
@@ -997,6 +1085,220 @@ class TileLibElementwiseTest(unittest.TestCase):
                 self.assertEqual(mlir.count("scf.for"), expected_loops)
                 self.assertIn("pto.vbr", mlir)
                 self.assertIn("pto.vsub", mlir)
+
+    def test_tdivs_operand_forms_preserve_candidate_ids(self):
+        cases = (
+            (
+                _scalar_specs("f32"),
+                (
+                    ("template_tdivs_tile_scalar_1d", 2, 1),
+                    ("template_tdivs_tile_scalar", 0, 2),
+                ),
+            ),
+            (
+                {
+                    "scalar": ScalarSpec(
+                        dtype=ScalarType("f32"),
+                        value=1,
+                    ),
+                    "src": TileSpec(
+                        shape=(4, 65),
+                        dtype=ScalarType("f32"),
+                    ),
+                    "dst": TileSpec(
+                        shape=(4, 65),
+                        dtype=ScalarType("f32"),
+                    ),
+                },
+                (
+                    ("template_tdivs_scalar_tile_1d", 3, 1),
+                    ("template_tdivs_scalar_tile", 1, 2),
+                ),
+            ),
+        )
+        for specs, candidates in cases:
+            with self.subTest(operand_order=tuple(specs)):
+                for name, candidate_id, loop_depth in candidates:
+                    descriptor = select(
+                        "pto.tdivs",
+                        "a5",
+                        specs,
+                        candidate_id=name,
+                    )
+                    self.assertEqual(descriptor.metadata.id, candidate_id)
+                    self.assertEqual(
+                        descriptor.metadata.loop_depth,
+                        loop_depth,
+                    )
+
+    def test_tdivs_1d_preserves_precision_and_operand_order(self):
+        cases = (
+            (
+                _scalar_specs("f32"),
+                "template_tdivs_tile_scalar_1d",
+            ),
+            (
+                {
+                    "scalar": ScalarSpec(
+                        dtype=ScalarType("f32"),
+                        value=1,
+                    ),
+                    "src": TileSpec(
+                        shape=(4, 65),
+                        dtype=ScalarType("f32"),
+                    ),
+                    "dst": TileSpec(
+                        shape=(4, 65),
+                        dtype=ScalarType("f32"),
+                    ),
+                },
+                "template_tdivs_scalar_tile_1d",
+            ),
+        )
+        for specs, expected_name in cases:
+            for precision_type in ("default", "high_precision"):
+                with self.subTest(
+                    operand_order=tuple(specs),
+                    precision_type=precision_type,
+                ):
+                    context_attrs = {"precisionType": precision_type}
+                    descriptor = select(
+                        "pto.tdivs",
+                        "a5",
+                        specs,
+                        context_attrs=context_attrs,
+                        candidate_id=expected_name,
+                    )
+                    mlir = descriptor.specialize(
+                        context_attrs=context_attrs,
+                        **specs,
+                    ).mlir_text()
+
+                    self.assertEqual(descriptor.name, expected_name)
+                    self.assertEqual(mlir.count("scf.for"), 1)
+                    self.assertIn("pto.vbr", mlir)
+                    self.assertIn("pto.vdiv", mlir)
+                    if precision_type == "high_precision":
+                        self.assertIn("pto.vbitcast", mlir)
+                        self.assertIn("pto.vcmp", mlir)
+
+    def test_tdivs_ineligible_ranges_reject_1d_candidates(self):
+        specs = _scalar_specs(
+            "f32",
+            shape=(4, 65),
+            valid_shape=(4, 63),
+        )
+        candidates = legal_candidates("pto.tdivs", "a5", specs)
+
+        self.assertNotIn(
+            "template_tdivs_tile_scalar_1d",
+            [candidate.name for candidate in candidates],
+        )
+        self.assertNotIn(
+            "template_tdivs_scalar_tile_1d",
+            [candidate.name for candidate in candidates],
+        )
+        self.assertTrue(
+            all(
+                candidate.metadata.loop_depth == 2
+                for candidate in candidates
+            )
+        )
+
+    def test_specialized_scalar_ops_use_shared_legality_rule(self):
+        shapes = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        for op, (
+            name_1d,
+            name_2d,
+            vector_op,
+            data_dtype,
+            scalar_dtype,
+            scalar_name,
+        ) in PRODUCTION_SPECIAL_SCALAR_1D.items():
+            for label, shape, valid_shape, compact_mode, expect_1d in shapes:
+                with self.subTest(op=op, case=label):
+                    specs = _named_scalar_specs(
+                        data_dtype,
+                        scalar_dtype=scalar_dtype,
+                        scalar_name=scalar_name,
+                        shape=shape,
+                        valid_shape=valid_shape,
+                        compact_mode=compact_mode,
+                    )
+                    candidates = legal_candidates(op, "a5", specs)
+                    self.assertEqual(
+                        candidates[0].name,
+                        name_1d if expect_1d else name_2d,
+                    )
+                    self.assertEqual(
+                        candidates[0].metadata.loop_depth,
+                        1 if expect_1d else 2,
+                    )
+
+                    mlir = candidates[0].specialize(**specs).mlir_text()
+                    self.assertIn(vector_op, mlir)
+
+    def test_temporary_scalar_ops_include_tmp_in_1d_legality(self):
+        for op, (
+            name_1d,
+            name_2d,
+            vector_op,
+            data_dtype,
+        ) in PRODUCTION_TEMP_SCALAR_1D.items():
+            with self.subTest(op=op, case="contiguous"):
+                specs = _scalar_tmp_specs(data_dtype)
+                candidates = legal_candidates(op, "a5", specs)
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_1d, name_2d],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+                mlir = candidates[0].specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn(vector_op, mlir)
+
+            with self.subTest(op=op, case="temporary stride gap"):
+                specs = _scalar_tmp_specs(
+                    data_dtype,
+                    tmp_compact_mode=2,
+                )
+                candidates = legal_candidates(op, "a5", specs)
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [name_2d],
+                )
+                self.assertEqual(candidates[0].metadata.loop_depth, 2)
+
+    def test_scalar_remainder_1d_preserves_instruction_sequences(self):
+        for op, specs in (
+            ("pto.tfmods", _scalar_specs("f32")),
+            ("pto.trems", _scalar_tmp_specs("f32")),
+        ):
+            with self.subTest(op=op):
+                descriptor = select(op, "a5", specs)
+                mlir = descriptor.specialize(**specs).mlir_text()
+
+                self.assertEqual(descriptor.metadata.loop_depth, 1)
+                for vector_op in (
+                    "pto.vbr",
+                    "pto.vdiv",
+                    "pto.vtrc",
+                    "pto.vmuls",
+                    "pto.vsub",
+                ):
+                    self.assertIn(vector_op, mlir)
 
     def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
         specs = {

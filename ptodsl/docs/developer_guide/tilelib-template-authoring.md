@@ -255,6 +255,19 @@ tile-minus-scalar operations request vector broadcast, while scalar shift
 operations keep their `i16` scalar dtype. `tsubs` is expressed as broadcast
 plus `vsub` through the shared registrar rather than owning separate loops.
 
+Specialized Tile-Scalar algorithms remain in their family modules and call the
+shared traversal emitters. `tdivs` retains its precision handling and distinct
+tile-scalar/scalar-tile call forms; `_remainder.py` retains scalar remainder
+math; and `tlrelu.py` retains slope coercion. Temporary scalar forms must name
+the temporary in `require_elementwise_1d`, even when the generated body does
+not access it.
+
+For callable forms distinguished by positional operand kind or order, test
+selection through daemon metadata or a compiler lit test. Daemon requests
+retain the original positional MLIR operand sequence. A direct registry call
+uses a name-keyed mapping that is rebound to each candidate and therefore
+cannot by itself prove which positional overload is legal.
+
 For bespoke computation, use the lower-level `emit_elementwise_1d` and
 `emit_elementwise_2d` chunk callbacks or the family emitters. The flattened
 form supplies one linear element offset; do not convert it back into row and

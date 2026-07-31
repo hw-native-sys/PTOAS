@@ -195,6 +195,48 @@ class TileLibDaemonTest(unittest.TestCase):
         self.assertEqual(selected["op_class"], "elementwise")
         self.assertEqual(selected["tags"], ["elementwise", "binary"])
 
+    def test_tdivs_metadata_preserves_operand_order_and_ranked_traversal(self):
+        scalar = {"kind": "scalar", "dtype": "f32", "value": 1.0}
+        cases = (
+            (
+                [_tile_spec(), scalar, _tile_spec()],
+                [
+                    ("template_tdivs_tile_scalar_1d", 2, 1),
+                    ("template_tdivs_tile_scalar", 0, 2),
+                ],
+            ),
+            (
+                [scalar, _tile_spec(), _tile_spec()],
+                [
+                    ("template_tdivs_scalar_tile_1d", 3, 1),
+                    ("template_tdivs_scalar_tile", 1, 2),
+                ],
+            ),
+        )
+        for operands, expected in cases:
+            with self.subTest(
+                operand_order=[
+                    operand["kind"]
+                    for operand in operands
+                ]
+            ):
+                metadata = self.client.get_metadata(
+                    "a5",
+                    "pto.tdivs",
+                    operands,
+                )
+                self.assertEqual(
+                    [
+                        (
+                            candidate["name"],
+                            candidate["id"],
+                            candidate["loop_depth"],
+                        )
+                        for candidate in metadata["candidates"]
+                    ],
+                    expected,
+                )
+
     def test_tile_spec_reconstruction_preserves_complete_config(self):
         operand = _tile_spec()
         operand["config"]["s_fractal_size"] = 32

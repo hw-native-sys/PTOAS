@@ -11,6 +11,8 @@ from ptodsl import pto, scalar
 import ptodsl.tilelib as tilelib
 from ptodsl._types import _resolve
 
+from ._elementwise import emit_scalar_binary_1d, emit_scalar_binary_2d
+
 
 def _ub_or_vec_row_major(operand_memory_spaces, operand_b_layouts, operand_s_layouts, **_):
     return (
@@ -20,43 +22,68 @@ def _ub_or_vec_row_major(operand_memory_spaces, operand_b_layouts, operand_s_lay
     )
 
 
-@tilelib.tile_template(
-    op="pto.tlrelu",
-    target="a5",
-    name="template_tlrelu",
-    dtypes=[
-        ("f16", "f16", "f16"),
-        ("f16", "f32", "f16"),
-        ("f32", "f32", "f32"),
-    ],
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    constraints=[
+_DTYPES = [
+    ("f16", "f16", "f16"),
+    ("f16", "f32", "f16"),
+    ("f32", "f32", "f32"),
+]
+
+
+def _register_tlrelu(*, name, traversal, priority, candidate_id):
+    constraints = [
         _ub_or_vec_row_major,
         tilelib.require_same_valid_shape("src", "dst"),
-    ],
-    id=0,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("elementwise", "scalar"),
-)
-def template_tlrelu(src: pto.Tile, slope, dst: pto.Tile):
-    dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
-    lanes = pto.elements_per_vreg(dtype)
-    slope_scalar = slope
-    if str(dtype) == "f16":
-        slope_scalar = scalar.coerce_scalar_to_type(
-            slope,
-            _resolve(pto.f16),
-            context="template_tlrelu(slope)",
-        )
+    ]
+    loop_depth = 2
+    if traversal == "1d":
+        constraints.append(tilelib.require_elementwise_1d("src", "dst"))
+        loop_depth = 1
 
-    for row in range(0, valid_rows, 1):
-        remained = valid_cols
-        for col in range(0, valid_cols, lanes):
-            mask, remained = pto.make_mask(dtype, remained)
-            value = pto.vlds(src[row, col:])
-            result = pto.vlrelu(value, slope_scalar, mask)
-            pto.vsts(result, dst[row, col:], mask)
+    @tilelib.tile_template(
+        op="pto.tlrelu",
+        target="a5",
+        name=name,
+        dtypes=_DTYPES,
+        iteration_axis="none",
+        op_engine="vector",
+        op_class="elementwise",
+        constraints=constraints,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
+        is_post_update=False,
+        tags=("elementwise", "scalar"),
+    )
+    def template(src: pto.Tile, slope, dst: pto.Tile):
+        dtype = dst.dtype
+        slope_scalar = slope
+        if str(dtype) == "f16":
+            slope_scalar = scalar.coerce_scalar_to_type(
+                slope,
+                _resolve(pto.f16),
+                context="template_tlrelu(slope)",
+            )
+
+        emitter = (
+            emit_scalar_binary_1d
+            if traversal == "1d"
+            else emit_scalar_binary_2d
+        )
+        emitter(src, slope_scalar, dst, pto.vlrelu)
+
+    return template
+
+
+template_tlrelu = _register_tlrelu(
+    name="template_tlrelu",
+    traversal="2d",
+    priority=0,
+    candidate_id=0,
+)
+
+template_tlrelu_1d = _register_tlrelu(
+    name="template_tlrelu_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

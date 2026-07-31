@@ -10,7 +10,11 @@
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
-from ._elementwise import _common_constraints
+from ._elementwise import (
+    _common_constraints,
+    emit_scalar_binary_1d,
+    emit_scalar_binary_2d,
+)
 from .div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
 
 
@@ -36,62 +40,112 @@ def _div(lhs, rhs, dtype, mask, precision_type):
     return pto.vdiv(lhs, rhs, mask)
 
 
-def _emit_tdivs_body(src, scalar, dst, *, scalar_lhs=False):
+def _emit_tdivs_body(src, scalar, dst, traversal, *, scalar_lhs=False):
     dtype = dst.dtype
-    valid_rows, valid_cols = dst.valid_shape
-    src_cols = src.shape[1]
-    dst_cols = dst.shape[1]
-    lanes = pto.elements_per_vreg(dtype)
     precision_type = pto.get_op_attr("precisionType", "default")
-    src_ptr = src.as_ptr()
-    dst_ptr = dst.as_ptr()
 
-    with pto.for_(0, valid_rows, step=1) as row:
-        col_loop = pto.for_(0, valid_cols, step=lanes).carry(remained=valid_cols)
-        with col_loop:
-            col = col_loop.iv
-            mask, remained = pto.make_mask(dtype, col_loop.remained)
-            src_addr = pto.addptr(src_ptr, row * src_cols + col)
-            value = pto.vlds(src_addr, 0)
-            scalar_value = pto.vbr(scalar)
-            lhs, rhs = (scalar_value, value) if scalar_lhs else (value, scalar_value)
-            result = _div(lhs, rhs, dtype, mask, precision_type)
-            dst_addr = pto.addptr(dst_ptr, row * dst_cols + col)
-            pto.vsts(result, dst_addr, 0, mask)
-            col_loop.update(remained=remained)
+    def divide(lhs, rhs, mask):
+        return _div(lhs, rhs, dtype, mask, precision_type)
+
+    emitter = (
+        emit_scalar_binary_1d
+        if traversal == "1d"
+        else emit_scalar_binary_2d
+    )
+    emitter(
+        src,
+        scalar,
+        dst,
+        divide,
+        broadcast_scalar=True,
+        scalar_lhs=scalar_lhs,
+    )
 
 
-@tilelib.tile_template(
-    op="pto.tdivs",
-    target="a5",
+def _register_tdivs(*, name, traversal, priority, candidate_id,
+                    scalar_lhs=False):
+    constraints = _common_constraints("src", "dst")
+    constraints.append(_scalar_tile_tile if scalar_lhs else _tile_scalar_tile)
+    loop_depth = 2
+    if traversal == "1d":
+        constraints.append(tilelib.require_elementwise_1d("src", "dst"))
+        loop_depth = 1
+
+    if scalar_lhs:
+
+        @tilelib.tile_template(
+            op="pto.tdivs",
+            target="a5",
+            name=name,
+            dtypes=_DTYPES,
+            iteration_axis="none",
+            op_engine="vector",
+            op_class="elementwise",
+            constraints=constraints,
+            priority=priority,
+            id=candidate_id,
+            loop_depth=loop_depth,
+            is_post_update=False,
+            tags=("elementwise", "scalar"),
+        )
+        def template(scalar, src: pto.Tile, dst: pto.Tile):
+            _emit_tdivs_body(
+                src,
+                scalar,
+                dst,
+                traversal,
+                scalar_lhs=True,
+            )
+
+        return template
+
+    @tilelib.tile_template(
+        op="pto.tdivs",
+        target="a5",
+        name=name,
+        dtypes=_DTYPES,
+        iteration_axis="none",
+        op_engine="vector",
+        op_class="elementwise",
+        constraints=constraints,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
+        is_post_update=False,
+        tags=("elementwise", "scalar"),
+    )
+    def template(src: pto.Tile, scalar, dst: pto.Tile):
+        _emit_tdivs_body(src, scalar, dst, traversal)
+
+    return template
+
+
+template_tdivs_tile_scalar = _register_tdivs(
     name="template_tdivs_tile_scalar",
-    dtypes=_DTYPES,
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    constraints=_common_constraints("src", "dst") + [_tile_scalar_tile],
-    id=0,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("elementwise", "scalar"),
+    traversal="2d",
+    priority=0,
+    candidate_id=0,
 )
-def template_tdivs_tile_scalar(src: pto.Tile, scalar, dst: pto.Tile):
-    _emit_tdivs_body(src, scalar, dst)
 
-
-@tilelib.tile_template(
-    op="pto.tdivs",
-    target="a5",
+template_tdivs_scalar_tile = _register_tdivs(
     name="template_tdivs_scalar_tile",
-    dtypes=_DTYPES,
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="elementwise",
-    constraints=_common_constraints("src", "dst") + [_scalar_tile_tile],
-    id=1,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("elementwise", "scalar"),
+    traversal="2d",
+    priority=0,
+    candidate_id=1,
+    scalar_lhs=True,
 )
-def template_tdivs_scalar_tile(scalar, src: pto.Tile, dst: pto.Tile):
-    _emit_tdivs_body(src, scalar, dst, scalar_lhs=True)
+
+template_tdivs_tile_scalar_1d = _register_tdivs(
+    name="template_tdivs_tile_scalar_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=2,
+)
+
+template_tdivs_scalar_tile_1d = _register_tdivs(
+    name="template_tdivs_scalar_tile_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=3,
+    scalar_lhs=True,
+)

@@ -1,0 +1,187 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Specialized Tile-Scalar algorithms retain operand order, precision handling,
+// and temporary operands while sharing flattened and row-wise traversal.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
+
+// META-LABEL: func.func @TDIVS_TILE_1D
+// META: pto.tdivs
+// META-SAME: candidates = [{
+// META-SAME: id = 2 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tdivs_tile_scalar_1d"
+// META-SAME: }, {
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tdivs_tile_scalar"
+
+// META-LABEL: func.func @TDIVS_SCALAR_1D
+// META: pto.tdivs
+// META-SAME: candidates = [{
+// META-SAME: id = 3 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tdivs_scalar_tile_1d"
+// META-SAME: }, {
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_tdivs_scalar_tile"
+
+// META-LABEL: func.func @TREMS_1D
+// META: pto.trems
+// META-SAME: candidates = [{
+// META-SAME: id = 1 : i64
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_trems_1d"
+// META-SAME: }, {
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_trems"
+
+// META-LABEL: func.func @TREMS_TMP_2D
+// META: pto.trems
+// META-SAME: candidates = [{
+// META-SAME: id = 0 : i64
+// META-SAME: loop_depth = 2 : i64
+// META-SAME: name = "template_trems"
+// META-NOT: name = "template_trems_1d"
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tdivs_tile_scalar_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vbr
+// SELECT: pto.vdiv
+// SELECT: pto.vbitcast
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_tdivs_scalar_tile_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vbr
+// SELECT: pto.vdiv
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_trems_1d(
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vdiv
+// SELECT: pto.vtrc
+// SELECT: pto.vmuls
+// SELECT: pto.vsub
+// SELECT: return
+
+// SELECT-LABEL: func.func private @{{.*}}__template_trems(
+// SELECT: scf.for
+// SELECT: scf.for
+// SELECT-NOT: scf.for
+// SELECT: pto.vdiv
+// SELECT: pto.vtrc
+// SELECT: pto.vmuls
+// SELECT: pto.vsub
+// SELECT: return
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TDIVS_TILE_1D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 2.0 : f32
+
+    pto.tdivs ins(
+      %src, %scalar
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          f32)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {precisionType = #pto<div_precision high_precision>}
+    return
+  }
+
+  func.func @TDIVS_SCALAR_1D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 2.0 : f32
+
+    pto.tdivs ins(
+      %scalar, %src
+        : f32,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TREMS_1D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 3.0 : f32
+
+    pto.trems ins(
+      %src, %scalar, %tmp
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          f32,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=72, v_row=4, v_col=72,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TREMS_TMP_2D() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                      compact=2>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 3.0 : f32
+
+    pto.trems ins(
+      %src, %scalar, %tmp
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          f32,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0,
+                        compact=2>)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
