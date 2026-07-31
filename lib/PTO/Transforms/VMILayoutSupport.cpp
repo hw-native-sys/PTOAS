@@ -301,6 +301,11 @@ struct EnsureLayoutPattern {
 };
 
 static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
+    // A one-element dense value and a one-group, one-slot value select the
+    // same sole physical carrier lane.
+    {bits<8, 16, 32, 64>(), N<1>(), c(), gs(1)},
+    {bits<8, 16, 32, 64>(), N<1>(), gs(1), c()},
+
     {bits<16>(), N<256>(), c(), d(2)},
     {bits<32>(), N<128, 256>(), c(), d(2)},
     {bits<64>(), N<64, 128, 256>(), c(), d(2)},

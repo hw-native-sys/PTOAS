@@ -3792,6 +3792,21 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
   }
 
+  bool oneLaneContiguousToGroup =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+      resultLayout.isGroupSlots() && resultLayout.getNumGroups() == 1 &&
+      resultLayout.getSlots() == 1;
+  bool oneLaneGroupToContiguous =
+      sourceLayout.isGroupSlots() && sourceLayout.getNumGroups() == 1 &&
+      sourceLayout.getSlots() == 1 && resultLayout.isContiguous() &&
+      resultLayout.getLaneStride() == 1;
+  if (oneLaneContiguousToGroup || oneLaneGroupToContiguous) {
+    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
+                                            rewriter)))
+      return failure();
+    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+  }
+
   if (sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
       sourceLayout.getNumGroups() == resultLayout.getNumGroups() &&
       sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8) {
