@@ -268,6 +268,11 @@ retain the original positional MLIR operand sequence. A direct registry call
 uses a name-keyed mapping that is rebound to each candidate and therefore
 cannot by itself prove which positional overload is legal.
 
+Scalar-fill operations use `register_scalar_fill`. Their 1D constraint names
+only the destination tile because the scalar has no physical layout. Preserve
+the original dtype signatures and let the shared emitter own flattened element
+count, mask generation, tail handling, and vector stores.
+
 For bespoke computation, use the lower-level `emit_elementwise_1d` and
 `emit_elementwise_2d` chunk callbacks or the family emitters. The flattened
 form supplies one linear element offset; do not convert it back into row and

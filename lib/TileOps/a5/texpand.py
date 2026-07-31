@@ -10,15 +10,27 @@
 from ._elementwise import register_scalar_fill
 
 
+_DTYPES = [
+    ("i8", "i8"),
+    ("i16", "i16"),
+    ("i32", "i32"),
+    ("f16", "f16"),
+    ("bf16", "bf16"),
+    ("f32", "f32"),
+]
+
+
 template_texpands = register_scalar_fill(
     op="pto.texpands",
     name="template_texpands",
-    dtypes=[
-        ("i8", "i8"),
-        ("i16", "i16"),
-        ("i32", "i32"),
-        ("f16", "f16"),
-        ("bf16", "bf16"),
-        ("f32", "f32"),
-    ],
+    dtypes=_DTYPES,
+)
+
+template_texpands_1d = register_scalar_fill(
+    op="pto.texpands",
+    name="template_texpands_1d",
+    dtypes=_DTYPES,
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
 )

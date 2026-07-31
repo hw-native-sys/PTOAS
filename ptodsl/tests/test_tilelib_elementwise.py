@@ -194,6 +194,8 @@ PRODUCTION_TEMP_SCALAR_1D = {
     ),
 }
 
+PRODUCTION_FILL_DTYPES = ("i8", "i16", "i32", "f16", "bf16", "f32")
+
 # Structured abstraction every elementwise template must preserve.
 SHARED_OPS = ["pto.tile_buf_addr", "!pto.ptr<f32, ub>", "scf.for", "iter_args",
               "pto.plt_b32", "pto.vlds", "pto.vsts", "pto.tilelang.instance"]
@@ -423,6 +425,27 @@ def _scalar_tmp_specs(
         "scalar": specs["scalar"],
         "tmp": specs["tmp"],
         "dst": specs["dst"],
+    }
+
+
+def _fill_specs(
+    dtype_name,
+    *,
+    shape=(4, 65),
+    valid_shape=None,
+    compact_mode="null",
+):
+    return {
+        "scalar": ScalarSpec(
+            dtype=ScalarType(dtype_name),
+            value=1,
+        ),
+        "dst": TileSpec(
+            shape=shape,
+            valid_shape=valid_shape,
+            dtype=ScalarType(dtype_name),
+            compact_mode=compact_mode,
+        ),
     }
 
 
@@ -1299,6 +1322,68 @@ class TileLibElementwiseTest(unittest.TestCase):
                     "pto.vsub",
                 ):
                     self.assertIn(vector_op, mlir)
+
+    def test_texpands_registers_preferred_1d_and_fallback_2d(self):
+        for dtype_name in PRODUCTION_FILL_DTYPES:
+            with self.subTest(dtype=dtype_name):
+                specs = _fill_specs(dtype_name)
+                candidates = legal_candidates("pto.texpands", "a5", specs)
+
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    ["template_texpands_1d", "template_texpands"],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+                self.assertEqual(
+                    candidates[0].metadata.dtypes,
+                    candidates[1].metadata.dtypes,
+                )
+
+                for shape in ((4, 64), (4, 65)):
+                    with self.subTest(dtype=dtype_name, shape=shape):
+                        mlir = candidates[0].specialize(
+                            **_fill_specs(dtype_name, shape=shape)
+                        ).mlir_text()
+                        self.assertEqual(mlir.count("scf.for"), 1)
+                        self.assertIn("pto.vdup", mlir)
+                        self.assertIn("pto.vsts", mlir)
+                        self.assertNotIn("pto.vlds", mlir)
+                        self.assertNotIn("memref.subview", mlir)
+
+    def test_texpands_selection_uses_destination_legality(self):
+        cases = (
+            ("contiguous multi-row", (4, 65), None, "null", True),
+            ("contiguous single-row", (4, 65), (1, 63), "null", True),
+            ("partial multi-row", (4, 65), (4, 63), "null", False),
+            ("stride gap", (4, 65), None, 2, False),
+        )
+        for label, shape, valid_shape, compact_mode, expect_1d in cases:
+            with self.subTest(case=label):
+                specs = _fill_specs(
+                    "f32",
+                    shape=shape,
+                    valid_shape=valid_shape,
+                    compact_mode=compact_mode,
+                )
+                selected = select("pto.texpands", "a5", specs)
+
+                self.assertEqual(
+                    selected.name,
+                    "template_texpands_1d"
+                    if expect_1d
+                    else "template_texpands",
+                )
+                self.assertEqual(
+                    selected.metadata.loop_depth,
+                    1 if expect_1d else 2,
+                )
 
     def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
         specs = {

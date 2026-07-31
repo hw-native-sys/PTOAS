@@ -47,7 +47,7 @@ CATALOG = {
     "pto.tcolmin": ("template_tcolmin", "pto.vmin", ("src", "dst"), "f32"),
     "pto.tcolprod": ("template_tcolprod", "pto.vmul", ("src", "dst"), "f32"),
     "pto.tcolsum": ("template_tcolsum", "pto.vadd", ("src", "dst"), "f32"),
-    "pto.texpands": ("template_texpands", "pto.vdup", ("scalar", "dst"), "f32"),
+    "pto.texpands": ("template_texpands_1d", "pto.vdup", ("scalar", "dst"), "f32"),
     "pto.textract": ("template_textract_vec2vec_nd", "pto.vlds", ("src", "index_row", "index_col", "dst"), "f32"),
     "pto.textract_fp": (
         "template_textract_fp_f32_f16",

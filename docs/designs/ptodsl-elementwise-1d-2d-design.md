@@ -80,6 +80,13 @@ to 121, completing 1D/2D coverage for all 14 Tile-Scalar operations. Compare,
 select, conversion, scalar fill, functional execution tests, and performance
 measurements remain subsequent steps.
 
+Scalar fill is now migrated. `texpands` preserves its ID-0 2D fallback and
+registers a preferred ID-1 1D candidate for all six existing dtype
+signatures. Only the destination tile participates in flattened-traversal
+legality. This raises the current scoped candidate count to 122. Predicate
+compare/select, conversion, functional execution tests, and performance
+measurements remain subsequent steps.
+
 ## Goals
 
 - Account for every A5 PTODSL element-wise TileOp in scope.
@@ -236,7 +243,7 @@ form is demonstrated separately.
 | `tcmps` | `template_tcmps(src, scalar, dst)` | source/scalar `f32`, `i32`, `f16`, `i16`, `i8`, or `ui8`; predicate destination `ui8` | mixed: f32/i32 flatten, other dtypes traverse rows; metadata says 2D | Predicate-specific |
 | `tsel` | `template_tsel(mask, src0, src1, tmp, dst)` | mask `i8`; data/tmp/dst all `f32`, all `f16`, or all `i8` | dtype-specific predicate loads inside 2D row traversal | Predicate-specific |
 | `tsels` | `template_tsels(mask, src, tmp, scalar, dst)` | mask `i8`, `i16`, or `i32`; data/tmp/scalar/dst all one of `i8`, `i16`, `i32`, `f32`, or `f16` | dtype-specific predicate loads inside 2D row traversal | Predicate-specific |
-| `texpands` | `template_texpands(scalar, dst)` | same `FILL6` | shared scalar-fill 2D | Shared |
+| `texpands` | `template_texpands`/`template_texpands_1d(scalar, dst)` | same `FILL6` | shared scalar-fill 2D fallback and preferred 1D | Shared |
 
 The existing shape rules do not yet express predicate representation:
 
