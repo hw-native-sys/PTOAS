@@ -18,6 +18,7 @@ from ptodsl.tilelib.constraints import (
     build_context,
     passes,
     require_elementwise_1d,
+    require_predicate_compare_1d,
 )
 from ptodsl.tilelib.registry import NoMatchingTemplate
 
@@ -54,6 +55,19 @@ def _tile(
 def _ordinary_elementwise_1d(specs, *operand_names):
     context = build_context(specs, "a5", "pto.example")
     return passes((require_elementwise_1d(*operand_names),), context)
+
+
+def _predicate_compare_1d(specs, *data_operand_names):
+    context = build_context(specs, "a5", "pto.example")
+    return passes(
+        (
+            require_predicate_compare_1d(
+                *data_operand_names,
+                predicate_operand="dst",
+            ),
+        ),
+        context,
+    )
 
 
 class TileLibConstraintTest(unittest.TestCase):
@@ -185,6 +199,70 @@ class TileLibConstraintTest(unittest.TestCase):
         self.assertFalse(
             _ordinary_elementwise_1d(specs, "src", "tmp", "dst")
         )
+
+    def test_predicate_compare_1d_accepts_single_row_with_rounded_capacity(self):
+        specs = {
+            "src": _tile(shape=(4, 128), valid_shape=(1, 63)),
+            "dst": TileSpec(
+                shape=(4, 32),
+                valid_shape=(1, 8),
+                dtype=ScalarType("ui8"),
+            ),
+        }
+
+        self.assertTrue(_predicate_compare_1d(specs, "src"))
+
+    def test_predicate_compare_1d_accepts_dense_block_aligned_rows(self):
+        specs = {
+            "src0": _tile(shape=(4, 256)),
+            "src1": _tile(shape=(4, 256), memory_space="vec"),
+            "dst": TileSpec(
+                shape=(4, 32),
+                dtype=ScalarType("i8"),
+            ),
+        }
+
+        self.assertTrue(_predicate_compare_1d(specs, "src0", "src1"))
+
+    def test_predicate_compare_1d_rejects_row_tail_or_predicate_padding(self):
+        cases = {
+            "source row tail": {
+                "src": TileSpec(
+                    shape=(4, 128),
+                    dtype=ScalarType("i8"),
+                ),
+                "dst": TileSpec(
+                    shape=(4, 32),
+                    dtype=ScalarType("ui8"),
+                ),
+            },
+            "predicate row padding": {
+                "src": _tile(shape=(4, 256)),
+                "dst": TileSpec(
+                    shape=(4, 64),
+                    dtype=ScalarType("ui8"),
+                ),
+            },
+            "insufficient single-row capacity": {
+                "src": _tile(shape=(1, 65), valid_shape=(1, 63)),
+                "dst": TileSpec(
+                    shape=(1, 32),
+                    dtype=ScalarType("ui8"),
+                ),
+            },
+            "predicate stride gap": {
+                "src": _tile(shape=(4, 256)),
+                "dst": TileSpec(
+                    shape=(4, 32),
+                    dtype=ScalarType("ui8"),
+                    compact_mode=2,
+                ),
+            },
+        }
+
+        for label, specs in cases.items():
+            with self.subTest(label=label):
+                self.assertFalse(_predicate_compare_1d(specs, "src"))
 
     def test_context_carries_complete_tile_layout_metadata(self):
         context = build_context(

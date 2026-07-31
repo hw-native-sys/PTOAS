@@ -5,13 +5,29 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""PTODSL TileLib template for pto.tcmps."""
+"""PTODSL TileLib templates for pto.tcmps."""
 
 from ptodsl import pto
+from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
 
-def _ub_or_vec_row_major(operand_memory_spaces, operand_b_layouts, operand_s_layouts, **_):
+_DTYPES = [
+    ("f32", "f32", "ui8"),
+    ("i32", "i32", "ui8"),
+    ("f16", "f16", "ui8"),
+    ("i16", "i16", "ui8"),
+    ("i8", "i8", "ui8"),
+    ("ui8", "ui8", "ui8"),
+]
+
+
+def _ub_or_vec_row_major(
+    operand_memory_spaces,
+    operand_b_layouts,
+    operand_s_layouts,
+    **_,
+):
     return (
         all(space in {"ub", "vec"} for space in operand_memory_spaces)
         and all(layout == "row_major" for layout in operand_b_layouts)
@@ -19,83 +35,195 @@ def _ub_or_vec_row_major(operand_memory_spaces, operand_b_layouts, operand_s_lay
     )
 
 
-@tilelib.tile_template(
-    op="pto.tcmps",
-    target="a5",
-    name="template_tcmps",
-    dtypes=[
-        ("f32", "f32", "ui8"),
-        ("i32", "i32", "ui8"),
-        ("f16", "f16", "ui8"),
-        ("i16", "i16", "ui8"),
-        ("i8", "i8", "ui8"),
-        ("ui8", "ui8", "ui8"),
-    ],
-    iteration_axis="none",
-    op_engine="vector",
-    op_class="other",
-    constraints=[_ub_or_vec_row_major],
-    id=0,
-    loop_depth=2,
-    is_post_update=False,
-    tags=("compare", "scalar", "predicate-store"),
-)
-def template_tcmps(src: pto.Tile, scalar, dst: pto.Tile):
+@rewrite_jit_function
+def _emit_tcmps_1d(src, scalar, dst):
+    dtype = src.dtype
+    valid_rows, valid_cols = src.valid_shape
+    lanes = pto.elements_per_vreg(dtype)
+    total_elements = valid_rows * valid_cols
+    cmp_mode = pto.get_op_attr("cmp_mode", "eq")
+    src_ptr = src.as_ptr()
+    dst_ptr = dst.as_ptr()
+
+    if str(dtype) in {"f32", "i32"}:
+        remained = total_elements
+        for offset in range(0, total_elements, lanes * 2):
+            first_mask, remained = pto.make_mask(dtype, remained)
+            first = pto.vlds(src_ptr, offset)
+            first_cmp = pto.vcmps(first, scalar, first_mask, cmp_mode)
+            first_cmp_b8 = pto.pbitcast(first_cmp, pto.mask_b8)
+
+            second_mask, remained = pto.make_mask(dtype, remained)
+            second = pto.vlds(src_ptr, offset + lanes)
+            second_cmp = pto.vcmps(
+                second,
+                scalar,
+                second_mask,
+                cmp_mode,
+            )
+            second_cmp_b8 = pto.pbitcast(second_cmp, pto.mask_b8)
+
+            packed_low, _ = pto.pdintlv_b8(
+                first_cmp_b8,
+                second_cmp_b8,
+            )
+            pto.psts(
+                packed_low,
+                dst_ptr,
+                offset // 8,
+                dist=pto.PredicateDist.PK,
+            )
+    elif str(dtype) in {"f16", "i16"}:
+        remained = total_elements
+        for offset in range(0, total_elements, lanes):
+            mask, remained = pto.make_mask(dtype, remained)
+            value = pto.vlds(src_ptr, offset)
+            cmp = pto.vcmps(value, scalar, mask, cmp_mode)
+            pto.psts(
+                cmp,
+                dst_ptr,
+                offset // 8,
+                dist=pto.PredicateDist.PK,
+            )
+    else:
+        remained = total_elements
+        for offset in range(0, total_elements, lanes):
+            mask, remained = pto.make_mask(dtype, remained)
+            value = pto.vlds(src_ptr, offset)
+            cmp = pto.vcmps(value, scalar, mask, cmp_mode)
+            pto.psts(
+                cmp,
+                dst_ptr,
+                offset // 8,
+                dist=pto.PredicateDist.NORM,
+            )
+
+
+@rewrite_jit_function
+def _emit_tcmps_2d(src, scalar, dst):
     dtype = src.dtype
     valid_rows, valid_cols = src.valid_shape
     lanes = pto.elements_per_vreg(dtype)
     cmp_mode = pto.get_op_attr("cmp_mode", "eq")
     dst_ptr = dst.as_ptr()
-    src_ptr = src.as_ptr()
+    dst_stride = dst.shape[1]
 
     if str(dtype) in {"f32", "i32"}:
-        total_elm = valid_rows * valid_cols
-        repeat_times = (total_elm + lanes - 1) // lanes + 1
+        repeat_times = (valid_cols + lanes - 1) // lanes + 1
         iterations = repeat_times // 2
+        for row in range(0, valid_rows, 1):
+            remained = valid_cols
+            for col in range(0, iterations, 1):
+                first_offset = col * lanes * 2
+                second_offset = (col * 2 + 1) * lanes
 
-        for iteration in range(0, iterations, 1):
-            elem_offset0 = iteration * 2 * lanes
-            elem_offset1 = (iteration * 2 + 1) * lanes
+                first_mask, remained = pto.make_mask(dtype, remained)
+                first = pto.vlds(src[row, first_offset:])
+                first_cmp = pto.vcmps(
+                    first,
+                    scalar,
+                    first_mask,
+                    cmp_mode,
+                )
+                first_cmp_b8 = pto.pbitcast(first_cmp, pto.mask_b8)
 
-            remaining0 = total_elm - elem_offset0
-            remaining1 = total_elm - elem_offset1
+                second_mask, remained = pto.make_mask(dtype, remained)
+                second = pto.vlds(src[row, second_offset:])
+                second_cmp = pto.vcmps(
+                    second,
+                    scalar,
+                    second_mask,
+                    cmp_mode,
+                )
+                second_cmp_b8 = pto.pbitcast(second_cmp, pto.mask_b8)
 
-            mask0, _ = pto.make_mask(dtype, remaining0)
-            mask1, _ = pto.make_mask(dtype, remaining1)
-
-            vec0 = pto.vlds(src_ptr, elem_offset0)
-            vec1 = pto.vlds(src_ptr, elem_offset1)
-
-            cmp0 = pto.vcmps(vec0, scalar, mask0, cmp_mode)
-            cmp1 = pto.vcmps(vec1, scalar, mask1, cmp_mode)
-
-            cmp0_b8 = pto.pbitcast(cmp0, pto.mask_b8)
-            cmp1_b8 = pto.pbitcast(cmp1, pto.mask_b8)
-            packed_low, _ = pto.pdintlv_b8(cmp0_b8, cmp1_b8)
-
-            store_offset = iteration * 16
-            pto.psts(packed_low, dst_ptr, store_offset, dist=pto.PredicateDist.PK)
+                packed_low, _ = pto.pdintlv_b8(
+                    first_cmp_b8,
+                    second_cmp_b8,
+                )
+                store_offset = row * dst_stride + col * 16
+                pto.psts(
+                    packed_low,
+                    dst_ptr,
+                    store_offset,
+                    dist=pto.PredicateDist.PK,
+                )
     elif str(dtype) in {"f16", "i16"}:
-        bytes_per_iter = 16
-        iters_per_row = (valid_cols + lanes - 1) // lanes
-
         for row in range(0, valid_rows, 1):
             remained = valid_cols
             for col in range(0, valid_cols, lanes):
                 mask, remained = pto.make_mask(dtype, remained)
-                vec = pto.vlds(src[row, col:])
-                cmp = pto.vcmps(vec, scalar, mask, cmp_mode)
-                store_offset = (row * iters_per_row + col // lanes) * bytes_per_iter
-                pto.psts(cmp, dst_ptr, store_offset, dist=pto.PredicateDist.PK)
+                value = pto.vlds(src[row, col:])
+                cmp = pto.vcmps(value, scalar, mask, cmp_mode)
+                store_offset = row * dst_stride + col // 8
+                pto.psts(
+                    cmp,
+                    dst_ptr,
+                    store_offset,
+                    dist=pto.PredicateDist.PK,
+                )
     else:
-        bytes_per_iter = 32
-        iters_per_row = (valid_cols + lanes - 1) // lanes
-
         for row in range(0, valid_rows, 1):
             remained = valid_cols
             for col in range(0, valid_cols, lanes):
                 mask, remained = pto.make_mask(dtype, remained)
-                vec = pto.vlds(src[row, col:])
-                cmp = pto.vcmps(vec, scalar, mask, cmp_mode)
-                store_offset = (row * iters_per_row + col // lanes) * bytes_per_iter
-                pto.psts(cmp, dst_ptr, store_offset, dist=pto.PredicateDist.NORM)
+                value = pto.vlds(src[row, col:])
+                cmp = pto.vcmps(value, scalar, mask, cmp_mode)
+                store_offset = row * dst_stride + col // 8
+                pto.psts(
+                    cmp,
+                    dst_ptr,
+                    store_offset,
+                    dist=pto.PredicateDist.NORM,
+                )
+
+
+def _register_tcmps(*, name, traversal, priority, candidate_id):
+    constraints = [_ub_or_vec_row_major]
+    loop_depth = 2
+    if traversal == "1d":
+        constraints.append(
+            tilelib.require_predicate_compare_1d(
+                "src",
+                predicate_operand="dst",
+            )
+        )
+        loop_depth = 1
+
+    @tilelib.tile_template(
+        op="pto.tcmps",
+        target="a5",
+        name=name,
+        dtypes=_DTYPES,
+        iteration_axis="none",
+        op_engine="vector",
+        op_class="other",
+        constraints=constraints,
+        priority=priority,
+        id=candidate_id,
+        loop_depth=loop_depth,
+        is_post_update=False,
+        tags=("compare", "scalar", "predicate-store"),
+    )
+    def template(src: pto.Tile, scalar, dst: pto.Tile):
+        if traversal == "1d":
+            _emit_tcmps_1d(src, scalar, dst)
+        else:
+            _emit_tcmps_2d(src, scalar, dst)
+
+    return template
+
+
+template_tcmps = _register_tcmps(
+    name="template_tcmps",
+    traversal="2d",
+    priority=0,
+    candidate_id=0,
+)
+
+template_tcmps_1d = _register_tcmps(
+    name="template_tcmps_1d",
+    traversal="1d",
+    priority=10,
+    candidate_id=1,
+)

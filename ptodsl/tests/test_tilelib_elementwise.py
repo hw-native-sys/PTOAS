@@ -449,6 +449,43 @@ def _fill_specs(
     }
 
 
+def _compare_specs(
+    op,
+    dtype_name,
+    *,
+    src_shape=(1, 256),
+    src_valid_shape=None,
+    dst_shape=None,
+    dst_valid_shape=None,
+    src_compact_mode="null",
+    dst_compact_mode="null",
+):
+    src = TileSpec(
+        shape=src_shape,
+        valid_shape=src_valid_shape,
+        dtype=ScalarType(dtype_name),
+        memory_space="vec",
+        compact_mode=src_compact_mode,
+    )
+    predicate_dtype = "i8" if op == "pto.tcmp" else "ui8"
+    if dst_shape is None:
+        dst_shape = src_shape if op == "pto.tcmp" else (src_shape[0], 32)
+    dst = TileSpec(
+        shape=dst_shape,
+        valid_shape=dst_valid_shape,
+        dtype=ScalarType(predicate_dtype),
+        memory_space="vec",
+        compact_mode=dst_compact_mode,
+    )
+    if op == "pto.tcmp":
+        return {"src0": src, "src1": src, "dst": dst}
+    return {
+        "src": src,
+        "scalar": ScalarSpec(dtype=ScalarType(dtype_name), value=1),
+        "dst": dst,
+    }
+
+
 class TileLibElementwiseTest(unittest.TestCase):
     def test_shared_traversals_use_native_python_for_syntax(self):
         tree = ast.parse(
@@ -1384,6 +1421,131 @@ class TileLibElementwiseTest(unittest.TestCase):
                     selected.metadata.loop_depth,
                     1 if expect_1d else 2,
                 )
+
+    def test_compare_family_registers_preferred_1d_and_fallback_2d(self):
+        cases = (
+            ("pto.tcmp", "template_tcmp_1d", "template_tcmp", "pto.vcmp"),
+            (
+                "pto.tcmps",
+                "template_tcmps_1d",
+                "template_tcmps",
+                "pto.vcmps",
+            ),
+        )
+        for op, name_1d, name_2d, vector_op in cases:
+            for dtype_name, expected_dist in (
+                ("f32", "PK"),
+                ("f16", "PK"),
+                ("i8", "NORM"),
+            ):
+                with self.subTest(op=op, dtype=dtype_name):
+                    specs = _compare_specs(op, dtype_name)
+                    candidates = legal_candidates(op, "a5", specs)
+                    self.assertEqual(
+                        [candidate.name for candidate in candidates],
+                        [name_1d, name_2d],
+                    )
+                    self.assertEqual(
+                        [candidate.metadata.id for candidate in candidates],
+                        [1, 0],
+                    )
+                    self.assertEqual(
+                        [candidate.metadata.loop_depth for candidate in candidates],
+                        [1, 2],
+                    )
+
+                    mlir = candidates[0].specialize(
+                        context_attrs={"cmp_mode": "lt"},
+                        **specs,
+                    ).mlir_text()
+                    self.assertEqual(mlir.count("scf.for"), 1)
+                    self.assertIn(vector_op, mlir)
+                    self.assertIn(expected_dist, mlir)
+                    self.assertIn('"lt"', mlir)
+
+    def test_compare_family_uses_predicate_specific_fallbacks(self):
+        cases = (
+            (
+                "tcmp multi-row predicate padding",
+                "pto.tcmp",
+                _compare_specs(
+                    "pto.tcmp",
+                    "f32",
+                    src_shape=(4, 128),
+                ),
+                "template_tcmp",
+            ),
+            (
+                "tcmps source row tail",
+                "pto.tcmps",
+                _compare_specs(
+                    "pto.tcmps",
+                    "i8",
+                    src_shape=(4, 128),
+                    dst_shape=(4, 32),
+                ),
+                "template_tcmps",
+            ),
+            (
+                "tcmps predicate row padding",
+                "pto.tcmps",
+                _compare_specs(
+                    "pto.tcmps",
+                    "f32",
+                    src_shape=(4, 256),
+                    dst_shape=(4, 64),
+                ),
+                "template_tcmps",
+            ),
+            (
+                "tcmps stride gap",
+                "pto.tcmps",
+                _compare_specs(
+                    "pto.tcmps",
+                    "f32",
+                    src_shape=(4, 256),
+                    dst_shape=(4, 32),
+                    dst_compact_mode=2,
+                ),
+                "template_tcmps",
+            ),
+        )
+        for label, op, specs, fallback_name in cases:
+            with self.subTest(case=label):
+                candidates = legal_candidates(op, "a5", specs)
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [fallback_name],
+                )
+                self.assertEqual(candidates[0].metadata.loop_depth, 2)
+
+    def test_tcmps_aligned_dense_multi_row_selects_flattened_body(self):
+        specs = _compare_specs(
+            "pto.tcmps",
+            "f32",
+            src_shape=(4, 256),
+            dst_shape=(4, 32),
+        )
+        selected = select("pto.tcmps", "a5", specs)
+        mlir = selected.specialize(**specs).mlir_text()
+
+        self.assertEqual(selected.name, "template_tcmps_1d")
+        self.assertEqual(selected.metadata.loop_depth, 1)
+        self.assertEqual(mlir.count("scf.for"), 1)
+
+    def test_tcmps_f32_fallback_is_genuinely_row_wise(self):
+        specs = _compare_specs(
+            "pto.tcmps",
+            "f32",
+            src_shape=(4, 64),
+            dst_shape=(4, 64),
+        )
+        selected = select("pto.tcmps", "a5", specs)
+        mlir = selected.specialize(**specs).mlir_text()
+
+        self.assertEqual(selected.name, "template_tcmps")
+        self.assertEqual(selected.metadata.loop_depth, 2)
+        self.assertEqual(mlir.count("scf.for"), 2)
 
     def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
         specs = {

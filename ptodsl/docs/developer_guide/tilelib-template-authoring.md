@@ -101,6 +101,17 @@ tile, including temporary operands. It proves a common static logical range on
 gap-free row-major/none-box local storage. Predicate-mask and dtype-width-
 changing conversion families need additional representation-specific rules.
 
+Packed compare candidates use
+`require_predicate_compare_1d(*data_operand_names,
+predicate_operand="dst")`. The data operands still need a common contiguous
+logical range, while the predicate destination is checked as one bit per
+source element with dtype-dependent complete-load/store rounding. Multi-row
+flattening additionally requires every source row to end on a complete
+predicate-store boundary and the predicate destination row stride to contain
+exactly that row's packed bytes; its physical row must retain the target's
+32-byte alignment. Do not substitute ordinary same-shape legality for this
+rule: padded predicate rows must restart in the 2D fallback.
+
 When porting a legacy TileLangDSL version, first write down which rule made the
 legacy version legal. Then encode that rule as metadata or a predicate. Avoid
 fixing a single failing case by weakening a predicate beyond the legacy

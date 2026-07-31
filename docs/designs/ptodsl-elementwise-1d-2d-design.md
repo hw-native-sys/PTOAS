@@ -87,6 +87,26 @@ legality. This raises the current scoped candidate count to 122. Predicate
 compare/select, conversion, functional execution tests, and performance
 measurements remain subsequent steps.
 
+Predicate compare is now migrated. `tcmp` and `tcmps` preserve their ID-0
+row-wise fallbacks and register preferred ID-1 flattened candidates. Their
+shared `require_predicate_compare_1d(...)` rule models one predicate bit per
+source element together with the complete 16-byte PK or 32-byte NORM stores
+used by A5. A single logical row may flatten when its physical predicate row
+has enough capacity. Multiple rows additionally require the source row width
+to end on a predicate-store boundary and the destination row stride to equal
+the exact packed bytes produced per row. This raises the current scoped
+candidate count to 124. Select, conversion, functional execution tests, and
+performance measurements remain subsequent steps.
+
+The A5 PTOAS verifier requires `tcmp` source and destination physical shapes
+to match. Since an ordinary predicate destination consequently has a wider
+row stride than its packed result, practical multi-row `tcmp` cases retain the
+2D candidate; eligible single-row cases select 1D. `tcmps` permits a dense
+packed destination and therefore selects 1D for block-aligned multi-row cases.
+The previous f32/i32 `tcmps` candidate flattened unconditionally despite its
+2D metadata. It is now a genuine row-wise fallback, preventing partial rows or
+predicate row padding from being crossed speculatively.
+
 ## Goals
 
 - Account for every A5 PTODSL element-wise TileOp in scope.
@@ -449,10 +469,33 @@ The logical one-row case is safe even when the physical tile has additional
 rows because a TileBuf valid region begins at the first element and never
 crosses a row boundary. Multi-row partial-column regions are rejected.
 
-This predicate is not sufficient for predicate tiles (`tcmp`, `tcmps`, `tsel`,
-and `tsels`) or dtype-width-changing and packed conversions (`tcvt`). Those
-families must establish their logical-to-physical representation rules before
-registering a 1D candidate.
+This predicate is not sufficient for predicate tiles or dtype-width-changing
+and packed conversions. Predicate compare uses the separate rule below;
+predicate select (`tsel` and `tsels`) and conversion (`tcvt`) must establish
+their logical-to-physical representation rules before registering a 1D
+candidate.
+
+### Packed predicate compare legality
+
+`tilelib.require_predicate_compare_1d(*data_operand_names,
+predicate_operand="dst")` implements the compare-specific rule. The data
+tiles must satisfy the same rank, locality, layout, compact-mode, bounds, and
+common-valid-range requirements as ordinary element-wise operands. The
+predicate destination is checked independently because it stores one bit per
+comparison instead of one element of the source dtype.
+
+For f32/i32 and f16/i16 comparisons, one complete predicate store represents
+128 source elements and occupies 16 bytes. For i8/ui8 comparisons, one store
+represents 256 source elements and occupies 32 bytes. A one-row range is legal
+when every source physical row can contain the rounded full vector loads and
+the destination physical row can contain the rounded number of stores.
+For multiple rows, the source valid column count must be a multiple of the
+corresponding 128- or 256-element store unit, every data tile must use its full
+physical column axis, and the destination physical row stride must equal the
+exact packed byte count for that row. The predicate physical row must also
+satisfy A5's 32-byte tile-row alignment. Unknown dtype, shape, layout, compact
+mode, alignment, or insufficient destination capacity rejects the 1D
+candidate.
 
 The older `require_contiguous()` helper remains available for existing users;
 new element-wise 1D candidates must use the named-operand rule.
@@ -550,20 +593,18 @@ than appearing to work.
 
 ## Open Legality Questions for the Next Step
 
-1. What exact logical-to-physical relation does an `i8`/`ui8` predicate tile
-   represent for each input dtype in compare and select?
-2. Are wider `tsels` mask dtypes representation choices, storage containers, or
+1. Are wider `tsels` mask dtypes representation choices, storage containers, or
    logical predicates with a different packing rule?
-3. Which temporary tiles are true traversal participants, and which are ABI
+2. Which temporary tiles are true traversal participants, and which are ABI
    scratch operands whose required size relation differs from the data range?
    They must all still be checked.
-4. For each `tcvt` distribution mode, what source and destination byte ranges
+3. For each `tcvt` distribution mode, what source and destination byte ranges
    are touched by a vector iteration and its tail?
-5. Does any packed conversion require per-row restart state even when both
+4. Does any packed conversion require per-row restart state even when both
    physical buffers are contiguous?
-6. Must `pad_value` affect 1D legality, or is it relevant only when an
+5. Must `pad_value` affect 1D legality, or is it relevant only when an
    instruction can observe elements outside the logical valid range?
-7. Which dynamic or unknown tile metadata encodings can reach
+6. Which dynamic or unknown tile metadata encodings can reach
    `InsertTemplateAttributes`, and how should each be rejected conservatively?
 
 These questions must be answered with focused legality tests or an explicitly
