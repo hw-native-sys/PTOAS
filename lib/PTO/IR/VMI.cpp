@@ -484,10 +484,19 @@ static LogicalResult verifyMemoryElementMatches(Operation *op, Type memoryType,
   Type memoryElementType = getMemoryElementType(memoryType);
   if (!memoryElementType)
     return success();
-  if (memoryElementType != dataType.getElementType())
-    return op->emitOpError() << "requires memory " << role
-                             << " element type to match VMI data element type";
-  return success();
+  Type dataElementType = dataType.getElementType();
+  if (memoryElementType == dataElementType)
+    return success();
+  // Integer memory cells are bit-storage; allow signless/signed/unsigned
+  // mismatches at the same width (TileLang parks are si*, reductions often
+  // produce signless i*).
+  auto memoryInt = dyn_cast<IntegerType>(memoryElementType);
+  auto dataInt = dyn_cast<IntegerType>(dataElementType);
+  if (memoryInt && dataInt &&
+      memoryInt.getWidth() == dataInt.getWidth())
+    return success();
+  return op->emitOpError() << "requires memory " << role
+                           << " element type to match VMI data element type";
 }
 
 static LogicalResult verifyContiguousIfLayoutAssigned(Operation *op,
