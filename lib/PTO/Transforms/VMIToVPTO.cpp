@@ -268,29 +268,6 @@ static SmallVector<Value> materializeVMIToVPTO(OpBuilder &builder,
   return SmallVector<Value>(unpackOp->getResults());
 }
 
-static FailureOr<Type> getVMIVRegPhysicalElementType(VMIVRegType type) {
-  Type elementType = type.getElementType();
-  VMILayoutAttr layout = type.getLayoutAttr();
-  if (!layout || !layout.hasGroupSlotLaneStride())
-    return elementType;
-
-  auto integerType = dyn_cast<IntegerType>(elementType);
-  if (!integerType && isa<FloatType>(elementType))
-    return elementType;
-  if (!integerType)
-    return failure();
-  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  int64_t laneStride = layout.getLaneStride();
-  if (elementBits == 0 || laneStride <= 1)
-    return failure();
-  if (elementBits == 8 && laneStride == 2)
-    return elementType;
-  int64_t physicalBits = static_cast<int64_t>(elementBits) * laneStride;
-  if (physicalBits != 16 && physicalBits != 32)
-    return failure();
-  return IntegerType::get(type.getContext(), physicalBits);
-}
-
 static int64_t getMaskGranularityBits(StringRef granularity) {
   if (granularity == "b8")
     return 8;
@@ -336,16 +313,16 @@ public:
     addConversion([](VMIVRegType type,
                      SmallVectorImpl<Type> &results) -> LogicalResult {
       FailureOr<int64_t> arity = getVMIPhysicalArity(type);
-      FailureOr<Type> physicalElementType = getVMIVRegPhysicalElementType(type);
-      if (failed(arity) || failed(physicalElementType))
+      Type physicalElementType = getVMIPhysicalDataElementType(type);
+      if (failed(arity))
         return failure();
       FailureOr<int64_t> lanesPerPart =
-          getDataLanesPerPart(*physicalElementType);
+          getDataLanesPerPart(physicalElementType);
       if (failed(lanesPerPart))
         return failure();
       for (int64_t i = 0; i < *arity; ++i)
         results.push_back(VRegType::get(type.getContext(), *lanesPerPart,
-                                        *physicalElementType));
+                                        physicalElementType));
       return success();
     });
     addConversion(
@@ -867,11 +844,7 @@ FailureOr<int64_t> getVMITypeElementCount(Type type) {
 
 FailureOr<int64_t> getVMITypeLanesPerPart(Type type) {
   if (auto vregType = dyn_cast<VMIVRegType>(type)) {
-    FailureOr<Type> physicalElementType =
-        getVMIVRegPhysicalElementType(vregType);
-    if (failed(physicalElementType))
-      return failure();
-    return getDataLanesPerPart(*physicalElementType);
+    return getDataLanesPerPart(getVMIPhysicalDataElementType(vregType));
   }
   if (auto maskType = dyn_cast<VMIMaskType>(type)) {
     FailureOr<StringRef> physicalGranularity =
@@ -7941,22 +7914,21 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
                                        slots));
 
       FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceVMIType);
-      FailureOr<Type> sourceElementType =
-          getVMIVRegPhysicalElementType(sourceVMIType);
-      if (failed(sourceArity) || failed(sourceElementType))
+      Type sourceElementType = getVMIPhysicalDataElementType(sourceVMIType);
+      if (failed(sourceArity))
         return rewriter.notifyMatchFailure(
             op, "group_broadcast_load fallback cannot derive physical types");
 
       SmallVector<Type> sourceTypes;
       sourceTypes.reserve(*sourceArity);
       FailureOr<int64_t> sourceLanesPerPart =
-          getDataLanesPerPart(*sourceElementType);
+          getDataLanesPerPart(sourceElementType);
       if (failed(sourceLanesPerPart))
         return rewriter.notifyMatchFailure(
             op, "group_broadcast_load fallback cannot derive source lanes");
       for (int64_t i = 0; i < *sourceArity; ++i)
         sourceTypes.push_back(VRegType::get(
-            rewriter.getContext(), *sourceLanesPerPart, *sourceElementType));
+            rewriter.getContext(), *sourceLanesPerPart, sourceElementType));
 
       SmallVector<Value> sourceParts;
       if (failed(lowerGroupSlotLoadParts(
@@ -10478,8 +10450,8 @@ struct OneToNVMIExtIOpPattern : OpConversionPattern<OpT> {
 //     Lowering shape: emit vcvt EVEN/ODD per source chunk pair.
 //   - contiguous lane_stride = 1 -> contiguous lane_stride = 2/4
 //     Example: 16 -> 8 lane_stride=2, 32 -> 8 lane_stride=4.
-//     Lowering shape: emit vcvt into the widened physical carrier selected by
-//     the lane-stride result type.
+//     Lowering shape: emit vcvt into the logical-element vector whose live
+//     results occupy the requested strided lanes.
 //
 // Group-slots logical layouts
 //   - slots = 1 preserves the layout for 2x/4x narrowing.
@@ -12007,12 +11979,11 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
                 "high");
 
   FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(aType.getElementType());
-  FailureOr<Type> physicalElementType = getVMIVRegPhysicalElementType(aType);
+  Type physicalElementType = getVMIPhysicalDataElementType(aType);
   FailureOr<StringRef> physicalMaskGranularity =
       getVMIMaskPhysicalGranularity(maskType);
   if (failed(lanesPerPart) || *lanesPerPart != 64 ||
-      failed(physicalElementType) ||
-      *physicalElementType != aType.getElementType() ||
+      physicalElementType != aType.getElementType() ||
       failed(physicalMaskGranularity) || *physicalMaskGranularity != "b32")
     return fail("requires 64xi32/ui32 data parts with corresponding b32 mask "
                 "parts");

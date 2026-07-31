@@ -244,11 +244,12 @@ The 64 logical f16 lanes occupy physical f16 lanes `0, 2, 4, ... 126` of one
 `!pto.vreg<128xf16>`.  The other lanes are undefined unless another layout
 value gives them semantics.
 
-Some lowerings represent the same lane map with wider carrier slots instead of
-logical-element lanes.  For example, a b16 value with `lane_stride=2` may be
-lowered as the low b16 element of each b32 carrier slot when using
-`UNPK_B16`/`PK_B32` or register pack/unpack materialization.  This does not
-change the VMI logical element type; it is a VPTO lowering representation choice.
+VMI physical parts keep the logical element type for both dense and packed
+group-slot lane-stride layouts.  For example, a b16 value with
+`lane_stride=2` is represented as a b16 vector whose semantic values occupy
+lanes `0, 2, 4, ...`.  `UNPK_B16`, `PK_B32`, and register pack/unpack lowering
+may use b32 values internally, but those wider values are instruction-local
+carriers and do not become the physical type of the VMI SSA value.
 
 ## 4. Type And Operation Generalization
 

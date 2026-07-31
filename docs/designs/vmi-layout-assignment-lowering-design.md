@@ -321,8 +321,10 @@ Ordinary dense `add/mul/store/truncf` cannot consume `group_slots`.
 `LS` defaults to 1 and is measured in logical element-sized physical slots.  It
 is not a new group semantic; it records regular physical spacing for each stored
 group slot.  For example, `ui8 lane_stride=4` maps slot values to byte lanes
-0, 4, 8, ... and lets `group_store` lower through a b32 carrier `PK4_B32`
-store.
+0, 4, 8, ... in a ui8 physical vector and lets `group_store` use a
+`PK4_B32` store.  Any b16/b32 values used by pack/unpack or store instructions
+are instruction-local carriers; the group-slot SSA value keeps its logical
+element type, matching ordinary dense lane-stride values.
 
 `K` is selected by the assigned producer/result contract:
 

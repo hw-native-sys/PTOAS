@@ -8,7 +8,8 @@ layout 作为一等 layout fact 固化、传播、rematerialize 和 lower，而�
 
 1. `lane_stride` is a lane-map field.
 2. Dense `lane_stride` does not change the VMI logical element type.
-3. Group-slot carrier packing is a separate lowering helper.
+3. Group-slot lane-stride keeps the logical element carrier; any wider
+   pack/unpack carrier is local to the lowering instruction.
 4. Layout assignment decides layout before `vmi-to-vpto`.
 5. `vmi-to-vpto` only lowers explicit assigned layout attrs.
 
@@ -39,7 +40,7 @@ Current stage status:
 
 | Area | Status | Notes |
 |---|---|---|
-| Dense layout attrs | Supported | Dense contiguous/deinterleaved layouts carry `lane_stride`; group-slot carrier layout remains separate. |
+| Dense layout attrs | Supported | Dense contiguous/deinterleaved and group-slot layouts carry `lane_stride`; all data parts keep the logical element carrier. |
 | Direct compact load/store | Supported for selected phase-zero maps | LS=2 b8/b16/b32 through `UNPK_B8/B16/B32` and `PK_B16/B32/B64`; LS=4 b8 through `UNPK4` and `PK4_B32`. |
 | Load/store layout folds | Supported with one-load/one-store preservation | `load -> ensure_layout(lane_stride)` rewrites the original load layout when all uses agree; `ensure_layout(lane_stride -> contiguous) -> store` lets the VMI store consume the lane-stride value. |
 | Dense widening ext | Supported | `getPreferredCastLayoutFact` chooses the arity-reducing source `lane_stride=W` / result contiguous relation when it beats the natural deinterleaved result; otherwise it keeps the natural relation. |
@@ -491,10 +492,9 @@ lib/PTO/IR/VMI.cpp
 lib/PTO/IR/VMI.cpp
 lib/PTO/Transforms/VMIToVPTO.cpp
   replace the current "hasLaneStride implies unsigned carrier widening" helper
-  with:
-    logical-element physicalization for ordinary dense VPTO values
-    selected carrier-slot physicalization for pack/unpack materializations
-    existing group-slot packed-byte carrier lowering
+  with logical-element physicalization shared by dense and group-slot values;
+  keep wider carrier types local to selected pack/unpack and memory
+  instructions
 
 include/PTO/Transforms/VMILayoutSupport.h
 lib/PTO/Transforms/VMILayoutSupport.cpp
@@ -1616,7 +1616,8 @@ ui8 contiguous lane_stride=4 may lower through low ui8 in ui32 carrier slots
 when the selected materialization is PK4_B32
 65xf16 contiguous lane_stride=2 is rejected by direct full-chunk-only paths, or
 covered only by an arity-changing materialization test outside this discussion
-group-slot ui8 lane_stride=4 keeps existing carrier lowering behavior
+group-slot ui8 lane_stride=4 has a physical 256xui8 part; any b32 carrier used
+by PK4_B32 lowering is instruction-local
 ```
 
 Conversion lowering:
@@ -1688,7 +1689,8 @@ rejected or kept on the conservative contiguous path
 ## 10. Suggested Patch Order
 
 1. Add attr fields, parser/printer, verifier, and round-trip tests.
-2. Split dense lane-map physicalization from group-slot carrier packing.
+2. Unify dense and group-slot data physicalization on the logical element type,
+   while keeping pack/unpack carrier selection inside lowering helpers.
 3. Update physical arity/unpack helpers for dense lane stride.
 4. Extend support queries and assignment layout keys.
 5. Implement widening arity-driven self-preference, single-part relation, and

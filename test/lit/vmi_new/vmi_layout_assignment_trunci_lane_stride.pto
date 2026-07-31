@@ -45,7 +45,7 @@ module {
 // ASSIGN: pto.vmi.group_store %[[NARROW]]
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride(
-// LOWER-NOT: pto.vcvt
+// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // LOWER: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // LOWER: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
 // LOWER: %[[WORDS:.*]] = pto.vbitcast %[[PACK8]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>

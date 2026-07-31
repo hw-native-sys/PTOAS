@@ -38,6 +38,10 @@ struct VMIPhysicalLane {
   int64_t lane = 0;
 };
 
+// VMI lane layouts never change the data element type of a physical part.
+// Wider values used by pack/unpack or memory distributions are
+// instruction-local carriers rather than the type of the VMI SSA value.
+Type getVMIPhysicalDataElementType(VMIVRegType type);
 FailureOr<int64_t> getDataLanesPerPart(Type elementType);
 FailureOr<int64_t> getMaskLanesPerPart(StringRef granularity);
 FailureOr<int64_t> getVMILayoutBlockElems(Type type);

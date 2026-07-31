@@ -270,14 +270,14 @@ so `vmi-to-vpto` can lower from the assigned type without reconstructing group
 slot placement from producer or consumer context.
 
 `lane_stride` is counted in logical element-sized physical slots and records a
-regular gap between stored group slots.  It is used for carrier-style packed
-stores such as `ui8` group slots lowered through b32 `PK4_B32`.
+regular gap between stored group slots.  The group-slot VMI value keeps its
+logical element carrier; a packed store such as `PK4_B32` may use a wider
+instruction-local carrier at the memory boundary.
 
-The current implementation treats this as a group-slot property.  The dense
-generalization is tracked separately in
-`vmi-lane-stride-generalization-implementation.md`; it requires splitting dense
-lane-map stride from group-slot carrier packing before `lane_stride` can be used
-on `contiguous` or `deinterleaved` layouts.
+The dense generalization is tracked separately in
+`vmi-lane-stride-generalization-implementation.md`.  Dense and group-slot
+lane-stride layouts now share logical-element physicalization, while retaining
+their distinct lane maps and supported lowering strategies.
 
 ### 3.2 VMI Types
 

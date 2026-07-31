@@ -133,8 +133,8 @@ module {
 // CHECK: %[[U8:.*]] = pto.vsldb {{.*}} : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
 // CHECK: %[[U16:.*]] = pto.vzunpack %[[U8]]
 // CHECK: %[[U32:.*]] = pto.vzunpack %[[U16]]
+// CHECK: pto.vbitcast %[[U32]] : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
 // CHECK: pto.pge_b8 "PAT_VL32" : !pto.mask<b8>
-// CHECK: pto.vbitcast {{.*}} : !pto.vreg<64xi32> -> !pto.vreg<256xui8>
 // CHECK: pto.vcvt {{.*}} {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
 // CHECK: pto.vshl
 // CHECK: pto.vselr
@@ -147,8 +147,8 @@ module {
 // CHECK: pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
 // CHECK: %[[U16:.*]] = pto.vsldb {{.*}} : !pto.ptr<ui16, ub>, i16, i16, !pto.mask<b16> -> !pto.vreg<128xui16>
 // CHECK: %[[U32:.*]] = pto.vzunpack %[[U16]]
+// CHECK: pto.vbitcast %[[U32]] : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: pto.pge_b16 "PAT_VL16" : !pto.mask<b16>
-// CHECK: pto.vbitcast {{.*}} : !pto.vreg<64xi32> -> !pto.vreg<128xui16>
 // CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
 // CHECK: pto.vsts {{.*}} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
 // CHECK-NOT: pto.vmi.

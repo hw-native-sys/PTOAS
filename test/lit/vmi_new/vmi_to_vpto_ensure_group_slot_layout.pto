@@ -149,6 +149,17 @@ module {
         -> !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>>
     return %r : !pto.vmi.vreg<16xf16, #pto.vmi.layout<num_groups = 16, slots = 8>>
   }
+
+  func.func @gs8_ls2_ui16_add(
+      %lhs: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
+      %rhs: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>)
+      -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %sum = pto.vmi.vadd %lhs, %rhs
+        : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
+          !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+        -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %sum : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
 }
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls2_ui8(
@@ -164,11 +175,12 @@ module {
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls4_ui8(
 // CHECK: %[[U2:.*]] = pto.vzunpack %arg0, %{{.*}} : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
-// CHECK: %[[R:.*]] = pto.vzunpack %[[U2]], %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: %[[U4:.*]] = pto.vzunpack %[[U2]], %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: %[[R:.*]] = pto.vbitcast %[[U4]] : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
 // CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 
 // CHECK-LABEL: func.func @gs8_ls4_to_gs8_ui8(
-// CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<64xi32> -> !pto.vreg<64xui32>
+// CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
 // CHECK: %[[P2:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: %[[R:.*]] = pto.vpack %[[P2]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
 // CHECK: %[[WORDS:.*]] = pto.vbitcast %[[R]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
@@ -176,21 +188,23 @@ module {
 
 // CHECK-LABEL: func.func @gs8_ls2_to_gs8_ls4_ui8(
 // CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
-// CHECK: %[[R:.*]] = pto.vzunpack %[[C]], %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: %[[U4:.*]] = pto.vzunpack %[[C]], %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: %[[R:.*]] = pto.vbitcast %[[U4]] : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
 // CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 
 // CHECK-LABEL: func.func @gs8_ls4_to_gs8_ls2_ui8(
-// CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<64xi32> -> !pto.vreg<64xui32>
+// CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
 // CHECK: %[[P:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: %[[R:.*]] = pto.vbitcast %[[P]] : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
 // CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls2_ui16(
-// CHECK: %[[R:.*]] = pto.vzunpack %arg0, %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: %[[U:.*]] = pto.vzunpack %arg0, %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: %[[R:.*]] = pto.vbitcast %[[U]] : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
 
 // CHECK-LABEL: func.func @gs8_ls2_to_gs8_ui16(
-// CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<64xi32> -> !pto.vreg<64xui32>
+// CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // CHECK: %[[R:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: %[[WORDS:.*]] = pto.vbitcast %[[R]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // CHECK-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
@@ -216,3 +230,9 @@ module {
 // CHECK-COUNT-2: pto.vpack
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
+
+// CHECK-LABEL: func.func @gs8_ls2_ui16_add(
+// CHECK-SAME: %[[LHS:.*]]: !pto.vreg<128xui16>, %[[RHS:.*]]: !pto.vreg<128xui16>
+// CHECK: pto.vadd %[[LHS]], %[[RHS]], {{.*}} : !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xui16>
+// CHECK-NOT: !pto.vreg<64xui32>
+// CHECK-NOT: pto.vmi.

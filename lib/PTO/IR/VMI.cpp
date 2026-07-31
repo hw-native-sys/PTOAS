@@ -223,27 +223,6 @@ static FailureOr<int64_t> getLayoutBlockElems(Type type) {
   return getVMILayoutBlockElems(type);
 }
 
-static FailureOr<Type> getVMIPhysicalElementType(VMIVRegType type) {
-  Type elementType = type.getElementType();
-  VMILayoutAttr layout = type.getLayoutAttr();
-  if (!layout || !layout.hasGroupSlotLaneStride())
-    return elementType;
-
-  auto integerType = dyn_cast<IntegerType>(elementType);
-  if (!integerType && isa<FloatType>(elementType))
-    return elementType;
-  if (!integerType)
-    return failure();
-  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  int64_t laneStride = layout.getLaneStride();
-  if (elementBits == 0 || laneStride <= 1)
-    return failure();
-  int64_t physicalBits = static_cast<int64_t>(elementBits) * laneStride;
-  if (physicalBits != 16 && physicalBits != 32)
-    return failure();
-  return IntegerType::get(type.getContext(), physicalBits);
-}
-
 static int64_t getMaskGranularityBitWidth(StringRef granularity) {
   if (granularity == "b8")
     return 8;
@@ -284,10 +263,7 @@ static FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type) {
 
 static FailureOr<int64_t> getPhysicalLanesPerPart(Type type) {
   if (auto vregType = dyn_cast<VMIVRegType>(type)) {
-    FailureOr<Type> physicalElementType = getVMIPhysicalElementType(vregType);
-    if (failed(physicalElementType))
-      return failure();
-    return getDataLanesPerPart(*physicalElementType);
+    return getDataLanesPerPart(getVMIPhysicalDataElementType(vregType));
   }
   if (auto maskType = dyn_cast<VMIMaskType>(type)) {
     FailureOr<StringRef> physicalGranularity =
@@ -535,8 +511,8 @@ static LogicalResult verifyPhysicalParts(Operation *op, Type vmiType,
   if (auto vregType = dyn_cast<VMIVRegType>(vmiType)) {
     FailureOr<int64_t> lanesPerPart =
         getPhysicalLanesPerPart(vregType);
-    FailureOr<Type> physicalElementType = getVMIPhysicalElementType(vregType);
-    if (failed(lanesPerPart) || failed(physicalElementType))
+    Type physicalElementType = getVMIPhysicalDataElementType(vregType);
+    if (failed(lanesPerPart))
       return op->emitOpError(
           "requires data element type with known physical lane count");
     for (Type physicalType : physicalTypes) {
@@ -544,7 +520,7 @@ static LogicalResult verifyPhysicalParts(Operation *op, Type vmiType,
       if (!partType)
         return op->emitOpError("requires physical data parts to be !pto.vreg");
       if (partType.getElementCount() != *lanesPerPart ||
-          partType.getElementType() != *physicalElementType)
+          partType.getElementType() != physicalElementType)
         return op->emitOpError(
             "requires physical data part type to match VMI lane-map helper");
     }
@@ -4181,6 +4157,14 @@ void VMIvLoadOp::getEffects(
 
 //===----------------------------------------------------------------------===//
 // VMIvStoreOp
+
+Type mlir::pto::getVMIPhysicalDataElementType(VMIVRegType type) {
+  // lane_stride describes where logical elements reside inside a physical
+  // vector register; it does not change their element type.  Packed group
+  // slots therefore use the same sparse logical-element carrier as dense
+  // lane-stride values.
+  return type.getElementType();
+}
 
 FailureOr<int64_t> mlir::pto::getDataLanesPerPart(Type elementType) {
   unsigned elementBitWidth = pto::getPTOStorageElemBitWidth(elementType);
