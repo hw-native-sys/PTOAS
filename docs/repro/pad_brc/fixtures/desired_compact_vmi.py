@@ -9,7 +9,7 @@
 """Python DSL form of ``desired_compact_vmi.pto``.
 
 Desired: in-register ``vbrc(..., group=G)`` expand without pad-32 + ``brc`` reload.
-Canonical IR: ``desired_compact_vmi.pto`` (expected FAIL on current tip).
+Canonical IR: ``desired_compact_vmi.pto`` (expected FAIL on the current best build).
 """
 
 from ptodsl import pto

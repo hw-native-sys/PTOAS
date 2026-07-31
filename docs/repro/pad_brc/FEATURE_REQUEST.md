@@ -38,7 +38,7 @@ See [`fixtures/current_pad_brc_vmi.pto`](fixtures/current_pad_brc_vmi.pto)
 - `vload(..., dist_mode="brc", group=4)` back to 128 lanes
 - then `vmul`
 
-This **lowers** to VPTO on the current tip. It is the workaround, not the
+This **lowers** to VPTO on the current best build. It is the workaround, not the
 desired shape.
 
 ## What we need

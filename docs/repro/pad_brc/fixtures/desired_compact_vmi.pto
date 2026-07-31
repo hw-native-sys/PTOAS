@@ -8,7 +8,7 @@
 
 // Desired VMI path: expand G=4 group-slot recip in-register with vbrc {group=4}
 // onto a 128-lane strip — no pad-32 store and no dist_mode="brc" reload.
-// On the current tip this leaves residual group_broadcast / VMI-UNSUPPORTED.
+// On the current best build this leaves residual group_broadcast / VMI-UNSUPPORTED.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @desired_compact_vbrc(

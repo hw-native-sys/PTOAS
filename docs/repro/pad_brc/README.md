@@ -14,7 +14,7 @@ Branch: `pad_brc`. Details: [`FEATURE_REQUEST.md`](FEATURE_REQUEST.md).
 **G=4 f32 scalars → expand across 128 lanes.**  
 G=8 bf16 → 256 lanes is the same pattern (same pad-32 + `brc` tax).
 
-| Fixture | Role | Expected on current tip |
+| Fixture | Role | Expected on current best build |
 |---------|------|-------------------------|
 | `fixtures/reference_asc_cce.asc` | Working AscendC baseline (reg-local inverse) | **PASS** (`bisheng`) |
 | `fixtures/current_pad_brc_vmi.pto` | Working VMI: pad-32 store + `brc` reload | **PASS** (VMI→VPTO) |
@@ -52,7 +52,7 @@ Results: `outputs/check_pad_brc/compile_results.txt`.
 
 ## Recorded check (example)
 
-On a built PTOAS tip with `pto-test-opt` + CANN `bisheng`:
+On a built PTOAS tree with `pto-test-opt` + CANN `bisheng`:
 
 | Fixture | Result |
 |---------|--------|
@@ -62,7 +62,7 @@ On a built PTOAS tip with `pto-test-opt` + CANN `bisheng`:
 
 ## How to read the result
 
-- If **desired** starts **PASS**ing, the micro-repro criteria in
+- If **desired** compiles successfully, the criteria in
   [`FEATURE_REQUEST.md`](FEATURE_REQUEST.md) are met.
 - **Current** pad+`brc` should keep working until kernels can move to the
   compact shape.
