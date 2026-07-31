@@ -562,42 +562,52 @@ for (int i = 0; i < num_requests; i++)
 
 ### `pto.sprsti`
 
-- **syntax:** `pto.sprsti "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32`
+- **syntax:**
+  - normal: `pto.sprsti "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32`
+  - post-update: `%next = pto.sprsti "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>`
 - **semantics:** Store SPR AR to UB using a signed 8-bit immediate offset.
 - **inputs:**
-  `%dest` is the UB base pointer and `%offset` is the immediate offset in units
-  of the SPR data width.
+  `%dest` is the UB base pointer and `%offset` is the immediate byte offset.
+- **outputs:**
+  The normal form returns no SSA value. The post-update form returns `%next`,
+  which advances `%dest` by `%offset` bytes.
 - **constraints and limitations:**
   Only `"AR"` is supported. `%dest` must be a `ui32` or signless `i32` UB
-  pointer. `%offset` must be a constant signed 8-bit `i32`. The current VPTO
-  surface models only the no-post-update form, so no updated base pointer is
-  returned.
+  pointer. `%offset` must be a constant signed 8-bit `i32`.
 
 ---
 
 ### `pto.sprsts`
 
-- **syntax:** `pto.sprsts "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32`
+- **syntax:**
+  - normal: `pto.sprsts "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32`
+  - post-update: `%next = pto.sprsts "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>`
 - **semantics:** Store SPR AR to UB using a scalar-register offset.
 - **inputs:**
   `%dest` is the UB base pointer and `%offset` is the scalar offset in bytes.
+- **outputs:**
+  The normal form returns no SSA value. The post-update form returns `%next`,
+  which advances `%dest` by `%offset` bytes.
 - **constraints and limitations:**
   Only `"AR"` is supported. `%dest` must be a `ui32` or signless `i32` UB
-  pointer. The current VPTO surface models only the no-post-update form, so no
-  updated base pointer is returned.
+  pointer.
 
 ---
 
 ## Alignment State Stores
 
 ### `pto.vstas`
-- **syntax:** `pto.vstas %value, %dest, %offset : !pto.align, !pto.ptr<T, ub>, i32`
+- **syntax:**
+  - normal: `pto.vstas %value, %dest, %offset : !pto.align, !pto.ptr<T, ub>, i32`
+  - post-update: `%next = pto.vstas %value, %dest, %offset : !pto.align, !pto.ptr<T, ub>, i32 -> !pto.ptr<T, ub>`
 - **semantics:** Scalar-register-offset form of alignment-state flush.
 - **inputs:**
   `%value` is the pending store-alignment state, `%dest` is the UB base
-  pointer, and `%offset` is the scalar-register style displacement.
+  pointer, and `%offset` is the displacement in destination elements.
 - **outputs:**
-  This op writes buffered tail bytes to UB and returns no SSA value.
+  This op writes buffered tail bytes to UB. The normal form returns no SSA
+  value. The post-update form returns `%next`, which advances `%dest` by
+  `%offset` destination elements.
 - **constraints and limitations:**
   This family flushes pending store-alignment state using an explicit scalar
   offset and keeps the scalar-offset form explicit. The incoming `%value`

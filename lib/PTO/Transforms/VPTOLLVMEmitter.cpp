@@ -2547,25 +2547,31 @@ static StringRef buildSprclrCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.sprclr").getValue();
 }
 
-static StringRef buildSprstiCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.sprsti").getValue();
+static StringRef buildSprstiCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.sprsti.post"
+                              : "llvm.hivm.sprsti")
+      .getValue();
 }
 
-static StringRef buildSprstsCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.sprsts").getValue();
+static StringRef buildSprstsCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.sprsts.post"
+                              : "llvm.hivm.sprsts")
+      .getValue();
 }
 
 template <typename SprStoreOp>
-static StringRef buildSprStoreCallee(MLIRContext *context);
+static StringRef buildSprStoreCallee(MLIRContext *context, bool post);
 
 template <>
-StringRef buildSprStoreCallee<pto::SprstiOp>(MLIRContext *context) {
-  return buildSprstiCallee(context);
+StringRef buildSprStoreCallee<pto::SprstiOp>(MLIRContext *context, bool post) {
+  return buildSprstiCallee(context, post);
 }
 
 template <>
-StringRef buildSprStoreCallee<pto::SprstsOp>(MLIRContext *context) {
-  return buildSprstsCallee(context);
+StringRef buildSprStoreCallee<pto::SprstsOp>(MLIRContext *context, bool post) {
+  return buildSprstsCallee(context, post);
 }
 
 template <typename ConfigOp>
@@ -2596,8 +2602,11 @@ static StringRef buildVstarCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.vstar").getValue();
 }
 
-static StringRef buildVstasCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.vstas").getValue();
+static StringRef buildVstasCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.vstas.post"
+                              : "llvm.hivm.vstas")
+      .getValue();
 }
 
 template <typename VoteOp>
@@ -7724,20 +7733,33 @@ public:
       return rewriter.notifyMatchFailure(op,
                                          "expected converted spr store operands");
 
-    StringRef calleeName = buildSprStoreCallee<SprStoreOp>(op.getContext());
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    SmallVector<Type> resultTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      resultTypes)) ||
+        resultTypes.size() != (usePostIntrinsic ? 1u : 0u))
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert spr store result types");
+
+    StringRef calleeName =
+        buildSprStoreCallee<SprStoreOp>(op.getContext(), usePostIntrinsic);
     Value sprValue = rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI16IntegerAttr(*spr));
     Value postValue = rewriter.create<arith::ConstantOp>(
-        op.getLoc(), rewriter.getI32IntegerAttr(0));
+        op.getLoc(), rewriter.getI32IntegerAttr(usePostIntrinsic ? 1 : 0));
     SmallVector<Value> args{sprValue, adaptor.getDestination(),
                             adaptor.getOffset(), postValue};
     auto funcType = rewriter.getFunctionType(
         TypeRange{sprValue.getType(), adaptor.getDestination().getType(),
                   adaptor.getOffset().getType(), postValue.getType()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{}, args);
+        resultTypes);
+    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
+                                              resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    if (usePostIntrinsic)
+      rewriter.replaceOp(op, call.getResults());
+    else
+      rewriter.eraseOp(op);
     return success();
   }
 
@@ -8117,17 +8139,31 @@ public:
     if (failed(offsetBytes))
       return rewriter.notifyMatchFailure(op, "failed to convert vstas offset");
 
-    StringRef calleeName = buildVstasCallee(op.getContext());
-    Value zeroValue = getI32Constant(rewriter, op.getLoc(), 0);
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    SmallVector<Type> resultTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      resultTypes)) ||
+        resultTypes.size() != (usePostIntrinsic ? 1u : 0u))
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert vstas result types");
+
+    StringRef calleeName =
+        buildVstasCallee(op.getContext(), usePostIntrinsic);
+    Value postValue =
+        getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
     SmallVector<Value> args{adaptor.getValue(), adaptor.getDestination(), *offsetBytes,
-                            zeroValue};
+                            postValue};
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getValue().getType(), adaptor.getDestination().getType(),
-                  (*offsetBytes).getType(), zeroValue.getType()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{}, args);
+                  (*offsetBytes).getType(), postValue.getType()},
+        resultTypes);
+    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
+                                              resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    if (usePostIntrinsic)
+      rewriter.replaceOp(op, call.getResults());
+    else
+      rewriter.eraseOp(op);
     return success();
   }
 

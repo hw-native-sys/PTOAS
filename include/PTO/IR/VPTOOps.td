@@ -1562,12 +1562,13 @@ def PTO_SprstiOp : PTO_VectorMicroOp<"sprsti", [
     I32:$offset
   );
 
-  let results = (outs);
+  let results = (outs Optional<PTO_BufferType>:$updated_base);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     $spr `,` $destination `[` $offset `]` attr-dict `:` type($destination) `,` type($offset)
+    (`->` type($updated_base)^)?
   }];
 }
 
@@ -1580,12 +1581,13 @@ def PTO_SprstsOp : PTO_VectorMicroOp<"sprsts", [
     I32:$offset
   );
 
-  let results = (outs);
+  let results = (outs Optional<PTO_BufferType>:$updated_base);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     $spr `,` $destination `[` $offset `]` attr-dict `:` type($destination) `,` type($offset)
+    (`->` type($updated_base)^)?
   }];
 }
 
@@ -3512,12 +3514,13 @@ def PTO_VstasOp : PTO_VectorMicroOp<"vstas", [
     PTO_BufferLikeType:$destination,
     I32:$offset
   );
-  let results = (outs);
+  let results = (outs Optional<PTO_BufferLikeType>:$updated_base);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     $value `,` $destination `,` $offset attr-dict `:` type($value) `,` type($destination) `,` type($offset)
+    (`->` type($updated_base)^)?
   }];
 }
 

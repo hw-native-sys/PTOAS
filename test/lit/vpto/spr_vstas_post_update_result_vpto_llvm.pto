@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @spr_vstas_post_update(
+      %spr_dst: !pto.ptr<ui32, ub>, %vstas_dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c4 = arith.constant 4 : i32
+    pto.vecscope {
+      %align = pto.init_align : !pto.align
+      %next_spr_dst = pto.sprsti "AR", %spr_dst[%c4]
+          : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>
+      %final_spr_dst = pto.sprsts "AR", %next_spr_dst[%c4]
+          : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>
+      %next_vstas_dst = pto.vstas %align, %vstas_dst, %c4
+          : !pto.align, !pto.ptr<f32, ub>, i32 -> !pto.ptr<f32, ub>
+    }
+    return
+  }
+}
+
+// CHECK-DAG: declare ptr addrspace(6) @llvm.hivm.sprsti.post
+// CHECK-DAG: declare ptr addrspace(6) @llvm.hivm.sprsts.post
+// CHECK-DAG: declare ptr addrspace(6) @llvm.hivm.vstas.post
+// CHECK: call ptr addrspace(6) @llvm.hivm.sprsti.post(i16 74,
+// CHECK-SAME: i32 4, i32 1)
+// CHECK: call ptr addrspace(6) @llvm.hivm.sprsts.post(i16 74,
+// CHECK-SAME: i32 4, i32 1)
+// CHECK: call ptr addrspace(6) @llvm.hivm.vstas.post
+// CHECK-SAME: i32 16, i32 1)

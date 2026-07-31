@@ -43,19 +43,16 @@ bisheng 内部将候选指令分为两个处理分支：
 | Auto | `pto.vsstb` | `llvm.hivm.vsstb` | `llvm.hivm.vsstb.post` |
 | Auto | `pto.psts` | `llvm.hivm.psts.b8` | `llvm.hivm.psts.post.b8` |
 | Auto | `pto.psti` | `llvm.hivm.psti.b8` | `llvm.hivm.psti.post.b8` |
+| Auto | `pto.sprsts` | `llvm.hivm.sprsts` | `llvm.hivm.sprsts.post` |
+| Auto | `pto.sprsti` | `llvm.hivm.sprsti` | `llvm.hivm.sprsti.post` |
+| Auto | `pto.vstas` | `llvm.hivm.vstas` | `llvm.hivm.vstas.post` |
 | Auto | `pto.vsldb` | `llvm.hivm.vsldb.v{N}{llvmTy}` | `llvm.hivm.vsldb.post.v{N}{llvmTy}` |
 
 LLVM lowering 时根据 op 是否有 `updated_base` 结果来选择生成 post 或非 post intrinsic。
 
-### 2.2 PTOAS 有 Op 但尚未实现 Post variant 的指令
+### 2.2 Step 4 完成状态
 
-这些指令结构上可支持 `updated_base`，但当前 ODS 定义中没有该可选返回值。
-
-| 分支 | PTOAS Op | 当前 Intrinsic | 备注 |
-|------|----------|---------------|------|
-| Auto | `pto.vstas` | `llvm.hivm.vstas` | align 存储（带 offset） |
-| Auto | `pto.sprsts` | `llvm.hivm.sprsts` | 标量 predicate 寄存器存储（strided） |
-| Auto | `pto.sprsti` | `llvm.hivm.sprsti` | 标量 predicate 寄存器存储（interleaved） |
+Step 4 范围内的 9 条指令均已实现 `updated_base` 与对应 post intrinsic lowering。
 
 ### 2.3 Stateful Post-Update 指令（Mechanism B：align 状态穿针）
 
@@ -575,12 +572,11 @@ def VPTOSoftPostUpdate : Pass<"vpto-soft-postupdate", "ModuleOp"> {
 23. ~~将尾指令改为使用当前指针和同类型零 stride 的 normal 形式，避免产生无人使用的最终 `updated_base`。~~
 24. ~~增加独立收益性检查：接受能够删除足量动态多层 `pto.addptr` 的常量-step run，以及任意合法长度的 direct symbolic-leaf run；规则统一适用于当前支持的全部 op。~~
 
-### Step 4：扩展指令覆盖
+### ~~Step 4：扩展指令覆盖~~（已完成）
 
-25. 为 2.2 中的指令添加 ODS `updated_base` 定义（已完成 `vldsx2`、`vsldb`、`plds`、`pldi`、`psts`、`psti`）。
-26. 扩展 `PostUpdateTable`，为每条新指令按 4.2.1 的方法确定 `StrideUnit`；立即数形式只接受可证明为常量的 stride。
-27. 两套 emitter 同步补充 post lowering，并添加 normal/post 成对、完整类型
-    集合、返回顺序、mode 常量和 offset 单位的 lit 回归。
+25. ~~为 9 条扩展指令添加 ODS `updated_base` 定义。~~
+26. ~~扩展 `PostUpdateTable`，按 4.2.1 配置 `StrideUnit`；立即数形式仅接受满足其约束的常量 stride。~~
+27. ~~两套 emitter 同步补充 post lowering，并添加返回 ABI、mode 常量、offset 单位、类型约束和 pass 改写的 lit 回归。~~
 
 ### Step 5：验证与开启
 

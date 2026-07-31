@@ -55,6 +55,12 @@ enum class StrideUnit {
   Byte,    // sprsts/sprsti: raw byte offset
 };
 
+enum class StrideConstraint {
+  Dynamic,
+  Constant,
+  SignedI8,
+};
+
 // Per-op-type descriptor: how to extract address operands and check
 // post-update. base/strideOperand indices are operand positions.
 struct PostUpdateOpInfo {
@@ -62,7 +68,7 @@ struct PostUpdateOpInfo {
   int strideOperandIdx;
   StrideUnit strideUnit;
   unsigned minResultsForPost; // numResults > this means already post-update
-  bool requiresConstantStride = false;
+  StrideConstraint strideConstraint = StrideConstraint::Dynamic;
 };
 
 using PostUpdateTable = llvm::StringMap<PostUpdateOpInfo>;
@@ -75,11 +81,15 @@ static const PostUpdateTable &getPostUpdateTable() {
     t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
     t["pto.plds"] = {0, 1, StrideUnit::Byte, 1};
     t["pto.pldi"] = {0, 1, StrideUnit::Byte, 1,
-                     /*requiresConstantStride=*/true};
+                     StrideConstraint::Constant};
     t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
     t["pto.psts"] = {1, 2, StrideUnit::Byte, 0};
     t["pto.psti"] = {1, 2, StrideUnit::Byte, 0,
-                     /*requiresConstantStride=*/true};
+                     StrideConstraint::Constant};
+    t["pto.sprsts"] = {0, 1, StrideUnit::Byte, 0};
+    t["pto.sprsti"] = {0, 1, StrideUnit::Byte, 0,
+                       StrideConstraint::SignedI8};
+    t["pto.vstas"] = {1, 2, StrideUnit::Element, 0};
     t["pto.vsldb"] = {0, 2, StrideUnit::Block, 1};
     t["pto.vsstb"] = {1, 3, StrideUnit::Block, 0};
     return t;
@@ -1263,6 +1273,17 @@ static bool constantsFitType(const StrideExprRef &e, Type wantType) {
   return false;
 }
 
+static bool satisfiesStrideConstraint(const StrideExprRef &stride,
+                                      StrideConstraint constraint) {
+  if (constraint == StrideConstraint::Dynamic)
+    return true;
+  std::optional<int64_t> constant = foldConst(stride);
+  if (!constant)
+    return false;
+  return constraint == StrideConstraint::Constant ||
+         (*constant >= -128 && *constant <= 127);
+}
+
 // Emit `e` at the builder's current insertion point.  Sub-expressions are
 // emitted bottom-up, so every operand is created before its user and the
 // result dominates the insertion point by construction.
@@ -1859,7 +1880,8 @@ static bool validateSequentialRun(SequentialRun &run,
   run.strideType = first->strideOperand.getType();
   if (!canMaterializeAs(run.step, run.strideType) ||
       !constantsFitType(run.step, run.strideType) ||
-      (first->info->requiresConstantStride && !foldConst(run.step)) ||
+      !satisfiesStrideConstraint(run.step,
+                                 first->info->strideConstraint) ||
       !canScaleInitialOffset(first->strideOperand, first->elemBytes,
                              first->unitBytes))
     return false;
@@ -2276,7 +2298,7 @@ private:
       // Reject strides whose constants do not fit the target operand type.
       if (!constantsFitType(total, strideType))
         continue;
-      if (info->requiresConstantStride && !foldConst(total))
+      if (!satisfiesStrideConstraint(total, info->strideConstraint))
         continue;
 
       // A stride built only from loop-invariant leaves is materialized before

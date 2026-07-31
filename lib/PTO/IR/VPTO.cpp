@@ -4926,9 +4926,14 @@ void SprstiOp::getEffects(
 }
 
 LogicalResult SprstiOp::verify() {
-  return verifySprStoreCommon(getOperation(), "pto.sprsti", getSpr(),
-                              getDestination(), getOffset(),
-                              /*requireImmediateOffset=*/true);
+  if (failed(verifySprStoreCommon(getOperation(), "pto.sprsti", getSpr(),
+                                  getDestination(), getOffset(),
+                                  /*requireImmediateOffset=*/true)))
+    return failure();
+  if (getUpdatedBase() &&
+      getUpdatedBase().getType() != getDestination().getType())
+    return emitOpError("requires updated base result to match base type");
+  return success();
 }
 
 void SprstsOp::getEffects(
@@ -4938,9 +4943,14 @@ void SprstsOp::getEffects(
 }
 
 LogicalResult SprstsOp::verify() {
-  return verifySprStoreCommon(getOperation(), "pto.sprsts", getSpr(),
-                              getDestination(), getOffset(),
-                              /*requireImmediateOffset=*/false);
+  if (failed(verifySprStoreCommon(getOperation(), "pto.sprsts", getSpr(),
+                                  getDestination(), getOffset(),
+                                  /*requireImmediateOffset=*/false)))
+    return failure();
+  if (getUpdatedBase() &&
+      getUpdatedBase().getType() != getDestination().getType())
+    return emitOpError("requires updated base result to match base type");
+  return success();
 }
 
 void VldusOp::getEffects(
@@ -6650,6 +6660,9 @@ LogicalResult VstasOp::verify() {
     return emitOpError("requires a pointer-like destination");
   if (classifyMemoryRole(getDestination().getType()) == MemoryRole::GM)
     return emitOpError("requires a UB-backed destination");
+  if (getUpdatedBase() &&
+      getUpdatedBase().getType() != getDestination().getType())
+    return emitOpError("requires updated base result to match base type");
   return success();
 }
 

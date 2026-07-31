@@ -1764,6 +1764,7 @@ def vstar(align, destination):
 def vstas(align, destination, offset):
     """``pto.vstas`` – flush alignment-buffered tail bytes with an explicit offset."""
     _pto.VstasOp(
+        None,
         unwrap_surface_value(align),
         unwrap_surface_value(destination),
         _coerce_i32(offset, context="vstas(align, destination, offset)"),
