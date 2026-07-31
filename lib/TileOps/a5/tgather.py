@@ -247,9 +247,7 @@ _CMP_GATHER_K_DTYPES = ("ui16", "ui32")
 def _cmp_gather_dtype_signatures():
     res = []
     for src in _CMP_GATHER_SRC_DTYPES:
-        for dst in _CMP_GATHER_DST_DTYPES:
-            for k in _CMP_GATHER_K_DTYPES:
-                res.append((src, dst, k, dst))
+        res.append((src, "i32", "i32", "ui8", src))
     return res
 
 
@@ -280,7 +278,7 @@ def template_tgather_cmp(
     k_value,
 ):
     cmp_mode = pto.get_op_attr("cmp_mode", "gt")
-    offset = pto.get_op_attr("offset", 0)
+    offset = int(pto.get_op_attr("offset", 0))
     dtype = src.dtype
     elem_bytes = pto.bytewidth(dtype)
     src_valid_rows, src_valid_cols = src.valid_shape
@@ -293,42 +291,47 @@ def template_tgather_cmp(
     align = pto.init_align()
     pto.sprclr("AR")
 
+    dst_cols = dst.shape[1]
+
     if pto.const_expr(str(dtype) in ("f32",)):
-        k_vec = pto.vbr(pto.vbitcast(k_value, pto.ui32))
+        k_vec = pto.vbitcast(pto.vbr(k_value), pto.ui32)
         for row in range(0, src_valid_rows, 1):
             remained = src_valid_cols
+            row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
             for col in range(0, src_valid_cols, lanes_b32):
                 src_reg = pto.vlds(src[row, col:])
                 mask, remained = pto.make_mask(pto.i32, remained)
                 src_s32 = pto.vcvt(
-                    src_reg, pto.i32, full_mask_b32, rnd=pto.VcvtRoundMode.ROUND_R
+                    src_reg, pto.i32, full_mask_b32, rnd=pto.VcvtRoundMode.R,
+                    sat=pto.VcvtSatMode.NOSAT,
                 )
                 cmp_mask = pto.vcmp(
                     pto.vbitcast(src_s32, pto.ui32), k_vec, mask, cmp_mode
                 )
                 sqz = pto.vsqz(index, cmp_mask)
-                align = pto.vstur(align, sqz, dst_ptr, "POST_UPDATE")
+                align = pto.vstur(align, sqz, row_dst_ptr, "POST_UPDATE")
                 index = pto.vadd(index, add_offset, full_mask_b32)
-            align = pto.vstar(align, dst_ptr)
+            pto.vstar(align, row_dst_ptr)
             pto.sprsts("AR", cdst_ptr, row * 4)
             pto.sprclr("AR")
-            dst_ptr = dst_ptr + dst.shape[1] * 4
+            align = pto.init_align()
 
     elif pto.const_expr(elem_bytes == 4):
         k_vec = pto.vbr(k_value)
         for row in range(0, src_valid_rows, 1):
             remained = src_valid_cols
+            row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
             for col in range(0, src_valid_cols, lanes_b32):
                 src_reg = pto.vlds(src[row, col:])
                 mask, remained = pto.make_mask(pto.i32, remained)
                 cmp_mask = pto.vcmp(src_reg, k_vec, mask, cmp_mode)
                 sqz = pto.vsqz(index, cmp_mask)
-                align = pto.vstur(align, sqz, dst_ptr, "POST_UPDATE")
+                align = pto.vstur(align, sqz, row_dst_ptr, "POST_UPDATE")
                 index = pto.vadd(index, add_offset, full_mask_b32)
-            align = pto.vstar(align, dst_ptr)
+            pto.vstar(align, row_dst_ptr)
             pto.sprsts("AR", cdst_ptr, row * 4)
             pto.sprclr("AR")
-            dst_ptr = dst_ptr + dst.shape[1] * 4
+            align = pto.init_align()
 
     elif pto.const_expr(str(dtype) in ("i16", "ui16", "f16", "bf16")):
         full_mask_b16 = pto.make_mask(dtype, pto.PAT.ALL)
@@ -338,6 +341,7 @@ def template_tgather_cmp(
         )
         for row in range(0, src_valid_rows, 1):
             remained = src_valid_cols
+            row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
             for col in range(0, src_valid_cols, lanes_b32):
                 src_reg = pto.vlds(src[row, col:], dist="UNPK_B16")
                 src_f32 = pto.vcvt(
@@ -346,12 +350,12 @@ def template_tgather_cmp(
                 mask, remained = pto.make_mask(pto.i32, remained)
                 cmp_mask = pto.vcmp(src_f32, k_f32_vec, mask, cmp_mode)
                 sqz = pto.vsqz(index, cmp_mask)
-                align = pto.vstur(align, sqz, dst_ptr, "POST_UPDATE")
+                align = pto.vstur(align, sqz, row_dst_ptr, "POST_UPDATE")
                 index = pto.vadd(index, add_offset, full_mask_b32)
-            align = pto.vstar(align, dst_ptr)
+            pto.vstar(align, row_dst_ptr)
             pto.sprsts("AR", cdst_ptr, row * 4)
             pto.sprclr("AR")
-            dst_ptr = dst_ptr + dst.shape[1] * 4
+            align = pto.init_align()
 
     elif pto.const_expr(elem_bytes == 1):
         full_mask_b8 = pto.make_mask(pto.i8, pto.PAT.ALL)
@@ -363,6 +367,7 @@ def template_tgather_cmp(
         k_ui32_vec = pto.vcvt(k_si8_1, pto.i32, full_mask_b8, part=pto.VcvtPartMode.P0)
         for row in range(0, src_valid_rows, 1):
             remained = src_valid_cols
+            row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
             for col in range(0, src_valid_cols, lanes_b32):
                 src_reg = pto.vlds(src[row, col:], dist="UNPK_B8")
                 src_u8 = pto.vbitcast(src_reg, pto.ui8)
@@ -383,7 +388,7 @@ def template_tgather_cmp(
                     cmp_mode,
                 )
                 sqz0 = pto.vsqz(index, cmp_mask0)
-                align = pto.vstur(align, sqz0, dst_ptr, "POST_UPDATE")
+                align = pto.vstur(align, sqz0, row_dst_ptr, "POST_UPDATE")
                 index = pto.vadd(index, add_offset, full_mask_b32)
                 mask1, remained = pto.make_mask(pto.i32, remained)
                 cmp_mask1 = pto.vcmp(
@@ -393,9 +398,9 @@ def template_tgather_cmp(
                     cmp_mode,
                 )
                 sqz1 = pto.vsqz(index, cmp_mask1)
-                align = pto.vstur(align, sqz1, dst_ptr, "POST_UPDATE")
+                align = pto.vstur(align, sqz1, row_dst_ptr, "POST_UPDATE")
                 index = pto.vadd(index, add_offset, full_mask_b32)
-            align = pto.vstar(align, dst_ptr)
+            pto.vstar(align, row_dst_ptr)
             pto.sprsts("AR", cdst_ptr, row * 4)
             pto.sprclr("AR")
-            dst_ptr = dst_ptr + dst.shape[1] * 4
+            align = pto.init_align()
