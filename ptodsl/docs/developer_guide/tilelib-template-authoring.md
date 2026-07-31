@@ -112,6 +112,15 @@ exactly that row's packed bytes; its physical row must retain the target's
 32-byte alignment. Do not substitute ordinary same-shape legality for this
 rule: padded predicate rows must restart in the 2D fallback.
 
+Packed select candidates use
+`require_predicate_select_1d(predicate_operand, *data_operand_names,
+temporary_operand=...)`. Data operands follow ordinary continuity and
+same-range rules, while the mask is checked in physical bytes because `tsels`
+allows i8, i16, and i32 mask storage containers for the same packed bits.
+Multi-row masks must have no predicate-row padding. On A5 the select temporary
+is unused, so validate that its local tile metadata is complete and supported
+without requiring its shape to match the data range.
+
 When porting a legacy TileLangDSL version, first write down which rule made the
 legacy version legal. Then encode that rule as metadata or a predicate. Avoid
 fixing a single failing case by weakening a predicate beyond the legacy

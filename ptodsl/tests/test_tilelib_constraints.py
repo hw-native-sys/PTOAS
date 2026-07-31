@@ -19,6 +19,7 @@ from ptodsl.tilelib.constraints import (
     passes,
     require_elementwise_1d,
     require_predicate_compare_1d,
+    require_predicate_select_1d,
 )
 from ptodsl.tilelib.registry import NoMatchingTemplate
 
@@ -64,6 +65,20 @@ def _predicate_compare_1d(specs, *data_operand_names):
             require_predicate_compare_1d(
                 *data_operand_names,
                 predicate_operand="dst",
+            ),
+        ),
+        context,
+    )
+
+
+def _predicate_select_1d(specs, *data_operand_names):
+    context = build_context(specs, "a5", "pto.example")
+    return passes(
+        (
+            require_predicate_select_1d(
+                "mask",
+                *data_operand_names,
+                temporary_operand="tmp",
             ),
         ),
         context,
@@ -263,6 +278,78 @@ class TileLibConstraintTest(unittest.TestCase):
         for label, specs in cases.items():
             with self.subTest(label=label):
                 self.assertFalse(_predicate_compare_1d(specs, "src"))
+
+    def test_predicate_select_1d_accepts_single_row_and_dense_multi_row(self):
+        cases = {
+            "single row": {
+                "mask": TileSpec(
+                    shape=(1, 32),
+                    valid_shape=(1, 8),
+                    dtype=ScalarType("i8"),
+                ),
+                "src": _tile(shape=(1, 128), valid_shape=(1, 63)),
+                "tmp": _tile(shape=(1, 32)),
+                "dst": _tile(shape=(1, 128), valid_shape=(1, 63)),
+            },
+            "dense multi row with i32 mask container": {
+                "mask": TileSpec(
+                    shape=(4, 8),
+                    dtype=ScalarType("i32"),
+                ),
+                "src": _tile(shape=(4, 256)),
+                "tmp": _tile(shape=(1, 32)),
+                "dst": _tile(shape=(4, 256)),
+            },
+        }
+
+        for label, specs in cases.items():
+            with self.subTest(label=label):
+                self.assertTrue(_predicate_select_1d(specs, "src", "dst"))
+
+    def test_predicate_select_1d_rejects_ineligible_metadata(self):
+        common = {
+            "mask": TileSpec(
+                shape=(4, 32),
+                dtype=ScalarType("i8"),
+            ),
+            "src": _tile(shape=(4, 256)),
+            "tmp": _tile(shape=(1, 32)),
+            "dst": _tile(shape=(4, 256)),
+        }
+        cases = {
+            "partial data row": {
+                **common,
+                "src": _tile(shape=(4, 256), valid_shape=(4, 255)),
+                "dst": _tile(shape=(4, 256), valid_shape=(4, 255)),
+            },
+            "predicate row padding": {
+                **common,
+                "mask": TileSpec(
+                    shape=(4, 64),
+                    dtype=ScalarType("i8"),
+                ),
+            },
+            "predicate stride gap": {
+                **common,
+                "mask": TileSpec(
+                    shape=(4, 32),
+                    dtype=ScalarType("i8"),
+                    compact_mode=2,
+                ),
+            },
+            "temporary stride gap": {
+                **common,
+                "tmp": _tile(shape=(1, 32), compact_mode=2),
+            },
+            "mismatched data range": {
+                **common,
+                "dst": _tile(shape=(4, 256), valid_shape=(3, 256)),
+            },
+        }
+
+        for label, specs in cases.items():
+            with self.subTest(label=label):
+                self.assertFalse(_predicate_select_1d(specs, "src", "dst"))
 
     def test_context_carries_complete_tile_layout_metadata(self):
         context = build_context(

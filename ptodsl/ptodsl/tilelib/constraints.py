@@ -405,7 +405,7 @@ def require_elementwise_1d(*operand_names, memory_spaces=("ub", "vec")):
     return _require_elementwise_1d
 
 
-_PREDICATE_STORE_LAYOUTS = {
+_PREDICATE_PACKING_LAYOUTS = {
     # A5 stores one predicate bit per compared element. 32-bit comparisons
     # combine two 64-lane masks before a 16-byte PK store; 16-bit comparisons
     # use one 128-lane 16-byte PK store; and 8-bit comparisons use one
@@ -474,7 +474,7 @@ def require_predicate_compare_1d(
             return False
 
         dtype = context.get(f"{data_operand_names[0]}_dtype")
-        store_layout = _PREDICATE_STORE_LAYOUTS.get(dtype)
+        store_layout = _PREDICATE_PACKING_LAYOUTS.get(dtype)
         if store_layout is None:
             return False
         elements_per_store, bytes_per_store = store_layout
@@ -512,6 +512,105 @@ def require_predicate_compare_1d(
         )
 
     return _require_predicate_compare_1d
+
+
+def require_predicate_select_1d(
+    predicate_operand,
+    *data_operand_names,
+    temporary_operand=None,
+    memory_spaces=("ub", "vec"),
+):
+    """Require A5 packed-predicate select operands to be flattenable.
+
+    Data operands must describe one static contiguous logical range. The mask
+    is a byte-addressed packed predicate whose row capacity and stride are
+    checked using the selected data dtype. A5 does not access the ABI
+    temporary, but its tile metadata must still be complete and supported.
+    """
+
+    allowed_memory_spaces = frozenset(memory_spaces)
+
+    def _require_predicate_select_1d(**context):
+        if not data_operand_names:
+            return False
+
+        data_shapes = []
+        data_valid_shapes = []
+        for name in data_operand_names:
+            if not _is_flat_local_tile(context, name, allowed_memory_spaces):
+                return False
+            data_shapes.append(context.get(f"{name}_shape"))
+            data_valid_shapes.append(context.get(f"{name}_valid_shape"))
+
+        if any(
+            valid_shape != data_valid_shapes[0]
+            for valid_shape in data_valid_shapes[1:]
+        ):
+            return False
+
+        if not _is_flat_local_tile(
+            context,
+            predicate_operand,
+            allowed_memory_spaces,
+        ):
+            return False
+        if temporary_operand is not None and not _is_flat_local_tile(
+            context,
+            temporary_operand,
+            allowed_memory_spaces,
+        ):
+            return False
+
+        predicate_shape = context.get(f"{predicate_operand}_shape")
+        predicate_valid_shape = context.get(
+            f"{predicate_operand}_valid_shape"
+        )
+        valid_rows, valid_cols = data_valid_shapes[0]
+        if predicate_valid_shape[0] != valid_rows:
+            return False
+
+        dtype = context.get(f"{data_operand_names[0]}_dtype")
+        store_layout = _PREDICATE_PACKING_LAYOUTS.get(dtype)
+        if store_layout is None:
+            return False
+        elements_per_store, bytes_per_store = store_layout
+
+        predicate_dtype = context.get(f"{predicate_operand}_dtype")
+        predicate_bytewidth = _dtype_bytewidth(predicate_dtype)
+        if predicate_bytewidth is None:
+            return False
+        predicate_row_bytes = predicate_shape[1] * predicate_bytewidth
+        if predicate_row_bytes % 32 != 0:
+            return False
+
+        row_store_count = _ceil_div(valid_cols, elements_per_store)
+        required_predicate_row_bytes = row_store_count * bytes_per_store
+        if predicate_row_bytes < required_predicate_row_bytes:
+            return False
+
+        single_logical_row = valid_rows == 1
+        if single_logical_row:
+            required_data_row_elements = row_store_count * elements_per_store
+            return all(
+                shape[1] >= required_data_row_elements
+                for shape in data_shapes
+            )
+
+        data_rows_are_contiguous = all(
+            valid_shape[1] == shape[1]
+            for shape, valid_shape in zip(data_shapes, data_valid_shapes)
+        )
+        rows_end_on_store_boundary = valid_cols % elements_per_store == 0
+        predicate_rows_are_contiguous = (
+            predicate_row_bytes == required_predicate_row_bytes
+        )
+        return (
+            data_rows_are_contiguous
+            and rows_end_on_store_boundary
+            and predicate_rows_are_contiguous
+        )
+
+    return _require_predicate_select_1d
 
 
 def _is_flat_local_tile(context, name, allowed_memory_spaces) -> bool:

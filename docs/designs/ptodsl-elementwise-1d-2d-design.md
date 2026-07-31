@@ -107,6 +107,25 @@ The previous f32/i32 `tcmps` candidate flattened unconditionally despite its
 2D metadata. It is now a genuine row-wise fallback, preventing partial rows or
 predicate row padding from being crossed speculatively.
 
+Predicate select is now migrated. `tsel` and `tsels` preserve their ID-0
+row-wise fallbacks and register preferred ID-1 flattened candidates. Their
+shared `require_predicate_select_1d(...)` rule applies the compare packing
+units in reverse: ordinary data tiles must describe one contiguous logical
+range, while the mask is checked as a byte-addressed packed predicate. Mask
+row capacity accounts for the nominal i8/i16/i32 container dtype used by
+`tsels`. Multi-row flattening requires complete predicate blocks and an exact
+packed mask row stride. This raises the current scoped candidate count to 126.
+Conversion, functional execution tests, and performance measurements remain
+subsequent steps.
+
+The A5 implementations do not access the `tsel`/`tsels` temporary tile. The
+shared rule nevertheless includes it in legality by requiring complete,
+supported local tile metadata. Its shape is not required to match the data
+range because doing so would reject the small ABI-compatible temporary tiles
+used by existing callers. The f32 row-wise fallback also now derives paired
+iterations from the rounded vector-repeat count, matching A5 for valid widths
+between 65 and 127 instead of treating that entire range as one 64-lane tail.
+
 ## Goals
 
 - Account for every A5 PTODSL element-wise TileOp in scope.
@@ -497,6 +516,24 @@ satisfy A5's 32-byte tile-row alignment. Unknown dtype, shape, layout, compact
 mode, alignment, or insufficient destination capacity rejects the 1D
 candidate.
 
+### Packed predicate select legality
+
+`tilelib.require_predicate_select_1d(predicate_operand,
+*data_operand_names, temporary_operand=...)` implements the inverse packed
+representation rule for `tsel` and `tsels`. All data operands must have one
+common static valid shape and satisfy local row-major, none-box, gap-free
+continuity. The mask row byte width is `mask.shape[1] * bytewidth(mask.dtype)`;
+the nominal mask dtype is a storage container and does not change the one-bit
+predicate interpretation.
+
+The same 128-element/16-byte unit is used for 32- and 16-bit data, and the same
+256-element/32-byte unit is used for 8-bit data. A single row requires enough
+rounded data and mask capacity. Multiple rows additionally require full data
+columns, a valid column count ending on the relevant predicate unit, and a
+mask row stride equal to the exact packed bytes per row. The mask physical row
+must satisfy 32-byte alignment. The A5-unused temporary is checked for static
+local layout and compact-mode metadata but does not share the data range.
+
 The older `require_contiguous()` helper remains available for existing users;
 new element-wise 1D candidates must use the named-operand rule.
 
@@ -593,18 +630,16 @@ than appearing to work.
 
 ## Open Legality Questions for the Next Step
 
-1. Are wider `tsels` mask dtypes representation choices, storage containers, or
-   logical predicates with a different packing rule?
-2. Which temporary tiles are true traversal participants, and which are ABI
+1. Which temporary tiles are true traversal participants, and which are ABI
    scratch operands whose required size relation differs from the data range?
    They must all still be checked.
-3. For each `tcvt` distribution mode, what source and destination byte ranges
+2. For each `tcvt` distribution mode, what source and destination byte ranges
    are touched by a vector iteration and its tail?
-4. Does any packed conversion require per-row restart state even when both
+3. Does any packed conversion require per-row restart state even when both
    physical buffers are contiguous?
-5. Must `pad_value` affect 1D legality, or is it relevant only when an
+4. Must `pad_value` affect 1D legality, or is it relevant only when an
    instruction can observe elements outside the logical valid range?
-6. Which dynamic or unknown tile metadata encodings can reach
+5. Which dynamic or unknown tile metadata encodings can reach
    `InsertTemplateAttributes`, and how should each be rejected conservatively?
 
 These questions must be answered with focused legality tests or an explicitly

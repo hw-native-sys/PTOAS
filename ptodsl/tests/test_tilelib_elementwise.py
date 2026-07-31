@@ -15,6 +15,8 @@ from pathlib import Path
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 import ptodsl.tilelib.templates.a5._elementwise as elementwise
+import ptodsl.tilelib.templates.a5.tsel as tsel_templates
+import ptodsl.tilelib.templates.a5.tsels as tsels_templates
 from ptodsl.tilelib import (
     ScalarSpec,
     ScalarType,
@@ -483,6 +485,57 @@ def _compare_specs(
         "src": src,
         "scalar": ScalarSpec(dtype=ScalarType(dtype_name), value=1),
         "dst": dst,
+    }
+
+
+def _select_specs(
+    op,
+    data_dtype,
+    *,
+    mask_dtype="i8",
+    data_shape=(1, 256),
+    data_valid_shape=None,
+    mask_shape=None,
+    mask_valid_shape=None,
+    tmp_shape=(1, 64),
+    data_compact_mode="null",
+    mask_compact_mode="null",
+    tmp_compact_mode="null",
+):
+    bytewidth = {"i8": 1, "i16": 2, "i32": 4}[mask_dtype]
+    if mask_shape is None:
+        mask_shape = (data_shape[0], 32 // bytewidth)
+    mask = TileSpec(
+        shape=mask_shape,
+        valid_shape=mask_valid_shape,
+        dtype=ScalarType(mask_dtype),
+        compact_mode=mask_compact_mode,
+    )
+    data = TileSpec(
+        shape=data_shape,
+        valid_shape=data_valid_shape,
+        dtype=ScalarType(data_dtype),
+        compact_mode=data_compact_mode,
+    )
+    tmp = TileSpec(
+        shape=tmp_shape,
+        dtype=ScalarType(data_dtype),
+        compact_mode=tmp_compact_mode,
+    )
+    if op == "pto.tsel":
+        return {
+            "mask": mask,
+            "src0": data,
+            "src1": data,
+            "tmp": tmp,
+            "dst": data,
+        }
+    return {
+        "mask": mask,
+        "src": data,
+        "tmp": tmp,
+        "scalar": ScalarSpec(dtype=ScalarType(data_dtype), value=1),
+        "dst": data,
     }
 
 
@@ -1546,6 +1599,170 @@ class TileLibElementwiseTest(unittest.TestCase):
         self.assertEqual(selected.name, "template_tcmps")
         self.assertEqual(selected.metadata.loop_depth, 2)
         self.assertEqual(mlir.count("scf.for"), 2)
+
+    def test_select_family_registers_preferred_1d_and_fallback_2d(self):
+        cases = (
+            ("pto.tsel", "f32", "i8", "US"),
+            ("pto.tsel", "f16", "i8", "US"),
+            ("pto.tsel", "i8", "i8", "NORM"),
+            ("pto.tsels", "f32", "i32", "US"),
+            ("pto.tsels", "f16", "i16", "US"),
+            ("pto.tsels", "i8", "i8", "NORM"),
+        )
+        for op, data_dtype, mask_dtype, expected_dist in cases:
+            with self.subTest(
+                op=op,
+                data_dtype=data_dtype,
+                mask_dtype=mask_dtype,
+            ):
+                specs = _select_specs(
+                    op,
+                    data_dtype,
+                    mask_dtype=mask_dtype,
+                )
+                candidates = legal_candidates(op, "a5", specs)
+                base_name = "template_tsel" if op == "pto.tsel" else "template_tsels"
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [f"{base_name}_1d", base_name],
+                )
+                self.assertEqual(
+                    [candidate.metadata.id for candidate in candidates],
+                    [1, 0],
+                )
+                self.assertEqual(
+                    [candidate.metadata.loop_depth for candidate in candidates],
+                    [1, 2],
+                )
+
+                mlir = candidates[0].specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn("pto.plds", mlir)
+                self.assertIn("pto.vsel", mlir)
+                self.assertIn(expected_dist, mlir)
+                if op == "pto.tsels":
+                    self.assertIn("pto.vdup", mlir)
+
+    def test_select_family_uses_predicate_specific_fallbacks(self):
+        cases = (
+            (
+                "partial data row",
+                _select_specs(
+                    "pto.tsel",
+                    "f32",
+                    data_shape=(4, 256),
+                    data_valid_shape=(4, 255),
+                ),
+            ),
+            (
+                "predicate row padding",
+                _select_specs(
+                    "pto.tsels",
+                    "f32",
+                    data_shape=(4, 256),
+                    mask_shape=(4, 64),
+                ),
+            ),
+            (
+                "predicate stride gap",
+                _select_specs(
+                    "pto.tsels",
+                    "f32",
+                    data_shape=(4, 256),
+                    mask_compact_mode=2,
+                ),
+            ),
+            (
+                "temporary stride gap",
+                _select_specs(
+                    "pto.tsel",
+                    "f32",
+                    data_shape=(4, 256),
+                    tmp_compact_mode=2,
+                ),
+            ),
+        )
+        for label, specs in cases:
+            with self.subTest(case=label):
+                op = "pto.tsels" if "scalar" in specs else "pto.tsel"
+                candidates = legal_candidates(op, "a5", specs)
+                fallback = (
+                    "template_tsels" if op == "pto.tsels" else "template_tsel"
+                )
+                self.assertEqual(
+                    [candidate.name for candidate in candidates],
+                    [fallback],
+                )
+                self.assertEqual(candidates[0].metadata.loop_depth, 2)
+
+    def test_select_family_aligned_multi_row_selects_flattened_body(self):
+        for op in ("pto.tsel", "pto.tsels"):
+            with self.subTest(op=op):
+                specs = _select_specs(
+                    op,
+                    "f32",
+                    data_shape=(4, 256),
+                )
+                selected = select(op, "a5", specs)
+                mlir = selected.specialize(**specs).mlir_text()
+
+                self.assertEqual(selected.name, f"template_{op[4:]}_1d")
+                self.assertEqual(selected.metadata.loop_depth, 1)
+                self.assertEqual(mlir.count("scf.for"), 1)
+
+    def test_select_f32_fallback_processes_a_65_element_row_as_a_pair(self):
+        for op, module in (
+            ("pto.tsel", tsel_templates),
+            ("pto.tsels", tsels_templates),
+        ):
+            with self.subTest(op=op):
+                self.assertEqual(module._f32_paired_cols(63, 64), 0)
+                self.assertEqual(module._f32_paired_cols(65, 64), 128)
+                self.assertEqual(module._f32_paired_cols(129, 64), 128)
+
+                specs = _select_specs(
+                    op,
+                    "f32",
+                    data_shape=(4, 128),
+                    data_valid_shape=(4, 65),
+                )
+                fallback = "template_tsel" if op == "pto.tsel" else "template_tsels"
+                selected = select(op, "a5", specs, candidate_id=fallback)
+                mlir = selected.specialize(**specs).mlir_text()
+
+                self.assertIn("pto.pintlv_b16", mlir)
+
+    def test_single_row_tcmp_mask_is_legal_input_to_tsel_1d(self):
+        data = TileSpec(
+            shape=(1, 256),
+            valid_shape=(1, 255),
+            dtype=ScalarType("f32"),
+        )
+        mask = TileSpec(
+            shape=(1, 256),
+            valid_shape=(1, 255),
+            dtype=ScalarType("i8"),
+        )
+        compare_specs = {"src0": data, "src1": data, "dst": mask}
+        select_specs = {
+            "mask": mask,
+            "src0": data,
+            "src1": data,
+            "tmp": TileSpec(
+                shape=(1, 64),
+                dtype=ScalarType("f32"),
+            ),
+            "dst": data,
+        }
+
+        self.assertEqual(
+            select("pto.tcmp", "a5", compare_specs).name,
+            "template_tcmp_1d",
+        )
+        self.assertEqual(
+            select("pto.tsel", "a5", select_specs).name,
+            "template_tsel_1d",
+        )
 
     def test_tdiv_mismatched_ranges_retain_existing_2d_candidate(self):
         specs = {
