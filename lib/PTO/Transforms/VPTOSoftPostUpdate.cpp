@@ -62,6 +62,7 @@ struct PostUpdateOpInfo {
   int strideOperandIdx;
   StrideUnit strideUnit;
   unsigned minResultsForPost; // numResults > this means already post-update
+  bool requiresConstantStride = false;
 };
 
 using PostUpdateTable = llvm::StringMap<PostUpdateOpInfo>;
@@ -72,7 +73,13 @@ static const PostUpdateTable &getPostUpdateTable() {
     //                       base  strideOp  strideUnit             minResults
     t["pto.vlds"] = {0, 1, StrideUnit::Element, 1};
     t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
+    t["pto.plds"] = {0, 1, StrideUnit::Byte, 1};
+    t["pto.pldi"] = {0, 1, StrideUnit::Byte, 1,
+                     /*requiresConstantStride=*/true};
     t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
+    t["pto.psts"] = {1, 2, StrideUnit::Byte, 0};
+    t["pto.psti"] = {1, 2, StrideUnit::Byte, 0,
+                     /*requiresConstantStride=*/true};
     t["pto.vsldb"] = {0, 2, StrideUnit::Block, 1};
     t["pto.vsstb"] = {1, 3, StrideUnit::Block, 0};
     return t;
@@ -1852,6 +1859,7 @@ static bool validateSequentialRun(SequentialRun &run,
   run.strideType = first->strideOperand.getType();
   if (!canMaterializeAs(run.step, run.strideType) ||
       !constantsFitType(run.step, run.strideType) ||
+      (first->info->requiresConstantStride && !foldConst(run.step)) ||
       !canScaleInitialOffset(first->strideOperand, first->elemBytes,
                              first->unitBytes))
     return false;
@@ -2267,6 +2275,8 @@ private:
 
       // Reject strides whose constants do not fit the target operand type.
       if (!constantsFitType(total, strideType))
+        continue;
+      if (info->requiresConstantStride && !foldConst(total))
         continue;
 
       // A stride built only from loop-invariant leaves is materialized before

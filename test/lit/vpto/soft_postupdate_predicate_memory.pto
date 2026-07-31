@@ -1,0 +1,111 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+
+// CHECK-LABEL: func.func @sequential_plds
+// CHECK: %{{.*}}, [[PLDS1:%[a-zA-Z0-9_]+]] = pto.plds {{%.*}}[%c4]
+// CHECK: %{{.*}}, [[PLDS2:%[a-zA-Z0-9_]+]] = pto.plds [[PLDS1]][%c4]
+// CHECK: %{{.*}}, %{{.*}} = pto.plds [[PLDS2]][%c4]
+
+// CHECK-LABEL: func.func @sequential_pldi
+// CHECK: %{{.*}}, [[PLDI1:%[a-zA-Z0-9_]+]] = pto.pldi {{%.*}}[%c4]
+// CHECK: %{{.*}}, [[PLDI2:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI1]][%c4]
+// CHECK: %{{.*}}, %{{.*}} = pto.pldi [[PLDI2]][%c4]
+
+// CHECK-LABEL: func.func @sequential_psts
+// CHECK: [[PSTS1:%[a-zA-Z0-9_]+]] = pto.psts {{.*}}[%c4]
+// CHECK: [[PSTS2:%[a-zA-Z0-9_]+]] = pto.psts {{.*}}[[PSTS1]][%c4]
+// CHECK: %{{.*}} = pto.psts {{.*}}[[PSTS2]][%c4]
+
+// CHECK-LABEL: func.func @sequential_psti
+// CHECK: [[PSTI1:%[a-zA-Z0-9_]+]] = pto.psti {{.*}}[%c4]
+// CHECK: [[PSTI2:%[a-zA-Z0-9_]+]] = pto.psti {{.*}}[[PSTI1]][%c4]
+// CHECK: %{{.*}} = pto.psti {{.*}}[[PSTI2]][%c4]
+
+// Dynamic strides are legal for plds/psts but not for the immediate pldi/psti
+// forms. The latter remain unchanged when their base step is symbolic.
+// CHECK-LABEL: func.func @dynamic_immediate_stride_is_skipped
+// CHECK: scf.for
+// CHECK: {{^ *}}%{{[^, ]+}} = pto.pldi
+// CHECK: {{^ *}}pto.psti
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @sequential_plds(%src: !pto.ptr<i8, ub>, %sink: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    pto.vecscope {
+      %m0 = pto.plds %src[%c0], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m0, %sink[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      %m1 = pto.plds %src[%c4], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m1, %sink[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      %m2 = pto.plds %src[%c8], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m2, %sink[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+    }
+    return
+  }
+
+  func.func @sequential_pldi(%src: !pto.ptr<i8, ub>, %sink: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    pto.vecscope {
+      %m0 = pto.pldi %src[%c0], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m0, %sink[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      %m1 = pto.pldi %src[%c4], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m1, %sink[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      %m2 = pto.pldi %src[%c8], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m2, %sink[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+    }
+    return
+  }
+
+  func.func @sequential_psts(%mask: !pto.mask<b8>, %dst: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    pto.vecscope {
+      pto.psts %mask, %dst[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      pto.psts %mask, %dst[%c4], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      pto.psts %mask, %dst[%c8], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+    }
+    return
+  }
+
+  func.func @sequential_psti(%mask: !pto.mask<b8>, %dst: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    pto.vecscope {
+      pto.psti %mask, %dst[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      pto.psti %mask, %dst[%c4], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      pto.psti %mask, %dst[%c8], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+    }
+    return
+  }
+
+  func.func @dynamic_immediate_stride_is_skipped(
+      %src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %step: index) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c4 step %c1 {
+        %scaled = arith.muli %iv, %step : index
+        %src_at = pto.addptr %src, %scaled : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        %dst_at = pto.addptr %dst, %scaled : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        %mask = pto.pldi %src_at[%c0], "NORM"
+            : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+        pto.psti %mask, %dst_at[%c0], "NORM"
+            : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      }
+    }
+    return
+  }
+}

@@ -3488,20 +3488,32 @@ static StringRef buildCopyCbufToFbufCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.MOV.L1.TO.FB.v220").getValue();
 }
 
-static StringRef buildPstiCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.psti.b8").getValue();
+static StringRef buildPstiCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.psti.post.b8"
+                              : "llvm.hivm.psti.b8")
+      .getValue();
 }
 
-static StringRef buildPstsCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.psts.b8").getValue();
+static StringRef buildPstsCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.psts.post.b8"
+                              : "llvm.hivm.psts.b8")
+      .getValue();
 }
 
-static StringRef buildPldiCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.pldi.b8").getValue();
+static StringRef buildPldiCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.pldi.post.b8"
+                              : "llvm.hivm.pldi.b8")
+      .getValue();
 }
 
-static StringRef buildPldsCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.plds.b8").getValue();
+static StringRef buildPldsCallee(MLIRContext *context, bool post) {
+  return StringAttr::get(context,
+                         post ? "llvm.hivm.plds.post.b8"
+                              : "llvm.hivm.plds.b8")
+      .getValue();
 }
 
 static StringRef buildPnotCallee(MLIRContext *context) {
@@ -3620,29 +3632,31 @@ static FailureOr<StringRef> buildVmullCallee(MLIRContext *context,
 }
 
 template <typename StoreOp>
-static StringRef getPredicateStoreCallee(MLIRContext *context);
+static StringRef getPredicateStoreCallee(MLIRContext *context, bool post);
 
 template <>
-StringRef getPredicateStoreCallee<pto::PstiOp>(MLIRContext *context) {
-  return buildPstiCallee(context);
+StringRef getPredicateStoreCallee<pto::PstiOp>(MLIRContext *context,
+                                                bool post) {
+  return buildPstiCallee(context, post);
 }
 
 template <>
-StringRef getPredicateStoreCallee<pto::PstsOp>(MLIRContext *context) {
-  return buildPstsCallee(context);
+StringRef getPredicateStoreCallee<pto::PstsOp>(MLIRContext *context,
+                                                bool post) {
+  return buildPstsCallee(context, post);
 }
 
 template <typename LoadOp>
-static StringRef getPredicateLoadCallee(MLIRContext *context);
+static StringRef getPredicateLoadCallee(MLIRContext *context, bool post);
 
 template <>
-StringRef getPredicateLoadCallee<pto::PldiOp>(MLIRContext *context) {
-  return buildPldiCallee(context);
+StringRef getPredicateLoadCallee<pto::PldiOp>(MLIRContext *context, bool post) {
+  return buildPldiCallee(context, post);
 }
 
 template <>
-StringRef getPredicateLoadCallee<pto::PldsOp>(MLIRContext *context) {
-  return buildPldsCallee(context);
+StringRef getPredicateLoadCallee<pto::PldsOp>(MLIRContext *context, bool post) {
+  return buildPldsCallee(context, post);
 }
 
 template <typename PredicateMaskOp>
@@ -8781,7 +8795,16 @@ public:
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-store offset to i32");
 
-    StringRef calleeName = getPredicateStoreCallee<StoreOp>(op.getContext());
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    SmallVector<Type> resultTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      resultTypes)) ||
+        resultTypes.size() != (usePostIntrinsic ? 1u : 0u))
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert predicate-store result types");
+
+    StringRef calleeName =
+        getPredicateStoreCallee<StoreOp>(op.getContext(), usePostIntrinsic);
     SmallVector<Value> args;
     args.push_back(adaptor.getValue());
     args.push_back(adaptor.getDestination());
@@ -8789,14 +8812,19 @@ public:
     args.push_back(rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*dist)));
     args.push_back(rewriter.create<arith::ConstantOp>(
-        op.getLoc(), rewriter.getI32IntegerAttr(0)));
+        op.getLoc(),
+        rewriter.getI32IntegerAttr(usePostIntrinsic ? 1 : 0)));
     auto funcType = rewriter.getFunctionType(
         TypeRange{valueType, llvmDestType, rewriter.getI32Type(),
                   rewriter.getI32Type(), rewriter.getI32Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{}, args);
+        resultTypes);
+    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
+                                              resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    if (usePostIntrinsic)
+      rewriter.replaceOp(op, call.getResults());
+    else
+      rewriter.eraseOp(op);
     return success();
   }
 
@@ -8817,9 +8845,14 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto llvmSourceType =
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
-    Type resultType =
-        this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!llvmSourceType || !resultType)
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    SmallVector<Type> resultTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      resultTypes)) ||
+        resultTypes.size() != (usePostIntrinsic ? 2u : 1u))
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert predicate-load result types");
+    if (!llvmSourceType)
       return rewriter.notifyMatchFailure(
           op, "expected converted predicate-load operand/result types");
 
@@ -8833,20 +8866,22 @@ public:
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-load offset to i32");
 
-    StringRef calleeName = getPredicateLoadCallee<LoadOp>(op.getContext());
+    StringRef calleeName =
+        getPredicateLoadCallee<LoadOp>(op.getContext(), usePostIntrinsic);
     SmallVector<Value> args;
     args.push_back(adaptor.getSource());
     args.push_back(offset);
     args.push_back(rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*dist)));
     args.push_back(rewriter.create<arith::ConstantOp>(
-        op.getLoc(), rewriter.getI32IntegerAttr(0)));
+        op.getLoc(),
+        rewriter.getI32IntegerAttr(usePostIntrinsic ? 1 : 0)));
     auto funcType = rewriter.getFunctionType(
         TypeRange{llvmSourceType, rewriter.getI32Type(), rewriter.getI32Type(),
                   rewriter.getI32Type()},
-        TypeRange{resultType});
-    auto call =
-        rewriter.create<func::CallOp>(op.getLoc(), calleeName, resultType, args);
+        resultTypes);
+    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
+                                              resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();

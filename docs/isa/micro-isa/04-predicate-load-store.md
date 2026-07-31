@@ -19,7 +19,7 @@ forms (`plds`, `psts`) differ only in how `%offset` is supplied.
 
 ### `pto.plds`
 
-- **syntax:** `%result = pto.plds %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G>`
+- **syntax:** `%result [, %updated_base] = pto.plds %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G> [, !pto.ptr<T, ub>]`
 - **semantics:** Load predicate register with runtime offset. This is the
   dynamic-offset form of `pto.pldi`: the predicate payload interpretation is
   the same, but `%offset` is supplied as an SSA `index` instead of a constant
@@ -35,6 +35,7 @@ The loaded payload is a packed predicate image in UB. Consumer ops interpret
 the resulting `!pto.mask<G>` according to the mask granularity `G`.
 `pto.plds` only
 models the explicit `base[offset]` form.
+If requested, `%updated_base` is `%source` advanced by `%offset` bytes.
 
 **Example:**
 ```mlir
@@ -45,7 +46,7 @@ models the explicit `base[offset]` form.
 
 ### `pto.pldi`
 
-- **syntax:** `%result = pto.pldi %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G>`
+- **syntax:** `%result [, %updated_base] = pto.pldi %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G> [, !pto.ptr<T, ub>]`
 - **offset:** must be a constant `index` immediate in PTO surface form.
 - **semantics:** Load predicate register with immediate offset.
 - **DIST:** mandatory string token, one of `NORM`, `US`, `DS`.
@@ -57,6 +58,8 @@ models the explicit `base[offset]` form.
 
 Like `pto.plds`, this op reads a packed predicate payload from UB and
 materializes it as `!pto.mask<G>`.
+If requested, `%updated_base` is `%source` advanced by the immediate
+`%offset` in bytes.
 
 ---
 
@@ -64,7 +67,7 @@ materializes it as `!pto.mask<G>`.
 
 ### `pto.psts`
 
-- **syntax:** `pto.psts %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index`
+- **syntax:** `[%updated_base =] pto.psts %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index [-> !pto.ptr<T, ub>]`
 - **semantics:** Store predicate register with runtime offset. This is the
   dynamic-offset form of `pto.psti`: the predicate payload interpretation is
   the same, but `%offset` is supplied as an SSA `index` instead of a constant
@@ -77,6 +80,7 @@ materializes it as `!pto.mask<G>`.
 
 `pto.psts` stores the packed predicate payload represented by `!pto.mask<G>`.
 It only models the explicit `base[offset]` form.
+If requested, `%updated_base` is `%dest` advanced by `%offset` bytes.
 
 **Example:**
 ```mlir
@@ -87,7 +91,7 @@ pto.psts %mask, %ub[%c0], "NORM" : !pto.mask<G>, !pto.ptr<T, ub>, index
 
 ### `pto.psti`
 
-- **syntax:** `pto.psti %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index`
+- **syntax:** `[%updated_base =] pto.psti %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index [-> !pto.ptr<T, ub>]`
 - **offset:** must be a constant `index` immediate in PTO surface form.
 - **semantics:** Store predicate register with immediate offset.
 - **DIST:** mandatory string token, one of `NORM`, `PK`.
@@ -99,6 +103,8 @@ pto.psts %mask, %ub[%c0], "NORM" : !pto.mask<G>, !pto.ptr<T, ub>, index
 `pto.psti` and `pto.psts` store the packed predicate payload represented by
 `!pto.mask<G>`. The surface distinction is only immediate-offset versus
 dynamic-offset.
+If requested, `%updated_base` is `%dest` advanced by the immediate `%offset`
+in bytes.
 
 ---
 
