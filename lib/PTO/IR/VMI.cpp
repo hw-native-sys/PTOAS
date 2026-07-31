@@ -2726,8 +2726,14 @@ LogicalResult VMIVminOp::verify() {
   auto lhsType = cast<VMIVRegType>(getLhs().getType());
   auto rhsType = cast<VMIVRegType>(getRhs().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIFloatLikeType(lhsType.getElementType()))
-    return emitOpError("requires floating-point-like VMI element type");
+  Type elemTy = lhsType.getElementType();
+  if (!isVMIFloatLikeType(elemTy) && !isVMIIntegerLikeType(elemTy))
+    return emitOpError(
+        "requires floating-point-like or integer-like VMI element type");
+  if (isVMIFloatLikeType(elemTy) && !isVMIF16BF16OrF32Type(elemTy))
+    return emitOpError("requires f16, bf16, or f32 VMI element type");
+  if (isVMIIntegerLikeType(elemTy) && !isVMIAnyI8I16I32Type(elemTy))
+    return emitOpError("requires i8, i16, or i32 VMI element type");
   if (failed(verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType)))
     return failure();
   if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(),
@@ -2740,8 +2746,14 @@ LogicalResult VMIVmaxOp::verify() {
   auto lhsType = cast<VMIVRegType>(getLhs().getType());
   auto rhsType = cast<VMIVRegType>(getRhs().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIFloatLikeType(lhsType.getElementType()))
-    return emitOpError("requires floating-point-like VMI element type");
+  Type elemTy = lhsType.getElementType();
+  if (!isVMIFloatLikeType(elemTy) && !isVMIIntegerLikeType(elemTy))
+    return emitOpError(
+        "requires floating-point-like or integer-like VMI element type");
+  if (isVMIFloatLikeType(elemTy) && !isVMIF16BF16OrF32Type(elemTy))
+    return emitOpError("requires f16, bf16, or f32 VMI element type");
+  if (isVMIIntegerLikeType(elemTy) && !isVMIAnyI8I16I32Type(elemTy))
+    return emitOpError("requires i8, i16, or i32 VMI element type");
   if (failed(verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType)))
     return failure();
   if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(),

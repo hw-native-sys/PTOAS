@@ -1442,18 +1442,24 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
     }
 
     if (auto vop = dyn_cast<VMIVminOp>(op)) {
+      Type elemType = getVMIElementType(vop.getResult());
       auto createLegacy = [&](Location loc, Type ty, Value lhs,
                               Value rhs) -> Value {
-        return builder.create<VMIMinFOp>(loc, ty, lhs, rhs).getResult();
+        if (isFloatType(elemType))
+          return builder.create<VMIMinFOp>(loc, ty, lhs, rhs).getResult();
+        return builder.create<VMIMinIOp>(loc, ty, lhs, rhs).getResult();
       };
       (void)lowerBinaryIgnoringMask(vop, createLegacy);
       continue;
     }
 
     if (auto vop = dyn_cast<VMIVmaxOp>(op)) {
+      Type elemType = getVMIElementType(vop.getResult());
       auto createLegacy = [&](Location loc, Type ty, Value lhs,
                               Value rhs) -> Value {
-        return builder.create<VMIMaxFOp>(loc, ty, lhs, rhs).getResult();
+        if (isFloatType(elemType))
+          return builder.create<VMIMaxFOp>(loc, ty, lhs, rhs).getResult();
+        return builder.create<VMIMaxIOp>(loc, ty, lhs, rhs).getResult();
       };
       (void)lowerBinaryIgnoringMask(vop, createLegacy);
       continue;
