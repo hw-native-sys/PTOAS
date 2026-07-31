@@ -16,8 +16,8 @@ def main() -> None:
     output_s = np.zeros((72,), dtype=np.uint32)
     golden_i = output_i.copy()
     golden_s = output_s.copy()
-    golden_i[1:65] = data
-    golden_s[2:66] = data
+    golden_i[8:72] = data
+    golden_s[8:72] = data
 
     data.tofile("input.bin")
     output_i.tofile("output_i.bin")

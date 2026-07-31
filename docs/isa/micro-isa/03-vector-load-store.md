@@ -567,10 +567,10 @@ for (int i = 0; i < num_requests; i++)
   - post-update: `%next = pto.sprsti "AR", %dest[%offset] : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>`
 - **semantics:** Store SPR AR to UB using a signed 8-bit immediate offset.
 - **inputs:**
-  `%dest` is the UB base pointer and `%offset` is the immediate byte offset.
+  `%dest` is the UB base pointer and `%offset` counts 4-byte words.
 - **outputs:**
   The normal form returns no SSA value. The post-update form returns `%next`,
-  which advances `%dest` by `%offset` bytes.
+  which advances `%dest` by `4 * %offset` bytes.
 - **constraints and limitations:**
   Only `"AR"` is supported. `%dest` must be a `ui32` or signless `i32` UB
   pointer. `%offset` must be a constant signed 8-bit `i32`.

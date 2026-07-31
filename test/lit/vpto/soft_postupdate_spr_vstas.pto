@@ -18,6 +18,13 @@
 // CHECK: [[SPRSTS2:%[a-zA-Z0-9_]+]] = pto.sprsts "AR", [[SPRSTS1]][%c4{{.*}}]
 // CHECK: %{{.*}} = pto.sprsts "AR", [[SPRSTS2]][%c4{{.*}}]
 
+// sprsti immediate offsets count 4-byte words. A one-element ui32 addptr
+// step must become post-update stride 1.
+// CHECK-LABEL: func.func @sprsti_base_step_uses_words
+// CHECK: [[SPRSTI_WORD1:%[a-zA-Z0-9_]+]] = pto.sprsti "AR", {{%.*}}[%c1{{.*}}]
+// CHECK: [[SPRSTI_WORD2:%[a-zA-Z0-9_]+]] = pto.sprsti "AR", [[SPRSTI_WORD1]][%c1{{.*}}]
+// CHECK: %{{.*}} = pto.sprsti "AR", [[SPRSTI_WORD2]][%c1{{.*}}]
+
 // CHECK-LABEL: func.func @sprsti_out_of_range_is_skipped
 // CHECK: scf.for
 // CHECK: pto.sprsti "AR", {{%.*}}[%c0{{.*}}] : !pto.ptr<ui32, ub>, i32
@@ -48,6 +55,23 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       pto.sprsts "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
       pto.sprsts "AR", %dst[%c4] : !pto.ptr<ui32, ub>, i32
       pto.sprsts "AR", %dst[%c8] : !pto.ptr<ui32, ub>, i32
+    }
+    return
+  }
+
+  func.func @sprsti_base_step_uses_words(
+      %dst: !pto.ptr<ui32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %dst1 = pto.addptr %dst, %c1
+        : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+    %dst2 = pto.addptr %dst, %c2
+        : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+    pto.vecscope {
+      pto.sprsti "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+      pto.sprsti "AR", %dst1[%c0] : !pto.ptr<ui32, ub>, i32
+      pto.sprsti "AR", %dst2[%c0] : !pto.ptr<ui32, ub>, i32
     }
     return
   }

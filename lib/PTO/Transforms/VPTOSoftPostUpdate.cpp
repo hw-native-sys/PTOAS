@@ -51,8 +51,9 @@ static constexpr unsigned kCanonicalAddressWidth = 16;
 // offset.  See `strideUnitBytes` for the conversion.
 enum class StrideUnit {
   Element, // vlds/vsts/vldsx2/vstas: offset in pointer elements
-  Block,   // vsstb/vsldb: repeat_stride in 32-byte blocks
-  Byte,    // sprsts/sprsti: raw byte offset
+  Word32,  // sprsti: immediate offset in 4-byte words
+  Block,   // vsstb/vsldb/pldi/psti: offset in 32-byte blocks
+  Byte,    // plds/psts/sprsts: scalar offset in bytes
 };
 
 enum class StrideConstraint {
@@ -80,14 +81,14 @@ static const PostUpdateTable &getPostUpdateTable() {
     t["pto.vlds"] = {0, 1, StrideUnit::Element, 1};
     t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
     t["pto.plds"] = {0, 1, StrideUnit::Byte, 1};
-    t["pto.pldi"] = {0, 1, StrideUnit::Byte, 1,
+    t["pto.pldi"] = {0, 1, StrideUnit::Block, 1,
                      StrideConstraint::Constant};
     t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
     t["pto.psts"] = {1, 2, StrideUnit::Byte, 0};
-    t["pto.psti"] = {1, 2, StrideUnit::Byte, 0,
+    t["pto.psti"] = {1, 2, StrideUnit::Block, 0,
                      StrideConstraint::Constant};
     t["pto.sprsts"] = {0, 1, StrideUnit::Byte, 0};
-    t["pto.sprsti"] = {0, 1, StrideUnit::Byte, 0,
+    t["pto.sprsti"] = {0, 1, StrideUnit::Word32, 0,
                        StrideConstraint::SignedI8};
     t["pto.vstas"] = {1, 2, StrideUnit::Element, 0};
     t["pto.vsldb"] = {0, 2, StrideUnit::Block, 1};
@@ -125,6 +126,8 @@ static int64_t strideUnitBytes(StrideUnit unit, int64_t elemBytes) {
   switch (unit) {
   case StrideUnit::Element:
     return elemBytes;
+  case StrideUnit::Word32:
+    return 4;
   case StrideUnit::Block:
     return kBlockSizeBytes;
   case StrideUnit::Byte:

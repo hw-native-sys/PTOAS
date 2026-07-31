@@ -9,12 +9,13 @@
 // case: micro-op/predicate-load-store/predicate-post-update
 // family: predicate-load-store
 // target_ops: pto.plds, pto.pldi, pto.psts, pto.psti
-// scenarios: post-update-result, immediate-byte-stride, scalar-byte-stride
+// scenarios: post-update-result, immediate-block-stride, scalar-byte-stride
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @predicate_post_update_kernel(
       %input: !pto.ptr<ui8, gm>, %output: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
     %c64 = arith.constant 64 : index
     %c0_i64 = arith.constant 0 : i64
@@ -40,13 +41,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
     pto.vecscope {
-      %mask_i0, %src_i1 = pto.pldi %ub_in[%c32], "NORM"
+      %mask_i0, %src_i1 = pto.pldi %ub_in[%c1], "NORM"
           : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>, !pto.ptr<ui8, ub>
-      %mask_i1, %src_i2 = pto.pldi %src_i1[%c32], "NORM"
+      %mask_i1, %src_i2 = pto.pldi %src_i1[%c1], "NORM"
           : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>, !pto.ptr<ui8, ub>
-      %dst_i1 = pto.psti %mask_i0, %ub_out[%c32], "NORM"
+      %dst_i1 = pto.psti %mask_i0, %ub_out[%c1], "NORM"
           : !pto.mask<b8>, !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
-      %dst_i2 = pto.psti %mask_i1, %dst_i1[%c32], "NORM"
+      %dst_i2 = pto.psti %mask_i1, %dst_i1[%c1], "NORM"
           : !pto.mask<b8>, !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
 
       %mask_s0, %src_s1 = pto.plds %ub_in_scalar[%c32], "NORM"

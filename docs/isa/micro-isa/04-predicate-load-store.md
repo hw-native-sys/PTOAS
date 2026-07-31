@@ -10,8 +10,8 @@ examples below use `b32` when the loaded/stored mask is used with `f32`
 vector compares or selects.
 
 The predicate load/store ops documented on this page always use explicit
-`base[offset]` addressing. The immediate forms (`pldi`, `psti`) and dynamic
-forms (`plds`, `psts`) differ only in how `%offset` is supplied.
+`base[offset]` addressing. Immediate forms (`pldi`, `psti`) count `%offset`
+in 32-byte blocks; scalar forms (`plds`, `psts`) express `%offset` in bytes.
 
 ---
 
@@ -48,6 +48,7 @@ If requested, `%updated_base` is `%source` advanced by `%offset` bytes.
 
 - **syntax:** `%result [, %updated_base] = pto.pldi %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G> [, !pto.ptr<T, ub>]`
 - **offset:** must be a constant `index` immediate in PTO surface form.
+- **offset unit:** 32-byte blocks.
 - **semantics:** Load predicate register with immediate offset.
 - **DIST:** mandatory string token, one of `NORM`, `US`, `DS`.
   - `NORM`: load a normal packed predicate payload of size `VL/8`.
@@ -59,7 +60,7 @@ If requested, `%updated_base` is `%source` advanced by `%offset` bytes.
 Like `pto.plds`, this op reads a packed predicate payload from UB and
 materializes it as `!pto.mask<G>`.
 If requested, `%updated_base` is `%source` advanced by the immediate
-`%offset` in bytes.
+`32 * %offset` bytes.
 
 ---
 
@@ -93,6 +94,7 @@ pto.psts %mask, %ub[%c0], "NORM" : !pto.mask<G>, !pto.ptr<T, ub>, index
 
 - **syntax:** `[%updated_base =] pto.psti %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index [-> !pto.ptr<T, ub>]`
 - **offset:** must be a constant `index` immediate in PTO surface form.
+- **offset unit:** 32-byte blocks.
 - **semantics:** Store predicate register with immediate offset.
 - **DIST:** mandatory string token, one of `NORM`, `PK`.
   - `NORM`: store the packed predicate payload into a normal destination space
@@ -101,10 +103,9 @@ pto.psts %mask, %ub[%c0], "NORM" : !pto.mask<G>, !pto.ptr<T, ub>, index
     `VL/16`, keeping one bit out of every two bits.
 
 `pto.psti` and `pto.psts` store the packed predicate payload represented by
-`!pto.mask<G>`. The surface distinction is only immediate-offset versus
-dynamic-offset.
+`!pto.mask<G>`.
 If requested, `%updated_base` is `%dest` advanced by the immediate `%offset`
-in bytes.
+in 32-byte blocks.
 
 ---
 

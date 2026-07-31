@@ -140,7 +140,7 @@ pass 的驱动分为两个阶段。两个阶段都通过 `PostUpdateTable`（sta
 每个候选 op 由 `PostUpdateOpInfo` 描述：base 与 strideOperand 的操作数下标，以及 strideOperand 的**单位**。
 
 ```
-enum class StrideUnit { Element, Block, Byte };
+enum class StrideUnit { Element, Word32, Block, Byte };
 struct PostUpdateOpInfo {
   int baseOperandIdx;
   int strideOperandIdx;
@@ -158,9 +158,14 @@ struct PostUpdateOpInfo {
 |------|------|---------------|-----------|-----------|---------|
 | vlds/vsts | source/destination | offset (Index) | Element | elemBytes | base + offset |
 | vsstb/vsldb | destination/source | repeat_stride (I16) | Block | 32 | dest + (32/elemBytes)·repeat_stride |
-| sprsts/sprsti（Step 4） | destination | offset (I32) | Byte | 1 | dest + offset/elemBytes |
+| plds/psts（Step 4） | source/destination | offset (Index) | Byte | 1 | base + offset/elemBytes |
+| pldi/psti（Step 4） | source/destination | offset (Index) | Block | 32 | base + (32/elemBytes)·offset |
+| sprsts（Step 4） | destination | offset (I32) | Byte | 1 | dest + offset/elemBytes |
+| sprsti（Step 4） | destination | offset (I32) | Word32 | 4 | dest + (4/elemBytes)·offset |
+| vstas（Step 4） | destination | offset (I32) | Element | elemBytes | dest + offset |
 
-> 新增指令时判断单位的方法：看它在 `VPTOLLVMEmitter.cpp` 的 lowering pattern 里，strideOperand 是否过 `convertElementOffsetToBytes`（→ Element），是否经 `packBlockRepeatStride` 透传控制字（→ Block），还是原样透传且 ISA 文档标注为字节（→ Byte）。
+> intrinsic 参数原样透传不能单独证明硬件地址单位；Step 4 的
+> immediate/scalar 差异以 CANN 9.1 SIM 的实际更新地址为准。
 
 分析和改写的核心公式统一以字节表达：
 

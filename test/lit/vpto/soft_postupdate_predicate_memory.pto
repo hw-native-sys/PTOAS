@@ -28,6 +28,16 @@
 // CHECK: [[PSTI2:%[a-zA-Z0-9_]+]] = pto.psti {{.*}}[[PSTI1]][%c4]
 // CHECK: %{{.*}} = pto.psti {{.*}}[[PSTI2]][%c4]
 
+// Immediate predicate offsets count 32-byte blocks. A 32-byte addptr step
+// must therefore become post-update stride 1, not 32.
+// CHECK-LABEL: func.func @immediate_base_steps_use_blocks
+// CHECK: %{{.*}}, [[PLDI_BLOCK1:%[a-zA-Z0-9_]+]] = pto.pldi {{%.*}}[%c1]
+// CHECK: %{{.*}}, [[PLDI_BLOCK2:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_BLOCK1]][%c1]
+// CHECK: %{{.*}}, %{{.*}} = pto.pldi [[PLDI_BLOCK2]][%c1]
+// CHECK: [[PSTI_BLOCK1:%[a-zA-Z0-9_]+]] = pto.psti {{.*}}[%c1]
+// CHECK: [[PSTI_BLOCK2:%[a-zA-Z0-9_]+]] = pto.psti {{.*}}[[PSTI_BLOCK1]][%c1]
+// CHECK: %{{.*}} = pto.psti {{.*}}[[PSTI_BLOCK2]][%c1]
+
 // Dynamic strides are legal for plds/psts but not for the immediate pldi/psti
 // forms. The latter remain unchanged when their base step is symbolic.
 // CHECK-LABEL: func.func @dynamic_immediate_stride_is_skipped
@@ -86,6 +96,38 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       pto.psti %mask, %dst[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
       pto.psti %mask, %dst[%c4], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
       pto.psti %mask, %dst[%c8], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+    }
+    return
+  }
+
+  func.func @immediate_base_steps_use_blocks(
+      %src: !pto.ptr<i8, ub>,
+      %sink: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %src32 = pto.addptr %src, %c32
+        : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+    %src64 = pto.addptr %src, %c64
+        : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+    %sink32 = pto.addptr %sink, %c32
+        : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+    %sink64 = pto.addptr %sink, %c64
+        : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+    pto.vecscope {
+      %m0 = pto.pldi %src[%c0], "NORM"
+          : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      %m1 = pto.pldi %src32[%c0], "NORM"
+          : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      %m2 = pto.pldi %src64[%c0], "NORM"
+          : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+      pto.psti %m0, %sink[%c0], "NORM"
+          : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      pto.psti %m1, %sink32[%c0], "NORM"
+          : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+      pto.psti %m2, %sink64[%c0], "NORM"
+          : !pto.mask<b8>, !pto.ptr<i8, ub>, index
     }
     return
   }
