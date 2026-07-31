@@ -36,8 +36,10 @@ bisheng 内部将候选指令分为两个处理分支：
 | 分支 | PTOAS Op | 非 Post intrinsic | Post intrinsic |
 |------|----------|-------------------|----------------|
 | Auto | `pto.vlds` | `llvm.hivm.vldsx1.v{N}{ty}` | `llvm.hivm.vldsx1.post.v{N}{ty}` |
+| Auto | `pto.vldsx2` | `llvm.hivm.vldsx2.v{N}{llvmTy}` | `llvm.hivm.vldsx2.post.v{N}{llvmTy}` |
 | Auto | `pto.vsts` | `llvm.hivm.vstsx1.v{N}{ty}` | `llvm.hivm.vstsx1.post.v{N}{ty}` |
 | Auto | `pto.vsstb` | `llvm.hivm.vsstb` | `llvm.hivm.vsstb.post` |
+| Auto | `pto.vsldb` | `llvm.hivm.vsldb.v{N}{llvmTy}` | `llvm.hivm.vsldb.post.v{N}{llvmTy}` |
 
 LLVM lowering 时根据 op 是否有 `updated_base` 结果来选择生成 post 或非 post intrinsic。
 
@@ -47,8 +49,6 @@ LLVM lowering 时根据 op 是否有 `updated_base` 结果来选择生成 post �
 
 | 分支 | PTOAS Op | 当前 Intrinsic | 备注 |
 |------|----------|---------------|------|
-| Auto | `pto.vldsx2` | `llvm.hivm.vldsx2.v{N}{ty}` | `vlds` 的双向量变体 |
-| Auto | `pto.vsldb` | `llvm.hivm.vsldb` | `vsstb` 的加载对称体（块步长加载） |
 | Auto | `pto.plds` | `llvm.hivm.plds.b8` | predicate mask 加载（strided） |
 | Auto | `pto.pldi` | `llvm.hivm.pldi.b8` | predicate mask 加载（interleaved） |
 | Auto | `pto.psts` | `llvm.hivm.psts.b8` | predicate mask 存储（strided） |
@@ -577,8 +577,8 @@ def VPTOSoftPostUpdate : Pass<"vpto-soft-postupdate", "ModuleOp"> {
 
 ### Step 4：扩展指令覆盖
 
-25. 为 2.2 中的指令（`vldsx2`、`vsldb`、`plds`、`pldi` 等）添加 ODS `updated_base` 定义。
-26. 扩展 `PostUpdateTable`，为每条新指令按 4.2.1 的方法确定 `StrideUnit`（Element / Block / Byte）。
+25. 为 2.2 中的指令添加 ODS `updated_base` 定义（已完成 `vldsx2`、`vsldb`）。
+26. 扩展 `PostUpdateTable`，为每条新指令按 4.2.1 的方法确定 `StrideUnit`（已完成 `vldsx2`、`vsldb`）。
 27. 补充对应的 LLVM lowering（post intrinsic callee）和 lit 测试。
 
 ### Step 5：验证与开启

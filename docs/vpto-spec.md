@@ -1214,6 +1214,7 @@ pto.vsts %value, %destination[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !pto.pt
 
 ```mlir
 %low, %high = pto.vldsx2 %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.vreg<NxT>
+%low, %high, %updated_base = pto.vldsx2 %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.ptr<T, ub>
 ```
 
 **Dual Store (two inputs, one interleaved store):**

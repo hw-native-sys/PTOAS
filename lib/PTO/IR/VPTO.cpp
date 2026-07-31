@@ -6394,6 +6394,9 @@ LogicalResult Vldsx2Op::verify() {
     return emitOpError("requires low/high results to share one vector type");
   if (!isSupportedVldx2DistToken(getDist()))
     return emitOpError("requires a supported x2 load distribution token");
+  if (getUpdatedBase() &&
+      getUpdatedBase().getType() != getSource().getType())
+    return emitOpError("requires updated base result to match base type");
   return success();
 }
 
@@ -6541,6 +6544,15 @@ LogicalResult VsldbOp::verify() {
     return emitOpError("requires block_stride to be i16");
   if (!getRepeatStride().getType().isSignlessInteger(16))
     return emitOpError("requires repeat_stride to be i16");
+  Type elementType = cast<VRegType>(getResult().getType()).getElementType();
+  if (!isVsldbElementType(elementType))
+    return emitOpError(
+        "requires s/u8, s/u16, s/u32, signed i64, f16, bf16, f32, FP8, or packed FP4 element type");
+  if (getBufferElementType(getSource().getType()) != elementType)
+    return emitOpError("requires source and result to share one element type");
+  if (getUpdatedBase() &&
+      getUpdatedBase().getType() != getSource().getType())
+    return emitOpError("requires updated base result to match base type");
   return success();
 }
 

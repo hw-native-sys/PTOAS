@@ -1501,12 +1501,15 @@ def PTO_Vldsx2Op : PTO_VectorMicroOp<"vldsx2", [
     Index:$offset,
     StrAttr:$dist
   );
-  let results = (outs PTO_VectorType:$low, PTO_VectorType:$high);
+  let results = (outs PTO_VectorType:$low,
+                      PTO_VectorType:$high,
+                      Optional<PTO_BufferLikeType>:$updated_base);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     $source `[` $offset `]` `,` $dist attr-dict `:` type($source) `,` type($offset) `->` type($low) `,` type($high)
+    (`,` type($updated_base)^)?
   }];
 }
 
@@ -3464,12 +3467,14 @@ def PTO_VsldbOp : PTO_VectorMicroOp<"vsldb", [
     I16:$repeat_stride,
     PTO_MaskTypeConstraint:$mask
   );
-  let results = (outs PTO_VectorType:$result);
+  let results = (outs PTO_VectorType:$result,
+                      Optional<PTO_BufferLikeType>:$updated_base);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     $source `,` $block_stride `,` $repeat_stride `,` $mask attr-dict `:` type($source) `,` type($block_stride) `,` type($repeat_stride) `,` type($mask) `->` type($result)
+    (`,` type($updated_base)^)?
   }];
 }
 

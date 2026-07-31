@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+
+// CHECK-LABEL: func.func @sequential_vldsx2
+// CHECK: %{{.*}}, %{{.*}}, [[X1:%[a-zA-Z0-9_]+]] = pto.vldsx2 {{%.*}}[%c64]
+// CHECK: %{{.*}}, %{{.*}}, [[X2:%[a-zA-Z0-9_]+]] = pto.vldsx2 [[X1]][%c64]
+// CHECK: %{{.*}}, %{{.*}}, %{{.*}} = pto.vldsx2 [[X2]][%c64]
+
+// CHECK-LABEL: func.func @sequential_vsldb
+// CHECK: %{{.*}}, [[B1:%[a-zA-Z0-9_]+]] = pto.vsldb {{%.*}}, %c2_i16, %c1_i16
+// CHECK: %{{.*}}, [[B2:%[a-zA-Z0-9_]+]] = pto.vsldb [[B1]], %c2_i16, %c1_i16
+// CHECK: %{{.*}}, %{{.*}} = pto.vsldb [[B2]], %c2_i16, %c1_i16
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @sequential_vldsx2(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %l0, %h0 = pto.vldsx2 %src[%c0], "DINTLV_B32"
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+      pto.vsts %l0, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %h0, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %l1, %h1 = pto.vldsx2 %src[%c64], "DINTLV_B32"
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+      pto.vsts %l1, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %h1, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %l2, %h2 = pto.vldsx2 %src[%c128], "DINTLV_B32"
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+      pto.vsts %l2, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %h2, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @sequential_vsldb(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c2_i16 = arith.constant 2 : i16
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v0 = pto.vsldb %src, %c2_i16, %c0_i16, %mask
+          : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %v0, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v1 = pto.vsldb %src, %c2_i16, %c1_i16, %mask
+          : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %v1, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v2 = pto.vsldb %src, %c2_i16, %c2_i16, %mask
+          : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %v2, %sink[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}

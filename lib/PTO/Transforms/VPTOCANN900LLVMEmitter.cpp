@@ -3733,14 +3733,16 @@ static FailureOr<StringRef> buildVldsCallee(MLIRContext *context, Type resultTyp
 }
 
 static FailureOr<StringRef> buildVldsx2Callee(MLIRContext *context,
-                                              Type resultType) {
+                                              Type resultType, bool post) {
   std::string vec =
       getMemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
   auto lanes = getElementCountFromVectorLike(resultType);
   if (vec.empty() || !lanes)
     return failure();
-  return StringAttr::get(context, "llvm.hivm.vldsx2.v" +
-                                      std::to_string(*lanes) + vec)
+  return StringAttr::get(
+             context, "llvm.hivm.vldsx2" +
+                          std::string(post ? ".post" : "") + ".v" +
+                          std::to_string(*lanes) + vec)
       .getValue();
 }
 
@@ -3770,9 +3772,9 @@ buildBlockStridedMemoryCallee(MLIRContext *context, Type vectorType,
 }
 
 static FailureOr<StringRef> buildVsldbCallee(MLIRContext *context,
-                                              Type resultType) {
+                                              Type resultType, bool post) {
   return buildBlockStridedMemoryCallee(context, resultType, "vsldb",
-                                       /*post=*/false);
+                                       post);
 }
 
 static FailureOr<StringRef> buildVstsCallee(MLIRContext *context, Type valueType) {
@@ -6853,10 +6855,11 @@ public:
                                          "failed to materialize vldsx2 operands");
     }
 
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != 2) {
+        resultTypes.size() != (usePostIntrinsic ? 3u : 2u)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vldsx2 result types");
     }
@@ -6865,19 +6868,23 @@ public:
     Type highCallType = getPayloadABIType(
         op.getHigh().getType(), resultTypes[1], rewriter.getContext());
     SmallVector<Type> callResultTypes{lowCallType, highCallType};
+    if (usePostIntrinsic)
+      callResultTypes.push_back(resultTypes[2]);
 
     FailureOr<StringRef> calleeName =
-        buildVldsx2Callee(op.getContext(), op.getLow().getType());
+        buildVldsx2Callee(op.getContext(), op.getLow().getType(),
+                          usePostIntrinsic);
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported vldsx2 signature");
 
     Value distValue = getI32Constant(rewriter, op.getLoc(), *dist);
-    Value zeroValue = getI32Constant(rewriter, op.getLoc(), 0);
+    Value postValue =
+        getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
     SmallVector<Value> args{adaptor.getSource(), *offsetBytes, distValue,
-                            zeroValue};
+                            postValue};
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getSource().getType(), (*offsetBytes).getType(),
-                  distValue.getType(), zeroValue.getType()},
+                  distValue.getType(), postValue.getType()},
         callResultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
                                               callResultTypes, args);
@@ -6888,7 +6895,10 @@ public:
     Value high = castFromPayloadABI(
         op.getLoc(), call.getResult(1), op.getHigh().getType(), resultTypes[1],
         rewriter);
-    rewriter.replaceOp(op, ValueRange{low, high});
+    if (usePostIntrinsic)
+      rewriter.replaceOp(op, ValueRange{low, high, call.getResult(2)});
+    else
+      rewriter.replaceOp(op, ValueRange{low, high});
     return success();
   }
 
@@ -6911,31 +6921,42 @@ public:
     if (!basePtr || !packedStride)
       return rewriter.notifyMatchFailure(op, "failed to materialize vsldb operands");
 
-    Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    SmallVector<Type> resultTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      resultTypes)) ||
+        resultTypes.size() != (usePostIntrinsic ? 2u : 1u))
       return rewriter.notifyMatchFailure(op, "failed to convert vsldb result type");
 
     Type callResultType = getPayloadABIType(
-        op.getResult().getType(), resultType, rewriter.getContext());
+        op.getResult().getType(), resultTypes[0], rewriter.getContext());
+    SmallVector<Type> callResultTypes{callResultType};
+    if (usePostIntrinsic)
+      callResultTypes.push_back(resultTypes[1]);
 
     FailureOr<StringRef> calleeName =
-        buildVsldbCallee(op.getContext(), op.getResult().getType());
+        buildVsldbCallee(op.getContext(), op.getResult().getType(),
+                         usePostIntrinsic);
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported vsldb signature");
-    Value zeroValue = getI32Constant(rewriter, op.getLoc(), 0);
-    SmallVector<Value> args{adaptor.getSource(), packedStride, zeroValue,
+    Value postValue =
+        getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
+    SmallVector<Value> args{adaptor.getSource(), packedStride, postValue,
                             adaptor.getMask()};
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getSource().getType(), packedStride.getType(),
-                  zeroValue.getType(), adaptor.getMask().getType()},
-        TypeRange{callResultType});
+                  postValue.getType(), adaptor.getMask().getType()},
+        callResultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{callResultType}, args);
+                                              callResultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     Value result = castFromPayloadABI(
-        op.getLoc(), call.getResult(0), op.getResult().getType(), resultType,
+        op.getLoc(), call.getResult(0), op.getResult().getType(), resultTypes[0],
         rewriter);
-    rewriter.replaceOp(op, ValueRange{result});
+    if (usePostIntrinsic)
+      rewriter.replaceOp(op, ValueRange{result, call.getResult(1)});
+    else
+      rewriter.replaceOp(op, ValueRange{result});
     return success();
   }
 

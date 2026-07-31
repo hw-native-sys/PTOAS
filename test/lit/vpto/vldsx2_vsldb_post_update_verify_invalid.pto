@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file 2>&1 | FileCheck %s
+
+module {
+  func.func @vldsx2_requires_matching_updated_base(%src: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %low, %high, %next = pto.vldsx2 %src[%c0], "DINTLV_B32"
+          : !pto.ptr<f32, ub>, index
+          -> !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.ptr<i32, ub>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vldsx2' op requires updated base result to match base type
+
+// -----
+
+module {
+  func.func @vsldb_requires_matching_updated_base(%src: !pto.ptr<f32, ub>) {
+    %c1_i16 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value, %next = pto.vsldb %src, %c1_i16, %c1_i16, %mask
+          : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+          -> !pto.vreg<64xf32>, !pto.ptr<i32, ub>
+    }
+    return
+  }
+}
+
+// CHECK: 'pto.vsldb' op requires updated base result to match base type

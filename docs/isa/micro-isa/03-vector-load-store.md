@@ -230,13 +230,14 @@ deinterleave forms.
 
 ### `pto.vldsx2`
 
-- **syntax:** `%low, %high = pto.vldsx2 %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.vreg<NxT>`
+- **syntax:** `%low, %high [, %updated_base] = pto.vldsx2 %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.vreg<NxT> [, !pto.ptr<T, ub>]`
 - **semantics:** Dual load with deinterleave (AoS → SoA conversion).
 - **inputs:**
   `%source` is the UB base pointer, `%offset` is the displacement, and `DIST`
   selects a dual-load/deinterleave layout.
 - **outputs:**
-  `%low` and `%high` are the two destination vectors.
+  `%low` and `%high` are the two destination vectors. If requested,
+  `%updated_base` is the source pointer advanced by `%offset`.
 - **constraints and limitations:**
   This family is only legal for interleave/deinterleave style distributions.
   The two outputs form an ordered pair, and that pairing MUST be preserved.
@@ -269,14 +270,15 @@ for (int i = 0; i < 64; i++) {
 
 ### `pto.vsldb`
 
-- **syntax:** `%result = pto.vsldb %source, %block_stride, %repeat_stride, %mask : !pto.ptr<T, ub>, i16, i16, !pto.mask<G> -> !pto.vreg<NxT>`
+- **syntax:** `%result [, %updated_base] = pto.vsldb %source, %block_stride, %repeat_stride, %mask : !pto.ptr<T, ub>, i16, i16, !pto.mask<G> -> !pto.vreg<NxT> [, !pto.ptr<T, ub>]`
 - **semantics:** Block-strided load for 2D tile access.
 - **inputs:**
   `%source` is the UB base pointer. `%block_stride` and `%repeat_stride` are
   the two 16-bit fields of the hardware control word, and `%mask` controls
   which blocks participate.
 - **outputs:**
-  `%result` is the loaded vector.
+  `%result` is the loaded vector. If requested, `%updated_base` is the source
+  pointer advanced by `%repeat_stride` 32-byte blocks.
 - **constraints and limitations:**
   PTO surface does not expose the packed control word directly. If a block is
   masked off, the corresponding destination block is zeroed and MUST NOT raise

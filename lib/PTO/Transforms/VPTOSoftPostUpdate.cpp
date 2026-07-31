@@ -71,7 +71,9 @@ static const PostUpdateTable &getPostUpdateTable() {
     PostUpdateTable t;
     //                       base  strideOp  strideUnit             minResults
     t["pto.vlds"] = {0, 1, StrideUnit::Element, 1};
+    t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
     t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
+    t["pto.vsldb"] = {0, 2, StrideUnit::Block, 1};
     t["pto.vsstb"] = {1, 3, StrideUnit::Block, 0};
     return t;
   }();

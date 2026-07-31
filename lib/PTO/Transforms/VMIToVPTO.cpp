@@ -5840,6 +5840,7 @@ struct OneToNVMILoadOpPattern : OpConversionPattern<VMILoadOp> {
           Value chunkOffset = createChunkOffset(
               op.getLoc(), *offset, group * 2 * *lanesPerPart, rewriter);
           auto load = rewriter.create<Vldsx2Op>(op.getLoc(), lowType, highType,
+                                                /*updated_base=*/Type{},
                                                 *source, chunkOffset,
                                                 rewriter.getStringAttr(*dist));
           lows.push_back(load.getLow());
@@ -5885,10 +5886,12 @@ struct OneToNVMILoadOpPattern : OpConversionPattern<VMILoadOp> {
           Value secondOffset = createChunkOffset(
               op.getLoc(), *offset, (group * 4 + 2) * *lanesPerPart, rewriter);
           auto first = rewriter.create<Vldsx2Op>(
-              op.getLoc(), part0Type, part1Type, *source, firstOffset,
+              op.getLoc(), part0Type, part1Type, /*updated_base=*/Type{},
+              *source, firstOffset,
               rewriter.getStringAttr(*dist));
           auto second = rewriter.create<Vldsx2Op>(
-              op.getLoc(), part2Type, part3Type, *source, secondOffset,
+              op.getLoc(), part2Type, part3Type, /*updated_base=*/Type{},
+              *source, secondOffset,
               rewriter.getStringAttr(*dist));
 
           auto even =
@@ -6004,8 +6007,9 @@ struct OneToNVMIDeinterleaveLoadOpPattern
           op.getLoc(), *offset, static_cast<int64_t>(index) * 2 * *lanesPerPart,
           rewriter);
       auto load =
-          rewriter.create<Vldsx2Op>(op.getLoc(), lowType, highType, *source,
-                                    chunkOffset, rewriter.getStringAttr(*dist));
+          rewriter.create<Vldsx2Op>(
+              op.getLoc(), lowType, highType, /*updated_base=*/Type{}, *source,
+              chunkOffset, rewriter.getStringAttr(*dist));
       lows.push_back(load.getLow());
       highs.push_back(load.getHigh());
     }
@@ -6131,6 +6135,7 @@ struct OneToNVMIGroupLoadOpPattern : OpConversionPattern<VMIGroupLoadOp> {
           Value chunkBase = makePtr(chunkOffset);
           results.push_back(rewriter
                                 .create<VsldbOp>(op.getLoc(), vregType,
+                                                 /*updated_base=*/Type{},
                                                  chunkBase, blockStride,
                                                  zeroI16, *allMask)
                                 .getResult());
@@ -6293,7 +6298,8 @@ static LogicalResult lowerGroupSlotLoadParts(
           createChunkOffset(op->getLoc(), offset, groupBegin, rewriter);
       Value slotBase = makePtr(groupOffset);
       results.push_back(rewriter
-                            .create<VsldbOp>(op->getLoc(), vregType, slotBase,
+                            .create<VsldbOp>(op->getLoc(), vregType,
+                                             /*updated_base=*/Type{}, slotBase,
                                              zeroI16, zeroI16, *slotMask)
                             .getResult());
     }
@@ -6348,7 +6354,8 @@ static LogicalResult lowerGroupSlotLoadParts(
     }
     Value slotBase = makePtr(groupOffset);
     results.push_back(rewriter
-                          .create<VsldbOp>(op->getLoc(), vregType, slotBase,
+                          .create<VsldbOp>(op->getLoc(), vregType,
+                                           /*updated_base=*/Type{}, slotBase,
                                            zeroI16, zeroI16, *oneBlockMask)
                           .getResult());
   }
@@ -8166,7 +8173,8 @@ struct OneToNVMIStrideLoadOpPattern
                      .getResult();
     Value loaded =
         rewriter
-            .create<VsldbOp>(op.getLoc(), resultType, base, *blockStride,
+            .create<VsldbOp>(op.getLoc(), resultType,
+                             /*updated_base=*/Type{}, base, *blockStride,
                              *repeatStride, maskParts.front())
             .getResult();
     replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{loaded},
