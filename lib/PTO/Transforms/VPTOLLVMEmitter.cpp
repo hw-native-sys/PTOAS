@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -8279,6 +8280,53 @@ private:
   LoweringState &state;
 };
 
+// Bisheng/hivmc encodes llvm.hivm.vci.*(i32 <imm>, ...) as VCI with base 0
+// (camodel: expert 144→16). Register SSA bases work (gym loop IV). AscendC's
+// clang builtin path embeds immediates in the VCI word; the HIVM intrinsic
+// path does not.
+//
+// (carrier_iv + imm) is insufficient: the single-trip aivector carrier IV is
+// proven 0 and folded back to a ConstantInt before encoding. Alloca *inside*
+// the VF body breaks outline ("Could not outline function!"). Instead: store
+// the imm to an alloca *outside* the aivector carrier loop, then volatile-load
+// inside — the pointer is captured as a VF arg (outline-safe) and the load
+// result stays an sreg operand.
+static Value materializeVciBaseForHIVM(Value indexValue, Operation *op,
+                                       ConversionPatternRewriter &rewriter) {
+  auto constOp = indexValue.getDefiningOp<arith::ConstantOp>();
+  if (!constOp)
+    return indexValue;
+  auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue());
+  if (!intAttr || intAttr.getValue().isZero())
+    return indexValue;
+
+  auto parentFor = op->getParentOfType<scf::ForOp>();
+  if (!parentFor)
+    return indexValue;
+
+  Location loc = op->getLoc();
+  Type indexType = indexValue.getType();
+  auto intType = dyn_cast<IntegerType>(indexType);
+  if (!intType)
+    return indexValue;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(parentFor);
+  // Recreate the imm outside the carrier so the store dominates the loop.
+  Value outerImm = rewriter.create<arith::ConstantOp>(loc, intAttr);
+  Value c1 = getI32Constant(rewriter, loc, 1);
+  auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+  auto alloca = rewriter.create<LLVM::AllocaOp>(loc, ptrTy, indexType, c1,
+                                                /*alignment=*/4);
+  rewriter.create<LLVM::StoreOp>(loc, outerImm, alloca.getRes());
+
+  rewriter.setInsertionPoint(op);
+  return rewriter
+      .create<LLVM::LoadOp>(loc, indexType, alloca.getRes(),
+                            /*alignment=*/0, /*isVolatile=*/true)
+      .getResult();
+}
+
 class LowerVciOpPattern final : public OpConversionPattern<pto::VciOp> {
 public:
   explicit LowerVciOpPattern(TypeConverter &typeConverter, MLIRContext *context,
@@ -8317,6 +8365,8 @@ public:
                                                        indexValue);
       }
     }
+
+    indexValue = materializeVciBaseForHIVM(indexValue, op, rewriter);
 
     Value orderValue = getI32Constant(rewriter, op.getLoc(), *order);
     auto funcType = rewriter.getFunctionType(

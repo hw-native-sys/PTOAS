@@ -25,6 +25,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -7667,6 +7668,42 @@ private:
   LoweringState &state;
 };
 
+// See VPTOLLVMEmitter.cpp: outline-safe imm→sreg via alloca outside carrier +
+// volatile load inside (alloca-in-VF breaks outline; iv+imm folds away).
+static Value materializeVciBaseForHIVM(Value indexValue, Operation *op,
+                                       ConversionPatternRewriter &rewriter) {
+  auto constOp = indexValue.getDefiningOp<arith::ConstantOp>();
+  if (!constOp)
+    return indexValue;
+  auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue());
+  if (!intAttr || intAttr.getValue().isZero())
+    return indexValue;
+
+  auto parentFor = op->getParentOfType<scf::ForOp>();
+  if (!parentFor)
+    return indexValue;
+
+  Location loc = op->getLoc();
+  Type indexType = indexValue.getType();
+  if (!isa<IntegerType>(indexType))
+    return indexValue;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(parentFor);
+  Value outerImm = rewriter.create<arith::ConstantOp>(loc, intAttr);
+  Value c1 = getI32Constant(rewriter, loc, 1);
+  auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+  auto alloca = rewriter.create<LLVM::AllocaOp>(loc, ptrTy, indexType, c1,
+                                                /*alignment=*/4);
+  rewriter.create<LLVM::StoreOp>(loc, outerImm, alloca.getRes());
+
+  rewriter.setInsertionPoint(op);
+  return rewriter
+      .create<LLVM::LoadOp>(loc, indexType, alloca.getRes(),
+                            /*alignment=*/0, /*isVolatile=*/true)
+      .getResult();
+}
+
 class LowerVciOpPattern final : public OpConversionPattern<pto::VciOp> {
 public:
   explicit LowerVciOpPattern(TypeConverter &typeConverter, MLIRContext *context,
@@ -7689,7 +7726,8 @@ public:
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported vci callee");
 
-    Value indexValue = adaptor.getIndex();
+    Value indexValue =
+        materializeVciBaseForHIVM(adaptor.getIndex(), op, rewriter);
 
     Value orderValue = getI32Constant(rewriter, op.getLoc(), *order);
     auto funcType = rewriter.getFunctionType(

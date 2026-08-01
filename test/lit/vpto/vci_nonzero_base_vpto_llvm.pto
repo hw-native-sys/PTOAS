@@ -6,9 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Regression for issue #1092: non-zero pto.vci bases must lower to the signless
-// HIVM intrinsic llvm.hivm.vci.v64i32 (same as AscendC/CCE). The legacy
-// v64s32 name is not a recognized HIVM overload and drops the scalar base.
+// Regression for issue #1092:
+// 1) HIVM vci overloads are signless (v64i32), not v64s32.
+// 2) Non-zero ConstantInt bases must not be passed as bare immediates —
+//    bisheng/hivmc encodes those as VCI base 0. Materialize via alloca
+//    *outside* the aivector carrier + volatile load inside (sreg operand,
+//    outline-safe).
 //
 // RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
 // RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
@@ -41,8 +44,13 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
 }
 
 // CHECK-LABEL: define void @vci_nonzero_base_mix_aiv
-// CHECK: call <64 x i32> @llvm.hivm.vci.v64i32(i32 64, i32 0)
+// Alloca for the imm is outside the aivector carrier; volatile load feeds vci.
+// CHECK: alloca i32
+// CHECK: store i32 64
+// CHECK: %[[BASE:[0-9]+]] = load volatile i32
+// CHECK: call <64 x i32> @llvm.hivm.vci.v64i32(i32 %[[BASE]], i32 0)
 // CHECK-NOT: llvm.hivm.vci.v64s32
+// CHECK-NOT: call {{.*}} @llvm.hivm.vci.v64i32(i32 64,
 
 // CHECK-LABEL: define void @vci_nonzero_base_si32_mix_aiv
 // CHECK: call <64 x i32> @llvm.hivm.vci.v64i32(i32 %{{.*}}, i32 0)
