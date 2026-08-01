@@ -3863,11 +3863,24 @@ static FailureOr<StringRef> buildVmulscvtCallee(MLIRContext *context,
 }
 
 static FailureOr<StringRef> buildVciCallee(MLIRContext *context, Type resultType) {
-  std::string vec =
-      getElementTypeFragment(getElementTypeFromVectorLike(resultType));
+  // HIVM vci overloads are signless (v64i32 / v128i16), matching AscendC/CCE
+  // and the CANN 9.0.0 emitter. Using sN/uN (e.g. v64s32) is not a recognized
+  // intrinsic and the backend drops a non-zero scalar base (issue #1092).
+  Type elemType = getElementTypeFromVectorLike(resultType);
   auto lanes = getElementCountFromVectorLike(resultType);
-  if (vec.empty() || !lanes)
+  if (!elemType || !lanes)
     return failure();
+
+  std::string vec;
+  if (elemType.isF16())
+    vec = "f16";
+  else if (elemType.isF32())
+    vec = "f32";
+  else if (auto intType = dyn_cast<IntegerType>(elemType))
+    vec = "i" + std::to_string(intType.getWidth());
+  else
+    return failure();
+
   if (vec == "f16" || vec == "f32")
     return StringAttr::get(context, "llvm.hivm.vci.v" + std::to_string(*lanes) +
                                         vec + "." + vec)
