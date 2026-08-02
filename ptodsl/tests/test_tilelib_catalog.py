@@ -28,7 +28,7 @@ CATALOG = {
     "pto.tand": ("template_tand_1d", "pto.vand", ("src0", "src1", "dst"), "i32"),
     "pto.tands": ("template_tands_1d", "pto.vand", ("src", "scalar", "dst"), "i32"),
     "pto.tcmp": ("template_tcmp", "pto.vcmp", ("src0", "src1", "dst"), "f32"),
-    "pto.tcmps": ("template_tcmps", "pto.vcmps", ("src", "scalar", "dst"), "f32"),
+    "pto.tcmps": ("template_tcmps_1d", "pto.vcmps", ("src", "scalar", "dst"), "f32"),
     "pto.tcolexpand": ("template_tcolexpand", "pto.vlds", ("src", "dst"), "f32"),
     "pto.tcolexpandadd": ("template_tcolexpandadd", "pto.vadd", ("src0", "src1", "dst"), "f32"),
     "pto.tcolexpanddiv": ("template_tcolexpanddiv", "pto.vdiv", ("src0", "src1", "dst"), "f32"),
@@ -913,7 +913,7 @@ class TileLibCatalogTest(unittest.TestCase):
                     ),
                 }
                 selected = select("pto.tcmps", "a5", specs)
-                self.assertEqual(selected.name, "template_tcmps")
+                self.assertEqual(selected.name, "template_tcmps_1d")
                 mlir = selected.specialize(context_attrs={"cmp_mode": "lt"}, **specs).mlir_text()
                 self.assertIn(expected_op, mlir)
                 self.assertIn(expected_dist, mlir)

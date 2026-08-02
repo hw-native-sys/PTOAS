@@ -1719,7 +1719,7 @@ class TileLibElementwiseTest(unittest.TestCase):
             "pto.tcmps",
             "f32",
             src_shape=(4, 64),
-            dst_shape=(4, 64),
+            dst_shape=(4, 32),
         )
         selected = select("pto.tcmps", "a5", specs)
         mlir = selected.specialize(**specs).mlir_text()
