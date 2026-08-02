@@ -207,13 +207,9 @@ def emit_scalar_fill_1d(scalar, dst):
 def emit_scalar_fill_2d(scalar, dst):
     """Emit a row-wise scalar-fill body."""
 
-    cols = dst.shape[1]
-    dst_ptr = dst.as_ptr()
-
     def emit_chunk(row, col, mask):
         value = pto.vdup(scalar, mask)
-        addr = pto.addptr(dst_ptr, row * cols + col)
-        pto.vsts(value, addr, 0, mask)
+        pto.vsts(value, dst[row, col:], mask)
 
     emit_elementwise_2d(dst, emit_chunk)
 
