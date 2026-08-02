@@ -9,6 +9,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
@@ -136,6 +137,12 @@ static std::optional<ForIterArgInfo> getForIterArgInfo(Value value) {
 }
 
 static std::optional<PltScalarOutInfo> getPltScalarOutInfo(Value value) {
+  // Element-wise templates keep the remaining element count as index while
+  // plt consumes and returns an integer scalar. Look through the cast used to
+  // feed the scalar result back to scf.for.
+  if (auto indexCast = value.getDefiningOp<arith::IndexCastOp>())
+    value = indexCast.getIn();
+
   auto result = dyn_cast<OpResult>(value);
   if (!result || result.getResultNumber() != 1)
     return std::nullopt;
@@ -180,10 +187,18 @@ static bool areEquivalentLoopCarriedValues(Value lhs, Value rhs,
   if (lhsYieldInfo->bitWidth != rhsYieldInfo->bitWidth)
     return false;
 
+  Value lhsRecurrenceInput = lhsYieldInfo->scalar;
+  Value rhsRecurrenceInput = rhsYieldInfo->scalar;
+  if (auto indexCast = lhsRecurrenceInput.getDefiningOp<arith::IndexCastOp>())
+    lhsRecurrenceInput = indexCast.getIn();
+  if (auto indexCast = rhsRecurrenceInput.getDefiningOp<arith::IndexCastOp>())
+    rhsRecurrenceInput = indexCast.getIn();
+
   // Stay conservative on unsupported cyclic proofs. The only accepted
   // recurrence cycle is the direct iter_arg -> plt.scalar_out self recursion
-  // for the same value pair; more complex cycles remain unsupported.
-  if (areSameValuePair(lhs, rhs, lhsYieldInfo->scalar, rhsYieldInfo->scalar))
+  // for the same value pair, optionally bridged by the index casts required by
+  // the plt/scf type boundary; more complex cycles remain unsupported.
+  if (areSameValuePair(lhs, rhs, lhsRecurrenceInput, rhsRecurrenceInput))
     return true;
 
   return areEquivalentValues(lhsYieldInfo->scalar, rhsYieldInfo->scalar,

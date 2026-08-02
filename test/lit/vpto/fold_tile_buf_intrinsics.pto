@@ -29,14 +29,15 @@
 // - tile_buf_addr should still carry the planned tile address as pto.ptr
 // ADDR-LABEL: func.func @TADD
 // ADDR: pto.tile_buf_addr {{.*}} -> {{.*<f32, ub>}}
-// ADDR: pto.vlds
 // ADDR: pto.tile_buf_addr {{.*}} -> {{.*<f32, ub>}}
-// ADDR: pto.vlds
-// ADDR: pto.vadd
 // ADDR: pto.tile_buf_addr {{.*}} -> {{.*<f32, ub>}}
 // ADDR-NOT: pto.pointer_cast
 // ADDR-NOT: pto.tile_valid_rows
 // ADDR-NOT: pto.tile_valid_cols
+// ADDR: scf.for
+// ADDR: pto.vlds
+// ADDR: pto.vlds
+// ADDR: pto.vadd
 // ADDR: pto.vsts
 
 // After VPTO pointer normalization:
@@ -44,14 +45,15 @@
 // - tile-slice addressing is carried by the vlds/vsts offset operand
 // NORMALIZED-LABEL: func.func @TADD
 // NORMALIZED: pto.castptr
-// NORMALIZED: arith.muli
-// NORMALIZED: pto.vlds
 // NORMALIZED: pto.castptr
-// NORMALIZED: pto.vlds
-// NORMALIZED: pto.vadd
 // NORMALIZED: pto.castptr
 // NORMALIZED-NOT: pto.tile_buf_addr
 // NORMALIZED-NOT: pto.pointer_cast
+// NORMALIZED-NOT: arith.muli
+// NORMALIZED: scf.for
+// NORMALIZED: pto.vlds
+// NORMALIZED: pto.vlds
+// NORMALIZED: pto.vadd
 // NORMALIZED: pto.vsts
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

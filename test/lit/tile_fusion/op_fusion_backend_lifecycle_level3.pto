@@ -58,8 +58,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // LLF: // -----// IR Dump After PTOLowLevelLoopFusion (pto-low-level-loop-fusion) //----- //
 // LLF-LABEL: func.func @fusion_backend_lifecycle_level3(
 // LLF: %[[REGION:.*]] = pto.fusion_region {
-// LLF: scf.for
-// LLF: scf.for {{.*}} -> (index, index, index) {
+// LLF: %[[ROWS:.*]] = arith.constant 32 : index
+// LLF: %[[COLS:.*]] = arith.constant 32 : index
+// LLF: %[[ELEMENT_COUNT:.*]] = arith.muli %[[ROWS]], %[[COLS]] : index
+// LLF: %[[VECTOR_WIDTH:.*]] = arith.constant 64 : index
+// LLF: scf.for {{.*}} to %[[ELEMENT_COUNT]] step %[[VECTOR_WIDTH]] {{.*}} -> (index, index, index) {
 // LLF: pto.plt_b32
 // LLF: pto.vadd
 // LLF: pto.vsts
@@ -80,10 +83,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // PRED: pto.plt_b32
 // PRED: pto.vadd
 // PRED: pto.vsts
+// PRED-NOT: pto.plt_b32
 // PRED: pto.vlds
 // PRED: pto.vlds
 // PRED: pto.vadd
 // PRED: pto.vsts
+// PRED-NOT: pto.plt_b32
 // PRED: pto.vlds
 // PRED: pto.vlds
 // PRED: pto.vadd
@@ -106,8 +111,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // FLAT: // -----// IR Dump After PTOFlattenFusionRegion (pto-flatten-fusion-region) //----- //
 // FLAT-LABEL: func.func @fusion_backend_lifecycle_level3(
+// FLAT: %[[VECTOR_WIDTH:.*]] = arith.constant 64 : index
+// FLAT: %[[ELEMENT_COUNT:.*]] = arith.constant 1024 : index
 // FLAT-NOT: pto.fusion_region
-// FLAT: scf.for %arg1 = %c0 to %c32 step %c1 {
+// FLAT: scf.for {{.*}} to %[[ELEMENT_COUNT]] step %[[VECTOR_WIDTH]]
 // FLAT: pto.vlds
 // FLAT: pto.vlds
 // FLAT: pto.vadd
