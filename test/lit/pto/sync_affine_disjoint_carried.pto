@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A store whose destination advances by at least its own footprint per iteration has
+// no loop-carried dependence on itself, so the barrier ordering it against its own
+// next execution is not needed. The three refusal cases are pinned alongside the
+// drop: a predicate that fired unconditionally would pass a test that only checked
+// the drop.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --emit-pto-ir %s \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  // Advances 512 per iteration against a 64-element footprint: disjoint.
+  // CHECK-LABEL: func.func @gap_wider_than_extent
+  // CHECK:         scf.for
+  // CHECK-NOT:       pto.barrier <PIPE_MTE3>
+  // CHECK:         pto.tstore
+  func.func @gap_wider_than_extent(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c512 = arith.constant 512 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %i = %c0 to %c8 step %c1 {
+      %off = arith.muli %i, %c512 : index
+      %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+    }
+    return
+  }
+
+  // Advances exactly its own footprint. Adjacent, not overlapping, so still
+  // disjoint -- and this is the boundary the corpus actually walks, a store
+  // covering a tensor with no gap between iterations. Enforced by the strict
+  // greater-than on the address window in `partitionViewIterationsDisjoint`.
+  // CHECK-LABEL: func.func @gap_equals_extent
+  // CHECK:         scf.for
+  // CHECK-NOT:       pto.barrier <PIPE_MTE3>
+  // CHECK:         pto.tstore
+  func.func @gap_equals_extent(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %i = %c0 to %c8 step %c1 {
+      %off = arith.muli %i, %c64 : index
+      %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+    }
+    return
+  }
+
+  // Advances 32 against a 64-element footprint: consecutive iterations overlap in
+  // the second half of each store, so the barrier must stay.
+  // CHECK-LABEL: func.func @gap_narrower_than_extent
+  // CHECK:         scf.for
+  // CHECK:           pto.barrier <PIPE_MTE3>
+  // CHECK:           pto.tstore
+  func.func @gap_narrower_than_extent(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %i = %c0 to %c8 step %c1 {
+      %off = arith.muli %i, %c32 : index
+      %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+    }
+    return
+  }
+
+  // The destination does not move: every iteration writes the same 64 elements.
+  // A genuine loop-carried write-after-write, so the barrier must stay.
+  // CHECK-LABEL: func.func @no_movement
+  // CHECK:         scf.for
+  // CHECK:           pto.barrier <PIPE_MTE3>
+  // CHECK:           pto.tstore
+  func.func @no_movement(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %i = %c0 to %c8 step %c1 {
+      %out = pto.partition_view %dst, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+    }
+    return
+  }
+
+  // The destination advances by a value the analysis cannot bound: the induction
+  // variable is scaled by a loop-invariant that is not a compile-time constant, so
+  // the movement per iteration is unknown and the barrier must stay.
+  // CHECK-LABEL: func.func @unknown_movement
+  // CHECK:         scf.for
+  // CHECK:           pto.barrier <PIPE_MTE3>
+  // CHECK:           pto.tstore
+  func.func @unknown_movement(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>, %arg2: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %i = %c0 to %c8 step %c1 {
+      %off = arith.muli %i, %arg2 : index
+      %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+    }
+    return
+  }
+}
