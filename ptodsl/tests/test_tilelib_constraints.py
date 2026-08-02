@@ -17,6 +17,7 @@ from ptodsl.tilelib import ScalarType, TileSpec, VectorSpec, ViewSpec, select
 from ptodsl.tilelib.constraints import (
     build_context,
     passes,
+    require_conversion_1d,
     require_elementwise_1d,
     require_predicate_compare_1d,
     require_predicate_select_1d,
@@ -56,6 +57,20 @@ def _tile(
 def _ordinary_elementwise_1d(specs, *operand_names):
     context = build_context(specs, "a5", "pto.example")
     return passes((require_elementwise_1d(*operand_names),), context)
+
+
+def _conversion_1d(specs, *, source_elements_per_destination=1):
+    context = build_context(specs, "a5", "pto.tcvt")
+    return passes(
+        (
+            require_conversion_1d(
+                source_elements_per_destination=(
+                    source_elements_per_destination
+                ),
+            ),
+        ),
+        context,
+    )
 
 
 def _predicate_compare_1d(specs, *data_operand_names):
@@ -213,6 +228,79 @@ class TileLibConstraintTest(unittest.TestCase):
         self.assertTrue(_ordinary_elementwise_1d(specs, "src", "dst"))
         self.assertFalse(
             _ordinary_elementwise_1d(specs, "src", "tmp", "dst")
+        )
+
+    def test_conversion_1d_accepts_typed_contiguous_streams(self):
+        specs = {
+            "src": _tile(shape=(8, 65)),
+            "dst": TileSpec(
+                shape=(8, 65),
+                dtype=ScalarType("i16"),
+                valid_shape=(8, 65),
+                compact_mode="normal",
+            ),
+        }
+        self.assertTrue(_conversion_1d(specs))
+
+    def test_conversion_1d_accepts_a_partial_single_logical_row(self):
+        specs = {
+            "src": _tile(shape=(4, 65), valid_shape=(1, 63)),
+            "dst": TileSpec(
+                shape=(4, 65),
+                dtype=ScalarType("i16"),
+                valid_shape=(1, 63),
+            ),
+        }
+        self.assertTrue(_conversion_1d(specs))
+
+    def test_conversion_1d_rejects_partial_multi_row_or_stride_gap(self):
+        partial = {
+            "src": _tile(shape=(4, 65), valid_shape=(4, 63)),
+            "dst": TileSpec(
+                shape=(4, 65),
+                dtype=ScalarType("i16"),
+                valid_shape=(4, 63),
+            ),
+        }
+        stride_gap = {
+            "src": _tile(shape=(4, 65), compact_mode="row_plus_one"),
+            "dst": TileSpec(
+                shape=(4, 65),
+                dtype=ScalarType("i16"),
+            ),
+        }
+        self.assertFalse(_conversion_1d(partial))
+        self.assertFalse(_conversion_1d(stride_gap))
+
+    def test_conversion_1d_models_bf16_to_fp4_packing(self):
+        legal = {
+            "src": TileSpec(
+                shape=(8, 130),
+                dtype=ScalarType("bf16"),
+            ),
+            "dst": TileSpec(
+                shape=(8, 65),
+                dtype=ScalarType("f4e1m2x2"),
+            ),
+        }
+        wrong_ratio = {
+            "src": TileSpec(
+                shape=(8, 129),
+                dtype=ScalarType("bf16"),
+            ),
+            "dst": legal["dst"],
+        }
+        self.assertTrue(
+            _conversion_1d(
+                legal,
+                source_elements_per_destination=2,
+            )
+        )
+        self.assertFalse(
+            _conversion_1d(
+                wrong_ratio,
+                source_elements_per_destination=2,
+            )
         )
 
     def test_predicate_compare_1d_accepts_single_row_with_rounded_capacity(self):

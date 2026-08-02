@@ -10,6 +10,7 @@
 import ast
 from pathlib import Path
 import unittest
+from pathlib import Path
 
 import ptodsl.tilelib as tilelib
 from ptodsl.tilelib import ScalarSpec, ScalarType, TileSpec, VectorSpec, ViewSpec, select
@@ -66,7 +67,7 @@ CATALOG = {
         "f32",
         "template_tdivs_tile_scalar_1d",
     ),
-    "pto.tcvt": ("template_tcvt_f32_to_i32", "pto.vcvt", ("src", "dst"), "f32"),
+    "pto.tcvt": ("template_tcvt_f32_to_i32_1d", "pto.vcvt", ("src", "dst"), "f32"),
     "pto.tconcat": ("template_tconcat", "pto.vsts", ("src0", "src1", "dst"), "f32"),
     # tdequant has i16/i8 variants; this entry covers the i16 representative
     # (the i8 path is exercised by test_tdequant_dtype_versions_render).
@@ -281,6 +282,7 @@ OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | ROW_REDUCTIONS
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | ARG_COLUMN_REDUCTIONS
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | CUBE_OPS
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {
+    "pto.tcvt",
     "pto.tabs",
     "pto.texp",
     "pto.tneg",
@@ -947,7 +949,7 @@ class TileLibCatalogTest(unittest.TestCase):
         self.assertEqual(selected.name, "template_tmov_basic")
         self.assertIn("pto.vsts", selected.specialize(**specs).mlir_text())
 
-    def test_tcvt_additional_rowwise_versions_render(self):
+    def test_tcvt_contiguous_versions_select_flattened_candidates(self):
         signatures = {
             ("i32", "f32"): "template_tcvt_i32_to_f32",
             ("i16", "f16"): "template_tcvt_i16_to_f16",
@@ -994,9 +996,12 @@ class TileLibCatalogTest(unittest.TestCase):
                     "dst": TileSpec(shape=(8, 64), dtype=ScalarType(dst_dtype)),
                 }
                 selected = select("pto.tcvt", "a5", specs)
-                self.assertEqual(selected.name, expected_name)
+                self.assertEqual(selected.name, f"{expected_name}_1d")
+                self.assertEqual(selected.metadata.loop_depth, 1)
                 expected_op = "pto.vtrc" if expected_name == "template_tcvt_f32_to_f32" else "pto.vcvt"
-                self.assertIn(expected_op, selected.specialize(**specs).mlir_text())
+                mlir = selected.specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn(expected_op, mlir)
 
     def test_tcvt_bf16_to_fp4_versions_render(self):
         for dst_dtype in ("f4e1m2x2", "f4e2m1x2"):
@@ -1006,8 +1011,122 @@ class TileLibCatalogTest(unittest.TestCase):
                     "dst": TileSpec(shape=(8, 64), dtype=ScalarType(dst_dtype)),
                 }
                 selected = select("pto.tcvt", "a5", specs)
-                self.assertEqual(selected.name, "template_tcvt_bf16_to_fp4")
-                self.assertIn("pto.vcvt", selected.specialize(**specs).mlir_text())
+                self.assertEqual(selected.name, "template_tcvt_bf16_to_fp4_1d")
+                self.assertEqual(selected.metadata.loop_depth, 1)
+                mlir = selected.specialize(**specs).mlir_text()
+                self.assertEqual(mlir.count("scf.for"), 1)
+                self.assertIn("pto.vcvt", mlir)
+
+    def test_tcvt_partial_multi_row_ranges_retain_2d_fallbacks(self):
+        cases = (
+            ("f32", "i32", "template_tcvt_f32_to_i32"),
+            ("f16", "i16", "template_tcvt_f16_to_i16"),
+            ("i64", "f32", "template_tcvt_i64_to_f32"),
+        )
+        for src_dtype, dst_dtype, expected_name in cases:
+            with self.subTest(signature=(src_dtype, dst_dtype)):
+                specs = {
+                    "src": TileSpec(
+                        shape=(8, 65),
+                        valid_shape=(8, 63),
+                        dtype=ScalarType(src_dtype),
+                    ),
+                    "dst": TileSpec(
+                        shape=(8, 65),
+                        valid_shape=(8, 63),
+                        dtype=ScalarType(dst_dtype),
+                    ),
+                }
+                selected = select("pto.tcvt", "a5", specs)
+                self.assertEqual(selected.name, expected_name)
+                self.assertEqual(selected.metadata.loop_depth, 2)
+                self.assertEqual(
+                    selected.specialize(**specs).mlir_text().count("scf.for"),
+                    2,
+                )
+
+        fp4_specs = {
+            "src": TileSpec(
+                shape=(8, 130),
+                valid_shape=(8, 126),
+                dtype=ScalarType("bf16"),
+            ),
+            "dst": TileSpec(
+                shape=(8, 65),
+                valid_shape=(8, 63),
+                dtype=ScalarType("f4e1m2x2"),
+            ),
+        }
+        selected = select("pto.tcvt", "a5", fp4_specs)
+        self.assertEqual(selected.name, "template_tcvt_bf16_to_fp4")
+        self.assertEqual(selected.metadata.loop_depth, 2)
+
+    def test_tcvt_single_row_and_stride_gap_selection(self):
+        single_row = {
+            "src": TileSpec(
+                shape=(4, 65),
+                valid_shape=(1, 63),
+                dtype=ScalarType("f32"),
+            ),
+            "dst": TileSpec(
+                shape=(4, 65),
+                valid_shape=(1, 63),
+                dtype=ScalarType("i32"),
+            ),
+        }
+        stride_gap = {
+            "src": TileSpec(
+                shape=(4, 65),
+                dtype=ScalarType("f32"),
+                compact_mode="row_plus_one",
+            ),
+            "dst": TileSpec(
+                shape=(4, 65),
+                dtype=ScalarType("i32"),
+            ),
+        }
+
+        self.assertEqual(
+            select("pto.tcvt", "a5", single_row).name,
+            "template_tcvt_f32_to_i32_1d",
+        )
+        self.assertEqual(
+            select("pto.tcvt", "a5", stride_gap).name,
+            "template_tcvt_f32_to_i32",
+        )
+
+    def test_tcvt_catalog_has_one_1d_pair_for_every_existing_candidate(self):
+        specs = {
+            "src": TileSpec(shape=(8, 64), dtype=ScalarType("f32")),
+            "dst": TileSpec(shape=(8, 64), dtype=ScalarType("i32")),
+        }
+        select("pto.tcvt", "a5", specs)
+        candidates = [
+            descriptor
+            for descriptor in tilelib.default_registry().lookup(
+                "pto.tcvt",
+                "a5",
+            )
+        ]
+        by_id = {descriptor.metadata.id: descriptor for descriptor in candidates}
+
+        self.assertEqual(len(candidates), 76)
+        self.assertEqual(set(by_id), set(range(76)))
+        for fallback_id in range(38):
+            with self.subTest(fallback_id=fallback_id):
+                fallback = by_id[fallback_id]
+                flattened = by_id[38 + fallback_id]
+                self.assertEqual(fallback.metadata.loop_depth, 2)
+                self.assertEqual(fallback.metadata.priority, 0)
+                self.assertEqual(flattened.metadata.loop_depth, 1)
+                self.assertEqual(flattened.metadata.priority, 10)
+                self.assertEqual(flattened.name, f"{fallback.name}_1d")
+
+    def test_tcvt_templates_use_native_python_loop_syntax(self):
+        from ptodsl.tilelib.templates.a5 import tcvt
+
+        source = Path(tcvt.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("pto.for_(", source)
 
     def test_tcolexpanddiv_i32_uses_float_divide_path(self):
         specs = {

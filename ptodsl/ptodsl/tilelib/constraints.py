@@ -405,6 +405,86 @@ def require_elementwise_1d(*operand_names, memory_spaces=("ub", "vec")):
     return _require_elementwise_1d
 
 
+def require_conversion_1d(
+    source_operand="src",
+    destination_operand="dst",
+    *,
+    source_elements_per_destination=1,
+    memory_spaces=("ub", "vec"),
+):
+    """Require two typed conversion streams to be independently flattenable.
+
+    Conversion source and destination tiles need not have the same element
+    width. Their typed pointers still advance over one common logical range,
+    provided each tile is gap-free and the valid shapes obey the conversion's
+    element-count relationship. ``source_elements_per_destination`` models
+    packed forms such as A5 BF16-to-FP4, where one destination storage element
+    represents two source elements.
+
+    Multi-row ranges must fill the physical column axis of both tiles. A
+    single logical row is also legal because neither stream crosses a row
+    boundary. Unknown layout or compact-mode metadata rejects the candidate.
+    """
+
+    allowed_memory_spaces = frozenset(memory_spaces)
+    ratio = source_elements_per_destination
+
+    def _require_conversion_1d(**context):
+        if not isinstance(ratio, int) or ratio <= 0:
+            return False
+
+        operands = (source_operand, destination_operand)
+        shapes = []
+        valid_shapes = []
+        for name in operands:
+            if context.get(f"{name}_kind") != "tile":
+                return False
+
+            shape = context.get(f"{name}_shape")
+            valid_shape = context.get(f"{name}_valid_shape")
+            if not _is_static_rank2_shape(shape) or not _is_static_rank2_shape(
+                valid_shape
+            ):
+                return False
+            if any(
+                valid > physical
+                for valid, physical in zip(valid_shape, shape)
+            ):
+                return False
+            if context.get(f"{name}_memory_space") not in allowed_memory_spaces:
+                return False
+
+            config = context.get(f"{name}_config")
+            if (
+                config is None
+                or _enum_value(config.b_layout) != BLayout.ROW_MAJOR.value
+                or _enum_value(config.s_layout) != SLayout.NONE_BOX.value
+                or not _has_gap_free_row_stride(config.compact_mode)
+            ):
+                return False
+
+            shapes.append(shape)
+            valid_shapes.append(valid_shape)
+
+        src_shape, dst_shape = shapes
+        src_valid, dst_valid = valid_shapes
+        if src_shape[0] != dst_shape[0] or src_valid[0] != dst_valid[0]:
+            return False
+        if (
+            src_shape[1] != dst_shape[1] * ratio
+            or src_valid[1] != dst_valid[1] * ratio
+        ):
+            return False
+
+        full_columns = (
+            src_valid[1] == src_shape[1]
+            and dst_valid[1] == dst_shape[1]
+        )
+        return full_columns or dst_valid[0] == 1
+
+    return _require_conversion_1d
+
+
 _PREDICATE_PACKING_LAYOUTS = {
     # A5 stores one predicate bit per compared element. 32-bit comparisons
     # combine two 64-lane masks before a 16-byte PK store; 16-bit comparisons
@@ -716,6 +796,7 @@ __all__ = [
     "evaluate_candidate",
     "passes",
     "require_contiguous",
+    "require_conversion_1d",
     "require_elementwise_1d",
     "require_same_valid_shape",
     "require_valid_rows",

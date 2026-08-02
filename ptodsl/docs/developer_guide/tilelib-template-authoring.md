@@ -121,6 +121,15 @@ Multi-row masks must have no predicate-row padding. On A5 the select temporary
 is unused, so validate that its local tile metadata is complete and supported
 without requiring its shape to match the data range.
 
+Width-changing conversion candidates use `require_conversion_1d()`. The rule
+proves that source and destination are independently gap-free typed streams;
+ordinary conversions have equal element shapes, while packed forms pass an
+explicit source-elements-per-destination ratio. Keep unpack/pack distribution
+modes, mask dtypes, rounding, saturation, and multi-step instruction sequences
+inside the conversion module. Unknown metadata falls back to 2D. If a future
+conversion has a tile temporary, extend the family rule to validate it rather
+than applying the current source/destination-only predicate unchanged.
+
 When porting a legacy TileLangDSL version, first write down which rule made the
 legacy version legal. Then encode that rule as metadata or a predicate. Avoid
 fixing a single failing case by weakening a predicate beyond the legacy

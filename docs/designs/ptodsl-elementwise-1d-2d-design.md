@@ -355,12 +355,12 @@ used by conversion bodies that request rounding.
 | 36 | `template_tcvt_i64_to_f32` | `i64 -> f32` | packed 64-to-32 store |
 | 37 | `template_tcvt_i64_to_i32` | `i64 -> i32` | packed 64-to-32 store |
 
-No `tcvt` candidate is yet classified as a confirmed 1D exception. The
-generic, unpacked-load, packed-store, multi-step, widening, and low-precision
-categories each require a family rule proving that a flat source chunk maps to
-the corresponding flat destination chunk without crossing a physical gap or
-changing tail semantics. BF16-to-FP4 additionally requires the existing 2:1
-logical-column relationship to hold over the complete flat ranges.
+All 38 `tcvt` candidates now have a paired preferred 1D form. The A5
+implementation provides flattened helpers for the generic, unpacked-load,
+packed-store, multi-step, widening, 64-bit, and low-precision categories, so
+none of the currently registered PTODSL conversions is a 2D-only exception.
+BF16-to-FP4 uses a separate rule that proves its 2:1 source/destination column
+relationship over both physical and valid ranges.
 
 ## Existing Shared Traversal Structure
 
@@ -537,6 +537,29 @@ local layout and compact-mode metadata but does not share the data range.
 The older `require_contiguous()` helper remains available for existing users;
 new element-wise 1D candidates must use the named-operand rule.
 
+### Conversion legality
+
+`tilelib.require_conversion_1d()` proves that the source and destination are
+two independently contiguous typed streams. Both operands must be static
+rank-2 local tiles with row-major, none-box, gap-free compact storage. Ordinary
+conversions require equal physical and valid shapes. Multi-row regions must
+fill both physical column axes; a single logical row may use partial columns
+because neither stream crosses a row boundary.
+
+Changing dtype width does not by itself make flattening illegal. Each source
+and destination pointer advances in its own element type, while the existing
+unpack/pack distribution mode and mask representation preserve the conversion
+body's logical-element mapping. BF16-to-FP4 supplies
+`source_elements_per_destination=2`, requiring source columns to be exactly
+twice the packed destination columns. Unknown memory, layout, shape, or compact
+metadata rejects the 1D candidate.
+
+The current A5 PTODSL candidates have only `(src, dst)` operands. A5's
+non-saturating multi-step conversions use register temporaries, so no ABI
+temporary tile is omitted from the proof. A future candidate with a tile
+temporary must extend the conversion rule to validate that operand before it
+can gain a 1D form.
+
 ## Metadata and Legality Status
 
 ### Current continuity predicate
@@ -628,22 +651,26 @@ This allocation deliberately makes the preferred 1D IDs larger than the
 fallback IDs, so an accidental ascending-ID sort is exposed by tests rather
 than appearing to work.
 
-## Open Legality Questions for the Next Step
+## Resolved Conversion Decisions
 
-1. Which temporary tiles are true traversal participants, and which are ABI
-   scratch operands whose required size relation differs from the data range?
-   They must all still be checked.
-2. For each `tcvt` distribution mode, what source and destination byte ranges
-   are touched by a vector iteration and its tail?
-3. Does any packed conversion require per-row restart state even when both
-   physical buffers are contiguous?
-4. Must `pad_value` affect 1D legality, or is it relevant only when an
-   instruction can observe elements outside the logical valid range?
-5. Which dynamic or unknown tile metadata encodings can reach
-   `InsertTemplateAttributes`, and how should each be rejected conservatively?
+1. The registered A5 PTODSL `tcvt` forms contain only source and destination
+   tiles; their multi-step paths use register temporaries.
+2. Width-changing forms use equal logical element offsets on independently
+   typed pointers. Their existing load/store distributions define the bytes
+   consumed and produced per iteration.
+3. A5 supplies flat forms for every registered packed and multi-step category;
+   no form requires per-row state when both streams are proven contiguous.
+4. `pad_value` does not change conversion selection because the 1D body stores
+   only the mask-bounded logical range and does not consume padding values as
+   operands.
+5. Non-static shapes and unknown memory, layout, sub-layout, or compact-mode
+   metadata conservatively reject the 1D candidate and retain the 2D fallback.
 
-These questions must be answered with focused legality tests or an explicitly
-documented exception before the relevant family gains a 1D candidate.
+The implementation follows PTO-ISA revision
+`23e31ddf51233835810997ba7cff12fda2808f50`, principally
+`include/pto/common/arch/register/tcvt_common.hpp`, which exposes paired 1D and
+2D conversion helpers and selects the flat path for full-column or single-row
+tiles.
 
 ## Coverage Checklist
 
