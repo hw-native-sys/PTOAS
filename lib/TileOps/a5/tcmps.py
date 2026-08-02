@@ -186,6 +186,7 @@ def _register_tcmps(*, name, traversal, priority, candidate_id):
             tilelib.require_predicate_compare_1d(
                 "src",
                 predicate_operand="dst",
+                flattened_destination=True,
             )
         )
         loop_depth = 1

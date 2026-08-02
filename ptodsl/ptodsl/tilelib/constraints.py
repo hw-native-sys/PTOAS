@@ -502,6 +502,7 @@ _PREDICATE_PACKING_LAYOUTS = {
 def require_predicate_compare_1d(
     *data_operand_names,
     predicate_operand="dst",
+    flattened_destination=False,
     memory_spaces=("ub", "vec"),
 ):
     """Require an A5 compare and its packed predicate output to be flattenable.
@@ -511,10 +512,14 @@ def require_predicate_compare_1d(
     element, written in complete dtype-dependent predicate-store blocks.
 
     A single logical row is flattenable when its destination row has enough
-    physical bytes for the rounded store. Multiple rows additionally require
-    every source row to end on a predicate-store boundary and the destination
-    row stride to equal the exact bytes produced for one row. This excludes
-    both source-row tail padding and destination predicate-row padding.
+    physical bytes for the rounded store. Multiple rows normally require every
+    source row to end on a predicate-store boundary and the destination row
+    stride to equal the exact bytes produced for one row.
+
+    ``flattened_destination`` models operations such as ``tcmps`` whose 1D
+    form writes the packed predicate into one continuous destination prefix.
+    In that form, complete contiguous data rows and sufficient total
+    destination capacity are required instead of an exact packed row stride.
     """
 
     allowed_memory_spaces = frozenset(memory_spaces)
@@ -583,6 +588,24 @@ def require_predicate_compare_1d(
             valid_shape[1] == shape[1]
             for shape, valid_shape in zip(data_shapes, data_valid_shapes)
         )
+        destination_holds_logical_range = predicate_row_bytes >= max(
+            shape[1] for shape in data_shapes
+        )
+        if flattened_destination and destination_holds_logical_range:
+            total_elements = valid_rows * valid_cols
+            total_store_count = _ceil_div(
+                total_elements,
+                elements_per_store,
+            )
+            required_total_bytes = total_store_count * bytes_per_store
+            predicate_total_bytes = (
+                predicate_shape[0] * predicate_row_bytes
+            )
+            return (
+                data_rows_are_contiguous
+                and predicate_total_bytes >= required_total_bytes
+            )
+
         rows_end_on_store_boundary = valid_cols % elements_per_store == 0
         predicate_rows_are_contiguous = predicate_row_bytes == required_row_bytes
         return (
