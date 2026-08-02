@@ -5,8 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Phase-4 breadth test: each ported elementwise op selects + renders to the structured
-abstraction, using the right vector op."""
+"""Element-wise template selection, traversal, and scope acceptance tests."""
 
 import ast
 import unittest
@@ -24,6 +23,7 @@ from ptodsl.tilelib import (
     legal_candidates,
     select,
 )
+from ptodsl.tilelib.templates import load_template
 from ptodsl.tilelib.templates.a5._elementwise import (
     emit_scalar_binary_1d,
     emit_scalar_binary_2d,
@@ -33,6 +33,71 @@ from ptodsl.tilelib.templates.a5._elementwise import (
     emit_unary_2d,
     register_binary,
 )
+
+
+ELEMENTWISE_SCOPE_BY_FAMILY = {
+    "unary": frozenset(
+        {
+            "pto.tabs",
+            "pto.texp",
+            "pto.tlog",
+            "pto.tneg",
+            "pto.tnot",
+            "pto.trecip",
+            "pto.trelu",
+            "pto.trsqrt",
+            "pto.tsqrt",
+        }
+    ),
+    "tile_tile": frozenset(
+        {
+            "pto.tadd",
+            "pto.tand",
+            "pto.tdiv",
+            "pto.tfmod",
+            "pto.tmax",
+            "pto.tmin",
+            "pto.tmul",
+            "pto.tor",
+            "pto.tprelu",
+            "pto.trem",
+            "pto.tshl",
+            "pto.tshr",
+            "pto.tsub",
+            "pto.txor",
+        }
+    ),
+    "tile_scalar": frozenset(
+        {
+            "pto.tadds",
+            "pto.tands",
+            "pto.tdivs",
+            "pto.tfmods",
+            "pto.tlrelu",
+            "pto.tmaxs",
+            "pto.tmins",
+            "pto.tmuls",
+            "pto.tors",
+            "pto.trems",
+            "pto.tshls",
+            "pto.tshrs",
+            "pto.tsubs",
+            "pto.txors",
+        }
+    ),
+    "compare": frozenset({"pto.tcmp", "pto.tcmps"}),
+    "select": frozenset({"pto.tsel", "pto.tsels"}),
+    "conversion": frozenset({"pto.tcvt"}),
+    "scalar_fill": frozenset({"pto.texpands"}),
+}
+
+ELEMENTWISE_SCOPE = frozenset().union(
+    *ELEMENTWISE_SCOPE_BY_FAMILY.values()
+)
+
+# Map an operation to its reviewed reason if no flattened form is legal.
+# Every scoped operation currently has at least one legal 1D candidate.
+ELEMENTWISE_1D_EXCEPTIONS = {}
 
 # op -> (expected template name, expected vector op in the rendered MLIR)
 ELEMENTWISE = {
@@ -540,6 +605,68 @@ def _select_specs(
 
 
 class TileLibElementwiseTest(unittest.TestCase):
+    def test_issue_scope_catalog_has_ranked_1d_and_2d_coverage(self):
+        family_sizes = sum(
+            len(operations)
+            for operations in ELEMENTWISE_SCOPE_BY_FAMILY.values()
+        )
+        self.assertEqual(family_sizes, 43)
+        self.assertEqual(len(ELEMENTWISE_SCOPE), family_sizes)
+        self.assertLessEqual(
+            set(ELEMENTWISE_1D_EXCEPTIONS),
+            ELEMENTWISE_SCOPE,
+        )
+
+        for op in sorted(ELEMENTWISE_SCOPE):
+            with self.subTest(op=op):
+                self.assertTrue(load_template(op, "a5"))
+                candidates = tilelib.default_registry().lookup(op, "a5")
+                self.assertTrue(candidates)
+
+                candidate_ids = [
+                    candidate.metadata.id for candidate in candidates
+                ]
+                self.assertEqual(
+                    len(candidate_ids),
+                    len(set(candidate_ids)),
+                    "candidate IDs must remain unique within an operation",
+                )
+
+                by_loop_depth = {
+                    loop_depth: [
+                        candidate
+                        for candidate in candidates
+                        if candidate.metadata.loop_depth == loop_depth
+                    ]
+                    for loop_depth in (1, 2)
+                }
+                self.assertTrue(
+                    by_loop_depth[2],
+                    "every scoped operation needs a general 2D fallback",
+                )
+
+                exception = ELEMENTWISE_1D_EXCEPTIONS.get(op)
+                if exception is not None:
+                    self.assertTrue(exception.strip())
+                    self.assertFalse(by_loop_depth[1])
+                    continue
+
+                self.assertTrue(
+                    by_loop_depth[1],
+                    "operation needs a 1D candidate or a documented exception",
+                )
+                self.assertGreater(
+                    min(
+                        candidate.metadata.priority
+                        for candidate in by_loop_depth[1]
+                    ),
+                    max(
+                        candidate.metadata.priority
+                        for candidate in by_loop_depth[2]
+                    ),
+                    "every legal 1D form must rank ahead of every 2D fallback",
+                )
+
     def test_shared_traversals_use_native_python_for_syntax(self):
         tree = ast.parse(
             Path(elementwise.__file__).read_text(encoding="utf-8")

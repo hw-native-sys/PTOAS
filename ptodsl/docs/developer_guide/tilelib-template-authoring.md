@@ -328,6 +328,17 @@ the registrar passes `src0`, `src1`, `tmp`, and `dst` to
 current generated helper does not read it. A non-contiguous or insufficiently
 described temporary must independently disqualify the 1D candidate.
 
+The issue-scope acceptance catalog lives in
+`ptodsl/tests/test_tilelib_elementwise.py` as
+`ELEMENTWISE_SCOPE_BY_FAMILY`. It is the authoritative checklist for the
+unary, Tile-Tile, Tile-Scalar, compare, select, conversion, and scalar-fill
+operations covered by shared 1D/2D selection. The catalog test requires unique
+candidate IDs, a general 2D fallback, and higher-ranked 1D coverage for every
+listed operation. There are currently no operation-level 1D exceptions. If an
+instruction representation makes all flattened forms illegal in the future,
+add a non-empty reviewed reason to `ELEMENTWISE_1D_EXCEPTIONS` and a focused
+legality regression; do not remove the operation from the catalog.
+
 ## View And Valid-Shape Rules
 
 Do not assume the logical valid shape is the same as the physical view shape.
