@@ -22,12 +22,14 @@ jobs:
   warn-slow-ci-sim:
     if: ${{ github.event.workflow_run.event == 'pull_request' }}
     runs-on: ubuntu-22.04
-    continue-on-error: true
     permissions:
       actions: read
       contents: read
       issues: write
-      pull-requests: read
+      # The warning targets a pull request. Request PR write permission as well
+      # as issues write so both the ci-slow label and conversation comment can
+      # be updated by GITHUB_TOKEN under restrictive repository defaults.
+      pull-requests: write
     env:
       SOFT_TIMEOUT_MINUTES: ${{ vars.CI_SIM_SOFT_TIMEOUT_MINUTES || '90' }}
       PR_CONTEXT_DIR: pr-context
