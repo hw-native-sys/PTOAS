@@ -397,6 +397,38 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
+static llvm::cl::opt<bool> checkSyncIds(
+    "check-sync-ids",
+    llvm::cl::desc("Run oracle gate G3: verify every static emitted sync id is "
+                   "legal for its direction, op and arch. Rotating set_flag_dyn / "
+                   "wait_flag_dyn ids resolve at runtime and are not checked "
+                   "(fails on violation)"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> checkSyncIdsInjectFault(
+    "check-sync-ids-inject-fault",
+    llvm::cl::desc("Gate self-test: feed G3 a synthetic illegal id "
+                   "(event-oor | block-all-stomp | bufid-oor). Appended to the "
+                   "gate's own record list after extraction, never to the IR, "
+                   "because an out-of-range event id is unrepresentable in IR"),
+    llvm::cl::init(""), llvm::cl::Hidden);
+
+static llvm::cl::opt<bool> checkSyncInterference(
+    "check-sync-interference",
+    llvm::cl::desc("Run oracle gate G2: assert no two overlapping intervals "
+                   "share a sync id (fails on nesting / leak)"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> checkSyncSelfCoverage(
+    "check-sync-self-coverage",
+    llvm::cl::desc("Run oracle gate G1-self: assert every dependency the "
+                   "front-end analysis (DepBetween) reports is ordered by the "
+                   "emitted sync, except pairs on mutually exclusive scf.if arms "
+                   "and, on A5, PIPE_V->PIPE_V pairs the target orders itself; "
+                   "both exclusions are counted and reported. ABSOLUTE -- no "
+                   "reference profile and nothing inherited from the sync pass"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
@@ -3528,6 +3560,18 @@ int mlir::pto::compilePTOASModule(
 
   // Materialize each `pto.multi_tile_get` as an addressed `pto.alloc_tile`;
   // dynamic selections use an `arith.select` chain over planned addresses.
+  // Oracle gates. Read-only apart from diagnostics, and each fails the pipeline on
+  // a violation rather than reporting and continuing.
+  if (checkSyncIds)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncIdsPass(
+        arch == "a5" ? 32u : 0u, checkSyncIdsInjectFault));
+  if (checkSyncInterference)
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOCheckSyncInterferencePass());
+  if (checkSyncSelfCoverage)
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOCheckSyncSelfCoveragePass());
+
   pm.addPass(pto::createPTOResolveBufferSelectPass());
   if (effectiveBackend == PTOBackend::EmitC)
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());

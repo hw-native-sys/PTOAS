@@ -1375,4 +1375,62 @@ def VPTOMaskSimplify
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 
+def PTOCheckSyncIds : Pass<"pto-check-sync-ids", "func::FuncOp"> {
+  let summary = "Oracle gate G3: device-id legality of the emitted synchronization";
+  let description = [{
+    Read-only apart from diagnostics. Checks that every static synchronization id
+    in the function is one the target permits: intra-core event ids inside their
+    per-direction pool, honouring the reserved tail, and buffer ids inside both the
+    hardware field and the arch's exposed buffer-id capacity, which the pass receives
+    from its caller and defaults to zero. Rotating ids on `set_flag_dyn` /
+    `wait_flag_dyn` resolve at runtime and are not checked. Fails the pass on any
+    violation.
+  }];
+
+  let constructor = "mlir::pto::createPTOCheckSyncIdsPass()";
+}
+
+def PTOCheckSyncInterference : Pass<"pto-check-sync-interference", "func::FuncOp"> {
+  let summary = "Oracle gate G2: no two overlapping intervals may share a sync id";
+  let description = [{
+    Read-only apart from diagnostics. Generalizes
+    `BufidSyncIdAlloc::validateNoSamePhysicalIdNesting` from buffer ids to every
+    id class: for each id key the live intervals must be pairwise disjoint.
+    Event ids are keyed by (srcPipe, dstPipe, eventId) because event flags are
+    per-direction disjoint hardware; buffer ids are keyed by buf_id alone
+    because that pool is global. Fails the pass on any nesting, on a close
+    without an open, or on a leaked id.
+  }];
+
+  let constructor = "mlir::pto::createPTOCheckSyncInterferencePass()";
+}
+
+def PTOCheckSyncSelfCoverage
+    : Pass<"pto-check-sync-self-coverage", "func::FuncOp"> {
+  let summary = "Oracle gate G1-self: every analysed dependency must be ordered by emitted sync";
+  let description = [{
+    ABSOLUTE, not differential -- there is no reference file. Rebuilds the
+    front-end SyncIR (`PTOIRTranslator`) and calls
+    `MemoryDependentAnalyzer::DepBetween` over the resulting def/use vectors
+    directly, then asserts that every dependency it reports is ordered by the
+    emitted sync, using the transitive closure of `computeCoverage`'s edge set
+    (loop-carried dependencies are checked against carried edges at d=1).
+
+    The expected set reads none of the sync pass's decisions -- not its hazard
+    selection, mechanism choice, ids, or emitted ops -- so a green result is
+    independent of them. It is NOT a proof of correctness: pairs on mutually
+    exclusive `scf.if` arms are excluded, and on A5 `PIPE_V`->`PIPE_V` pairs are
+    credited to the target's intra-pipe ordering guarantee. Both exclusions are
+    counted and reported rather than dropped.
+    `InsertSyncAnalysis::IsMemInfoHasDependency`, which layers policy on top of
+    `DepBetween`. It cannot, however, catch a dependency the front-end alias
+    analysis itself misses; see SyncOracleGates.h for that limit.
+
+    Dependencies whose endpoint op is not an anchor are reported as `unmappable`
+    rather than dropped.
+  }];
+
+  let constructor = "mlir::pto::createPTOCheckSyncSelfCoveragePass()";
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

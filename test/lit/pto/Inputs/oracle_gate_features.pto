@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Two shapes G1-self treats specially, isolated so each can be pinned on its own.
+// lit excludes this directory from discovery.
+
+module {
+  // Two consecutive PIPE_V ops on one tile: a same-pipe read-after-write. A5
+  // guarantees intra-pipe ordering on that pipe and its backend rejects an
+  // explicit vector barrier, so the gate must credit the ordering there and must
+  // NOT credit it on A3.
+  func.func @same_pipe(%a: !pto.partition_tensor_view<1x64xf32>,
+                       %c: !pto.partition_tensor_view<1x64xf32>) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %u = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tadd ins(%t, %t : !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>) outs(%u : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tmul ins(%u, %u : !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>) outs(%u : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tstore ins(%u : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // The two arms of one `scf.if` can never both execute, so no ordering is owed
+  // between an op in each. Counted rather than dropped, so the bookkeeping identity
+  // still balances and a predicate that swallowed real dependencies would show up.
+  func.func @exclusive_arms(%a: !pto.partition_tensor_view<1x64xf32>,
+                            %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %u = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    scf.if %p {
+      pto.tadd ins(%t, %t : !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>) outs(%u : !pto.tile_buf<vec, 1x64xf32>)
+    } else {
+      pto.tmul ins(%t, %t : !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>) outs(%u : !pto.tile_buf<vec, 1x64xf32>)
+    }
+    pto.tstore ins(%u : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+}

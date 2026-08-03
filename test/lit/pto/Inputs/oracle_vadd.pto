@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Shared input for the oracle gate tests: two loads, one vector add, one store.
+// That is the smallest kernel carrying both a cross-pipe read-after-write
+// (MTE2 -> V) and a write-after-read the other way (V -> MTE3), so every gate has
+// something real to judge. lit excludes this directory from discovery.
+
+module {
+  func.func @oracle_vadd(%a: !pto.partition_tensor_view<1x64xf32>,
+                         %b: !pto.partition_tensor_view<1x64xf32>,
+                         %c: !pto.partition_tensor_view<1x64xf32>) {
+    %ta = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %tb = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>)
+              outs(%ta : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tload ins(%b : !pto.partition_tensor_view<1x64xf32>)
+              outs(%tb : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tadd ins(%ta, %tb : !pto.tile_buf<vec, 1x64xf32>,
+                            !pto.tile_buf<vec, 1x64xf32>)
+             outs(%ta : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tstore ins(%ta : !pto.tile_buf<vec, 1x64xf32>)
+               outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+}

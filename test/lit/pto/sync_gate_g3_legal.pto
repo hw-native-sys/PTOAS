@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G3 passes synchronization the existing allocator produced. Paired with
+// sync_gate_g3_faults.pto: a gate that only ever passed would clear this file too.
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-ids %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=A3
+// A3: [sync-gate:g3] func=oracle_vadd view=ir records=5 violations=0 OK
+
+// The same kernel on A5. This kernel emits no buffer-id op, so the arch-capacity
+// rule is not exercised here; what the line pins is that changing the arch does not
+// change the verdict on event ids.
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --check-sync-ids %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=A5
+// A5: [sync-gate:g3] func=oracle_vadd view=ir records=5 violations=0 OK

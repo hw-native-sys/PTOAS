@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G1-self asks whether every dependency the front-end analysis reports is ordered
+// by the emitted synchronization. It is ABSOLUTE: the expected set comes from
+// `MemoryDependentAnalyzer::DepBetween` over a freshly built SyncIR, so it reads
+// none of the sync allocator's decisions and there is no reference file.
+//
+// Two exemptions exist, and both are COUNTED rather than dropped, so that
+// covered + uncovered + arm_excluded + arch_guaranteed == deps holds exactly. A
+// predicate that quietly swallowed real dependencies would be indistinguishable
+// from a correct one in any total-only check.
+
+// ---------------------------------------------------------------------------
+// 1. Sound: every dependency ordered, on synchronization InsertSync produced.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=COVERED
+// COVERED: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=5 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+
+// 2. Not vacuous: the same kernel with no sync pass at all still has the same five
+//    dependencies, and none of them is ordered. `deps` is identical to the run
+//    above, which is what shows the expected set does not move with the candidate.
+// RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=NOSYNC
+// NOSYNC: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=0 uncovered=5 (samepipe=0 crosspipe=5) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0
+
+// ---------------------------------------------------------------------------
+// 3. THE A5 INTRA-PIPE GUARANTEE, and that it does not leak across arches.
+//
+//    A5 orders two consecutive PIPE_V ops on one tile in hardware, and its backend
+//    rejects an explicit vector barrier for such a pair, so demanding one would make
+//    the gate unsatisfiable rather than strict. The rule is applied at exactly the
+//    condition the codegen uses, so the two cannot drift.
+//
+//    On A5 the two same-pipe dependencies are credited to the target:
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --check-sync-self-coverage %S/Inputs/oracle_gate_features.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=A5GUAR
+// A5GUAR: [sync-gate:g1-self] func=same_pipe compounds=4 deps=5 covered=3 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=2 unmappable=0 OK
+
+//    On A3 the same analysis of the same kernel credits NOTHING to the target --
+//    `arch_guaranteed=0` is the property under test here, and it is what shows the
+//    A5 rule did not leak. A3 orders those dependencies with real sync instead.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/Inputs/oracle_gate_features.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=A3NOGUAR
+// A3NOGUAR: [sync-gate:g1-self] func=same_pipe compounds=4 deps=5 covered=5 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+
+// ---------------------------------------------------------------------------
+// 4. MUTUALLY EXCLUSIVE ARMS. Two ops in different arms of one `scf.if` can never
+//    both execute, so no ordering is missing between them. `scf.if` is the only
+//    mutually-exclusive-region op this recognises; the exclusion is counted so the
+//    identity above still balances (4 + 0 + 1 + 0 == 5).
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/Inputs/oracle_gate_features.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ARMS
+// ARMS: [sync-gate:g1-self] func=exclusive_arms compounds=4 deps=5 covered=4 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=1 arch_guaranteed=0 unmappable=0 OK
