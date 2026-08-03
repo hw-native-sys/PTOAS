@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @trunci_u16_u8_nosat(
+      %input: !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xui8,
+          #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %result = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xui8,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<128xui8,
+        #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @trunci_i16_i8_nosat(
+      %input: !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi8,
+          #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %result = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xsi8,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<128xsi8,
+        #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @trunci_u32_u16_nosat(
+      %input: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xui16,
+          #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %result = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xui16,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<64xui16,
+        #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @trunci_i32_i16_nosat(
+      %input: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xsi16,
+          #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %result = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xsi16,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<64xsi16,
+        #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @trunci_u32_u8_nosat(
+      %input: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xui8,
+          #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %result = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xui8,
+            #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %result : !pto.vmi.vreg<64xui8,
+        #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @trunci_i32_i8_nosat(
+      %input: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xsi8,
+          #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %result = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xsi8,
+            #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %result : !pto.vmi.vreg<64xsi8,
+        #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @trunci_u16_u8_sat(
+      %input: !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xui8,
+          #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %result = pto.vmi.trunci %input {saturate = "SAT"}
+        : !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xui8,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<128xui8,
+        #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @trunci_u16_u8_nosat(
+// CHECK: %[[RESULT:.*]] = pto.vbitcast %arg0 : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: return %[[RESULT]]
+// CHECK-NOT: pto.vcvt
+
+// CHECK-LABEL: func.func @trunci_i16_i8_nosat(
+// CHECK: pto.vbitcast %arg0 : !pto.vreg<128xsi16> -> !pto.vreg<256xsi8>
+// CHECK-NOT: pto.vcvt
+
+// CHECK-LABEL: func.func @trunci_u32_u16_nosat(
+// CHECK: pto.vbitcast %arg0 : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// CHECK-NOT: pto.vcvt
+
+// CHECK-LABEL: func.func @trunci_i32_i16_nosat(
+// CHECK: pto.vbitcast %arg0 : !pto.vreg<64xsi32> -> !pto.vreg<128xsi16>
+// CHECK-NOT: pto.vcvt
+
+// CHECK-LABEL: func.func @trunci_u32_u8_nosat(
+// CHECK: pto.vbitcast %arg0 : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
+// CHECK-NOT: pto.vcvt
+
+// CHECK-LABEL: func.func @trunci_i32_i8_nosat(
+// CHECK: pto.vbitcast %arg0 : !pto.vreg<64xsi32> -> !pto.vreg<256xsi8>
+// CHECK-NOT: pto.vcvt
+
+// CHECK-LABEL: func.func @trunci_u16_u8_sat(
+// CHECK: pto.vcvt %arg0, {{.*}} {part = "EVEN", sat = "SAT"}
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

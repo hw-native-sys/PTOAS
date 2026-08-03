@@ -10451,8 +10451,9 @@ struct OneToNVMIExtIOpPattern : OpConversionPattern<OpT> {
 //     Lowering shape: emit vcvt EVEN/ODD per source chunk pair.
 //   - contiguous lane_stride = 1 -> contiguous lane_stride = 2/4
 //     Example: 16 -> 8 lane_stride=2, 32 -> 8 lane_stride=4.
-//     Lowering shape: emit vcvt into the logical-element vector whose live
-//     results occupy the requested strided lanes.
+//     Lowering shape: NOSAT keeps/bitcasts the source carrier; SAT emits vcvt
+//     into the logical-element vector whose live results occupy the requested
+//     strided lanes.
 //
 // Group-slots logical layouts
 //   - slots = 1 preserves the layout for 2x/4x narrowing.
@@ -10627,6 +10628,34 @@ struct OneToNVMITruncIOpPattern : OpConversionPattern<VMITruncIOp> {
 
     int64_t factor = sourceBits / resultBits;
 
+    StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
+
+    bool isDenseLaneStrideNarrowing =
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+        sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == factor &&
+        sourceParts.size() == resultTypes.size();
+    if (isDenseLaneStrideNarrowing && factor != 2 && factor != 4)
+      return rewriter.notifyMatchFailure(
+          op, "unsupported dense lane_stride trunci result layout");
+
+    if (isDenseLaneStrideNarrowing && sat && sat.getValue() == "NOSAT") {
+      SmallVector<Value> results;
+      results.reserve(resultTypes.size());
+      for (auto [sourcePart, resultType] :
+           llvm::zip_equal(sourceParts, resultTypes)) {
+        FailureOr<Value> result =
+            bitcastVReg(op.getLoc(), sourcePart, resultType, rewriter);
+        if (failed(result))
+          return rewriter.notifyMatchFailure(
+              op, "failed to forward NOSAT trunci carrier");
+        results.push_back(*result);
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
     // s32 -> s8 alias: borrow ui32 -> ui8 physical path (NOSAT bit-pattern
     // equivalent).  Rewrite source parts si32 -> ui32 / result types si8 -> ui8
     // via vbitcast; finalize() below casts merged ui8 results back to si8.
@@ -10662,8 +10691,6 @@ struct OneToNVMITruncIOpPattern : OpConversionPattern<VMITruncIOp> {
       resultType0 = cast<VRegType>(resultTypes.front());
     }
 
-    StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-
     auto finalize = [&](SmallVector<Value> &results) {
       if (s32ToS8Alias) {
         for (auto &&[i, r] : llvm::enumerate(results))
@@ -10675,13 +10702,7 @@ struct OneToNVMITruncIOpPattern : OpConversionPattern<VMITruncIOp> {
                                        *this->getTypeConverter());
     };
 
-    if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
-        sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
-        resultLayout.getLaneStride() == factor &&
-        sourceParts.size() == resultTypes.size()) {
-      if (factor != 2 && factor != 4)
-        return rewriter.notifyMatchFailure(
-            op, "unsupported dense lane_stride trunci result layout");
+    if (isDenseLaneStrideNarrowing) {
       StringAttr part = rewriter.getStringAttr(factor == 2 ? "EVEN" : "P0");
       FailureOr<Value> sourceMask =
           createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
