@@ -10,6 +10,7 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-layout-fold | FileCheck %s --check-prefix=FOLD
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-layout-fold -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-layout-fold -vmi-to-vpto -vpto-optimize-vcvt -canonicalize | FileCheck %s --check-prefix=ZERO-GAP
 
 module {
   func.func @vmi_layout_fold_load_lane_stride(
@@ -174,6 +175,46 @@ module {
     return %strided
         : !pto.vmi.vreg<129xi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
   }
+
+  func.func @vmi_load_extui_u8_u16_zero_gap(
+      %src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>> {
+    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+        : !pto.ptr<ui8, ub>
+        -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    %wide = pto.vmi.vcvt %load
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+    return %wide
+        : !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vmi_load_extui_u16_u32_zero_gap(
+      %src: !pto.ptr<ui16, ub>, %off: index)
+      -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>> {
+    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+        : !pto.ptr<ui16, ub>
+        -> !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    %wide = pto.vmi.vcvt %load
+        : !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+    return %wide
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vmi_load_extui_u8_u32_zero_gap(
+      %src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>> {
+    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+        : !pto.ptr<ui8, ub>
+        -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    %wide = pto.vmi.vcvt %load
+        : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+        -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+    return %wide
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+  }
+
 }
 
 // FOLD-LABEL: func.func @vmi_layout_fold_load_lane_stride(
@@ -296,3 +337,22 @@ module {
 // LOWER-COUNT-3: pto.vzunpack {{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
+
+// ZERO-GAP-LABEL: func.func @vmi_load_extui_u8_u16_zero_gap(
+// ZERO-GAP: %[[LOAD:.*]] = pto.vlds {{.*}} {dist = "UNPK_B8"}
+// ZERO-GAP: %[[WIDE:.*]] = pto.vbitcast %[[LOAD]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+// ZERO-GAP-NOT: pto.vcvt
+// ZERO-GAP: return %[[WIDE]]
+
+
+// ZERO-GAP-LABEL: func.func @vmi_load_extui_u16_u32_zero_gap(
+// ZERO-GAP: %[[LOAD:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// ZERO-GAP: %[[WIDE:.*]] = pto.vbitcast %[[LOAD]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// ZERO-GAP-NOT: pto.vcvt
+// ZERO-GAP: return %[[WIDE]]
+
+// ZERO-GAP-LABEL: func.func @vmi_load_extui_u8_u32_zero_gap(
+// ZERO-GAP: %[[LOAD:.*]] = pto.vlds {{.*}} {dist = "UNPK4"}
+// ZERO-GAP: %[[WIDE:.*]] = pto.vbitcast %[[LOAD]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// ZERO-GAP-NOT: pto.vcvt
+// ZERO-GAP: return %[[WIDE]]

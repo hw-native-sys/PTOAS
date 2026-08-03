@@ -1,0 +1,278 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-optimize-vcvt -canonicalize -cse | FileCheck %s
+
+module {
+  func.func @e2b_load(%src: !pto.ptr<f16, ub>, %off: index)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %load = pto.vlds %src[%off] {dist = "E2B_B16"}
+        : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+    %even = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    %odd = pto.vcvt %load, %mask {part = "ODD"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %even, %odd : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @brc_load(%src: !pto.ptr<f16, ub>, %off: index)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %load = pto.vlds %src[%off] {dist = "BRC_B16"}
+        : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+    %even = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    %odd = pto.vcvt %load, %mask {part = "ODD"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %even, %odd : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @scalar_broadcast(%seed: f16)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %broadcast = pto.vbr %seed : f16 -> !pto.vreg<128xf16>
+    %even = pto.vcvt %broadcast, %mask {part = "EVEN"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    %odd = pto.vcvt %broadcast, %mask {part = "ODD"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %even, %odd : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @normal_load_is_not_changed(%src: !pto.ptr<f16, ub>, %off: index)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %load = pto.vlds %src[%off]
+        : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+    %even = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    %odd = pto.vcvt %load, %mask {part = "ODD"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %even, %odd : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @masked_broadcast_is_not_changed(%seed: f16)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    %mask = pto.pset_b16 "PAT_VL1" : !pto.mask<b16>
+    %broadcast = pto.vbr %seed : f16 -> !pto.vreg<128xf16>
+    %even = pto.vcvt %broadcast, %mask {part = "EVEN"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    %odd = pto.vcvt %broadcast, %mask {part = "ODD"}
+        : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %even, %odd : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @zero_gap_unpk_b8(%src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vreg<128xui16> {
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
+        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+
+  func.func @zero_gap_unpk_b16(%src: !pto.ptr<ui16, ub>, %off: index)
+      -> !pto.vreg<64xui32> {
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %load = pto.vlds %src[%off] {dist = "UNPK_B16"}
+        : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+    %wide = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
+    return %wide : !pto.vreg<64xui32>
+  }
+
+  func.func @zero_gap_unpk4(%src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vreg<64xui32> {
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %load = pto.vlds %src[%off] {dist = "UNPK4"}
+        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %load, %mask {part = "P0"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+    return %wide : !pto.vreg<64xui32>
+  }
+
+  func.func @zero_gap_vzunpack(%input: !pto.vreg<256xui8>)
+      -> !pto.vreg<128xui16> {
+    %c0 = arith.constant 0 : index
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %unpacked = pto.vzunpack %input, %c0
+        : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+    %carrier = pto.vbitcast %unpacked
+        : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %carrier, %mask {part = "EVEN"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+
+  func.func @zero_gap_vzunpack_chain(%input: !pto.vreg<256xui8>)
+      -> !pto.vreg<64xui32> {
+    %c0 = arith.constant 0 : index
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %half = pto.vzunpack %input, %c0
+        : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+    %quarter = pto.vzunpack %half, %c0
+        : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+    %carrier = pto.vbitcast %quarter
+        : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %carrier, %mask {part = "P0"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+    return %wide : !pto.vreg<64xui32>
+  }
+
+  func.func @zero_gap_narrowing_vcvt_u16_u8_u16(
+      %input: !pto.vreg<128xui16>) -> !pto.vreg<128xui16> {
+    %narrow_mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %wide_mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %narrow = pto.vcvt %input, %narrow_mask {part = "EVEN", sat = "SAT"}
+        : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %narrow, %wide_mask {part = "EVEN"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+
+  func.func @zero_gap_narrowing_vcvt_u32_u8_u32(
+      %input: !pto.vreg<64xui32>) -> !pto.vreg<64xui32> {
+    %narrow_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %wide_mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %narrow = pto.vcvt %input, %narrow_mask {part = "P0", sat = "SAT"}
+        : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %narrow, %wide_mask {part = "P0"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+    return %wide : !pto.vreg<64xui32>
+  }
+
+  func.func @misaligned_narrowing_vcvt_is_not_zero_gap(
+      %input: !pto.vreg<128xui16>) -> !pto.vreg<128xui16> {
+    %narrow_mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %wide_mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %narrow = pto.vcvt %input, %narrow_mask {part = "ODD", sat = "SAT"}
+        : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %narrow, %wide_mask {part = "EVEN"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+
+  func.func @unknown_gap_is_not_changed(%input: !pto.vreg<256xui8>)
+      -> !pto.vreg<128xui16> {
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %wide = pto.vcvt %input, %mask {part = "EVEN"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+
+  func.func @wrong_part_is_not_changed(%src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vreg<128xui16> {
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
+        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %load, %mask {part = "ODD"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+
+  func.func @signed_zero_gap_is_not_changed(
+      %src: !pto.ptr<si8, ub>, %off: index) -> !pto.vreg<128xsi16> {
+    %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
+        : !pto.ptr<si8, ub> -> !pto.vreg<256xsi8>
+    %wide = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<128xsi16>
+    return %wide : !pto.vreg<128xsi16>
+  }
+
+  func.func @masked_zero_gap_is_not_changed(
+      %src: !pto.ptr<ui8, ub>, %off: index) -> !pto.vreg<128xui16> {
+    %mask = pto.pset_b8 "PAT_VL1" : !pto.mask<b8>
+    %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
+        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+    %wide = pto.vcvt %load, %mask {part = "EVEN"}
+        : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+    return %wide : !pto.vreg<128xui16>
+  }
+}
+
+// CHECK-LABEL: func.func @e2b_load
+// CHECK: %[[CVT:.*]] = pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[CVT]], %[[CVT]]
+
+// CHECK-LABEL: func.func @brc_load
+// CHECK: %[[CVT:.*]] = pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[CVT]], %[[CVT]]
+
+// CHECK-LABEL: func.func @scalar_broadcast
+// CHECK: %[[CVT:.*]] = pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[CVT]], %[[CVT]]
+
+// CHECK-LABEL: func.func @normal_load_is_not_changed
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt {{.*}} {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+
+// CHECK-LABEL: func.func @masked_broadcast_is_not_changed
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt {{.*}} {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+
+// CHECK-LABEL: func.func @zero_gap_unpk_b8
+// CHECK: %[[LOAD:.*]] = pto.vlds {{.*}} {dist = "UNPK_B8"}
+// CHECK: %[[WIDE:.*]] = pto.vbitcast %[[LOAD]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[WIDE]]
+
+// CHECK-LABEL: func.func @zero_gap_unpk_b16
+// CHECK: %[[LOAD:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// CHECK: %[[WIDE:.*]] = pto.vbitcast %[[LOAD]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[WIDE]]
+
+// CHECK-LABEL: func.func @zero_gap_unpk4
+// CHECK: %[[LOAD:.*]] = pto.vlds {{.*}} {dist = "UNPK4"}
+// CHECK: %[[WIDE:.*]] = pto.vbitcast %[[LOAD]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[WIDE]]
+
+// CHECK-LABEL: func.func @zero_gap_vzunpack
+// CHECK: %[[UNPACK:.*]] = pto.vzunpack
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[UNPACK]]
+
+// CHECK-LABEL: func.func @zero_gap_vzunpack_chain
+// CHECK: %[[HALF:.*]] = pto.vzunpack
+// CHECK: %[[QUARTER:.*]] = pto.vzunpack %[[HALF]]
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[QUARTER]]
+
+// CHECK-LABEL: func.func @zero_gap_narrowing_vcvt_u16_u8_u16
+// CHECK: %[[NARROW:.*]] = pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
+// CHECK: %[[WIDE:.*]] = pto.vbitcast %[[NARROW]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[WIDE]]
+
+// CHECK-LABEL: func.func @zero_gap_narrowing_vcvt_u32_u8_u32
+// CHECK: %[[NARROW:.*]] = pto.vcvt {{.*}} {part = "P0", sat = "SAT"}
+// CHECK: %[[WIDE:.*]] = pto.vbitcast %[[NARROW]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// CHECK-NOT: pto.vcvt
+// CHECK: return %[[WIDE]]
+
+// CHECK-LABEL: func.func @misaligned_narrowing_vcvt_is_not_zero_gap
+// CHECK: pto.vcvt {{.*}} {part = "ODD", sat = "SAT"}
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"}
+
+// CHECK-LABEL: func.func @unknown_gap_is_not_changed
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"}
+
+// CHECK-LABEL: func.func @wrong_part_is_not_changed
+// CHECK: pto.vcvt {{.*}} {part = "ODD"}
+
+// CHECK-LABEL: func.func @signed_zero_gap_is_not_changed
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"}
+
+// CHECK-LABEL: func.func @masked_zero_gap_is_not_changed
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"}

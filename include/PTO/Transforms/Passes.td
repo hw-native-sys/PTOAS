@@ -1276,18 +1276,21 @@ def VPTOPtrCastCleanup
                            "mlir::memref::MemRefDialect"];
 }
 
-def VPTONormalizeEquivalentVcvt
-    : Pass<"vpto-normalize-equivalent-vcvt", "ModuleOp"> {
-  let summary = "Normalize equivalent VPTO vcvt part selections";
+def VPTOOptimizeVcvt
+    : Pass<"vpto-optimize-vcvt", "ModuleOp"> {
+  let summary = "Normalize or remove provably redundant VPTO vcvt operations";
   let description = [{
     Rewrites `pto.vcvt` operations whose `EVEN` and `ODD` part selections are
     provably equivalent into the canonical `EVEN` form. The pass currently
     recognizes all-true masked narrow-to-wide conversions from VPTO values with
     pair-wise equivalent input lanes, such as scalar/vector broadcasts and
-    selected broadcast load distributions. A following CSE pass can then merge
-    duplicate conversions.
+    selected broadcast load distributions. It also replaces unsigned widening
+    conversions with `pto.vbitcast` when a canonical zero-filling producer --
+    an unpack load, `pto.vzunpack` chain, or aligned narrowing `pto.vcvt` --
+    proves that every widened carrier's high bits are zero. A following CSE
+    pass can then merge duplicate conversions and remove dead masks.
   }];
-  let constructor = "mlir::pto::createVPTONormalizeEquivalentVcvtPass()";
+  let constructor = "mlir::pto::createVPTOOptimizeVcvtPass()";
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 

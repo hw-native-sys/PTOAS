@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-layout-fold -vmi-to-vpto -vpto-optimize-vcvt -canonicalize | FileCheck %s
+
+module {
+  func.func @vmi_surface_load_extui_zero_gap(
+      %src8: !pto.ptr<ui8, ub>, %src16: !pto.ptr<ui16, ub>,
+      %dst16: !pto.ptr<ui16, ub>, %dst32a: !pto.ptr<ui32, ub>,
+      %dst32b: !pto.ptr<ui32, ub>, %off: index) {
+    %a = pto.vmi.load %src8[%off]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
+    %aw = pto.vmi.extui %a
+        : !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xui16>
+    pto.vmi.store %aw, %dst16[%off]
+        : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
+
+    %b = pto.vmi.load %src8[%off]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+    %bw = pto.vmi.extui %b
+        : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui32>
+    pto.vmi.store %bw, %dst32a[%off]
+        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+
+    %c = pto.vmi.load %src16[%off]
+        : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %cw = pto.vmi.extui %c
+        : !pto.vmi.vreg<64xui16> -> !pto.vmi.vreg<64xui32>
+    pto.vmi.store %cw, %dst32b[%off]
+        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_surface_load_extui_zero_gap(
+// CHECK: %[[U8U16:.*]] = pto.vlds {{.*}} {dist = "UNPK_B8"}
+// CHECK-NEXT: %[[U16:.*]] = pto.vbitcast %[[U8U16]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
+// CHECK: pto.vsts %[[U16]],
+// CHECK: %[[U8U32:.*]] = pto.vlds {{.*}} {dist = "UNPK4"}
+// CHECK-NEXT: %[[U32A:.*]] = pto.vbitcast %[[U8U32]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// CHECK: pto.vsts %[[U32A]],
+// CHECK: %[[U16U32:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// CHECK-NEXT: %[[U32B:.*]] = pto.vbitcast %[[U16U32]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: pto.vsts %[[U32B]],
+// CHECK-NOT: pto.vcvt
+// CHECK-NOT: pto.vzunpack

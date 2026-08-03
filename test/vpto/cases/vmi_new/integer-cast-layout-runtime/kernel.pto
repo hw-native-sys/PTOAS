@@ -1,0 +1,376 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @integer_cast_u8_kernel(
+      %src_gm: !pto.ptr<ui8, gm>, %dst16_gm: !pto.ptr<ui16, gm>,
+      %dst32_gm: !pto.ptr<ui32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_dst16 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst32 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<ui32, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src16 = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<256xui8>
+      %dst16 = pto.vmi.extui %src16
+          : !pto.vmi.vreg<256xui8> -> !pto.vmi.vreg<256xui16>
+      %src32 = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<256xui8>
+      %dst32 = pto.vmi.extui %src32
+          : !pto.vmi.vreg<256xui8> -> !pto.vmi.vreg<256xui32>
+      pto.vmi.store %dst16, %ub_dst16[%c0]
+          : !pto.vmi.vreg<256xui16>, !pto.ptr<ui16, ub>
+      pto.vmi.store %dst32, %ub_dst32[%c0]
+          : !pto.vmi.vreg<256xui32>, !pto.ptr<ui32, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst16, %dst16_gm, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<ui16, ub>, !pto.ptr<ui16, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst32, %dst32_gm, %c1024_i64
+      nburst(%c1_i64, %c1024_i64, %c1024_i64)
+      : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @integer_cast_i8_kernel(
+      %src_gm: !pto.ptr<si8, gm>, %dst16_gm: !pto.ptr<si16, gm>,
+      %dst32_gm: !pto.ptr<si32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<si8, ub>
+    %ub_dst16 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<si16, ub>
+    %ub_dst32 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<si32, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<si8, gm>, !pto.ptr<si8, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src16 = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<si8, ub> -> !pto.vmi.vreg<256xsi8>
+      %dst16 = pto.vmi.extsi %src16
+          : !pto.vmi.vreg<256xsi8> -> !pto.vmi.vreg<256xsi16>
+      %src32 = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<si8, ub> -> !pto.vmi.vreg<256xsi8>
+      %dst32 = pto.vmi.extsi %src32
+          : !pto.vmi.vreg<256xsi8> -> !pto.vmi.vreg<256xsi32>
+      pto.vmi.store %dst16, %ub_dst16[%c0]
+          : !pto.vmi.vreg<256xsi16>, !pto.ptr<si16, ub>
+      pto.vmi.store %dst32, %ub_dst32[%c0]
+          : !pto.vmi.vreg<256xsi32>, !pto.ptr<si32, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst16, %dst16_gm, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<si16, ub>, !pto.ptr<si16, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst32, %dst32_gm, %c1024_i64
+      nburst(%c1_i64, %c1024_i64, %c1024_i64)
+      : !pto.ptr<si32, ub>, !pto.ptr<si32, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @integer_cast_u16_kernel(
+      %src_gm: !pto.ptr<ui16, gm>, %dst32_gm: !pto.ptr<ui32, gm>,
+      %dst8_gm: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c12288_i64 = arith.constant 12288 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst32 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui32, ub>
+    %ub_dst8 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_scratch32 = pto.castptr %c12288_i64 : i64 -> !pto.ptr<ui32, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui16, gm>, !pto.ptr<ui16, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+      %dst32 = pto.vmi.extui %src
+          : !pto.vmi.vreg<128xui16>
+          -> !pto.vmi.vreg<128xui32>
+      %dst8 = pto.vmi.trunci %src {saturate = "NOSAT"}
+          : !pto.vmi.vreg<128xui16>
+          -> !pto.vmi.vreg<128xui8>
+      pto.vmi.store %dst32, %ub_dst32[%c0]
+          : !pto.vmi.vreg<128xui32>, !pto.ptr<ui32, ub>
+      pto.vmi.store %dst8, %ub_dst8[%c0]
+          : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>
+      // One-block groups make the widening result contiguous through layout assignment.
+      %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+      %sum32 = pto.vmi.group_reduce_addi %dst32, %mask {num_groups = 16 : i64}
+          : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+          -> !pto.vmi.vreg<16xui32>
+      %broadcast32 = pto.vmi.group_broadcast %sum32 {num_groups = 16 : i64}
+          : !pto.vmi.vreg<16xui32> -> !pto.vmi.vreg<128xui32>
+      pto.vmi.store %broadcast32, %ub_scratch32[%c0]
+          : !pto.vmi.vreg<128xui32>, !pto.ptr<ui32, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst32, %dst32_gm, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst8, %dst8_gm, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @integer_cast_i16_kernel(
+      %src_gm: !pto.ptr<si16, gm>, %dst32_gm: !pto.ptr<si32, gm>,
+      %dst8_gm: !pto.ptr<si8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c12288_i64 = arith.constant 12288 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<si16, ub>
+    %ub_dst32 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<si32, ub>
+    %ub_dst8 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<si8, ub>
+    %ub_scratch32 = pto.castptr %c12288_i64 : i64 -> !pto.ptr<si32, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<si16, gm>, !pto.ptr<si16, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+      %dst32 = pto.vmi.extsi %src
+          : !pto.vmi.vreg<128xsi16>
+          -> !pto.vmi.vreg<128xsi32>
+      %dst8 = pto.vmi.trunci %src {saturate = "NOSAT"}
+          : !pto.vmi.vreg<128xsi16>
+          -> !pto.vmi.vreg<128xsi8>
+      pto.vmi.store %dst32, %ub_dst32[%c0]
+          : !pto.vmi.vreg<128xsi32>, !pto.ptr<si32, ub>
+      pto.vmi.store %dst8, %ub_dst8[%c0]
+          : !pto.vmi.vreg<128xsi8>, !pto.ptr<si8, ub>
+      // One-block groups make the widening result contiguous through layout assignment.
+      %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+      %sum32 = pto.vmi.group_reduce_addi %dst32, %mask {num_groups = 16 : i64}
+          : !pto.vmi.vreg<128xsi32>, !pto.vmi.mask<128xpred>
+          -> !pto.vmi.vreg<16xsi32>
+      %broadcast32 = pto.vmi.group_broadcast %sum32 {num_groups = 16 : i64}
+          : !pto.vmi.vreg<16xsi32> -> !pto.vmi.vreg<128xsi32>
+      pto.vmi.store %broadcast32, %ub_scratch32[%c0]
+          : !pto.vmi.vreg<128xsi32>, !pto.ptr<si32, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst32, %dst32_gm, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<si32, ub>, !pto.ptr<si32, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst8, %dst8_gm, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<si8, ub>, !pto.ptr<si8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @integer_cast_u32_kernel(
+      %src_gm: !pto.ptr<ui32, gm>, %dst16_gm: !pto.ptr<ui16, gm>,
+      %dst8_gm: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui32, ub>
+    %ub_dst16 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst8 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<ui8, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+      %dst16 = pto.vmi.trunci %src {saturate = "NOSAT"}
+          : !pto.vmi.vreg<64xui32>
+          -> !pto.vmi.vreg<64xui16>
+      %dst8 = pto.vmi.trunci %src {saturate = "NOSAT"}
+          : !pto.vmi.vreg<64xui32>
+          -> !pto.vmi.vreg<64xui8>
+      pto.vmi.store %dst16, %ub_dst16[%c0]
+          : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
+      pto.vmi.store %dst8, %ub_dst8[%c0]
+          : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst16, %dst16_gm, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui16, ub>, !pto.ptr<ui16, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst8, %dst8_gm, %c64_i64
+      nburst(%c1_i64, %c64_i64, %c64_i64)
+      : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @integer_cast_i32_kernel(
+      %src_gm: !pto.ptr<si32, gm>, %dst16_gm: !pto.ptr<si16, gm>,
+      %dst8_gm: !pto.ptr<si8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<si32, ub>
+    %ub_dst16 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<si16, ub>
+    %ub_dst8 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<si8, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<si32, gm>, !pto.ptr<si32, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src = pto.vmi.load %ub_src[%c0]
+          : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+      %dst16 = pto.vmi.trunci %src {saturate = "NOSAT"}
+          : !pto.vmi.vreg<64xsi32>
+          -> !pto.vmi.vreg<64xsi16>
+      %dst8 = pto.vmi.trunci %src {saturate = "NOSAT"}
+          : !pto.vmi.vreg<64xsi32>
+          -> !pto.vmi.vreg<64xsi8>
+      pto.vmi.store %dst16, %ub_dst16[%c0]
+          : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
+      pto.vmi.store %dst8, %ub_dst8[%c0]
+          : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst16, %dst16_gm, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<si16, ub>, !pto.ptr<si16, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst8, %dst8_gm, %c64_i64
+      nburst(%c1_i64, %c64_i64, %c64_i64)
+      : !pto.ptr<si8, ub>, !pto.ptr<si8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @integer_cast_zero_gap_kernel(
+      %src8_gm: !pto.ptr<ui8, gm>, %src16_gm: !pto.ptr<ui16, gm>,
+      %dst16_gm: !pto.ptr<ui16, gm>, %dst32_from8_gm: !pto.ptr<ui32, gm>,
+      %dst32_from16_gm: !pto.ptr<ui32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c12288_i64 = arith.constant 12288 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %ub_src8 = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_src16 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst16 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst32_from8 = pto.castptr %c12288_i64 : i64 -> !pto.ptr<ui32, ub>
+    %ub_dst32_from16 = pto.castptr %c16384_i64 : i64 -> !pto.ptr<ui32, ub>
+
+    pto.mte_gm_ub %src8_gm, %ub_src8, %c0_i64, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %src16_gm, %ub_src16, %c0_i64, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui16, gm>, !pto.ptr<ui16, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %src8_ls2 = pto.vmi.load %ub_src8[%c0]
+          : !pto.ptr<ui8, ub>
+          -> !pto.vmi.vreg<128xui8>
+      %dst16 = pto.vmi.extui %src8_ls2
+          : !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xui16>
+      pto.vmi.store %dst16, %ub_dst16[%c0]
+          : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
+
+      %src8_ls4 = pto.vmi.load %ub_src8[%c0]
+          : !pto.ptr<ui8, ub>
+          -> !pto.vmi.vreg<64xui8>
+      %dst32_from8 = pto.vmi.extui %src8_ls4
+          : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui32>
+      pto.vmi.store %dst32_from8, %ub_dst32_from8[%c0]
+          : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+
+      %src16_ls2 = pto.vmi.load %ub_src16[%c0]
+          : !pto.ptr<ui16, ub>
+          -> !pto.vmi.vreg<64xui16>
+      %dst32_from16 = pto.vmi.extui %src16_ls2
+          : !pto.vmi.vreg<64xui16> -> !pto.vmi.vreg<64xui32>
+      pto.vmi.store %dst32_from16, %ub_dst32_from16[%c0]
+          : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst16, %dst16_gm, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui16, ub>, !pto.ptr<ui16, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst32_from8, %dst32_from8_gm, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_dst32_from16, %dst32_from16_gm, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

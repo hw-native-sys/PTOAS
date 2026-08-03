@@ -2851,7 +2851,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(pto::createVPTOPtrNormalizePass());
   kernelModulePM.addPass(pto::createVPTOPtrCastCleanupPass());
-  kernelModulePM.addPass(pto::createVPTONormalizeEquivalentVcvtPass());
+  kernelModulePM.addPass(pto::createVPTOOptimizeVcvtPass());
   kernelModulePM.addPass(createReconcileUnrealizedCastsPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       createVPTOExpandWrapperOpsPass());
