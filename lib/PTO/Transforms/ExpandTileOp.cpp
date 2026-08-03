@@ -63,8 +63,8 @@ namespace mlir {
 namespace pto {
   namespace func = ::mlir::func;
 
-  #define GEN_PASS_DEF_EXPANDTILEOP
-  #include "PTO/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_EXPANDTILEOP
+#include "PTO/Transforms/TileLibPasses.h.inc"
 } // namespace pto
 } // namespace mlir
 
@@ -1206,10 +1206,6 @@ void ExpandTileOpPass::runOnOperation() {
 
 namespace mlir {
 namespace pto {
-
-std::unique_ptr<Pass> createExpandTileOpPass() {
-  return std::make_unique<ExpandTileOpPass>();
-}
 
 std::unique_ptr<Pass> createExpandTileOpPass(
     std::shared_ptr<TileLibService> tileLibService) {

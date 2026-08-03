@@ -36,7 +36,7 @@ using namespace mlir;
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_INSERTTEMPLATEATTRIBUTES
-#include "PTO/Transforms/Passes.h.inc"
+#include "PTO/Transforms/TileLibPasses.h.inc"
 } // namespace pto
 } // namespace mlir
 
@@ -906,10 +906,6 @@ struct InsertTemplateAttributesPass
 
 namespace mlir {
 namespace pto {
-
-std::unique_ptr<Pass> createInsertTemplateAttributesPass() {
-  return std::make_unique<InsertTemplateAttributesPass>();
-}
 
 std::unique_ptr<Pass> createInsertTemplateAttributesPass(
     std::shared_ptr<TileLibService> tileLibService) {

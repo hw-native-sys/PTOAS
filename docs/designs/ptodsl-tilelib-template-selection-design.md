@@ -66,6 +66,10 @@ before later passes can make candidate information harder to reconstruct.
 `ExpandTileOp` still renders from the current MLIR operands so the helper body
 matches the actual operand types and view metadata that survived to expansion.
 
+Both stages are compiler-session passes. They require the `TileLibService`
+owned by `PTOASContext`, are constructed explicitly by the PTOAS pipeline, and
+are not registered as standalone textual passes.
+
 ## Template Metadata
 
 PTODSL template authors register versions through `tilelib.tile_template`.

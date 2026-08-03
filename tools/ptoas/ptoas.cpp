@@ -213,7 +213,6 @@ void mlir::pto::registerPTOASPassesAndCLOptions() {
   mlir::pto::registerPTOPasses();
   mlir::pto::registerPTOInlineLibCall();
   mlir::pto::registerFoldTileBufIntrinsics();
-  mlir::pto::registerExpandTileOp();
   mlir::pto::registerLowerPTOToUBufOps();
   mlir::registerPassManagerCLOptions();
 }

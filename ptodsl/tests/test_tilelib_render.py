@@ -12,11 +12,13 @@ Asserts the rendered MLIR is *on par* with the tilelang golden
 (ptodsl differs in SSA naming, constant hoisting, index-vs-i32 carry, ptr typing).
 """
 
+import json
 import unittest
 from pathlib import Path
 
 from ptoas.mlir.dialects import pto as pto_dialect
 from ptoas.mlir.ir import Context
+from ptodsl.tilelib._compiler_runtime import materialize
 from ptodsl.tilelib import TileSpec, f32
 from TileOps.a5.tadd import template_tadd
 
@@ -46,6 +48,25 @@ def _render():
     return template_tadd.specialize(src0=spec, src1=spec, dst=spec).mlir_text()
 
 
+def _materialize(context):
+    tile_spec = {
+        "kind": "tile",
+        "shape": [8, 64],
+        "valid_shape": [8, 64],
+        "dtype": "f32",
+        "memory_space": "ub",
+        "config": {"b_layout": "row_major", "s_layout": "none_box"},
+    }
+    return materialize(
+        "a5",
+        "pto.tadd",
+        json.dumps([tile_spec, tile_spec, tile_spec]),
+        "{}",
+        "template_tadd",
+        context,
+    )
+
+
 class TileLibRenderTest(unittest.TestCase):
     def test_renders_structured_abstraction(self):
         text = _render()
@@ -70,27 +91,22 @@ class TileLibRenderTest(unittest.TestCase):
     def test_materialize_uses_borrowed_context_and_returns_fresh_modules(self):
         context = Context()
         pto_dialect.register_dialect(context, load=True)
-        spec = TileSpec(shape=(8, 64), dtype=f32)
-        artifact = template_tadd.specialize(src0=spec, src1=spec, dst=spec)
-
-        first = artifact.materialize(context)
-        second = artifact.materialize(context)
+        first, first_entry = _materialize(context)
+        second, second_entry = _materialize(context)
 
         self.assertIs(first.context, context)
         self.assertIs(second.context, context)
         self.assertIsNot(first, second)
+        self.assertEqual(first_entry, "template_tadd")
+        self.assertEqual(second_entry, "template_tadd")
         self.assertTrue(first.operation.verify())
         self.assertTrue(second.operation.verify())
-        self.assertIn("func.func @template_tadd", artifact.mlir_text())
+        self.assertIn("func.func @template_tadd", str(first))
 
     def test_materialized_surface_wrappers_release_without_cycle_collection(self):
         context = Context()
         pto_dialect.register_dialect(context, load=True)
-        spec = TileSpec(shape=(8, 64), dtype=f32)
-
-        module = template_tadd.specialize(
-            src0=spec, src1=spec, dst=spec
-        ).materialize(context)
+        module, _ = _materialize(context)
         self.assertEqual(context._get_live_operation_count(), 0)
 
         del module

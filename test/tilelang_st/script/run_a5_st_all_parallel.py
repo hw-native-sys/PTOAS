@@ -137,60 +137,54 @@ def _run_one(job, args, ptoas_bin, output_root, base_env):
         "build_dir": str(build_dir),
     }
 
-    try:
-        with log_path.open("w", encoding="utf-8") as log_handle:
-            log_handle.write(f"# kind: {kind}\n")
-            log_handle.write(f"# testcase: {testcase}\n")
-            log_handle.write(f"# source: {job['target_dir']}\n")
-            log_handle.write(f"# build: {build_dir}\n")
-            log_handle.write(f"# PTODSL_CACHE_DIR={env['PTODSL_CACHE_DIR']}\n")
-            log_handle.write("\n")
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        log_handle.write(f"# kind: {kind}\n")
+        log_handle.write(f"# testcase: {testcase}\n")
+        log_handle.write(f"# source: {job['target_dir']}\n")
+        log_handle.write(f"# build: {build_dir}\n")
+        log_handle.write(f"# PTODSL_CACHE_DIR={env['PTODSL_CACHE_DIR']}\n")
+        log_handle.write("\n")
 
-            cmake_cmd = [
-                "cmake",
-                "-S",
-                job["target_dir"],
-                "-B",
-                build_dir,
-                f"-DRUN_MODE={args.run_mode}",
-                f"-DSOC_VERSION={DEFAULT_SOC_VERSION}",
-                f"-DTEST_CASE={testcase}",
-                f"-DPTOAS_BIN={ptoas_bin}",
-            ]
+        cmake_cmd = [
+            "cmake",
+            "-S",
+            job["target_dir"],
+            "-B",
+            build_dir,
+            f"-DRUN_MODE={args.run_mode}",
+            f"-DSOC_VERSION={DEFAULT_SOC_VERSION}",
+            f"-DTEST_CASE={testcase}",
+            f"-DPTOAS_BIN={ptoas_bin}",
+        ]
 
-            rc = _run_logged(cmake_cmd, log_handle, output_root, env)
-            if rc == 0:
-                rc = _run_logged(
-                    ["cmake", "--build", build_dir, "--parallel", str(args.build_jobs)],
-                    log_handle,
-                    output_root,
-                    env,
-                )
+        rc = _run_logged(cmake_cmd, log_handle, output_root, env)
+        if rc == 0:
+            rc = _run_logged(
+                ["cmake", "--build", build_dir, "--parallel", str(args.build_jobs)],
+                log_handle,
+                output_root,
+                env,
+            )
 
+        if rc != 0:
+            result["returncode"] = rc
+            result["phase"] = "build"
+            result["seconds"] = time.time() - started
+            return result
+
+        case_work_dir = build_dir / "testcase" / testcase
+        _copy_case_scripts(job["testcase_root"], testcase, case_work_dir)
+
+        for phase, command in (
+            ("gen_data", [sys.executable, "gen_data.py"]),
+            ("run", [build_dir / "bin" / testcase]),
+            ("compare", [sys.executable, "compare.py"]),
+        ):
+            rc = _run_logged(command, log_handle, case_work_dir, env)
             if rc != 0:
                 result["returncode"] = rc
-                result["phase"] = "build"
-                result["seconds"] = time.time() - started
-                return result
-
-            case_work_dir = build_dir / "testcase" / testcase
-            _copy_case_scripts(job["testcase_root"], testcase, case_work_dir)
-
-            for phase, command in (
-                ("gen_data", [sys.executable, "gen_data.py"]),
-                ("run", [build_dir / "bin" / testcase]),
-                ("compare", [sys.executable, "compare.py"]),
-            ):
-                rc = _run_logged(command, log_handle, case_work_dir, env)
-                if rc != 0:
-                    result["returncode"] = rc
-                    result["phase"] = phase
-                    break
-    finally:
-        try:
-            socket_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+                result["phase"] = phase
+                break
 
     result["seconds"] = time.time() - started
     return result

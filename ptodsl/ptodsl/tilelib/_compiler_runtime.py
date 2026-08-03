@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+from ._render_runtime import _TemplateTrace
 from ._selection import _select_descriptor_and_specs, metadata_request
 
 
@@ -60,11 +61,11 @@ def materialize(
         context_attrs,
         candidate_id or None,
     )
-    artifact = descriptor.specialize(
+    module = _TemplateTrace(
+        descriptor,
+        tile_specs,
         context_attrs=context_attrs,
-        **tile_specs,
-    )
-    module = artifact.materialize(context)
+    ).build_module(context=context)
     module.operation.verify()
     return module, descriptor.name
 
