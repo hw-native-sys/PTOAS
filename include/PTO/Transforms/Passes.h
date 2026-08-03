@@ -167,6 +167,19 @@ std::unique_ptr<Pass> createPTOCheckSyncInterferencePass();
 /// sync. `maxViolations` caps the per-function detail lines; 0 prints all.
 std::unique_ptr<Pass> createPTOCheckSyncSelfCoveragePass(unsigned maxViolations = 8);
 
+/// G1: dump the happens-before edges this run's emitted sync induces, as the
+/// reference profile a later run is compared against.
+std::unique_ptr<Pass> createPTODumpSyncCoveragePass();
+
+/// G1: assert this run establishes every ordering recorded in `referenceFile`.
+std::unique_ptr<Pass> createPTOCheckSyncCoveragePass(llvm::StringRef referenceFile);
+
+/// G4: dump this run's kernel-body sync-op counts, one line per function.
+std::unique_ptr<Pass> createPTODumpSyncCountsPass();
+
+/// G4: assert this run's counts do not regress against `referenceFile`.
+std::unique_ptr<Pass> createPTOCheckSyncCountFloorPass(llvm::StringRef referenceFile);
+
 #undef GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION
 #include "PTO/Transforms/Passes.h.inc"

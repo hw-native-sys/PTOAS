@@ -1455,4 +1455,54 @@ def PTOCheckSyncSelfCoverage
   let constructor = "mlir::pto::createPTOCheckSyncSelfCoveragePass()";
 }
 
+def PTODumpSyncCoverage : Pass<"pto-dump-sync-coverage", "func::FuncOp"> {
+  let summary = "Dump the happens-before edges the emitted sync induces (oracle gate G1, reference side)";
+  let description = [{
+    Read-only. Numbers every op that carries a pipe and a memory effect, then
+    emits the set of ordered anchor pairs the emitted synchronization
+    establishes, including the buffer-token ordering `rls_buf` precedes
+    `get_buf` for the same buffer id.
+  }];
+
+  let constructor = "mlir::pto::createPTODumpSyncCoveragePass()";
+}
+
+def PTOCheckSyncCoverage : Pass<"pto-check-sync-coverage", "func::FuncOp"> {
+  let summary = "Oracle gate G1: the new sync mode must establish every ordering InsertSync does";
+  let description = [{
+    Differential. Reads a reference profile produced by `pto-dump-sync-coverage`
+    on an InsertSync run and asserts, per function, that the current run's
+    happens-before edge set is a superset of the reference's. A differing anchor
+    signature, or a missing reference profile, is a violation. Fails the pass on
+    any missing ordering.
+  }];
+
+  let constructor = "mlir::pto::createPTOCheckSyncCoveragePass(\"\")";
+}
+
+def PTODumpSyncCounts : Pass<"pto-dump-sync-counts", "func::FuncOp"> {
+  let summary = "Dump kernel-body sync-op counts (oracle gate G4, reference side)";
+  let description = [{
+    Read-only. Emits one `[sync-count]` line per function counting the emitted
+    `pto.set_flag` / `pto.wait_flag` / `pto.get_buf` / `pto.rls_buf` /
+    `pto.barrier` ops in the function body. These are IR ops, so the emitted
+    `ptoas_auto_sync_tail` C++ boilerplate cannot contaminate the count.
+  }];
+
+  let constructor = "mlir::pto::createPTODumpSyncCountsPass()";
+}
+
+def PTOCheckSyncCountFloor : Pass<"pto-check-sync-count-floor", "func::FuncOp"> {
+  let summary = "Oracle gate G4: the new sync mode must not synchronize more than InsertSync";
+  let description = [{
+    Differential. Reads a reference profile produced by `pto-dump-sync-counts`
+    on an InsertSync run and asserts, per function, that the current run does not
+    increase (a) the total sync-op count, (b) the barrier count, or (c) the
+    PIPE_ALL barrier count. A missing reference profile is a violation. Fails the
+    pass on any regression.
+  }];
+
+  let constructor = "mlir::pto::createPTOCheckSyncCountFloorPass(\"\")";
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

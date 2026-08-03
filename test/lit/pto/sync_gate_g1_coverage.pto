@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G1 asserts that every ordering a reference compilation establishes is also
+// established by the one under test. Unlike the count floor, it cannot be cleared
+// by a compilation that emits nothing.
+
+// ---------------------------------------------------------------------------
+// 1. The reference profile, and a run compared against itself.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --dump-sync-coverage %S/Inputs/oracle_vadd.pto 2> %t.ref > /dev/null
+// RUN: FileCheck %s --check-prefix=PROFILE --input-file=%t.ref
+// PROFILE: [sync-cov] func=oracle_vadd anchors=4 sig=0x{{[0-9a-f]+}} edge_count=3 edges=0-2,1-2,2-3 bedge_count=0 bedges= barrier_all=1
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-coverage=%t.ref %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=SELF
+// SELF: [sync-gate:g1] func=oracle_vadd candidate_edges=3 reference_edges=3 violations=0 OK
+
+// ---------------------------------------------------------------------------
+// 2. THE FAULT CLASS THIS GATE EXISTS FOR. Compiling with no synchronization pass
+//    at all emits nothing, which the count floor clears trivially. Every ordering
+//    is reported missing, and each names the anchor pair it lost.
+// RUN: not ptoas --pto-arch=a3 --check-sync-coverage=%t.ref %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EMPTY
+// EMPTY:      [sync-gate:g1] func=oracle_vadd candidate_edges=0 reference_edges=3 violations=3
+// EMPTY-NEXT:   !! kind=missing-ordering anchor#0 -> anchor#2
+// EMPTY-NEXT:   !! kind=missing-ordering anchor#1 -> anchor#2
+// EMPTY-NEXT:   !! kind=missing-ordering anchor#2 -> anchor#3
+
+// ---------------------------------------------------------------------------
+// 3. THE BUFFER-TOKEN RULE IS LOAD-BEARING, and this is what shows it. On A5 the
+//    buffer-id pass discharges these hazards with get_buf/rls_buf instead of event
+//    flags. Its edge set is a strict SUPERSET of the event reference's, so the gate
+//    passes -- but only because `rls_buf(b)` is credited as ordering the following
+//    `get_buf(b)`. Drop that rule and this candidate appears to order nothing and
+//    the gate rejects a correct compilation.
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --dump-sync-coverage %S/Inputs/oracle_vadd.pto 2> %t.a5 > /dev/null
+// RUN: ptoas --pto-arch=a5 --enable-bufid_sync --check-sync-coverage=%t.a5 %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=BUFID
+// BUFID: [sync-gate:g1] func=oracle_vadd candidate_edges=4 reference_edges=3 violations=0 OK

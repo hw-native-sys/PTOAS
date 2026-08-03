@@ -9,13 +9,16 @@
 //===- SyncOracleGates.h - Oracle correctness gates -------------*- C++ -*-===//
 //
 // Correctness gates over the sync a compilation emitted, read through
-// SyncOracleExtract.h. Each judges one compilation on its own -- there is no
-// reference file and nothing is compared against another run:
-//
+// SyncOracleExtract.h. Four judge one compilation on its own; two are DIFFERENTIAL
+// and compare two runs of the same function, inheriting the reference run's
+// completeness as an assumption:
 //   G3       device-id legality: every id is one the hardware and the compiler's
 //            own reservations permit, for that op, direction and arch.
 //   G2       non-interference: no two overlapping intervals share an id.
 //   G1-self  every dependency `DepBetween` reports is ordered by emitted sync.
+//   G1       coverage superset (differential): every ordering a reference run
+//            establishes must also be established by this one.
+//   G4       sync-count floor (differential).
 //
 // G3's rules, and why each is not already covered elsewhere:
 //
@@ -122,6 +125,86 @@ void printIdViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
                        llvm::ArrayRef<IdViolation> violations);
 
 //===----------------------------------------------------------------------===//
+// G4: sync-count floor
+//===----------------------------------------------------------------------===//
+//
+// Differential gate: one run must not synchronize *more* than a reference run of
+// the same kernel. Two compilations, two profiles, one comparison. What the
+// reference is compiled with is the caller's choice.
+//
+// The counts below are **kernel-body PTO sync ops**, taken from the IR view --
+// not a grep of the emitted C++. That distinction is load-bearing: ptoas emits a
+// `ptoas_auto_sync_tail` helper *definition* into every output regardless of sync
+// mode, and its body contains a set_flag/wait_flag pair and a pipe_barrier, so a
+// whole-file grep over-counts by a constant. `extractFromIR` walks the function's
+// ops, so the boilerplate is structurally invisible to it.
+//
+// A scalar `total <= reference.total` floor is NOT sufficient, and this is
+// measured rather than assumed. On `vadd`, InsertSync emits 2 set + 2 wait +
+// 1 barrier = 5 ops; `--enable-inject-barrier-all-sync` -- a fully serializing
+// degenerate -- emits 5 PIPE_ALL barriers = 5 ops. Totals tie, so a scalar floor
+// waves the degenerate through. One barrier can replace a set/wait pair and
+// *lower* the op count while strictly worsening the schedule. Hence the floor is
+// per class:
+//
+//   F1 total op count must not increase.
+//   F2 barrier count must not increase (a barrier orders every pipe; a directed
+//      set/wait pair orders one direction).
+//   F3 PIPE_ALL barrier count must not increase (full serialization).
+//
+// A candidate function with no reference profile is a violation, not a pass:
+// a gate that silently skips what it cannot find is not a gate.
+
+struct SyncCountProfile {
+  unsigned setFlag = 0;
+  unsigned waitFlag = 0;
+  unsigned getBuf = 0;
+  unsigned rlsBuf = 0;
+  unsigned barrier = 0;    // all pto.barrier, any pipe
+  unsigned barrierAll = 0; // subset of `barrier` whose pipe is PIPE_ALL
+  unsigned total() const {
+    return setFlag + waitFlag + getBuf + rlsBuf + barrier;
+  }
+};
+
+enum class CountViolationKind {
+  TotalIncreased,
+  BarrierIncreased,
+  BarrierAllIncreased,
+  MissingReference,
+};
+
+llvm::StringRef countViolationKindName(CountViolationKind kind);
+
+struct CountViolation {
+  CountViolationKind kind;
+  unsigned candidate;
+  unsigned reference;
+  std::string detail;
+};
+
+/// Kernel-body sync-op counts for one function.
+SyncCountProfile computeSyncCounts(llvm::ArrayRef<IRSyncRecord> records);
+
+/// G4. `reference` is InsertSync's profile for the same function.
+llvm::SmallVector<CountViolation>
+checkSyncCountFloor(const SyncCountProfile &candidate,
+                    const SyncCountProfile &reference);
+
+/// One machine-readable line per function, re-readable by parseSyncCounts().
+void printSyncCounts(llvm::raw_ostream &os, llvm::StringRef funcName,
+                     const SyncCountProfile &profile);
+
+/// Parse `[sync-count]` lines out of a previous run's output. Other lines are
+/// ignored, so a raw stdout capture can be handed straight back in.
+llvm::StringMap<SyncCountProfile> parseSyncCounts(llvm::StringRef text);
+
+void printCountViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
+                          const SyncCountProfile &candidate,
+                          const SyncCountProfile &reference,
+                          llvm::ArrayRef<CountViolation> violations);
+
+//===----------------------------------------------------------------------===//
 // G2: non-interference
 //===----------------------------------------------------------------------===//
 //
@@ -186,8 +269,8 @@ void printIdViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
 //      recommended" -- soft). WARNING, not an error, and deliberately so: the
 //      shipping BufidSync pass already emits one id across MTE2/V/MTE3 on real
 //      kernels (measured). Making it an error would fail on known-good output.
-//      It is reported because it is exactly the coalescing bound the unified
-//      allocator has to decide about.
+//      It is reported because it is the coalescing bound any allocator routing
+//      hazards onto buffer tokens has to respect.
 //   B7 a get_buf and its rls_buf must sit in the SAME block. A pair split
 //      across if/else arms would be matched by any flat program-order walk, yet
 //      at run time only one arm executes -- the counters desync (the ASC
@@ -381,6 +464,14 @@ struct CoverageProfile {
   /// Sorted, unique. Loop-carried orderings; `from`/`to` are the same global
   /// anchor indices as `edges`, and `from < to` is NOT implied.
   llvm::SmallVector<CarriedEdge> carriedEdges;
+  /// Hash of the anchor sequence. A differing signature means the two runs did not
+  /// compile the same program, so their edge sets are not comparable.
+  uint64_t anchorSignature = 0;
+  /// PIPE_ALL barriers seen. Reported by the differential gate and never
+  /// differenced into its verdict: a reference that discharges hazards with
+  /// barriers is denser by construction, and so is a candidate that is simply
+  /// broken.
+  unsigned barrierAll = 0;
 };
 
 /// Walks `func` and derives the happens-before edges its emitted sync induces.
@@ -392,6 +483,44 @@ struct CoverageProfile {
 CoverageProfile
 computeCoverage(func::FuncOp func,
                 llvm::DenseMap<Operation *, unsigned> *anchorIndex = nullptr);
+
+enum class CoverageViolationKind {
+  MissingOrdering,
+  MissingBackwardOrdering,
+  AnchorMismatch,
+  MissingReference,
+};
+
+llvm::StringRef coverageViolationKindName(CoverageViolationKind kind);
+
+struct CoverageViolation {
+  CoverageViolationKind kind;
+  unsigned from;
+  unsigned to;
+  std::string detail;
+  /// Only meaningful for MissingBackwardOrdering; 0 for the forward class.
+  unsigned distance = 0;
+};
+
+
+/// G1: every ordering in `reference` must also be in `candidate`.
+llvm::SmallVector<CoverageViolation>
+checkCoverageSuperset(const CoverageProfile &candidate,
+                      const CoverageProfile &reference);
+
+void printCoverage(llvm::raw_ostream &os, llvm::StringRef funcName,
+                   const CoverageProfile &profile);
+
+llvm::StringMap<CoverageProfile> parseCoverage(llvm::StringRef text);
+
+/// Prints at most 8 missing orderings, a fixed cap with no parameter and no flag to
+/// raise it. On a large failure the survivors are the numerically first anchor pairs,
+/// which is the least informative slice available -- attributing a cause means dumping
+/// both profiles and differencing them, not reading this report.
+void printCoverageViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
+                             const CoverageProfile &candidate,
+                             const CoverageProfile &reference,
+                             llvm::ArrayRef<CoverageViolation> violations);
 
 //===----------------------------------------------------------------------===//
 // G1-self: ABSOLUTE coverage against the dependency analysis

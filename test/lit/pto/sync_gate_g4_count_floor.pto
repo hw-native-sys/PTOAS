@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G4 compares one compilation's sync-op counts against a reference compilation of
+// the same function, per class rather than in total.
+
+// ---------------------------------------------------------------------------
+// 1. A run compared against itself must be clean, and the profile it writes is
+//    what every case below is measured against.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --dump-sync-counts %S/Inputs/oracle_vadd.pto 2> %t.ref > /dev/null
+// RUN: FileCheck %s --check-prefix=PROFILE --input-file=%t.ref
+// PROFILE: [sync-count] func=oracle_vadd set=2 wait=2 get=0 rls=0 barrier=1 barrier_all=1 total=5
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-count-floor=%t.ref %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=SELF
+// SELF: [sync-gate:g4] func=oracle_vadd candidate_total=5 reference_total=5 violations=0 OK
+
+// ---------------------------------------------------------------------------
+// 2. WHY THE FLOOR IS PER CLASS AND NOT A TOTAL. The barrier-all mode replaces the
+//    two directed pairs with five full-core barriers. The TOTAL IS IDENTICAL at 5,
+//    so a scalar floor would wave through a fully serializing allocation; only the
+//    per-class rules catch it.
+// RUN: not ptoas --pto-arch=a3 --enable-inject-barrier-all-sync --check-sync-count-floor=%t.ref %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=DEGEN
+// DEGEN:      [sync-gate:g4] func=oracle_vadd candidate_total=5 reference_total=5 violations=2
+// DEGEN:        candidate: [sync-count] func=oracle_vadd set=0 wait=0 get=0 rls=0 barrier=5 barrier_all=5 total=5
+// DEGEN:        !! kind=barrier-count-increased candidate=5 reference=1
+// DEGEN:        !! kind=barrier-all-count-increased candidate=5 reference=1
+
+// ---------------------------------------------------------------------------
+// 3. A function with no entry in the reference is a violation, not a pass. A gate
+//    that silently skips what it cannot find is not a gate.
+// RUN: echo "[sync-count] func=some_other_kernel set=0 wait=0 get=0 rls=0 barrier=0 barrier_all=0 total=0" > %t.wrong
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --check-sync-count-floor=%t.wrong %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=MISSING
+// MISSING:      [sync-gate:g4] func=oracle_vadd violations=1
+// MISSING-NEXT:   !! kind=missing-reference-profile

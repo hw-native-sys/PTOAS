@@ -41,6 +41,10 @@ namespace func = ::mlir::func;
 #define GEN_PASS_DEF_PTOCHECKSYNCIDS
 #define GEN_PASS_DEF_PTOCHECKSYNCSELFCOVERAGE
 #define GEN_PASS_DEF_PTOCHECKSYNCINTERFERENCE
+#define GEN_PASS_DEF_PTODUMPSYNCCOVERAGE
+#define GEN_PASS_DEF_PTOCHECKSYNCCOVERAGE
+#define GEN_PASS_DEF_PTODUMPSYNCCOUNTS
+#define GEN_PASS_DEF_PTOCHECKSYNCCOUNTFLOOR
 #include "PTO/Transforms/Passes.h.inc"
 
 } // namespace pto
@@ -279,6 +283,148 @@ void mlir::pto::oracle::printIdViolations(llvm::raw_ostream &os,
   for (const IdViolation &v : violations) {
     os << "  !! #" << v.order << " " << v.opName
        << " kind=" << idViolationKindName(v.kind) << " id=" << v.id << " : "
+       << v.detail << "\n";
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// G4: sync-count floor
+//===----------------------------------------------------------------------===//
+
+llvm::StringRef mlir::pto::oracle::countViolationKindName(CountViolationKind k) {
+  switch (k) {
+  case CountViolationKind::TotalIncreased:
+    return "total-sync-count-increased";
+  case CountViolationKind::BarrierIncreased:
+    return "barrier-count-increased";
+  case CountViolationKind::BarrierAllIncreased:
+    return "barrier-all-count-increased";
+  case CountViolationKind::MissingReference:
+    return "missing-reference-profile";
+  }
+  return "?";
+}
+
+SyncCountProfile
+mlir::pto::oracle::computeSyncCounts(llvm::ArrayRef<IRSyncRecord> records) {
+  SyncCountProfile p;
+  for (const IRSyncRecord &rec : records) {
+    // Rotation's dyn ops count toward the SAME classes as their static
+    // counterparts -- they are set/wait pairs whose id is chosen at runtime. They
+    // were previously counted as NOTHING, so G4 undercounted every rotating
+    // kernel and an allocator that replaced static pairs with dyn pairs would
+    // have looked like it REDUCED the op count.
+    if (rec.opName == "pto.set_flag" || rec.opName == "pto.set_flag_dyn")
+      ++p.setFlag;
+    else if (rec.opName == "pto.wait_flag" || rec.opName == "pto.wait_flag_dyn")
+      ++p.waitFlag;
+    else if (rec.opName == "pto.get_buf")
+      ++p.getBuf;
+    else if (rec.opName == "pto.rls_buf")
+      ++p.rlsBuf;
+    else if (rec.opName == "pto.barrier") {
+      ++p.barrier;
+      if (rec.srcPipeType == PipelineType::PIPE_ALL)
+        ++p.barrierAll;
+    }
+  }
+  return p;
+}
+
+llvm::SmallVector<CountViolation>
+mlir::pto::oracle::checkSyncCountFloor(const SyncCountProfile &cand,
+                                       const SyncCountProfile &ref) {
+  llvm::SmallVector<CountViolation> violations;
+
+  if (cand.total() > ref.total())
+    violations.push_back({CountViolationKind::TotalIncreased, cand.total(),
+                          ref.total(),
+                          "the new mode emits more sync ops than InsertSync"});
+
+  // Load-bearing: one barrier can replace a set/wait pair, lowering the total
+  // while strictly worsening the schedule. On vadd the degenerate ties on total.
+  if (cand.barrier > ref.barrier)
+    violations.push_back(
+        {CountViolationKind::BarrierIncreased, cand.barrier, ref.barrier,
+         "a barrier orders every pipe; a set/wait pair orders one direction"});
+
+  if (cand.barrierAll > ref.barrierAll)
+    violations.push_back({CountViolationKind::BarrierAllIncreased,
+                          cand.barrierAll, ref.barrierAll,
+                          "PIPE_ALL barriers fully serialize the core"});
+
+  return violations;
+}
+
+void mlir::pto::oracle::printSyncCounts(llvm::raw_ostream &os,
+                                        llvm::StringRef funcName,
+                                        const SyncCountProfile &p) {
+  os << "[sync-count] func=" << funcName << " set=" << p.setFlag
+     << " wait=" << p.waitFlag << " get=" << p.getBuf << " rls=" << p.rlsBuf
+     << " barrier=" << p.barrier << " barrier_all=" << p.barrierAll
+     << " total=" << p.total() << "\n";
+}
+
+llvm::StringMap<SyncCountProfile>
+mlir::pto::oracle::parseSyncCounts(llvm::StringRef text) {
+  llvm::StringMap<SyncCountProfile> profiles;
+
+  llvm::SmallVector<llvm::StringRef> lines;
+  text.split(lines, '\n');
+  for (llvm::StringRef line : lines) {
+    line = line.trim();
+    if (!line.consume_front("[sync-count]"))
+      continue;
+
+    llvm::StringRef name;
+    SyncCountProfile p;
+    llvm::SmallVector<llvm::StringRef> fields;
+    line.split(fields, ' ', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+    for (llvm::StringRef field : fields) {
+      auto [key, value] = field.split('=');
+      if (key == "func") {
+        name = value;
+        continue;
+      }
+      unsigned parsed = 0;
+      if (value.getAsInteger(10, parsed))
+        continue;
+      if (key == "set")
+        p.setFlag = parsed;
+      else if (key == "wait")
+        p.waitFlag = parsed;
+      else if (key == "get")
+        p.getBuf = parsed;
+      else if (key == "rls")
+        p.rlsBuf = parsed;
+      else if (key == "barrier")
+        p.barrier = parsed;
+      else if (key == "barrier_all")
+        p.barrierAll = parsed;
+      // `total` is derived; ignore it on read so a hand-edited file cannot lie.
+    }
+    if (!name.empty())
+      profiles[name] = p;
+  }
+
+  return profiles;
+}
+
+void mlir::pto::oracle::printCountViolations(
+    llvm::raw_ostream &os, llvm::StringRef funcName,
+    const SyncCountProfile &cand, const SyncCountProfile &ref,
+    llvm::ArrayRef<CountViolation> violations) {
+  os << "[sync-gate:g4] func=" << funcName << " candidate_total=" << cand.total()
+     << " reference_total=" << ref.total()
+     << " violations=" << violations.size() << (violations.empty() ? " OK" : "")
+     << "\n";
+  os << "  candidate: ";
+  printSyncCounts(os, funcName, cand);
+  os << "  reference: ";
+  printSyncCounts(os, funcName, ref);
+  for (const CountViolation &v : violations) {
+    os << "  !! kind=" << countViolationKindName(v.kind)
+       << " candidate=" << v.candidate << " reference=" << v.reference << " : "
        << v.detail << "\n";
   }
 }
@@ -843,6 +989,9 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
                         nearest, rotationDepthOf(waitDyn.getEventId())});
     } else if (auto barrier = dyn_cast<pto::BarrierOp>(op)) {
       pto::PIPE pipe = barrier.getPipeAttr().getPipe();
+      if (pipe == pto::PIPE::PIPE_ALL) {
+        ++profile.barrierAll;
+      }
       events.push_back({pipe == pto::PIPE::PIPE_ALL ? SyncEvent::BarrierAll
                                                     : SyncEvent::BarrierPipe,
                         slot, pipe, pipe, -1, op, order, nearest});
@@ -850,6 +999,8 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
   });
 
   profile.anchorCount = anchorPipes.size();
+  profile.anchorSignature =
+      static_cast<uint64_t>(llvm::hash_value(llvm::StringRef(signatureText)));
 
   llvm::DenseSet<std::pair<unsigned, unsigned>> edges;
   /// `reachedBy` is the op whose execution the edge depends on -- the CONSUMING end of
@@ -1209,6 +1360,199 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
 //===----------------------------------------------------------------------===//
 // G1-self: absolute coverage against the dependency analysis
 //===----------------------------------------------------------------------===//
+// G1: coverage superset (differential)
+//===----------------------------------------------------------------------===//
+
+llvm::StringRef
+mlir::pto::oracle::coverageViolationKindName(CoverageViolationKind k) {
+  switch (k) {
+  case CoverageViolationKind::MissingOrdering:
+    return "missing-ordering";
+  case CoverageViolationKind::MissingBackwardOrdering:
+    return "missing-backward-ordering";
+  case CoverageViolationKind::AnchorMismatch:
+    return "anchor-signature-mismatch";
+  case CoverageViolationKind::MissingReference:
+    return "missing-reference-profile";
+  }
+  return "?";
+}
+
+llvm::SmallVector<CoverageViolation>
+mlir::pto::oracle::checkCoverageSuperset(const CoverageProfile &cand,
+                                         const CoverageProfile &ref) {
+  llvm::SmallVector<CoverageViolation> violations;
+
+  if (cand.anchorCount != ref.anchorCount ||
+      cand.anchorSignature != ref.anchorSignature) {
+    violations.push_back(
+        {CoverageViolationKind::AnchorMismatch, 0, 0,
+         "the two runs did not see the same ops: candidate has " +
+             std::to_string(cand.anchorCount) + " anchor(s), reference has " +
+             std::to_string(ref.anchorCount) +
+             " -- the coverage comparison would be meaningless"});
+    return violations;
+  }
+
+  llvm::DenseSet<std::pair<unsigned, unsigned>> have;
+  for (const auto &edge : cand.edges)
+    have.insert(edge);
+  for (const auto &edge : ref.edges)
+    if (!have.count(edge))
+      violations.push_back(
+          {CoverageViolationKind::MissingOrdering, edge.first, edge.second,
+           "the reference orders this pair; the candidate does not"});
+
+  // Carried edges are a SEPARATE superset, not merged into the forward set.
+  // A carried edge (x, y, d=1) with x < y is possible and would key identically
+  // to the forward edge (x, y) -- yet it is a strictly WEAKER claim, so merging
+  // would let a candidate that established only the cross-iteration ordering
+  // satisfy a reference demanding the same-iteration one.
+  std::set<std::tuple<unsigned, unsigned, unsigned>> haveCarried;
+  for (const CarriedEdge &edge : cand.carriedEdges)
+    haveCarried.insert({edge.from, edge.to, edge.distance});
+  for (const CarriedEdge &edge : ref.carriedEdges)
+    if (!haveCarried.count({edge.from, edge.to, edge.distance}))
+      violations.push_back(
+          {CoverageViolationKind::MissingBackwardOrdering, edge.from, edge.to,
+           "the reference orders this pair across iterations; the candidate "
+           "does not -- an unprimed loop-carried wait blocks forever",
+           edge.distance});
+
+  return violations;
+}
+
+void mlir::pto::oracle::printCoverage(llvm::raw_ostream &os,
+                                      llvm::StringRef funcName,
+                                      const CoverageProfile &p) {
+  os << "[sync-cov] func=" << funcName << " anchors=" << p.anchorCount
+     << " sig=" << llvm::format_hex(p.anchorSignature, 18)
+     << " edge_count=" << p.edges.size() << " edges=";
+  for (size_t i = 0; i < p.edges.size(); ++i) {
+    if (i)
+      os << ",";
+    os << p.edges[i].first << "-" << p.edges[i].second;
+  }
+  // Carried-edge fields are APPENDED, never interleaved: every existing pin ends at the
+  // forward `edges=` list and FileCheck matches substrings, so a line that grows
+  // a suffix still matches. Reordering would break all of them for no reason.
+  os << " bedge_count=" << p.carriedEdges.size() << " bedges=";
+  for (size_t i = 0; i < p.carriedEdges.size(); ++i) {
+    if (i)
+      os << ",";
+    os << p.carriedEdges[i].from << "-" << p.carriedEdges[i].to << "@"
+       << p.carriedEdges[i].distance;
+  }
+  os << " barrier_all=" << p.barrierAll << "\n";
+}
+
+llvm::StringMap<CoverageProfile>
+mlir::pto::oracle::parseCoverage(llvm::StringRef text) {
+  llvm::StringMap<CoverageProfile> profiles;
+
+  llvm::SmallVector<llvm::StringRef> lines;
+  text.split(lines, '\n');
+  for (llvm::StringRef line : lines) {
+    line = line.trim();
+    if (!line.consume_front("[sync-cov]"))
+      continue;
+
+    llvm::StringRef name;
+    CoverageProfile p;
+    llvm::SmallVector<llvm::StringRef> fields;
+    line.split(fields, ' ', -1, /*KeepEmpty=*/false);
+    for (llvm::StringRef field : fields) {
+      auto [key, value] = field.split('=');
+      if (key == "func") {
+        name = value;
+      } else if (key == "anchors") {
+        if (value.getAsInteger(10, p.anchorCount))
+          p.anchorCount = 0;
+      } else if (key == "sig") {
+        if (value.getAsInteger(0, p.anchorSignature))
+          p.anchorSignature = 0;
+      } else if (key == "edges" && !value.empty()) {
+        llvm::SmallVector<llvm::StringRef> pairs;
+        value.split(pairs, ',', -1, /*KeepEmpty=*/false);
+        for (llvm::StringRef pair : pairs) {
+          auto [a, b] = pair.split('-');
+          unsigned from = 0, to = 0;
+          if (!a.getAsInteger(10, from) && !b.getAsInteger(10, to))
+            p.edges.push_back({from, to});
+        }
+      } else if (key == "barrier_all") {
+        // A profile written before this field existed parses to 0, which reads as
+        // "no barrier delta" and leaves the verdict untouched -- the field is
+        // reported, never differenced into a pass.
+        if (value.getAsInteger(10, p.barrierAll))
+          p.barrierAll = 0;
+      } else if (key == "bedges" && !value.empty()) {
+        // `j-i@d`. A profile written before carried edges existed has no `bedges=` field and
+        // parses to an empty carried set -- which is the right reading for the
+        // hand-written deliberate-mismatch fixtures. No version tag: no .cov
+        // file is checked in, so producer and consumer always move together.
+        llvm::SmallVector<llvm::StringRef> triples;
+        value.split(triples, ',', -1, /*KeepEmpty=*/false);
+        for (llvm::StringRef triple : triples) {
+          auto [pair, distText] = triple.split('@');
+          auto [a, b] = pair.split('-');
+          unsigned from = 0, to = 0, distance = 0;
+          if (!a.getAsInteger(10, from) && !b.getAsInteger(10, to) &&
+              !distText.getAsInteger(10, distance))
+            p.carriedEdges.push_back({from, to, distance});
+        }
+      }
+    }
+    if (!name.empty()) {
+      llvm::sort(p.edges);
+      llvm::sort(p.carriedEdges);
+      profiles[name] = p;
+    }
+  }
+
+  return profiles;
+}
+
+void mlir::pto::oracle::printCoverageViolations(
+    llvm::raw_ostream &os, llvm::StringRef funcName,
+    const CoverageProfile &cand, const CoverageProfile &ref,
+    llvm::ArrayRef<CoverageViolation> violations) {
+  os << "[sync-gate:g1] func=" << funcName
+     << " candidate_edges=" << cand.edges.size()
+     << " reference_edges=" << ref.edges.size()
+     << " violations=" << violations.size() << (violations.empty() ? " OK" : "")
+     << " candidate_bedges=" << cand.carriedEdges.size()
+     << " reference_bedges=" << ref.carriedEdges.size()
+     << " candidate_barrier_all=" << cand.barrierAll
+     << " reference_barrier_all=" << ref.barrierAll << "\n";
+  // The two barrier counts are reported and nothing is concluded from them. An
+  // earlier version added a line reading the difference as coarseness rather than
+  // lost coverage, and the deliberate-fault fixtures refused it: an empty allocation
+  // and a hand-written missing-carried-ordering both show the reference ahead on
+  // barriers, because the reference carries the auto-sync tail barrier and they do
+  // not. The same delta therefore appears on the exact fault class this gate exists
+  // to catch, and a line explaining it away would have excused them. The reading
+  // belongs where it can be qualified; see BARRIER COARSENESS in the header.
+  unsigned shown = 0;
+  for (const CoverageViolation &v : violations) {
+    if ((v.kind == CoverageViolationKind::MissingOrdering ||
+         v.kind == CoverageViolationKind::MissingBackwardOrdering) &&
+        shown >= 8) {
+      os << "  ... and " << (violations.size() - shown) << " more\n";
+      break;
+    }
+    ++shown;
+    os << "  !! kind=" << coverageViolationKindName(v.kind);
+    if (v.kind == CoverageViolationKind::MissingOrdering)
+      os << " anchor#" << v.from << " -> anchor#" << v.to;
+    if (v.kind == CoverageViolationKind::MissingBackwardOrdering)
+      os << " anchor#" << v.from << " -> anchor#" << v.to << " (d=" << v.distance
+         << ")";
+    os << " : " << v.detail << "\n";
+  }
+}
+
+//===----------------------------------------------------------------------===//
 
 namespace {
 
@@ -1496,7 +1840,7 @@ mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
       // both sit in one loop body: `now` in iteration k conflicts with `front` in
       // iteration k+1, across the back edge. A forward RAW (front writes, now
       // reads) is a carried WAR (now reads, then front writes next iteration),
-      // and so on -- which is exactly why the incumbent emits backward pairs at
+      // and so on -- which is why the sync pass emits backward pairs at
       // all. This is the requirement only carried edges can satisfy.
       if (!(raw || war || waw))
         continue;
@@ -1796,6 +2140,143 @@ struct PTOCheckSyncSelfCoveragePass
   }
 };
 
+
+/// G1 reference side: writes the happens-before edges this run's sync induces.
+struct PTODumpSyncCoveragePass
+    : public mlir::pto::impl::PTODumpSyncCoverageBase<PTODumpSyncCoveragePass> {
+  void runOnOperation() override {
+    func::FuncOp func = getOperation();
+    if (func.isDeclaration())
+      return;
+    auto profile = oracle::computeCoverage(func);
+    oracle::emitReport([&](llvm::raw_ostream &os) {
+      oracle::printCoverage(os, func.getSymName(), profile);
+    });
+  }
+};
+
+/// G1: every ordering the reference establishes must also be established here.
+struct PTOCheckSyncCoveragePass
+    : public mlir::pto::impl::PTOCheckSyncCoverageBase<PTOCheckSyncCoveragePass> {
+  std::string referenceFile;
+
+  void runOnOperation() override {
+    func::FuncOp func = getOperation();
+    if (func.isDeclaration())
+      return;
+
+    auto bufferOr = llvm::MemoryBuffer::getFile(referenceFile);
+    if (!bufferOr) {
+      func.emitError() << "G1 coverage: cannot read reference profile '"
+                       << referenceFile << "': " << bufferOr.getError().message();
+      return signalPassFailure();
+    }
+
+    llvm::StringMap<CoverageProfile> reference =
+        oracle::parseCoverage((*bufferOr)->getBuffer());
+    llvm::StringRef name = func.getSymName();
+    CoverageProfile candidate = oracle::computeCoverage(func);
+
+    auto it = reference.find(name);
+    if (it == reference.end()) {
+      oracle::emitReport([&](llvm::raw_ostream &os) {
+        os << "[sync-gate:g1] func=" << name << " violations=1\n  !! kind="
+           << oracle::coverageViolationKindName(
+                  CoverageViolationKind::MissingReference)
+           << " : no reference profile for this function in '" << referenceFile
+           << "'\n";
+      });
+      func.emitError() << "G1 coverage: no reference profile for '" << name
+                       << "'";
+      return signalPassFailure();
+    }
+
+    const CoverageProfile &ref = it->second;
+    auto violations = oracle::checkCoverageSuperset(candidate, ref);
+    oracle::emitReport([&](llvm::raw_ostream &os) {
+      oracle::printCoverageViolations(os, name, candidate, ref, violations);
+    });
+
+    if (!violations.empty()) {
+      // An anchor mismatch is not "missing orderings" -- nothing is missing, the
+      // two runs simply did not compile the same program. Say so.
+      if (violations.front().kind == CoverageViolationKind::AnchorMismatch)
+        func.emitError() << "G1 coverage: candidate and reference did not see "
+                            "the same program (anchor signature mismatch)";
+      else
+        func.emitError() << "G1 coverage: " << violations.size()
+                         << " ordering(s) the reference establishes are missing";
+      signalPassFailure();
+    }
+  }
+};
+
+/// Writes this run's kernel-body sync-op counts. Read-only.
+struct PTODumpSyncCountsPass
+    : public mlir::pto::impl::PTODumpSyncCountsBase<PTODumpSyncCountsPass> {
+  void runOnOperation() override {
+    func::FuncOp func = getOperation();
+    if (func.isDeclaration())
+      return;
+    auto profile = oracle::computeSyncCounts(oracle::extractFromIR(func));
+    oracle::emitReport([&](llvm::raw_ostream &os) {
+      oracle::printSyncCounts(os, func.getSymName(), profile);
+    });
+  }
+};
+
+/// G4: compares this run's counts against a reference run's profile.
+struct PTOCheckSyncCountFloorPass
+    : public mlir::pto::impl::PTOCheckSyncCountFloorBase<
+          PTOCheckSyncCountFloorPass> {
+  std::string referenceFile;
+
+  void runOnOperation() override {
+    func::FuncOp func = getOperation();
+    if (func.isDeclaration())
+      return;
+
+    auto bufferOr = llvm::MemoryBuffer::getFile(referenceFile);
+    if (!bufferOr) {
+      func.emitError() << "G4 sync-count floor: cannot read reference profile '"
+                       << referenceFile << "': " << bufferOr.getError().message();
+      return signalPassFailure();
+    }
+
+    llvm::StringMap<SyncCountProfile> reference =
+        oracle::parseSyncCounts((*bufferOr)->getBuffer());
+
+    llvm::StringRef name = func.getSymName();
+    SyncCountProfile candidate =
+        oracle::computeSyncCounts(oracle::extractFromIR(func));
+
+    auto it = reference.find(name);
+    if (it == reference.end()) {
+      // Not a pass: a gate that skips what it cannot find is not a gate.
+      oracle::emitReport([&](llvm::raw_ostream &os) {
+        os << "[sync-gate:g4] func=" << name << " violations=1\n  !! kind="
+           << oracle::countViolationKindName(CountViolationKind::MissingReference)
+           << " : no reference profile for this function in '" << referenceFile
+           << "'\n";
+      });
+      func.emitError() << "G4 sync-count floor: no reference profile for '"
+                       << name << "'";
+      return signalPassFailure();
+    }
+
+    const SyncCountProfile &ref = it->second;
+    auto violations = oracle::checkSyncCountFloor(candidate, ref);
+    oracle::emitReport([&](llvm::raw_ostream &os) {
+      oracle::printCountViolations(os, name, candidate, ref, violations);
+    });
+
+    if (!violations.empty()) {
+      func.emitError() << "G4 sync-count floor: " << violations.size()
+                       << " regression(s) against the reference profile";
+      signalPassFailure();
+    }
+  }
+};
 } // namespace
 
 std::unique_ptr<Pass>
@@ -1815,5 +2296,27 @@ std::unique_ptr<Pass>
 mlir::pto::createPTOCheckSyncSelfCoveragePass(unsigned maxViolations) {
   auto pass = std::make_unique<PTOCheckSyncSelfCoveragePass>();
   pass->maxViolations = maxViolations;
+  return pass;
+}
+
+std::unique_ptr<Pass> mlir::pto::createPTODumpSyncCoveragePass() {
+  return std::make_unique<PTODumpSyncCoveragePass>();
+}
+
+std::unique_ptr<Pass>
+mlir::pto::createPTOCheckSyncCoveragePass(llvm::StringRef referenceFile) {
+  auto pass = std::make_unique<PTOCheckSyncCoveragePass>();
+  pass->referenceFile = referenceFile.str();
+  return pass;
+}
+
+std::unique_ptr<Pass> mlir::pto::createPTODumpSyncCountsPass() {
+  return std::make_unique<PTODumpSyncCountsPass>();
+}
+
+std::unique_ptr<Pass>
+mlir::pto::createPTOCheckSyncCountFloorPass(llvm::StringRef referenceFile) {
+  auto pass = std::make_unique<PTOCheckSyncCountFloorPass>();
+  pass->referenceFile = referenceFile.str();
   return pass;
 }

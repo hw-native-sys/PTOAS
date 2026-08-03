@@ -397,6 +397,32 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
+static llvm::cl::opt<bool> dumpSyncCoverage(
+    "dump-sync-coverage",
+    llvm::cl::desc("Write the happens-before edges this run's emitted sync induces, "
+                   "as the reference profile for --check-sync-coverage"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> checkSyncCoverage(
+    "check-sync-coverage",
+    llvm::cl::desc("Run oracle gate G1: assert this run establishes every ordering "
+                   "in the given file (a prior --dump-sync-coverage run). "
+                   "DIFFERENTIAL -- its strength is bounded by that reference"),
+    llvm::cl::init(""), llvm::cl::value_desc("profile-file"));
+
+static llvm::cl::opt<bool> dumpSyncCounts(
+    "dump-sync-counts",
+    llvm::cl::desc("Write this run's kernel-body sync-op counts, one line per "
+                   "function, as the reference for --check-sync-count-floor"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> checkSyncCountFloor(
+    "check-sync-count-floor",
+    llvm::cl::desc("Run oracle gate G4: assert this run does not synchronize more "
+                   "than the given reference profile, per class (total, barriers, "
+                   "PIPE_ALL barriers). DIFFERENTIAL"),
+    llvm::cl::init(""), llvm::cl::value_desc("profile-file"));
+
 static llvm::cl::opt<bool> checkSyncIds(
     "check-sync-ids",
     llvm::cl::desc("Run oracle gate G3: verify every static emitted sync id is "
@@ -3574,6 +3600,16 @@ int mlir::pto::compilePTOASModule(
   if (checkSyncSelfCoverage)
     pm.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOCheckSyncSelfCoveragePass());
+  if (dumpSyncCoverage)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCoveragePass());
+  if (!checkSyncCoverage.empty())
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOCheckSyncCoveragePass(checkSyncCoverage));
+  if (dumpSyncCounts)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCountsPass());
+  if (!checkSyncCountFloor.empty())
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOCheckSyncCountFloorPass(checkSyncCountFloor));
 
   pm.addPass(pto::createPTOResolveBufferSelectPass());
   if (effectiveBackend == PTOBackend::EmitC)
