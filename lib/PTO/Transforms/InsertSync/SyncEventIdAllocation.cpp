@@ -133,6 +133,13 @@ size_t SyncEventIdAllocation::GetCompilerAvailableEventIdNum(const SyncOperation
   return kTotalEventIdNum;
 }
 
+uint64_t SyncEventIdAllocation::GetReservedEventIdNum(PipelineType src,
+                                                      PipelineType dst) {
+  auto it = reservedEventIdNum.find({src, dst});
+  return it == reservedEventIdNum.end() ? 0 : it->second;
+}
+
+
 void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
   const size_t poolSize = getEventIdPoolSize(sync, reservedBlockSyncEventIdNum);
   const size_t availableEventIdNum = GetCompilerAvailableEventIdNum(sync);

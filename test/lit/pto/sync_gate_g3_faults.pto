@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G3 rejects ids the target forbids. None of the three classes below can be written
+// as input IR: `pto.set_flag` spells its id as an EVENT_ID0..EVENT_ID7 enum, so 9 and
+// 14 are unrepresentable, and `pto.get_buf`'s buf_id is verified into [0, 31], so 64
+// is too. Each fault is appended to the gate's own record list after extraction,
+// never to the IR, so it cannot reach codegen. `--check-sync-ids-inject-fault` exists
+// for that and is hidden.
+
+// An event id past the end of the intra-core pool.
+// RUN: not ptoas --pto-arch=a3 --check-sync-ids --check-sync-ids-inject-fault=event-oor %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=OOR
+// OOR:      [sync-gate:g3] func=oracle_vadd view=syncops records=1 violations=1
+// OOR-NEXT:   !! #0 set_event kind=event-id-out-of-range id=9 : intra-core event pool for V->MTE3 is [0, 8)
+
+// An id that `sync_block_all` owns while one is live.
+// RUN: not ptoas --pto-arch=a3 --check-sync-ids --check-sync-ids-inject-fault=block-all-stomp %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=STOMP
+// STOMP:      [sync-gate:g3] func=oracle_vadd view=syncops records=2 violations=1
+// STOMP-NEXT:   !! #1 sync_block_set kind=event-id-reserved-for-block-all id=14 : ids 14/15 belong to sync_block_all while one is live
+
+// A buffer id past the hardware field. Checked on A5, where buffer-id sync exists.
+// RUN: not ptoas --pto-arch=a5 --check-sync-ids --check-sync-ids-inject-fault=bufid-oor %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=BUFOOR
+// BUFOOR:      [sync-gate:g3] func=oracle_vadd view=ir records=1 violations=1
+// BUFOOR-NEXT:   !! #0 pto.get_buf kind=buf-id-out-of-range id=64 : hardware buf_id field is [0, 32)
+
+// A SELECTOR THAT NAMES NO FAULT MUST FAIL LOUDLY. Injecting nothing would leave
+// the gate with nothing to find, so it would report clean and the three runs above
+// would pass while proving nothing -- a misspelling would vacuously satisfy the
+// tests that exist to show the gate is not vacuous.
+// RUN: not ptoas --pto-arch=a3 --check-sync-ids --check-sync-ids-inject-fault=typo-not-a-fault %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=BADSEL
+// BADSEL: error: unknown --check-sync-ids-inject-fault selector 'typo-not-a-fault'; expected event-oor, block-all-stomp or bufid-oor

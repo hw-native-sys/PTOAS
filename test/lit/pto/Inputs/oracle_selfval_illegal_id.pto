@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Oracle self-validation fixture: ONE fault, of G3's class only.
+// V->S reserves the top id of its pool, so EVENT_ID7 is illegal there. The
+// set/wait interval discipline is perfect, so G2 must stay silent.
+// Event-only on purpose: buffer-id sync is A5-only and this fixture is compiled for
+// a3, where the exposed capacity is zero, so a get_buf here would be rejected for the
+// arch rather than for the id under test.
+// Not a test: lives under Inputs/, which lit excludes from discovery.
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @selfval_illegal_id() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.set_flag["PIPE_V", "PIPE_S", "EVENT_ID7"]
+    pto.wait_flag["PIPE_V", "PIPE_S", "EVENT_ID7"]
+    return
+  }
+}

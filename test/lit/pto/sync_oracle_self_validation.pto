@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Proves the three gates are neither unsound nor vacuous, which is the only basis
+// on which a green result from them means anything.
+//
+// Soundness: all three pass on synchronization InsertSync itself produced.
+// Non-vacuity: each of the three fault classes below is caught by exactly ONE gate
+// and is SILENT on the other two. Delete any one gate and a fault class escapes.
+//
+//   fault class                     G1-self   G2      G3
+//   ---------------------------------------------------------
+//   nothing ordered at all          CATCH     pass    pass
+//   two overlapping uses of one id  pass      CATCH   pass
+//   an id the target forbids        pass      pass    CATCH
+//
+// The inputs are hand-written modules rather than compiler output, so no gate's
+// verdict depends on another pass continuing to behave a particular way.
+
+// ---------------------------------------------------------------------------
+// ROW 0 -- SOUNDNESS. All three green on InsertSync's own output.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GOOD1
+// GOOD1: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=5 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-interference %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GOOD2
+// GOOD2: [sync-gate:g2] func=oracle_vadd view=ir records=5 errors=0 warnings=0 OK
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-ids %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GOOD3
+// GOOD3: [sync-gate:g3] func=oracle_vadd view=ir records=5 violations=0 OK
+
+// ---------------------------------------------------------------------------
+// ROW 1 -- NOTHING ORDERED AT ALL. Only G1-self can see this.
+//
+// The fault is the ABSENCE of a sync pass, so the source is the whole truth and
+// this row cannot expire the way a stub-based injector would: it depends on no
+// pass's behaviour. G2 and G3 are silent because they judge the ids that ARE
+// present, and there are none -- which is exactly why a green G2/G3 is not a
+// correctness result on its own.
+// RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EMPTY1
+// EMPTY1: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=0 uncovered=5 (samepipe=0 crosspipe=5) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0
+
+// RUN: ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EMPTY2
+// EMPTY2: [sync-gate:g2] func=oracle_vadd view=ir records=0 errors=0 warnings=0 OK
+
+// RUN: ptoas --pto-arch=a3 --check-sync-ids %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EMPTY3
+// EMPTY3: [sync-gate:g3] func=oracle_vadd view=ir records=0 violations=0 OK
+
+// ---------------------------------------------------------------------------
+// ROW 2 -- TWO OVERLAPPING USES OF ONE ID. Only G2 can see this.
+//
+// One (src,dst,id) is acquired twice before either release. The op count is
+// unchanged and every ordering is still established, so neither a coverage gate
+// nor a count floor can distinguish it from correct code.
+// RUN: not ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_selfval_nested_id.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=NEST1
+// NEST1: [sync-gate:g2] func=selfval_nested_id view=ir records=4 errors=1 warnings=0
+
+// RUN: ptoas --pto-arch=a3 --check-sync-ids %S/Inputs/oracle_selfval_nested_id.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=NEST2
+// NEST2: [sync-gate:g3] func=selfval_nested_id view=ir records=4 violations=0 OK
+
+// ---------------------------------------------------------------------------
+// ROW 3 -- AN ID THE TARGET FORBIDS. Only G3 can see this.
+//
+// A direction that reserves the tail of its pool, used with a reserved id. The
+// intervals are disjoint and every dependency is ordered, so G2 and G1-self are
+// both correct to stay quiet.
+// RUN: not ptoas --pto-arch=a3 --check-sync-ids %S/Inputs/oracle_selfval_illegal_id.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ILL1
+// ILL1: [sync-gate:g3] func=selfval_illegal_id view=ir records=2 violations=2
+
+// RUN: ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_selfval_illegal_id.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ILL2
+// ILL2: [sync-gate:g2] func=selfval_illegal_id view=ir records=2 errors=0 warnings=0 OK

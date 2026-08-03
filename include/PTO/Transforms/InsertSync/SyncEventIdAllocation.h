@@ -40,6 +40,12 @@ using SyncCycle = DenseMap<int, EventCyclePool>;
  
 class SyncEventIdAllocation {
 public:
+  /// Number of event ids reserved at the tail of the intra-core pool
+  /// [0, kTotalEventIdNum) for the direction `src -> dst`; 0 when the direction
+  /// reserves nothing. Exposed so the device-id-legality gate reads the same
+  /// reservation map this allocator obeys, rather than duplicating it.
+  static uint64_t GetReservedEventIdNum(PipelineType src, PipelineType dst);
+
   SyncEventIdAllocation(SyncIRs &syncIR, SyncOperations &syncOperations)
       : syncIR_(syncIR), syncOperations_(syncOperations) {
     reserveBlockAllEventIds();
@@ -124,6 +130,7 @@ private:
   static const llvm::DenseMap<std::pair<PipelineType, PipelineType>, uint64_t>
       reservedEventIdNum;
   uint64_t reservedBlockSyncEventIdNum{0};
+
 };
  
 } // namespace pto
