@@ -76,6 +76,14 @@ public:
 
       mlir::ModuleOp source = unwrap(rawModule);
       auto cloned = mlir::cast<mlir::ModuleOp>(source->clone());
+
+      // Python's MLIR binding keeps operation wrappers in the context's
+      // live-operation map (and Module.operation keeps the Module alive).
+      // Clear those non-owning wrappers before the PyModule destructor
+      // releases its native module.  This context is private to this PTOAS
+      // invocation, so no unrelated Python operation wrappers are invalidated.
+      getRuntime().attr("release_module_wrappers")(contextOwner);
+
       mlir::pto::TileLibMaterialization materialization{
           mlir::OwningOpRef<mlir::ModuleOp>(cloned),
           py::cast<std::string>(result[1])};
