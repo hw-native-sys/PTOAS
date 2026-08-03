@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @one_point_only(
+      %src8: !pto.ptr<ui8, ub>,
+      %src16: !pto.ptr<ui16, ub>,
+      %src32: !pto.ptr<ui32, ub>,
+      %dst8: !pto.ptr<ui8, ub>,
+      %dst16: !pto.ptr<ui16, ub>,
+      %dst32: !pto.ptr<ui32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %value8 = pto.vlds %src8[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %value16 = pto.vlds %src16[%c0]
+          : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+      %value32 = pto.vlds %src32[%c0]
+          : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+      %mask8 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+      %mask16 = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+      %mask32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsts %value8, %dst8[%c0], %mask8 {dist = "1PT_B8"}
+          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+      pto.vsts %value16, %dst16[%c0], %mask16 {dist = "1PT_B16"}
+          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+      pto.vsts %value32, %dst32[%c0], %mask32 {dist = "1PT_B32"}
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @mixed_one_point_and_normal(
+      %src: !pto.ptr<ui32, ub>,
+      %dst: !pto.ptr<ui32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %value = pto.vlds %src[%c0]
+          : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsts %value, %dst[%c0], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+      pto.vsts %value, %dst[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: define {{.*}}@one_point_only_mix_aiv
+// CHECK-NOT: call {{.*}}@llvm.hivm.pset
+// CHECK-NOT: call {{.*}}@llvm.hivm.pge
+// CHECK-COUNT-3: call void @llvm.hivm.vstsx1
+// CHECK-SAME: undef)
+
+// CHECK-LABEL: define {{.*}}@mixed_one_point_and_normal_mix_aiv
+// CHECK: %[[MASK:.*]] = call {{.*}}@llvm.hivm.pset
+// CHECK: call void @llvm.hivm.vstsx1{{.*}}undef)
+// CHECK: call void @llvm.hivm.vstsx1{{.*}}%[[MASK]])

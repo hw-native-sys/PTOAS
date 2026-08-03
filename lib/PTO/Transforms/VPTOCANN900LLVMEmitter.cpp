@@ -1422,6 +1422,17 @@ static std::optional<uint64_t> parseStoreDistImmediate(StringRef dist,
   return std::nullopt;
 }
 
+static bool isOnePointStoreDist(StringRef dist) {
+  return dist == "1PT_B8" || dist == "1PT_B16" || dist == "1PT_B32";
+}
+
+static bool isMaskOnlyUsedByOnePointStores(Value mask) {
+  return !mask.use_empty() && llvm::all_of(mask.getUsers(), [](Operation *user) {
+    auto store = dyn_cast<pto::VstsOp>(user);
+    return store && store.getDist() && isOnePointStoreDist(*store.getDist());
+  });
+}
+
 static std::optional<uint64_t> parseStoreX2DistImmediate(StringRef dist,
                                                          Type elementType) {
   auto width = getDistElementWidth(elementType);
@@ -6607,6 +6618,12 @@ public:
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)))
       return rewriter.notifyMatchFailure(op, "failed to convert pset result types");
 
+    if (isMaskOnlyUsedByOnePointStores(op.getResult())) {
+      auto undef = rewriter.create<LLVM::UndefOp>(op.getLoc(), resultTypes.front());
+      rewriter.replaceOp(op, undef.getResult());
+      return success();
+    }
+
     StringRef calleeName = buildPsetCallee<PsetOp>(op.getContext());
     Value patternValue = rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*pattern));
@@ -6641,6 +6658,12 @@ public:
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)))
       return rewriter.notifyMatchFailure(op, "failed to convert pge result types");
+
+    if (isMaskOnlyUsedByOnePointStores(op.getResult())) {
+      auto undef = rewriter.create<LLVM::UndefOp>(op.getLoc(), resultTypes.front());
+      rewriter.replaceOp(op, undef.getResult());
+      return success();
+    }
 
     StringRef calleeName = buildPgeCallee<PgeOp>(op.getContext());
     Value patternValue = rewriter.create<arith::ConstantOp>(
@@ -7066,12 +7089,19 @@ public:
                                                         usePostIntrinsic ? 1 : 0));
     Value value = castToPayloadABI(
         op.getLoc(), adaptor.getValue(), op.getValue().getType(), rewriter);
-    SmallVector<Value> args{value, adaptor.getDestination(),
-                            *offsetBytes, distValue, zero, adaptor.getMask()};
+    Value mask = adaptor.getMask();
+    // The 1PT store forms keep a mask operand in the LLVM ABI, but the
+    // hardware ignores it.  Do not materialize a pset/pge mask solely for
+    // this dead operand; an LLVM undef is sufficient at this boundary.
+    StringRef distToken = op.getDist().value_or("");
+    if (isOnePointStoreDist(distToken))
+      mask = rewriter.create<LLVM::UndefOp>(op.getLoc(), mask.getType());
+    SmallVector<Value> args{value, adaptor.getDestination(), *offsetBytes,
+                            distValue, zero, mask};
     auto funcType = rewriter.getFunctionType(
         TypeRange{value.getType(), adaptor.getDestination().getType(),
                   rewriter.getI32Type(), rewriter.getI32Type(),
-                  rewriter.getI32Type(), adaptor.getMask().getType()},
+                  rewriter.getI32Type(), mask.getType()},
         resultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
                                               resultTypes, args);
