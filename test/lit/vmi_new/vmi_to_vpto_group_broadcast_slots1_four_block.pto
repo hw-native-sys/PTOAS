@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=DIRECT
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @group_broadcast_slots1_four_block(
+      %source: !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>,
+      %data: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %broadcast = pto.vmi.vbrc %source {group = 4}
+        : !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vmul %data, %broadcast
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %out
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_broadcast_slots1_four_block_producer(%scalar: f32)
+      -> !pto.vmi.vreg<128xf32> {
+    %slots = pto.vmi.vbrc %scalar
+        : f32 -> !pto.vmi.vreg<4xf32>
+    %broadcast = pto.vmi.vbrc %slots {group = 4}
+        : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
+    return %broadcast : !pto.vmi.vreg<128xf32>
+  }
+}
+
+// DIRECT-LABEL: func.func @group_broadcast_slots1_four_block(
+// DIRECT: %[[MASK:.*]] = pto.pset_b32 "PAT_ALL"
+// DIRECT: pto.vdup {{.*}}LOWEST
+// DIRECT: pto.vdup {{.*}}LOWEST
+// DIRECT: pto.vsel
+// DIRECT: pto.vdup {{.*}}LOWEST
+// DIRECT: pto.vdup {{.*}}LOWEST
+// DIRECT: pto.vsel
+// DIRECT: pto.vmul
+// DIRECT: pto.vmul
+// DIRECT-NOT: pto.vmi.
+
+// ASSIGN-LABEL: func.func @group_broadcast_slots1_four_block_producer(
+// ASSIGN: %[[SLOTS:.*]] = pto.vmi.broadcast
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>
+// ASSIGN: %[[BROADCAST:.*]] = pto.vmi.group_broadcast %[[SLOTS]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+
+// LOWER-LABEL: func.func @group_broadcast_slots1_four_block_producer(
+// LOWER: pto.vdup %arg0
+// LOWER-COUNT-2: pto.vselr
+// LOWER-NOT: pto.vsel {{.*}}
+// LOWER-NOT: pto.vmi.

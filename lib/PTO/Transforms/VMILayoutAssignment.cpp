@@ -389,11 +389,35 @@ struct LayoutSolver {
         solved.getSlots() > 0)
       return solved;
     if (type.getElementCount() == numGroups)
-      return VMILayoutAttr::getGroupSlots(ctx, numGroups,
-                                          numGroups >= 8 ? 8 : 1);
+      // Prefer the packed carrier for plastic producers, including partial
+      // packets with fewer than eight groups.  This keeps the broadcast on
+      // the single-source vselr path; explicit or otherwise fixed slots=1
+      // values retain their layout and use the cross-source fallback.
+      return VMILayoutAttr::getGroupSlots(ctx, numGroups, /*slots=*/8);
     if (auto load = value.getDefiningOp<VMIGroupSlotLoadOp>())
       return getPreferredGroupSlotLoadLayout(load);
     return getPreferredGroupSlotsLayout(type, numGroups);
+  }
+
+  VMILayoutAttr
+  getPreferredGroupBroadcastResultLayout(VMIGroupBroadcastOp op) {
+    auto type = cast<VMIVRegType>(op.getResult().getType());
+    if (VMILayoutAttr existing = type.getLayoutAttr())
+      return existing;
+
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(type.getElementType());
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    if (failed(lanesPerPart) || numGroups <= 0 ||
+        type.getElementCount() % numGroups != 0)
+      return {};
+
+    int64_t groupSize = type.getElementCount() / numGroups;
+    int64_t vcgBlockElems = *lanesPerPart / 8;
+    if (type.getElementCount() < *lanesPerPart &&
+        groupSize == vcgBlockElems)
+      return VMILayoutAttr::getContiguous(ctx, /*laneStride=*/2);
+    return {};
   }
 
   VMILayoutAttr getPreferredGroupLoadResultLayout(VMIGroupLoadOp op) {
@@ -1030,6 +1054,11 @@ struct LayoutSolver {
             getPreferredGroupBroadcastSourceLayout(
                 broadcast.getSource(), broadcast.getNumGroupsAttr().getInt()),
             /*late=*/false, DataLayoutSeedPhase::GroupBroadcast);
+        if (failed(setPreferredLayout(
+                broadcast.getResult(),
+                getPreferredGroupBroadcastResultLayout(broadcast), op,
+                DataLayoutSeedPhase::GroupBroadcast)))
+          return WalkResult::interrupt();
         return WalkResult::advance();
       }
       if (auto hist = dyn_cast<VMIVdhistOp>(op)) {

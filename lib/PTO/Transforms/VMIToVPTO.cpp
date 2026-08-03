@@ -6414,9 +6414,11 @@ static LogicalResult lowerGroupBroadcastParts(
   } else if (resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
     selectorKind = SelectorKind::LogicalRamp;
     selectorPeriod = fact->groupSize;
-  } else if ((resultLayout.isContiguous() &&
-              resultLayout.getLaneStride() > 1) ||
-             resultLayout.isDeinterleaved() ||
+  } else if (resultLayout.isContiguous() &&
+             resultLayout.getLaneStride() > 1) {
+    selectorKind = SelectorKind::VCGBlockRamp;
+    selectorPeriod = fact->groupSize * resultLayout.getLaneStride();
+  } else if (resultLayout.isDeinterleaved() ||
              resultLayout.isBlockDeinterleaved()) {
     selectorKind = SelectorKind::VCGBlockRamp;
     selectorPeriod = fact->vcgBlockElems;
@@ -6536,6 +6538,82 @@ static LogicalResult lowerGroupBroadcastParts(
           sourceChunk >= static_cast<int64_t>(sourceParts.size()))
         return rewriter.notifyMatchFailure(
             op, "group_broadcast source chunk is out of range");
+
+      // A slots=1 source stores every logical group in a separate physical
+      // VReg.  When a result chunk contains multiple groups, first splat the
+      // scalar from each source VReg and then merge those splats by lane.  A
+      // single vselr cannot express this case because its selector only
+      // addresses lanes within one source VReg.
+      if (sourceSlots == 1 && selectorKind != SelectorKind::Constant) {
+        FailureOr<MaskType> resultMaskType =
+            getMaskTypeForVReg(resultVRegType, rewriter.getContext());
+        if (failed(resultMaskType))
+          return rewriter.notifyMatchFailure(
+              op, "group_broadcast cannot derive result mask type");
+
+        SmallVector<int64_t> laneSourceChunks(fact->lanesPerPart, -1);
+        SmallVector<int64_t> activeSourceChunks;
+        for (int64_t lane = 0; lane < fact->lanesPerPart; ++lane) {
+          FailureOr<bool> padding =
+              isPaddingLane(resultVMIType, part, chunk, lane);
+          if (failed(padding))
+            return rewriter.notifyMatchFailure(
+                op, "group_broadcast failed to map result padding lanes");
+          if (*padding)
+            continue;
+          FailureOr<int64_t> logical =
+              mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+          if (failed(logical))
+            return rewriter.notifyMatchFailure(
+                op, "group_broadcast failed to map a result lane");
+          int64_t actualGroup = *logical / fact->groupSize;
+          int64_t expectedGroup = firstGroup + lane / selectorPeriod;
+          if (actualGroup != expectedGroup)
+            return rewriter.notifyMatchFailure(
+                op, "group_broadcast layout table row does not match its "
+                    "selector lowering plan");
+          int64_t laneSourceChunk = actualGroup;
+          if (laneSourceChunk < 0 ||
+              laneSourceChunk >= static_cast<int64_t>(sourceParts.size()))
+            return rewriter.notifyMatchFailure(
+                op, "group_broadcast source chunk is out of range");
+          laneSourceChunks[lane] = laneSourceChunk;
+          if (llvm::find(activeSourceChunks, laneSourceChunk) ==
+              activeSourceChunks.end())
+            activeSourceChunks.push_back(laneSourceChunk);
+        }
+        if (activeSourceChunks.empty())
+          return rewriter.notifyMatchFailure(
+              op, "group_broadcast result chunk has no active lanes");
+
+        auto splatSource = [&](int64_t chunkIndex) {
+          return rewriter
+              .create<VdupOp>(op->getLoc(), resultType,
+                              sourceParts[chunkIndex], *allMask,
+                              rewriter.getStringAttr("LOWEST"))
+              .getResult();
+        };
+        Value merged = splatSource(activeSourceChunks.front());
+        for (int64_t chunkIndex : llvm::drop_begin(activeSourceChunks)) {
+          SmallVector<int8_t> laneMaskBits(fact->lanesPerPart, 0);
+          for (auto [lane, laneSourceChunk] : llvm::enumerate(laneSourceChunks))
+            if (laneSourceChunk == chunkIndex)
+              laneMaskBits[lane] = 1;
+          FailureOr<Value> laneMask = materializeConstantMaskChunk(
+              op->getLoc(), *resultMaskType, laneMaskBits, rewriter);
+          if (failed(laneMask))
+            return rewriter.notifyMatchFailure(
+                op, "failed to create group_broadcast source merge mask");
+          Value splat = splatSource(chunkIndex);
+          merged =
+              rewriter
+                  .create<VselOp>(op->getLoc(), resultType, splat, merged,
+                                  *laneMask)
+                  .getResult();
+        }
+        results[flatIndex] = merged;
+        continue;
+      }
 
       // The support table selects one of the three affine selector forms.
       // Check the table property against the canonical lane map so new table
