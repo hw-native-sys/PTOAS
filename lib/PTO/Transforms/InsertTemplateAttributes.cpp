@@ -8,7 +8,6 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
-#include "PTO/Support/PythonExecutable.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/TileOpExpansionUtils.h"
 
@@ -21,26 +20,16 @@
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <cstdlib>
 #include <optional>
 #include <string>
-#include <unistd.h>
 #include <vector>
-
-extern "C" {
-extern char **environ;
-}
 
 using namespace mlir;
 
@@ -764,121 +753,6 @@ getTargetArch(Operation *operation) {
   return std::nullopt;
 }
 
-static std::optional<std::string>
-invokeMetadataHelper(Operation *operation, StringRef pythonExe,
-                     StringRef daemonSocketPath, StringRef tileLibPkgPath,
-                     StringRef daemonHelperModule) {
-  auto pythonPath = pto::resolvePythonExecutable(pythonExe);
-  if (!pythonPath) {
-    operation->emitError("InsertTemplateAttributes cannot find Python '")
-        << pythonExe << "'";
-    return std::nullopt;
-  }
-
-  auto target = getTargetArch(operation);
-  auto operandSpecs = buildOperandSpecsJson(operation);
-  if (!target || !operandSpecs)
-    return std::nullopt;
-  std::string contextAttrs = buildContextAttrsJson(operation);
-
-  llvm::SmallString<128> outputPath;
-  int outputFd;
-  if (auto error = llvm::sys::fs::createTemporaryFile(
-          "tilelib_metadata", "json", outputFd, outputPath)) {
-    operation->emitError("InsertTemplateAttributes cannot create temporary "
-                         "metadata output: ")
-        << error.message();
-    return std::nullopt;
-  }
-  ::close(outputFd);
-
-  llvm::SmallString<128> errorPath;
-  int errorFd;
-  if (auto error = llvm::sys::fs::createTemporaryFile(
-          "tilelib_metadata", "err", errorFd, errorPath)) {
-    llvm::sys::fs::remove(outputPath);
-    operation->emitError("InsertTemplateAttributes cannot create temporary "
-                         "metadata error output: ")
-        << error.message();
-    return std::nullopt;
-  }
-  ::close(errorFd);
-
-  std::string opName = operation->getName().getStringRef().str();
-  SmallVector<StringRef> args = {
-      *pythonPath,       "-m",            daemonHelperModule,
-      "--method",        "get_metadata",  "--socket",
-      daemonSocketPath,  "--target",      *target,
-      "--op",            opName,          "--operand-specs",
-      *operandSpecs,
-  };
-  if (contextAttrs != "{}") {
-    args.push_back("--context-attrs");
-    args.push_back(contextAttrs);
-  }
-
-  std::optional<StringRef> redirects[] = {
-      std::nullopt,
-      StringRef(outputPath),
-      StringRef(errorPath),
-  };
-
-  SmallVector<StringRef> environment;
-  std::string pythonPathEnvironment;
-  std::vector<std::string> environmentStorage;
-  bool hasPythonPath = !tileLibPkgPath.empty();
-  if (hasPythonPath) {
-    const char *existingPath = ::getenv("PYTHONPATH");
-    pythonPathEnvironment = "PYTHONPATH=" + tileLibPkgPath.str();
-    if (existingPath && existingPath[0] != '\0')
-      pythonPathEnvironment += ":" + std::string(existingPath);
-
-    for (char **entry = environ; *entry; ++entry) {
-      StringRef value(*entry);
-      if (!value.starts_with("PYTHONPATH="))
-        environmentStorage.push_back(value.str());
-    }
-    environmentStorage.push_back(pythonPathEnvironment);
-    for (std::string &value : environmentStorage)
-      environment.push_back(value);
-  }
-
-  std::string errorMessage;
-  int result = llvm::sys::ExecuteAndWait(
-      *pythonPath, args,
-      hasPythonPath
-          ? std::optional<llvm::ArrayRef<StringRef>>(environment)
-          : std::nullopt,
-      redirects, /*secondsToWait=*/30, /*memoryLimit=*/0, &errorMessage);
-  if (result != 0) {
-    auto errorOutput = llvm::MemoryBuffer::getFile(errorPath);
-    llvm::sys::fs::remove(outputPath);
-    llvm::sys::fs::remove(errorPath);
-
-    std::string detail;
-    if (errorOutput)
-      detail = errorOutput.get()->getBuffer().trim().str();
-    if (detail.empty())
-      detail = errorMessage;
-    if (detail.empty())
-      detail = "helper exited with status " + std::to_string(result);
-
-    operation->emitError("InsertTemplateAttributes metadata RPC failed: ")
-        << detail;
-    return std::nullopt;
-  }
-
-  auto output = llvm::MemoryBuffer::getFile(outputPath);
-  llvm::sys::fs::remove(outputPath);
-  llvm::sys::fs::remove(errorPath);
-  if (!output) {
-    operation->emitError(
-        "InsertTemplateAttributes cannot read metadata output");
-    return std::nullopt;
-  }
-  return (*output)->getBuffer().str();
-}
-
 static FailureOr<ArrayAttr>
 parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
   auto parsed = llvm::json::parse(metadataJson);
@@ -978,6 +852,14 @@ struct InsertTemplateAttributesPass
           InsertTemplateAttributesPass> {
   using InsertTemplateAttributesBase::InsertTemplateAttributesBase;
 
+  explicit InsertTemplateAttributesPass(
+      std::shared_ptr<pto::TileLibService> tileLibService)
+      : tileLibService(std::move(tileLibService)) {}
+
+  InsertTemplateAttributesPass(const InsertTemplateAttributesPass &other)
+      : InsertTemplateAttributesBase<InsertTemplateAttributesPass>(other),
+        tileLibService(other.tileLibService) {}
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
 
@@ -988,18 +870,27 @@ struct InsertTemplateAttributesPass
     });
     if (tileOperations.empty())
       return;
-    if (daemonSocketPath.empty()) {
+    if (!tileLibService) {
       module.emitError(
-          "InsertTemplateAttributes requires a PTODSL daemon socket");
+          "InsertTemplateAttributes requires an in-process PTODSL service");
       return signalPassFailure();
     }
 
     for (Operation *operation : tileOperations) {
-      auto metadata = invokeMetadataHelper(
-          operation, pythonExe, daemonSocketPath, tileLibPkgPath,
-          daemonHelperModule);
-      if (!metadata)
+      auto target = getTargetArch(operation);
+      auto operandSpecs = buildOperandSpecsJson(operation);
+      if (!target || !operandSpecs)
         return signalPassFailure();
+      pto::TileLibMaterializationRequest request;
+      request.target = std::move(*target);
+      request.op = operation->getName().getStringRef().str();
+      request.operandSpecsJson = std::move(*operandSpecs);
+      request.contextAttrsJson = buildContextAttrsJson(operation);
+      FailureOr<std::string> metadata = tileLibService->getMetadata(request);
+      if (failed(metadata)) {
+        operation->emitError("in-process PTODSL metadata query failed");
+        return signalPassFailure();
+      }
 
       auto candidates = parseCandidateAttributes(operation, *metadata);
       if (failed(candidates))
@@ -1007,6 +898,8 @@ struct InsertTemplateAttributesPass
       operation->setAttr(kCandidatesAttr, *candidates);
     }
   }
+
+  std::shared_ptr<pto::TileLibService> tileLibService;
 };
 
 } // namespace
@@ -1019,8 +912,9 @@ std::unique_ptr<Pass> createInsertTemplateAttributesPass() {
 }
 
 std::unique_ptr<Pass> createInsertTemplateAttributesPass(
-    const InsertTemplateAttributesOptions &options) {
-  return std::make_unique<InsertTemplateAttributesPass>(options);
+    std::shared_ptr<TileLibService> tileLibService) {
+  return std::make_unique<InsertTemplateAttributesPass>(
+      std::move(tileLibService));
 }
 
 } // namespace pto

@@ -176,8 +176,8 @@ class _TemplateTrace(TracingRuntime):
         rewritten(*args)
 
     # Custom golden-shaped container: single module(target_arch) + func(instance, kernel_kind).
-    def build_module(self):
-        ctx = make_context()
+    def build_module(self, context=None):
+        ctx = context if context is not None else make_context()
         with ctx, Location.unknown():
             arg_types = list(self.compute_argument_types())
             module, ir_fn = self._create_instance_module(arg_types)

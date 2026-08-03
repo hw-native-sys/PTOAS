@@ -56,6 +56,19 @@ class SpecializedTileTemplate(ModuleArtifact):
         self.tile_specs = tile_specs
         self.context_attrs = dict(context_attrs or {})
 
+    def materialize(self, context):
+        """Build a fresh source module in the caller-provided context.
+
+        The returned module remains Python-owned. Native callers must keep this
+        object alive until they have cloned/imported its generated functions.
+        This bypasses the context-bound ModuleArtifact cache.
+        """
+        return _TemplateTrace(
+            self.descriptor,
+            self.tile_specs,
+            context_attrs=self.context_attrs,
+        ).build_module(context=context)
+
 
 def tile_template(*, op, target="a5", name=None, dtypes=(), layouts=(),
                   memory_spaces=(), constraints=(), priority=0, fusible=False,

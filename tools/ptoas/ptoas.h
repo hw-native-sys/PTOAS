@@ -13,6 +13,7 @@
 #include "PTO/Compiler/CompilerApi.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "VFSIMTSizePatcher.h"
+#include "PTO/Transforms/TileLibService.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LogicalResult.h"
@@ -62,6 +63,9 @@ class PTOASContext {
 public:
   PTOASContext(DialectRegistry &registry, llvm::StringRef outputPath, int argc,
                char **argv);
+  PTOASContext(MLIRContext &borrowedContext,
+               std::shared_ptr<TileLibService> tileLibService,
+               llvm::StringRef outputPath, int argc, char **argv);
   ~PTOASContext();
 
   LogicalResult initializeEnvironment(bool requiresToolchain,
@@ -69,6 +73,7 @@ public:
   void initializeMLIRContext();
 
   MLIRContext &getMLIRContext();
+  std::shared_ptr<TileLibService> getTileLibService() const;
 
   void setArch(std::string value);
   llvm::StringRef getArch() const;
@@ -94,7 +99,9 @@ public:
                                std::string &path);
 
 private:
-  MLIRContext mlirContext;
+  std::unique_ptr<MLIRContext> ownedMlirContext;
+  MLIRContext *mlirContext = nullptr;
+  std::shared_ptr<TileLibService> tileLibService;
   std::string outputPath;
   std::string arch;
   BackendInfo backendInfo;
@@ -135,6 +142,9 @@ void loadPTOASDialects(MLIRContext &context);
 
 // Reusable driver entry shared by the Python extension and standalone CLI.
 PTOAS_COMPILER_EXPORT int runPTOAS(int argc, char **argv);
+PTOAS_COMPILER_EXPORT int
+runPTOAS(int argc, char **argv, MLIRContext &borrowedContext,
+         std::shared_ptr<TileLibService> tileLibService);
 
 // Attach textual-.pto SSA name hints (function args, block args, op results)
 // to the parsed module's Locations as debug metadata. Called by the driver

@@ -139,7 +139,7 @@ assemble Python packages from unrelated build directories.
 The current archive is built against CPython 3.11 and requires a CPython 3.11
 interpreter. `bin/ptoas` adds the archive root to `sys.path`, then uses the same
 `ptoas._cli -> ptoas._core` path as the install tree. The packaged `ptodsl/`
-tree supports the compiler's default PTODSL TileLib backend; it does not turn
+tree supports the compiler's PTODSL TileLib implementation; it does not turn
 the archive into a normal pip-installable PTODSL distribution.
 
 Linux archives use package-relative and archive-relative `$ORIGIN` RPATHs;
@@ -155,8 +155,10 @@ declared installation layout. CTest and direct developer-tree runs must set an
 explicit matching `PYTHONPATH`; PTODSL does not guess repository, LLVM build,
 or PTOAS install paths at import time.
 
-TileOp expansion remains a lazy, separate daemon process. The PTOAS CLI passes
-the packaged PTODSL root and the active Python executable to the native driver,
-which starts the daemon only when expansion is required. Keeping the daemon out
-of the compiler process also prevents independently packaged MLIR/LLVM Python
-bindings from registering runtime state in the native PTOAS process.
+TileOp expansion runs in the CLI's existing Python process. `_core.main` creates
+one Python-owned MLIR context for the compilation session, and the native driver
+borrows that exact context. The in-process TileLib service materializes a source
+module in the shared context and clones it into native ownership before the
+Python module owner can be released. The packaged MLIR bindings and PTOAS must
+therefore remain one ABI-matched runtime rather than independently replaceable
+components.

@@ -109,8 +109,7 @@ _core
 │   ├── ptoas.cpp
 │   ├── driver.cpp
 │   ├── VPTOHostStubEmission.cpp
-│   ├── ObjectEmission.cpp
-│   └── TilelangDaemon.cpp
+│   └── ObjectEmission.cpp
 ├── PTOCAPI
 └── PTOASPythonCAPI
 ```

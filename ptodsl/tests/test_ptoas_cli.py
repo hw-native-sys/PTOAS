@@ -45,20 +45,13 @@ class PTOASCLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         native_module.main.assert_called_once_with(
-            [
-                str(wrapper.resolve()),
-                "--ptodsl-pkg-path",
-                str(package_root.parent.resolve()),
-                "--tileops-pkg-path",
-                str(tileops_dir.parent.resolve()),
-                "--version",
-            ]
+            [str(wrapper.resolve()), "--version"]
         )
         self.assertEqual(environment["PTOAS_BIN"], str(wrapper.resolve()))
-        self.assertEqual(environment["PTOAS_PYTHON_EXE"], _cli.sys.executable)
+        self.assertNotIn("PTOAS_PYTHON_EXE", environment)
         self.assertEqual(environment["PATH"], "/usr/bin")
 
-    def test_explicit_resource_options_are_not_overridden(self):
+    def test_user_arguments_are_forwarded_unchanged(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             package_root = Path(temp_dir) / "install" / "ptoas"
             (package_root / "_runtime" / "share" / "ptoas" / "TileOps").mkdir(
@@ -69,9 +62,7 @@ class PTOASCLITests(unittest.TestCase):
             wrapper.write_text("", encoding="utf-8")
             native_module = self._make_native_module(package_root)
             arguments = [
-                "--ptodsl-pkg-path=/custom/ptodsl",
-                "--tileops-pkg-path",
-                "/custom/tileops",
+                "--pto-arch=a5",
                 "--version",
             ]
 
@@ -92,11 +83,8 @@ class PTOASCLITests(unittest.TestCase):
             tileops_dir.mkdir(parents=True)
             native_module = self._make_native_module(package_root)
 
-            python_root, resolved_tileops = _cli._resolve_runtime_paths(
-                native_module
-            )
+            resolved_tileops = _cli._resolve_tileops_dir(native_module)
 
-        self.assertEqual(python_root, package_root.parent.resolve())
         self.assertEqual(resolved_tileops, tileops_dir.resolve())
 
     def test_missing_tileops_resources_is_an_error(self):
@@ -105,7 +93,7 @@ class PTOASCLITests(unittest.TestCase):
             native_module = self._make_native_module(package_root)
 
             with self.assertRaisesRegex(SystemExit, "TileOps"):
-                _cli._resolve_runtime_paths(native_module)
+                _cli._resolve_tileops_dir(native_module)
 
 
 if __name__ == "__main__":

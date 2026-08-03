@@ -10,7 +10,7 @@
 // bodies. Two tstores with the same tile type but different destination view
 // strides must therefore not share one cached helper specialization.
 //
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --tile-lib-backend=ptodsl %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s
 
 // CHECK-LABEL: func.func @STORE_COMPACT
 // CHECK: %[[COMPACT_GM:.*]] = arith.constant 4 : i64

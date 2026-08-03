@@ -7,7 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""Run TileLang ST testcases with the PTODSL TileLib backend and per-test logs."""
+"""Run TileLang ST testcases with PTODSL TileLib and per-test logs."""
 
 import argparse
 import concurrent.futures
@@ -69,7 +69,6 @@ def _run_build(args, default_soc_version, target_dir, log_dir, ptoas_bin):
     started = time.time()
     with build_log.open("w", encoding="utf-8") as handle:
         handle.write(f"# cwd: {target_dir}\n")
-        handle.write(f"# PTOAS_TILE_LIB_BACKEND={args.tile_lib_backend}\n")
         handle.write(f"# ptoas: {ptoas_bin}\n")
         handle.write("# command: run_st.build_project(..., testcase='all', ...)\n\n")
         handle.flush()
@@ -116,13 +115,11 @@ def _run_one_testcase(args, testcase, target_dir, log_dir, ptoas_bin):
         command.append("--smoke")
 
     env = os.environ.copy()
-    env["PTOAS_TILE_LIB_BACKEND"] = args.tile_lib_backend
 
     started = time.time()
     with log_path.open("w", encoding="utf-8") as handle:
         handle.write(f"# testcase: {testcase}\n")
         handle.write(f"# cwd: {target_dir}\n")
-        handle.write(f"# PTOAS_TILE_LIB_BACKEND={args.tile_lib_backend}\n")
         handle.write("# command: " + " ".join(command) + "\n\n")
         handle.flush()
         proc = subprocess.Popen(
@@ -150,10 +147,7 @@ def _run_one_testcase(args, testcase, target_dir, log_dir, ptoas_bin):
 def _parse_args():
     repo_root = _repo_root()
     parser = argparse.ArgumentParser(
-        description=(
-            "Run TileLang ST testcases in parallel with PTOAS_TILE_LIB_BACKEND=ptodsl "
-            "and save one log per testcase."
-        )
+        description="Run TileLang ST testcases in parallel and save one log per testcase."
     )
     parser.add_argument("-r", "--run-mode", default="sim", help="Run mode: sim or npu.")
     parser.add_argument("-v", "--soc-version", default="a5", help="SoC version key, default: a5.")
@@ -181,11 +175,6 @@ def _parse_args():
         "--log-dir",
         default=None,
         help="Directory for build.log, one <testcase>.log per testcase, and summary files.",
-    )
-    parser.add_argument(
-        "--tile-lib-backend",
-        default="ptodsl",
-        help="Value for PTOAS_TILE_LIB_BACKEND, default: ptodsl.",
     )
     parser.add_argument(
         "--full",
@@ -250,14 +239,12 @@ def main():
     print(f"[INFO] target_dir={target_dir}")
     print(f"[INFO] ptoas={ptoas_bin}")
     print(f"[INFO] logs={log_dir}")
-    print(f"[INFO] PTOAS_TILE_LIB_BACKEND={args.tile_lib_backend}")
 
     if args.dry_run:
         for testcase in selected:
             print(f"[DRY-RUN] {testcase}")
         return 0
 
-    os.environ["PTOAS_TILE_LIB_BACKEND"] = args.tile_lib_backend
     default_soc_version = run_all_st.SOC_VERSION_MAP[args.soc_version]
     results = []
 
@@ -311,7 +298,6 @@ def main():
                     break
 
     summary = {
-        "backend": args.tile_lib_backend,
         "run_mode": args.run_mode,
         "soc_version": args.soc_version,
         "smoke": args.smoke,

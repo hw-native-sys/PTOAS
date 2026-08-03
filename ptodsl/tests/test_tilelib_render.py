@@ -15,6 +15,8 @@ Asserts the rendered MLIR is *on par* with the tilelang golden
 import unittest
 from pathlib import Path
 
+from ptoas.mlir.dialects import pto as pto_dialect
+from ptoas.mlir.ir import Context
 from ptodsl.tilelib import TileSpec, f32
 from TileOps.a5.tadd import template_tadd
 
@@ -64,6 +66,22 @@ class TileLibRenderTest(unittest.TestCase):
         golden = FIXTURE.read_text(encoding="utf-8")
         for op in ("pto.tile_buf_addr", "!pto.ptr<f32, ub>", "pto.vlds", "pto.vadd", "pto.vsts", "pto.plt_b32"):
             self.assertIn(op, golden)
+
+    def test_materialize_uses_borrowed_context_and_returns_fresh_modules(self):
+        context = Context()
+        pto_dialect.register_dialect(context, load=True)
+        spec = TileSpec(shape=(8, 64), dtype=f32)
+        artifact = template_tadd.specialize(src0=spec, src1=spec, dst=spec)
+
+        first = artifact.materialize(context)
+        second = artifact.materialize(context)
+
+        self.assertIs(first.context, context)
+        self.assertIs(second.context, context)
+        self.assertIsNot(first, second)
+        self.assertTrue(first.operation.verify())
+        self.assertTrue(second.operation.verify())
+        self.assertIn("func.func @template_tadd", artifact.mlir_text())
 
 
 if __name__ == "__main__":

@@ -6,10 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Test that PTOAS can select the PTODSL TileLib daemon and expand the
-// single-candidate pto.tsub template without using the legacy TileLang path.
+// Test that PTOAS can use the in-process PTODSL TileLib service to expand the
+// single-candidate pto.tsub template.
 //
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --tile-lib-backend=ptodsl %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s
 
 // CHECK: func.func @TSUB
 // CHECK-NOT: pto.tsub ins

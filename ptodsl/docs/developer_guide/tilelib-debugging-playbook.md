@@ -1,7 +1,7 @@
 # PTODSL TileLib Debugging Playbook
 
-This playbook is for diagnosing PTODSL TileLib failures while migrating from
-TileLangDSL. It converts the migration scratch notes into a reusable workflow.
+This playbook is for diagnosing PTODSL TileLib failures. It converts the
+original migration scratch notes into a reusable workflow.
 
 The main rule: classify the failure before editing templates. A build failure,
 a candidate-selection failure, a tracing failure, and a wrong-output failure
@@ -24,7 +24,6 @@ ninja -C build-llvm21 PTODSLPackage
 Run one smoke ST:
 
 ```bash
-PTOAS_TILE_LIB_BACKEND=ptodsl \
 python3 test/tilelang_st/script/run_all_st.py \
   -r sim -v a5 \
   -p build-llvm21/tools/ptoas/ptoas \
@@ -34,7 +33,6 @@ python3 test/tilelang_st/script/run_all_st.py \
 Run one non-smoke ST:
 
 ```bash
-PTOAS_TILE_LIB_BACKEND=ptodsl \
 python3 test/tilelang_st/script/run_all_st.py \
   -r sim -v a5 \
   -p build-llvm21/tools/ptoas/ptoas \
@@ -44,7 +42,6 @@ python3 test/tilelang_st/script/run_all_st.py \
 Run one named ST case when supported by `run_st.py`:
 
 ```bash
-PTOAS_TILE_LIB_BACKEND=ptodsl \
 python3 test/tilelang_st/script/run_st.py \
   -r sim -v a5 \
   -p build-llvm21/tools/ptoas/ptoas \
@@ -64,8 +61,7 @@ python3 test/tilelang_st/script/run_st.py \
 | isolated case passes but full test fails | helper specialization cache or stale generated package |
 
 Do not assume every ST failure means the testcase is wrong. First check whether
-the same case works with TileLangDSL and whether the PTODSL lowering has enough
-metadata to reproduce the TileLangDSL behavior.
+the PTODSL lowering has enough metadata to represent the testcase behavior.
 
 ## Candidate Selection Failures
 
@@ -94,15 +90,15 @@ If legality appears correct but `ExpandTileOp` cannot expand:
    non-empty `candidates` attr.
 2. Dump after passes that rewrite view/tile operands and confirm the attr is
    still attached.
-3. Confirm candidate 0 has a `name` and that the daemon can render that
-   candidate directly.
+3. Confirm candidate 0 has a `name` and that the in-process TileLib service can
+   materialize that candidate directly.
 
 Useful compiler-only command:
 
 ```bash
 build-llvm21/tools/ptoas/ptoas \
   --pto-arch=a5 --pto-backend=vpto --emit-vpto \
-  --tile-lib-backend=ptodsl --enable-insert-sync \
+  --enable-insert-sync \
   --mlir-print-ir-after=pto-expand-tile-op \
   --mlir-print-ir-tree-dir=/tmp/<tileop>_after_expand_ptodsl \
   test/tilelang_st/npu/a5/src/st/testcase/<tileop>/<tileop>.pto \
@@ -133,7 +129,7 @@ Compiler-only dump:
 ```bash
 build-llvm21/tools/ptoas/ptoas \
   --pto-arch=a5 --pto-backend=vpto --emit-vpto \
-  --tile-lib-backend=ptodsl --enable-insert-sync \
+  --enable-insert-sync \
   test/tilelang_st/npu/a5/src/st/testcase/<tileop>/<tileop>.pto \
   -o /tmp/<tileop>_ptodsl.vpto
 ```

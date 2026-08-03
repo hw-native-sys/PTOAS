@@ -2,10 +2,7 @@
 
 ## Background
 
-PTOAS currently supports two TileLib backends for VPTO tile-op expansion:
-
-- `tilelang`, the legacy TileLangDSL template implementation.
-- `ptodsl`, the PTODSL-native template implementation.
+PTOAS uses the PTODSL-native TileLib implementation for VPTO tile-op expansion.
 
 A tile op may have several legal implementations for the same op
 name. Those implementations can differ by dtype, layout, memory space,
@@ -42,7 +39,7 @@ in the ISA and user guide documents, not here.
 
 ## Pipeline
 
-The PTODSL TileLib path has two compiler interactions with the Python daemon.
+The PTODSL TileLib path has two interactions with the in-process Python service.
 
 ```text
 TileOp in MLIR
@@ -50,7 +47,7 @@ TileOp in MLIR
   | InsertTemplateAttributes
   |   - reconstruct operand specs from MLIR
   |   - collect context attributes
-  |   - ask the PTODSL daemon for legal candidates
+  |   - ask the PTODSL service for legal candidates
   |   - store compact candidate metadata on the TileOp
   v
 TileOp with candidates attr
@@ -58,8 +55,8 @@ TileOp with candidates attr
   | ExpandTileOp
   |   - build a specialization key from current MLIR operands and attrs
   |   - choose candidate 0 from the compact candidates attr
-  |   - ask the daemon to render that candidate
-  |   - clone the generated helper and replace the TileOp with func.call
+  |   - ask the service to materialize that candidate in the shared context
+  |   - import the generated entry/helpers and replace the TileOp with func.call
   v
 VPTO-facing IR
 ```
@@ -102,7 +99,7 @@ remain in Python metadata for selection, diagnostics, and future tooling.
 ## Operand Specs
 
 Both `InsertTemplateAttributes` and `ExpandTileOp` reconstruct operand specs
-from MLIR. The JSON shape sent to the daemon is deliberately close to
+from MLIR. The JSON shape sent to the Python service is deliberately close to
 `TileSpec`, `ViewSpec`, `ScalarSpec`, and `VectorSpec`.
 
 | Operand kind | Required metadata |
@@ -137,7 +134,7 @@ template is considered ported.
 
 ## Candidate Legality And Ranking
 
-The daemon loads only the template module for the requested op and target. It
+The service loads only the template module for the requested op and target. It
 then evaluates each registered candidate:
 
 1. Bind positional MLIR operands to the template parameter names.
@@ -149,7 +146,7 @@ then evaluates each registered candidate:
 7. Run custom constraint predicates.
 8. Sort legal candidates by descending priority.
 
-If no candidate is legal, the daemon reports a `NoMatchingTemplate` error with
+If no candidate is legal, the service reports a `NoMatchingTemplate` error with
 per-candidate reasons. If multiple candidates tie for the highest priority and
 no explicit candidate is requested, the registry reports ambiguity rather than
 silently picking one.
@@ -170,7 +167,7 @@ TileOp. Each entry contains:
 - `tail`
 
 This attribute is intentionally not a copy of the full Python metadata object.
-Legality has already happened in the daemon. The IR only needs a stable list of
+Legality has already happened in the service. The IR only needs a stable list of
 legal render targets and the small amount of metadata consumed by downstream
 passes.
 
@@ -180,8 +177,9 @@ Python metadata. Add a field only when a C++ pass or IR-level test consumes it.
 ## Expansion And Specialization
 
 `ExpandTileOp` uses the first candidate in the compact candidate list. For
-PTODSL, it passes the selected candidate name back to the daemon so rendering
-cannot accidentally choose a different legal template after the metadata pass.
+PTODSL, it passes the selected candidate name back to the service so
+materialization cannot accidentally choose a different legal template after the
+metadata pass.
 
 The specialization key deduplicates generated helpers inside one module. It
 must include every input that can change the rendered helper body:

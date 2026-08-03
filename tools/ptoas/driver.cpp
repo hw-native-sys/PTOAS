@@ -678,8 +678,16 @@ static LogicalResult emitVPTOLLVMFatobj(
 mlir::pto::PTOASContext::PTOASContext(DialectRegistry &registry,
                                       llvm::StringRef outputPath, int argc,
                                       char **argv)
-    : mlirContext(registry), outputPath(outputPath.str()), argc(argc),
-      argv(argv) {}
+    : ownedMlirContext(std::make_unique<MLIRContext>(registry)),
+      mlirContext(ownedMlirContext.get()), outputPath(outputPath.str()),
+      argc(argc), argv(argv) {}
+
+mlir::pto::PTOASContext::PTOASContext(
+    MLIRContext &borrowedContext,
+    std::shared_ptr<TileLibService> tileLibService,
+    llvm::StringRef outputPath, int argc, char **argv)
+    : mlirContext(&borrowedContext), tileLibService(std::move(tileLibService)),
+      outputPath(outputPath.str()), argc(argc), argv(argv) {}
 
 mlir::pto::PTOASContext::~PTOASContext() = default;
 
@@ -694,11 +702,16 @@ mlir::pto::PTOASContext::initializeEnvironment(bool requiresToolchain,
 void mlir::pto::PTOASContext::initializeMLIRContext() {
   // Be tolerant: ptobc decode may materialize ops from dialects that aren't
   // explicitly registered/loaded in this tool yet.
-  mlirContext.allowUnregisteredDialects(true);
-  mlir::pto::loadPTOASDialects(mlirContext);
+  mlirContext->allowUnregisteredDialects(true);
+  mlir::pto::loadPTOASDialects(*mlirContext);
 }
 
-MLIRContext &mlir::pto::PTOASContext::getMLIRContext() { return mlirContext; }
+MLIRContext &mlir::pto::PTOASContext::getMLIRContext() { return *mlirContext; }
+
+std::shared_ptr<mlir::pto::TileLibService>
+mlir::pto::PTOASContext::getTileLibService() const {
+  return tileLibService;
+}
 
 void mlir::pto::PTOASContext::setArch(std::string value) {
   arch = std::move(value);
@@ -1266,9 +1279,13 @@ static LogicalResult writeTextOutput(llvm::StringRef output,
 // +-------------+ +------------------------------------------+
 // | C++ source  | |                fatobj                    |
 // +-------------+ +------------------------------------------+
-static int runPTOASDriver(int argc, char **argv) {
+static int runPTOASDriver(
+    int argc, char **argv, MLIRContext *borrowedContext = nullptr,
+    std::shared_ptr<mlir::pto::TileLibService> tileLibService = nullptr) {
   DialectRegistry registry;
   mlir::pto::registerPTOASDialects(registry);
+  if (borrowedContext)
+    borrowedContext->appendDialectRegistry(registry);
   mlir::pto::registerPTOASPassesAndCLOptions();
   llvm::cl::SetVersionPrinter(printPTOASVersion);
 
@@ -1283,10 +1300,17 @@ static int runPTOASDriver(int argc, char **argv) {
                                        llvm::errs()))
     return 1;
 
-  PTOASContext context(registry, outputFilename, argc, argv);
-  context.setOutputCANNVersionOverride(outputCANNVersionOverride);
-  context.setVFSIMTSizeFixMode(mlir::pto::vptoFixVFSIMTSize);
-  context.initializeMLIRContext();
+  std::unique_ptr<PTOASContext> context;
+  if (borrowedContext) {
+    context = std::make_unique<PTOASContext>(
+        *borrowedContext, std::move(tileLibService), outputFilename, argc, argv);
+  } else {
+    context =
+        std::make_unique<PTOASContext>(registry, outputFilename, argc, argv);
+  }
+  context->setOutputCANNVersionOverride(outputCANNVersionOverride);
+  context->setVFSIMTSizeFixMode(mlir::pto::vptoFixVFSIMTSize);
+  context->initializeMLIRContext();
 
   std::unique_ptr<llvm::MemoryBuffer> inputBuffer = readInputBuffer();
   if (!inputBuffer)
@@ -1294,24 +1318,24 @@ static int runPTOASDriver(int argc, char **argv) {
 
   std::string arch;
   OwningOpRef<ModuleOp> module = loadInputModule(
-      std::move(inputBuffer), context.getMLIRContext(), cliArchSpecified, arch);
+      std::move(inputBuffer), context->getMLIRContext(), cliArchSpecified, arch);
   if (!module)
     return 1;
-  context.setArch(std::move(arch));
+  context->setArch(std::move(arch));
 
   mlir::pto::BackendInfo backendInfo;
   if (failed(buildBackendInfo(module.get(), cliBackendSpecified, backendInfo)))
     return 1;
-  context.setBackendInfo(std::move(backendInfo));
-  (void)context.initializeEnvironment(context.getBackendInfo().requiresToolchain,
-                                      llvm::errs());
+  context->setBackendInfo(std::move(backendInfo));
+  (void)context->initializeEnvironment(
+      context->getBackendInfo().requiresToolchain, llvm::errs());
 
   mlir::pto::PTOASCompileResult result;
-  if (failed(runPTOASJobs(module, context, result)))
+  if (failed(runPTOASJobs(module, *context, result)))
     return 1;
 
   if (result.kind == mlir::pto::PTOASCompileResultKind::Text)
-    return failed(writeTextOutput(result.textOutput, context.getOutputPath()));
+    return failed(writeTextOutput(result.textOutput, context->getOutputPath()));
   if (result.kind == mlir::pto::PTOASCompileResultKind::MixedObject)
     return 0;
 
@@ -1321,4 +1345,11 @@ static int runPTOASDriver(int argc, char **argv) {
 
 int mlir::pto::runPTOAS(int argc, char **argv) {
   return runPTOASDriver(argc, argv);
+}
+
+int mlir::pto::runPTOAS(
+    int argc, char **argv, MLIRContext &borrowedContext,
+    std::shared_ptr<TileLibService> tileLibService) {
+  return runPTOASDriver(argc, argv, &borrowedContext,
+                        std::move(tileLibService));
 }

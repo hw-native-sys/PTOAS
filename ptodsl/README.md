@@ -86,18 +86,17 @@ LLVM_BUILD_DIR=/path/to/llvm/build ./quick_install.sh
 
 ## PTODSL TileLib backend
 
-PTOAS uses the PTODSL TileLib daemon by default for VPTO tile-op expansion:
+PTOAS uses its in-process PTODSL TileLib service for VPTO tile-op expansion:
 
 ```bash
 ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto \
   input.pto -o -
 ```
 
-Wheel and CMake-tree launchers pass the Python root containing their own
-installed or staged `ptodsl` package to the native driver. Use
-`--ptodsl-pkg-path=/path/to/package/root` for an explicit command-line
-override. PTODSL daemon failures are reported as errors and never fall back to
-the TileLang implementation.
+Wheel and CMake-tree launchers add their packaged `TileOps` resource directory
+to the host interpreter while the native compiler runs. Template discovery,
+metadata queries, and MLIR materialization therefore stay in one process and
+do not require a Python executable, daemon socket, or package-path CLI option.
 
 `InsertTemplateAttributes` queries legal-candidate metadata before fusion and
 stores an ordered `candidates` array containing only `id`, `name`,

@@ -222,13 +222,4 @@ grep -q "candidates = " "${CLEAN_ENV_PTO_IR}" || {
   echo "Error: clean-environment ptoas smoke output is missing TileLib candidate metadata" >&2
   exit 1
 }
-if ! grep -q "TileLib daemon started successfully" "${CLEAN_ENV_LOG}"; then
-  echo "Error: TileLib daemon did not report a successful start" >&2
-  exit 1
-fi
-if ! grep -q "TileLib daemon stopped" "${CLEAN_ENV_LOG}"; then
-  echo "Error: TileLib daemon did not report a clean stop" >&2
-  exit 1
-fi
-
 echo "All wheel import tests passed!"

@@ -31,13 +31,12 @@ def _load_native_module():
     return _core
 
 
-def _resolve_runtime_paths(native_module) -> tuple[Path, Path]:
+def _resolve_tileops_dir(native_module) -> Path:
     module_file = getattr(native_module, "__file__", None)
     if not module_file:
         raise SystemExit("ptoas._core does not expose a module file")
 
     package_root = Path(module_file).resolve().parent
-    python_root = package_root.parent
     runtime_root = package_root / "_runtime"
     tileops_dir = runtime_root / "share" / "ptoas" / "TileOps"
     if not tileops_dir.is_dir():
@@ -45,32 +44,27 @@ def _resolve_runtime_paths(native_module) -> tuple[Path, Path]:
             "unable to locate packaged PTOAS TileOps resources: expected "
             f"{tileops_dir}"
         )
-    return python_root, tileops_dir.resolve()
-
-
-def _has_cli_option(arguments: Sequence[str], option: str) -> bool:
-    option_with_value = f"{option}="
-    return any(
-        argument == option or argument.startswith(option_with_value)
-        for argument in arguments
-    )
+    return tileops_dir.resolve()
 
 
 def launch(user_args: Sequence[str], *, wrapper: Path | None = None) -> int:
     native_module = _load_native_module()
-    python_root, tileops_dir = _resolve_runtime_paths(native_module)
+    tileops_dir = _resolve_tileops_dir(native_module)
     wrapper = wrapper.resolve() if wrapper is not None else _resolve_wrapper_path()
 
     os.environ["PTOAS_BIN"] = str(wrapper)
-    os.environ["PTOAS_PYTHON_EXE"] = sys.executable
     argv = [str(wrapper)]
-    if not _has_cli_option(user_args, "--ptodsl-pkg-path"):
-        argv.extend(["--ptodsl-pkg-path", str(python_root)])
-    if not _has_cli_option(user_args, "--tileops-pkg-path"):
-        argv.extend(["--tileops-pkg-path", str(tileops_dir.parent)])
     argv.extend(user_args)
 
-    return int(native_module.main(argv))
+    tileops_python_root = str(tileops_dir.parent)
+    inserted_tileops_root = tileops_python_root not in sys.path
+    if inserted_tileops_root:
+        sys.path.insert(0, tileops_python_root)
+    try:
+        return int(native_module.main(argv))
+    finally:
+        if inserted_tileops_root:
+            sys.path.remove(tileops_python_root)
 
 
 def main() -> int:
