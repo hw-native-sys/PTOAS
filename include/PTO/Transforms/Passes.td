@@ -971,9 +971,10 @@ def VMIPreAssignmentCombine
     still exposing direct semantic operations to the later layout and lowering
     passes.
 
-    The pass currently rewrites the semantic pattern
-    `group_broadcast(group_slot_load(...))` into the equivalent
-    `group_broadcast_load` operation.
+    The pass rewrites a `group_load` whose constant row stride equals its
+    logical group size into an ordinary contiguous `load`. It also rewrites
+    the semantic pattern `group_broadcast(group_slot_load(...))` into the
+    equivalent `group_broadcast_load` operation.
   }];
   let constructor = "mlir::pto::createVMIPreAssignmentCombinePass()";
   let dependentDialects = ["mlir::func::FuncDialect",

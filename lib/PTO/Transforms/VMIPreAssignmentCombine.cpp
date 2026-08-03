@@ -12,11 +12,14 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/SmallVector.h"
+
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -29,6 +32,45 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+static std::optional<int64_t> getConstantIndexValue(Value value) {
+  if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>())
+    return constant.value();
+  if (auto constant = value.getDefiningOp<arith::ConstantOp>())
+    if (auto integerAttr = dyn_cast<IntegerAttr>(constant.getValue()))
+      return integerAttr.getInt();
+  return std::nullopt;
+}
+
+static LogicalResult canonicalizeContiguousGroupLoads(ModuleOp module) {
+  SmallVector<VMIGroupLoadOp> loads;
+  module.walk([&](VMIGroupLoadOp load) {
+    auto resultType = dyn_cast<VMIVRegType>(load.getResult().getType());
+    if (!resultType)
+      return;
+
+    int64_t numGroups = load.getNumGroupsAttr().getInt();
+    int64_t laneCount = resultType.getElementCount();
+    if (numGroups <= 0 || laneCount % numGroups != 0)
+      return;
+
+    std::optional<int64_t> rowStride =
+        getConstantIndexValue(load.getRowStride());
+    if (rowStride && *rowStride == laneCount / numGroups)
+      loads.push_back(load);
+  });
+
+  OpBuilder builder(module.getContext());
+  for (VMIGroupLoadOp load : loads) {
+    builder.setInsertionPoint(load);
+    auto replacement = builder.create<VMILoadOp>(
+        load.getLoc(), load.getResult().getType(), load.getSource(),
+        load.getOffset());
+    load.getResult().replaceAllUsesWith(replacement.getResult());
+    load.erase();
+  }
+  return success();
+}
 
 static LogicalResult fuseGroupSlotBroadcastLoads(ModuleOp module) {
   SmallVector<VMIGroupBroadcastOp> broadcasts;
@@ -67,7 +109,8 @@ static LogicalResult fuseGroupSlotBroadcastLoads(ModuleOp module) {
 struct VMIPreAssignmentCombinePass
     : pto::impl::VMIPreAssignmentCombineBase<VMIPreAssignmentCombinePass> {
   void runOnOperation() override {
-    if (failed(fuseGroupSlotBroadcastLoads(getOperation())))
+    if (failed(canonicalizeContiguousGroupLoads(getOperation())) ||
+        failed(fuseGroupSlotBroadcastLoads(getOperation())))
       signalPassFailure();
   }
 };

@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s --check-prefix=COMBINE
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @contiguous_bf16_group_load(
+      %src: !pto.ptr<bf16, ub>,
+      %off: index) -> !pto.vmi.vreg<8xui16> {
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %c32640_i16 = arith.constant 32640 : i16
+    %c32640_ui16 = builtin.unrealized_conversion_cast %c32640_i16
+        : i16 to ui16
+    %exp_mask = pto.vmi.vbrc %c32640_ui16
+        : ui16 -> !pto.vmi.vreg<256xui16>
+    %c32 = arith.constant 32 : index
+    %x = pto.vmi.vload %src[%off], %c32 {group = 8}
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %bits = pto.vmi.vinterpret_cast %x
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xui16>
+    %exp = pto.vmi.vand %bits, %exp_mask, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui16>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xui16>
+    %max = pto.vmi.vcmax %exp, %mask {group = 8}
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xpred>
+          -> !pto.vmi.vreg<8xui16>
+    return %max : !pto.vmi.vreg<8xui16>
+  }
+
+  func.func @contiguous_ui8_group_load(
+      %src: !pto.ptr<ui8, ub>,
+      %off: index) -> !pto.vmi.vreg<64xui8> {
+    %c16 = arith.constant 16 : index
+    %value = pto.vmi.vload %src[%off], %c16 {group = 4}
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+    return %value : !pto.vmi.vreg<64xui8>
+  }
+
+  func.func @contiguous_f32_group_load(
+      %src: !pto.ptr<f32, ub>,
+      %off: index) -> !pto.vmi.vreg<128xf32> {
+    %c8 = arith.constant 8 : index
+    %value = pto.vmi.vload %src[%off], %c8 {group = 16}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    return %value : !pto.vmi.vreg<128xf32>
+  }
+
+  func.func @contiguous_si16_group_load(
+      %src: !pto.ptr<si16, ub>,
+      %off: index) -> !pto.vmi.vreg<128xsi16> {
+    %c16 = arith.constant 16 : index
+    %value = pto.vmi.vload %src[%off], %c16 {group = 8}
+        : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+    return %value : !pto.vmi.vreg<128xsi16>
+  }
+}
+
+// COMBINE-LABEL: func.func @contiguous_bf16_group_load
+// COMBINE: %[[LOAD:.*]] = pto.vmi.load
+// COMBINE-NOT: pto.vmi.group_load
+// COMBINE: pto.vmi.bitcast %[[LOAD]]
+
+// COMBINE-LABEL: func.func @contiguous_ui8_group_load
+// COMBINE: pto.vmi.load
+// COMBINE-NOT: pto.vmi.group_load
+
+// COMBINE-LABEL: func.func @contiguous_f32_group_load
+// COMBINE: pto.vmi.load
+// COMBINE-NOT: pto.vmi.group_load
+
+// COMBINE-LABEL: func.func @contiguous_si16_group_load
+// COMBINE: pto.vmi.load
+// COMBINE-NOT: pto.vmi.group_load
+
+// LOWER-LABEL: func.func @contiguous_bf16_group_load
+// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vldsx2 {{.*}}, "DINTLV_B16" : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>, !pto.vreg<128xbf16>
+// LOWER-NEXT: %{{.*}} = pto.vbitcast %[[LOW]]
+// LOWER-NEXT: %{{.*}} = pto.vbitcast %[[HIGH]]
+// LOWER: pto.vmax
+// LOWER-NEXT: pto.vcgmax

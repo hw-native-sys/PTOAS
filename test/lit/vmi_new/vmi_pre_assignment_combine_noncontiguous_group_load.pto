@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s
+
+module {
+  func.func @strided_bf16_group_load(
+      %src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
+    %c40 = arith.constant 40 : index
+    %x = pto.vmi.vload %src[%off], %c40 {group = 8}
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    return %x : !pto.vmi.vreg<256xbf16>
+  }
+
+  func.func @dynamic_stride_bf16_group_load(
+      %src: !pto.ptr<bf16, ub>, %off: index, %stride: index)
+      -> !pto.vmi.vreg<256xbf16> {
+    %x = pto.vmi.vload %src[%off], %stride {group = 8}
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    return %x : !pto.vmi.vreg<256xbf16>
+  }
+}
+
+// CHECK-LABEL: func.func @strided_bf16_group_load
+// CHECK: pto.vmi.group_load
+
+// CHECK-LABEL: func.func @dynamic_stride_bf16_group_load
+// CHECK: pto.vmi.group_load
