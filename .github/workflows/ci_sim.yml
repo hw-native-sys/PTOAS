@@ -904,7 +904,10 @@ jobs:
             ${{ env.TILELIB_ST_WORKSPACE }}/run_ci.log
             ${{ env.TILELIB_ST_WORKSPACE }}/ptodsl-dsl-st.log
             ${{ env.TILELIB_ST_WORKSPACE }}/tilelib-st-a5.log
-            ${{ env.TILELIB_ST_WORKSPACE }}/tilelib-st-a5/**
+            ${{ env.TILELIB_ST_WORKSPACE }}/tilelib-st-a5/logs/*.log
+            ${{ env.TILELIB_ST_WORKSPACE }}/tilelib-st-a5/cases/*/example.exitcode
+            ${{ env.TILELIB_ST_WORKSPACE }}/tilelib-st-a5/cases/*/run_example.sh
+            ${{ env.TILELIB_ST_WORKSPACE }}/tilelib-st-a5/cases/*/msprof.stdout.log
             ${{ env.TILELIB_ST_WORKSPACE }}/ptodsl-python-probe.log
           if-no-files-found: warn
 
