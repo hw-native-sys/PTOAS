@@ -60,8 +60,8 @@ module {
 // LOWER-SAME: %[[DST_BF16:[^,]+]]: !pto.ptr<bf16, ub>
 // LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
 // LOWER-SAME: %[[OFF:[^)]+]]: index
-// LOWER: %[[REDUCE_MASK:.*]] = pto.pge_b32 "PAT_ALL"
-// LOWER: %[[STORE_MASK:.*]] = pto.pge_b32 "PAT_VL1"
+// LOWER: %[[REDUCE_MASK:.*]] = pto.pset_b32 "PAT_ALL"
+// LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL1"
 // LOWER: %[[ALL:.*]] = pto.pset_b32 "PAT_ALL"
 // LOWER: %[[SUM:.*]] = pto.vadd %[[SRC]], %[[RHS]], %[[ALL]]
 // LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[OFF]]], {{.*}} {dist = "PK_B32"}

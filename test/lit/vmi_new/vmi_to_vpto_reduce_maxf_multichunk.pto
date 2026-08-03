@@ -55,7 +55,7 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_reduce_maxf_multichunk(
-// CHECK: %[[FIRST:.*]] = pto.pge_b32 "PAT_VL1" : !pto.mask<b32>
+// CHECK: %[[FIRST:.*]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // CHECK: %[[RED0:.*]] = pto.vcmax %arg0, %arg2 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vmax %[[RED0]], {{.*}}, %[[FIRST]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: %[[RED1:.*]] = pto.vcmax %arg1, %arg3 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
@@ -65,7 +65,7 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_reduce_minf_multichunk(
-// CHECK: %[[FIRST:.*]] = pto.pge_b32 "PAT_VL1" : !pto.mask<b32>
+// CHECK: %[[FIRST:.*]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // CHECK: %[[RED0:.*]] = pto.vcmin %arg0, %arg2 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vmin %[[RED0]], {{.*}}, %[[FIRST]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: %[[RED1:.*]] = pto.vcmin %arg1, %arg3 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>

@@ -329,7 +329,7 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots8_i32_to_ui8(
-// CHECK: pto.pge_b32 "PAT_VL8"
+// CHECK: pto.pset_b32 "PAT_VL8"
 // CHECK: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.

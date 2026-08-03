@@ -172,7 +172,7 @@ module {
 // LOWER-NOT: dist = "PK_B16"
 // LOWER-NOT: dist = "PK4_B32"
 // LOWER-LABEL: func.func @aligned_compact_group_store_bf16(
-// LOWER: %[[MASK:.*]] = pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
+// LOWER: %[[MASK:.*]] = pto.pset_b16 "PAT_VL8" : !pto.mask<b16>
 // LOWER: pto.vsts %arg0, %{{.*}}[%{{.*}}], %[[MASK]] {dist = "NORM_B16"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
 // LOWER-NOT: dist = "1PT_B32"
 // LOWER-LABEL: func.func @aligned_compact_group_store_bf16_across_addptr(

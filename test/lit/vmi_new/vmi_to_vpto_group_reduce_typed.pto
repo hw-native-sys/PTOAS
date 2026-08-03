@@ -70,7 +70,7 @@ module {
 // CHECK: return %[[SUM]]
 
 // CHECK-LABEL: func.func @vmi_group_reduce_addi_i32_two_vlane(
-// CHECK: %[[MASK:.*]] = pto.pge_b32 "PAT_VL8" : !pto.mask<b32>
+// CHECK: %[[MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // CHECK: %[[SLO:.*]] = pto.vcgadd %arg0, %arg2
 // CHECK: %[[SHI:.*]] = pto.vcgadd %arg1, %arg3
 // CHECK: %[[SUM:.*]] = pto.vadd %[[SLO]], %[[SHI]], %[[MASK]]

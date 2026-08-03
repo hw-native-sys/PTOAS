@@ -41,10 +41,10 @@ module {
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_reduce_s32_store(
 // LOWER-COUNT-4: pto.vdintlv
 // LOWER-COUNT-4: pto.pdintlv_b32
-// LOWER: %[[VL8:.*]] = pto.pge_b32 "PAT_VL8" : !pto.mask<b32>
+// LOWER: %[[VL8:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // LOWER-COUNT-4: pto.vcgadd
 // LOWER-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[VL8]]
-// LOWER: %[[STORE_MASK:.*]] = pto.pge_b32 "PAT_VL8" : !pto.mask<b32>
+// LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // LOWER: pto.vsts {{.*}}, %arg8[%arg9], %[[STORE_MASK]]
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

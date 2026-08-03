@@ -39,10 +39,10 @@ module {
 // ASSIGN-SAME: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_intlv_mask_f16(
-// LOWER: pto.pge_b32 "PAT_ALL"
-// LOWER: pto.pge_b16 "PAT_VL64"
+// LOWER: pto.pset_b32 "PAT_ALL"
+// LOWER: pto.pset_b16 "PAT_VL64"
 // LOWER: pto.vdintlv
-// LOWER: pto.pge_b16 "PAT_VL64"
+// LOWER: pto.pset_b16 "PAT_VL64"
 // LOWER: pto.vintlv
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

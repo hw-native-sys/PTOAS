@@ -540,18 +540,23 @@ FailureOr<Value> createPatternMask(Location loc, MaskType maskType,
 FailureOr<Value> createPrefixMask(Location loc, MaskType maskType,
                                   StringRef pattern,
                                   PatternRewriter &rewriter) {
+  // A prefix mask with a compile-time PAT_* pattern is represented by the
+  // modern A5 pset builtin.  The legacy pge builtin accepts the same static
+  // pattern set, but has a different LLVM ABI and is deprecated after V210;
+  // keeping it here would prevent the normal VPTO CSE from merging identical
+  // static masks produced through createAllTrueMask/createPatternMask.
   StringAttr patternAttr = rewriter.getStringAttr(pattern);
   MLIRContext *ctx = rewriter.getContext();
   if (maskType.isB8())
-    return rewriter.create<PgeB8Op>(loc, MaskType::get(ctx, "b8"), patternAttr)
+    return rewriter.create<PsetB8Op>(loc, MaskType::get(ctx, "b8"), patternAttr)
         .getResult();
   if (maskType.isB16())
     return rewriter
-        .create<PgeB16Op>(loc, MaskType::get(ctx, "b16"), patternAttr)
+        .create<PsetB16Op>(loc, MaskType::get(ctx, "b16"), patternAttr)
         .getResult();
   if (maskType.isB32())
     return rewriter
-        .create<PgeB32Op>(loc, MaskType::get(ctx, "b32"), patternAttr)
+        .create<PsetB32Op>(loc, MaskType::get(ctx, "b32"), patternAttr)
         .getResult();
   return failure();
 }

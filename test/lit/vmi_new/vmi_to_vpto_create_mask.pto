@@ -55,32 +55,32 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_create_mask_contiguous
-// CHECK: %[[M0:.*]] = pto.pge_b32 "PAT_ALL" : !pto.mask<b32>
-// CHECK: %[[M1:.*]] = pto.pge_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: %[[M0:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+// CHECK: %[[M1:.*]] = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
 // CHECK: return %[[M0]], %[[M1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_create_mask_deint2
-// CHECK: %[[P0:.*]] = pto.pge_b32 "PAT_VL32" : !pto.mask<b32>
-// CHECK: %[[P1:.*]] = pto.pge_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: %[[P0:.*]] = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: %[[P1:.*]] = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
 // CHECK: return %[[P0]], %[[P1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_create_mask_b8_contiguous
-// CHECK: %[[B8_0:.*]] = pto.pge_b8 "PAT_ALL" : !pto.mask<b8>
-// CHECK: %[[B8_1:.*]] = pto.pge_b8 "PAT_VL64" : !pto.mask<b8>
+// CHECK: %[[B8_0:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// CHECK: %[[B8_1:.*]] = pto.pset_b8 "PAT_VL64" : !pto.mask<b8>
 // CHECK: return %[[B8_0]], %[[B8_1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_create_mask_b16_deint2
-// CHECK: %[[B16_0:.*]] = pto.pge_b16 "PAT_VL32" : !pto.mask<b16>
-// CHECK: %[[B16_1:.*]] = pto.pge_b16 "PAT_VL32" : !pto.mask<b16>
+// CHECK: %[[B16_0:.*]] = pto.pset_b16 "PAT_VL32" : !pto.mask<b16>
+// CHECK: %[[B16_1:.*]] = pto.pset_b16 "PAT_VL32" : !pto.mask<b16>
 // CHECK: return %[[B16_0]], %[[B16_1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

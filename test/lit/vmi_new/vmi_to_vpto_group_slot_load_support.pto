@@ -23,7 +23,7 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_support(
-// CHECK: pto.pge_b32 "PAT_VL8"
+// CHECK: pto.pset_b32 "PAT_VL8"
 // CHECK: pto.vsldb
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

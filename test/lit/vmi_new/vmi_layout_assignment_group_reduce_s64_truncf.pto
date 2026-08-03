@@ -41,7 +41,7 @@ module {
 // LOWER-COUNT-8: pto.vcadd
 // LOWER-NOT: pto.vsel
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
-// LOWER: pto.pge_b16 "PAT_VL1"
+// LOWER: pto.pset_b16 "PAT_VL1"
 // LOWER: pto.vsts {{.*}} : !pto.vreg<128xf16>, {{(!pto\.ptr)?<f16, ub>}}, !pto.mask<b16>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
