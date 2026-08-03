@@ -3243,7 +3243,7 @@ int mlir::pto::compilePTOASModule(
   // PTODSL legality discovery happens on tile-native PTO IR before fusion.
   // Fusion may later filter the ordered `candidates` array; ExpandTileOp
   // consumes the first candidate that remains.
-  if (!isA2A3 && hasTileOpsToExpand)
+  if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand)
     pm.addPass(pto::createInsertTemplateAttributesPass(
         context.getTileLibService()));
 
