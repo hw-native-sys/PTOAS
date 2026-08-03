@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-mask-simplify | FileCheck %s
+
+module {
+  func.func @pintlv_b8_pset() -> (!pto.mask<b8>, !pto.mask<b8>) {
+    %lhs = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %rhs = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %low, %high = pto.pintlv_b8 %lhs, %rhs
+        : !pto.mask<b8>, !pto.mask<b8> -> !pto.mask<b8>, !pto.mask<b8>
+    return %low, %high : !pto.mask<b8>, !pto.mask<b8>
+  }
+
+  func.func @pintlv_b16_pge() -> (!pto.mask<b16>, !pto.mask<b16>) {
+    %lhs = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+    %rhs = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+    %low, %high = pto.pintlv_b16 %lhs, %rhs
+        : !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>, !pto.mask<b16>
+    return %low, %high : !pto.mask<b16>, !pto.mask<b16>
+  }
+
+  func.func @pintlv_b32_mixed() -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %lhs = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %rhs = pto.pge_b32 "PAT_ALL" : !pto.mask<b32>
+    %low, %high = pto.pintlv_b32 %lhs, %rhs
+        : !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>, !pto.mask<b32>
+    return %low, %high : !pto.mask<b32>, !pto.mask<b32>
+  }
+
+  func.func @pdintlv_b8_pge() -> (!pto.mask<b8>, !pto.mask<b8>) {
+    %lhs = pto.pge_b8 "PAT_ALL" : !pto.mask<b8>
+    %rhs = pto.pge_b8 "PAT_ALL" : !pto.mask<b8>
+    %low, %high = pto.pdintlv_b8 %lhs, %rhs
+        : !pto.mask<b8>, !pto.mask<b8> -> !pto.mask<b8>, !pto.mask<b8>
+    return %low, %high : !pto.mask<b8>, !pto.mask<b8>
+  }
+
+  func.func @pdintlv_b16_mixed() -> (!pto.mask<b16>, !pto.mask<b16>) {
+    %lhs = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %rhs = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+    %low, %high = pto.pdintlv_b16 %lhs, %rhs
+        : !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>, !pto.mask<b16>
+    return %low, %high : !pto.mask<b16>, !pto.mask<b16>
+  }
+
+  func.func @pdintlv_b32_pset() -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %lhs = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %rhs = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %low, %high = pto.pdintlv_b32 %lhs, %rhs
+        : !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>, !pto.mask<b32>
+    return %low, %high : !pto.mask<b32>, !pto.mask<b32>
+  }
+
+  func.func @nonuniform_pintlv_is_preserved()
+      -> (!pto.mask<b16>, !pto.mask<b16>) {
+    %lhs = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+    %rhs = pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
+    %low, %high = pto.pintlv_b16 %lhs, %rhs
+        : !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>, !pto.mask<b16>
+    return %low, %high : !pto.mask<b16>, !pto.mask<b16>
+  }
+
+  func.func @identical_nonuniform_pdintlv_is_preserved()
+      -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %mask = pto.pge_b32 "PAT_VL1" : !pto.mask<b32>
+    %low, %high = pto.pdintlv_b32 %mask, %mask
+        : !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>, !pto.mask<b32>
+    return %low, %high : !pto.mask<b32>, !pto.mask<b32>
+  }
+
+  func.func @all_true_reorder_preserves_external_uses()
+      -> (!pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>) {
+    %lhs = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %rhs = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+    %low, %high = pto.pintlv_b16 %lhs, %rhs
+        : !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>, !pto.mask<b16>
+    return %low, %high, %lhs, %rhs
+        : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>
+  }
+}
+
+// CHECK-LABEL: func.func @pintlv_b8_pset
+// CHECK: %[[LHS:.*]] = pto.pset_b8 "PAT_ALL"
+// CHECK: %[[RHS:.*]] = pto.pset_b8 "PAT_ALL"
+// CHECK-NOT: pto.pintlv_b8
+// CHECK: return %[[LHS]], %[[RHS]]
+
+// CHECK-LABEL: func.func @pintlv_b16_pge
+// CHECK-NOT: pto.pintlv_b16
+// CHECK: return %[[LHS:.*]], %[[RHS:.*]]
+
+// CHECK-LABEL: func.func @pintlv_b32_mixed
+// CHECK-NOT: pto.pintlv_b32
+// CHECK: return %[[LHS:.*]], %[[RHS:.*]]
+
+// CHECK-LABEL: func.func @pdintlv_b8_pge
+// CHECK-NOT: pto.pdintlv_b8
+// CHECK: return %[[LHS:.*]], %[[RHS:.*]]
+
+// CHECK-LABEL: func.func @pdintlv_b16_mixed
+// CHECK-NOT: pto.pdintlv_b16
+// CHECK: return %[[LHS:.*]], %[[RHS:.*]]
+
+// CHECK-LABEL: func.func @pdintlv_b32_pset
+// CHECK-NOT: pto.pdintlv_b32
+// CHECK: return %[[LHS:.*]], %[[RHS:.*]]
+
+// CHECK-LABEL: func.func @nonuniform_pintlv_is_preserved
+// CHECK: pto.pintlv_b16
+
+// CHECK-LABEL: func.func @identical_nonuniform_pdintlv_is_preserved
+// CHECK: pto.pdintlv_b32
+
+// CHECK-LABEL: func.func @all_true_reorder_preserves_external_uses
+// CHECK: %[[LHS:.*]] = pto.pset_b16 "PAT_ALL"
+// CHECK: %[[RHS:.*]] = pto.pge_b16 "PAT_ALL"
+// CHECK-NOT: pto.pintlv_b16
+// CHECK: return %[[LHS]], %[[RHS]], %[[LHS]], %[[RHS]]

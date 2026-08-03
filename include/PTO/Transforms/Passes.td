@@ -1361,4 +1361,18 @@ def VPTOOptimizeVcvt
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 
+def VPTOMaskSimplify
+    : Pass<"vpto-mask-simplify", "ModuleOp"> {
+  let summary = "Simplify provably redundant VPTO mask transformations";
+  let description = [{
+    Replaces the two results of `pto.pintlv_b*` and `pto.pdintlv_b*` with
+    their inputs when both inputs are masks produced with the `PAT_ALL`
+    pattern. Interleaving or deinterleaving an all-true predicate cannot change
+    its value, so this removes redundant predicate values before backend
+    emission. Non-uniform masks are intentionally left unchanged.
+  }];
+  let constructor = "mlir::pto::createVPTOMaskSimplifyPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES
