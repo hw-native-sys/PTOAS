@@ -1018,6 +1018,20 @@ static Value truncateElementOffsetToI32(Value offset, Location loc,
                                             offsetI32);
 }
 
+// pto.addptr always consumes an index offset. Block offsets retain their
+// existing unsigned interpretation; every other supported address unit is
+// signed, including sprsti's signed 8-bit word offset.
+static Value normalizeAddPtrOffsetToIndex(Value offset, StrideUnit strideUnit,
+                                          Location loc, OpBuilder &builder) {
+  if (offset.getType().isIndex())
+    return offset;
+  if (strideUnit == StrideUnit::Block)
+    return builder.create<arith::IndexCastUIOp>(loc, builder.getIndexType(),
+                                                offset);
+  return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
+                                            offset);
+}
+
 // Create the address reached by one memory op before post-update rewriting.
 // The builder must already point at the desired insertion location.
 static Value createInitialPtr(Value base, Value strideOperand,
@@ -1051,6 +1065,8 @@ static Value createInitialPtr(Value base, Value strideOperand,
           builder.create<arith::ConstantIndexOp>(loc, *constSo / divisor);
     }
   }
+  scaledOffset =
+      normalizeAddPtrOffsetToIndex(scaledOffset, strideUnit, loc, builder);
   return builder.create<pto::AddPtrOp>(loc, base, scaledOffset);
 }
 
@@ -1224,9 +1240,9 @@ static StrideExprRef makeAvailableAt(const StrideExprRef &e,
 
 // Constants are loop-invariant, so they are always emitted before the loop and
 // shared across every candidate in it.  Sharing matters beyond tidiness: the
-// rewrite groups ops by (base, stride) Value identity, so two candidates with
-// the same numeric stride must end up with the *same* Value to share an
-// iter_arg.
+// rewrite groups ops by base/offset/stride Value identity and effective byte
+// unit, so two compatible candidates with the same numeric stride must end up
+// with the *same* Value to share an iter_arg.
 using ConstCache = DenseMap<std::pair<int64_t, Type>, Value>;
 
 static Value materializeConst(int64_t c, Type ty, Location loc,
@@ -1458,6 +1474,7 @@ struct PostUpdateRewrite {
   Value strideOperand; // original offset / repeat_stride operand
   Value stride;        // stride value (stride_new for block-stride ops)
   Value initPtr;       // base + strideOperand_at_iter0, in addptr units
+  int64_t unitBytes;   // bytes advanced by one unit of stride
 };
 
 // A unique key for grouping rewrites that can share an iter_arg.
@@ -1472,12 +1489,14 @@ struct PostUpdateRewrite {
 // Keying on the original operands rather than on `initPtr` itself keeps the
 // comparison by Value identity meaningful: computeInitialPtr may materialize a
 // fresh pto.addptr per candidate, so equal start addresses do not necessarily
-// share a Value.  This is conservative — it can split groups that could have
-// been merged — but never merges groups that must stay apart.
-using IterArgGroupKey = std::tuple<Value, Value, Value>;
+// share a Value. The effective byte unit is also part of the address sequence:
+// equal numeric strides in element and byte ops need not advance equally.
+// This is conservative — it can split groups that could have been merged —
+// but never merges groups that must stay apart.
+using IterArgGroupKey = std::tuple<Value, Value, Value, int64_t>;
 
 static IterArgGroupKey getGroupKey(const PostUpdateRewrite &rw) {
-  return {rw.base, rw.strideOperand, rw.stride};
+  return {rw.base, rw.strideOperand, rw.stride, rw.unitBytes};
 }
 
 // Build the post-update form of an op while preserving every operand,
@@ -1654,10 +1673,11 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
   if (rewrites.empty())
     return nullptr;
 
-  // Group rewrites by (base, stride). Ops in the same group share one iter_arg
-  // and all use the pre-update pointer. Only one updated_base per group is
-  // yielded. This avoids redundant iter_args for same-address ops (e.g. vlds
-  // + vsts both accessing %base[%iv]).
+  // Group rewrites by start-address operands, stride, and effective byte unit.
+  // Ops in the same group share one iter_arg and all use the pre-update
+  // pointer. Only one updated_base per group is yielded. This avoids redundant
+  // iter_args for same-address ops (e.g. vlds + vsts both accessing
+  // %base[%iv]) without merging byte- and element-scaled recurrences.
   DenseMap<IterArgGroupKey, unsigned> groupToIdx; // group key -> iter_arg index
   SmallVector<unsigned> rwGroupIdx(rewrites.size()); // rewrite -> group index
   SmallVector<Value>
@@ -2333,7 +2353,8 @@ private:
       if (!initPtr)
         continue;
 
-      rewrites.push_back({&op, base, strideOperand, strideNew, initPtr});
+      rewrites.push_back(
+          {&op, base, strideOperand, strideNew, initPtr, unitBytes});
     }
 
     if (!rewrites.empty())

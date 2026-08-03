@@ -316,9 +316,9 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 
 改写步骤对所有指令统一：
 
-1. **物化 stride。** 叶子全部循环不变时发射到循环外，否则发射到候选 op 之前。常量按 `(值, 类型)` 在同一循环内复用同一个 SSA 值——4.2.7 的分组按 `(base, stride_new)` 的 **Value 同一性** 判定，重复创建等值常量会把本可共享 `iter_arg` 的 op 拆成多组。
+1. **物化 stride。** 叶子全部循环不变时发射到循环外，否则发射到候选 op 之前。常量按 `(值, 类型)` 在同一循环内复用同一个 SSA 值——4.2.7 的分组按 stride 的 **Value 同一性** 判定，重复创建等值常量会把本可共享 `iter_arg` 的 op 拆成多组。
 
-2. 计算初始指针 `init_ptr = pto.addptr(base_0, (unitBytes/elemBytes)·strideOperand_0)`（见 4.2.1；若偏移为零则直接用 `base_0`）。
+2. 计算初始指针 `init_ptr = pto.addptr(base_0, (unitBytes/elemBytes)·strideOperand_0)`（见 4.2.1；若偏移为零则直接用 `base_0`）。传给 `pto.addptr` 前将最终偏移规范为 `index`；Block 单位保持无符号扩展，其他单位使用有符号扩展，避免丢失 `sprsti` 负立即数的语义。
 3. 新增指针类型的 `iter_arg`，初始值为 `init_ptr`。
 4. 创建 Post-Update op：将 `strideOperand` 替换为 `stride_new`，base 替换为 iter_arg 的 block argument。其余操作数（block_stride、mask、dist 等）不变。
 5. 将 `updated_base` 通过 `scf.yield` 传出。
@@ -348,9 +348,9 @@ Post-Update 模式下 `repeat_stride` 从地址偏移变为指针前进量，因
 
 #### 4.2.7 同一循环中的多个 Op
 
-两个 op 能共享同一个 `iter_arg`，当且仅当它们走**同一条地址序列**——起点 `init_ptr`（由 `base_0` 与 `strideOperand_0` 决定，见 4.2.1）相同，且步长 `stride_new` 相同。
+两个 op 能共享同一个 `iter_arg`，当且仅当它们走**同一条地址序列**——起点 `init_ptr`（由 `base_0`、`strideOperand_0` 和 `unitBytes` 决定，见 4.2.1）相同，且以字节计的步长相同。
 
-理想的分组键是 `(init_ptr, stride_new)`。但 `init_ptr` 不适合直接入键：分组按 **Value 同一性** 比较，而 `computeInitialPtr` 可能为每个候选各自物化一个 `pto.addptr`，起点数值相同也未必是同一个 SSA 值。因此改用决定 `init_ptr` 的**原始操作数**：分组键取 `(base, strideOperand, stride_new)`。操作数相同必然起点相同，这是一个充分条件——可能把本可合并的组拆开，但绝不会合并本应分开的组。
+理想的分组键是 `(init_ptr, byte_stride)`。但 `init_ptr` 不适合直接入键：分组按 **Value 同一性** 比较，而 `computeInitialPtr` 可能为每个候选各自物化一个 `pto.addptr`，起点数值相同也未必是同一个 SSA 值。因此改用决定地址序列的原始量：分组键取 `(base, strideOperand, stride_new, unitBytes)`。加入 `unitBytes` 可防止 f32 上数值相同的 Element 与 Byte stride 被误合并；该键可能把本可合并的组拆开，但不会合并字节递推不同的组。
 
 同组的 op 共享一个 `iter_arg`，所有 op 使用同一个 pre-update 指针（block argument），不链式传递 `updated_base`。原因：同一迭代内同组 op 访问相同地址，链式传递会使后续 op 的地址偏移一个 stride。每组只需 yield 一个 `updated_base`。
 
