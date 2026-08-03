@@ -76,7 +76,15 @@ public:
       }
 
       mlir::ModuleOp source = unwrap(rawModule);
-      return callback(source, py::cast<std::string>(result[1]));
+      mlir::LogicalResult callbackResult =
+          callback(source, py::cast<std::string>(result[1]));
+
+      // The source module remains Python-owned, but native import is the last
+      // permitted use of its operation wrappers. Keep the binding's live map
+      // synchronized before the next materialization creates detached ops.
+      getRuntime().attr("invalidate_materialized_module_wrappers")(
+          contextOwner);
+      return callbackResult;
     } catch (const py::error_already_set &error) {
       llvm::errs() << "TileLib: PTODSL materialization raised Python "
                       "exception:\n"
