@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import re
-import weakref
 from dataclasses import dataclass
 
 from ._diagnostics import native_python_control_flow_error
@@ -520,35 +519,41 @@ class _TileValidShapeView:
     """Tuple-like proxy that lowers `tile.valid_shape[i]` on demand."""
 
     def __init__(self, tile: "TileValue"):
-        self._tile = weakref.proxy(tile)
-        self._cache: dict[int, object] = {}
+        self._tile = tile
 
     def __getitem__(self, index: int):
-        logical_rank = len(self._tile.shape) if self._tile.shape is not None else 2
+        return self._tile._get_valid_shape_dim(index)
+
+
+class TileValue(_SurfaceValue, Tile):
+    """Author-facing tile handle with surface-style accessors."""
+
+    def _get_valid_shape_dim(self, index: int):
+        logical_rank = len(self.shape) if self.shape is not None else 2
         allowed = {0} if logical_rank == 1 else {0, 1}
         if index not in allowed:
             if logical_rank == 1:
                 raise IndexError("PTODSL rank-1 tile.valid_shape currently supports only index 0")
             raise IndexError("PTODSL tile.valid_shape currently supports indices 0 and 1")
-        cached = self._cache.get(index)
+        cached = self._valid_shape_cache.get(index)
         if cached is not None:
             return cached
-        if self._tile.static_valid_shape is not None:
-            dim = self._tile.static_valid_shape[index]
+        if self.static_valid_shape is not None:
+            dim = self.static_valid_shape[index]
             if dim is not None:
                 value = _index_const(dim) if _is_python_index_literal(dim) else unwrap_surface_value(dim)
                 value = wrap_surface_value(value)
-                self._cache[index] = value
+                self._valid_shape_cache[index] = value
                 return value
         try:
             if logical_rank == 1:
-                value = wrap_surface_value(_pto.TileValidColsOp(self._tile.value).result)
+                value = wrap_surface_value(_pto.TileValidColsOp(self.value).result)
             elif index == 0:
-                value = wrap_surface_value(_pto.TileValidRowsOp(self._tile.value).result)
+                value = wrap_surface_value(_pto.TileValidRowsOp(self.value).result)
             else:
-                value = wrap_surface_value(_pto.TileValidColsOp(self._tile.value).result)
+                value = wrap_surface_value(_pto.TileValidColsOp(self.value).result)
         except Exception:
-            static_dim = _fallback_static_valid_dim(self._tile.type, index)
+            static_dim = _fallback_static_valid_dim(self.type, index)
             if static_dim is None:
                 raise RuntimeError(
                     "tile.valid_shape could not be lowered because the current "
@@ -556,12 +561,8 @@ class _TileValidShapeView:
                     "the tile type does not carry a recoverable static bound"
                 ) from None
             value = wrap_surface_value(_index_const(static_dim))
-        self._cache[index] = value
+        self._valid_shape_cache[index] = value
         return value
-
-
-class TileValue(_SurfaceValue, Tile):
-    """Author-facing tile handle with surface-style accessors."""
 
     def __init__(
         self,
@@ -592,11 +593,11 @@ class TileValue(_SurfaceValue, Tile):
         self.static_valid_shape = tuple(valid_shape) if valid_shape is not None else (
             parsed["valid_dims"] if parsed is not None else None
         )
-        self._valid_shape = _TileValidShapeView(self)
+        self._valid_shape_cache: dict[int, object] = {}
 
     @property
     def valid_shape(self):
-        return self._valid_shape
+        return _TileValidShapeView(self)
 
     @valid_shape.setter
     def valid_shape(self, dims):
@@ -604,7 +605,7 @@ class TileValue(_SurfaceValue, Tile):
 
         set_tile_valid_shape(self, dims)
         self.static_valid_shape = tuple(dims)
-        self._valid_shape._cache.clear()
+        self._valid_shape_cache.clear()
 
     @property
     def surface_metadata(self):
