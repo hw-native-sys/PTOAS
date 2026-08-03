@@ -12,7 +12,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ptoas.mlir.dialects import pto as _pto
-from ptoas.mlir.ir import BF16Type, F16Type, F32Type, Float8E4M3FNType, Float8E5M2Type, IntegerType, MemRefType, UnitAttr
+from ptoas.mlir.ir import (
+    BF16Type,
+    F16Type,
+    F32Type,
+    Float8E4M3FNType,
+    Float8E5M2Type,
+    IndexType,
+    IntegerType,
+    MemRefType,
+    UnitAttr,
+)
 
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_values import _coerce_index_value, _try_get_constant_index, unwrap_surface_value, wrap_surface_value
@@ -269,7 +279,14 @@ def _derive_vci_result_type(base, size, *, context: str):
             f"{context} requires a typed scalar such as pto.i32(0) or "
             "pto.f32(0.0); plain Python scalars are ambiguous"
         )
-    return _pto.VMIVRegType.get(size, raw_base.type)
+    elem_type = raw_base.type
+    # Dynamic loop indices (TileLang T.serial / scf.for IVs) are MLIR index.
+    # VCI requires an integer/float sreg element type; Ascend uses i32.
+    # Coerce index → signless i32 so pto.vmi.vci(dynamic_base) lowers to
+    # ``VCI Vd, Sn`` instead of failing ODS (index) or verify (i64).
+    if IndexType.isinstance(elem_type):
+        elem_type = IntegerType.get_signless(32)
+    return _pto.VMIVRegType.get(size, elem_type)
 
 
 def _derive_vmull_result_types(a, b, *, context: str):
