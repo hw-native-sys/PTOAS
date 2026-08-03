@@ -2842,6 +2842,57 @@ VMILayoutSupport::getBitcastLayoutFact(VMIBitcastOp op,
   return VMIBitcastLayoutFact{sourceLayout, resultLayout};
 }
 
+FailureOr<SmallVector<VMIBitcastLayoutFact, 4>>
+VMILayoutSupport::getBitcastLayoutFactsForLayout(
+    VMIVRegType sourceType, VMIVRegType resultType, VMICastLayoutPort port,
+    VMILayoutAttr layout, std::string *reason) const {
+  auto fail = [&](const Twine &message)
+      -> FailureOr<SmallVector<VMIBitcastLayoutFact, 4>> {
+    if (reason)
+      *reason = message.str();
+    return failure();
+  };
+
+  if (!layout)
+    return fail("requires an assigned bitcast query layout");
+
+  unsigned sourceElementBits =
+      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  unsigned resultElementBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  if (sourceElementBits == 0 || resultElementBits == 0)
+    return fail("requires source and result with known storage element width");
+
+  if (sourceElementBits == resultElementBits)
+    return SmallVector<VMIBitcastLayoutFact, 4>{
+        VMIBitcastLayoutFact{layout, layout}};
+
+  int64_t numGroups = layout.isGroupSlots() ? layout.getNumGroups() : 0;
+  MLIRContext *ctx = sourceType.getContext();
+  SmallVector<VMIBitcastLayoutFact, 4> facts;
+  for (const WidthChangingBitcastLayoutPattern &pattern :
+       kWidthChangingBitcastLayoutPatterns) {
+    VMILayoutAttr candidate =
+        materializeLayoutPattern(ctx, pattern.layout, numGroups);
+    if (!candidate)
+      continue;
+    if (port == VMICastLayoutPort::Source && candidate != layout)
+      continue;
+    if (port == VMICastLayoutPort::Result && candidate != layout)
+      continue;
+    facts.push_back(VMIBitcastLayoutFact{candidate, candidate});
+  }
+
+  if (facts.empty()) {
+    if (port == VMICastLayoutPort::Source)
+      return fail(
+          "requires a legal width-changing bitcast source layout relation");
+    return fail(
+        "requires a legal width-changing bitcast result layout relation");
+  }
+  return facts;
+}
+
 LogicalResult VMILayoutSupport::getBitcastSupport(VMIBitcastOp op,
                                                   std::string *reason) const {
   return getBitcastLayoutFact(op, reason);

@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vsldb --implicit-check-not=pto.vsstb --implicit-check-not=pto.vcmax --implicit-check-not=pto.vldsx2 --implicit-check-not='pto.vcvt ' --implicit-check-not=pto.vcgmax --implicit-check-not='pto.vmax ' --implicit-check-not=pto.vpack --implicit-check-not=pto.vselr --implicit-check-not='pto.vmul ' --implicit-check-not=pto.vintlv --implicit-check-not=pto.vbitcast --implicit-check-not='pto.vsts '
+
+// Optimization guard for the per-block BF16 group=8 quant path. Two adjacent
+// 128-column strips form one 256-lane value with eight 32-lane groups. Keep the
+// BF16-to-F32 conversion and reduction on deinterleaved layouts, broadcast the
+// eight scale slots directly in registers, and preserve the width-changing
+// carrier reinterpretation needed by the final PK4_B32 stores.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @per_block_bf16_group8_quant_vmi_opt(
+      %src: !pto.ptr<bf16, ub>,
+      %dst: !pto.ptr<f8E4M3FN, ub>,
+      %off: index) attributes {pto.kernel} {
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %cst = arith.constant 0.000000e+00 : bf16
+    %off128 = arith.addi %off, %c128 : index
+    %mask = pto.vmi.create_mask %c256
+        : index -> !pto.vmi.mask<256xpred>
+    %zero = pto.vmi.vbrc %cst : bf16 -> !pto.vmi.vreg<256xbf16>
+    %x = pto.vmi.vload %src[%off]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %x_f32 = pto.vmi.vcvt %x
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+    %mask_f32 = pto.vmi.create_mask %c256
+        : index -> !pto.vmi.mask<256xpred>
+    %amax = pto.vmi.vcmax %x_f32, %mask_f32 {group = 8}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xf32>
+    %scale = pto.vmi.vcvt %amax {rounding = "R", saturate = "NOSAT"}
+        : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xbf16>
+    %scale256 = pto.vmi.vbrc %scale {group = 8}
+        : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
+    %qbf16 = pto.vmi.vmul %x, %scale256, %mask
+        : !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<256xbf16>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xbf16>
+    %low, %high = pto.vmi.vintlv %zero, %qbf16, %mask
+        : !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<256xbf16>,
+          !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<256xbf16>
+    %low32 = pto.vmi.vinterpret_cast %low
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128xf32>
+    %high32 = pto.vmi.vinterpret_cast %high
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128xf32>
+    %low8 = pto.vmi.vcvt %low32 {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf8E4M3FN>
+    %high8 = pto.vmi.vcvt %high32 {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf8E4M3FN>
+    pto.vmi.vstore %low8, %dst[%off]
+        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+    pto.vmi.vstore %high8, %dst[%off128]
+        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @per_block_bf16_group8_quant_vmi_opt(
+// ASSIGN: %[[X:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[X_F32:.*]] = pto.vmi.extf %[[X]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: %[[AMAX:.*]] = pto.vmi.group_reduce_maxf %[[X_F32]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN: %[[SCALE_LS2:.*]] = pto.vmi.truncf %[[AMAX]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+// ASSIGN: %[[SCALE:.*]] = pto.vmi.ensure_layout %[[SCALE_LS2]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-NOT: pto.vmi.store
+// ASSIGN-NOT: pto.vmi.load
+// ASSIGN: %[[SCALE256:.*]] = pto.vmi.group_broadcast %[[SCALE]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[Q:.*]] = pto.vmi.mulf %[[X]], %[[SCALE256]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[Q_C:.*]] = pto.vmi.ensure_layout %[[Q]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[LOW:.*]], %[[HIGH:.*]] = pto.vmi.vintlv
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[LOW_C:.*]] = pto.vmi.ensure_layout %[[LOW]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.bitcast %[[LOW_C]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[HIGH_C:.*]] = pto.vmi.ensure_layout %[[HIGH]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.bitcast %[[HIGH_C]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+
+// VPTO-LABEL: func.func @per_block_bf16_group8_quant_vmi_opt(
+// VPTO: pto.vldsx2 {{.*}}, "DINTLV_B16"
+// VPTO-COUNT-2: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// VPTO-COUNT-2: pto.vcvt {{.*}} {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// VPTO-COUNT-3: pto.vmax {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32>
+// VPTO: pto.vcgmax
+// VPTO: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "NOSAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xbf16>
+// VPTO: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64xui32>
+// VPTO: pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// VPTO: pto.vbitcast {{.*}} : !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
+// VPTO: pto.vselr
+// VPTO-COUNT-2: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// VPTO: %[[Q_LOW:.*]], %[[Q_HIGH:.*]] = pto.vintlv
+// VPTO: %[[LOW0:.*]], %[[LOW1:.*]] = pto.vintlv {{.*}}, %[[Q_LOW]]
+// VPTO-COUNT-2: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
+// VPTO: %[[HIGH0:.*]], %[[HIGH1:.*]] = pto.vintlv {{.*}}, %[[Q_HIGH]]
+// VPTO-COUNT-2: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
+// VPTO-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+// VPTO-NOT: part = "P1"
+// VPTO-NOT: part = "P2"
+// VPTO-NOT: part = "P3"
+// VPTO-NOT: pto.vor
+// VPTO-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
+// VPTO-NOT: pto.vsts

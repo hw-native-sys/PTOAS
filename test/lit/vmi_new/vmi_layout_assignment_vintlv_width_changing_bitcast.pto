@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vmi_layout_assignment_vintlv_width_changing_bitcast(
+      %zero: !pto.vmi.vreg<256xbf16>,
+      %acc: !pto.vmi.vreg<256xbf16>,
+      %mask: !pto.vmi.mask<256xpred>)
+      -> (!pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>) {
+    %low, %high = pto.vmi.vintlv %zero, %acc, %mask
+        : !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<256xbf16>,
+          !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<256xbf16>
+    %low_f32 = pto.vmi.vinterpret_cast %low
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128xf32>
+    %high_f32 = pto.vmi.vinterpret_cast %high
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128xf32>
+    return %low_f32, %high_f32
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+  }
+}
+
+// ASSIGN-LABEL: func.func @vmi_layout_assignment_vintlv_width_changing_bitcast(
+// ASSIGN: %[[LOW:.*]], %[[HIGH:.*]] = pto.vmi.vintlv
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[LOW_C:.*]] = pto.vmi.ensure_layout %[[LOW]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[LOW_F32:.*]] = pto.vmi.bitcast %[[LOW_C]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[HIGH_C:.*]] = pto.vmi.ensure_layout %[[HIGH]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[HIGH_F32:.*]] = pto.vmi.bitcast %[[HIGH_C]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_vintlv_width_changing_bitcast(
+// LOWER: pto.vintlv
+// LOWER-COUNT-2: pto.vbitcast
+// LOWER: pto.vintlv
+// LOWER-COUNT-2: pto.vbitcast
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast

@@ -205,13 +205,15 @@ def _derive_vinterpret_cast_result_type(source, to_dtype, *, context: str):
     target_elem_type = _ensure_tensor_storage_dtype(to_dtype, context=context)
     source_bits = _type_bit_width(source_elem_type, context=context)
     target_bits = _type_bit_width(target_elem_type, context=context)
-    if source_bits != target_bits:
+    total_bits = source_type.element_count * source_bits
+    if total_bits % target_bits != 0:
         raise TypeError(
-            f"{context} requires source and target element widths to match; got "
+            f"{context} requires the source bit count to be divisible by the "
+            f"target element width; got {source_type.element_count}x"
             f"{source_elem_type} -> {target_elem_type}"
         )
     return _pto.VMIVRegType.get(
-        source_type.element_count,
+        total_bits // target_bits,
         target_elem_type,
         layout=source_type.layout,
     )

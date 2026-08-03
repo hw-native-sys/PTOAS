@@ -175,7 +175,7 @@ static bool isSameLayoutOp(Operation *op) {
              VMIMaxIOp, VMINegFOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,
              VMILnOp, VMIReluOp, VMIFPToSIOp, VMISIToFPOp, VMIAndIOp, VMIOrIOp,
              VMIXOrIOp, VMIShLIOp, VMIShRUIOp, VMIShRSIOp, VMINotOp, VMICmpFOp,
-             VMICmpIOp, VMISelectOp, VMIBitcastOp, VMIMaskAndOp, VMIMaskOrOp,
+             VMICmpIOp, VMISelectOp, VMIMaskAndOp, VMIMaskOrOp,
              VMIMaskXOrOp, VMIMaskNotOp, VMIActivePrefixIndexOp, VMICompressOp,
              VMIExpandLoadOp>(op);
 }
@@ -245,6 +245,47 @@ public:
       return relations;
     }
     return failure();
+  }
+};
+
+class VMIBitcastTransfer final : public VMILayoutTransfer {
+public:
+  FailureOr<SmallVector<VMILayoutRelation, 4>>
+  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
+        const VMILayoutPropagator &propagator,
+        OpOperand *changedOperand) const override {
+    auto bitcast = dyn_cast<VMIBitcastOp>(op);
+    if (!bitcast)
+      return failure();
+
+    auto sourceType = dyn_cast<VMIVRegType>(bitcast.getSource().getType());
+    auto resultType = dyn_cast<VMIVRegType>(bitcast.getResult().getType());
+    if (!sourceType || !resultType)
+      return failure();
+
+    VMICastLayoutPort port;
+    if (changedOperand == &bitcast.getSourceMutable() ||
+        changedValue == bitcast.getSource()) {
+      port = VMICastLayoutPort::Source;
+    } else if (changedValue == bitcast.getResult()) {
+      port = VMICastLayoutPort::Result;
+    } else {
+      return failure();
+    }
+
+    VMILayoutSupport supports;
+    FailureOr<SmallVector<VMIBitcastLayoutFact, 4>> facts =
+        supports.getBitcastLayoutFactsForLayout(sourceType, resultType, port,
+                                                changedLayout);
+    if (failed(facts) || facts->empty())
+      return failure();
+
+    SmallVector<VMILayoutRelation, 4> relations;
+    for (const VMIBitcastLayoutFact &fact : *facts)
+      relations.push_back(makeRelation(SmallVector<VMILayoutFact, 4>{
+          operandFact(bitcast.getSourceMutable(), fact.sourceLayout),
+          valueFact(bitcast.getResult(), fact.resultLayout)}));
+    return relations;
   }
 };
 
@@ -765,6 +806,7 @@ public:
 const VMILayoutTransfer *getTransfer(Operation *op) {
   static VMISameLayoutTransfer sameLayoutTransfer;
   static VMICastTransfer castTransfer;
+  static VMIBitcastTransfer bitcastTransfer;
   static VMIMaskGranularityCastTransfer maskGranularityCastTransfer;
   static VMIFreeResultLayoutTransfer freeResultLayoutTransfer;
   static VMILoadTransfer loadTransfer;
@@ -804,6 +846,8 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
     return &interleaveTransfer;
   if (isa<VMIGatherOp>(op))
     return &gatherTransfer;
+  if (isa<VMIBitcastOp>(op))
+    return &bitcastTransfer;
   if (isSameLayoutOp(op))
     return &sameLayoutTransfer;
   if (isa<VMIEnsureMaskGranularityOp>(op))

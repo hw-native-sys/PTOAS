@@ -112,9 +112,9 @@ def vmi_vinterpret_cast_missing_dtype_probe():
 
 
 @pto.jit(target="a5")
-def vmi_vinterpret_cast_width_mismatch_probe():
-    src = pto.vmi.vbrc(pto.f32(0.0), size=64)
-    _ = pto.vmi.vinterpret_cast(src, to_dtype=pto.f16)
+def vmi_vinterpret_cast_footprint_mismatch_probe():
+    src = pto.vmi.vbrc(pto.f16(0.0), size=1)
+    _ = pto.vmi.vinterpret_cast(src, to_dtype=pto.f32)
 
 
 @pto.jit(target="a5")
@@ -721,10 +721,10 @@ def main() -> None:
         "requires to_dtype",
     )
     expect_raises(
-        vmi_vinterpret_cast_width_mismatch_probe.compile,
+        vmi_vinterpret_cast_footprint_mismatch_probe.compile,
         TypeError,
         "pto.vmi.vinterpret_cast(...)",
-        "element widths to match",
+        "source bit count to be divisible",
     )
     expect_raises(
         vmi_create_mask_group_mismatch_probe.compile,
