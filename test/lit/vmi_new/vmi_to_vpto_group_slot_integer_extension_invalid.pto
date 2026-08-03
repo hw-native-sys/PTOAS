@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @extui_rejects_signed(
+      %src: !pto.vmi.vreg<1xsi8, #pto.vmi.layout<num_groups = 1, slots = 1>>) {
+    %wide = pto.vmi.extui %src
+        : !pto.vmi.vreg<1xsi8, #pto.vmi.layout<num_groups = 1, slots = 1>>
+        -> !pto.vmi.vreg<1xsi16, #pto.vmi.layout<num_groups = 1, slots = 1>>
+    return
+  }
+}
+
+// CHECK: error: 'pto.vmi.extui' op requires unsigned integer source and result element types
+
+// -----
+
+module {
+  func.func @extui_rejects_signless(
+      %src: !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 1>>) {
+    %wide = pto.vmi.extui %src
+        : !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 1>>
+        -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 1>>
+    return
+  }
+}
+
+// CHECK: error: 'pto.vmi.extui' op requires unsigned integer source and result element types
+
+// -----
+
+module {
+  func.func @extsi_rejects_unsigned(
+      %src: !pto.vmi.vreg<1xui8, #pto.vmi.layout<num_groups = 1, slots = 1>>) {
+    %wide = pto.vmi.extsi %src
+        : !pto.vmi.vreg<1xui8, #pto.vmi.layout<num_groups = 1, slots = 1>>
+        -> !pto.vmi.vreg<1xui16, #pto.vmi.layout<num_groups = 1, slots = 1>>
+    return
+  }
+}
+
+// CHECK: error: 'pto.vmi.extsi' op requires signed or signless integer source and result element types
+
+// -----
+
+module {
+  func.func @slots8_requires_natural_stride(
+      %src: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>) {
+    %wide = pto.vmi.extui %src
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return
+  }
+}
+
+// CHECK: error: VMI-UNSUPPORTED: pto.vmi.extui
+// CHECK-SAME: requires a legal cast relation for the source layout
+
+// -----
+
+module {
+  func.func @slots8_rejects_wrong_stride(
+      %src: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) {
+    %wide = pto.vmi.extui %src
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+        -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return
+  }
+}
+
+// CHECK: error: VMI-UNSUPPORTED: pto.vmi.extui
+// CHECK-SAME: requires a legal cast relation for the source layout

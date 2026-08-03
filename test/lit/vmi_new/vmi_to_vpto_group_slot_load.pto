@@ -107,6 +107,39 @@ module {
           !pto.ptr<ui32, ub>
     return
   }
+
+  func.func @vmi_to_vpto_group_slot_load_extui_u8_u16_slots8(
+      %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui16, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %narrow = pto.vmi.vload %src[%off], %c1 {group = 8}
+        : !pto.ptr<ui8, ub>
+        -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    %strided = pto.vmi.ensure_layout %narrow
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    %wide = pto.vmi.extui %strided
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+        -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    pto.vmi.vstore %wide, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<ui16, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_group_slot_load_extui_u8_u16_slots1(
+      %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui16, ub>, %off: index) {
+    %c32 = arith.constant 32 : index
+    %narrow = pto.vmi.vload %src[%off], %c32 {group = 8}
+        : !pto.ptr<ui8, ub>
+        -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    %wide = pto.vmi.extui %narrow
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
+        -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    pto.vmi.vstore %wide, %dst[%off], %c32 {group = 8}
+        : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+          !pto.ptr<ui16, ub>
+    return
+  }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_slots8(
@@ -151,6 +184,22 @@ module {
 // CHECK: pto.pge_b16 "PAT_VL16" : !pto.mask<b16>
 // CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
 // CHECK: pto.vsts {{.*}} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_extui_u8_u16_slots8(
+// CHECK: %[[LOAD:.*]] = pto.vsldb {{.*}} : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
+// CHECK: %[[UNPACK:.*]] = pto.vzunpack %[[LOAD]]
+// CHECK: %[[WIDE:.*]] = pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+// CHECK: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+
+// CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_extui_u8_u16_slots1(
+// CHECK-COUNT-8: pto.vsldb
+// CHECK-COUNT-8: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+// CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B16"}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
