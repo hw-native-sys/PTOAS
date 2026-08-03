@@ -11,6 +11,8 @@
 Dynamic loop indices must coerce to an i32 sreg so ODS/verify accept the op
 and lowering emits ``VCI Vd, Sn`` (matches Ascend ``S.vci(T.int32(offset))``).
 
+Also covers ``group=2`` (VL128 group-periodic) with a dynamic base.
+
 Run:
   python3 ptodsl/tests/test_vmi_vci_dynamic_index.py
 """
@@ -44,6 +46,16 @@ def vmi_vci_dynamic_index_probe():
         pto.vmi.vstore(idx, dst.as_ptr(), base)
 
 
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vmi_vci_dynamic_group2_probe():
+    """Dynamic base + group=2 → VL128 group-periodic iota ([0..63|0..63]+base)."""
+    dst = pto.alloc_tile(shape=[1, 128], dtype=pto.i32)
+    for pass_id in range(2):
+        base = pass_id * 64
+        idx = pto.vmi.vci(base, size=128, group=2)
+        pto.vmi.vstore(idx, dst.as_ptr(), pto.const(0, dtype=pto.index))
+
+
 def main() -> None:
     const_text = vmi_vci_const_i32_probe.compile().mlir_text()
     expect("pto.vmi.vci" in const_text, "const probe must emit pto.vmi.vci")
@@ -65,6 +77,21 @@ def main() -> None:
     expect(
         "arith.index_cast" in dyn_text or "index_cast" in dyn_text,
         f"dynamic probe must index_cast before vci:\n{dyn_text[:1600]}",
+    )
+
+    g2_text = vmi_vci_dynamic_group2_probe.compile().mlir_text()
+    expect("pto.vmi.vci" in g2_text, "group=2 probe must emit pto.vmi.vci")
+    expect(
+        "group = 2" in g2_text or "{group = 2" in g2_text,
+        f"group=2 probe must preserve group attr:\n{g2_text[:2000]}",
+    )
+    expect(
+        ": i32 -> !pto.vmi.vreg" in g2_text,
+        f"group=2 probe must coerce index→i32 vci:\n{g2_text[:2000]}",
+    )
+    expect(
+        "arith.index_cast" in g2_text or "index_cast" in g2_text,
+        f"group=2 probe must index_cast before vci:\n{g2_text[:2000]}",
     )
     print("ptodsl_vmi_vci_dynamic_index: PASS")
 

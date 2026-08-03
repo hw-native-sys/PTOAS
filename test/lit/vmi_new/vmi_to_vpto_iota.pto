@@ -61,20 +61,30 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_i32_asc(
-// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
+// CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[Z0:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[P0:.*]] = pto.vadds %[[Z0]], %[[BASE]]
 // CHECK: arith.constant 64 : i32
-// CHECK: arith.addi %arg0
-// CHECK: %[[P1:.*]] = pto.vci
+// CHECK: %[[BASE64:.*]] = arith.addi %[[BASE]]
+// CHECK: %[[Z1:.*]] = pto.vci {{.*}} : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[P1:.*]] = pto.vadds %[[Z1]], %[[BASE64]]
 // CHECK: return %[[P0]], %[[P1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_i32_desc(
-// CHECK: %[[P0:.*]] = pto.vci %arg0 {order = "DESC"} : i32 -> !pto.vreg<64xi32>
+// CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[Z0:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[DUP0:.*]] = pto.vdup %[[BASE]]
+// CHECK: %[[P0:.*]] = pto.vsub %[[DUP0]], %[[Z0]]
 // CHECK: arith.constant 64 : i32
-// CHECK: arith.subi %arg0
-// CHECK: %[[P1:.*]] = pto.vci {{.*}} {order = "DESC"}
+// CHECK: %[[BASE64:.*]] = arith.subi %[[BASE]]
+// CHECK: %[[Z1:.*]] = pto.vci {{.*}} : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[DUP1:.*]] = pto.vdup %[[BASE64]]
+// CHECK: %[[P1:.*]] = pto.vsub %[[DUP1]], %[[Z1]]
 // CHECK: return %[[P0]], %[[P1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
@@ -95,7 +105,10 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_i16_asc(
-// CHECK: %[[P16:.*]] = pto.vci %arg0 : i16 -> !pto.vreg<128xi16>
+// CHECK-SAME: %[[BASE:.*]]: i16
+// CHECK: %[[C0:.*]] = arith.constant 0 : i16
+// CHECK: %[[Z:.*]] = pto.vci %[[C0]] : i16 -> !pto.vreg<128xi16>
+// CHECK: %[[P16:.*]] = pto.vadds %[[Z]], %[[BASE]]
 // CHECK: return %[[P16]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

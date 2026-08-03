@@ -5207,12 +5207,47 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
                                            Value base, int64_t laneOffset,
                                            StringAttr orderAttr,
                                            PatternRewriter &rewriter) {
+  // Camodel / Bisheng llvm.hivm.vci honors immediate bases but currently
+  // ignores a non-zero *register* Sn base (dynamic sreg). Materialize
+  // absolute indices as vci(0) ± vadds/vdup(base), matching the
+  // deinterleaved iota path and Ascend's S.vci(0)+vadds pattern.
+  auto vregType = dyn_cast<VRegType>(resultType);
+  if (!vregType)
+    return failure();
+
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
   FailureOr<Value> chunkBase =
       createIotaChunkBase(loc, base, laneOffset, order, rewriter);
   if (failed(chunkBase))
     return failure();
-  return rewriter.create<VciOp>(loc, resultType, *chunkBase, orderAttr)
+
+  FailureOr<Value> mask = createAllTrueMaskForVReg(loc, vregType, rewriter);
+  FailureOr<Value> zero =
+      createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
+  if (failed(mask) || failed(zero))
+    return failure();
+
+  Value local =
+      rewriter.create<VciOp>(loc, resultType, *zero, StringAttr{}).getResult();
+
+  // Fast-path: base+laneOffset folds to zero and ASC → plain vci(0).
+  if (order != "DESC") {
+    if (auto constBase = chunkBase->getDefiningOp<arith::ConstantOp>()) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(constBase.getValue())) {
+        if (intAttr.getValue().isZero())
+          return local;
+      }
+    }
+    return rewriter.create<VaddsOp>(loc, resultType, local, *chunkBase, *mask)
+        .getResult();
+  }
+
+  Value baseVector =
+      rewriter
+          .create<VdupOp>(loc, resultType, *chunkBase, *mask,
+                          /*position=*/nullptr)
+          .getResult();
+  return rewriter.create<VsubOp>(loc, resultType, baseVector, local, *mask)
       .getResult();
 }
 
@@ -5293,6 +5328,77 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<VMIIotaOp> {
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
+
+    // Optional {group = C}: group-periodic ramp. Each group of size
+    // S = L / C independently gets dst[g*S + j] = base + j. Contiguous
+    // physical part p therefore uses laneOffset = (p * lanesPerPart) % S
+    // (not p * lanesPerPart). Without {group}, keep the contiguous /
+    // deinterleaved absolute ramps below.
+    if (auto groupAttr = op.getGroupAttr()) {
+      int64_t numGroups = groupAttr.getInt();
+      int64_t logicalLanes = resultVMIType.getElementCount();
+      if (numGroups <= 0 || logicalLanes % numGroups != 0)
+        return rewriter.notifyMatchFailure(
+            op, "grouped iota requires group to divide logical lane count");
+      int64_t groupSize = logicalLanes / numGroups;
+      if (groupSize % *lanesPerPart != 0)
+        return rewriter.notifyMatchFailure(
+            op, "grouped iota requires group_size to be a multiple of "
+                "physical lanes per part");
+
+      if (layout.isContiguous()) {
+        if (static_cast<int64_t>(resultTypes.size()) * *lanesPerPart !=
+            logicalLanes)
+          return rewriter.notifyMatchFailure(
+              op, "grouped contiguous iota physical result count mismatch");
+        for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+          if (!isa<VRegType>(resultType))
+            return rewriter.notifyMatchFailure(op, "iota result must be vreg");
+          int64_t laneOffset =
+              (static_cast<int64_t>(index) * *lanesPerPart) % groupSize;
+          FailureOr<Value> result = createIotaContiguousChunk(
+              op.getLoc(), resultType, *base, laneOffset, op.getOrderAttr(),
+              rewriter);
+          if (failed(result))
+            return rewriter.notifyMatchFailure(
+                op, "failed to materialize grouped contiguous iota chunk");
+          results.push_back(*result);
+        }
+        replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                         *this->getTypeConverter());
+        return success();
+      }
+
+      int64_t factor = layout.getFactor();
+      if (factor != numGroups)
+        return rewriter.notifyMatchFailure(
+            op, "grouped deinterleaved iota requires layout factor == group");
+      if (resultTypes.size() % factor != 0)
+        return rewriter.notifyMatchFailure(
+            op, "deinterleaved iota physical result count does not match "
+                "layout factor");
+      int64_t chunksPerPart = resultTypes.size() / factor;
+      if (chunksPerPart * *lanesPerPart != groupSize)
+        return rewriter.notifyMatchFailure(
+            op, "grouped deinterleaved iota chunks-per-part mismatch");
+      // Group-periodic deinterleaved: each part is one group and restarts
+      // at `base` (partOffset ignores the group index).
+      for (int64_t part = 0; part < factor; ++part) {
+        for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+          Type resultType = resultTypes[part * chunksPerPart + chunk];
+          FailureOr<Value> result = createIotaDeinterleavedChunk(
+              op.getLoc(), resultType, *base, /*factor=*/1, /*part=*/0, chunk,
+              *lanesPerPart, op.getOrderAttr(), rewriter);
+          if (failed(result))
+            return rewriter.notifyMatchFailure(
+                op, "failed to materialize grouped deinterleaved iota chunk");
+          results.push_back(*result);
+        }
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
+    }
 
     if (layout.isContiguous()) {
       for (auto [index, resultType] : llvm::enumerate(resultTypes)) {

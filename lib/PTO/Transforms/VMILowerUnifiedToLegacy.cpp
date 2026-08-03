@@ -1189,7 +1189,7 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
     // ---- Category A: pure syntactic renames ----
 
     if (auto vop = dyn_cast<VMIVciOp>(op)) {
-      // vci -> iota
+      // vci -> iota (preserve optional {group})
       builder.setInsertionPoint(op);
       StringAttr orderAttr;
       if (auto order = vop.getOrder())
@@ -1197,7 +1197,7 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
       Value result =
           builder
               .create<VMIIotaOp>(op->getLoc(), vop.getResult().getType(),
-                                 vop.getBase(), orderAttr)
+                                 vop.getBase(), orderAttr, vop.getGroupAttr())
               .getResult();
       vop.getResult().replaceAllUsesWith(result);
       op->erase();

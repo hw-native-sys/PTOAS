@@ -673,14 +673,26 @@ class _VMINamespace:
         )
 
     @staticmethod
-    def vci(base, *, size, order=None, loc=None, ip=None):
-        result_type = _derive_vci_result_type(base, size, context="pto.vmi.vci(...)")
+    def vci(base, *, size, order=None, group=None, loc=None, ip=None):
+        context = "pto.vmi.vci(...)"
+        if group is not None:
+            if isinstance(group, bool) or not isinstance(group, int):
+                raise TypeError(f"{context} requires group to be a positive Python integer")
+            if group <= 0:
+                raise ValueError(f"{context} requires group to be positive, got {group!r}")
+            if size % group != 0:
+                raise ValueError(
+                    f"{context} requires size divisible by group; got size={size!r}, group={group!r}"
+                )
+        result_type = _derive_vci_result_type(base, size, context=context)
         base = coerce_scalar_to_type(
             base,
-            _vmi_element_type(result_type, context="pto.vmi.vci(...)"),
+            _vmi_element_type(result_type, context=context),
             context="pto.vmi.vci(base)",
         )
-        return _call_value("vci", result_type, base, order=order, loc=loc, ip=ip)
+        return _call_value(
+            "vci", result_type, base, order=order, group=group, loc=loc, ip=ip
+        )
 
     vadd = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vadd", lhs, rhs, mask, **kw))
     vsub = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vsub", lhs, rhs, mask, **kw))

@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+// Contiguous VL128 {group=2} must restart both physical parts at the same
+// base (group-periodic), materialized as vci(0)+vadds(base) for camodel.
+
+module {
+  func.func @vmi_to_vpto_iota_group2_i32(%base: i32)
+      -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>) {
+    %value = pto.vmi.vci %base {group = 2 : i64}
+        : i32 -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
+    %p0, %p1 = "pto.vmi.unpack"(%value)
+        : (!pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>)
+    return %p0, %p1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_i32(
+// CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[Z0:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[P0:.*]] = pto.vadds %[[Z0]], %[[BASE]]
+// CHECK: %[[C0B:.*]] = arith.constant 0 : i32
+// CHECK: %[[Z1:.*]] = pto.vci %[[C0B]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[P1:.*]] = pto.vadds %[[Z1]], %[[BASE]]
+// CHECK: return %[[P0]], %[[P1]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

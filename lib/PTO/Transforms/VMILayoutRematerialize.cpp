@@ -242,7 +242,8 @@ static std::optional<Value> rematerializeDataProducer(Value value,
 
   if (auto iota = value.getDefiningOp<VMIIotaOp>())
     return builder
-        .create<VMIIotaOp>(loc, resultType, iota.getBase(), iota.getOrderAttr())
+        .create<VMIIotaOp>(loc, resultType, iota.getBase(), iota.getOrderAttr(),
+                           iota.getGroupAttr())
         .getResult();
 
   return std::nullopt;

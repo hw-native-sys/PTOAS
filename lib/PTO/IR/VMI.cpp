@@ -955,6 +955,14 @@ LogicalResult VMIIotaOp::verify() {
     if (*order != "ASC" && *order != "DESC")
       return emitOpError("requires order to be ASC or DESC");
   }
+  if (auto groupAttr = getGroupAttr()) {
+    int64_t numGroups = groupAttr.getInt();
+    if (numGroups <= 0)
+      return emitOpError("requires group to be positive");
+    if (resultType.getElementCount() % numGroups != 0)
+      return emitOpError("requires group to evenly divide result logical lane "
+                         "count");
+  }
   return success();
 }
 
@@ -2603,6 +2611,14 @@ LogicalResult VMIVciOp::verify() {
   if (std::optional<StringRef> order = getOrder()) {
     if (*order != "ASC" && *order != "DESC")
       return emitOpError("requires order to be ASC or DESC");
+  }
+  if (auto groupAttr = getGroupAttr()) {
+    int64_t numGroups = groupAttr.getInt();
+    if (numGroups <= 0)
+      return emitOpError("requires group to be positive");
+    if (resultType.getElementCount() % numGroups != 0)
+      return emitOpError("requires group to evenly divide result logical lane "
+                         "count");
   }
   return success();
 }

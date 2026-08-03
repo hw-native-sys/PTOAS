@@ -62,9 +62,19 @@ def VMIBroadcastOp : VMI_Op<"broadcast", [Pure]> {
 
 def VMIIotaOp : VMI_Op<"iota", [Pure]> {
   let summary = "Create a VMI logical index vector from a scalar base";
+  let description = [{
+    Without `{group}`, produces a contiguous ramp
+    `dst[i] = base + i` (ASC) over the full logical vector.
+
+    With `{group = C}`, produces a **group-periodic** ramp: each of the C
+    groups of size `S = L / C` independently gets
+    `dst[g*S + j] = base + j` for `j in [0, S)`. Example for
+    `L=128, C=2, base=0`: `[0..63 | 0..63]`.
+  }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
-    OptionalAttr<StrAttr>:$order
+    OptionalAttr<StrAttr>:$order,
+    OptionalAttr<I64Attr>:$group
   );
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
@@ -821,9 +831,15 @@ def VMIVbrcOp : VMI_Op<"vbrc", [Pure]> {
 
 def VMIVciOp : VMI_Op<"vci", [Pure]> {
   let summary = "Create a VMI logical index vector from a scalar base";
+  let description = [{
+    Unified form of `iota`. Without `{group}`, contiguous ramp over L lanes.
+    With `{group = C}`, group-periodic ramp: each group restarts at `base`
+    (see `iota`). Lowers to `iota` preserving `{group}`.
+  }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
-    OptionalAttr<StrAttr>:$order
+    OptionalAttr<StrAttr>:$order,
+    OptionalAttr<I64Attr>:$group
   );
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
