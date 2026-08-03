@@ -337,49 +337,49 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots1_ui8_to_ui16(
-// CHECK: %[[VL1:.*]] = pto.pge_b8 "PAT_VL1" : !pto.mask<b8>
+// CHECK: %[[VL1:.*]] = pto.pset_b8 "PAT_VL1" : !pto.mask<b8>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1]] {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots1_ui8_to_ui32(
-// CHECK: %[[VL1U8:.*]] = pto.pge_b8 "PAT_VL1" : !pto.mask<b8>
+// CHECK: %[[VL1U8:.*]] = pto.pset_b8 "PAT_VL1" : !pto.mask<b8>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U8]] {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots1_ui16_to_ui32(
-// CHECK: %[[VL1U16EXT:.*]] = pto.pge_b16 "PAT_VL1" : !pto.mask<b16>
+// CHECK: %[[VL1U16EXT:.*]] = pto.pset_b16 "PAT_VL1" : !pto.mask<b16>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U16EXT]] {part = "EVEN"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots8_ui8_to_ui16(
-// CHECK: %[[VL16:.*]] = pto.pge_b8 "PAT_VL16" : !pto.mask<b8>
+// CHECK: %[[VL16:.*]] = pto.pset_b8 "PAT_VL16" : !pto.mask<b8>
 // CHECK: pto.vcvt {{.*}}, %[[VL16]] {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots8_ui8_to_ui32(
-// CHECK: %[[VL32:.*]] = pto.pge_b8 "PAT_VL32" : !pto.mask<b8>
+// CHECK: %[[VL32:.*]] = pto.pset_b8 "PAT_VL32" : !pto.mask<b8>
 // CHECK: pto.vcvt {{.*}}, %[[VL32]] {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extsi_slots8_si16_to_si32(
-// CHECK: %[[VL16S:.*]] = pto.pge_b16 "PAT_VL16" : !pto.mask<b16>
+// CHECK: %[[VL16S:.*]] = pto.pset_b16 "PAT_VL16" : !pto.mask<b16>
 // CHECK: pto.vcvt {{.*}}, %[[VL16S]] {part = "EVEN"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots1_ui16_to_ui8(
-// CHECK: %[[VL1U16:.*]] = pto.pge_b16 "PAT_VL1" : !pto.mask<b16>
+// CHECK: %[[VL1U16:.*]] = pto.pset_b16 "PAT_VL1" : !pto.mask<b16>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U16]] {part = "EVEN", sat = "SAT"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots1_ui32_to_ui16(
-// CHECK: %[[VL1U32:.*]] = pto.pge_b32 "PAT_VL1" : !pto.mask<b32>
+// CHECK: %[[VL1U32:.*]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U32]] {part = "EVEN", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<128xui16>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

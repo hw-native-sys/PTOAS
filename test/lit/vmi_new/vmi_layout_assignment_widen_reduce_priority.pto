@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vintlv
+
+module {
+  func.func @vmi_layout_assignment_widen_reduce_priority(
+      %input: !pto.vmi.vreg<256xsi16>,
+      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<8xsi32> {
+    %wide = pto.vmi.extsi %input
+        : !pto.vmi.vreg<256xsi16> -> !pto.vmi.vreg<256xsi32>
+    %sum = pto.vmi.group_reduce_addi %wide, %mask
+        {num_groups = 8 : i64, reassoc}
+        : !pto.vmi.vreg<256xsi32>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xsi32>
+    return %sum : !pto.vmi.vreg<8xsi32>
+  }
+}
+
+// ASSIGN-LABEL: func.func @vmi_layout_assignment_widen_reduce_priority(
+// ASSIGN: %[[INPUT:.*]] = pto.vmi.ensure_layout %arg0
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[WIDE:.*]] = pto.vmi.extsi %[[INPUT]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[WIDE]]
+// ASSIGN: pto.vmi.group_reduce_addi %[[WIDE]]
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_widen_reduce_priority(
+// LOWER: pto.vdintlv
+// LOWER-NOT: pto.vdintlv
+// LOWER-COUNT-4: pto.vcvt
+// LOWER-NOT: pto.vdintlv
+// LOWER: pto.vcgadd
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast

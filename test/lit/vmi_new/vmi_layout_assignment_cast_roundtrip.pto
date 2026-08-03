@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vor
+
+module {
+  func.func @f32_fp8_f32_roundtrip(
+      %src: !pto.ptr<bf16, ub>,
+      %scale: bf16,
+      %dst: !pto.ptr<bf16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256
+        : index -> !pto.vmi.mask<256xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %wide = pto.vmi.vcvt %input
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+    %quantized = pto.vmi.vcvt %wide {saturate = "SAT"}
+        : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
+    %restored = pto.vmi.vcvt %quantized
+        : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
+    %scale_bf16 = pto.vmi.vbrc %scale
+        : bf16 -> !pto.vmi.vreg<256xbf16>
+    %scale_f32 = pto.vmi.vcvt %scale_bf16
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+    %scaled = pto.vmi.vmul %restored, %scale_f32
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
+        -> !pto.vmi.vreg<256xf32>
+    %output = pto.vmi.vcvt %scaled {saturate = "SAT"}
+        : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xbf16>
+    pto.vmi.vstore %output, %dst[%c0], %mask
+        : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>,
+          !pto.vmi.mask<256xpred>
+    return
+  }
+
+  func.func @f32_f16_f32_roundtrip(
+      %src: !pto.ptr<f32, ub>,
+      %dst16: !pto.ptr<f16, ub>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %c128
+        : index -> !pto.vmi.mask<128xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %narrow = pto.vmi.vcvt %input {saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
+    %restored = pto.vmi.vcvt %narrow
+        : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %narrow, %dst16[%c0]
+        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %restored, %dst[%c0], %mask
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>,
+          !pto.vmi.mask<128xpred>
+    return
+  }
+
+  func.func @si32_si16_si32_roundtrip(
+      %src: !pto.ptr<si32, ub>,
+      %dst: !pto.ptr<si32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64
+        : index -> !pto.vmi.mask<64xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %narrow = pto.vmi.vcvt %input {saturate = "SAT"}
+        : !pto.vmi.vreg<64xsi32> -> !pto.vmi.vreg<64xsi16>
+    %restored = pto.vmi.vcvt %narrow
+        : !pto.vmi.vreg<64xsi16> -> !pto.vmi.vreg<64xsi32>
+    pto.vmi.vstore %restored, %dst[%c0], %mask
+        : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>,
+          !pto.vmi.mask<64xpred>
+    return
+  }
+
+  func.func @ui32_ui8_ui32_roundtrip(
+      %src: !pto.ptr<ui32, ub>,
+      %dst8: !pto.ptr<ui8, ub>,
+      %dst: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64
+        : index -> !pto.vmi.mask<64xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %narrow = pto.vmi.vcvt %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xui32> -> !pto.vmi.vreg<64xui8>
+    %restored = pto.vmi.vcvt %narrow
+        : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui32>
+    pto.vmi.vstore %narrow, %dst8[%c0]
+        : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %restored, %dst[%c0], %mask
+        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>,
+          !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @f32_fp8_f32_roundtrip(
+// ASSIGN: %[[INPUT:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: %[[WIDE:.*]] = pto.vmi.extf %[[INPUT]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[WIDE]]
+// ASSIGN: %[[QUANTIZED:.*]] = pto.vmi.truncf %[[WIDE]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: %[[RESTORED:.*]] = pto.vmi.extf %[[QUANTIZED]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[QUANTIZED]]
+
+// ASSIGN-LABEL: func.func @f32_f16_f32_roundtrip(
+// ASSIGN: %[[F16:.*]] = pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: %[[F32:.*]] = pto.vmi.extf %[[F16]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[F16]]
+// ASSIGN: pto.vmi.store %[[F16]]
+
+// ASSIGN-LABEL: func.func @si32_si16_si32_roundtrip(
+// ASSIGN: %[[SI16:.*]] = pto.vmi.trunci
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: %[[SI32:.*]] = pto.vmi.extsi %[[SI16]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[SI16]]
+
+// ASSIGN-LABEL: func.func @ui32_ui8_ui32_roundtrip(
+// ASSIGN: %[[UI8:.*]] = pto.vmi.trunci
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: %[[UI32:.*]] = pto.vmi.extui %[[UI8]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[UI8]]
+// ASSIGN: pto.vmi.store %[[UI8]]
+
+// LOWER-LABEL: func.func @f32_fp8_f32_roundtrip(
+// LOWER-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER-NOT: part = "P1", rnd = "R", sat = "SAT"
+// LOWER-NOT: part = "P2", rnd = "R", sat = "SAT"
+// LOWER-NOT: part = "P3", rnd = "R", sat = "SAT"

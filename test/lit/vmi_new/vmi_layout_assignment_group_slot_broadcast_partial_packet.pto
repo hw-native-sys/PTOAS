@@ -42,14 +42,14 @@ module {
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @partial_group_slots_2(
-// CHECK: pto.pge_b32 "PAT_VL2"
+// CHECK: pto.pset_b32 "PAT_VL2"
 // CHECK: pto.vsldb
 // CHECK: pto.vshrs
 // CHECK: pto.vselr
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @partial_group_slots_4(
-// CHECK: pto.pge_b32 "PAT_VL4"
+// CHECK: pto.pset_b32 "PAT_VL4"
 // CHECK: pto.vsldb
 // CHECK: pto.vshrs
 // CHECK: pto.vselr

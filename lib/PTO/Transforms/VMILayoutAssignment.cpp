@@ -64,6 +64,7 @@ enum class DataLayoutSeedPhase {
   GroupBroadcastLoad,
   CompactCast,
   GroupStore,
+  LaneStrideNarrowCast,
   Cast,
   WeakReduce,
   Store,
@@ -265,9 +266,11 @@ struct LayoutSolver {
   }
 
   DataLayoutSeedPhase getCastSeedPhase(const VMICastLayoutFact &fact) {
-    return fact.priority == VMICastLayoutPriority::High
-               ? DataLayoutSeedPhase::CompactCast
-               : DataLayoutSeedPhase::Cast;
+    if (fact.priority == VMICastLayoutPriority::High)
+      return DataLayoutSeedPhase::CompactCast;
+    if (fact.priority == VMICastLayoutPriority::LaneStrideNarrowing)
+      return DataLayoutSeedPhase::LaneStrideNarrowCast;
+    return DataLayoutSeedPhase::Cast;
   }
 
   VMILayoutAttr getPreferredDenseStoreLayout(VMIVRegType type) {

@@ -1531,7 +1531,8 @@ makeMaskGranularityCastLayoutFact(int64_t sourceBits, int64_t resultBits,
 
 static FailureOr<VMICastLayoutFact> getPreferredCastLayoutFactImpl(
     ArrayRef<PreferredCastLayoutPattern> patterns, VMIVRegType sourceType,
-    VMIVRegType resultType, StringRef tableName, std::string *reason) {
+    VMIVRegType resultType, StringRef tableName, std::string *reason,
+    VMICastLayoutPriority priority = VMICastLayoutPriority::Normal) {
   auto [sourceBits, resultBits] = getCastElementBits(sourceType, resultType);
 
   const PreferredCastLayoutPattern *selected = nullptr;
@@ -1568,7 +1569,8 @@ static FailureOr<VMICastLayoutFact> getPreferredCastLayoutFactImpl(
                             materializeLayoutPattern(ctx,
                                                      selected->sourceLayout),
                             materializeLayoutPattern(ctx,
-                                                     selected->resultLayout));
+                                                     selected->resultLayout),
+                            priority);
 }
 
 static FailureOr<VMICastLayoutFact>
@@ -1577,7 +1579,8 @@ getPreferredLaneStrideNarrowCastLayoutFactImpl(VMIVRegType sourceType,
                                                std::string *reason) {
   return getPreferredCastLayoutFactImpl(
       kPreferredLaneStrideNarrowCastLayoutPatterns, sourceType, resultType,
-      "preferred lane-stride narrow cast layout table", reason);
+      "preferred lane-stride narrow cast layout table", reason,
+      VMICastLayoutPriority::LaneStrideNarrowing);
 }
 
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(

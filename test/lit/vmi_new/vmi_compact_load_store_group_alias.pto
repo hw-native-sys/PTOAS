@@ -96,26 +96,26 @@ module {
 // LEGACY-SAME: {num_groups = 1 : i64}
 
 // LOWER-LABEL: func.func @compact_1(
-// LOWER: pto.pge_b32 "PAT_VL1"
+// LOWER: pto.pset_b32 "PAT_VL1"
 // LOWER: pto.vsldb
 // LOWER: pto.vsts
 // LOWER-NOT: pto.vmi.
 
 
 // LOWER-LABEL: func.func @compact_2(
-// LOWER: pto.pge_b32 "PAT_VL2"
+// LOWER: pto.pset_b32 "PAT_VL2"
 // LOWER: pto.vsldb
 // LOWER: pto.vsts
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @compact_4(
-// LOWER: pto.pge_b32 "PAT_VL4"
+// LOWER: pto.pset_b32 "PAT_VL4"
 // LOWER: pto.vsldb
 // LOWER: pto.vsts
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @compact_8(
-// LOWER: pto.pge_b32 "PAT_VL8"
+// LOWER: pto.pset_b32 "PAT_VL8"
 // LOWER: pto.vsldb
 // LOWER: pto.vsts
 // LOWER-NOT: pto.vmi.

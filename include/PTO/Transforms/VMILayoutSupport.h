@@ -68,6 +68,7 @@ enum class VMICastLayoutPort {
 enum class VMICastLayoutPriority {
   Normal,
   High,
+  LaneStrideNarrowing,
 };
 
 enum class VMIInterleaveLayoutPort {
