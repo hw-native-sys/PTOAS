@@ -972,8 +972,8 @@ static std::string buildContextAttrsJson(const SpecKey &key) {
 
 // ============================================================================
 // Materialize PTODSL in the host Python interpreter and import its functions.
-// The service clones the Python-owned source module before returning, so this
-// pass only handles C++-owned IR in the current MLIRContext.
+// The service borrows the source module only for the synchronous callback;
+// this pass clones the required functions into the caller module there.
 // ============================================================================
 func::FuncOp ExpandState::invokeInProcessTileLib(const SpecKey &key,
                                                  StringRef candidateId,
@@ -989,98 +989,96 @@ func::FuncOp ExpandState::invokeInProcessTileLib(const SpecKey &key,
   request.contextAttrsJson = buildContextAttrsJson(key);
   request.candidateId = candidateId.str();
 
-  FailureOr<pto::TileLibMaterialization> materializationOr =
-      tileLibService->materialize(request, *ctx);
-  if (failed(materializationOr)) {
+  func::FuncOp importedEntry;
+  LogicalResult materializationResult = tileLibService->materialize(
+      request, *ctx, [&](ModuleOp sourceModule, StringRef entrySymbol) {
+    if (!sourceModule || sourceModule.getContext() != ctx) {
+      llvm::errs() << "ExpandTileOp: in-process PTODSL returned a module from "
+                      "a different MLIRContext\n";
+      return failure();
+    }
+
+    auto sourceEntry = sourceModule.lookupSymbol<func::FuncOp>(entrySymbol);
+    if (!sourceEntry) {
+      llvm::errs() << "ExpandTileOp: in-process PTODSL entry symbol @"
+                   << entrySymbol << " was not found\n";
+      return failure();
+    }
+
+    SmallVector<func::FuncOp, 4> sourceFuncs;
+    for (func::FuncOp fn : sourceModule.getOps<func::FuncOp>())
+      sourceFuncs.push_back(fn);
+    if (sourceFuncs.empty()) {
+      llvm::errs() << "ExpandTileOp: in-process PTODSL returned no func.func\n";
+      return failure();
+    }
+
+    std::string uniqueName = buildUniqueFunctionBaseName(key);
+    if (!candidateId.empty())
+      uniqueName += "__" + candidateId.str();
+
+    SymbolTable targetSymTable(mod);
+    if (auto existingFunc = targetSymTable.lookup(uniqueName)) {
+      importedEntry = cast<func::FuncOp>(existingFunc);
+      return success();
+    }
+
+    llvm::StringMap<std::string> plannedSymbols;
+    for (func::FuncOp fn : sourceFuncs) {
+      std::string newName = fn == sourceEntry
+                                ? uniqueName
+                                : uniqueName + "__" + std::string(fn.getSymName());
+      if (targetSymTable.lookup(newName)) {
+        llvm::errs() << "ExpandTileOp: imported PTODSL symbol collision at @"
+                     << newName << "\n";
+        return failure();
+      }
+      plannedSymbols[fn.getSymName()] = std::move(newName);
+    }
+
+    OpBuilder builder(ctx);
+    builder.setInsertionPointToEnd(mod.getBody());
+    SmallVector<func::FuncOp, 4> clonedFuncs;
+    for (func::FuncOp fn : sourceFuncs) {
+      IRMapping mapping;
+      auto cloned = cast<func::FuncOp>(builder.clone(*fn, mapping));
+      cloned.setName(plannedSymbols.lookup(fn.getSymName()));
+      cloned.setVisibility(SymbolTable::Visibility::Private);
+      clonedFuncs.push_back(cloned);
+    }
+
+    for (func::FuncOp fn : clonedFuncs) {
+      for (const auto &renamed : plannedSymbols) {
+        if (failed(SymbolTable::replaceAllSymbolUses(
+                StringAttr::get(ctx, renamed.getKey()),
+                StringAttr::get(ctx, renamed.getValue()), fn))) {
+          llvm::errs() << "ExpandTileOp: failed to rewrite imported symbol @"
+                       << renamed.getKey() << " in @" << fn.getSymName()
+                       << "\n";
+          for (func::FuncOp imported : clonedFuncs)
+            imported.erase();
+          return failure();
+        }
+      }
+    }
+
+    importedEntry = mod.lookupSymbol<func::FuncOp>(uniqueName);
+    if (!importedEntry) {
+      llvm::errs() << "ExpandTileOp: failed to import PTODSL entry @"
+                   << entrySymbol << "\n";
+      return failure();
+    }
+    if (!importedEntry->hasAttr("pto.tilelang.instance"))
+      llvm::errs() << "ExpandTileOp: warning: in-process PTODSL entry @"
+                   << importedEntry.getSymName()
+                   << " missing pto.tilelang.instance attribute\n";
+    return success();
+  });
+  if (failed(materializationResult)) {
     llvm::errs() << "ExpandTileOp: in-process PTODSL materialization failed\n";
     return nullptr;
   }
-
-  pto::TileLibMaterialization materialization =
-      std::move(*materializationOr);
-  OwningOpRef<ModuleOp> sourceModule = std::move(materialization.module);
-  if (!sourceModule || sourceModule->getContext() != ctx) {
-    llvm::errs() << "ExpandTileOp: in-process PTODSL returned a module from "
-                    "a different MLIRContext\n";
-    return nullptr;
-  }
-
-  auto sourceEntry = sourceModule->lookupSymbol<func::FuncOp>(
-      materialization.entrySymbol);
-  if (!sourceEntry) {
-    llvm::errs() << "ExpandTileOp: in-process PTODSL entry symbol @"
-                 << materialization.entrySymbol << " was not found\n";
-    return nullptr;
-  }
-
-  SmallVector<func::FuncOp, 4> sourceFuncs;
-  for (func::FuncOp fn : sourceModule->getOps<func::FuncOp>())
-    sourceFuncs.push_back(fn);
-  if (sourceFuncs.empty()) {
-    llvm::errs() << "ExpandTileOp: in-process PTODSL returned no func.func\n";
-    return nullptr;
-  }
-
-  std::string uniqueName = buildUniqueFunctionBaseName(key);
-  if (!candidateId.empty())
-    uniqueName += "__" + candidateId.str();
-
-  SymbolTable targetSymTable(mod);
-  if (auto existingFunc = targetSymTable.lookup(uniqueName))
-    return cast<func::FuncOp>(existingFunc);
-
-  llvm::StringMap<std::string> plannedSymbols;
-  for (func::FuncOp fn : sourceFuncs) {
-    std::string newName = fn == sourceEntry
-                              ? uniqueName
-                              : uniqueName + "__" + std::string(fn.getSymName());
-    if (targetSymTable.lookup(newName)) {
-      llvm::errs() << "ExpandTileOp: imported PTODSL symbol collision at @"
-                   << newName << "\n";
-      return nullptr;
-    }
-    plannedSymbols[fn.getSymName()] = std::move(newName);
-  }
-
-  OpBuilder builder(ctx);
-  builder.setInsertionPointToEnd(mod.getBody());
-  SmallVector<func::FuncOp, 4> clonedFuncs;
-  for (func::FuncOp fn : sourceFuncs) {
-    IRMapping mapping;
-    auto cloned = cast<func::FuncOp>(builder.clone(*fn, mapping));
-    cloned.setName(plannedSymbols.lookup(fn.getSymName()));
-    cloned.setVisibility(SymbolTable::Visibility::Private);
-    clonedFuncs.push_back(cloned);
-  }
-
-  for (func::FuncOp fn : clonedFuncs) {
-    for (const auto &renamed : plannedSymbols) {
-      if (failed(SymbolTable::replaceAllSymbolUses(
-              StringAttr::get(ctx, renamed.getKey()),
-              StringAttr::get(ctx, renamed.getValue()), fn))) {
-        llvm::errs() << "ExpandTileOp: failed to rewrite imported symbol @"
-                     << renamed.getKey() << " in @" << fn.getSymName()
-                     << "\n";
-        for (func::FuncOp imported : clonedFuncs)
-          imported.erase();
-        return nullptr;
-      }
-    }
-  }
-
-  func::FuncOp entry = mod.lookupSymbol<func::FuncOp>(uniqueName);
-  if (!entry) {
-    llvm::errs() << "ExpandTileOp: failed to import PTODSL entry @"
-                 << materialization.entrySymbol << "\n";
-    return nullptr;
-  }
-  if (!entry->hasAttr("pto.tilelang.instance")) {
-    llvm::errs() << "ExpandTileOp: warning: in-process PTODSL entry @"
-                 << entry.getSymName()
-                 << " missing pto.tilelang.instance attribute\n";
-  }
-
-  return entry;
+  return importedEntry;
 }
 
 // ============================================================================

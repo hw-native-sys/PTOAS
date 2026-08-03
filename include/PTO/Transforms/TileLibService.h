@@ -12,7 +12,9 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LogicalResult.h"
 
-#include <memory>
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringRef.h"
+
 #include <string>
 
 namespace mlir::pto {
@@ -29,14 +31,13 @@ struct TileLibMaterializationRequest {
   std::string candidateId;
 };
 
-struct TileLibMaterialization {
-  OwningOpRef<ModuleOp> module;
-  std::string entrySymbol;
-};
+using TileLibMaterializationCallback =
+    llvm::function_ref<LogicalResult(ModuleOp source, StringRef entrySymbol)>;
 
-/// C++ ownership boundary for a TileLib implementation. Implementations return
-/// a C++-owned source ModuleOp in the requested context. The caller may then
-/// clone/import its generated functions into the caller module.
+/// Synchronous handoff for a materialized TileLib implementation. The source
+/// module is borrowed and remains owned by the service for the duration of the
+/// callback. Consumers must clone/import any operations they need before the
+/// callback returns.
 class TileLibService {
 public:
   virtual ~TileLibService() = default;
@@ -44,9 +45,10 @@ public:
   virtual FailureOr<std::string>
   getMetadata(const TileLibMaterializationRequest &request) = 0;
 
-  virtual FailureOr<TileLibMaterialization>
+  virtual LogicalResult
   materialize(const TileLibMaterializationRequest &request,
-              MLIRContext &context) = 0;
+              MLIRContext &context,
+              TileLibMaterializationCallback callback) = 0;
 };
 
 } // namespace mlir::pto

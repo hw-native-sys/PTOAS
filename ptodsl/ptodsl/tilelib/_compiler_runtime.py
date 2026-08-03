@@ -69,15 +69,4 @@ def materialize(
     return module, descriptor.name
 
 
-def release_module_wrappers(context) -> None:
-    """Release Python operation wrappers after a native caller clones a module.
-
-    ``Module`` remains the owner of the native module.  The binding's live
-    operation map otherwise retains detached wrappers after the C++ handoff,
-    so a later materialization can collide with a reused native operation
-    address.
-    """
-    context._clear_live_operations()
-
-
-__all__ = ["materialize", "metadata", "release_module_wrappers"]
+__all__ = ["materialize", "metadata"]

@@ -45,9 +45,10 @@ public:
     }
   }
 
-  mlir::FailureOr<mlir::pto::TileLibMaterialization>
+  mlir::LogicalResult
   materialize(const mlir::pto::TileLibMaterializationRequest &request,
-              mlir::MLIRContext &context) override {
+              mlir::MLIRContext &context,
+              mlir::pto::TileLibMaterializationCallback callback) override {
     py::gil_scoped_acquire acquire;
     try {
       MlirContext pythonContext = py::cast<MlirContext>(contextOwner);
@@ -75,19 +76,7 @@ public:
       }
 
       mlir::ModuleOp source = unwrap(rawModule);
-      auto cloned = mlir::cast<mlir::ModuleOp>(source->clone());
-
-      // Python's MLIR binding keeps operation wrappers in the context's
-      // live-operation map (and Module.operation keeps the Module alive).
-      // Clear those non-owning wrappers before the PyModule destructor
-      // releases its native module.  This context is private to this PTOAS
-      // invocation, so no unrelated Python operation wrappers are invalidated.
-      getRuntime().attr("release_module_wrappers")(contextOwner);
-
-      mlir::pto::TileLibMaterialization materialization{
-          mlir::OwningOpRef<mlir::ModuleOp>(cloned),
-          py::cast<std::string>(result[1])};
-      return materialization;
+      return callback(source, py::cast<std::string>(result[1]));
     } catch (const py::error_already_set &error) {
       llvm::errs() << "TileLib: PTODSL materialization raised Python "
                       "exception:\n"
