@@ -8,8 +8,8 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
-// Contiguous VL128 {group=2} must restart both physical parts at the same
-// base (group-periodic), materialized as vci(0)+vadds(base) for camodel.
+// VL128 {group=2} is group-periodic [base..base+63 | base..base+63], not a
+// continuous 0..127 ramp. Both physical parts reuse one index vreg.
 
 module {
   func.func @vmi_to_vpto_iota_group2_i32(%base: i32)
@@ -26,12 +26,11 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_i32(
 // CHECK-SAME: %[[BASE:.*]]: i32
 // CHECK: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK: %[[Z0:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[P0:.*]] = pto.vadds %[[Z0]], %[[BASE]]
-// CHECK: %[[C0B:.*]] = arith.constant 0 : i32
-// CHECK: %[[Z1:.*]] = pto.vci %[[C0B]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[P1:.*]] = pto.vadds %[[Z1]], %[[BASE]]
-// CHECK: return %[[P0]], %[[P1]]
+// CHECK: %[[Z:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[IDX:.*]] = pto.vadds %[[Z]], %[[BASE]]
+// CHECK-NOT: pto.vci
+// CHECK-NOT: pto.vadds
+// CHECK: return %[[IDX]], %[[IDX]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

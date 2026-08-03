@@ -5329,11 +5329,14 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<VMIIotaOp> {
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
 
-    // Optional {group = C}: group-periodic ramp. Each group of size
-    // S = L / C independently gets dst[g*S + j] = base + j. Contiguous
-    // physical part p therefore uses laneOffset = (p * lanesPerPart) % S
-    // (not p * lanesPerPart). Without {group}, keep the contiguous /
-    // deinterleaved absolute ramps below.
+    // Optional {group = C}: *group-periodic* ramp (not a continuous 0..L-1
+    // ramp). Each of C groups of size S = L / C independently gets
+    // dst[g*S + j] = base + j. Example L=128,C=2 → [base..base+63 |
+    // base..base+63]. Layout<contiguous> only packs those logical lanes into
+    // physical parts; part p uses laneOffset = (p * lanesPerPart) % S.
+    // When several parts share the same offset (VL128 group=2 → both 0),
+    // materialize one physical index vreg and reuse it — same register for
+    // every identical group run.
     if (auto groupAttr = op.getGroupAttr()) {
       int64_t numGroups = groupAttr.getInt();
       int64_t logicalLanes = resultVMIType.getElementCount();
@@ -5351,18 +5354,27 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<VMIIotaOp> {
             logicalLanes)
           return rewriter.notifyMatchFailure(
               op, "grouped contiguous iota physical result count mismatch");
+
+        // Cache by (resultType, laneOffset): identical group runs share one
+        // physical index register instead of re-emitting vci/vadds.
+        llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
         for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
           if (!isa<VRegType>(resultType))
             return rewriter.notifyMatchFailure(op, "iota result must be vreg");
           int64_t laneOffset =
               (static_cast<int64_t>(index) * *lanesPerPart) % groupSize;
-          FailureOr<Value> result = createIotaContiguousChunk(
-              op.getLoc(), resultType, *base, laneOffset, op.getOrderAttr(),
-              rewriter);
-          if (failed(result))
-            return rewriter.notifyMatchFailure(
-                op, "failed to materialize grouped contiguous iota chunk");
-          results.push_back(*result);
+          auto key = std::make_pair(resultType, laneOffset);
+          auto it = sharedChunks.find(key);
+          if (it == sharedChunks.end()) {
+            FailureOr<Value> result = createIotaContiguousChunk(
+                op.getLoc(), resultType, *base, laneOffset, op.getOrderAttr(),
+                rewriter);
+            if (failed(result))
+              return rewriter.notifyMatchFailure(
+                  op, "failed to materialize grouped iota chunk");
+            it = sharedChunks.try_emplace(key, *result).first;
+          }
+          results.push_back(it->second);
         }
         replaceOpWithFlatConvertedValues(rewriter, op, results,
                                          *this->getTypeConverter());

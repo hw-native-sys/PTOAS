@@ -63,13 +63,15 @@ def VMIBroadcastOp : VMI_Op<"broadcast", [Pure]> {
 def VMIIotaOp : VMI_Op<"iota", [Pure]> {
   let summary = "Create a VMI logical index vector from a scalar base";
   let description = [{
-    Without `{group}`, produces a contiguous ramp
-    `dst[i] = base + i` (ASC) over the full logical vector.
+    Without `{group}`, produces a *continuous* ramp over the full logical
+    length L: `dst[i] = base + i` (ASC). For L=128 that is `base..base+127`
+    (physical parts `base+0..63` then `base+64..127`).
 
-    With `{group = C}`, produces a **group-periodic** ramp: each of the C
-    groups of size `S = L / C` independently gets
-    `dst[g*S + j] = base + j` for `j in [0, S)`. Example for
-    `L=128, C=2, base=0`: `[0..63 | 0..63]`.
+    With `{group = C}`, produces a **group-periodic** ramp (not continuous
+    across groups): each of the C groups of size `S = L / C` independently
+    gets `dst[g*S + j] = base + j`. Example `L=128, C=2, base=0`:
+    `[0..63 | 0..63]`. Both physical VL64 parts hold the same ramp and may
+    share one index register. Layout packing is orthogonal to this ramp shape.
   }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
@@ -832,9 +834,10 @@ def VMIVbrcOp : VMI_Op<"vbrc", [Pure]> {
 def VMIVciOp : VMI_Op<"vci", [Pure]> {
   let summary = "Create a VMI logical index vector from a scalar base";
   let description = [{
-    Unified form of `iota`. Without `{group}`, contiguous ramp over L lanes.
-    With `{group = C}`, group-periodic ramp: each group restarts at `base`
-    (see `iota`). Lowers to `iota` preserving `{group}`.
+    Unified form of `iota`. Without `{group}`, continuous ramp over L lanes.
+    With `{group = C}`, group-periodic restart at `base` per group (see
+    `iota`); identical group runs share one physical index register after
+    lowering. Lowers to `iota` preserving `{group}`.
   }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
