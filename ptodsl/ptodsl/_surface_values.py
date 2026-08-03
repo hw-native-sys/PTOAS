@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import weakref
 from dataclasses import dataclass
 
 from ._diagnostics import native_python_control_flow_error
@@ -519,7 +520,7 @@ class _TileValidShapeView:
     """Tuple-like proxy that lowers `tile.valid_shape[i]` on demand."""
 
     def __init__(self, tile: "TileValue"):
-        self._tile = tile
+        self._tile = weakref.proxy(tile)
         self._cache: dict[int, object] = {}
 
     def __getitem__(self, index: int):

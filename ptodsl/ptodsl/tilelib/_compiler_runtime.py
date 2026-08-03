@@ -69,19 +69,4 @@ def materialize(
     return module, descriptor.name
 
 
-def invalidate_materialized_module_wrappers(context) -> None:
-    """Invalidate wrappers after native code imports a materialized module.
-
-    PTOAS uses a dedicated Python MLIR context for each compiler invocation.
-    Native code only borrows the source module during a synchronous callback,
-    but the binding's live-operation map otherwise retains wrappers after that
-    callback. No Python operation from this materialization remains usable.
-    """
-    context._clear_live_operations()
-
-
-__all__ = [
-    "invalidate_materialized_module_wrappers",
-    "materialize",
-    "metadata",
-]
+__all__ = ["materialize", "metadata"]

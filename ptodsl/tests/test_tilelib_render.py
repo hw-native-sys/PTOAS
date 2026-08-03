@@ -83,6 +83,19 @@ class TileLibRenderTest(unittest.TestCase):
         self.assertTrue(second.operation.verify())
         self.assertIn("func.func @template_tadd", artifact.mlir_text())
 
+    def test_materialized_surface_wrappers_release_without_cycle_collection(self):
+        context = Context()
+        pto_dialect.register_dialect(context, load=True)
+        spec = TileSpec(shape=(8, 64), dtype=f32)
+
+        module = template_tadd.specialize(
+            src0=spec, src1=spec, dst=spec
+        ).materialize(context)
+        self.assertEqual(context._get_live_operation_count(), 0)
+
+        del module
+        self.assertEqual(context._get_live_operation_count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
