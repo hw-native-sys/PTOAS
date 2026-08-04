@@ -1111,7 +1111,10 @@ def _render_32_to_ui8(src: pto.Tile, dst: pto.Tile):
     for row in range(0, valid_rows, 1):
         remained = valid_cols
         for col in range(0, valid_cols, lanes):
-            store_mask, remained = pto.make_mask(pto.ui8, remained)
+            # One source register contributes only 64 compacted bytes. Building
+            # this directly as a b8 mask would consume up to 256 elements.
+            iteration_mask, remained = pto.make_mask(src.dtype, remained)
+            store_mask = pto.pbitcast(iteration_mask, pto.mask_b8)
             vec = pto.vlds(src[row, col:])
             converted = pto.vcvt(
                 vec,
@@ -1136,7 +1139,9 @@ def _render_32_to_ui8_1d(src: pto.Tile, dst: pto.Tile):
     v_idx_i16 = pto.vmuls(v_idx_i16, pto.i16(4), idx_mask_b16)
     v_idx_ui8 = pto.vbitcast(v_idx_i16, pto.ui8)
 
-    def emit_chunk(offset, store_mask):
+    def emit_chunk(offset, iteration_mask):
+        # Preserve the 64-element b32 loop granularity for the b8 store.
+        store_mask = pto.pbitcast(iteration_mask, pto.mask_b8)
         vec = pto.vlds(src_ptr, offset)
         converted = pto.vcvt(
             vec,
@@ -1155,7 +1160,7 @@ def _render_32_to_ui8_1d(src: pto.Tile, dst: pto.Tile):
             dist=pto.VStoreDist.NORM_B8,
         )
 
-    _emit_tcvt_1d(dst, src.dtype, pto.ui8, 1, emit_chunk)
+    _emit_tcvt_1d(dst, src.dtype, src.dtype, 1, emit_chunk)
 
 
 @tilelib.tile_template(
