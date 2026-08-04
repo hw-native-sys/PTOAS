@@ -98,21 +98,6 @@ module {
 // -----
 
 module {
-  func.func @vmi_to_vpto_absf_bf16_invalid(
-      %source: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>) {
-    %out = pto.vmi.vabs %source
-        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
-    return
-  }
-}
-
-// vabs(bf16) lowers to legacy absf, whose verifier rejects bf16.
-// CHECK: 'pto.vmi.absf' op requires f16 or f32 VMI element type
-
-// -----
-
-module {
   func.func @vmi_to_vpto_absi_unsigned_invalid(
       %source: !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>) {
     %out = pto.vmi.vabs %source

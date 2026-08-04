@@ -776,6 +776,8 @@ static constexpr GroupBroadcastLayoutPattern kGroupBroadcastLayoutPatterns[] = {
     {gb(2), gs(8), c()},
     {gb(2), gs(8), d(2)},
     {gb(2), gs(8), bd(2)},
+    // bf16 G=4 on L=128: groupSize=32 = two 32B blocks; slots=1 source.
+    {gb(2), gs(1), c()},
     {gb(4), gs(8), c()},
     {gb(4), gs(8), d(4)},
     {gb(4), gs(8), bd(4)},
