@@ -165,8 +165,9 @@ falls back to `MemAlias`.
 ## Oracle gates
 
 The allocator is written from scratch, so it cannot be validated by byte-comparing its
-output against the incumbent -- and in fact does not reproduce it op for op, though it
-matches it in count everywhere (see **Equivalence to the incumbent**). Correctness is
+output against the incumbent -- and in fact does not reproduce it op for op, though its
+counts match on every kernel in the sample corpus (see **Equivalence to the
+incumbent**). Correctness is
 defined instead by gates over the extracted sync. Two are differential -- they need a
 reference profile from a second compiler run -- and four are absolute.
 
@@ -310,9 +311,10 @@ tripwire, not a measurement.
 ### 6. The A5 PIPE_V exemption is keyed on the pipe alone
 
 G1-self treats an A5 `PIPE_V -> PIPE_V` dependency that emitted sync did not cover
-as satisfied by the target rather than as a gap. What it rests on is that no sync is
-emitted for such a pair on A5, so demanding one would make this gate report every
-such pair on every A5 kernel.
+as satisfied by the target rather than as a gap. What it rests on is that neither pass
+emits sync for such a pair on any A5 kernel measured, so demanding one would make this
+gate report every such pair on every A5 kernel it sees. That is an observation about the
+kernels available, not a target guarantee this document can cite.
 
 The test asks only whether both endpoints sit on `PIPE_V`; it does not distinguish a
 same-allocation pair from a cross-allocation one. A substantial share of the pairs it
@@ -467,27 +469,57 @@ The gate fixtures are separate and do not drive the allocator:
 `sync_oracle_self_validation.pto` and the `sync_gate_g*.pto` family pin that each gate
 fails on an injected fault.
 
-Nothing on the real corpus overflows an event pool -- per-direction peak demand stays
-inside the pool of 8 -- so the overflow, routing and spill paths would be unreachable
+No kernel in the sample corpus overflows an event pool -- per-direction peak demand
+stays inside the pool of 8 on every one measured -- so the overflow, routing and spill paths would be unreachable
 without synthetic inputs that overflow on purpose. That is what `sync_forced_overflow.pto`
 exists for, and why it pins a non-overflowing control alongside the overflowing case: a
 synthetic that always overflows could be broken rather than saturated.
 
 ## Equivalence to the incumbent
 
+Three claims of different strength, kept apart deliberately. Op-count identity does not
+entail cycle identity, and the cycle measurements below show a case where it does not.
+
+### Proven: sync-op count parity across the corpus
+
 The allocator replaces only the assignment of mechanisms and ids; the dependence
-analysis, hoisting and redundancy pruning ahead of it are shared. Measured over the
-sample corpus, comparing emitted PTO IR between `--enable-insert-sync` and
-`--enable-unified-sync` at the highest level each kernel compiles at: of 130 kernels,
-115 emit under both modes -- 56 byte-identical, 59 differing, and 15 emitting under
-neither. No kernel fails under the unified allocator that succeeds under the
-incumbent.
+analysis, hoisting and redundancy pruning ahead of it are shared. Comparing emitted PTO
+IR between `--enable-insert-sync` and `--enable-unified-sync`, at the highest level each
+kernel compiles at, over the sample corpus: of 130 kernels, 115 emit under both modes --
+56 byte-identical, 59 differing, 15 emitting under neither. No kernel fails under the
+unified allocator that succeeds under the incumbent.
 
-Every one of the 59 differences is at an IDENTICAL per-kernel sync-op count: 2242 ops
-on each side across those 59, and 2603 on each side across all 115 that emit -- a delta
-of zero either way. The differences are ordering, not quantity.
+Every one of the 59 differences is at an IDENTICAL per-kernel sync-op count: 2242 ops on
+each side across those 59, and 2603 across all 115 that emit -- a delta of zero either
+way. The differences are ordering, not quantity. This holds for A5 as well as A3: all 21
+A5 kernels compile at level3 under both modes, 20 differing and 1 identical, every one at
+an equal count.
 
-That is the basis for treating the allocator as cycle-neutral on the production corpus
-rather than as an improvement to it. On a kernel that never exhausts a pool there is
-nothing for a second mechanism to win, and the measurements above say so rather than
-leaving it to be inferred.
+### Measured: two A5 kernels, in the cycle domain
+
+Ordering is not free, so op-count parity is not a cycle result. Two A5 kernels were
+measured on the cycle-accurate model, per-core latency, with a determinism control:
+
+| kernel | insert-sync | unified-sync | delta |
+|---|---|---|---|
+| `rmsnorm` (vector) | 18.35 us | 18.38 us | +0.16% |
+| `qwen3_decode_incore_10` (cube) | 82.15 us | 82.15 us | 0.00% |
+
+The control matters: repeating the `rmsnorm` insert-sync run reproduced 18.35 us with a
+bit-identical instruction-cycle sum, so +0.16% is a signal rather than run variance. Only
+the SoC tick counter moves between repeats, and it is not used here.
+
+Note that the two available metrics disagree in direction on `rmsnorm`: unified's summed
+instruction cycles are LOWER by 3.2% while its per-core latency is marginally higher. The
+trace span is the metric to trust -- a schedule can retire fewer cycles in total and still
+finish later -- and quoting the cycle sum instead would turn a small regression into an
+apparent win.
+
+### Not claimed: cycle neutrality as a general property
+
+Two kernels are not the corpus. What the measurements support is that reordering at equal
+op count costs little on the kernels tested -- nothing worse than a fraction of a percent,
+in one case a regression and in the other nothing. They do not establish that the
+allocator is cycle-neutral in general, and no claim here depends on it being so: the
+allocator's purpose is to make the mechanism a decision rather than a premise, and on the
+production corpus it declines to route because no kernel exhausts a pool.
