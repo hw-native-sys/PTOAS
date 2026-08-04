@@ -9,21 +9,24 @@ A 1-lane `vstore` whose destination is 4-byte aligned but **not** 32-byte
 aligned faults the vector cores:
 
 ```
-RuntimeError: aclrtLaunchKernelWithHostArgs failed ... ACL error 507035
+RuntimeError: ... device error type 3, error code is 507035
 [Error]: The vector core execution is abnormal.
 ```
 
 The AscendC peer stores to the same packed addresses with
-`vsts(..., dist="ONEPT_B32")` and is fine.
+`vsts(..., dist="ONEPT_B32")` and is fine. The same 1-lane `vstore` into a
+`(B, 8)` padded layout (32-byte slot per row) is exact.
 
 The failure mode is especially nasty: the fault can poison the process so the
 *next* unrelated kernel fails, and the traceback points somewhere innocent.
+Isolate each launch in its own process.
 
 ## Minimal algorithm
 
 ```text
+# input staged as (B, 8) so every 1-lane *load* is aligned
 for k in 0..7:
-    vstore(val[k], out_ub[k], mask=1-lane)   # packed (8,) f32
+    vstore(val[k, 0], out_ub[k], mask=1-lane)   # packed (8,) f32  ← faults
 ```
 
 For odd `k`, `&out_ub[k]` is only 4-byte aligned. That faults on VMI.

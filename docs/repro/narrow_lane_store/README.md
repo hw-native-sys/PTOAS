@@ -9,13 +9,13 @@ Branch: `repro/narrow-store-align`. Details: [`BUG_REPORT.md`](BUG_REPORT.md).
 ## Algorithm
 
 ```text
-# faulting (packed)
+# faulting (packed destination; input staged padded so loads stay aligned)
 for k in 0..7:
-    vstore(val[k], out_ub[k], mask=1)          # out_ub: (8,) f32
+    vstore(val[k, 0], out_ub[k], mask=1)       # out_ub: (8,) f32
 
-# workaround (padded)
+# workaround (padded destination; GM out is also (B, 8), host checks col 0)
 for k in 0..7:
-    vstore(val[k], pad_ub[k, 0], mask=1)       # pad_ub: (8, 8) f32
+    vstore(val[k, 0], pad_ub[k, 0], mask=1)    # pad_ub: (8, 8) f32
 ```
 
 | Fixture | Role | Expected on current build |
@@ -51,6 +51,10 @@ source scripts/env.sh
 ```
 
 Results: `outputs/check_narrow_lane_store/results.txt`.
+
+Run the two VMI fixtures in **separate processes** (the check script does);
+a 507035 fault can poison the NPU context for later launches in the same
+process.
 
 ## How to read the result
 

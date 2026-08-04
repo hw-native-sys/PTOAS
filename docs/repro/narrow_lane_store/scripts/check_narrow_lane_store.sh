@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Compile + numeric check for narrow_lane_store fixtures.
+# Each VMI fixture runs in its own Python process so a 507035 fault cannot
+# poison the padded workaround launch.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPRO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -47,15 +49,21 @@ try:
     print("NUMERIC", r)
     raise SystemExit(0 if r.get("ok") else 1)
 except RuntimeError as exc:
+    msg = str(exc)
     print(f"LAUNCH_ERR {type(exc).__name__}: {exc}")
+    if "requires 'addr' operand" in msg or "pto-level=level3" in msg:
+        print("NATIVE_BUILD_ERR")
+    elif "507035" in msg or "vector core" in msg.lower():
+        print("VECTOR_CORE_FAULT")
     raise SystemExit(0)
 except Exception as exc:
     msg = str(exc)
     print(f"LAUNCH_ERR {type(exc).__name__}: {exc}")
-    if "507035" in msg or "vector core" in msg.lower():
+    if "requires 'addr' operand" in msg or "pto-level=level3" in msg:
+        print("NATIVE_BUILD_ERR")
+    elif "507035" in msg or "vector core" in msg.lower():
         print("VECTOR_CORE_FAULT")
-        raise SystemExit(0)
-    raise SystemExit(2)
+    raise SystemExit(0)
 PY
   rc=$?
   set -e
@@ -67,7 +75,9 @@ PY
     echo | tee -a "${LOG}"
     return
   fi
-  if grep -qE "LAUNCH_ERR.*NPU not available" "${OUT}/${name}.log"; then
+  if grep -q "NATIVE_BUILD_ERR" "${OUT}/${name}.log"; then
+    fail "${name} native build (level3/addr)"
+  elif grep -qE "LAUNCH_ERR.*NPU not available" "${OUT}/${name}.log"; then
     skip "${name} numeric (no device)"
   elif grep -qE "VECTOR_CORE_FAULT|507035" "${OUT}/${name}.log"; then
     if [ "${expect}" = "fault" ]; then
@@ -83,8 +93,9 @@ PY
   echo | tee -a "${LOG}"
 }
 
-run_fixture "faulting_vmi" "fault"
+# Padded first so a clean process records the workaround before the fault case.
 run_fixture "padded_workaround_vmi" "pass"
+run_fixture "faulting_vmi" "fault"
 
 echo "=== reference_asc_cce.asc (bisheng) ===" | tee -a "${LOG}"
 if [ -z "${BISHENG}" ] || [ ! -x "${BISHENG}" ]; then
