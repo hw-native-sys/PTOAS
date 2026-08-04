@@ -570,6 +570,20 @@ void InsertSyncAnalysis::InsertSyncOperation(
     SmallVector<Value> depRoots = GetMemInfoBuffers(depBaseMemInfosVec);
     setOp->depRootBuffers = depRoots;
     waitOp->depRootBuffers = depRoots;
+    // Keep the BaseMemInfo objects too, not just their roots. The root is the
+    // root ALLOCATION and is far coarser than a buffer -- many tiles share one --
+    // so a consumer that needs to know *which tile* this dependency is on cannot
+    // recover it from `depRoots`. Both halves get the same vector, exactly as
+    // the roots do.
+    SmallVector<const BaseMemInfo *> depMemInfos;
+    for (const auto &memInfoPair : depBaseMemInfosVec) {
+      if (memInfoPair.first)
+        depMemInfos.push_back(memInfoPair.first);
+      if (memInfoPair.second)
+        depMemInfos.push_back(memInfoPair.second);
+    }
+    setOp->depMemInfos = depMemInfos;
+    waitOp->depMemInfos = depMemInfos;
     setOp->SetDepSyncIRIndex(frontCompound->GetIndex());
     waitOp->SetDepSyncIRIndex(frontCompound->GetIndex());
 

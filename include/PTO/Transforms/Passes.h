@@ -161,7 +161,8 @@ std::unique_ptr<Pass> createPTOCheckSyncIdsPass(unsigned bufidCapacity = 0,
                                                llvm::StringRef injectFault = "");
 
 /// G2: assert no two overlapping intervals share a sync id.
-std::unique_ptr<Pass> createPTOCheckSyncInterferencePass();
+std::unique_ptr<Pass>
+createPTOCheckSyncInterferencePass(llvm::StringRef injectFault = "");
 
 /// G1-self: assert every dependence the front end reports is ordered by emitted
 /// sync. `maxViolations` caps the per-function detail lines; 0 prints all.
@@ -179,6 +180,15 @@ std::unique_ptr<Pass> createPTODumpSyncCountsPass();
 
 /// G4: assert this run's counts do not regress against `referenceFile`.
 std::unique_ptr<Pass> createPTOCheckSyncCountFloorPass(llvm::StringRef referenceFile);
+
+std::unique_ptr<Pass> createPTODumpSyncExtractPass();
+
+/// The unified allocator: event ids, buffer ids and barriers as three resource
+/// classes over one interval-colouring problem. `bufidCapacity` is K, the number of
+/// buffer ids the arch exposes -- 0 on A3, 32 on A5 -- and it is the only arch input.
+std::unique_ptr<Pass>
+createPTOUnifiedSyncPass(unsigned bufidCapacity = 0, bool debugEnabled = false,
+                         llvm::StringRef forceMechanism = "");
 
 #undef GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION

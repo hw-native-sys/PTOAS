@@ -271,6 +271,104 @@ mlir::pto::oracle::checkDeviceIdLegality(llvm::ArrayRef<SyncOpRecord> records,
   return violations;
 }
 
+llvm::SmallVector<IdViolation>
+mlir::pto::oracle::checkMacroHiddenEventCollisions(
+    const SyncIRs &syncIR, llvm::ArrayRef<SyncOpRecord> records) {
+  llvm::SmallVector<IdViolation> violations;
+
+  // One reservation per (direction, id) a macro's library implementation uses,
+  // over the macro's own span. Built to the same rule the incumbent reserves by,
+  // so that a green result here means what a green result there means.
+  struct Reservation {
+    int srcPipe, dstPipe, id;
+    unsigned begin, end;
+    std::string macroName;
+  };
+  llvm::SmallVector<Reservation> reserved;
+
+  for (size_t i = 0; i < syncIR.size(); ++i) {
+    auto *first = dyn_cast<pto::CompoundInstanceElement>(syncIR[i].get());
+    if (!first || first->macroOpInstanceId != 0 || !first->elementOp)
+      continue;
+    auto model = pto::getSyncMacroModel(first->elementOp);
+    if (!model || model->hiddenEvents.empty())
+      continue;
+
+    // The span is first phase -> last phase of the SAME op, then padded one index
+    // each side. Without the pad, a hazard ending exactly where the call begins
+    // reads as disjoint from it and the collision is missed.
+    unsigned end = first->GetIndex() + 1;
+    for (size_t j = i + 1; j < syncIR.size(); ++j) {
+      auto *other = dyn_cast<pto::CompoundInstanceElement>(syncIR[j].get());
+      if (!other || other->elementOp != first->elementOp)
+        continue;
+      end = other->GetIndex();
+    }
+    unsigned begin = first->GetIndex();
+    if (begin > 0)
+      --begin;
+    if (end + 1 < syncIR.size())
+      ++end;
+    if (begin >= end)
+      continue;
+
+    for (const auto &hidden : model->hiddenEvents)
+      for (unsigned id : hidden.eventIds)
+        reserved.push_back({int(hidden.srcPipe), int(hidden.dstPipe), int(id),
+                            begin, end,
+                            first->elementOp->getName().getStringRef().str()});
+  }
+  if (reserved.empty())
+    return violations;
+
+  // An allocated hazard occupies the interval spanned by its own records: the set
+  // and the wait share a `syncIndex`, so the group's min/max irIndex is its live
+  // range. Barriers carry no id and cannot collide.
+  struct Live {
+    int srcPipe = -1, dstPipe = -1;
+    unsigned lo = ~0u, hi = 0;
+    llvm::SmallVector<int, 2> ids;
+  };
+  llvm::MapVector<unsigned, Live> byHazard;
+  for (const SyncOpRecord &r : records) {
+    if (r.eventIds.empty())
+      continue;
+    Live &L = byHazard[r.syncIndex];
+    L.srcPipe = r.srcPipe;
+    L.dstPipe = r.dstPipe;
+    L.lo = std::min(L.lo, r.irIndex);
+    L.hi = std::max(L.hi, r.irIndex);
+    for (int id : r.eventIds)
+      if (!llvm::is_contained(L.ids, id))
+        L.ids.push_back(id);
+  }
+
+  for (const auto &entry : byHazard) {
+    const Live &L = entry.second;
+    for (const Reservation &R : reserved) {
+      if (L.srcPipe != R.srcPipe || L.dstPipe != R.dstPipe)
+        continue;
+      if (L.hi < R.begin || R.end < L.lo)
+        continue; // disjoint spans
+      for (int id : L.ids) {
+        if (id != R.id)
+          continue;
+        violations.push_back(
+            {IdViolationKind::EventIdCollidesWithMacroHidden, entry.first,
+             "set/wait", id,
+             ("event id " + std::to_string(id) + " on direction " +
+              std::to_string(R.srcPipe) + "->" + std::to_string(R.dstPipe) +
+              " is reserved by `" + R.macroName + "` over SyncIR [" +
+              std::to_string(R.begin) + ", " + std::to_string(R.end) +
+              "]; this hazard holds it over [" + std::to_string(L.lo) + ", " +
+              std::to_string(L.hi) +
+              "], so the library's own wait can be satisfied by this producer")});
+      }
+    }
+  }
+  return violations;
+}
+
 
 void mlir::pto::oracle::printIdViolations(llvm::raw_ostream &os,
                                           llvm::StringRef funcName,
@@ -739,6 +837,87 @@ mlir::pto::oracle::checkNonInterference(llvm::ArrayRef<IRSyncRecord> records) {
 
   return violations;
 }
+llvm::SmallVector<InterferenceViolation>
+mlir::pto::oracle::checkNonInterference(llvm::ArrayRef<SyncOpRecord> records) {
+  using TYPE = SyncOperation::TYPE;
+  llvm::SmallVector<InterferenceViolation> violations;
+  llvm::DenseMap<std::tuple<int, int, int64_t>, LiveIntervals> eventLive;
+
+  // THE SCAN REQUIRES PROGRAM ORDER, AND THE CALLER'S ORDER IS NOT IT.
+  //
+  // `extractFromSyncOps` emits records in STORAGE order: group by group, and
+  // within a group the set before the wait -- regardless of where they actually
+  // sit in the program. For a BACKWARD-matched pair (a loop-carried WAR, whose
+  // wait is satisfied by the previous iteration's set and therefore appears
+  // EARLIER in the program than its set) that hands the scan [set, wait], which
+  // reads as perfectly well-formed. The gate then reports OK on a kernel whose
+  // event realization deadlocks on iteration 1 -- 188 such pairs exist across 49
+  // of 98 corpus kernels.
+  //
+  // Sorting by `irIndex` restores true program order for the set/wait relation.
+  // Safe to do here, and verified across the corpus: NO pair has
+  // set.irIndex == wait.irIndex (644 forward, 188 backward, 0 ties), so the
+  // relation is never ambiguous.
+  //
+  // KNOWN LIMIT, deliberately not papered over: `irIndex` is SyncIR-ELEMENT
+  // granular, not op granular -- two syncs on the same element (one in
+  // `pipeBefore`, one in `pipeAfter`) share an index, and `SyncOpRecord` does not
+  // record which side. A stable sort leaves those in storage order. That cannot
+  // affect the set/wait relation (0 ties, above), but it means the relative order
+  // of two DIFFERENT hazards colliding on one element is not resolved here. It
+  // only matters once ids are reused across hazards, and G2 on the IR view
+  // -- true program order, post-codegen -- remains the authority.
+  llvm::SmallVector<SyncOpRecord> ordered(records.begin(), records.end());
+  llvm::stable_sort(ordered, [](const SyncOpRecord &a, const SyncOpRecord &b) {
+    return a.irIndex < b.irIndex;
+  });
+
+  for (const SyncOpRecord &rec : ordered) {
+    TYPE type = static_cast<TYPE>(rec.typeCode);
+    if (type != TYPE::SET_EVENT && type != TYPE::WAIT_EVENT)
+      continue;
+    for (int id : rec.eventIds) {
+      auto key = std::make_tuple(rec.srcPipe, rec.dstPipe, int64_t(id));
+      std::string name = eventKeyName(PipelineType(rec.srcPipe),
+                                      PipelineType(rec.dstPipe), id);
+      // The OWNING hazard: a compensation pair reports the in-body hazard it primes,
+      // everything else reports itself. So a compensation op and the pair it primes
+      // share an owner and do not nest, while a collision with any other hazard --
+      // compensation or not -- is still reported. Scoping this to `isCompensation`
+      // alone would have excused the latter too, and syncops is the ONLY view that
+      // checks rotating ids at all (the IR view's dyn ops carry eventId = -1).
+      int owner = rec.isCompensation && rec.compensationOf >= 0
+                      ? rec.compensationOf
+                      : int(rec.syncIndex);
+      if (type == TYPE::SET_EVENT)
+        scanOpen(eventLive, key, rec.syncIndex, rec.type, name,
+                 InterferenceKind::EventIdNested, violations, owner);
+      else
+        scanClose(eventLive, key, rec.syncIndex, rec.type, name,
+                  InterferenceKind::EventIdWaitWithoutSet, violations);
+    }
+  }
+
+  llvm::SmallVector<InterferenceViolation> leaks;
+  for (const auto &entry : eventLive)
+    for (const auto &open : entry.second.opens) {
+      unsigned order = open.first;
+      leaks.push_back({InterferenceKind::EventIdUnclosed, Severity::Error,
+                       order, order, "set_event",
+                       eventKeyName(PipelineType(std::get<0>(entry.first)),
+                                    PipelineType(std::get<1>(entry.first)),
+                                    std::get<2>(entry.first)),
+                       "opened but never waited: the id is leaked"});
+    }
+  llvm::sort(leaks, [](const InterferenceViolation &a,
+                       const InterferenceViolation &b) {
+    return a.order < b.order;
+  });
+  violations.append(leaks.begin(), leaks.end());
+
+  return violations;
+}
+
 
 unsigned mlir::pto::oracle::countErrors(
     llvm::ArrayRef<InterferenceViolation> violations) {
@@ -1116,8 +1295,8 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
 
   // (from, to, distance) -> the loop that carries it. Second insert from a
   // DIFFERENT loop means one anchor pair is carried at two nest levels, which
-  // this flat key cannot tell apart. Measured empty on this corpus; the counter
-  // is the tripwire that keeps it that way.
+  // this flat key cannot tell apart. The counter is a tripwire: nonzero means the
+  // key has become ambiguous and the closure below cannot be trusted.
   std::map<std::tuple<unsigned, unsigned, unsigned>, Operation *> carriedOwner;
   unsigned loopKeyCollisions = 0;
 
@@ -1580,9 +1759,8 @@ std::string anchorPipeName(Operation *op) {
 /// DELIBERATELY AS NARROW AS THE CORPUS ALLOWS. A too-broad exclusivity
 /// predicate silently EXCUSES real dependencies, and that failure is invisible in
 /// any "the number went down" check -- so this recognises `scf.if` and nothing
-/// else. Measured: `scf.if` is the ONLY mutually-exclusive-region op in the
-/// post-sync corpus IR (16 occurrences; zero `scf.index_switch`, zero `cf.cond_br`,
-/// zero `cf.switch`). If another one ever appears, this must be revisited
+/// else -- not `scf.index_switch`, `cf.cond_br` or `cf.switch`. If another
+/// mutually-exclusive-region op appears in the post-sync IR, this must be revisited
 /// explicitly rather than generalised on a hunch.
 ///
 /// A one-armed `scf.if` is handled correctly by construction: if `b` is outside
@@ -1636,9 +1814,8 @@ mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
   // false pass hiding in an implementation detail, which is the one direction
   // that must not happen.
   //
-  // 32 is chosen to exceed K (the 32-slot buffer-id pool) and every event pool
-  // (8 per direction), so no representable rotation depth can reach it. Measured:
-  // the deepest rotation anywhere in this repo's tests is N=6.
+  // 32 matches K, the buffer-id pool, and exceeds every event pool (8 per
+  // direction), so no representable rotation depth can reach it.
   constexpr uint8_t kMaxDistance = 32;
   constexpr uint8_t kUnreached = kMaxDistance + 1;
   std::vector<uint8_t> reach(size_t(n) * n, kUnreached);
@@ -1745,17 +1922,15 @@ mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
     // Widening it to "same pipe" would silence them -- re-blinding the gate in the
     // same edit that fixes it.
     //
-    // SCOPE, MEASURED. This test asks only whether both endpoints sit on PIPE_V; it
-    // does not distinguish a same-allocation pair from a cross-allocation one.
-    // Corpus-wide, of the pairs it excuses roughly three fifths are between ops on
-    // one allocation and two fifths span two distinct allocations that overlap in
-    // memory, which is how aliasing views are expressed once addresses are
-    // assigned. So the exemption is broader than a per-allocation test would be.
+    // SCOPE. This test asks only whether both endpoints sit on PIPE_V; it does not
+    // distinguish a same-allocation pair from a cross-allocation one. Aliasing views
+    // are expressed as distinct allocations overlapping in memory once addresses are
+    // assigned, so the exemption is broader than a per-allocation test would be.
     //
-      // It is not narrowed, for a measured reason: the sync pass treats every one of
-      // those cross-allocation pairs identically, excusing all of them and covering
-      // none. Narrowing it to one-allocation pairs would turn roughly a thousand
-      // corpus dependencies from excused to uncovered.
+    // It is deliberately not narrowed: the sync pass treats those cross-allocation
+    // pairs identically, excusing all of them and covering none, so narrowing here
+    // would reclassify them from excused to uncovered without changing what is
+    // emitted.
     if (isA5) {
       auto srcPipe = anchorPipe(src->elementOp);
       auto dstPipe = anchorPipe(dst->elementOp);
@@ -2040,6 +2215,73 @@ bool injectFaultRecords(llvm::StringRef kind,
   return false;
 }
 
+/// Appends a synthetic G2 shape to a record list. Returns false when `kind` names
+/// none, which the caller must report: injecting nothing would leave the gate with
+/// nothing to find, so a misspelled selector would report clean and prove nothing.
+///
+/// Both shapes concern the pre-codegen view, and neither can be written as input IR.
+/// A compensation record's link to the hazard it primes exists only before codegen,
+/// and a rotating hazard's ids are resolved at runtime once emitted.
+bool injectInterferenceRecords(llvm::StringRef kind,
+                               llvm::SmallVectorImpl<SyncOpRecord> &records) {
+  using TYPE = SyncOperation::TYPE;
+
+  if (kind == "comp-conflict") {
+    // A compensation record shares its ids with the hazard it primes BY DESIGN, so
+    // that pairing must not read as a collision. A collision with any OTHER hazard
+    // still must: exempting on `isCompensation` alone would excuse both, which is why
+    // the scan keys on the owning hazard rather than on the flag.
+    SyncOpRecord comp;
+    comp.type = "set_event";
+    comp.typeCode = static_cast<int>(TYPE::SET_EVENT);
+    comp.srcPipe = static_cast<int>(PipelineType::PIPE_MTE2);
+    comp.dstPipe = static_cast<int>(PipelineType::PIPE_V);
+    comp.eventIds.push_back(3);
+    comp.syncIndex = 900;
+    comp.irIndex = 900;
+    comp.isCompensation = true;
+    comp.compensationOf = 901;
+    SyncOpRecord other = comp;
+    other.isCompensation = false;
+    other.compensationOf = -1;
+    other.syncIndex = 902;
+    other.irIndex = 901;
+    records.push_back(std::move(comp));
+    records.push_back(std::move(other));
+    return true;
+  }
+
+  if (kind == "multi-id-conflict") {
+    // The scan must check EVERY id a hazard holds, not just the first. These two
+    // records differ on their first id and collide on their second, so a
+    // first-id-only scan finds nothing while the full scan reports the collision.
+    SyncOpRecord rot;
+    rot.type = "set_event";
+    rot.typeCode = static_cast<int>(TYPE::SET_EVENT);
+    rot.srcPipe = static_cast<int>(PipelineType::PIPE_MTE2);
+    rot.dstPipe = static_cast<int>(PipelineType::PIPE_V);
+    rot.eventIds.push_back(0);
+    rot.eventIds.push_back(1);
+    rot.syncIndex = 910;
+    rot.irIndex = 910;
+    rot.isCompensation = true;
+    rot.compensationOf = 911;
+    SyncOpRecord clash = rot;
+    clash.eventIds.clear();
+    clash.eventIds.push_back(7);
+    clash.eventIds.push_back(1);
+    clash.isCompensation = false;
+    clash.compensationOf = -1;
+    clash.syncIndex = 912;
+    clash.irIndex = 911;
+    records.push_back(std::move(rot));
+    records.push_back(std::move(clash));
+    return true;
+  }
+
+  return false;
+}
+
 /// Runs G3 on a compiled function. Read-only apart from diagnostics.
 struct PTOCheckSyncIdsPass
     : public mlir::pto::impl::PTOCheckSyncIdsBase<PTOCheckSyncIdsPass> {
@@ -2091,6 +2333,8 @@ struct PTOCheckSyncIdsPass
 struct PTOCheckSyncInterferencePass
     : public mlir::pto::impl::PTOCheckSyncInterferenceBase<
           PTOCheckSyncInterferencePass> {
+  std::string injectFault;
+
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     if (func.isDeclaration())
@@ -2102,6 +2346,31 @@ struct PTOCheckSyncInterferencePass
       oracle::printInterferenceViolations(os, func.getSymName(), "ir",
                                           records.size(), violations);
     });
+
+    // The two synthetic shapes concern the pre-codegen view, so they are judged on
+    // their own record list rather than mixed into the emitted-op scan above.
+    if (!injectFault.empty()) {
+      llvm::SmallVector<SyncOpRecord> synthetic;
+      if (!injectInterferenceRecords(injectFault, synthetic)) {
+        func.emitError() << "unknown --check-sync-interference-inject-fault "
+                            "selector '"
+                         << injectFault
+                         << "'; expected comp-conflict or multi-id-conflict";
+        signalPassFailure();
+        return;
+      }
+      auto synthViolations = oracle::checkNonInterference(synthetic);
+      oracle::emitReport([&](llvm::raw_ostream &os) {
+        oracle::printInterferenceViolations(os, func.getSymName(), "syncops",
+                                            synthetic.size(), synthViolations);
+      });
+      if (unsigned errors = oracle::countErrors(synthViolations)) {
+        func.emitError() << "G2 non-interference: " << errors
+                         << " illegal sync id use(s)";
+        signalPassFailure();
+        return;
+      }
+    }
     // Warnings (a soft rule, such as an id spanning more than two pipes) are
     // reported but do not fail the gate; only errors do.
     if (unsigned errors = oracle::countErrors(violations)) {
@@ -2288,8 +2557,11 @@ mlir::pto::createPTOCheckSyncIdsPass(unsigned bufidCapacity,
   return pass;
 }
 
-std::unique_ptr<Pass> mlir::pto::createPTOCheckSyncInterferencePass() {
-  return std::make_unique<PTOCheckSyncInterferencePass>();
+std::unique_ptr<Pass>
+mlir::pto::createPTOCheckSyncInterferencePass(llvm::StringRef injectFault) {
+  auto pass = std::make_unique<PTOCheckSyncInterferencePass>();
+  pass->injectFault = injectFault.str();
+  return pass;
 }
 
 std::unique_ptr<Pass>

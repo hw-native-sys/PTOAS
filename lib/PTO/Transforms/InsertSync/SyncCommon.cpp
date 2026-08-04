@@ -89,6 +89,40 @@ std::string SyncOperation::TypeName(SyncOperation::TYPE t) {
   return "";
 }
 
+SyncOperation::MECHANISM
+SyncOperation::DefaultMechanismFor(SyncOperation::TYPE t) {
+  switch (t) {
+  case TYPE::SET_EVENT:
+  case TYPE::WAIT_EVENT:
+    return MECHANISM::EVENT;
+  case TYPE::PIPE_BARRIER:
+  case TYPE::PIPE_BARRIER_CUBE:
+  case TYPE::PIPE_BARRIER_VECTOR:
+    return MECHANISM::BARRIER;
+  case TYPE::SYNC_BLOCK_SET:
+  case TYPE::SYNC_BLOCK_WAIT:
+  case TYPE::SYNC_BLOCK_ALL:
+    return MECHANISM::BLOCK;
+  }
+  llvm_unreachable("Not supported sync type");
+  return MECHANISM::EVENT;
+}
+
+std::string SyncOperation::MechanismName(SyncOperation::MECHANISM m) {
+  switch (m) {
+  case MECHANISM::EVENT:
+    return "event";
+  case MECHANISM::BUFID:
+    return "bufid";
+  case MECHANISM::BARRIER:
+    return "barrier";
+  case MECHANISM::BLOCK:
+    return "block";
+  }
+  llvm_unreachable("Not supported sync mechanism");
+  return "";
+}
+
 std::string SyncOperation::GetCoreTypeName(TCoreType t) const {
   static std::map<TCoreType, std::string> coreTypeNameMap = {
       {TCoreType::CUBE, "CUBE"},
@@ -122,10 +156,17 @@ SyncOperation::GetMatchSync(unsigned index) const {
   auto res =
       std::make_unique<SyncOperation>(newType, this->srcPipe_, this->dstPipe_,
                                       kSyncIndex_, index, this->forEndIndex_);
+  // The matched half must sit in the SAME resource class -- a BUFID set with an
+  // EVENT wait is not a pair, it is two unrelated syncs. The constructor derived
+  // a default from `newType`, which is right for EVENT/BARRIER/BLOCK and WRONG
+  // for BUFID (not derivable from TYPE), so it must be propagated explicitly.
+  res->mechanism_ = this->mechanism_;
   res->eventIds = this->eventIds;
   res->depRootBuffers = this->depRootBuffers;
+  res->depMemInfos = this->depMemInfos;
   res->eventIdNum = this->eventIdNum;
   res->isCompensation = this->isCompensation;
+  res->compensationOf = this->compensationOf;
   res->autoSyncTailBarrier = this->autoSyncTailBarrier;
   res->SetDepSyncIRIndex(this->GetDepSyncIRIndex());
   // Slot info: propagate as a default; callers that know the matched side's
@@ -139,6 +180,11 @@ SyncOperation::GetMatchSync(unsigned index) const {
 void SyncOperation::SetPipeAll() {
   // set current sync to pipe_all
   this->type_ = TYPE::PIPE_BARRIER;
+  // This is the resource-exhaustion downgrade, so the mechanism must fall with
+  // the type. Leaving it would let a spilled barrier keep reporting EVENT (or,
+  // once the allocator routes them, BUFID) and hand the codegen a sync it would
+  // try to back with an id that is no longer held.
+  this->mechanism_ = DefaultMechanismFor(this->type_);
   // [修正] 使用 pto::PipelineType
   this->srcPipe_ = PipelineType::PIPE_ALL;
   this->dstPipe_ = PipelineType::PIPE_ALL;

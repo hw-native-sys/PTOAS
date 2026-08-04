@@ -397,6 +397,34 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
+static llvm::cl::opt<bool> dumpSyncExtract(
+    "dump-sync-extract",
+    llvm::cl::desc("Render the structured extraction of whatever sync the selected "
+                   "mode emitted. Read-only"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> enableUnifiedSync(
+    "enable-unified-sync",
+    llvm::cl::desc("Enable the unified intra-core sync allocator: event ids, buffer "
+                   "ids and barriers as three resource classes over one "
+                   "interval-colouring problem"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> enableUnifiedSyncDebug(
+    "enable-unified-sync-debug",
+    llvm::cl::desc("Print the unified allocator's model, routing, colouring and "
+                   "emission reports to stderr. Off by default; gate violations are "
+                   "reported either way"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> unifiedSyncForceMechanism(
+    "unified-sync-force-mechanism",
+    llvm::cl::desc("Test-only: route hazard group 0 off its TYPE-derived mechanism "
+                   "(bufid | bufid-spill), so the buffer-id path and the "
+                   "resource-exhaustion downgrade can be exercised on a kernel the "
+                   "router would otherwise leave alone"),
+    llvm::cl::init(""), llvm::cl::Hidden);
+
 static llvm::cl::opt<bool> dumpSyncCoverage(
     "dump-sync-coverage",
     llvm::cl::desc("Write the happens-before edges this run's emitted sync induces, "
@@ -437,6 +465,13 @@ static llvm::cl::opt<std::string> checkSyncIdsInjectFault(
                    "(event-oor | block-all-stomp | bufid-oor). Appended to the "
                    "gate's own record list after extraction, never to the IR, "
                    "because an out-of-range event id is unrepresentable in IR"),
+    llvm::cl::init(""), llvm::cl::Hidden);
+
+static llvm::cl::opt<std::string> checkSyncInterferenceInjectFault(
+    "check-sync-interference-inject-fault",
+    llvm::cl::desc("Gate self-test: judge a synthetic pre-codegen shape "
+                   "(comp-conflict | multi-id-conflict) on its own record list. "
+                   "Never added to the IR, so it cannot reach codegen"),
     llvm::cl::init(""), llvm::cl::Hidden);
 
 static llvm::cl::opt<bool> checkSyncInterference(
@@ -3343,12 +3378,12 @@ int mlir::pto::compilePTOASModule(
   }
 
   int enabledAutoSyncModes =
-      (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
+      (enableInsertSync ? 1 : 0) + (enableUnifiedSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
       (enableInjectBarrierAllSync ? 1 : 0) + (enableGraphSyncSolver ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
     llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
-                    "--enable-inject-barrier-all-sync, and "
-                    "--enable-graph-sync-solver are mutually exclusive.\n";
+                    "--enable-inject-barrier-all-sync, --enable-graph-sync-solver, "
+                    "and --enable-unified-sync are mutually exclusive.\n";
     return 1;
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
@@ -3551,7 +3586,12 @@ int mlir::pto::compilePTOASModule(
   // `pto.multi_tile_get` operations and keeps their slot identity for alias
   // and event-id analysis.
   // solvers, while BufidSync is A5-only get_buf/rls_buf synchronization.
-  if (enableInsertSync) {
+  if (enableUnifiedSync)
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOUnifiedSyncPass(arch == "a5" ? 32u : 0u,
+                                      enableUnifiedSyncDebug,
+                                      unifiedSyncForceMechanism));
+  else if (enableInsertSync) {
     if (emitMlirIR)
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false, 0));
@@ -3596,10 +3636,13 @@ int mlir::pto::compilePTOASModule(
         arch == "a5" ? 32u : 0u, checkSyncIdsInjectFault));
   if (checkSyncInterference)
     pm.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOCheckSyncInterferencePass());
+        pto::createPTOCheckSyncInterferencePass(
+            checkSyncInterferenceInjectFault));
   if (checkSyncSelfCoverage)
     pm.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOCheckSyncSelfCoveragePass());
+  if (dumpSyncExtract)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncExtractPass());
   if (dumpSyncCoverage)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCoveragePass());
   if (!checkSyncCoverage.empty())

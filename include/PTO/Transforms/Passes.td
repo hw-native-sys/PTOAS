@@ -1505,4 +1505,57 @@ def PTOCheckSyncCountFloor : Pass<"pto-check-sync-count-floor", "func::FuncOp"> 
   let constructor = "mlir::pto::createPTOCheckSyncCountFloorPass(\"\")";
 }
 
+def PTOUnifiedSync : Pass<"pto-unified-sync", "func::FuncOp"> {
+  let summary = "Unified intra-core sync allocator (event-ID + buffer-ID + barrier)";
+  let description = [{
+    Allocates intra-core synchronization for one function across all three
+    mechanisms from a single model, instead of committing to a mechanism before
+    the cost of that choice is known: event ids, drawn from a pool per
+    (src, dst) pipe direction; buffer-id tokens, drawn from one pool of K and
+    available only where K is non-zero; and PIPE_ALL barriers, the fallback that
+    always succeeds and orders everything.
+
+    The dependence analysis is shared with pto-insert-sync rather than
+    reimplemented, so both passes see the same program and the same hazards.
+    Only the assignment of mechanisms and ids differs. Hazards whose direction
+    would overflow its event pool are routed to buffer-id tokens where the buffer
+    is eligible; what remains is coloured into the event pools by live interval,
+    and anything that still does not fit spills to a barrier. A hazard always
+    ends on some mechanism.
+
+    Functions that already contain explicit synchronization are left untouched.
+
+    Macro ops are supported. They lower to library calls that consume fixed
+    internal event ids which no operation in the IR names, so those (direction, id)
+    pairs are reserved over the call's span before any id is allocated; an id
+    already taken is never offered. A gate checks the result on every run, since a
+    collision with a library-internal id is otherwise invisible.
+  }];
+
+  let constructor = "mlir::pto::createPTOUnifiedSyncPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
+def PTODumpSyncExtract : Pass<"pto-dump-sync-extract", "func::FuncOp"> {
+  let summary = "Dump the oracle's structured extraction of emitted sync ops";
+  let description = [{
+    Read-only. Walks the emitted `pto.set_flag` / `pto.wait_flag` /
+    `pto.get_buf` / `pto.rls_buf` / `pto.barrier` ops and renders one record per
+    line (pipes, event_id / buf_id, program order). This is the shared IR-view
+    surface the differential oracle gates (coverage superset, sync-count floor)
+    read from each compiler run.
+  }];
+
+  let constructor = "mlir::pto::createPTODumpSyncExtractPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

@@ -272,6 +272,42 @@ void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
   if (sync->GetType() == SyncOperation::TYPE::PIPE_BARRIER) {
     CreateBarrierOp(rewriter, insertAnchorOp, sync, forceBefore);
   } else if (sync->isSyncSetType() || sync->isSyncWaitType()) {
+    // A set/wait hazard with NO event id has no mechanism realised: nothing below
+    // will emit anything for it, and the hazard's ordering simply vanishes from the
+    // kernel. That must be LOUD.
+    //
+    // It used to be silent, and it was reachable two ways. (1) The multi-id fallback
+    // iterates `eventIds` -- zero ids means zero flags emitted, then `return`.
+    // (2) `--unified-sync-force-mechanism=bufid` stamps MECHANISM::BUFID, which makes
+    // `colorEventIds` skip the hazard, while nothing routes a buffer for it -- so the
+    // pair arrived here empty and disappeared, with ptoas exiting 0 and every gate
+    // reporting clean. Those are one defect, not two.
+    //
+    // "No id" is never a resting state: a hazard must end on SOME mechanism -- an
+    // event id, a buffer token, or a barrier -- which is exactly what
+    // `Hazard::SpillToBarrier` exists to guarantee (it converts the hazard AND
+    // suppresses its synthesised compensation, because `SetEventId` stamps all four
+    // ops alike). This guard is what makes that invariant checked rather than assumed:
+    // the synthesised compensation lives in `pipeBefore`/`pipeAfter`, the two containers the
+    // incumbent's own degradation ladder does not walk, so nothing else would catch a
+    // future path that left one live and unstamped.
+    //
+    // Reachability on the shipping path was traced and adversarially reviewed:
+    // `--enable-insert-sync` cannot arrive here empty, because the backward-match
+    // synthetics are always stamped with an id before being published into the sync
+    // lists. So this is hardening for the unified path, not a fix to insert-sync.
+    if (sync->eventIds.empty()) {
+      sawUnrealisedHazard_ = true;
+      assert(false && "set/wait hazard reached codegen with no event id");
+      func_.emitError()
+          << "sync codegen: a " << SyncOperation::TypeName(sync->GetType())
+          << " hazard (src pipe " << int(sync->GetActualSrcPipe()) << " -> dst pipe "
+          << int(sync->GetActualDstPipe()) << ", syncIndex "
+          << sync->GetSyncIndex() << ") reached emission with no event id, so no mechanism was realised for it "
+             "and its ordering would be silently dropped. A hazard must end on an "
+             "event id, a buffer token, or a barrier.";
+      return;
+    }
     if (sync->eventIds.size() == 1) {
       CreateSetWaitOpForSingleBuffer(rewriter, insertAnchorOp, sync, forceBefore);
     } else {
@@ -361,8 +397,26 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
   // fall back to a static set/wait on the first event id. This preserves
   // correctness at the cost of forgoing per-slot pipelining.
   if (!sync->slotSSAExpr || sync->eventIds.empty()) {
-    auto eventId = getEventAttr(rewriter, sync->eventIds[0]);
-    createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId);
+    // A MULTI-ID OP WITH NO SLOT SSA MUST EMIT ONE FLAG PER ID, NOT ONE FLAG.
+    // This is the loop-carried COMPENSATION of a rotating hazard: the head/tail
+    // are synthesised, so they have no slot expression, but the in-body pair they
+    // prime is `wait_flag_dyn` selecting eventIds[slot % N]. Priming only
+    // eventIds[0] leaves every other slot's flag unset, and the first iteration
+    // that lands on slot != 0 BLOCKS FOREVER -- the iteration-1 deadlock the carried
+    // exists to catch, reintroduced through the rotation path.
+    //
+    // The incumbent reaches the same emitted shape by a different route: its
+    // `UpdateBackwardMatchSync(setFlag, waitFlag, eventId)` takes ONE id and
+    // builds one compensation pair PER id, so each of its head ops carries a
+    // single id and never lands here. Ours carries the whole id list on one pair
+    // (SetEventIds stamps all four ops alike), so the fan-out happens here.
+    // Either way the emitted IR is d static flags -- verified identical.
+    //
+    // Ops with exactly one id are unaffected.
+    for (int id : sync->eventIds) {
+      auto eventId = getEventAttr(rewriter, id);
+      createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId);
+    }
     return;
   }
 

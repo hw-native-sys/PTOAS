@@ -141,6 +141,14 @@ static void dumpSyncOp(llvm::raw_ostream &os, const SyncOperation *op,
      << getPipelineName(op->GetDstPipe()) << ">";
   os << " idx=" << op->GetSyncIndex();
 
+  // Printed only when the allocator moved this sync OFF the class its TYPE
+  // implies -- i.e. today, only when it routed it to BUFID. Printing the derived
+  // default would be redundant on every line and would churn the pinned debug
+  // output of every existing sync test for no information.
+  if (op->GetMechanism() !=
+      SyncOperation::DefaultMechanismFor(op->GetType()))
+    os << " mech=" << SyncOperation::MechanismName(op->GetMechanism());
+
   if (op->GetForEndIndex().has_value())
     os << " forEnd=" << op->GetForEndIndex().value();
 

@@ -119,6 +119,31 @@ llvm::SmallVector<IdViolation>
 checkDeviceIdLegality(llvm::ArrayRef<SyncOpRecord> records,
                       const DeviceIdLimits &limits);
 
+//===----------------------------------------------------------------------===//
+// G3-macro: collision with a macro's library-internal event ids
+//===----------------------------------------------------------------------===//
+//
+// A macro op lowers to a pto-isa library call that consumes event ids INSIDE the
+// call, where no PTO IR names them. `SyncMacroModel::hiddenEvents` records which
+// (srcPipe, dstPipe, id) the library uses, so the ids are known even though the
+// uses are not representable. An allocator that hands one of those ids to a
+// compiler hazard whose interval spans the call produces a kernel where the
+// library's wait is satisfied by the wrong producer -- silently, with no op in the
+// IR to point at.
+//
+// THE RESERVATION MIRRORS THE INCUMBENT'S, deliberately, so that "legal" means the
+// same thing on both paths: the span runs from the macro's first phase to its last,
+// padded one SyncIR index each side, and the pad is what stops a hazard that ends
+// exactly where the call begins from being read as disjoint.
+//
+// WHY THIS GATE EXISTS BEFORE THE FIX. While macro ops are refused there is no way
+// to check a reservation by running it -- the kernel never reaches allocation. So
+// the detector is built first and shown to fire on the CURRENT wrong id; only then
+// is the reservation worth writing, because its green result then means something.
+llvm::SmallVector<IdViolation>
+checkMacroHiddenEventCollisions(const SyncIRs &syncIR,
+                                llvm::ArrayRef<SyncOpRecord> records);
+
 /// Deterministic rendering. `view` is "ir" or "syncops".
 void printIdViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
                        llvm::StringRef view, size_t recordCount,
@@ -139,12 +164,10 @@ void printIdViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
 // whole-file grep over-counts by a constant. `extractFromIR` walks the function's
 // ops, so the boilerplate is structurally invisible to it.
 //
-// A scalar `total <= reference.total` floor is NOT sufficient, and this is
-// measured rather than assumed. On `vadd`, InsertSync emits 2 set + 2 wait +
-// 1 barrier = 5 ops; `--enable-inject-barrier-all-sync` -- a fully serializing
-// degenerate -- emits 5 PIPE_ALL barriers = 5 ops. Totals tie, so a scalar floor
-// waves the degenerate through. One barrier can replace a set/wait pair and
-// *lower* the op count while strictly worsening the schedule. Hence the floor is
+// A scalar `total <= reference.total` floor is NOT sufficient. A fully serializing
+// allocation can tie on total -- one PIPE_ALL barrier per hazard replaces a set/wait
+// pair one for one -- so a scalar floor waves the degenerate through. A barrier can
+// even *lower* the op count while strictly worsening the schedule. Hence the floor is
 // per class:
 //
 //   F1 total op count must not increase.
@@ -268,7 +291,7 @@ void printCountViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
 //   B6 an id SHOULD NOT span more than 2 pipes ("not
 //      recommended" -- soft). WARNING, not an error, and deliberately so: the
 //      shipping BufidSync pass already emits one id across MTE2/V/MTE3 on real
-//      kernels (measured). Making it an error would fail on known-good output.
+//      kernels. Making it an error would fail on known-good output.
 //      It is reported because it is the coalescing bound any allocator routing
 //      hazards onto buffer tokens has to respect.
 //   B7 a get_buf and its rls_buf must sit in the SAME block. A pair split
@@ -324,6 +347,11 @@ struct InterferenceViolation {
 /// G2 over the emitted IR.
 llvm::SmallVector<InterferenceViolation>
 checkNonInterference(llvm::ArrayRef<IRSyncRecord> records);
+
+/// G2 over the pre-codegen SyncOperation set -- the ids an allocator just wrote,
+/// before codegen can drop or merge any of them.
+llvm::SmallVector<InterferenceViolation>
+checkNonInterference(llvm::ArrayRef<SyncOpRecord> records);
 
 /// KNOWN LIMITATION: G2 does not check ROTATING (multi-id) hazards at all.
 /// `set_flag_dyn` / `wait_flag_dyn` carry a runtime id, recorded as -1, so those ops

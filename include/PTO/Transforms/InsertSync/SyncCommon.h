@@ -163,8 +163,48 @@ public:
     SYNC_BLOCK_WAIT,
     SYNC_BLOCK_ALL,
   };
-  
+
+  /// Which hardware resource backs this sync -- and therefore, per the buf-id
+  /// design revision, WHERE it may be placed.
+  ///
+  /// This is deliberately a DIFFERENT axis from TYPE. `TYPE` is the op *shape*
+  /// (a set, a wait, a barrier) and is decided by the analysis. `MECHANISM` is
+  /// the resource *class* that backs it, and is decided by the allocator:
+  ///
+  ///   EVENT   Per-(src,dst) private pool of 8 flags. Carried at a SyncIR
+  ///           position, so `MoveSyncState` may hoist it out of a branch or
+  ///           loop. This is what every in-tree sync is today.
+  ///   BUFID   Shared rotating pool of K buffer-ID tokens (K=0 on A3, 32 on A5).
+  ///           A token's get/rel counters are BIDIRECTIONAL: one token discharges
+  ///           the forward RAW *and* the reverse WAR. Two consequences, and they
+  ///           are the reason this enum exists rather than a bool:
+  ///             - no backward-matched pair is needed (`UpdateBackwardMatchSync`
+  ///               lives in SyncEventIdAllocation, which the unified allocator
+  ///               never runs -- so there is nothing to delete);
+  ///             - it MUST be emitted OP-ANCHORED, bracketing the access, not at
+  ///               a hoisted SyncIR position.
+  ///           Set by the allocator when it routes a hazard off events.
+  ///   BARRIER Spill. Carries no id.
+  ///   BLOCK   Cross-core block sync (reserved ids 14/15). Not routed by this
+  ///           allocator; present so a block sync can never be mistaken for an
+  ///           event.
+  ///
+  /// Every value EXCEPT BUFID is derivable from TYPE, and the constructor does
+  /// derive it (see `DefaultMechanismFor`), so no construction site has to
+  /// remember to set it and a barrier can never silently claim to be an event.
+  /// BUFID is the one value that is *not* derivable -- buffer-ID sync does not
+  /// go through `SyncOperation` at all today -- and it is precisely the routing
+  /// decision the unified allocator exists to make.
+  enum class MECHANISM { EVENT, BUFID, BARRIER, BLOCK };
+
   bool isCompensation = false;
+  /// For a compensation op (head-set / tail-wait), the `kSyncIndex_` of the in-body
+  /// hazard it primes and drains; -1 otherwise. Needed because a compensation pair is
+  /// created as its OWN sync group, so `GetSyncIndex()` does not identify its owner --
+  /// and G2 must be able to tell "these two records are halves of one hazard" from
+  /// "two different hazards collide on an id". Without it the exemption would have to
+  /// excuse every compensation record, which would drop real conflicts.
+  int compensationOf = -1;
 
   static const int kNullEventId{-1};
  
@@ -173,7 +213,20 @@ public:
   // Root buffers participating in the dependency that created this sync pair.
   // These are kept for allocation/widening heuristics and debug printing; set/
   // wait redundancy pruning is based on the pipe pair semantics.
+  //
+  // `rootBuffer` is the ROOT ALLOCATION, which is much COARSER than a buffer: many
+  // distinct tiles share one root. It is therefore NOT a buffer identity, and must
+  // not be used as one -- see `depMemInfos` below.
   SmallVector<Value> depRootBuffers;
+  // The BaseMemInfo objects behind this dependency, kept so a consumer can
+  // recover the TILE identity `(scope, baseAddr, size)` rather than the coarse
+  // root above. Owned by the translator's `Buffer2MemInfoMap`; these are raw
+  // pointers into that arena, which every analysis in the pipeline shares.
+  //
+  // This exists because `InsertSyncAnalysis` HAS these pointers when it builds a
+  // sync pair and used to discard them, keeping only the roots -- which left the
+  // unified allocator unable to tell which buffer a hazard was actually on.
+  SmallVector<const BaseMemInfo *> depMemInfos;
   bool uselessSync{false};
   int eventIdNum{1};
   // For multi-buffer dyn-event sync: the slot SSA expression at this access
@@ -192,15 +245,25 @@ public:
   SyncOperation(TYPE type, pto::PipelineType srcPipe, pto::PipelineType dstPipe,
                 unsigned kSyncIndex, unsigned syncIRIndex,
                 std::optional<int> forEndIndex, bool isComp = false)
-      : isCompensation(isComp), eventIds({}), type_(type), srcPipe_(srcPipe),
+      : isCompensation(isComp), eventIds({}), type_(type),
+        mechanism_(DefaultMechanismFor(type)), srcPipe_(srcPipe),
         dstPipe_(dstPipe), kSyncIndex_(kSyncIndex), syncIRIndex_(syncIRIndex),
         forEndIndex_(forEndIndex) {};
- 
+
   ~SyncOperation() = default;
- 
+
   std::unique_ptr<SyncOperation> GetMatchSync(unsigned index) const;
-  
+
   TYPE GetType() const { return type_; }
+
+  /// The resource class backing this sync. Defaults from TYPE; only the
+  /// allocator moves a sync off its default (today: onto BUFID).
+  MECHANISM GetMechanism() const { return mechanism_; }
+  void SetMechanism(MECHANISM m) { mechanism_ = m; }
+
+  /// The mechanism a given TYPE implies. Kept next to the enum so the two can
+  /// never drift; `SetPipeAll` and the constructor are its only callers.
+  static MECHANISM DefaultMechanismFor(TYPE t);
   pto::PipelineType GetSrcPipe() const { return srcPipe_; }
   pto::PipelineType GetDstPipe() const { return dstPipe_; }
   
@@ -223,6 +286,7 @@ public:
   bool isBarrierType() const;
  
   static std::string TypeName(TYPE t);
+  static std::string MechanismName(MECHANISM m);
   std::string GetCoreTypeName(TCoreType t) const;
  
   using SyncOperations =
@@ -235,6 +299,9 @@ public:
  
 private:
   TYPE type_;
+  // Private on purpose: it must stay consistent with type_ (see SetPipeAll,
+  // which downgrades both together). Write it through SetMechanism only.
+  MECHANISM mechanism_;
   pto::PipelineType srcPipe_;
   pto::PipelineType dstPipe_;
   const unsigned kSyncIndex_;

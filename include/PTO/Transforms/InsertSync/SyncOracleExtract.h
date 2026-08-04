@@ -72,11 +72,23 @@ struct SyncOpRecord {
   /// `static_cast<int>(SyncOperation::TYPE)`; -1 when unset. Gates switch on
   /// this, never on the `type` string.
   int typeCode = -1;
+  /// `static_cast<int>(SyncOperation::MECHANISM)`; -1 when unset. Which resource
+  /// class the allocator routed this sync to -- and so whether it is
+  /// SyncIR-positioned (event/barrier) or op-anchored (bufid). Gates switch on
+  /// this, never on the `mechanism` string.
+  int mechanismCode = -1;
+  std::string mechanism;
   int srcPipe = -1;
   int dstPipe = -1;
   llvm::SmallVector<int, 2> eventIds;
   unsigned syncIndex = 0;
   unsigned irIndex = 0;
+  /// Mirrors `SyncOperation::isCompensation` / `compensationOf`. G2's syncops scan
+  /// needs both: a compensation record shares its ids with the in-body pair it primes
+  /// BY DESIGN, so that pairing must not read as two hazards colliding -- while a
+  /// collision with any OTHER hazard still must.
+  bool isCompensation = false;
+  int compensationOf = -1;
 };
 
 /// Human-readable name of an InsertSync PipelineType ("MTE2", "V", "ALL", ...).
@@ -102,6 +114,10 @@ void emitReport(llvm::function_ref<void(llvm::raw_ostream &)> body);
 
 /// Extract the emitted sync ops from `func`, in program order.
 llvm::SmallVector<IRSyncRecord> extractFromIR(func::FuncOp func);
+
+/// The same synchronization before codegen, as an allocator holds it: the ids it has
+/// just written, before anything is emitted.
+llvm::SmallVector<SyncOpRecord> extractFromSyncOps(const SyncOperations &ops);
 
 
 /// Deterministic, diff-friendly rendering (one record per line).

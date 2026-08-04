@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/InsertSync/SyncOracleExtract.h"
+#define GEN_PASS_DEF_PTODUMPSYNCEXTRACT
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
@@ -190,6 +191,38 @@ mlir::pto::oracle::extractFromIR(func::FuncOp func) {
   return records;
 }
 
+llvm::SmallVector<oracle::SyncOpRecord>
+mlir::pto::oracle::extractFromSyncOps(const SyncOperations &ops) {
+  llvm::SmallVector<SyncOpRecord> records;
+
+  for (const auto &group : ops) {
+    for (const auto &owned : group) {
+      const SyncOperation *sync = owned.get();
+      if (!sync)
+        continue;
+      SyncOpRecord rec;
+      rec.type = SyncOperation::TypeName(sync->GetType());
+      rec.typeCode = static_cast<int>(sync->GetType());
+      rec.mechanism = SyncOperation::MechanismName(sync->GetMechanism());
+      rec.mechanismCode = static_cast<int>(sync->GetMechanism());
+      rec.srcPipe = static_cast<int>(sync->GetActualSrcPipe());
+      rec.dstPipe = static_cast<int>(sync->GetActualDstPipe());
+      for (int id : sync->eventIds)
+        rec.eventIds.push_back(id);
+      rec.syncIndex = sync->GetSyncIndex();
+      rec.irIndex = sync->GetSyncIRIndex();
+      rec.compensationOf = sync->compensationOf;
+      // DERIVED, not copied from `SyncOperation::isCompensation`: that flag also
+      // steers codegen placement and is deliberately left unset (see
+      // synthesizeLoopCompensation). `compensationOf >= 0` is the oracle-only marker.
+      rec.isCompensation = sync->compensationOf >= 0;
+      records.push_back(std::move(rec));
+    }
+  }
+
+  return records;
+}
+
 
 void mlir::pto::oracle::printIRRecords(llvm::raw_ostream &os,
                                        llvm::StringRef funcName,
@@ -215,6 +248,7 @@ void mlir::pto::oracle::printSyncOpRecords(
      << " records=" << records.size() << "\n";
   for (const SyncOpRecord &rec : records) {
     os << "  #" << rec.syncIndex << " " << rec.type
+       << " mech=" << rec.mechanism
        << " src="
        << pipelineTypeName(static_cast<PipelineType>(rec.srcPipe))
        << " dst=" << pipelineTypeName(static_cast<PipelineType>(rec.dstPipe))
@@ -226,4 +260,26 @@ void mlir::pto::oracle::printSyncOpRecords(
     }
     os << "]\n";
   }
+}
+
+namespace {
+
+/// Renders the IR view of a function's emitted sync ops. Read-only.
+struct PTODumpSyncExtractPass
+    : public mlir::pto::impl::PTODumpSyncExtractBase<PTODumpSyncExtractPass> {
+  void runOnOperation() override {
+    func::FuncOp func = getOperation();
+    if (func.isDeclaration())
+      return;
+    auto records = oracle::extractFromIR(func);
+    oracle::emitReport([&](llvm::raw_ostream &os) {
+      oracle::printIRRecords(os, func.getSymName(), records);
+    });
+  }
+};
+
+} // namespace
+
+std::unique_ptr<Pass> mlir::pto::createPTODumpSyncExtractPass() {
+  return std::make_unique<PTODumpSyncExtractPass>();
 }

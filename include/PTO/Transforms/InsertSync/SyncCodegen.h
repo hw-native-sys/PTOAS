@@ -38,8 +38,15 @@ public:
  
   /// 入口函数：执行代码生成
   void Run();
+
+  /// True if a set/wait hazard reached emission with NO event id, i.e. with no
+  /// mechanism realised. `Run()` emits a diagnostic for each such hazard; the caller
+  /// decides whether that fails the pass. See the guard in `SyncInsert`.
+  bool sawUnrealisedHazard() const { return sawUnrealisedHazard_; }
  
 private:
+  bool sawUnrealisedHazard_ = false;
+
   // --- 核心插入逻辑 ---
   void SyncInsert(IRRewriter &rewriter, Operation *op, SyncOperation *sync,
                   bool beforeInsert);
