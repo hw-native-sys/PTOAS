@@ -50,7 +50,7 @@ class SpecializedTileTemplate(ModuleArtifact):
             descriptor.name,
             module_factory=lambda: _TemplateTrace(
                 descriptor, tile_specs, context_attrs=context_attrs
-            ).build_module(),
+            ).build_standalone_module(),
         )
         self.descriptor = descriptor
         self.tile_specs = tile_specs

@@ -27,14 +27,11 @@ namespace {
 
 class PythonTileLibService final : public mlir::pto::TileLibService {
 public:
-  explicit PythonTileLibService(py::object contextOwner)
-      : contextOwner(std::move(contextOwner)) {}
-
   mlir::FailureOr<std::string>
   getMetadata(const mlir::pto::TileLibMaterializationRequest &request) override {
     py::gil_scoped_acquire acquire;
     try {
-      return py::cast<std::string>(getRuntime().attr("metadata")(
+      return py::cast<std::string>(getCompilerRuntime().attr("metadata")(
           request.target, request.op, request.operandSpecsJson,
           request.contextAttrsJson));
     } catch (const py::error_already_set &error) {
@@ -51,6 +48,7 @@ public:
               mlir::pto::TileLibMaterializationCallback callback) override {
     py::gil_scoped_acquire acquire;
     try {
+      py::object contextOwner = getPythonContext(context);
       MlirContext pythonContext = py::cast<MlirContext>(contextOwner);
       if (unwrap(pythonContext) != &context) {
         llvm::errs() << "TileLib: Python context does not match the PTOAS "
@@ -58,7 +56,7 @@ public:
         return mlir::failure();
       }
 
-      py::tuple result = getRuntime().attr("materialize")(
+      py::tuple result = getCompilerRuntime().attr("materialize")(
           request.target, request.op, request.operandSpecsJson,
           request.contextAttrsJson, request.candidateId, contextOwner);
       if (result.size() != 2)
@@ -90,18 +88,48 @@ public:
   }
 
 private:
-  py::object &getRuntime() {
-    if (!runtime)
-      runtime = py::module_::import("ptodsl.tilelib._compiler_runtime");
-    return runtime;
+  static py::module_ getCompilerRuntime() {
+    // Python's sys.modules cache makes this a process-wide runtime module
+    // without storing a py::object whose destructor could outlive CPython.
+    return py::module_::import("ptodsl.tilelib._compiler_runtime");
   }
 
-  // These objects are created and destroyed by runPTOASFromPython while the
-  // calling thread owns the GIL. materialize() reacquires it for every DSL
-  // invocation because the native compiler releases it around the driver.
-  py::object contextOwner;
-  py::object runtime;
+  static py::object getPythonContext(mlir::MLIRContext &context) {
+    py::object capsule = py::reinterpret_steal<py::object>(
+        mlirPythonContextToCapsule(wrap(&context)));
+    return py::module_::import("ptoas.mlir.ir")
+        .attr("Context")
+        .attr(MLIR_PYTHON_CAPI_FACTORY_ATTR)(capsule);
+  }
 };
+
+constexpr char kRuntimeRegistrationCapsuleName[] =
+    "ptoas.TileLibRuntimeRegistration";
+
+class PythonTileLibRuntimeRegistration {
+public:
+  PythonTileLibRuntimeRegistration()
+      : service(std::make_shared<PythonTileLibService>()) {
+    mlir::pto::TileLibRuntime::install(service);
+  }
+
+  ~PythonTileLibRuntimeRegistration() {
+    mlir::pto::TileLibRuntime::uninstall(service.get());
+  }
+
+private:
+  std::shared_ptr<PythonTileLibService> service;
+};
+
+void destroyRuntimeRegistration(PyObject *capsule) {
+  void *pointer =
+      PyCapsule_GetPointer(capsule, kRuntimeRegistrationCapsuleName);
+  if (!pointer) {
+    PyErr_Clear();
+    return;
+  }
+  delete static_cast<PythonTileLibRuntimeRegistration *>(pointer);
+}
 
 int runPTOASFromPython(const std::vector<std::string> &arguments) {
   std::vector<std::string> storage = arguments;
@@ -113,14 +141,12 @@ int runPTOASFromPython(const std::vector<std::string> &arguments) {
   py::object contextOwner =
       py::module_::import("ptoas.mlir.ir").attr("Context")();
   MlirContext rawContext = py::cast<MlirContext>(contextOwner);
-  auto tileLibService =
-      std::make_shared<PythonTileLibService>(contextOwner);
 
   int result;
   {
     py::gil_scoped_release release;
     result = mlir::pto::runPTOAS(static_cast<int>(argv.size()), argv.data(),
-                                 *unwrap(rawContext), tileLibService);
+                                 *unwrap(rawContext));
   }
   return result;
 }
@@ -131,5 +157,10 @@ PYBIND11_MODULE(_core, module) {
   module.doc() = "PTOAS compiler and PTO dialect native bindings";
   py::module_::import("ptoas.mlir.ir");
   mlir::pto::python::populatePTODialectBindings(module);
+  module.add_object(
+      "_tilelib_runtime_registration",
+      py::capsule(new PythonTileLibRuntimeRegistration(),
+                  kRuntimeRegistrationCapsuleName,
+                  destroyRuntimeRegistration));
   module.def("main", &runPTOASFromPython, py::arg("argv"));
 }

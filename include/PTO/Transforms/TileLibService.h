@@ -15,6 +15,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <memory>
 #include <string>
 
 namespace mlir::pto {
@@ -49,6 +50,17 @@ public:
   materialize(const TileLibMaterializationRequest &request,
               MLIRContext &context,
               TileLibMaterializationCallback callback) = 0;
+};
+
+/// Process-wide access to the host TileLib implementation. The runtime owns no
+/// compilation context: passes obtain the current MLIRContext from their
+/// operation and pass it to TileLibService::materialize. A host binding installs
+/// one service implementation for the lifetime of that runtime.
+class TileLibRuntime {
+public:
+  static void install(std::shared_ptr<TileLibService> service);
+  static void uninstall(TileLibService *service);
+  static std::shared_ptr<TileLibService> getService();
 };
 
 } // namespace mlir::pto

@@ -2785,9 +2785,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
-static void
-lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module,
-                      std::shared_ptr<pto::TileLibService> tileLibService) {
+static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
   auto &kernelModulePM = pm.nest<ModuleOp>();
   auto moduleArchAttr =
       module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
@@ -2804,8 +2802,7 @@ lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module,
     return;
   }
 
-  kernelModulePM.addPass(
-      pto::createExpandTileOpPass(std::move(tileLibService)));
+  kernelModulePM.addPass(pto::createExpandTileOpPass());
 
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
@@ -2900,15 +2897,13 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
 }
 
 static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
-                                            bool hasTileOpsToExpand,
-                                            std::shared_ptr<pto::TileLibService>
-                                                tileLibService) {
+                                            bool hasTileOpsToExpand) {
   PassManager pm(module->getContext());
   pm.enableVerifier();
   pm.addPass(pto::createVPTOSplitCVModulePass());
   pm.addPass(pto::createVPTONormalizeContainerPass());
   if (hasTileOpsToExpand)
-    lowerPTOToVPTOBackend(pm, module.get(), std::move(tileLibService));
+    lowerPTOToVPTOBackend(pm, module.get());
   auto &kernelModulePM = pm.nest<ModuleOp>();
   // Inline legal direct calls before VMI layout assignment so private helper
   // bodies participate in one caller-local layout decision. The Func
@@ -3203,8 +3198,7 @@ int mlir::pto::compilePTOASModule(
                       "skipping the shared PTO-to-VPTO lowering pipeline.\n";
       return 1;
     }
-    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand,
-                                      context.getTileLibService())))
+    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand)))
       return 1;
     return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
                                  context.getCANNVersionOrDefault());
@@ -3243,8 +3237,7 @@ int mlir::pto::compilePTOASModule(
   // Fusion may later filter the ordered `candidates` array; ExpandTileOp
   // consumes the first candidate that remains.
   if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand)
-    pm.addPass(pto::createInsertTemplateAttributesPass(
-        context.getTileLibService()));
+    pm.addPass(pto::createInsertTemplateAttributesPass());
 
   // Keep frontend fusion on tile-native PTO IR and annotate last_use directly
   // on scheduled block-local spans before the shared mainline lowers tiles.
@@ -3387,8 +3380,7 @@ int mlir::pto::compilePTOASModule(
     if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile)))
       return 1;
 
-    if (failed(runVPTOBackendPipeline(
-            module, hasTileOpsToExpand, context.getTileLibService())))
+    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand)))
       return 1;
     return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
                                  context.getCANNVersionOrDefault());

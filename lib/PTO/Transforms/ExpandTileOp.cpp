@@ -64,7 +64,7 @@ namespace pto {
   namespace func = ::mlir::func;
 
 #define GEN_PASS_DEF_EXPANDTILEOP
-#include "PTO/Transforms/TileLibPasses.h.inc"
+#include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
 
@@ -797,17 +797,7 @@ struct ExpandTileOpPass
     : public mlir::pto::impl::ExpandTileOpBase<ExpandTileOpPass> {
   using ExpandTileOpBase::ExpandTileOpBase;
 
-  explicit ExpandTileOpPass(
-      std::shared_ptr<pto::TileLibService> tileLibService)
-      : tileLibService(std::move(tileLibService)) {}
-
-  ExpandTileOpPass(const ExpandTileOpPass &other)
-      : ExpandTileOpBase<ExpandTileOpPass>(other),
-        tileLibService(other.tileLibService) {}
-
   void runOnOperation() override;
-
-  std::shared_ptr<pto::TileLibService> tileLibService;
 };
 
 /// Serialize a JSON array of integers.
@@ -1185,8 +1175,10 @@ void ExpandTileOpPass::runOnOperation() {
   if (!hasExpandableOps)
     return;
 
+  std::shared_ptr<pto::TileLibService> tileLibService =
+      pto::TileLibRuntime::getService();
   if (!tileLibService) {
-    mod.emitError("ExpandTileOp PTODSL backend requires an in-process service");
+    mod.emitError("ExpandTileOp requires an initialized PTODSL runtime");
     signalPassFailure();
     return;
   }
@@ -1207,9 +1199,8 @@ void ExpandTileOpPass::runOnOperation() {
 namespace mlir {
 namespace pto {
 
-std::unique_ptr<Pass> createExpandTileOpPass(
-    std::shared_ptr<TileLibService> tileLibService) {
-  return std::make_unique<ExpandTileOpPass>(std::move(tileLibService));
+std::unique_ptr<Pass> createExpandTileOpPass() {
+  return std::make_unique<ExpandTileOpPass>();
 }
 
 } // namespace pto

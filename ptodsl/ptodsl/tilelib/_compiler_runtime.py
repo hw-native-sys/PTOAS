@@ -65,7 +65,7 @@ def materialize(
         descriptor,
         tile_specs,
         context_attrs=context_attrs,
-    ).build_module(context=context)
+    ).build_module_in_context(context)
     module.operation.verify()
     return module, descriptor.name
 

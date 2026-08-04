@@ -36,7 +36,7 @@ using namespace mlir;
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_INSERTTEMPLATEATTRIBUTES
-#include "PTO/Transforms/TileLibPasses.h.inc"
+#include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
 
@@ -852,14 +852,6 @@ struct InsertTemplateAttributesPass
           InsertTemplateAttributesPass> {
   using InsertTemplateAttributesBase::InsertTemplateAttributesBase;
 
-  explicit InsertTemplateAttributesPass(
-      std::shared_ptr<pto::TileLibService> tileLibService)
-      : tileLibService(std::move(tileLibService)) {}
-
-  InsertTemplateAttributesPass(const InsertTemplateAttributesPass &other)
-      : InsertTemplateAttributesBase<InsertTemplateAttributesPass>(other),
-        tileLibService(other.tileLibService) {}
-
   void runOnOperation() override {
     ModuleOp module = getOperation();
 
@@ -870,9 +862,11 @@ struct InsertTemplateAttributesPass
     });
     if (tileOperations.empty())
       return;
+    std::shared_ptr<pto::TileLibService> tileLibService =
+        pto::TileLibRuntime::getService();
     if (!tileLibService) {
       module.emitError(
-          "InsertTemplateAttributes requires an in-process PTODSL service");
+          "InsertTemplateAttributes requires an initialized PTODSL runtime");
       return signalPassFailure();
     }
 
@@ -898,8 +892,6 @@ struct InsertTemplateAttributesPass
       operation->setAttr(kCandidatesAttr, *candidates);
     }
   }
-
-  std::shared_ptr<pto::TileLibService> tileLibService;
 };
 
 } // namespace
@@ -907,10 +899,8 @@ struct InsertTemplateAttributesPass
 namespace mlir {
 namespace pto {
 
-std::unique_ptr<Pass> createInsertTemplateAttributesPass(
-    std::shared_ptr<TileLibService> tileLibService) {
-  return std::make_unique<InsertTemplateAttributesPass>(
-      std::move(tileLibService));
+std::unique_ptr<Pass> createInsertTemplateAttributesPass() {
+  return std::make_unique<InsertTemplateAttributesPass>();
 }
 
 } // namespace pto

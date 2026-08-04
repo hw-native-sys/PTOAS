@@ -13,12 +13,11 @@
 // Running without --enable-op-fusion proves metadata insertion is not gated
 // by fusion. Printing before FusionPlan proves its position when fusion is on.
 //
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after-all %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level2 --enable-op-fusion --emit-pto-ir --mlir-print-ir-before=pto-fusion-plan %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PREFUSION
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after-all %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s --check-prefix=EXPAND
 
-// META: IR Dump After InsertTemplateAttributes
 // META: pto.tadd
 // META-SAME: candidates = [
 // META-SAME: id = 0 : i64
@@ -34,7 +33,6 @@
 // PREFUSION: pto.tadd
 // PREFUSION-SAME: candidates = [
 
-// SELECT: IR Dump After ExpandTileOp
 // SELECT: func.func {{.*}}@{{.*}}__template_tadd
 
 // EXPAND: func.func @TADD

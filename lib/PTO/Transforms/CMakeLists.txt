@@ -76,6 +76,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/InsertSyncDebug.cpp
   PTORematerializeFixpipeVectorQuant.cpp
   PTOValidateIntToPtrUses.cpp
+  TileLibService.cpp
   InsertTemplateAttributes.cpp
   ExpandTileOp.cpp
   FoldTileBufIntrinsics.cpp

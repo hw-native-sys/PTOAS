@@ -66,9 +66,19 @@ before later passes can make candidate information harder to reconstruct.
 `ExpandTileOp` still renders from the current MLIR operands so the helper body
 matches the actual operand types and view metadata that survived to expansion.
 
-Both stages are compiler-session passes. They require the `TileLibService`
-owned by `PTOASContext`, are constructed explicitly by the PTOAS pipeline, and
-are not registered as standalone textual passes.
+Both stages are ordinary registered MLIR passes. They are default-constructible
+and obtain the current `MLIRContext` from the operation being transformed. A
+process-wide `TileLibRuntime` provides the host `TileLibService`; it owns no
+compilation context and receives the current context explicitly for every
+materialization. `PTOASContext` continues to own or borrow the context for one
+compilation session, so different invocations may use different contexts while
+sharing one Python runtime.
+
+The Python entry keeps the corresponding Python `Context` owner alive for the
+complete native compilation call. Compiler materialization requires that
+explicit context and never falls back to creating another one. This preserves
+normal pass registration, textual pipelines, targeted IR printing, cloning,
+and reproducer behavior without storing Python objects in pass instances.
 
 ## Template Metadata
 

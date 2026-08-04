@@ -683,11 +683,10 @@ mlir::pto::PTOASContext::PTOASContext(DialectRegistry &registry,
       argc(argc), argv(argv) {}
 
 mlir::pto::PTOASContext::PTOASContext(
-    MLIRContext &borrowedContext,
-    std::shared_ptr<TileLibService> tileLibService,
-    llvm::StringRef outputPath, int argc, char **argv)
-    : mlirContext(&borrowedContext), tileLibService(std::move(tileLibService)),
-      outputPath(outputPath.str()), argc(argc), argv(argv) {}
+    MLIRContext &borrowedContext, llvm::StringRef outputPath, int argc,
+    char **argv)
+    : mlirContext(&borrowedContext), outputPath(outputPath.str()), argc(argc),
+      argv(argv) {}
 
 mlir::pto::PTOASContext::~PTOASContext() = default;
 
@@ -707,11 +706,6 @@ void mlir::pto::PTOASContext::initializeMLIRContext() {
 }
 
 MLIRContext &mlir::pto::PTOASContext::getMLIRContext() { return *mlirContext; }
-
-std::shared_ptr<mlir::pto::TileLibService>
-mlir::pto::PTOASContext::getTileLibService() const {
-  return tileLibService;
-}
 
 void mlir::pto::PTOASContext::setArch(std::string value) {
   arch = std::move(value);
@@ -1279,9 +1273,8 @@ static LogicalResult writeTextOutput(llvm::StringRef output,
 // +-------------+ +------------------------------------------+
 // | C++ source  | |                fatobj                    |
 // +-------------+ +------------------------------------------+
-static int runPTOASDriver(
-    int argc, char **argv, MLIRContext *borrowedContext = nullptr,
-    std::shared_ptr<mlir::pto::TileLibService> tileLibService = nullptr) {
+static int runPTOASDriver(int argc, char **argv,
+                          MLIRContext *borrowedContext = nullptr) {
   DialectRegistry registry;
   mlir::pto::registerPTOASDialects(registry);
   if (borrowedContext)
@@ -1302,8 +1295,8 @@ static int runPTOASDriver(
 
   std::unique_ptr<PTOASContext> context;
   if (borrowedContext) {
-    context = std::make_unique<PTOASContext>(
-        *borrowedContext, std::move(tileLibService), outputFilename, argc, argv);
+    context = std::make_unique<PTOASContext>(*borrowedContext, outputFilename,
+                                             argc, argv);
   } else {
     context =
         std::make_unique<PTOASContext>(registry, outputFilename, argc, argv);
@@ -1347,9 +1340,7 @@ int mlir::pto::runPTOAS(int argc, char **argv) {
   return runPTOASDriver(argc, argv);
 }
 
-int mlir::pto::runPTOAS(
-    int argc, char **argv, MLIRContext &borrowedContext,
-    std::shared_ptr<TileLibService> tileLibService) {
-  return runPTOASDriver(argc, argv, &borrowedContext,
-                        std::move(tileLibService));
+int mlir::pto::runPTOAS(int argc, char **argv,
+                        MLIRContext &borrowedContext) {
+  return runPTOASDriver(argc, argv, &borrowedContext);
 }

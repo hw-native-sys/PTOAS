@@ -507,6 +507,49 @@ def PTOResolveReservedBuffers : Pass<"pto-resolve-reserved-buffers", "ModuleOp">
   ];
 }
 
+def InsertTemplateAttributes
+    : Pass<"pto-insert-template-attributes", "ModuleOp"> {
+  let summary = "Attach legal PTODSL template candidates to tile operations";
+  let description = [{
+    Queries the process-wide PTODSL TileLib runtime for legal template
+    candidates and stores the compact candidate list on each tile operation as
+    the `candidates` attribute. Each candidate contains only id, name,
+    loop_depth, postupdate, and tail metadata.
+  }];
+  let constructor = "mlir::pto::createInsertTemplateAttributesPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
+def ExpandTileOp : Pass<"pto-expand-tile-op", "ModuleOp"> {
+  let summary = "Expand tile ops into calls to TileLib template functions";
+  let description = [{
+    Expands tile-level operations (pto.tadd, pto.tsub, etc.) by asking the
+    process-wide PTODSL TileLib runtime to instantiate template libraries in
+    the current operation's MLIRContext. The generated template functions use
+    tile_buf parameters and contain vector-level implementations (pto.vecscope,
+    pto.vlds, pto.vadd, pto.vsts, etc.).
+
+    Each tile op is replaced by a func.call to the generated template function,
+    with tile_buf operands passed directly (no type bridging).
+
+    After this pass, the Inline pass inlines template bodies, and
+    FoldTileBufIntrinsics resolves tile_buf_addr / tile_valid_rows /
+    tile_valid_cols.
+  }];
+  let constructor = "mlir::pto::createExpandTileOpPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::vector::VectorDialect"
+  ];
+}
+
 def FoldTileBufIntrinsics : Pass<"pto-fold-tile-buf-intrinsics", "mlir::func::FuncOp"> {
   let summary = "Fold structured-view intrinsics after template inlining";
   let description = [{
