@@ -1,7 +1,8 @@
-# UB table scatter/gather — stale `vgather` reads
+# UB table scatter/gather — `vscatter` never lands
 
-A UB-resident lookup table written with `vscatter` and read back with
-`vgather` returns the seed sentinel on every lane. AscendC with the same
+A UB-resident lookup table updated with `vscatter` and read back with
+`vgather` returns the seed sentinel on every lane. Contiguous `vstore`/`vload`
+and `MTE → vgather` of the same addresses are exact. AscendC with the same
 schedule is exact. This package is a self-contained bug report and numeric
 repro for PTOAS.
 
@@ -10,9 +11,9 @@ Branch: `repro/ub-pool-scatter-gather`. Details: [`BUG_REPORT.md`](BUG_REPORT.md
 ## Algorithm
 
 ```text
-seed pool[i] = -inf          for i in 0..63   (vscatter)
+seed pool[i] = -inf          for i in 0..63   (contiguous vstore)
 barrier
-pool[i]      = vals[i]       for i in 0..63   (vscatter)
+pool[i]      = vals[i]       for i in 0..63   (vscatter)   ← does not land
 barrier
 out[i]       = pool[i]       for i in 0..63   (vgather)
 ```

@@ -1,29 +1,35 @@
-# Bug report — UB-resident `vscatter` / `vgather` returns stale data
+# Bug report — UB-resident `vscatter` never lands
 
 Audience: PTOAS maintainers.
 Tag / tree: `vmi-v0.1.3` (this worktree).
 
 ## Problem
 
-A small lookup table kept in UB is written with two `vscatter` passes and read
-back with `vgather`. The kernel compiles, launches, and completes without an
-ACL error, but every gathered lane returns the **seed sentinel** (`-inf`) as if
-the second scatter never landed.
+A small lookup table kept in UB is seeded with a contiguous `vstore`, then
+updated with `vscatter` and read back with `vgather`. The kernel compiles,
+launches, and completes without an ACL error, but every gathered lane returns
+the **seed sentinel** (`-inf`) as if the scatter never landed.
 
 The AscendC peer with the same schedule (`vscatter` → `mem_bar` → `vscatter` →
-`mem_bar` → `vgather2`) is exact.
+`mem_bar` → `vgather2`) is exact. On VMI, contiguous `vstore`/`vload` and
+`MTE → vgather` of the same addresses are also exact — only `vscatter` fails
+to write.
 
 ## Minimal algorithm
 
 ```text
-pool[0..63]  <-  -inf          # vscatter seed
+pool[0..63]  <-  -inf          # contiguous vstore (known-good write)
 barrier V
-pool[0..63]  <-  vals[0..63]   # vscatter payload (identity offsets)
+pool[0..63]  <-  vals[0..63]   # vscatter (identity offsets)  ← does not land
 barrier V
 out[0..63]   <-  pool[0..63]   # vgather
 ```
 
 Expected: `out == vals`. Observed: `out == [-inf] * 64`.
+
+Seeding with `vscatter` itself also fails to land (gather then returns NaN from
+untouched UB). The contiguous `vstore` seed makes the stale-sentinel signature
+unambiguous.
 
 ## Fixtures
 
@@ -45,12 +51,15 @@ Expected: `out == vals`. Observed: `out == [-inf] * 64`.
    Reinterpreting as `ui32` was tried; still stale.
 3. **Offset units.** Spec says per-lane element offset. Scaling by 4 (byte
    offsets) was tried; also wrong.
+4. **`vgather` itself.** Gathering data written by contiguous `vstore` or by
+   MTE returns the expected values. Contiguous `vload` after a failed
+   `vscatter` also still sees the seed — the write path is the broken one.
 
 ## Criteria
 
 1. `failing_vmi.py` launched on device returns `out == vals` (identity).
-2. Until then, please treat UB-resident scatter/gather tables as broken on VMI
-   and keep the AscendC path as the reference.
+2. Until then, please treat UB-resident `vscatter` as broken on VMI and keep
+   the AscendC path as the reference.
 
 ## Non-goals
 

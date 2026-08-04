@@ -40,7 +40,10 @@ print("COMPILE_OK", len(compiled.mlir_text()))
 try:
     r = run_numeric()
 except Exception as exc:
+    msg = str(exc)
     print(f"LAUNCH_ERR {type(exc).__name__}: {exc}")
+    if "requires 'addr' operand" in msg or "pto-level=level3" in msg:
+        print("NATIVE_BUILD_ERR")
     raise SystemExit(0)
 print("NUMERIC", r)
 raise SystemExit(0 if r.get("ok") else 1)
@@ -53,8 +56,12 @@ if grep -q "COMPILE_OK" "${OUT}/failing_vmi.log"; then
 else
   fail "failing_vmi.py compile"
 fi
-if grep -qE "LAUNCH_ERR|NPU not available" "${OUT}/failing_vmi.log"; then
-  skip "failing_vmi.py numeric (no device / launch error)"
+if grep -q "NATIVE_BUILD_ERR" "${OUT}/failing_vmi.log"; then
+  fail "failing_vmi.py native build (level3/addr)"
+elif grep -qE "LAUNCH_ERR.*NPU not available" "${OUT}/failing_vmi.log"; then
+  skip "failing_vmi.py numeric (no device)"
+elif grep -qE "LAUNCH_ERR" "${OUT}/failing_vmi.log"; then
+  fail "failing_vmi.py launch error"
 elif grep -q "all_neg_inf.: True" "${OUT}/failing_vmi.log"; then
   fail "failing_vmi.py numeric — all lanes -inf (bug reproduced)"
 elif [ "${rc}" -eq 0 ]; then
