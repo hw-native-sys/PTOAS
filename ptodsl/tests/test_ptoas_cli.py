@@ -35,6 +35,8 @@ class PTOASCLITests(unittest.TestCase):
 
             with mock.patch.object(
                 _cli, "_load_native_module", return_value=native_module
+            ), mock.patch.object(
+                _cli, "_editable_source_root", return_value=None
             ), mock.patch.dict(
                 _cli.os.environ,
                 {"PATH": "/usr/bin"},
@@ -92,9 +94,12 @@ class PTOASCLITests(unittest.TestCase):
             tileops_dir.mkdir(parents=True)
             native_module = self._make_native_module(package_root)
 
-            python_root, resolved_tileops = _cli._resolve_runtime_paths(
-                native_module
-            )
+            with mock.patch.object(
+                _cli, "_editable_source_root", return_value=None
+            ):
+                python_root, resolved_tileops = _cli._resolve_runtime_paths(
+                    native_module
+                )
 
         self.assertEqual(python_root, package_root.parent.resolve())
         self.assertEqual(resolved_tileops, tileops_dir.resolve())
@@ -104,8 +109,30 @@ class PTOASCLITests(unittest.TestCase):
             package_root = Path(temp_dir) / "site-packages" / "ptoas"
             native_module = self._make_native_module(package_root)
 
-            with self.assertRaisesRegex(SystemExit, "TileOps"):
+            with mock.patch.object(
+                _cli, "_editable_source_root", return_value=None
+            ), self.assertRaisesRegex(SystemExit, "TileOps"):
                 _cli._resolve_runtime_paths(native_module)
+
+    def test_editable_install_uses_source_tree_tileops(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            tileops_dir = source_root / "lib" / "TileOps"
+            tileops_dir.mkdir(parents=True)
+            (source_root / "ptodsl").mkdir()
+            native_module = self._make_native_module(
+                source_root / "site-packages" / "ptoas"
+            )
+
+            with mock.patch.object(
+                _cli, "_editable_source_root", return_value=source_root
+            ):
+                python_root, resolved_tileops = _cli._resolve_runtime_paths(
+                    native_module
+                )
+
+        self.assertEqual(python_root, source_root / "ptodsl")
+        self.assertEqual(resolved_tileops, tileops_dir.resolve())
 
 
 if __name__ == "__main__":

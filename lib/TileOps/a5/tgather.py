@@ -278,23 +278,19 @@ def template_tgather_cmp(
     lanes_b32 = pto.elements_per_vreg(pto.i32)
     dst_ptr = dst.as_ptr()
     cdst_ptr = cdst.as_ptr()
+    k_scalar = k_value
     with pto.vecscope():
         full_mask_b32 = pto.make_mask(pto.i32, pto.PAT.ALL)
         index = pto.vci(offset, "ASC")
         add_offset = pto.vbr(64)
-        align = pto.init_align()
         pto.sprclr("AR")
 
         dst_cols = dst.shape[1]
 
         if pto.const_expr(str(dtype) in ("f32",)):
-            k_f32_vec = pto.vbr(k_value)
-            k_s32_vec = pto.vcvt(
-                k_f32_vec, pto.i32, full_mask_b32, rnd=pto.VcvtRoundMode.R,
-                sat=pto.VcvtSatMode.NOSAT,
-            )
-            k_vec = pto.vbitcast(k_s32_vec, pto.ui32)
+            k_vec = pto.vbr(k_scalar)
             for row in range(0, src_valid_rows, 1):
+                align = pto.init_align()
                 remained = src_valid_cols
                 row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
                 for col in range(0, src_valid_cols, lanes_b32):
@@ -304,41 +300,37 @@ def template_tgather_cmp(
                         src_reg, pto.i32, full_mask_b32, rnd=pto.VcvtRoundMode.R,
                         sat=pto.VcvtSatMode.NOSAT,
                     )
-                    cmp_mask = pto.vcmp(
-                        pto.vbitcast(src_s32, pto.ui32), k_vec, mask, cmp_mode
-                    )
+                    src_u32 = pto.vbitcast(src_s32, pto.ui32)
+                    cmp_mask = pto.vcmp(src_u32, pto.vbitcast(k_vec, pto.ui32), mask, cmp_mode)
                     sqz = pto.vsqz(index, cmp_mask)
                     align = pto.vstur(align, sqz, row_dst_ptr, "POST_UPDATE")
                     index = pto.vadd(index, add_offset, full_mask_b32)
                 pto.vstar(align, row_dst_ptr)
                 pto.sprsts("AR", cdst_ptr, row * 4)
                 pto.sprclr("AR")
-                align = pto.init_align()
+                pto.mem_bar(pto.BarrierType.VST_VST)
 
         elif pto.const_expr(elem_bytes == 4):
-            k_vec = pto.vbr(k_value)
             for row in range(0, src_valid_rows, 1):
+                align = pto.init_align()
                 remained = src_valid_cols
                 row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
                 for col in range(0, src_valid_cols, lanes_b32):
                     src_reg = pto.vlds(src[row, col:])
                     mask, remained = pto.make_mask(pto.i32, remained)
-                    cmp_mask = pto.vcmp(src_reg, k_vec, mask, cmp_mode)
+                    cmp_mask = pto.vcmps(src_reg, k_scalar, mask, cmp_mode)
                     sqz = pto.vsqz(index, cmp_mask)
                     align = pto.vstur(align, sqz, row_dst_ptr, "POST_UPDATE")
                     index = pto.vadd(index, add_offset, full_mask_b32)
                 pto.vstar(align, row_dst_ptr)
                 pto.sprsts("AR", cdst_ptr, row * 4)
                 pto.sprclr("AR")
-                align = pto.init_align()
+                pto.mem_bar(pto.BarrierType.VST_VST)
 
         elif pto.const_expr(str(dtype) in ("i16", "ui16", "f16", "bf16")):
             full_mask_b16 = pto.make_mask(dtype, pto.PAT.ALL)
-            k_vec_src = pto.vbr(k_value)
-            k_f32_vec = pto.vcvt(
-                k_vec_src, pto.f32, full_mask_b16, part=pto.VcvtPartMode.EVEN
-            )
             for row in range(0, src_valid_rows, 1):
+                align = pto.init_align()
                 remained = src_valid_cols
                 row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
                 for col in range(0, src_valid_cols, lanes_b32):
@@ -347,24 +339,20 @@ def template_tgather_cmp(
                         src_reg, pto.f32, full_mask_b16, part=pto.VcvtPartMode.EVEN
                     )
                     mask, remained = pto.make_mask(pto.i32, remained)
-                    cmp_mask = pto.vcmp(src_f32, k_f32_vec, mask, cmp_mode)
+                    cmp_mask = pto.vcmps(src_f32, k_scalar, mask, cmp_mode)
                     sqz = pto.vsqz(index, cmp_mask)
                     align = pto.vstur(align, sqz, row_dst_ptr, "POST_UPDATE")
                     index = pto.vadd(index, add_offset, full_mask_b32)
                 pto.vstar(align, row_dst_ptr)
                 pto.sprsts("AR", cdst_ptr, row * 4)
                 pto.sprclr("AR")
-                align = pto.init_align()
+                pto.mem_bar(pto.BarrierType.VST_VST)
 
         elif pto.const_expr(elem_bytes == 1):
             full_mask_b8 = pto.make_mask(pto.i8, pto.PAT.ALL)
             v_zero = pto.vdup(pto.ui8(0), full_mask_b8)
-            k_vec_src = pto.vbr(k_value)
-            k_u8 = pto.vbitcast(k_vec_src, pto.ui8)
-            k_intlv1, k_intlv2 = pto.vintlv(k_u8, v_zero)
-            k_si8_1 = pto.vbitcast(k_intlv1, pto.si8)
-            k_ui32_vec = pto.vcvt(k_si8_1, pto.i32, full_mask_b8, part=pto.VcvtPartMode.P0)
             for row in range(0, src_valid_rows, 1):
+                align = pto.init_align()
                 remained = src_valid_cols
                 row_dst_ptr = pto.addptr(dst_ptr, row * dst_cols * 4)
                 for col in range(0, src_valid_cols, lanes_b32):
@@ -380,9 +368,9 @@ def template_tgather_cmp(
                         src_i8_2, pto.i32, full_mask_b8, part=pto.VcvtPartMode.P0
                     )
                     mask0, remained = pto.make_mask(pto.i32, remained)
-                    cmp_mask0 = pto.vcmp(
+                    cmp_mask0 = pto.vcmps(
                         pto.vbitcast(score_u32_0, pto.ui32),
-                        pto.vbitcast(k_ui32_vec, pto.ui32),
+                        k_scalar,
                         mask0,
                         cmp_mode,
                     )
@@ -390,9 +378,9 @@ def template_tgather_cmp(
                     align = pto.vstur(align, sqz0, row_dst_ptr, "POST_UPDATE")
                     index = pto.vadd(index, add_offset, full_mask_b32)
                     mask1, remained = pto.make_mask(pto.i32, remained)
-                    cmp_mask1 = pto.vcmp(
+                    cmp_mask1 = pto.vcmps(
                         pto.vbitcast(score_u32_1, pto.ui32),
-                        pto.vbitcast(k_ui32_vec, pto.ui32),
+                        k_scalar,
                         mask1,
                         cmp_mode,
                     )
@@ -402,4 +390,4 @@ def template_tgather_cmp(
                 pto.vstar(align, row_dst_ptr)
                 pto.sprsts("AR", cdst_ptr, row * 4)
                 pto.sprclr("AR")
-                align = pto.init_align()
+                pto.mem_bar(pto.BarrierType.VST_VST)

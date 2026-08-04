@@ -371,6 +371,7 @@ def _tgather_cmp_body(
     src_dtype,
     cmp_mode,
     offset,
+    k_value,
 ):
     src_view = pto.make_tensor_view(
         src_ptr, shape=[src_rows, src_cols], strides=[src_cols, 1]
@@ -391,7 +392,7 @@ def _tgather_cmp_body(
     pto.tile.gather(
         src_tile,
         dst_tile,
-        k_value=src_dtype(_CMP_K_VALUE),
+        k_value=src_dtype(k_value),
         cdst=cdst_tile,
         tmp=tmp_tile,
         cmp_mode=cmp_mode,
@@ -413,6 +414,7 @@ for _name, _src_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
         sdt=_src_dtype,
         cm=_cmp_mode,
         off=_offset,
+        kv=_CMP_K_VALUE,
         kernel_name=f"tgather_{_name}",
     ):
         @pto.jit(name=kernel_name, target="a5")
@@ -431,6 +433,7 @@ for _name, _src_dtype, _cmp_mode, _src_shape, _offset in CMP_CASES:
                 src_dtype=sdt,
                 cmp_mode=cm,
                 offset=off,
+                k_value=kv,
             )
 
         return _kernel

@@ -31,7 +31,32 @@ def _load_native_module():
     return _core
 
 
+def _editable_source_root() -> Path | None:
+    try:
+        from importlib.metadata import distribution
+        import json
+
+        direct_url_text = distribution("ptoas").read_text("direct_url.json")
+        if not direct_url_text:
+            return None
+        info = json.loads(direct_url_text)
+        if info.get("dir_info", {}).get("editable"):
+            url = info.get("url", "")
+            if url.startswith("file://"):
+                return Path(url[7:])
+    except Exception:
+        pass
+    return None
+
+
 def _resolve_runtime_paths(native_module) -> tuple[Path, Path]:
+    source_root = _editable_source_root()
+    if source_root is not None:
+        python_root = source_root / "ptodsl"
+        tileops_dir = source_root / "lib" / "TileOps"
+        if tileops_dir.is_dir():
+            return python_root, tileops_dir.resolve()
+
     module_file = getattr(native_module, "__file__", None)
     if not module_file:
         raise SystemExit("ptoas._core does not expose a module file")
