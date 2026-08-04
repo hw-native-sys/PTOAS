@@ -1,0 +1,336 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// FORCED EVENT-ID OVERFLOW.
+//
+// WHY THIS FILE EXISTS AT ALL. No real kernel overflows: per-direction peak overlap
+// stays inside the 8-id pool, so the routing predicate ("does this buffer overflow
+// its pool?") would never fire on a real kernel, and neither would the spill path.
+// Without a synthetic input that overflows on purpose, both would be machinery no
+// test can execute.
+//
+// HOW IT FORCES OVERFLOW -- with a REAL KERNEL, not a test-only pool knob. All N
+// tloads are issued before any consumer, so all N MTE2->V hazards are
+// simultaneously live and the per-direction peak overlap is exactly N. The event
+// pool for one direction is 8, so overflow = max(0, N - 8).
+//
+// IT IS A DIAL, not a single data point: overflow == max(0, N - 8) in N, so the
+// harness can be moved to any point on the curve. Two points are pinned below --
+// N=8, the boundary, which must NOT overflow, and N=12, which must overflow by 4.
+//
+// BOTH DIRECTIONS ARE PINNED. A synthetic that always overflows proves nothing --
+// it could be broken rather than saturated. So the N=8 boundary kernel is pinned
+// as a CONTROL that must NOT overflow. If OVERFLOW ever reports overflow=0, or
+// BOUNDARY ever reports overflow>0, the dial has stopped being a dial.
+//
+// A5 (K=32) on purpose: buffer-ID is the class overflow is routed INTO, so
+// the harness must run where K > 0.
+//===----------------------------------------------------------------------===//
+
+// N=12: 12 live MTE2->V hazards against a pool of 8 -> overflow=4.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=OVERFLOW
+// OVERFLOW: [unified-model] func=forced_overflow_n12 hazards={{[0-9]+}} K=32
+// An overflowing hazard does not go out with no id: each spills to a PIPE_ALL
+// barrier, so `overflow` and `spilled_to_barrier` must agree.
+//
+// THIS KERNEL IS THE ONLY REMAINING COVERAGE OF THE SPILL PATH. Written-back
+// overflow kernels are ROUTED to buffer-id instead of spilled (see
+// sync_overflow_id_gap.pto). This kernel is a pure
+// forward MTE2->V chain -- never written back, so never routed -- which is what
+// keeps the spill path exercised. If it ever starts routing, spilling becomes
+// untested. If the two counts ever diverge, a hazard has been left unallocated.
+// OVERFLOW: [unified-sync coloring] interval coloring: assigned=9 overflow=4 spilled_to_barrier=4 hidden_reserved=0 reused=0
+//
+// N=8 CONTROL: exactly the pool. MUST NOT overflow -- this is what proves the
+// dial is a dial and not a kernel that is simply always broken.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=BOUNDARY
+// BOUNDARY: [unified-model] func=boundary_n8 hazards={{[0-9]+}} K=32
+// BOUNDARY: [unified-sync coloring] interval coloring: assigned=9 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=0
+
+// ---------------------------------------------------------------------------
+// STEP 2 ROUTING.
+//
+// EVERY CHECK BELOW IS ANCHORED ON `func=`, AND THAT IS LOAD-BEARING. Three
+// functions share this module and the per-function report lines are emitted in a
+// non-deterministic FUNCTION order. Each function's own lines are contiguous, so a
+// check anchored on `func=` and the lines that follow it are sound -- but an
+// unanchored check is not: two of these kernels report the same `considered=13`, so
+// without the function name the match is ambiguous and the test flakes on order.
+//
+// The two kernels above force OVERFLOW but NOT WRITE-BACK, and the routing predicate
+// needs BOTH: a pure forward MTE2->V chain leaves isWrittenBack false, giving
+// `routed=0 skipped(not_written_back=12)`. `overflow_writeback` below supplies the
+// second dimension, so overflow alone is never mistaken for a routing condition.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=NOROUTE
+// NOROUTE: [unified-sync routing] func=forced_overflow_n12 buffer routing: considered=13 routed=0 hazards_covered=0 skipped(no_overflow=1 not_written_back=12 K=0:0) split=0 OK
+//
+// With write-back, 12 of 13 buffers route. The 13th is the output tile: its
+// direction does not overflow, so `no_overflow=1` -- the predicate discriminating,
+// not routing everything in sight. `split=0` is the ALL-OR-NOTHING assertion: no
+// hazard touches both a routed and an unrouted buffer, which is the shape that hangs.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=ROUTE
+// ROUTE:      [unified-sync routing] func=overflow_writeback buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) split=0 OK
+// ROUTE-NEXT:     ROUTE overflow_writeback b#0 -> bufid omega=12>pool=8 wb=yes
+//
+// AND THE EMISSION HAPPENS: the routed hazards take no event
+// id and get get_buf/rls_buf instead. `get` == `rls` is the counter cycle closing.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=EMITWB
+// EMITWB: [unified-sync bufid] func=overflow_writeback bufid emission: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
+//
+// ALL-OR-NOTHING is asserted by the compiler itself, per function, in the bufid
+// emission line above: `leaked_event_ops=0`. A whole-file `CHECK-NOT` was tried first and is
+// WRONG here -- the IR dump holds all three functions and the two UNROUTED ones
+// legitimately emit MTE2<->V flags, so it flagged them. Per-function assertion in
+// the report is both correct and immune to the report-ordering flake.
+//
+// sync_overflow_id_gap.pto pins the same spill from the other direction, and stays
+// single-function, because a `not ptoas` check cannot
+// live in a multi-function module: when the pass fails on the first function it
+// processes, `signalPassFailure` stops the pipeline and the other functions' reports
+// are ABSENT, not merely reordered.
+//
+// G1 AND THE BARRIER DELTA. The differential coverage gate FAILS on this kernel, and
+// that failure is the intended reading rather than an open defect. Routing twelve
+// buffers to tokens keeps the event pool from overflowing, so this run emits NO
+// in-body PIPE_ALL where the incumbent emits eight. A PIPE_ALL orders every anchor
+// pair spanning it, so the incumbent's edge set is denser by construction and the
+// superset requirement cannot be satisfied by emitting less sync. The two functions
+// above, whose barrier counts match, are clean in the very same run -- the barrier
+// delta is the entire discriminator.
+//
+// The gate reports the two barrier counts and concludes nothing from them, because
+// the same delta appears whenever the candidate is simply broken -- an empty
+// allocation shows it too, the reference carrying the auto-sync tail barrier. So the
+// counts are pinned here as facts and the reading is argued in the header.
+//
+// Three checks hold this down, and the middle one is what makes it evidence instead
+// of an excuse:
+//   G1FWD          the failure, carrying the barrier counts it is attributed to
+//   G1REV          the same comparison with the two profiles SWAPPED passes, so this
+//                  run's edge set is a strict SUBSET -- there is no ordering it
+//                  establishes that the incumbent lacks. That is what separates
+//                  "emitted less" from "diverged", and it is the direction a real
+//                  regression could not fake
+//   SELFU / SELFI  the absolute gate is clean for BOTH modes, which is the
+//                  correctness claim the differential is unable to make
+//
+// Only `func=overflow_writeback` lines are asserted, for the reason recorded just
+// above: a failing function can cost the remaining functions their reports, and
+// report order across functions is not stable.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync  --dump-sync-coverage %s 2> %t.ref.cov  > /dev/null
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --dump-sync-coverage %s 2> %t.cand.cov > /dev/null
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --check-sync-coverage=%t.ref.cov %s 2>&1 >/dev/null | FileCheck %s --check-prefix=G1FWD
+// G1FWD: [sync-gate:g1] func=overflow_writeback candidate_edges=90 reference_edges=236 violations=665 candidate_bedges=90 reference_bedges=609 candidate_barrier_all=1 reference_barrier_all=9
+//
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --check-sync-coverage=%t.cand.cov %s 2>&1 >/dev/null | FileCheck %s --check-prefix=G1REV
+// G1REV: [sync-gate:g1] func=overflow_writeback candidate_edges=236 reference_edges=90 violations=0 OK
+//
+// THE ABSOLUTE GATE, BOTH MODES. `arch_guaranteed` counts dependencies left to the A5
+// PIPE_V intra-pipe guarantee instead of to emitted sync, and it is pinned on BOTH
+// sides because this run leans on it harder -- 66 against 28. Those sixty-six are the
+// WAW pairs among the twelve `tcvt` writes into ONE tile buffer, which program order
+// already orders on every profile; the two modes discharge different numbers of
+// those pairs (114 covered here against 152), and `covered` is tested before the
+// carve-out. Both sides
+// reach uncovered=0, so what differs is which mechanism discharges a pair, not whether
+// it is discharged. Pinning both numbers makes a future shift in that balance visible.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELFU
+// SELFU: [sync-gate:g1-self] func=overflow_writeback compounds=25 deps=205 covered=139 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=66 unmappable=0 OK
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELFI
+// SELFI: [sync-gate:g1-self] func=overflow_writeback compounds=25 deps=205 covered=177 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=28 unmappable=0 OK
+//
+// AND THE COUNT FLOOR PASSES THE SAME FACT the coverage gate reports as loss: 55 ops
+// against 63. Two gates reading one reduction in opposite directions is the clearest
+// statement of what each one measures.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --dump-sync-counts %s 2> %t.ref.cnt > /dev/null
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --check-sync-count-floor=%t.ref.cnt %s 2>&1 >/dev/null | FileCheck %s --check-prefix=G4
+// G4: [sync-gate:g4] func=overflow_writeback candidate_total=55 reference_total=63 violations=0 OK
+
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @forced_overflow_n12(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 2048 : i64
+    %a2 = arith.constant 4096 : i64
+    %a3 = arith.constant 6144 : i64
+    %a4 = arith.constant 8192 : i64
+    %a5 = arith.constant 10240 : i64
+    %a6 = arith.constant 12288 : i64
+    %a7 = arith.constant 14336 : i64
+    %a8 = arith.constant 16384 : i64
+    %a9 = arith.constant 18432 : i64
+    %a10 = arith.constant 20480 : i64
+    %a11 = arith.constant 22528 : i64
+    %aout = arith.constant 24576 : i64
+    %sv = pto.make_tensor_view %src, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %dv = pto.make_tensor_view %dst, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %ps = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %pd = pto.partition_view %dv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %t0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t1 = pto.alloc_tile addr = %a1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t2 = pto.alloc_tile addr = %a2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t3 = pto.alloc_tile addr = %a3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t4 = pto.alloc_tile addr = %a4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t5 = pto.alloc_tile addr = %a5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t6 = pto.alloc_tile addr = %a6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t7 = pto.alloc_tile addr = %a7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t8 = pto.alloc_tile addr = %a8 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t9 = pto.alloc_tile addr = %a9 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t10 = pto.alloc_tile addr = %a10 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t11 = pto.alloc_tile addr = %a11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tout = pto.alloc_tile addr = %aout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // All 12 loads first: opens 12 simultaneous MTE2->V hazards.
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t8 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t9 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t10 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    // Then all consumers: every one of those intervals is still live.
+    pto.tcvt ins(%t0{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t1{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t2{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t3{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t4{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t5{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t6{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t7{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t8{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t9{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t10{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t11{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%pd : !pto.partition_tensor_view<32x32xf16>)
+    return
+  }
+  func.func @boundary_n8(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 2048 : i64
+    %a2 = arith.constant 4096 : i64
+    %a3 = arith.constant 6144 : i64
+    %a4 = arith.constant 8192 : i64
+    %a5 = arith.constant 10240 : i64
+    %a6 = arith.constant 12288 : i64
+    %a7 = arith.constant 14336 : i64
+    %aout = arith.constant 16384 : i64
+    %sv = pto.make_tensor_view %src, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %dv = pto.make_tensor_view %dst, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %ps = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %pd = pto.partition_view %dv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %t0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t1 = pto.alloc_tile addr = %a1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t2 = pto.alloc_tile addr = %a2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t3 = pto.alloc_tile addr = %a3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t4 = pto.alloc_tile addr = %a4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t5 = pto.alloc_tile addr = %a5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t6 = pto.alloc_tile addr = %a6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %t7 = pto.alloc_tile addr = %a7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tout = pto.alloc_tile addr = %aout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // All 8 loads first: opens 8 simultaneous MTE2->V hazards.
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    // Then all consumers: every one of those intervals is still live.
+    pto.tcvt ins(%t0{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t1{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t2{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t3{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t4{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t5{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t6{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%t7{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%pd : !pto.partition_tensor_view<32x32xf16>)
+    return
+  }
+  // The loop is what creates the WRITE-BACK: each tile is written by MTE2 and
+  // read by V on every iteration, so it carries BOTH MTE2->V (forward RAW) and
+  // V->MTE2 (loop-carried WAR). That makes isWrittenBack true, which the routing
+  // predicate requires and which the two kernels above do NOT have.
+  func.func @overflow_writeback(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c4 = arith.constant 4 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 2048 : i64
+    %a2 = arith.constant 4096 : i64
+    %a3 = arith.constant 6144 : i64
+    %a4 = arith.constant 8192 : i64
+    %a5 = arith.constant 10240 : i64
+    %a6 = arith.constant 12288 : i64
+    %a7 = arith.constant 14336 : i64
+    %a8 = arith.constant 16384 : i64
+    %a9 = arith.constant 18432 : i64
+    %a10 = arith.constant 20480 : i64
+    %a11 = arith.constant 22528 : i64
+    %aout = arith.constant 24576 : i64
+    %sv = pto.make_tensor_view %src, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %dv = pto.make_tensor_view %dst, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %ps = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %pd = pto.partition_view %dv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    scf.for %it = %c0 to %c4 step %c1 {
+      %t0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t1 = pto.alloc_tile addr = %a1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t2 = pto.alloc_tile addr = %a2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t3 = pto.alloc_tile addr = %a3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t4 = pto.alloc_tile addr = %a4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t5 = pto.alloc_tile addr = %a5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t6 = pto.alloc_tile addr = %a6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t7 = pto.alloc_tile addr = %a7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t8 = pto.alloc_tile addr = %a8 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t9 = pto.alloc_tile addr = %a9 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t10 = pto.alloc_tile addr = %a10 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t11 = pto.alloc_tile addr = %a11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %tout = pto.alloc_tile addr = %aout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t8 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t9 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t10 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t0{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t1{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t2{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t3{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t4{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t5{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t6{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t7{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t8{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t9{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t10{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t11{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tstore ins(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%pd : !pto.partition_tensor_view<32x32xf16>)
+      scf.yield
+    }
+    return
+  }
+}

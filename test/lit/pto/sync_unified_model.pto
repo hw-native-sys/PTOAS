@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// THE UNIFIED ALLOCATOR'S DATA MODEL.
+//
+// The premise of the allocator is that event ids, buffer ids and barriers are three
+// RESOURCE CLASSES over one interval-colouring problem, not three algorithms. This
+// file pins the problem statement:
+//
+//   Hazard    -- one ordering, OWNING BOTH HALVES of its sync pair
+//   Interval  -- its live range in SyncIR-index space, the colourer's coordinates
+//   Resources -- an event pool per (src,dst); ONE shared buffer-id pool of K
+//   alpha     -- the per-hazard mechanism cost, keyed on whether a reverse WAR exists
+//
+// Nothing routes to buffer-id on these kernels; what runs is per-direction first-fit
+// interval colouring, reusing an id across disjoint intervals.
+//===----------------------------------------------------------------------===//
+
+// ---------------------------------------------------------------------------
+// 1. The model on a straight-line kernel: two pairs and the tail barrier.
+//
+// K=0 IS THE ARCHITECTURE, NOT A BRANCH. A3 is the same allocator with an empty
+// buffer-id class; A5 opens it with K=32 in section 2. No arch test executes
+// anywhere between the two runs -- K does all the work.
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=VADD
+// VADD:      [unified-model] func=oracle_vadd hazards=3 K=0
+
+// Intervals are SyncIR indices, not op positions -- the coordinate system
+// MoveSyncState rewrites when it hoists. A barrier is a POINT (start == end), not a
+// degenerate range.
+//
+// `clusters` is the buffer-id cluster the hazard's memory belongs to, joined on
+// MemAlias. THE DISTINCTNESS IS THE POINT: h#0 (the load) and h#1 (the store) are on
+// DIFFERENT buffers and must report DIFFERENT clusters. A join keyed on
+// `(scope, baseAddr, size)` reports the same cluster for both, because
+// `baseAddresses` is empty before addresses are assigned, so baseAddr collapses to 0
+// and distinct clusters share one key. If these two ever read the same cluster, the
+// join has regressed to a degenerate key.
+// VADD-NEXT: h#0 pair MTE2->V iv=[1,2) pool=8 mech=event clusters=[1] revwar=no alpha(e/b/bar)=1/2/100 event_id=0
+// VADD-NEXT: h#1 pair V->MTE3 iv=[2,3) pool=8 mech=event clusters=[0] revwar=no alpha(e/b/bar)=1/2/100 event_id=0
+// VADD-NEXT: h#2 barrier ALL->ALL iv=[3,3) pool=8 mech=barrier clusters=[] revwar=no alpha(e/b/bar)=1/2/100 event_id=-
+
+// Both pairs take id 0, and that is CORRECT rather than a collision: event flags are
+// per-(src,dst) DISJOINT hardware, so id 0 in MTE2->V is a different flag from id 0
+// in V->MTE3. G2 keys on (src,dst,id) and does not fire.
+//
+// alpha prices buffer-id at 2 against event's 1 because revwar=no. A streaming kernel
+// reuses no buffer in both directions, so a bidirectional token would buy nothing and
+// would manufacture a reverse edge nobody asked for. Where revwar=yes, buffer-id
+// drops to 1.
+// VADD:      [unified-sync coloring] interval coloring: assigned=2 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=0
+
+// The chosen ids are actually emitted, not merely computed.
+// VADD:      [unified-sync codegen] codegen WIRED: emitting set_flag/wait_flag/barrier from the colored model
+
+// ---------------------------------------------------------------------------
+// 2. The same kernel with K=32: the SAME hazards and the SAME event assignment, with
+//    the buffer-id class now non-empty.
+//
+// The prefix is K32 rather than A5 deliberately. FileCheck scans the WHOLE file for
+// `<prefix>:`, so prose containing "A5:" anywhere in these comments would be read as
+// a directive.
+// RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=K32
+// K32: [unified-model] func=oracle_vadd hazards=3 K=32
+// K32: [unified-sync coloring] interval coloring: assigned=2 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=0
+
+// ---------------------------------------------------------------------------
+// 3. LOOP-CARRIED COMPENSATION, AND ID REUSE, on four tiles cycling in one loop.
+//
+// A loop-carried hazard's wait is satisfied by the previous iteration, so without a
+// synthesised head-set the first iteration waits on a flag nothing raised and
+// deadlocks. This is not an optimisation: `fe` counts the hazards the loop-carried
+// predicate flagged, and `pairs` counts the head/tail groups appended. They must
+// agree, one of each, and `linked` must match -- a synthesiser that primed once per
+// loop rather than once per hazard would report fewer pairs than fe.
+//
+// `reused` being non-zero is the other half: four disjoint intervals per direction
+// let the colourer hand the same id out more than once, which is what keeps a
+// pressured kernel inside a pool of 8 instead of overflowing.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %S/Inputs/unified_model_loop_carried.pto 2>&1 | FileCheck %s --check-prefix=LOOP
+// LOOP: [unified-model] func=loop_carried_tiles hazards=17 K=0
+// LOOP: [unified-sync compensation] loop-compensation: fe=4 inv=4 pairs=4 heads=4 tails=4 linked=4 OK
+// LOOP: [unified-sync coloring] interval coloring: assigned=12 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=4

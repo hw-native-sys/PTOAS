@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// EVENT ROTATION (d > 1): the unified allocator no longer collapses multi-buffered
+// hazards to a single event id.
+//
+// THE SHAPE. On a `pto.alloc_multi_tile count=N` + `pto.multi_tile_get %mb[%slot]`
+// loop the frontend hands the hazard `eventIdNum = N` and a slot SSA, and codegen
+// emits `set_flag_dyn`/`wait_flag_dyn` selecting `eventIds[slot % N]`. A colourer
+// that assigns one id per hazard collapses this: codegen's `eventIds.size() == 1`
+// test then routes it to the STATIC emitter and every dyn op disappears. This is an
+// event-path property, independent of buffer-ID routing.
+//
+// THE OPTIMALITY CLAIM HAD TO BE RESTATED, not just the code changed. Rotation
+// makes the colouring WEIGHTED -- a hazard needs d ids live across its interval --
+// so the unit-demand "chi = omega" no longer holds as written. What holds is
+// `chi = omega_weighted`, the peak SUM of demands over a point. That survives ONLY
+// because the d ids need not be CONTIGUOUS, which was settled from code:
+//   - `CreateSetWaitOpForMultiBuffer` materialises each `eventIds[i]` as an
+//     independent constant picked by `slotMod == i`;
+//   - `set_flag_dyn` takes the id as a runtime `Index` operand and
+//     `LowerPipeEventDynSyncOpPattern` passes it straight through. No verifier, no
+//     lowering, no ISA text constrains the id set.
+// Had contiguity been required this would be interval colouring with BANDWIDTH --
+// NP-hard in general -- and the greedy core would not have extended.
+//
+// THE COMPENSATION MUST EMIT d FLAGS, NOT ONE -- the iteration-1 deadlock in a
+// rotation costume. The head/tail are synthesised and carry no slot SSA, so they hit
+// the static fallback and would prime only `eventIds[0]`. The in-body
+// `wait_flag_dyn` waits on `eventIds[slot % N]`, so the first iteration landing on
+// slot != 0 would BLOCK FOREVER. Both ids must be primed before the loop.
+//===----------------------------------------------------------------------===//
+
+// RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug --mlir-print-ir-after=pto-unified-sync %s 2>&1 >/dev/null | FileCheck %s
+
+// EVERY allocated id is primed before the loop -- the anti-deadlock invariant.
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// CHECK: scf.for
+// The in-body pair is slot-keyed, so it rotates between those two ids.
+// CHECK: arith.select
+// CHECK: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
+// CHECK: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
+
+// ---------------------------------------------------------------------------
+// G1-self MODELS THE ROTATING PAIR, AT DISTANCE N.
+//
+// It used to be blind: `computeCoverage`'s type chain had no Dyn case, so the
+// rotating pair fell off the end and contributed NO edge, and G1-self reported its
+// ordering uncovered on BOTH modes (identical counts -- the same shared code).
+//
+// The distance is N, DERIVED not assumed: `wait_flag_dyn` in iteration j waits on
+// eventIds[j % N] and `set_flag_dyn` in iteration k sets eventIds[k % N], so the
+// wait at j is satisfied by the latest k < j with k%N == j%N -- i.e. k = j - N.
+// N is recovered from the selector's own `arith.remui` modulus.
+//
+// THE EXPECTED SIDE HAD TO MOVE TOO, and in the WIDEN direction only. With N
+// slots, iteration k+1 touches a DIFFERENT slot, so the d=1 requirement the check
+// used to make was SPURIOUS -- the real conflict is at slot reuse, k+N. The
+// dep is real; only its distance moves. This gate does not drop it, and there is
+// no skip on that path -- dropping it would let an unrotated kernel pass.
+// RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug --dump-sync-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=COV
+// COV: [sync-cov] func=rot_d2_t1 anchors=2 {{.*}} bedge_count=2 bedges=1-0@2,1-1@1
+//
+// `1-0@2` is the rotating edge: tstore (anchor#1) in iteration k before tload
+// (anchor#0) in iteration k+2. `1-1@1` is the in-body PIPE_MTE3 barrier, which
+// orders every ADJACENT iteration and so stays at d=1.
+//
+// With it modelled, the absolute gate closes on this kernel.
+// RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELF
+// SELF: [sync-gate:g1-self] func=rot_d2_t1 compounds=2 deps=4 covered=4 uncovered=0 (samepipe=0 crosspipe=0) carried=3/3 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+//
+// NON-VACUITY, and this is the check that catches "dropped" masquerading as
+// "covered": with NO sync pass the SAME kernel must still DEMAND the carried
+// dependency and report it uncovered. `deps=2` is unchanged from the green run
+// above -- the dependency was re-distanced, never excused.
+// RUN: not ptoas --pto-arch=a5 --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=NOSYNC
+// NOSYNC:      [sync-gate:g1-self] func=rot_d2_t1 compounds=2 deps=4 covered=0 uncovered=4 (samepipe=2 crosspipe=2) carried=3/0
+// NOSYNC:        !! kind=uncovered-dependency war/carried anchor#1 (pto.tstore) -> anchor#0 (pto.tload) PIPE_MTE3->PIPE_MTE2
+
+
+// ---------------------------------------------------------------------------
+// THE ROUTING PREDICATE'S OVERFLOW PREDICTION IS WEIGHTED BY d.
+//
+// A hazard with demand d holds d ids live across its interval, so the overflow
+// prediction must sum demands rather than count hazards. Unweighted, it
+// under-predicts pressure by a factor of d and declines to route exactly the buffers
+// the colourer then overflows and spills to PIPE_ALL barriers. This kernel must
+// therefore reach the colourer with nothing overflowing and nothing spilled.
+// RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=WEIGHTED
+// WEIGHTED: [unified-sync coloring] interval coloring: assigned={{[0-9]+}} overflow=0 spilled_to_barrier=0
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @rot_d2_t1(%gm : !pto.partition_tensor_view<16x16xf16>,
+      %dst : !pto.partition_tensor_view<16x16xf16>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %cN = arith.constant 2 : index
+    %mb0 = pto.alloc_multi_tile : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %i = %c0 to %n step %c1 {
+      %idx = arith.remui %i, %cN : index
+      %p0 = pto.multi_tile_get %mb0[%idx] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%p0 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%p0 : !pto.tile_buf<vec, 16x16xf16>) outs(%dst : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}

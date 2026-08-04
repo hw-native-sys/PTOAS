@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// FORMAT PIN FOR THE SHARED SYNC-OP EXTRACTOR.
+//
+// The oracle's gates read one of two views of the same synchronization, so both
+// renderings must stay stable and field-correct:
+//
+//   * IR view (post-codegen): the emitted pto.set_flag / pto.wait_flag /
+//     pto.get_buf / pto.rls_buf / pto.barrier ops. This is the surface for the
+//     differential gates -- coverage superset and sync-count floor -- and for
+//     device-id legality.
+//   * SyncOperation view (pre-codegen): the in-memory set the allocator assigns ids
+//     into. This is the surface for the in-pass gates.
+//
+// This test fails if a field is dropped or renamed, if program order changes, or if
+// the two views stop agreeing on a kernel's hazard structure. The two are not
+// redundant: the IR view cannot see a mechanism or a pre-codegen id, and the syncops
+// view cannot see what was actually emitted.
+//===----------------------------------------------------------------------===//
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --dump-sync-extract %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=IRVIEW
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=SYNCOPS
+
+// IR view: two set/wait pairs (MTE2->V, V->MTE3) plus the tail PIPE_ALL barrier.
+// Pipes, event_id and program order are all pinned. Note the numbering: the IR view
+// counts OPS, so a pair occupies two indices.
+// IRVIEW:      sync-extract:ir{{.*}} func=oracle_vadd records=5
+// IRVIEW-NEXT: #0 pto.set_flag src=PIPE_MTE2 dst=PIPE_V event_id=0
+// IRVIEW-NEXT: #1 pto.wait_flag src=PIPE_MTE2 dst=PIPE_V event_id=0
+// IRVIEW-NEXT: #2 pto.set_flag src=PIPE_V dst=PIPE_MTE3 event_id=0
+// IRVIEW-NEXT: #3 pto.wait_flag src=PIPE_V dst=PIPE_MTE3 event_id=0
+// IRVIEW-NEXT: #4 pto.barrier src=PIPE_ALL dst=PIPE_ALL
+
+// SyncOperation view: the same three hazards, but numbered by HAZARD rather than by
+// op, so both halves of a pair share an index. That difference is the reason both
+// views are pinned here together -- a gate reading one cannot infer the other's
+// indices.
+//
+// `mech` is the resource class backing each sync, DERIVED FROM TYPE at construction.
+// That is why the tail reads `barrier` and not `event`: a flat default of event would
+// make every barrier claim an event id it does not hold. Nothing here reads `bufid`,
+// because this kernel's buffers do not overflow their event pool and the router
+// declines them -- sync_overflow_id_gap.pto covers a kernel where it does not, and
+// sync_mechanism_field.pto forces the value directly.
+//
+// `event_ids` are populated by the allocator, and two properties are visible:
+//   - BOTH halves of a pair carry the SAME id. The id, like the mechanism, belongs to
+//     the hazard and is never stamped on a lone SyncOperation.
+//   - both pairs use id 0, because event flags are per-(src,dst) DISJOINT hardware:
+//     id 0 in MTE2->V is a different flag from id 0 in V->MTE3. This matches what
+//     InsertSync emits on this kernel.
+// The barrier carries no id, having none to carry.
+// SYNCOPS:      unified-sync model{{.*}} kernel=oracle_vadd K=0 hazards=3
+// SYNCOPS:      sync-extract:syncops{{.*}} func=oracle_vadd records=5
+// SYNCOPS-NEXT: #0 set_flag mech=event src=MTE2 dst=V irIdx=1 event_ids=[0]
+// SYNCOPS-NEXT: #0 wait_flag mech=event src=MTE2 dst=V irIdx=2 event_ids=[0]
+// SYNCOPS-NEXT: #1 set_flag mech=event src=V dst=MTE3 irIdx=2 event_ids=[0]
+// SYNCOPS-NEXT: #1 wait_flag mech=event src=V dst=MTE3 irIdx=3 event_ids=[0]
+// SYNCOPS-NEXT: #2 pipe_barrier mech=barrier src=ALL dst=ALL irIdx=3 event_ids=[]

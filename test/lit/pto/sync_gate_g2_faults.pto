@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Two G2 shapes that only the SyncOperation view can judge, so they cannot be
+// written as input IR: the emitted-IR view records `set_flag_dyn` with
+// eventId = -1, and a compensation record's link to the hazard it primes exists
+// only before codegen. They are appended to the gate's own record list, never to
+// the IR, so they cannot reach codegen.
+//
+// Each pins the `event-id-nested` line specifically rather than an error total.
+// The synthetic list is judged in isolation, so its lone sets also report as
+// leaked ids -- true of the list, but not the property under test.
+
+// A compensation record shares its id with the hazard it primes BY DESIGN, so that
+// pairing must not read as a collision. A collision with any OTHER hazard still
+// must, and #902 is a different hazard from #900's owner.
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --check-sync-interference --check-sync-interference-inject-fault=comp-conflict %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=COMP
+// COMP:      [sync-gate:g2] func=oracle_vadd view=syncops records=2
+// COMP-NEXT:   !! #902 set_event kind=event-id-nested MTE2->V id=3 live_since=#900
+
+// The scan must check EVERY id a hazard holds. These two records differ on their
+// first id and collide on their second, so a first-id-only scan finds nothing.
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --check-sync-interference --check-sync-interference-inject-fault=multi-id-conflict %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=MULTI
+// MULTI:      [sync-gate:g2] func=oracle_vadd view=syncops records=2
+// MULTI-NEXT:   !! #912 set_event kind=event-id-nested MTE2->V id=1 live_since=#910
+
+// A selector naming no shape must fail loudly, for the same reason G3's does:
+// injecting nothing would leave the gate with nothing to find, so the two runs
+// above would pass while proving nothing.
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --check-sync-interference --check-sync-interference-inject-fault=typo-not-a-shape %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=BADSEL
+// BADSEL: error: unknown --check-sync-interference-inject-fault selector 'typo-not-a-shape'; expected comp-conflict or multi-id-conflict

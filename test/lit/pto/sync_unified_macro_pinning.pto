@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// A macro op's library-internal event ids are RESERVED, so the allocator cannot
+// hand one to a compiler hazard.
+//
+// pto.mgather lowers to a pto-isa library call that performs its own
+// PtoSetWaitFlag<SRC, DST>() internally, defaulted to EVENT_ID0. No op in the IR
+// names that use, so nothing downstream can see a collision with it: G3 checks that
+// an id is in range, not that something else reserved it, and G2 cannot see an id
+// consumed inside a library call. Both report clean on colliding output.
+//
+// THE FAILURE MODE. Without a reservation the colourer can hand EVENT_ID0 to a
+// compiler hazard whose interval SPANS the call. The library's own wait is then
+// satisfied by that hazard's stale credit and its DMA drain silently does not happen
+// -- correct-looking IR, wrong execution, no diagnostic anywhere.
+//
+// `seedHiddenMacroEvents` reserves those (direction, id) pairs over the macro's span,
+// padded one SyncIR index each side, and the colourer treats a reservation as
+// occupancy. `checkMacroHiddenEventCollisions` checks the result on every run.
+
+// THE FIX: the kernel compiles, and the collision is gone.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync %s 2>&1 >/dev/null | FileCheck %s --check-prefix=CLEAN --allow-empty
+// CLEAN-NOT: event-id-collides-with-macro-hidden
+// CLEAN-NOT: error:
+
+// THE ID MATCHES THE INCUMBENT'S, which is the property the reservation exists to
+// restore. EVENT_ID1, not EVENT_ID0. If this ever prints EVENT_ID0 the reservation
+// has stopped being consulted and the library's drain is silently unsynchronised.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync --emit-pto-ir %s | FileCheck %s --check-prefix=PINNED
+// PINNED: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// PINNED: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+
+// AND THE RESERVATION IS ACTUALLY SEEDED, not merely honoured by luck. A run that
+// reserved nothing would also pass the two checks above if the colourer happened to
+// pick EVENT_ID1 for its own reasons, so the count is pinned separately.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SEEDED
+// SEEDED: [unified-sync coloring] interval coloring: {{.*}}hidden_reserved=7
+
+// THE INCUMBENT is the reference answer and must be unchanged by any of this.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --emit-pto-ir %s | FileCheck %s --check-prefix=INCUMBENT
+// INCUMBENT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// INCUMBENT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @mgather_row_macro_model(%arg0: !pto.ptr<f16>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<f16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %c64_index = arith.constant 64 : index
+    %c32_index = arith.constant 32 : index
+    %c1_index = arith.constant 1 : index
+    %c16_index = arith.constant 16 : index
+    %c0_index = arith.constant 0 : index
+    %mem_view = pto.make_tensor_view %arg0, shape = [%c64_index, %c32_index], strides = [%c32_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf16>
+    %idx_view = pto.make_tensor_view %arg1, shape = [%c1_index, %c16_index], strides = [%c16_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xi32>
+    %out_view = pto.make_tensor_view %arg2, shape = [%c16_index, %c32_index], strides = [%c32_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf16>
+    %idx_tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c16_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx_pview = pto.partition_view %idx_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c16_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x16xi32>
+    pto.tload ins(%idx_pview : !pto.partition_tensor_view<1x16xi32>)
+              outs(%idx_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %dst = pto.alloc_tile addr = %c64_i64 valid_row = %c16_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %mem_pview = pto.partition_view %mem_view, offsets = [%c0_index, %c0_index], sizes = [%c64_index, %c32_index] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x32xf16>
+    pto.mgather ins(%mem_pview, %idx_tile
+        : !pto.partition_tensor_view<64x32xf16>,
+          !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    %out_pview = pto.partition_view %out_view, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c32_index] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
+    pto.tstore ins(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%out_pview : !pto.partition_tensor_view<16x32xf16>)
+    return
+  }
+}

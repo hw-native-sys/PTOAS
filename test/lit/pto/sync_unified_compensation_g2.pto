@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G2's syncops view must not read a rotating hazard's own compensation pair as a
+// competing hazard -- and must still catch a real collision.
+//
+// THE OVER-APPROXIMATION THIS GUARDS AGAINST. A d>1 hazard is ONE syncops record
+// declaring all d ids, and the compensation pair that primes and drains it declares the
+// SAME ids over the enclosing interval -- SetEventIds stamps set, wait, head and tail
+// alike. A linear scan therefore sees set;set;wait;wait on one (direction, id) and
+// reports `event-id-nested`, failing a kernel the incumbent compiles, with zero sync
+// emitted. The emitted shape is in fact the incumbent's: d primes, a dyn in-body pair,
+// d drains.
+//
+// THE EXEMPTION IS OWNER-SCOPED, AND THAT IS THE PART THAT MATTERS. A compensation
+// record reports the hazard it primes (`compensationOf`); everything else reports
+// itself, and two opens conflict unless they share a non-sentinel owner. Excusing every
+// compensation record instead would make G2 look fixed while dropping rotation coverage
+// -- and syncops is the ONLY view that checks rotating ids, because the IR view's
+// set_flag_dyn / wait_flag_dyn carry eventId = -1 and never enter the id check.
+//
+// THE NEGATIVE SIDE LIVES IN sync_gate_g2_faults.pto, which injects a compensation
+// record colliding with an unrelated hazard, and a pair colliding only on a non-first
+// id, directly into the gate's record list. Those pin that the scan still reports a
+// real collision and that it checks every id rather than the first. This file pins the
+// positive side: that the exemption does not fire on a hazard's own compensation.
+
+// ---------------------------------------------------------------------------
+// 1. The kernel that used to fail now compiles, WITH sync emitted (not zero).
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug --emit-pto-ir %S/multi_tile_affine_disjoint_slots.pto | FileCheck %s --check-prefix=EMIT
+// The order is the property, and it is the incumbent's: d=2 static primes BEFORE the
+// loop, the rotating dyn pair INSIDE it, d=2 static drains AFTER. A prime that landed
+// after the loop, or a missing one, is the iteration-1 deadlock.
+// EMIT:      pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// EMIT-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// EMIT-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// EMIT-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// EMIT:      pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
+// EMIT:      pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// EMIT:      pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// EMIT:      pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
+// EMIT:      pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// EMIT-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// EMIT-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// EMIT-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+
+// 2. G2 on the syncops view is clean on it -- this is the pairing that used to error.
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug %S/multi_tile_affine_disjoint_slots.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=G2OK
+// G2OK: [sync-gate:g2] func=prefetch_disjoint_slots view=syncops records=10 errors=0 warnings=0 OK
+
+// 3. fe != inv is now COMPARED, not just printed. It was reporting a number nobody
+//    read; it would have flagged this kernel the first time it ran. A WARNING, not an
+//    error: a divergence is not by itself wrong, and erroring would refuse six
+//    multi_tile kernels that compile today.
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug %S/multi_tile_affine_disjoint_slots.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=DIVERGE
+// DIVERGE: !! predicate-divergence func=prefetch_disjoint_slots fe=2 inv=1
+// DIVERGE-SAME: whose in-body set precedes its wait
+
+// ---------------------------------------------------------------------------
+// 4. G2 IS CLEAN UNDER THIS ALLOCATOR ON A STRAIGHT-LINE KERNEL. sync_gate_g2_legal.pto
+//    pins the same property for the incumbent; this pins it for the unified path, so a
+//    gate that only ever ran green on the incumbent cannot pass for the wrong reason.
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=CLEAN
+// CLEAN: [sync-gate:g2] func=vadd_g2_control view=syncops records=5 errors=0 warnings=0 OK
+
+
+module {
+  func.func @vadd_g2_control(%a: !pto.partition_tensor_view<1x32xf32>,
+                             %b: !pto.partition_tensor_view<1x32xf32>,
+                             %c: !pto.partition_tensor_view<1x32xf32>) {
+    %ta = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %tb = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x32xf32>)
+              outs(%ta : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%b : !pto.partition_tensor_view<1x32xf32>)
+              outs(%tb : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tadd ins(%ta, %tb : !pto.tile_buf<vec, 1x32xf32>,
+                            !pto.tile_buf<vec, 1x32xf32>)
+             outs(%ta : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tstore ins(%ta : !pto.tile_buf<vec, 1x32xf32>)
+               outs(%c : !pto.partition_tensor_view<1x32xf32>)
+    return
+  }
+}

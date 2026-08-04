@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// BUFFER-ID ROUTING ABSORBS AN EVENT-POOL OVERFLOW.
+//
+// This kernel's tiles are written back AND overflow the 8-id event pool, so the
+// router sends them to the token protocol and the colourer never overflows --
+// nothing reaches the barrier spill. One tile, the output, is NOT written back, so
+// it stays on events: that is why a single kernel exercises both sides of the
+// routing predicate and the counts below discriminate rather than merely pass.
+//
+// The mirror case -- overflow that is NOT written back, so it must spill -- is
+// pinned by `forced_overflow_n12` in sync_forced_overflow.pto. Neither file covers
+// the other.
+//
+// THE FORBIDDEN IDS ARE THE POINT. `2147483647` is the unset sentinel and
+// `event-id-nested id=0` is an id nobody handed out; either one means a hazard
+// reached codegen with no mechanism realised and its ordering was silently dropped.
+// Do not relax these checks: they forbid ids the hardware was never told about.
+//===----------------------------------------------------------------------===//
+
+// Routing takes all 12 written-back overflowing buffers, and the colourer is left
+// with only the 2 hazards on the un-routed output tile -- `overflow=0`, so the
+// spill never fires here.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=ROUTED
+// ROUTED: [unified-sync routing] func=overflow_id_gap buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) split=0 OK
+// ROUTED: [unified-sync coloring] interval coloring: assigned=2 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=0
+
+// The emission actually happened, and every acquire has its release.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=EMITTED
+// EMITTED: [unified-sync bufid] func=overflow_id_gap bufid emission: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
+
+// G2 -- the gate that caught the original defect -- is clean, and B1-B7 are being
+// applied to OUR buffer-ID allocation for the first time. No B5 (single-pipe id),
+// and zero B6 warnings.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug --check-sync-interference %s 2>&1 >/dev/null | FileCheck %s --check-prefix=G2CLEAN
+// G2CLEAN: [sync-gate:g2] func=overflow_id_gap view=ir records={{[0-9]+}} errors=0 warnings=0 OK
+
+// G3 device-id legality, on both views. Buffer ids must be within K=32.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug --check-sync-ids %s 2>&1 >/dev/null | FileCheck %s --check-prefix=G3
+// G3: [sync-gate:g3] func=overflow_id_gap view=ir records={{[0-9]+}} violations=0 OK
+
+// G1-self: the token protocol must actually COVER the orderings it replaced --
+// rls-before-get on the same id, which G1-self models directly. All 90 loop-carried
+// dependencies stay covered with the event pairs gone.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELF
+// SELF: [sync-gate:g1-self] func=overflow_id_gap compounds=25 deps=205 covered=139 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=66 unmappable=0 OK
+
+// THE EMITTED FORM. get_buf/rls_buf present, sentinel absent, and the whole-core
+// serialisation gone -- exactly one PIPE_ALL survives (the auto-sync tail).
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s -o - 2>/dev/null | FileCheck %s --check-prefix=EMIT
+// EMIT: get_buf(
+// EMIT: rls_buf(
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s -o - 2>/dev/null | FileCheck %s --check-prefix=NOSENTINEL
+// NOSENTINEL-NOT: 2147483647
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @overflow_id_gap(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c4 = arith.constant 4 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 2048 : i64
+    %a2 = arith.constant 4096 : i64
+    %a3 = arith.constant 6144 : i64
+    %a4 = arith.constant 8192 : i64
+    %a5 = arith.constant 10240 : i64
+    %a6 = arith.constant 12288 : i64
+    %a7 = arith.constant 14336 : i64
+    %a8 = arith.constant 16384 : i64
+    %a9 = arith.constant 18432 : i64
+    %a10 = arith.constant 20480 : i64
+    %a11 = arith.constant 22528 : i64
+    %aout = arith.constant 24576 : i64
+    %sv = pto.make_tensor_view %src, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %dv = pto.make_tensor_view %dst, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %ps = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %pd = pto.partition_view %dv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    scf.for %it = %c0 to %c4 step %c1 {
+      %t0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t1 = pto.alloc_tile addr = %a1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t2 = pto.alloc_tile addr = %a2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t3 = pto.alloc_tile addr = %a3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t4 = pto.alloc_tile addr = %a4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t5 = pto.alloc_tile addr = %a5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t6 = pto.alloc_tile addr = %a6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t7 = pto.alloc_tile addr = %a7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t8 = pto.alloc_tile addr = %a8 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t9 = pto.alloc_tile addr = %a9 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t10 = pto.alloc_tile addr = %a10 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %t11 = pto.alloc_tile addr = %a11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %tout = pto.alloc_tile addr = %aout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t0 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t1 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t2 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t3 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t4 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t5 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t6 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t7 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t8 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t9 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t10 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%ps : !pto.partition_tensor_view<32x32xf16>) outs(%t11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t0{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t1{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t2{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t3{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t4{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t5{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t6{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t7{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t8{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t9{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t10{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tcvt ins(%t11{rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tstore ins(%tout : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%pd : !pto.partition_tensor_view<32x32xf16>)
+      scf.yield
+    }
+    return
+  }
+}

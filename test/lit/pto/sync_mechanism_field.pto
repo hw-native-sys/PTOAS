@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// THE `mechanism` FIELD ON SyncOperation.
+//
+// `mechanism` is a DIFFERENT AXIS from `TYPE`. TYPE is the op shape -- a set, a wait,
+// a barrier -- and the analysis decides it. MECHANISM is the resource class backing
+// it, and therefore where the sync may be placed:
+//
+//   event / barrier -> carried at a SyncIR position, hoistable by MoveSyncState
+//   bufid           -> MUST be op-anchored, bracketing the access
+//
+// Buffer routing is decided per BUFFER by `routeBuffers`, so on a kernel it declines
+// no hazard carries `bufid` at all. The hidden `--unified-sync-force-mechanism` flag
+// stamps it anyway, so the value and its plumbing are exercised rather than shipped
+// as an enum case that first executes in anger.
+//===----------------------------------------------------------------------===//
+
+// ---------------------------------------------------------------------------
+// 1. DEFAULT -- mechanism is DERIVED FROM TYPE, not defaulted flat to EVENT.
+//
+// This is why the default is derived rather than assigned. Under a flat
+// "default = EVENT", record #2 -- a PIPE_ALL barrier -- would report `mech=event`,
+// so every barrier would claim an event id it does not hold. Deriving it means no
+// construction site has to remember to set the field, and a barrier cannot pose as
+// an event.
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --enable-unified-sync-debug %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=DEFAULT
+// DEFAULT:      sync-extract:syncops{{.*}} records=5
+// DEFAULT-NEXT: #0 set_flag mech=event src=MTE2 dst=V
+// DEFAULT-NEXT: #0 wait_flag mech=event src=MTE2 dst=V
+// DEFAULT-NEXT: #1 set_flag mech=event src=V dst=MTE3
+// DEFAULT-NEXT: #1 wait_flag mech=event src=V dst=MTE3
+// DEFAULT-NEXT: #2 pipe_barrier mech=barrier src=ALL dst=ALL
+
+// ---------------------------------------------------------------------------
+// 2. STAMPED BUFID -- both halves of the pair, and only that hazard.
+//
+// Two properties are pinned, and both are load-bearing:
+//
+//   (a) BOTH halves of hazard #0 carry `bufid`. A set routed to a buffer token whose
+//       wait stayed on an event is not a pair -- it is two unrelated syncs that
+//       cannot discharge each other. Mechanism is therefore a per-HAZARD property,
+//       stamped on set and wait together, never per SyncOperation.
+//
+//   (b) The kernel is MIXED: #0 on bufid, #1 still on event, the tail still a
+//       barrier. Three mechanisms coexisting in one kernel is the state buffer
+//       routing produces, so it must be representable.
+//
+// THE RUN REFUSES, AND THE REFUSAL IS THE POINT. Stamping the mechanism makes
+// `colorEventIds` skip the hazard, but nothing routed a buffer for it -- routing is a
+// per-buffer decision this flag does not make -- so the pair reaches codegen with no
+// id. Without the guard it would vanish silently, with ptoas exiting 0 and every gate
+// clean, because a dropped ordering leaves nothing for a gate to object to. The
+// records still print, so the plumbing under test stays observable; what fails is the
+// emission.
+// RUN: not ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug --unified-sync-force-mechanism=bufid %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=BUFID
+// BUFID:      sync-extract:syncops{{.*}} records=5
+// BUFID-NEXT: #0 set_flag mech=bufid src=MTE2 dst=V
+// BUFID-NEXT: #0 wait_flag mech=bufid src=MTE2 dst=V
+// BUFID-NEXT: #1 set_flag mech=event src=V dst=MTE3
+// BUFID-NEXT: #1 wait_flag mech=event src=V dst=MTE3
+// BUFID-NEXT: #2 pipe_barrier mech=barrier src=ALL dst=ALL
+// BUFID:      error: sync codegen
+// BUFID-SAME: no mechanism was realised for it
+
+// ---------------------------------------------------------------------------
+// 3. SPILL -- the resource-exhaustion downgrade drops TYPE and MECHANISM together.
+//
+// `SetPipeAll` is the overflow path: it rewrites the type to PIPE_BARRIER, and it
+// must drop the mechanism with it. Otherwise these two records read
+// `pipe_barrier mech=bufid` -- a spilled barrier still claiming a buffer token it no
+// longer holds, which codegen would try to back with a get/release pair that was
+// never allocated.
+// RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug --unified-sync-force-mechanism=bufid-spill %S/Inputs/oracle_vadd.pto 2>&1 | FileCheck %s --check-prefix=SPILL
+// SPILL:      sync-extract:syncops{{.*}} records=5
+// SPILL-NEXT: #0 pipe_barrier mech=barrier src=ALL dst=ALL
+// SPILL-NEXT: #0 pipe_barrier mech=barrier src=ALL dst=ALL
+// SPILL-NEXT: #1 set_flag mech=event src=V dst=MTE3
+// SPILL-NEXT: #1 wait_flag mech=event src=V dst=MTE3
+// SPILL-NEXT: #2 pipe_barrier mech=barrier src=ALL dst=ALL
+
+// ---------------------------------------------------------------------------
+// 4. WHY THERE IS NO CHECK-NOT OVER THE EMITTED CODE HERE.
+//
+// A `CHECK-NOT: set_flag` over the emitted C++ would be a false pin: ptoas emits the
+// `ptoas_auto_sync_tail` helper DEFINITION into every output regardless of sync mode,
+// and its body contains a literal `set_flag(PIPE_MTE3, PIPE_S, EVENT_ID0)`. Such a
+// check fails even on a kernel that emits no sync at all. Sync-op counts must be
+// taken over the KERNEL BODY, which is what the oracle's IR view does, never over the
+// whole emitted file.
