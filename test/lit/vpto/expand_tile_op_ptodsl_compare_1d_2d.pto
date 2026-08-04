@@ -7,16 +7,17 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Packed predicate compare may flatten a sufficiently sized single row. A
-// multi-row range also requires complete predicate-store source rows and a
-// destination row stride equal to the exact packed bytes produced per row.
+// multi-row packed destination also requires complete predicate-store source
+// rows and an exact packed row stride. TCMPS may additionally flatten into the
+// continuous prefix of a logical-sized destination; padded packed rows remain
+// on the 2D fallback.
 //
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
 
 // META-LABEL: func.func @TCMP_1D
 // META: pto.tcmp
-// META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
+// META-SAME: candidates = [{id = 1 : i64
 // META-SAME: loop_depth = 1 : i64
 // META-SAME: name = "template_tcmp_1d"
 // META-SAME: }, {
@@ -26,16 +27,14 @@
 
 // META-LABEL: func.func @TCMP_2D
 // META: pto.tcmp
-// META-SAME: candidates = [{
-// META-SAME: id = 0 : i64
+// META-SAME: candidates = [{id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcmp"
 // META-NOT: name = "template_tcmp_1d"
 
 // META-LABEL: func.func @TCMPS_1D
 // META: pto.tcmps
-// META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
+// META-SAME: candidates = [{id = 1 : i64
 // META-SAME: loop_depth = 1 : i64
 // META-SAME: name = "template_tcmps_1d"
 // META-SAME: }, {
@@ -45,8 +44,7 @@
 
 // META-LABEL: func.func @TCMPS_2D
 // META: pto.tcmps
-// META-SAME: candidates = [{
-// META-SAME: id = 0 : i64
+// META-SAME: candidates = [{id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcmps"
 // META-NOT: name = "template_tcmps_1d"
@@ -158,7 +156,7 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
       : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64,
                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile
-      : !pto.tile_buf<loc=vec, dtype=ui8, rows=4, cols=64, v_row=4, v_col=64,
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=4, cols=32, v_row=4, v_col=32,
                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %scalar = arith.constant 1.0 : f32
 
@@ -169,7 +167,7 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
           f32)
       outs(
         %dst
-          : !pto.tile_buf<loc=vec, dtype=ui8, rows=4, cols=64, v_row=4, v_col=64,
+          : !pto.tile_buf<loc=vec, dtype=ui8, rows=4, cols=32, v_row=4, v_col=32,
                           blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
