@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The carried-self-dep drop must be proved against the loop whose BACK EDGE is under
+// analysis, not against the innermost loop enclosing the op. The two differ whenever the
+// access sits in a nest: inner iterations can be disjoint while the outer loop restarts
+// and revisits the same addresses, so a drop proved on the inner loop removes an ordering
+// the outer loop still needs.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --emit-pto-ir %s \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  // Inner advances by exactly its own footprint, so consecutive inner iterations are
+  // disjoint. The outer loop contributes nothing to the address, so every outer iteration
+  // rewrites the same region: a real carried WAW across the outer back edge. KEEP.
+  // CHECK-LABEL: func.func @nested_outer_repeats
+  // CHECK:         scf.for
+  // CHECK:           scf.for
+  // CHECK:             pto.barrier <PIPE_MTE3>
+  // CHECK:             pto.tstore
+  func.func @nested_outer_repeats(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %o = %c0 to %c2 step %c1 {
+      scf.for %i = %c0 to %c8 step %c1 {
+        %off = arith.muli %i, %c64 : index
+        %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+        pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+      }
+    }
+    return
+  }
+
+  // The carrying loop is an `scf.while`, which reaches the same loop-element type through
+  // UpdateWhileOpInfo. Its back edge resolves to a WhileOp, not a ForOp, so there is no
+  // iteration space to reason about and the predicate must refuse. Without that refusal
+  // the innermost `scf.for` is used instead and the barrier is dropped, exactly as above.
+  // CHECK-LABEL: func.func @while_outer_repeats
+  // CHECK:         scf.while
+  // CHECK:           scf.for
+  // CHECK:             pto.barrier <PIPE_MTE3>
+  // CHECK:             pto.tstore
+  func.func @while_outer_repeats(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %fin = scf.while (%w = %c0) : (index) -> index {
+      %cond = arith.cmpi slt, %w, %c2 : index
+      scf.condition(%cond) %w : index
+    } do {
+    ^bb0(%wa: index):
+      scf.for %i = %c0 to %c8 step %c1 {
+        %off = arith.muli %i, %c64 : index
+        %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+        pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+      }
+      %next = arith.addi %wa, %c1 : index
+      scf.yield %next : index
+    }
+    return
+  }
+}

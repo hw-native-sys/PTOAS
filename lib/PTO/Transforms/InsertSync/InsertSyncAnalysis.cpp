@@ -409,12 +409,34 @@ void InsertSyncAnalysis::InsertSync(
 // Every condition is cumulative and the default is to keep the sync: each helper
 // refuses the moment an input is not a compile-time constant.
 
-/// The innermost `scf.for` containing `op`, or null.
-static scf::ForOp enclosingForOf(Operation *op) {
-  for (Operation *p = op ? op->getParentOp() : nullptr; p; p = p->getParentOp())
-    if (auto forOp = dyn_cast<scf::ForOp>(p))
-      return forOp;
-  return {};
+/// The `scf.for` whose back edge `forEndIndex` denotes, or null.
+///
+/// THE INNERMOST ENCLOSING LOOP IS THE WRONG ANSWER, and silently so. A carried
+/// dependence is analysed once per back edge, and for an access inside a nest the
+/// outer back edge and the inner one are different questions: inner iterations can
+/// be disjoint while the outer loop restarts and revisits the same addresses. Proving
+/// disjointness against the innermost enclosing loop therefore answers the inner
+/// question and applies the result to whichever edge is under analysis.
+///
+/// `forEndIndex` indexes `syncIR_`, and its element is the loop's LOOP_END marker.
+/// `UpdateForOpInfo` records the op on both markers, so the loop is recovered exactly
+/// rather than inferred. Note the index refers to `syncIR_` even while a back edge is
+/// being analysed over the copied body slice, so it must not be resolved against the
+/// SyncIRs the current traversal happens to walk.
+///
+/// Null on every path that does not resolve to an `scf.for`: an out-of-range index, an
+/// element that is not a loop, a loop marker with no op, and an `scf.while`, which
+/// reaches the same element type through `UpdateWhileOpInfo`. Callers must treat null
+/// as "not proven".
+static scf::ForOp carryingForOf(const SyncIRs &syncIR,
+                                const std::optional<unsigned> &forEndIndex) {
+  if (!forEndIndex.has_value() || forEndIndex.value() >= syncIR.size())
+    return {};
+  const auto *loopEl =
+      dyn_cast_or_null<LoopInstanceElement>(syncIR[forEndIndex.value()].get());
+  if (!loopEl || !loopEl->elementOp)
+    return {};
+  return dyn_cast<scf::ForOp>(loopEl->elementOp);
 }
 
 /// `v` as a compile-time constant index, or nullopt.
@@ -593,7 +615,8 @@ static bool partitionViewIterationsDisjoint(pto::PartitionViewOp view,
 static bool isCarriedSelfDepAffineDisjoint(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound,
-    const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair) {
+    const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair,
+    scf::ForOp carryingFor) {
   if (nowCompound != frontCompound || !nowCompound)
     return false;
   if (!pair.first || !pair.second || !(*pair.first == *pair.second))
@@ -602,8 +625,10 @@ static bool isCarriedSelfDepAffineDisjoint(
       pair.second->baseAddresses.size() > 1)
     return false;
 
-  scf::ForOp forOp = enclosingForOf(nowCompound->elementOp);
-  if (!forOp)
+  // The loop under analysis, not the innermost one enclosing the access. Null means
+  // the back edge did not resolve to an `scf.for`, which is never a proof of
+  // disjointness.
+  if (!carryingFor)
     return false;
 
   auto viewOf = [](const BaseMemInfo *mi) -> pto::PartitionViewOp {
@@ -616,7 +641,7 @@ static bool isCarriedSelfDepAffineDisjoint(
   if (!a || a != b)
     return false;
 
-  return partitionViewIterationsDisjoint(a, forOp);
+  return partitionViewIterationsDisjoint(a, carryingFor);
 }
 
 // Returns true if a *same-iter* multi-buffer dep pair can be dropped
@@ -677,9 +702,11 @@ void InsertSyncAnalysis::MemAnalyze(
   // about back edges is about ROTATION -- a real dependence at the rotation distance --
   // and rotating accesses are refused here, so the two claims cannot be confused.
   if (forEndIndex.has_value()) {
+    scf::ForOp carryingFor = carryingForOf(syncIR_, forEndIndex);
     auto isDroppableCarried = [&](const std::pair<const BaseMemInfo *,
                                                   const BaseMemInfo *> &pair) {
-      return isCarriedSelfDepAffineDisjoint(nowCompound, frontCompound, pair);
+      return isCarriedSelfDepAffineDisjoint(nowCompound, frontCompound, pair,
+                                            carryingFor);
     };
     depVec.erase(
         std::remove_if(depVec.begin(), depVec.end(), isDroppableCarried),
