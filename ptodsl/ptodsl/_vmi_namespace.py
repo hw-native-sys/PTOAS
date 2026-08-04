@@ -289,6 +289,39 @@ def _derive_vci_result_type(base, size, *, context: str):
     return _pto.VMIVRegType.get(size, elem_type)
 
 
+def _physical_lanes_per_part(elem_type, *, context: str) -> int | None:
+    """A5 256B physical VL lane count for VCI element types, else None."""
+    if IntegerType.isinstance(elem_type):
+        width = IntegerType(elem_type).width
+        if width == 8:
+            return 256
+        if width == 16:
+            return 128
+        if width == 32:
+            return 64
+        return None
+    # Float: f16→128, f32→64 (match getDataLanesPerPart).
+    name = str(elem_type)
+    if "f16" in name or "bf16" in name:
+        return 128
+    if "f32" in name:
+        return 64
+    return None
+
+
+def _check_vci_group_tiles_phys_vl(elem_type, size, group, *, context: str) -> None:
+    group_size = size // group
+    phys = _physical_lanes_per_part(elem_type, context=context)
+    if phys is None:
+        return
+    if group_size % phys != 0 and phys % group_size != 0:
+        raise ValueError(
+            f"{context} requires group_size ({group_size}) to divide or be a "
+            f"multiple of physical lanes per part ({phys}) for element type "
+            f"{elem_type}"
+        )
+
+
 def _derive_vmull_result_types(a, b, *, context: str):
     lhs_type = _as_vmi_vreg_type(_type_of(a), context=context)
     rhs_type = _as_vmi_vreg_type(_type_of(b), context=context)
@@ -685,6 +718,10 @@ class _VMINamespace:
                     f"{context} requires size divisible by group; got size={size!r}, group={group!r}"
                 )
         result_type = _derive_vci_result_type(base, size, context=context)
+        if group is not None:
+            _check_vci_group_tiles_phys_vl(
+                result_type.element_type, size, group, context=context
+            )
         base = coerce_scalar_to_type(
             base,
             _vmi_element_type(result_type, context=context),

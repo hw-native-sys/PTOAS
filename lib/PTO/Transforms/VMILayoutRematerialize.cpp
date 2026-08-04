@@ -240,11 +240,20 @@ static std::optional<Value> rematerializeDataProducer(Value value,
     return builder.create<VMIBroadcastOp>(loc, resultType, broadcast.getValue())
         .getResult();
 
-  if (auto iota = value.getDefiningOp<VMIIotaOp>())
+  if (auto iota = value.getDefiningOp<VMIIotaOp>()) {
+    // Grouped iota only materializes as contiguous. Keep ensure_layout when
+    // the consumer wants a non-contiguous layout instead of rematerializing
+    // a grouped iota directly into deinterleaved/etc.
+    if (iota.getGroupAttr()) {
+      VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+      if (!resultLayout || !resultLayout.isContiguous())
+        return std::nullopt;
+    }
     return builder
         .create<VMIIotaOp>(loc, resultType, iota.getBase(), iota.getOrderAttr(),
                            iota.getGroupAttr())
         .getResult();
+  }
 
   return std::nullopt;
 }

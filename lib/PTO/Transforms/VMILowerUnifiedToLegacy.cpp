@@ -1189,17 +1189,48 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
     // ---- Category A: pure syntactic renames ----
 
     if (auto vop = dyn_cast<VMIVciOp>(op)) {
-      // vci -> iota (preserve optional {group})
+      // vci -> iota (preserve optional {group}).
+      // Grouped iota only lowers as contiguous; non-contiguous results are
+      // rewritten to contiguous iota + ensure_layout so layout assignment /
+      // consumers can still request deinterleaved without a dedicated
+      // grouped-deint materialization.
       builder.setInsertionPoint(op);
       StringAttr orderAttr;
       if (auto order = vop.getOrder())
         orderAttr = builder.getStringAttr(*order);
-      Value result =
+
+      Type resultType = vop.getResult().getType();
+      Value iotaResult;
+      if (vop.getGroupAttr()) {
+        if (auto vmiTy = dyn_cast<VMIVRegType>(resultType)) {
+          VMILayoutAttr layout = vmiTy.getLayoutAttr();
+          if (layout && !layout.isContiguous()) {
+            Type contigType = VMIVRegType::get(
+                op->getContext(), vmiTy.getElementCount(),
+                vmiTy.getElementType(),
+                VMILayoutAttr::getContiguous(op->getContext()));
+            Value contig =
+                builder
+                    .create<VMIIotaOp>(op->getLoc(), contigType, vop.getBase(),
+                                       orderAttr, vop.getGroupAttr())
+                    .getResult();
+            iotaResult =
+                builder
+                    .create<VMIEnsureLayoutOp>(op->getLoc(), vmiTy, contig)
+                    .getResult();
+            vop.getResult().replaceAllUsesWith(iotaResult);
+            op->erase();
+            continue;
+          }
+        }
+      }
+
+      iotaResult =
           builder
-              .create<VMIIotaOp>(op->getLoc(), vop.getResult().getType(),
-                                 vop.getBase(), orderAttr, vop.getGroupAttr())
+              .create<VMIIotaOp>(op->getLoc(), resultType, vop.getBase(),
+                                 orderAttr, vop.getGroupAttr())
               .getResult();
-      vop.getResult().replaceAllUsesWith(result);
+      vop.getResult().replaceAllUsesWith(iotaResult);
       op->erase();
       continue;
     }
@@ -1581,6 +1612,39 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
       (void)lowerMaskedUnary(vop, builder, createLegacy);
       continue;
     }
+  }
+
+  // Direct legacy iota with {group} on a non-contiguous layout: rewrite to
+  // contiguous iota + ensure_layout (same contract as vci above).
+  SmallVector<VMIIotaOp> groupedNonContigIotas;
+  module.walk([&](VMIIotaOp iota) {
+    if (!iota.getGroupAttr())
+      return;
+    auto vmiTy = dyn_cast<VMIVRegType>(iota.getResult().getType());
+    if (!vmiTy)
+      return;
+    VMILayoutAttr layout = vmiTy.getLayoutAttr();
+    if (layout && !layout.isContiguous())
+      groupedNonContigIotas.push_back(iota);
+  });
+  for (VMIIotaOp iota : groupedNonContigIotas) {
+    if (!iota->getBlock())
+      continue;
+    OpBuilder builder(iota);
+    auto vmiTy = cast<VMIVRegType>(iota.getResult().getType());
+    Type contigType = VMIVRegType::get(
+        iota.getContext(), vmiTy.getElementCount(), vmiTy.getElementType(),
+        VMILayoutAttr::getContiguous(iota.getContext()));
+    Value contig =
+        builder
+            .create<VMIIotaOp>(iota.getLoc(), contigType, iota.getBase(),
+                               iota.getOrderAttr(), iota.getGroupAttr())
+            .getResult();
+    Value converted =
+        builder.create<VMIEnsureLayoutOp>(iota.getLoc(), vmiTy, contig)
+            .getResult();
+    iota.getResult().replaceAllUsesWith(converted);
+    iota.erase();
   }
 }
 

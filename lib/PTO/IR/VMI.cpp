@@ -962,6 +962,13 @@ LogicalResult VMIIotaOp::verify() {
     if (resultType.getElementCount() % numGroups != 0)
       return emitOpError("requires group to evenly divide result logical lane "
                          "count");
+    int64_t groupSize = resultType.getElementCount() / numGroups;
+    FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
+    if (succeeded(lanesPerPart) && groupSize % *lanesPerPart != 0 &&
+        *lanesPerPart % groupSize != 0)
+      return emitOpError("requires group_size to divide or be a multiple of "
+                         "physical lanes per part (")
+             << *lanesPerPart << ")";
   }
   return success();
 }
@@ -2619,6 +2626,13 @@ LogicalResult VMIVciOp::verify() {
     if (resultType.getElementCount() % numGroups != 0)
       return emitOpError("requires group to evenly divide result logical lane "
                          "count");
+    int64_t groupSize = resultType.getElementCount() / numGroups;
+    FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
+    if (succeeded(lanesPerPart) && groupSize % *lanesPerPart != 0 &&
+        *lanesPerPart % groupSize != 0)
+      return emitOpError("requires group_size to divide or be a multiple of "
+                         "physical lanes per part (")
+             << *lanesPerPart << ")";
   }
   return success();
 }

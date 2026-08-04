@@ -70,8 +70,11 @@ def VMIIotaOp : VMI_Op<"iota", [Pure]> {
     With `{group = C}`, produces a **group-periodic** ramp (not continuous
     across groups): each of the C groups of size `S = L / C` independently
     gets `dst[g*S + j] = base + j`. Example `L=128, C=2, base=0`:
-    `[0..63 | 0..63]`. Both physical VL64 parts hold the same ramp and may
-    share one index register. Layout packing is orthogonal to this ramp shape.
+    `[0..63 | 0..63]`. When `S` is a multiple of physical VL, parts that share
+    the same ramp may reuse one index register. When `S < VL` and `VL % S == 0`
+    (e.g. i32 `L=64, C=2` → `[0..31 | 0..31]` inside one VL64), lowering merges
+    masked `vci` runs via `vsel`. Grouped iota materializes as contiguous;
+    deinterleaved results go through contiguous iota + `ensure_layout`.
   }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
@@ -837,7 +840,8 @@ def VMIVciOp : VMI_Op<"vci", [Pure]> {
     Unified form of `iota`. Without `{group}`, continuous ramp over L lanes.
     With `{group = C}`, group-periodic restart at `base` per group (see
     `iota`); identical group runs share one physical index register after
-    lowering. Lowers to `iota` preserving `{group}`.
+    lowering. Non-contiguous result layouts rewrite to contiguous iota +
+    `ensure_layout` in unified→legacy. Lowers to `iota` preserving `{group}`.
   }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,

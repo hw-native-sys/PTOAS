@@ -61,6 +61,22 @@ def vmi_vci_dynamic_group2_probe():
         pto.vmi.vstore(idx, dst.as_ptr(), pto.const(0, dtype=pto.index))
 
 
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vmi_vci_subvl_i32_g2_probe():
+    """Sub-VL: i32 size=64 group=2 → [0..31|0..31] in one physical VL."""
+    dst = pto.alloc_tile(shape=[1, 64], dtype=pto.i32)
+    idx = pto.vmi.vci(pto.i32(0), size=64, group=2)
+    pto.vmi.vstore(idx, dst.as_ptr(), pto.const(0, dtype=pto.index))
+
+
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vmi_vci_subvl_i16_g2_probe():
+    """Sub-VL: i16 size=128 group=2 → [0..63|0..63] in one physical VL."""
+    dst = pto.alloc_tile(shape=[1, 128], dtype=pto.i16)
+    idx = pto.vmi.vci(pto.i16(0), size=128, group=2)
+    pto.vmi.vstore(idx, dst.as_ptr(), pto.const(0, dtype=pto.index))
+
+
 def main() -> None:
     const_text = vmi_vci_const_i32_probe.compile().mlir_text()
     expect("pto.vmi.vci" in const_text, "const probe must emit pto.vmi.vci")
@@ -98,6 +114,46 @@ def main() -> None:
         "arith.index_cast" in g2_text or "index_cast" in g2_text,
         f"group=2 probe must index_cast before vci:\n{g2_text[:2000]}",
     )
+
+    subvl32 = vmi_vci_subvl_i32_g2_probe.compile().mlir_text()
+    expect(
+        "group = 2" in subvl32 or "{group = 2" in subvl32,
+        f"sub-VL i32 g2 must preserve group:\n{subvl32[:1500]}",
+    )
+    expect(
+        "!pto.vmi.vreg<64xi32" in subvl32,
+        f"sub-VL i32 g2 must be 64xi32:\n{subvl32[:1500]}",
+    )
+
+    subvl16 = vmi_vci_subvl_i16_g2_probe.compile().mlir_text()
+    expect(
+        "group = 2" in subvl16 or "{group = 2" in subvl16,
+        f"sub-VL i16 g2 must preserve group:\n{subvl16[:1500]}",
+    )
+    expect(
+        "!pto.vmi.vreg<128xi16" in subvl16,
+        f"sub-VL i16 g2 must be 128xi16:\n{subvl16[:1500]}",
+    )
+
+    # Untileable: i32 size=48 group=2 → S=24 does not tile phys 64.
+    from ptodsl._vmi_namespace import _check_vci_group_tiles_phys_vl
+    from mlir.ir import Context, IntegerType
+
+    with Context():
+        i32 = IntegerType.get_signless(32)
+        try:
+            _check_vci_group_tiles_phys_vl(
+                i32, 48, 2, context="pto.vmi.vci(...)"
+            )
+            raise AssertionError(
+                "expected ValueError for untileable group_size=24"
+            )
+        except ValueError as err:
+            expect(
+                "physical lanes" in str(err),
+                f"untileable group must mention physical lanes, got: {err}",
+            )
+
     print("ptodsl_vmi_vci_dynamic_index: PASS")
 
 

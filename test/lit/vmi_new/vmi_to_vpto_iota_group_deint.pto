@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+// Grouped vci on a deinterleaved result is rewritten to contiguous group
+// iota + ensure_layout, then lowered. No dedicated grouped-deint iota path.
+
+module {
+  func.func @vmi_to_vpto_iota_group2_deint(%base: i32)
+      -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>) {
+    %value = pto.vmi.vci %base {group = 2 : i64}
+        : i32 -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+    %p0, %p1 = "pto.vmi.unpack"(%value)
+        : (!pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>)
+        -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>)
+    return %p0, %p1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>
+  }
+}
+
+// Contiguous group share first, then c→d ensure_layout (vdintlv).
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_deint(
+// CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK-NOT: pto.vci
+// CHECK: %[[E:.*]], %[[O:.*]] = pto.vdintlv %[[IDX]], %[[IDX]]
+// CHECK: return %[[E]], %[[O]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
