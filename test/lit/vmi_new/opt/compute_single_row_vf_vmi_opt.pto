@@ -10,10 +10,12 @@
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.vcgmax --implicit-check-not=pto.vselr
 
 // Optimization guard for the ComputeSingleRowVF block-quant path.
-// The 128xf32 -> 128xf8 truncf should use a contiguous f32 source and a
-// lane_stride=4 fp8 result. Each physical f32 source part should lower through
-// P0 independently, and the masked_store should preserve lane_stride and lower
-// to two PK4_B32 stores without vor/vpack assembly.
+// The 128xf16 input should split into two UNPK_B16 loads whose f16 -> f32
+// conversions both consume the EVEN lanes. The 128xf32 -> 128xf8 truncf should
+// use a contiguous f32 source and a lane_stride=4 fp8 result. Each physical f32
+// source part should lower through P0 independently, and the masked_store
+// should preserve lane_stride and lower to two PK4_B32 stores without
+// vor/vpack assembly.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @ComputeSingleRowVF_fp16_vmi_opt(
@@ -90,8 +92,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // ASSIGN: pto.vmi.masked_store %[[Q8]], {{.*}}, %[[MASK]]
 
 // VPTO-LABEL: func.func @ComputeSingleRowVF_fp16_vmi_opt(
-// VPTO: pto.vcvt {{.*}} {part = "EVEN"}
-// VPTO: pto.vcvt {{.*}} {part = "ODD"}
+// VPTO: %[[INPUT_LOW:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// VPTO: %[[INPUT_HIGH:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// VPTO: pto.vcvt %[[INPUT_LOW]], {{.*}} {part = "EVEN"}
+// VPTO: pto.vcvt %[[INPUT_HIGH]], {{.*}} {part = "EVEN"}
 // VPTO: pto.vcmax
 // VPTO-NOT: part = "P1"
 // VPTO-NOT: part = "P3"
