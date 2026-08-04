@@ -76,7 +76,6 @@ struct SyncOpRecord {
   /// class the allocator routed this sync to -- and so whether it is
   /// SyncIR-positioned (event/barrier) or op-anchored (bufid). Gates switch on
   /// this, never on the `mechanism` string.
-  int mechanismCode = -1;
   std::string mechanism;
   int srcPipe = -1;
   int dstPipe = -1;

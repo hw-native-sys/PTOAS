@@ -204,7 +204,6 @@ mlir::pto::oracle::extractFromSyncOps(const SyncOperations &ops) {
       rec.type = SyncOperation::TypeName(sync->GetType());
       rec.typeCode = static_cast<int>(sync->GetType());
       rec.mechanism = SyncOperation::MechanismName(sync->GetMechanism());
-      rec.mechanismCode = static_cast<int>(sync->GetMechanism());
       rec.srcPipe = static_cast<int>(sync->GetActualSrcPipe());
       rec.dstPipe = static_cast<int>(sync->GetActualDstPipe());
       for (int id : sync->eventIds)

@@ -83,8 +83,6 @@ struct Interval {
   bool overlaps(const Interval &o) const {
     return start < o.end && o.start < end;
   }
-  /// A barrier is a point, not a range; length 0 is normal, not degenerate.
-  unsigned length() const { return end > start ? end - start : 0; }
 };
 
 //===----------------------------------------------------------------------===//

@@ -441,6 +441,9 @@ struct PTOUnifiedSyncPass
            << " spilled_to_barrier=" << alloc.spilledToBarrier
            << " hidden_reserved=" << hiddenReserved
            << " reused=" << alloc.reused
+           << " skipped_routed=" << alloc.skippedRouted
+           << " rotating=" << alloc.rotating
+           << " ids_assigned=" << alloc.idsAssigned
            << " (per-direction first-fit; ids reused across disjoint intervals)\n";
 
         // --- Placement of the synthesised compensation pairs ------------------
