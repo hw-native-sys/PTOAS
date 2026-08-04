@@ -6,74 +6,134 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
 // Sub-VL group-periodic contiguous iota: S < physVL and physVL % S == 0.
-// Materialize via vci(base) + per-group (∓ g*S) + lane-range vsel.
+// Materialize via vci(base) + per-group (∓ g*S) + lane-range vsel, then
+// consume with vadds(+1000) + vsts (no unpack).
 //
-// i32 size=64 group=2 → [base..base+31 | base..base+31] in one VL64.
-// i16 size=128 group=2 → [base..base+63 | base..base+63] in one VL128.
-// i32 size=128 group=4 → two identical VL64 packs [b..b+31|b..b+31], shared.
+// i32 physVL=64:  g2→S=32, g4→S=16, g8→S=8
+// i16 physVL=128: g2→S=64, g4→S=32
 
 module {
-  func.func @vmi_to_vpto_iota_subvl_i32_g2(%base: i32) -> !pto.vreg<64xi32> {
-    %value = pto.vmi.vci %base {group = 2 : i64}
-        : i32 -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
-    %part = "pto.vmi.unpack"(%value)
-        : (!pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
-        -> !pto.vreg<64xi32>
-    return %part : !pto.vreg<64xi32>
+  func.func @vmi_to_vpto_iota_subvl_i32_g2(
+      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<64xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 2 : i64}
+        : i32 -> !pto.vmi.vreg<64xi32>
+    %c1000 = arith.constant 1000 : i32
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xi32>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+    return
   }
 
-  func.func @vmi_to_vpto_iota_subvl_i16_g2(%base: i16) -> !pto.vreg<128xi16> {
-    %value = pto.vmi.vci %base {group = 2 : i64}
-        : i16 -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
-    %part = "pto.vmi.unpack"(%value)
-        : (!pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>)
-        -> !pto.vreg<128xi16>
-    return %part : !pto.vreg<128xi16>
+  func.func @vmi_to_vpto_iota_subvl_i32_g4(
+      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<64xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 4 : i64}
+        : i32 -> !pto.vmi.vreg<64xi32>
+    %c1000 = arith.constant 1000 : i32
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xi32>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+    return
   }
 
-  func.func @vmi_to_vpto_iota_subvl_i32_g4_share(%base: i32)
-      -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>) {
-    %value = pto.vmi.vci %base {group = 4 : i64}
-        : i32 -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
-    %p0, %p1 = "pto.vmi.unpack"(%value)
-        : (!pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>)
-        -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>)
-    return %p0, %p1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>
+  func.func @vmi_to_vpto_iota_subvl_i32_g8(
+      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<64xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 8 : i64}
+        : i32 -> !pto.vmi.vreg<64xi32>
+    %c1000 = arith.constant 1000 : i32
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xi32>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_iota_subvl_i16_g2(
+      %base: i16, %dst: !pto.ptr<i16, ub>, %mask: !pto.vmi.mask<128xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 2 : i64}
+        : i16 -> !pto.vmi.vreg<128xi16>
+    %c1000 = arith.constant 1000 : i16
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xi16>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_iota_subvl_i16_g4(
+      %base: i16, %dst: !pto.ptr<i16, ub>, %mask: !pto.vmi.mask<128xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 4 : i64}
+        : i16 -> !pto.vmi.vreg<128xi16>
+    %c1000 = arith.constant 1000 : i16
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xi16>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>
+    return
   }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g2(
 // CHECK-SAME: %[[BASE:.*]]: i32
 // CHECK: %[[FULL:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[ZERO:.*]] = arith.constant 0 : i32
-// CHECK: %[[INIT:.*]] = pto.vdup %[[ZERO]]
-// CHECK: %[[MASK0:.*]] = pto.pset_b32 "PAT_VL32"
-// CHECK: %[[G0:.*]] = pto.vsel %[[FULL]], %[[INIT]], %[[MASK0]]
-// CHECK: %[[OFF:.*]] = arith.constant 32 : i32
-// CHECK: %[[NEGOFF:.*]] = arith.subi %[[ZERO]], %[[OFF]]
-// CHECK: %[[ADJ:.*]] = pto.vadds %[[FULL]], %[[NEGOFF]]
-// CHECK: pto.pnot
-// CHECK: %[[OUT:.*]] = pto.vsel %[[ADJ]], %[[G0]]
-// CHECK: return %[[OUT]]
+// CHECK: pto.pset_b32 "PAT_VL32"
+// CHECK: pto.vsel
+// CHECK: pto.vadds %[[FULL]]
+// CHECK: %[[PACKED:.*]] = pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g4(
+// CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK-COUNT-3: pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
+// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g8(
+// CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK-COUNT-7: pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
+// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i16_g2(
 // CHECK-SAME: %[[BASE:.*]]: i16
-// CHECK: %[[FULL:.*]] = pto.vci %[[BASE]] : i16 -> !pto.vreg<128xi16>
+// CHECK: pto.vci %[[BASE]] : i16 -> !pto.vreg<128xi16>
 // CHECK: pto.pset_b16 "PAT_VL64"
 // CHECK: pto.vsel
 // CHECK: pto.vadds
 // CHECK: pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i16
+// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
 
-// CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g4_share(
-// CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK: pto.vsel
-// CHECK: pto.vadds
-// CHECK: %[[OUT:.*]] = pto.vsel
-// CHECK-NEXT: return %[[OUT]], %[[OUT]]
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i16_g4(
+// CHECK-SAME: %[[BASE:.*]]: i16
+// CHECK: pto.vci %[[BASE]] : i16 -> !pto.vreg<128xi16>
+// CHECK-COUNT-3: pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i16
+// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.

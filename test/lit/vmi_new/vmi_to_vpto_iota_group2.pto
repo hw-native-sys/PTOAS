@@ -6,29 +6,35 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
-// VL128 {group=2} is group-periodic [base..base+63 | base..base+63].
-// One vci(dyn Sn); both physical parts reuse that single VL64 result.
+// VL128 {group=2}: group-periodic [base..base+63 | base..base+63].
+// Real consumers: shared phys vci → per-part vadds(+1000) → vsts.
 
 module {
-  func.func @vmi_to_vpto_iota_group2_i32(%base: i32)
-      -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>) {
-    %value = pto.vmi.vci %base {group = 2 : i64}
-        : i32 -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
-    %p0, %p1 = "pto.vmi.unpack"(%value)
-        : (!pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>)
-        -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>)
-    return %p0, %p1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>
+  func.func @vmi_to_vpto_iota_group2_vadds_vsts(
+      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<128xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 2 : i64}
+        : i32 -> !pto.vmi.vreg<128xi32>
+    %c1000 = arith.constant 1000 : i32
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<128xi32>, i32, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xi32>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<128xi32>, !pto.ptr<i32, ub>
+    return
   }
 }
 
-// CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_i32(
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_vadds_vsts(
 // CHECK-SAME: %[[BASE:.*]]: i32
 // CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
 // CHECK-NOT: pto.vci
-// CHECK-NOT: pto.vadds
-// CHECK: return %[[IDX]], %[[IDX]]
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
+// CHECK: pto.vadds %[[IDX]], %[[C1000]]
+// CHECK: pto.vadds %[[IDX]], %[[C1000]]
+// CHECK: pto.vsts
+// CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
-// CHECK-NOT: unrealized_conversion_cast

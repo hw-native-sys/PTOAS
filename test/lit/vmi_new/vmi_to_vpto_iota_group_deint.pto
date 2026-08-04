@@ -8,27 +8,33 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
-// Grouped vci on a deinterleaved result is rewritten to contiguous group
-// iota + ensure_layout, then lowered. No dedicated grouped-deint iota path.
+// Grouped vci on a deinterleaved result → contiguous group iota +
+// ensure_layout (vdintlv), then sitofp vcvt + interleaved store.
+// No unpack; vcvt/vstore are the real consumers.
 
 module {
-  func.func @vmi_to_vpto_iota_group2_deint(%base: i32)
-      -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>) {
-    %value = pto.vmi.vci %base {group = 2 : i64}
+  func.func @vmi_to_vpto_iota_group2_deint_vcvt(
+      %base: i32, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 2 : i64}
         : i32 -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
-    %p0, %p1 = "pto.vmi.unpack"(%value)
-        : (!pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>)
-        -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>)
-    return %p0, %p1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>
+    %fp = pto.vmi.vcvt %idx
+        : !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    pto.vmi.vstore %fp, %dst[%c0]
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+          !pto.ptr<f32, ub>
+    return
   }
 }
 
-// Contiguous group share first, then c→d ensure_layout (vdintlv).
-// CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_deint(
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_deint_vcvt(
 // CHECK-SAME: %[[BASE:.*]]: i32
 // CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
 // CHECK-NOT: pto.vci
 // CHECK: %[[E:.*]], %[[O:.*]] = pto.vdintlv %[[IDX]], %[[IDX]]
-// CHECK: return %[[E]], %[[O]]
+// CHECK: %[[FE:.*]] = pto.vcvt %[[E]]
+// CHECK: %[[FO:.*]] = pto.vcvt %[[O]]
+// CHECK: pto.vstsx2 %[[FE]], %[[FO]], {{.*}}, "INTLV_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
