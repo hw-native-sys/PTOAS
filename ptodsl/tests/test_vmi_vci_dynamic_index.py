@@ -11,7 +11,12 @@
 Dynamic loop indices must coerce to an i32 sreg so ODS/verify accept the op
 and lowering emits ``VCI Vd, Sn`` (matches Ascend ``S.vci(T.int32(offset))``).
 
-Also covers ``group=2`` (VL128 group-periodic) with a dynamic base.
+Also covers ``group=2`` (VL128 group-periodic) with a dynamic base. Lit
+``vmi_to_vpto_iota_group2.pto`` checks the share lowering:
+``%idx = pto.vci %base`` then ``return %idx, %idx``.
+
+Camodel share+compute probe (not this unit test):
+  ``ptodsl/examples/vci_vadds_share_launch.py`` → ``vci(0)+vadds(1000)+vsts``.
 
 Run:
   python3 ptodsl/tests/test_vmi_vci_dynamic_index.py

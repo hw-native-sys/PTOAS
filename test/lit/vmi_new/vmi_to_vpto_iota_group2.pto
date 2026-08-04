@@ -8,8 +8,8 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
-// VL128 {group=2} is group-periodic [base..base+63 | base..base+63], not a
-// continuous 0..127 ramp. Both physical parts reuse one index vreg.
+// VL128 {group=2} is group-periodic [base..base+63 | base..base+63].
+// One vci(dyn Sn); both physical parts reuse that single VL64 result.
 
 module {
   func.func @vmi_to_vpto_iota_group2_i32(%base: i32)
@@ -25,9 +25,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_i32(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK: %[[Z:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[IDX:.*]] = pto.vadds %[[Z]], %[[BASE]]
+// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
 // CHECK-NOT: pto.vci
 // CHECK-NOT: pto.vadds
 // CHECK: return %[[IDX]], %[[IDX]]

@@ -5207,47 +5207,15 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
                                            Value base, int64_t laneOffset,
                                            StringAttr orderAttr,
                                            PatternRewriter &rewriter) {
-  // Camodel / Bisheng llvm.hivm.vci honors immediate bases but currently
-  // ignores a non-zero *register* Sn base (dynamic sreg). Materialize
-  // absolute indices as vci(0) ± vadds/vdup(base), matching the
-  // deinterleaved iota path and Ascend's S.vci(0)+vadds pattern.
-  auto vregType = dyn_cast<VRegType>(resultType);
-  if (!vregType)
-    return failure();
-
+  // Contiguous iota is a direct VCI of the absolute chunk base (ASC
+  // `vci(offset_sreg)`). Group-periodic VL128 {group=2} shares one such VL64
+  // result across both physical parts (see sharedChunks below).
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
   FailureOr<Value> chunkBase =
       createIotaChunkBase(loc, base, laneOffset, order, rewriter);
   if (failed(chunkBase))
     return failure();
-
-  FailureOr<Value> mask = createAllTrueMaskForVReg(loc, vregType, rewriter);
-  FailureOr<Value> zero =
-      createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
-  if (failed(mask) || failed(zero))
-    return failure();
-
-  Value local =
-      rewriter.create<VciOp>(loc, resultType, *zero, StringAttr{}).getResult();
-
-  // Fast-path: base+laneOffset folds to zero and ASC → plain vci(0).
-  if (order != "DESC") {
-    if (auto constBase = chunkBase->getDefiningOp<arith::ConstantOp>()) {
-      if (auto intAttr = dyn_cast<IntegerAttr>(constBase.getValue())) {
-        if (intAttr.getValue().isZero())
-          return local;
-      }
-    }
-    return rewriter.create<VaddsOp>(loc, resultType, local, *chunkBase, *mask)
-        .getResult();
-  }
-
-  Value baseVector =
-      rewriter
-          .create<VdupOp>(loc, resultType, *chunkBase, *mask,
-                          /*position=*/nullptr)
-          .getResult();
-  return rewriter.create<VsubOp>(loc, resultType, baseVector, local, *mask)
+  return rewriter.create<VciOp>(loc, resultType, *chunkBase, orderAttr)
       .getResult();
 }
 
@@ -5355,8 +5323,9 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<VMIIotaOp> {
           return rewriter.notifyMatchFailure(
               op, "grouped contiguous iota physical result count mismatch");
 
-        // Cache by (resultType, laneOffset): identical group runs share one
-        // physical index register instead of re-emitting vci/vadds.
+        // Group-periodic VL128 {group=2}: one physical ramp shared by both
+        // parts → [base..base+63 | base..base+63]. Emit a single vci(dyn Sn)
+        // (or vci(chunkBase) when laneOffset≠0) and reuse that SSA value.
         llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
         for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
           if (!isa<VRegType>(resultType))

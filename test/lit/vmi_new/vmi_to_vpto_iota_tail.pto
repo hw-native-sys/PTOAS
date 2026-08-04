@@ -35,14 +35,10 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_contiguous_tail(
-// CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK: %[[Z0:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[P0:.*]] = pto.vadds %[[Z0]], %[[BASE]]
+// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
 // CHECK: arith.constant 64 : i32
-// CHECK: %[[BASE64:.*]] = arith.addi %[[BASE]]
-// CHECK: %[[Z1:.*]] = pto.vci {{.*}} : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[P1:.*]] = pto.vadds %[[Z1]], %[[BASE64]]
+// CHECK: arith.addi %arg0
+// CHECK: %[[P1:.*]] = pto.vci
 // CHECK: return %[[P0]], %[[P1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
