@@ -175,6 +175,10 @@ private:
   PTOParserTargetArch previousArch;
 };
 
+/// Return the target-specific alignment size in bytes for a supported
+/// load/store vector op. Unsupported operations, modes, and targets return
+/// std::nullopt.
+std::optional<int64_t> getLoadStoreVecAlignmentSize(Operation *op);
 
 /// Function attributes that mark an explicit PTO kernel entry.
 inline constexpr llvm::StringLiteral kPTOEntryAttrName = "pto.entry";

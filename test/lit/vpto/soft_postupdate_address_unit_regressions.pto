@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
 
 // Element and byte strides with the same numeric SSA value are different
 // address recurrences on an f32 pointer and must use separate iter_args.
@@ -22,6 +24,8 @@
 // CHECK: %[[VSTAS_INIT:[a-zA-Z0-9_]+]] = pto.addptr %arg0, %c4
 // CHECK: scf.for {{.*}} iter_args({{%.*}} = %[[VSTAS_INIT]])
 // CHECK: pto.vstas {{.*}}, {{%.*}}, %c4_i32
+// LLVM-LABEL: define void @vstas_nonzero_i32_initial_offset_mix_aiv
+// LLVM: call ptr addrspace(6) @llvm.hivm.vstas.post(<32 x i8> {{.*}}, ptr addrspace(6) {{.*}}, i32 16, i32 1)
 
 // sprsti offsets are signed 8-bit word counts; -1 must remain negative when
 // the initial pto.addptr address is constructed.

@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-soft-postupdate | FileCheck %s
+
+// A5 predicate alignment sizes must not be assumed for another target.
+// CHECK-LABEL: func.func @a3_predicate_alignment_is_unknown
+// CHECK: scf.for
+// CHECK: %{{.*}} = pto.pldi %{{.*}}[%c0], "US"
+// CHECK-NOT: pto.pldi {{.*}} -> !pto.mask<b8>, !pto.ptr<i8, ub>
+// CHECK: pto.psti %{{.*}}, %{{.*}}[%c0], "PK"
+// CHECK-NOT: pto.psti {{.*}} -> !pto.ptr<i8, ub>
+// CHECK: pto.addptr
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @a3_predicate_alignment_is_unknown(
+      %src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%src_ptr = %src, %dst_ptr = %dst)
+          -> (!pto.ptr<i8, ub>, !pto.ptr<i8, ub>) {
+        %mask = pto.pldi %src_ptr[%c0], "US"
+            : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+        pto.psti %mask, %dst_ptr[%c0], "PK"
+            : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+        %next_src = pto.addptr %src_ptr, %c16
+            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        %next_dst = pto.addptr %dst_ptr, %c16
+            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        scf.yield %next_src, %next_dst
+            : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>
+      }
+    }
+    return
+  }
+}

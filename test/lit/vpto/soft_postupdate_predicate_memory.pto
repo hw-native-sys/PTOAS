@@ -26,12 +26,23 @@
 // CHECK: scf.for
 // CHECK: %{{.*}} = pto.psti {{.*}}[%c4]
 
-// Immediate predicate offsets count 32-byte blocks. A 32-byte addptr step
-// must therefore become post-update stride 1, not 32.
-// CHECK-LABEL: func.func @immediate_base_steps_use_blocks
+// Immediate predicate offsets count dist-dependent alignment units. Each
+// original offset and addptr step below is one alignment unit. The pass must
+// build a correctly scaled initial pointer and emit post-update stride 1.
+// CHECK-LABEL: func.func @immediate_base_steps_use_alignment_units
+// CHECK: [[PLDI_NORM_INIT:%[a-zA-Z0-9_]+]] = pto.addptr {{%.*}}, %c32
+// CHECK-NEXT: [[PLDI_US_INIT:%[a-zA-Z0-9_]+]] = pto.addptr {{%.*}}, %c16
+// CHECK-NEXT: [[PLDI_DS_INIT:%[a-zA-Z0-9_]+]] = pto.addptr {{%.*}}, %c32
+// CHECK-NEXT: [[PSTI_NORM_INIT:%[a-zA-Z0-9_]+]] = pto.addptr {{%.*}}, %c32
+// CHECK-NEXT: [[PSTI_PK_INIT:%[a-zA-Z0-9_]+]] = pto.addptr {{%.*}}, %c16
 // CHECK: scf.for
-// CHECK: %{{.*}}, %{{.*}} = pto.pldi {{%.*}}[%c1]
-// CHECK: %{{.*}} = pto.psti {{.*}}[%c1]
+// CHECK-SAME: iter_args({{%.* = %.*}}, [[PLDI_NORM_BASE:%[a-zA-Z0-9_]+]] = [[PLDI_NORM_INIT]], [[PLDI_US_BASE:%[a-zA-Z0-9_]+]] = [[PLDI_US_INIT]], [[PLDI_DS_BASE:%[a-zA-Z0-9_]+]] = [[PLDI_DS_INIT]], [[PSTI_NORM_BASE:%[a-zA-Z0-9_]+]] = [[PSTI_NORM_INIT]], [[PSTI_PK_BASE:%[a-zA-Z0-9_]+]] = [[PSTI_PK_INIT]])
+// CHECK: [[MASK_NORM:%[a-zA-Z0-9_]+]], [[PLDI_NORM_NEXT:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_NORM_BASE]][%c1], "NORM"
+// CHECK-NEXT: [[MASK_US:%[a-zA-Z0-9_]+]], [[PLDI_US_NEXT:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_US_BASE]][%c1], "US"
+// CHECK-NEXT: [[MASK_DS:%[a-zA-Z0-9_]+]], [[PLDI_DS_NEXT:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_DS_BASE]][%c1], "DS"
+// CHECK-NEXT: [[PSTI_NORM_NEXT:%[a-zA-Z0-9_]+]] = pto.psti [[MASK_NORM]], [[PSTI_NORM_BASE]][%c1], "NORM"
+// CHECK-NEXT: [[PSTI_PK_NEXT:%[a-zA-Z0-9_]+]] = pto.psti [[MASK_US]], [[PSTI_PK_BASE]][%c1], "PK"
+// CHECK: scf.yield {{%.*}}, [[PLDI_NORM_NEXT]], [[PLDI_US_NEXT]], [[PLDI_DS_NEXT]], [[PSTI_NORM_NEXT]], [[PSTI_PK_NEXT]]
 
 // Dynamic strides are legal for plds/psts but not for the immediate pldi/psti
 // forms. The latter remain unchanged when their base step is symbolic.
@@ -110,27 +121,54 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @immediate_base_steps_use_blocks(
-      %src: !pto.ptr<i8, ub>,
-      %sink: !pto.ptr<i8, ub>) attributes {pto.kernel} {
+  func.func @immediate_base_steps_use_alignment_units(
+      %src_norm: !pto.ptr<i8, ub>,
+      %src_us: !pto.ptr<i8, ub>,
+      %src_ds: !pto.ptr<i8, ub>,
+      %dst_norm: !pto.ptr<i8, ub>,
+      %dst_pk: !pto.ptr<i8, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c3 = arith.constant 3 : index
+    %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
     pto.vecscope {
       scf.for %iv = %c0 to %c3 step %c1
-          iter_args(%src_ptr = %src, %sink_ptr = %sink)
-          -> (!pto.ptr<i8, ub>, !pto.ptr<i8, ub>) {
-        %mask = pto.pldi %src_ptr[%c0], "NORM"
+          iter_args(%src_norm_ptr = %src_norm,
+                    %src_us_ptr = %src_us,
+                    %src_ds_ptr = %src_ds,
+                    %dst_norm_ptr = %dst_norm,
+                    %dst_pk_ptr = %dst_pk)
+          -> (!pto.ptr<i8, ub>, !pto.ptr<i8, ub>, !pto.ptr<i8, ub>,
+              !pto.ptr<i8, ub>, !pto.ptr<i8, ub>) {
+        %mask_norm = pto.pldi %src_norm_ptr[%c1], "NORM"
             : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
-        pto.psti %mask, %sink_ptr[%c0], "NORM"
+        %mask_us = pto.pldi %src_us_ptr[%c1], "US"
+            : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+        %mask_ds = pto.pldi %src_ds_ptr[%c1], "DS"
+            : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
+        pto.psti %mask_norm, %dst_norm_ptr[%c1], "NORM"
             : !pto.mask<b8>, !pto.ptr<i8, ub>, index
-        %next_src = pto.addptr %src_ptr, %c32
+        pto.psti %mask_us, %dst_pk_ptr[%c1], "PK"
+            : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+        // Keep the DS load observable. This NORM store intentionally cannot
+        // follow the 16-byte dst_pk recurrence and remains in normal form.
+        pto.psti %mask_ds, %dst_pk_ptr[%c0], "NORM"
+            : !pto.mask<b8>, !pto.ptr<i8, ub>, index
+        %next_src_norm = pto.addptr %src_norm_ptr, %c32
             : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
-        %next_sink = pto.addptr %sink_ptr, %c32
+        %next_src_us = pto.addptr %src_us_ptr, %c16
             : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
-        scf.yield %next_src, %next_sink
-            : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>
+        %next_src_ds = pto.addptr %src_ds_ptr, %c32
+            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        %next_dst_norm = pto.addptr %dst_norm_ptr, %c32
+            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        %next_dst_pk = pto.addptr %dst_pk_ptr, %c16
+            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        scf.yield %next_src_norm, %next_src_us, %next_src_ds,
+                  %next_dst_norm, %next_dst_pk
+            : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>, !pto.ptr<i8, ub>,
+              !pto.ptr<i8, ub>, !pto.ptr<i8, ub>
       }
     }
     return

@@ -388,6 +388,92 @@ bool mlir::pto::isTargetArchA5(Operation *op) {
   return getTargetArch(op) == PTOArch::A5;
 }
 
+constexpr int64_t kA5VectorLengthBytes = 256;
+
+enum class PredicateLoadDist {
+  Norm,
+  Us,
+  Ds,
+};
+
+enum class PredicateStoreDist {
+  Norm,
+  Pk,
+};
+
+struct PredicateLoadAlignmentRule {
+  PredicateLoadDist dist;
+  int64_t alignmentBytes;
+};
+
+struct PredicateStoreAlignmentRule {
+  PredicateStoreDist dist;
+  int64_t alignmentBytes;
+};
+
+constexpr PredicateLoadAlignmentRule kA5PredicateLoadAlignmentRules[] = {
+    {PredicateLoadDist::Norm, kA5VectorLengthBytes / 8},
+    {PredicateLoadDist::Us, kA5VectorLengthBytes / 16},
+    {PredicateLoadDist::Ds, std::min<int64_t>(32, kA5VectorLengthBytes / 4)},
+};
+
+constexpr PredicateStoreAlignmentRule kA5PredicateStoreAlignmentRules[] = {
+    {PredicateStoreDist::Norm, kA5VectorLengthBytes / 8},
+    {PredicateStoreDist::Pk, kA5VectorLengthBytes / 16},
+};
+
+static std::optional<PredicateLoadDist>
+parsePredicateLoadDist(StringRef dist) {
+  if (dist == "NORM")
+    return PredicateLoadDist::Norm;
+  if (dist == "US")
+    return PredicateLoadDist::Us;
+  if (dist == "DS")
+    return PredicateLoadDist::Ds;
+  return std::nullopt;
+}
+
+static std::optional<PredicateStoreDist>
+parsePredicateStoreDist(StringRef dist) {
+  if (dist == "NORM")
+    return PredicateStoreDist::Norm;
+  if (dist == "PK")
+    return PredicateStoreDist::Pk;
+  return std::nullopt;
+}
+
+template <typename Rule, typename Dist, size_t N>
+static std::optional<int64_t> findAlignmentSize(const Rule (&rules)[N],
+                                                Dist dist) {
+  auto rule = llvm::find_if(
+      rules, [&](const Rule &entry) { return entry.dist == dist; });
+  if (rule == std::end(rules))
+    return std::nullopt;
+  return rule->alignmentBytes;
+}
+
+std::optional<int64_t>
+mlir::pto::getLoadStoreVecAlignmentSize(Operation *op) {
+  if (!op || getTargetArch(op) != PTOArch::A5)
+    return std::nullopt;
+
+  if (auto pldi = dyn_cast<PldiOp>(op)) {
+    auto dist = parsePredicateLoadDist(pldi.getDist());
+    return dist ? findAlignmentSize(kA5PredicateLoadAlignmentRules, *dist)
+                : std::nullopt;
+  }
+  if (auto psti = dyn_cast<PstiOp>(op)) {
+    auto dist = parsePredicateStoreDist(psti.getDist());
+    return dist ? findAlignmentSize(kA5PredicateStoreAlignmentRules, *dist)
+                : std::nullopt;
+  }
+  if (auto sprsti = dyn_cast<SprstiOp>(op)) {
+    if (sprsti.getSpr() == "AR")
+      return 4;
+  }
+  return std::nullopt;
+}
+
 static llvm::TypeSize getOneByteTypeSize() {
   return llvm::TypeSize::getFixed(8);
 }

@@ -47,13 +47,14 @@ static constexpr unsigned kCanonicalAddressWidth = 16;
 // What one unit of an op's strideOperand means, in address terms.  This is a
 // property of the op's lowering, not of the pass: `Element` ops run their
 // offset through convertElementOffsetToBytes, `Block` ops pass a packed
-// control word straight to the intrinsic, and `Byte` ops pass a raw byte
-// offset.  See `strideUnitBytes` for the conversion.
+// control word straight to the intrinsic, `Alignment` ops use an op-specific
+// hardware alignment table, and `Byte` ops pass a raw byte offset. See
+// `strideUnitBytes` for the conversion.
 enum class StrideUnit {
-  Element, // vlds/vsts/vldsx2/vstas: offset in pointer elements
-  Word32,  // sprsti: immediate offset in 4-byte words
-  Block,   // vsstb/vsldb/pldi/psti: offset in 32-byte blocks
-  Byte,    // plds/psts/sprsts: scalar offset in bytes
+  Element,   // vlds/vsts/vldsx2/vstas: offset in pointer elements
+  Block,     // vsstb/vsldb: offset in 32-byte blocks
+  Alignment, // pldi/psti/sprsti: op-specific hardware alignment units
+  Byte,      // plds/psts/sprsts: scalar offset in bytes
 };
 
 enum class StrideConstraint {
@@ -81,14 +82,14 @@ static const PostUpdateTable &getPostUpdateTable() {
     t["pto.vlds"] = {0, 1, StrideUnit::Element, 1};
     t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
     t["pto.plds"] = {0, 1, StrideUnit::Byte, 1};
-    t["pto.pldi"] = {0, 1, StrideUnit::Block, 1,
+    t["pto.pldi"] = {0, 1, StrideUnit::Alignment, 1,
                      StrideConstraint::Constant};
     t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
     t["pto.psts"] = {1, 2, StrideUnit::Byte, 0};
-    t["pto.psti"] = {1, 2, StrideUnit::Block, 0,
+    t["pto.psti"] = {1, 2, StrideUnit::Alignment, 0,
                      StrideConstraint::Constant};
     t["pto.sprsts"] = {0, 1, StrideUnit::Byte, 0};
-    t["pto.sprsti"] = {0, 1, StrideUnit::Word32, 0,
+    t["pto.sprsti"] = {0, 1, StrideUnit::Alignment, 0,
                        StrideConstraint::SignedI8};
     t["pto.vstas"] = {1, 2, StrideUnit::Element, 0};
     t["pto.vsldb"] = {0, 2, StrideUnit::Block, 1};
@@ -121,15 +122,17 @@ static std::optional<int64_t> addPtrUnitBytes(Value base) {
   return static_cast<int64_t>(bits / 8);
 }
 
-// Bytes covered by one unit of the op's strideOperand.
-static int64_t strideUnitBytes(StrideUnit unit, int64_t elemBytes) {
+// Bytes covered by one unit of the op's strideOperand. Some units depend on
+// op attributes, so an unknown table entry conservatively rejects the op.
+static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
+                                              int64_t elemBytes) {
   switch (unit) {
   case StrideUnit::Element:
     return elemBytes;
-  case StrideUnit::Word32:
-    return 4;
   case StrideUnit::Block:
     return kBlockSizeBytes;
+  case StrideUnit::Alignment:
+    return pto::getLoadStoreVecAlignmentSize(op);
   case StrideUnit::Byte:
     return 1;
   }
@@ -2119,7 +2122,9 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     auto elemBytes = addPtrUnitBytes(base);
     if (!elemBytes)
       continue;
-    int64_t unitBytes = strideUnitBytes(info->strideUnit, *elemBytes);
+    auto unitBytes = strideUnitBytes(&op, info->strideUnit, *elemBytes);
+    if (!unitBytes)
+      continue;
     NormalizedBase normalized =
         normalizeSequentialBase(base, *elemBytes, exprCache);
 
@@ -2133,7 +2138,8 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     }
     bucketIt->candidates.push_back(
         {&op, info, base, strideOperand, normalized.root, normalized.offset,
-         buildSequentialExpr(strideOperand, exprCache), *elemBytes, unitBytes});
+         buildSequentialExpr(strideOperand, exprCache), *elemBytes,
+         *unitBytes});
   }
 
   SmallVector<SequentialRun> runs;
@@ -2291,7 +2297,9 @@ private:
       std::optional<int64_t> elemBytes = addPtrUnitBytes(base);
       if (!elemBytes)
         continue;
-      int64_t unitBytes = strideUnitBytes(info->strideUnit, *elemBytes);
+      auto unitBytes = strideUnitBytes(&op, info->strideUnit, *elemBytes);
+      if (!unitBytes)
+        continue;
 
       // Analyze each operand independently: accumulator (iter_arg) first,
       // delta (IV/affine) fallback. Both return a symbolic per-iteration
@@ -2304,7 +2312,7 @@ private:
         continue;
 
       StrideExprRef total =
-          combineStride(deltaBase, deltaOffset, *elemBytes, unitBytes);
+          combineStride(deltaBase, deltaOffset, *elemBytes, *unitBytes);
       if (!total)
         continue;
 
@@ -2349,12 +2357,12 @@ private:
                                     constCache, builder);
 
       Value initPtr = computeInitialPtr(base, strideOperand, info->strideUnit,
-                                        *elemBytes, unitBytes, forOp, builder);
+                                        *elemBytes, *unitBytes, forOp, builder);
       if (!initPtr)
         continue;
 
       rewrites.push_back(
-          {&op, base, strideOperand, strideNew, initPtr, unitBytes});
+          {&op, base, strideOperand, strideNew, initPtr, *unitBytes});
     }
 
     if (!rewrites.empty())
