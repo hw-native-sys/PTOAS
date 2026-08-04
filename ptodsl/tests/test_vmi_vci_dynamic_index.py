@@ -137,7 +137,7 @@ def main() -> None:
 
     # Untileable: i32 size=48 group=2 → S=24 does not tile phys 64.
     from ptodsl._vmi_namespace import _check_vci_group_tiles_phys_vl
-    from mlir.ir import Context, IntegerType
+    from ptoas.mlir.ir import Context, IntegerType
 
     with Context():
         i32 = IntegerType.get_signless(32)
