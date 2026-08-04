@@ -175,4 +175,56 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  // THE CANONICAL TWO-LEVEL !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>D STORE, and it forfeits the optimisation entirely.
+  //
+  // The offset mixes BOTH induction variables: a block term from the outer loop and a
+  // tile term from the inner one. Per edge:
+  //   inner: the outer term is loop-invariant here, so movement is 64 against a 63-byte
+  //          window -- dropped.
+  //   outer: movement resolves the block term to 512 and then meets the INNER induction
+  //          variable, which is not the outer loop's own, is not defined outside it
+  //          (the outer loop is an ancestor of the inner one), is not a constant and has
+  //          no defining op. Movement is therefore unknown and the edge refuses.
+  // One barrier survives, from the outer edge.
+  //
+  // THE REFUSAL IS REQUIRED, NOT MERELY UNPROVEN. The inner loop sweeps 16 iterations of
+  // 64, so one outer iteration covers 1024 bytes while consecutive outer iterations are
+  // only 512 apart: outer iterations genuinely revisit addresses the previous one wrote.
+  // A future movement analysis that treated an enclosed loop's induction variable as
+  // invariant would compute 512 > 63 and drop a real write-after-write here. The trip
+  // count is load-bearing for that reason and must not be lowered to make the arithmetic
+  // tidier.
+  //
+  // CHECK-LABEL: func.func @nested_mixed_ivs
+  // CHECK:         scf.for
+  // CHECK:           scf.for
+  // CHECK:             pto.barrier <PIPE_MTE3>
+  // CHECK:             pto.tstore
+  func.func @nested_mixed_ivs(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c512 = arith.constant 512 : index
+    %c1024 = arith.constant 1024 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %arg1, shape = [%c1024, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %dst = pto.make_tensor_view %arg0, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c64 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %in = pto.partition_view %src, offsets = [%c0, %c0], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<1x64xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %o = %c0 to %c2 step %c1 {
+      %blk = arith.muli %o, %c512 : index
+      scf.for %i = %c0 to %c16 step %c1 {
+        %tl = arith.muli %i, %c64 : index
+        %off = arith.addi %blk, %tl : index
+        %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+        pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)
+      }
+    }
+    return
+  }
 }
