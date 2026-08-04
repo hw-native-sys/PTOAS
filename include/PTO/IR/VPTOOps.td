@@ -135,6 +135,8 @@ def PTO_SimtConvertValueType : AnyTypeOf<[I32, I64, F16, BF16, F32,
                                          "standard scalar, low-precision scalar payload, or supported vector<2xT> conversion type">;
 def PTO_AtomicValueType : AnyTypeOf<[I32, I64, F16, BF16, F32, PTO_V2F16Type, PTO_V2BF16Type],
                                     "i32, i64, f16, bf16, f32, vector<2xf16> or vector<2xbf16>">;
+def PTO_DevScalarValueType : AnyTypeOf<[I8, I16, I32, I64],
+                                       "i8, i16, i32 or i64">;
 
 class PTO_MicroOp<string mnemonic, list<Trait> traits = []>
     : PTO_Op<mnemonic, !listconcat(traits, [MicroOpInterface])>;
@@ -255,6 +257,57 @@ def PTOStgOp : PTO_SimtOp<"stg", [
   let assemblyFormat = [{
     $value `,` $ptr `[` $offset `]` custom<L1Cache>($l1cache)
     custom<StL2Cache>($l2cache) attr-dict `:` type($ptr) `,` type($value)
+  }];
+}
+
+def PTOLdDevOp : PTO_MicroOp<"ld_dev", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Load one scalar GM element while bypassing the local L1 data cache.";
+  let description = [{
+    Load one integer scalar element from GM through the AICore device-memory
+    path while bypassing the local L1 data cache.  The offset operand is an
+    element offset, not a byte offset.  The operation does not provide
+    atomicity, synchronization, memory-ordering, or L2 cache-policy semantics.
+  }];
+
+  let arguments = (ins
+    PTO_BufferType:$ptr,
+    Index:$offset
+  );
+
+  let results = (outs PTO_DevScalarValueType:$value);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
+  }];
+}
+
+def PTOStDevOp : PTO_MicroOp<"st_dev", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Store one scalar GM element while bypassing the local L1 data cache.";
+  let description = [{
+    Store one integer scalar element to GM through the AICore device-memory
+    path while bypassing the local L1 data cache.  The offset operand is an
+    element offset, not a byte offset.  The operation does not provide
+    atomicity, synchronization, memory-ordering, or L2 cache-policy semantics.
+  }];
+
+  let arguments = (ins
+    PTO_DevScalarValueType:$value,
+    PTO_BufferType:$ptr,
+    Index:$offset
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
   }];
 }
 

@@ -546,6 +546,33 @@ static LogicalResult verifyLdgStgAccess(Operation *op, Type ptrType,
             "packed vector<2/4/8xfp8>, and !pto.hif8x2 value type";
 }
 
+static LogicalResult verifyLdStDevAccess(Operation *op, Type ptrType,
+                                         Type valueType) {
+  if (op->hasAttr("l1cache") || op->hasAttr("l2cache"))
+    return op->emitOpError()
+           << "does not accept l1cache or l2cache policy attributes";
+
+  auto ptrTy = dyn_cast<PtrType>(ptrType);
+  if (!ptrTy)
+    return op->emitOpError() << "requires !pto.ptr operand";
+  if (ptrTy.getMemorySpace().getAddressSpace() != AddressSpace::GM)
+    return op->emitOpError() << "requires GM pointer";
+
+  auto intType = dyn_cast<IntegerType>(valueType);
+  if (!intType || (intType.getWidth() != 8 && intType.getWidth() != 16 &&
+                   intType.getWidth() != 32 && intType.getWidth() != 64))
+    return op->emitOpError() << "supports only i8, i16, i32 or i64 values";
+
+  if (isInsideSimtExecutionScope(op))
+    return op->emitOpError()
+           << "must be outside pto.simt_entry functions and pto.section.simt";
+  auto funcOp = op->getParentOfType<func::FuncOp>();
+  if (!funcOp || !pto::isPTOEntryFunction(funcOp))
+    return op->emitOpError()
+           << "requires an enclosing ordinary AICore entry function";
+  return success();
+}
+
 LogicalResult PTOLoadOp::verify() {
   if (failed(verifyVPTOScalarAccessTypes(getOperation(), getPtr().getType(),
                                          getValue().getType(), "load")))
@@ -564,16 +591,42 @@ LogicalResult PTOLdgOp::verify() {
   if (failed(verifyVPTOScalarAccessTypes(getOperation(), getPtr().getType(),
                                          getValue().getType(), "ldg")))
     return failure();
-  return verifyLdgStgAccess(getOperation(), getPtr().getType(),
-                            getValue().getType());
+  if (failed(verifyLdgStgAccess(getOperation(), getPtr().getType(),
+                                getValue().getType())))
+    return failure();
+  if (!isInsideSimtExecutionScope(getOperation()))
+    return emitOpError()
+           << "must be inside a pto.simt_entry function or pto.section.simt";
+  return success();
 }
 
 LogicalResult PTOStgOp::verify() {
   if (failed(verifyVPTOScalarAccessTypes(getOperation(), getPtr().getType(),
                                          getValue().getType(), "stg")))
     return failure();
-  return verifyLdgStgAccess(getOperation(), getPtr().getType(),
-                            getValue().getType());
+  if (failed(verifyLdgStgAccess(getOperation(), getPtr().getType(),
+                                getValue().getType())))
+    return failure();
+  if (!isInsideSimtExecutionScope(getOperation()))
+    return emitOpError()
+           << "must be inside a pto.simt_entry function or pto.section.simt";
+  return success();
+}
+
+LogicalResult PTOLdDevOp::verify() {
+  if (failed(verifyVPTOScalarAccessTypes(getOperation(), getPtr().getType(),
+                                         getValue().getType(), "ld_dev")))
+    return failure();
+  return verifyLdStDevAccess(getOperation(), getPtr().getType(),
+                             getValue().getType());
+}
+
+LogicalResult PTOStDevOp::verify() {
+  if (failed(verifyVPTOScalarAccessTypes(getOperation(), getPtr().getType(),
+                                         getValue().getType(), "st_dev")))
+    return failure();
+  return verifyLdStDevAccess(getOperation(), getPtr().getType(),
+                             getValue().getType());
 }
 
 LogicalResult ShuffleIdxOp::verify() {
@@ -701,6 +754,18 @@ void PTOLdgOp::getEffects(
 }
 
 void PTOStgOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getPtrMutable());
+}
+
+void PTOLdDevOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getPtrMutable());
+}
+
+void PTOStDevOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getPtrMutable());

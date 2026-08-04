@@ -1,0 +1,17 @@
+// -----------------------------------------------------------------------------
+// case: micro-op/scalar-load-store/ld-st-dev
+// family: scalar-load-store
+// target_ops: pto.ld_dev, pto.st_dev
+// scenarios: core-i32, gm-l1-bypass, nonzero-element-offset
+// -----------------------------------------------------------------------------
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @ld_st_dev_kernel(
+      %src: !pto.ptr<i32, gm>,
+      %dst: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %src_offset = arith.constant 1 : index
+    %dst_offset = arith.constant 3 : index
+    %value = pto.ld_dev %src[%src_offset] : !pto.ptr<i32, gm> -> i32
+    pto.st_dev %value, %dst[%dst_offset] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}

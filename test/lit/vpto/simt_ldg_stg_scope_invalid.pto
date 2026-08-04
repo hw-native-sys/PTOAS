@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ldg.pto -o %t/ldg.o 2>&1 | FileCheck %s --check-prefix=LDG
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/stg.pto -o %t/stg.o 2>&1 | FileCheck %s --check-prefix=STG
+
+// LDG: 'pto.ldg' op must be inside a pto.simt_entry function or pto.section.simt
+// STG: 'pto.stg' op must be inside a pto.simt_entry function or pto.section.simt
+
+//--- ldg.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @invalid_ldg(%gm: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %value = pto.ldg %gm[%c0] : !pto.ptr<i32, gm> -> i32
+    pto.st_dev %value, %gm[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+
+//--- stg.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @invalid_stg(%gm: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %value = arith.constant 1 : i32
+    pto.stg %value, %gm[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}

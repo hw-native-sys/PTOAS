@@ -10,6 +10,7 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @ldst_policy_kernel(%gm_i8: !pto.ptr<i8, gm>, %gm_i16: !pto.ptr<i16, gm>, %gm_i32: !pto.ptr<i32, gm>, %gm_i64: !pto.ptr<i64, gm>, %gm_f16: !pto.ptr<f16, gm>, %gm_bf16: !pto.ptr<bf16, gm>, %gm_f32: !pto.ptr<f32, gm>, %gm_f64: !pto.ptr<f64, gm>, %dst_i32: !pto.ptr<i32, ub>, %dst_i64: !pto.ptr<i64, ub>) attributes {pto.aicore} {
+    pto.section.simt<<<1, 1, 1>>> {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
@@ -45,6 +46,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.store %load_cache, %dst_i32[%c0] : !pto.ptr<i32, ub>, i32
     pto.store %load_uncache, %dst_i64[%c0] : !pto.ptr<i64, ub>, i64
+    }
     return
   }
 }

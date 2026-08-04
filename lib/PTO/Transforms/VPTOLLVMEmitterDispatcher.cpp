@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "PTO/Support/CANNVersion.h"
 
@@ -18,10 +19,38 @@ static bool usesCANN900Lowering(const VPTOEmissionOptions &options) {
          options.cannVersion >= CANNVersion::release(9, 0, 0);
 }
 
+static bool containsLdStDev(ModuleOp module) {
+  bool found = false;
+  module.walk([&](Operation *op) {
+    if (isa<PTOLdDevOp, PTOStDevOp>(op))
+      found = true;
+  });
+  return found;
+}
+
+static LogicalResult verifyLdStDevTarget(ModuleOp module,
+                                         const VPTOEmissionOptions &options,
+                                         llvm::raw_ostream &diagOS) {
+  if (!containsLdStDev(module) || usesCANN900Lowering(options))
+    return success();
+
+  const bool isC220 = options.march == "dav-c220-vec" ||
+                      options.march == "dav-c220-cube";
+  if (isC220)
+    diagOS << "VPTO LLVM emission failed: pto.ld_dev and pto.st_dev require "
+              "--pto-arch=a5\n";
+  else
+    diagOS << "VPTO LLVM emission failed: pto.ld_dev and pto.st_dev require "
+              "CANN 9.0.0 or newer official lowering\n";
+  return failure();
+}
+
 LogicalResult lowerVPTOModuleToLLVMModules(
     ModuleOp module, const VPTOEmissionOptions &options,
     EmittedLLVMModule &cubeModule, EmittedLLVMModule &vectorModule,
     llvm::raw_ostream &diagOS) {
+  if (failed(verifyLdStDevTarget(module, options, diagOS)))
+    return failure();
   if (usesCANN900Lowering(options))
     return lowerVPTOModuleToLLVMModulesCANN900(module, options, cubeModule,
                                                vectorModule, diagOS);

@@ -10431,6 +10431,137 @@ private:
   LoweringState &state;
 };
 
+static std::string buildLdDevCalleeName(unsigned width) {
+  return "llvm.hivm.LD.DEV.u" + std::to_string(width) + ".GM";
+}
+
+static std::string buildStDevCalleeName(unsigned width) {
+  return "llvm.hivm.ST.DEV.u" + std::to_string(width);
+}
+
+class ConvertPtoLdDevOp final : public OpConversionPattern<pto::PTOLdDevOp> {
+public:
+  ConvertPtoLdDevOp(TypeConverter &typeConverter, MLIRContext *context,
+                    LoweringState &state)
+      : OpConversionPattern<pto::PTOLdDevOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::PTOLdDevOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
+    if (!llvmPtrType)
+      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
+
+    auto valueType = dyn_cast<IntegerType>(op.getValue().getType());
+    if (!valueType)
+      return rewriter.notifyMatchFailure(op, "expected integer result type");
+
+    Value offset = adaptor.getOffset();
+    if (offset.getType().isIndex())
+      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
+                                                     rewriter.getI64Type(), offset);
+
+    Type convertedValueType =
+        getTypeConverter()->convertType(op.getValue().getType());
+    if (!convertedValueType)
+      return rewriter.notifyMatchFailure(op,
+                                         "could not convert ld_dev result type");
+
+    Value elemPtr = adaptor.getPtr();
+    if (!matchPattern(offset, m_Zero())) {
+      elemPtr = rewriter.create<LLVM::GEPOp>(
+          op.getLoc(), llvmPtrType,
+          normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter),
+          adaptor.getPtr(), ValueRange{offset});
+    }
+
+    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(
+        op, elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
+    if (failed(gmPtr))
+      return rewriter.notifyMatchFailure(op, "failed to map ld_dev GM pointer");
+
+    std::string calleeName = buildLdDevCalleeName(valueType.getWidth());
+    Value intrinsicOffset = getI64Constant(rewriter, op.getLoc(), 0);
+    auto funcType = rewriter.getFunctionType(
+        TypeRange{gmPtr->getType(), rewriter.getI64Type()},
+        TypeRange{rewriter.getI64Type()});
+    auto call = rewriter.create<func::CallOp>(
+        op.getLoc(), calleeName, TypeRange{rewriter.getI64Type()},
+        ValueRange{*gmPtr, intrinsicOffset});
+    state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+
+    Value result = call.getResult(0);
+    if (valueType.getWidth() < 64)
+      result = rewriter.create<arith::TruncIOp>(op.getLoc(), convertedValueType,
+                                                result);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
+class ConvertPtoStDevOp final : public OpConversionPattern<pto::PTOStDevOp> {
+public:
+  ConvertPtoStDevOp(TypeConverter &typeConverter, MLIRContext *context,
+                    LoweringState &state)
+      : OpConversionPattern<pto::PTOStDevOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::PTOStDevOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
+    if (!llvmPtrType)
+      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
+
+    auto valueType = dyn_cast<IntegerType>(op.getValue().getType());
+    if (!valueType)
+      return rewriter.notifyMatchFailure(op, "expected integer value type");
+
+    Value offset = adaptor.getOffset();
+    if (offset.getType().isIndex())
+      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
+                                                     rewriter.getI64Type(), offset);
+
+    Value elemPtr = adaptor.getPtr();
+    if (!matchPattern(offset, m_Zero())) {
+      elemPtr = rewriter.create<LLVM::GEPOp>(
+          op.getLoc(), llvmPtrType,
+          normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(),
+                                                  rewriter),
+          adaptor.getPtr(), ValueRange{offset});
+    }
+
+    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(
+        op, elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
+    if (failed(gmPtr))
+      return rewriter.notifyMatchFailure(op, "failed to map st_dev GM pointer");
+
+    Value payload = adaptor.getValue();
+    if (valueType.getWidth() < 64)
+      payload = rewriter.create<arith::ExtUIOp>(op.getLoc(),
+                                                rewriter.getI64Type(), payload);
+
+    std::string calleeName = buildStDevCalleeName(valueType.getWidth());
+    Value intrinsicOffset = getI64Constant(rewriter, op.getLoc(), 0);
+    auto funcType = rewriter.getFunctionType(
+        TypeRange{rewriter.getI64Type(), gmPtr->getType(),
+                  rewriter.getI64Type()},
+        TypeRange{});
+    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
+                                  ValueRange{payload, *gmPtr, intrinsicOffset});
+    state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 class ConvertVPTOTypedCarrierOp final : public ConversionPattern {
 public:
   ConvertVPTOTypedCarrierOp(TypeConverter &typeConverter, MLIRContext *context)
@@ -10874,7 +11005,8 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
       });
   target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::LoadScalarOp,
                       pto::StoreScalarOp, pto::PTOLoadOp, pto::PTOStoreOp,
-                      pto::PTOLdgOp, pto::PTOStgOp, pto::DeclareStructOp,
+                      pto::PTOLdgOp, pto::PTOStgOp, pto::PTOLdDevOp,
+                      pto::PTOStDevOp, pto::DeclareStructOp,
                       pto::StructGetOp, pto::StructSetOp>();
   target.addDynamicallyLegalOp<UnrealizedConversionCastOp>(
       [&](UnrealizedConversionCastOp op) {
@@ -10892,7 +11024,7 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
                ConvertPtoStructGetOp,
                ConvertPtoStructSetOp>(typeConverter, context);
   patterns.add<ConvertPtoLoadOp, ConvertPtoStoreOp, ConvertPtoLdgOp,
-               ConvertPtoStgOp>(
+               ConvertPtoStgOp, ConvertPtoLdDevOp, ConvertPtoStDevOp>(
       typeConverter, context, state);
   patterns.add<ConvertArithSelectOp>(typeConverter, context);
   patterns.add<ConvertVPTOUnrealizedCastOp>(typeConverter, context);

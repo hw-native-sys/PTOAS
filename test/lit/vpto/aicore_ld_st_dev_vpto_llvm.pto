@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @aicore_ld_st_dev(
+      %gm_i8: !pto.ptr<i8, gm>,
+      %gm_i16: !pto.ptr<i16, gm>,
+      %gm_i32: !pto.ptr<i32, gm>,
+      %gm_i64: !pto.ptr<i64, gm>,
+      %dynamic_offset: index) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+
+    %v8 = pto.ld_dev %gm_i8[%c0] : !pto.ptr<i8, gm> -> i8
+    %v16 = pto.ld_dev %gm_i16[%c1] : !pto.ptr<i16, gm> -> i16
+    %v32 = pto.ld_dev %gm_i32[%dynamic_offset] : !pto.ptr<i32, gm> -> i32
+    %v64 = pto.ld_dev %gm_i64[%c0] : !pto.ptr<i64, gm> -> i64
+
+    pto.st_dev %v8, %gm_i8[%c1] : !pto.ptr<i8, gm>, i8
+    pto.st_dev %v16, %gm_i16[%dynamic_offset] : !pto.ptr<i16, gm>, i16
+    pto.st_dev %v32, %gm_i32[%c0] : !pto.ptr<i32, gm>, i32
+    pto.st_dev %v64, %gm_i64[%c1] : !pto.ptr<i64, gm>, i64
+    return
+  }
+}
+
+// CHECK-LABEL: define {{.*}}void @aicore_ld_st_dev_mix_aiv
+// CHECK-NOT: @llvm.hivm.ldg.
+// CHECK-NOT: @llvm.hivm.stg.
+// CHECK-DAG: getelementptr i16, ptr addrspace(1) {{.*}}, i64 1
+// CHECK-DAG: getelementptr i32, ptr addrspace(1) {{.*}}
+// CHECK-DAG: call i64 @llvm.hivm.LD.DEV.u8.GM(ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call i64 @llvm.hivm.LD.DEV.u16.GM(ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call i64 @llvm.hivm.LD.DEV.u32.GM(ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call i64 @llvm.hivm.LD.DEV.u64.GM(ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call void @llvm.hivm.ST.DEV.u8(i64 {{.*}}, ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call void @llvm.hivm.ST.DEV.u16(i64 {{.*}}, ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call void @llvm.hivm.ST.DEV.u32(i64 {{.*}}, ptr addrspace(1) {{.*}}, i64 0)
+// CHECK-DAG: call void @llvm.hivm.ST.DEV.u64(i64 {{.*}}, ptr addrspace(1) {{.*}}, i64 0)
+// CHECK: ret void

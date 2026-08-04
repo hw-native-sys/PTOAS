@@ -21,6 +21,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %gm_i16: !pto.ptr<vector<2xi16>, gm>,
       %gm_i32: !pto.ptr<vector<2xi32>, gm>
   ) attributes {pto.aicore} {
+    pto.section.simt<<<1, 1, 1>>> {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
 
@@ -58,6 +59,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %v_i32 = pto.ldg %gm_i32[%c0] : !pto.ptr<vector<2xi32>, gm> -> vector<2xi32>
     pto.stg %v_i32, %gm_i32[%c1] : !pto.ptr<vector<2xi32>, gm>, vector<2xi32>
 
+    }
     return
   }
 }
