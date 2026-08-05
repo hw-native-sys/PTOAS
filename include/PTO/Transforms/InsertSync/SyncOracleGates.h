@@ -493,6 +493,9 @@ struct SelfCoverageReport {
   /// (a1) A5 PIPE_V->PIPE_V: ordered by the target guarantee the codegen relies
   /// on when it declines to emit a barrier. NOT "A5 same-pipe".
   unsigned archGuaranteed = 0;
+  /// (a3) PIPE_S->PIPE_S. Counted apart from `archGuaranteed` because no hardware
+  /// guarantee is claimed for it -- see the exemption site for what it does rest on.
+  unsigned pipeSelfOrdered = 0;
   unsigned uncoveredSamePipe = 0;   // diagnosis split: both endpoints one pipe
   unsigned uncoveredCrossPipe = 0;  // the interesting ones
   unsigned compounds = 0;      // SyncIR compounds seen (consistency check)

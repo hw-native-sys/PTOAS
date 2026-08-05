@@ -25,7 +25,7 @@
 // ---------------------------------------------------------------------------
 // ROW 0 -- SOUNDNESS. All three green on InsertSync's own output.
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GOOD1
-// GOOD1: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=5 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+// GOOD1: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=5 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
 
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-interference %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GOOD2
 // GOOD2: [sync-gate:g2] func=oracle_vadd view=ir records=5 errors=0 warnings=0 OK
@@ -42,7 +42,7 @@
 // present, and there are none -- which is exactly why a green G2/G3 is not a
 // correctness result on its own.
 // RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EMPTY1
-// EMPTY1: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=0 uncovered=5 (samepipe=0 crosspipe=5) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0
+// EMPTY1: [sync-gate:g1-self] func=oracle_vadd compounds=4 deps=5 covered=0 uncovered=5 (samepipe=0 crosspipe=5) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0
 
 // RUN: ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EMPTY2
 // EMPTY2: [sync-gate:g2] func=oracle_vadd view=ir records=0 errors=0 warnings=0 OK
