@@ -33,8 +33,8 @@ module {
 }
 
 // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
-// CHECK-SAME: N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit
-// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements
+// CHECK-SAME: N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, or N=64 for 32-bit
+// CHECK-SAME: vselr requires contiguous layouts and supports N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, and N=64 for 32-bit elements
 
 // -----
 
@@ -49,8 +49,8 @@ module {
 }
 
 // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
-// CHECK-SAME: N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit
-// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements
+// CHECK-SAME: N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, or N=64 for 32-bit
+// CHECK-SAME: vselr requires contiguous layouts and supports N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, and N=64 for 32-bit elements
 
 // -----
 
@@ -65,5 +65,5 @@ module {
 }
 
 // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
-// CHECK-SAME: N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit
-// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements
+// CHECK-SAME: N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, or N=64 for 32-bit
+// CHECK-SAME: vselr requires contiguous layouts and supports N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, and N=64 for 32-bit elements

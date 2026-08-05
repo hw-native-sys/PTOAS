@@ -548,9 +548,10 @@ scalar type must match the vector element type.
   elements; `index_T` must be an integer type with the same storage width as
   `T`.
 - **constraints:** Source, index, and result have the same lane count. The
-  supported shapes are exactly `256×T` for 8-bit elements, `128×T` for 16-bit
-  elements, and `64×T` for 32-bit elements. Every `index[i]` must identify a
-  valid source lane; behavior is unspecified for an out-of-range index.
+  supported lane counts are `N ∈ {64, 128, 256}` for 8-bit elements,
+  `N ∈ {64, 128}` for 16-bit elements, and `N = 64` for 32-bit elements.
+  Every `index[i]` must identify a valid logical source lane; behavior is
+  unspecified for an out-of-range index.
 
 - **notes:**
   - This is the permute/gather class — it is the register-resident realization

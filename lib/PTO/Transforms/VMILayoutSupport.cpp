@@ -800,7 +800,13 @@ struct VselrLayoutPattern {
 };
 
 static constexpr VselrLayoutPattern kVselrLayoutPatterns[] = {
+    {bits<8>(), N<64>(), N<64>(), N<64>(), chunk<1>(), chunk<1>(),
+     chunk<1>(), c(), c(), c()},
+    {bits<8>(), N<128>(), N<128>(), N<128>(), chunk<1>(), chunk<1>(),
+     chunk<1>(), c(), c(), c()},
     {bits<8>(), N<256>(), N<256>(), N<256>(), chunk<1>(), chunk<1>(),
+     chunk<1>(), c(), c(), c()},
+    {bits<16>(), N<64>(), N<64>(), N<64>(), chunk<1>(), chunk<1>(),
      chunk<1>(), c(), c(), c()},
     {bits<16>(), N<128>(), N<128>(), N<128>(), chunk<1>(), chunk<1>(),
      chunk<1>(), c(), c(), c()},
@@ -1181,8 +1187,9 @@ VMILayoutSupport::getPreferredVselrLayoutFact(
     if (matchesVselrLayoutPattern(pattern, op, fact))
       return fact;
   }
-  return fail("vselr requires contiguous layouts and exactly N=256 for 8-bit, "
-              "N=128 for 16-bit, or N=64 for 32-bit elements");
+  return fail("vselr requires contiguous layouts and supports N=64, 128, or "
+              "256 for 8-bit, N=64 or 128 for 16-bit, and N=64 for 32-bit "
+              "elements");
 }
 
 FailureOr<VMIVselrLayoutFact>
@@ -1214,8 +1221,9 @@ VMILayoutSupport::getVselrLayoutFact(VMIVselrOp op,
       continue;
     return assignedFact;
   }
-  return fail("vselr requires contiguous layouts and exactly N=256 for 8-bit, "
-              "N=128 for 16-bit, or N=64 for 32-bit elements");
+  return fail("vselr requires contiguous layouts and supports N=64, 128, or "
+              "256 for 8-bit, N=64 or 128 for 16-bit, and N=64 for 32-bit "
+              "elements");
 }
 
 LogicalResult

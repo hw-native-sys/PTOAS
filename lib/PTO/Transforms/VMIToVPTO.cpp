@@ -12714,8 +12714,8 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       vselr.emitError()
           << kVMIDiagUnsupportedPrefix
           << "pto.vmi.vselr supports only contiguous lane_stride=1 layouts "
-             "with N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit "
-             "elements ("
+             "with N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, "
+             "or N=64 for 32-bit elements ("
           << reason << ")";
       return WalkResult::interrupt();
     }

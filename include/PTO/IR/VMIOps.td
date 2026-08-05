@@ -1424,11 +1424,11 @@ def VMIVselrOp : VMI_Op<"vselr", [Pure]> {
   let description = [{
     Dynamic lane permutation: for each lane i, result[i] = source[index[i]].
     Replaces the static-index `shuffle` op with a dynamic index vector operand.
-    Lowers 1:1 to `pto.vselr` for contiguous vectors with exactly 256 lanes for
-    8-bit elements, 128 lanes for 16-bit elements, or 64 lanes for 32-bit
-    elements.  Source, index, and result use the same lane count, and the index
-    element storage width must match the source element storage width.  Other
-    lane counts are not supported by this operation.
+    Lowers 1:1 to `pto.vselr` for contiguous vectors with 64, 128, or 256 lanes
+    for 8-bit elements; 64 or 128 lanes for 16-bit elements; or 64 lanes for
+    32-bit elements.  Source, index, and result use the same lane count, and
+    the index element storage width must match the source element storage
+    width.  Other lane counts are not supported by this operation.
 
     Example:
     ```

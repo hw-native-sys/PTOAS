@@ -46,9 +46,36 @@ module {
     return %result : !pto.vmi.vreg<256xui8>
   }
 
+  func.func @vselr_ui8_128(%source: !pto.vmi.vreg<128xui8>,
+                           %index: !pto.vmi.vreg<128xui8>)
+      -> !pto.vmi.vreg<128xui8> {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<128xui8>, !pto.vmi.vreg<128xui8>
+        -> !pto.vmi.vreg<128xui8>
+    return %result : !pto.vmi.vreg<128xui8>
+  }
+
+  func.func @vselr_ui8_64(%source: !pto.vmi.vreg<64xui8>,
+                          %index: !pto.vmi.vreg<64xui8>)
+      -> !pto.vmi.vreg<64xui8> {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<64xui8>, !pto.vmi.vreg<64xui8>
+        -> !pto.vmi.vreg<64xui8>
+    return %result : !pto.vmi.vreg<64xui8>
+  }
+
+  func.func @vselr_ui16_64(%source: !pto.vmi.vreg<64xui16>,
+                           %index: !pto.vmi.vreg<64xui16>)
+      -> !pto.vmi.vreg<64xui16> {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<64xui16>, !pto.vmi.vreg<64xui16>
+        -> !pto.vmi.vreg<64xui16>
+    return %result : !pto.vmi.vreg<64xui16>
+  }
+
 }
 
-// ASSIGN-COUNT-12: #pto.vmi.layout<contiguous>
+// ASSIGN-COUNT-21: #pto.vmi.layout<contiguous>
 
 // LOWER-LABEL: func.func @vselr_ui32(
 // LOWER: %[[UI32:.*]] = pto.vselr %{{.*}}, %{{.*}} : !pto.vreg<64xui32>, !pto.vreg<64xui32> -> !pto.vreg<64xui32>
@@ -65,3 +92,15 @@ module {
 // LOWER-LABEL: func.func @vselr_ui8_full(
 // LOWER: %[[UI8:.*]] = pto.vselr %{{.*}}, %{{.*}} : !pto.vreg<256xui8>, !pto.vreg<256xui8> -> !pto.vreg<256xui8>
 // LOWER: return %[[UI8]] : !pto.vreg<256xui8>
+
+// LOWER-LABEL: func.func @vselr_ui8_128(
+// LOWER: %[[UI8_128:.*]] = pto.vselr %{{.*}}, %{{.*}} : !pto.vreg<256xui8>, !pto.vreg<256xui8> -> !pto.vreg<256xui8>
+// LOWER: return %[[UI8_128]] : !pto.vreg<256xui8>
+
+// LOWER-LABEL: func.func @vselr_ui8_64(
+// LOWER: %[[UI8_64:.*]] = pto.vselr %{{.*}}, %{{.*}} : !pto.vreg<256xui8>, !pto.vreg<256xui8> -> !pto.vreg<256xui8>
+// LOWER: return %[[UI8_64]] : !pto.vreg<256xui8>
+
+// LOWER-LABEL: func.func @vselr_ui16_64(
+// LOWER: %[[UI16_64:.*]] = pto.vselr %{{.*}}, %{{.*}} : !pto.vreg<128xui16>, !pto.vreg<128xui16> -> !pto.vreg<128xui16>
+// LOWER: return %[[UI16_64]] : !pto.vreg<128xui16>
