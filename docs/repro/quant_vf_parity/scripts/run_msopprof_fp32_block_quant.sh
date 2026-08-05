@@ -24,6 +24,8 @@ export PATH=\"\${PTOAS_ROOT}/build/tools/ptoas:\${PATH}\"
 export PTO_FLAGS='--pto-backend=vpto --pto-level=level3 --cann-output-version=9.1.0-beta.3'
 export PTODSL_CACHE_DIR='${OUT}/ptodsl_cache'
 mkdir -p \"\${PTODSL_CACHE_DIR}\"
+bash '${SCRIPT_DIR}/build_fp32_block_quant_asc.sh'
+unset FP32_BQ_REBUILD || true
 PY='${SCRIPT_DIR}/bench_fp32_block_quant.py'
 # Prewarm VMI compile outside the profiler.
 python \"\${PY}\" --side vmi --shapes 8192x2048 --no-bench >/tmp/prewarm_vmi_fp32_bq.txt 2>&1 || true
@@ -32,7 +34,7 @@ profile_side() {
   local side=\"\$1\" kn
   local od='${OUT}/'\${side}_kern
   mkdir -p \"\${od}\"
-  if [ \"\${side}\" = asc ]; then kn='per_block_cast_kernel'; else kn='fp32_block_quant'; fi
+  if [ \"\${side}\" = asc ]; then kn='fp32_block_quant_kernel'; else kn='fp32_block_quant'; fi
   echo \"=== msprof op side=\${side} kernel-name=\${kn} ===\"
   msprof op --output=\"\${od}\" --aic-metrics=Default,PipeUtilization \\
     --warm-up=3 --launch-count=1 --kill=on --kernel-name=\"\${kn}\" \\

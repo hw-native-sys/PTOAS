@@ -1,20 +1,34 @@
-# Feature requests — remaining quant gaps on VMI after bf16 abs / group-4 broadcast
+# Feature requests — AscendC vs VMI residuals after PR #1145
 
 Audience: PTOAS maintainers reviewing this reproducer package.
 
 On top of [PR #1145](https://github.com/hw-native-sys/PTOAS/pull/1145)
 (bf16 absolute value via clearing the sign bit, and bf16 group-4 broadcast),
-several issues are still unfixed. Each section below pairs a working AscendC
-program with a nearly equivalent VMI/PTO program that fails to compile, produces
-wrong results, or is slower for a reason we want PTOAS to investigate.
+these AscendC-vs-VMI residuals remain. Each open request pairs a working
+AscendC program with a nearly equivalent VMI/PTO program that fails to compile
+or produces wrong results.
 
 Pipe synchronization (`set_flag` / `wait_flag`, including dynamic forms) is
 already present in the VMI dumps. Enabling InsertSync is not what these
 requests ask for.
 
+## Status (read this first)
+
+| Priority | Topic | Status |
+|----------|--------|--------|
+| **Open — primary** | Feature request 1: `get_block_idx` bound cannot control a vector body | **Blocker** — VMI emit fails; blocks multi-buffer schedules that need that pattern |
+| **Open** | Feature request 2: wide double-buffered dequant disagrees with AscendC | **Still open** — numeric mismatch on the wide schedule |
+| Backlog | Former request 3: FP32 double-buffered block-quant wall-clock | **Solved as a product / schedule issue — not a PTOAS blocker now.** Kept only as backlog (fixtures + notes). |
+
 ---
 
 ## Feature request 1 — `get_block_idx` used to decide whether a vector body runs fails in ptoas → bisheng
+
+**This is the main remaining ask.** Multi-buffer kernels that form a tile bound
+from the hardware block index and only then run vector work cannot finish
+device emission on VMI. AscendC does the same pattern today. Until this lowers,
+schedules that need that guard (including offset-style multi-buffer pipelines
+at large shapes) cannot ship on the VMI path.
 
 ### Problem
 
@@ -72,6 +86,8 @@ After a fix:
 
 ## Feature request 2 — Wide double-buffered dequant disagrees with AscendC
 
+**Still open** (correctness, not the primary compile blocker).
+
 ### Problem
 
 Dequantizing e4m3 data with UE8M0 scales (expand the scale across a strip,
@@ -125,87 +141,33 @@ After a fix:
 
 ---
 
-## Feature request 3 — Full FP32 block-quant: VMI is slower than AscendC at large shape
+## Backlog — solved / not a blocker (kept for history)
 
-### What the programs do (same algorithm both sides)
+### Former feature request 3 — FP32 double-buffered block-quant wall-clock
 
-FP32 matrix → e4m3 + per-block scales (`32×32`), UE8M0-style scale round:
+**Issue solved. Not a blocker now. Kept only as backlog.**
 
-1. Persistent tiles over the matrix with **two on-chip faces** overlapping copy
-   and vector work.
-2. Tile face: **32 rows × 512 cols** of FP32 in UB.
-3. Vector body, eight times per tile (each **64 cols**): abs-max over 32 rows;
-   two independent one-element reduces (low/high 32-lane halves) → two scales;
-   keep reciprocals in registers; store two scale floats; per row multiply +
-   convert to e4m3 and store.
-4. Copy quantized tile and scales back to GM.
+Wall-clock at large shape (8192×2048) is within noise of AscendC (~0.98× on
+msopprof and product zero-copy) after the VMI side uses **serial** abs-max row
+loops (`range` → `scf.for`). The earlier ~0.88× gap was from **explicitly
+unrolling** that abs-max strip (huge IR / slower), not from a missing PTOAS
+legalization of `vcmax(group=1)`.
 
-Public name: `fp32_block_quant` (“double-buffered block quantize”).
+Fixtures and notes remain for regression and history:
 
-### Primary evidence (full kernel — reproduces the gap)
+| Artifact | Role |
+|----------|------|
+| [`reference_asc_fp32_block_quant.asc`](fixtures/reference_asc_fp32_block_quant.asc) + [`fp32_block_quant_artifact/`](fixtures/fp32_block_quant_artifact/) | AscendC full kernel + ctypes launch lib |
+| [`current_vmi_fp32_block_quant_*.ptodsl.py`](fixtures/) | VMI full kernel (serial abs-max / pair / quantize) |
+| [`PERF_FINDINGS.md`](fixtures/PERF_FINDINGS.md) | Host + msopprof numbers after the fix |
+| Strip amax fixtures / [`emit_compare_note.md`](fixtures/emit_compare_note.md) | Fragment-only compile checks (never claimed the wall gap) |
 
-| Side | Artifact | Role |
-|------|----------|------|
-| AscendC | [`fixtures/reference_asc_fp32_block_quant.asc`](fixtures/reference_asc_fp32_block_quant.asc) + [`fixtures/fp32_block_quant_artifact/`](fixtures/fp32_block_quant_artifact/) | Double-buffered tile schedule; VF uses `__simd_callee__` return wrappers over MicroAPI (same pattern as the timed `.so`); `bisheng` / prebuilt `.so` |
-| VMI | [`fixtures/current_vmi_fp32_block_quant_8192x2048.ptodsl.py`](fixtures/current_vmi_fp32_block_quant_8192x2048.ptodsl.py) (and `…_512x2048…`) | Same schedule in VMI/PTO |
-
-Host (CANN + `torch_npu` / ACL + this PTOAS tree only — no product `PYTHONPATH`):
+Optional re-run (not required to close an open ask):
 
 ```bash
 PTOAS_ROOT=/path/to/PTOAS NPU_DEVICE=1 ./scripts/run_fp32_block_quant_device.sh
 ./scripts/run_msopprof_fp32_block_quant.sh both
 ```
 
-Checked-in numbers and pipe interpretation:
-[`fixtures/PERF_FINDINGS.md`](fixtures/PERF_FINDINGS.md).
-
-| Shape | AscendC / VMI (msopprof or host) | Meaning |
-|-------|----------------------------------|---------|
-| 512×2048 | ~0.97 | Near parity (control) |
-| 8192×2048 | **~0.86** (msopprof ~27.0 vs ~31.5 µs) | VMI slower — primary claim |
-
-Correctness: scale and output lane mismatches vs AscendC = 0 before trusting timing.
-
-### Strip fixtures (VF fragment only — do **not** claim the gap)
-
-| Side | Fixture | What they prove |
-|------|---------|-----------------|
-| AscendC | [`reference_asc_fp32_strip_amax.asc`](fixtures/reference_asc_fp32_strip_amax.asc) | Dense MicroAPI abs-max strip compiles |
-| VMI | [`current_vmi_fp32_strip_amax.pto`](fixtures/current_vmi_fp32_strip_amax.pto) | `vabs` + `vcmax(group=1)` lowers today |
-
-These compile/lower checks only show the one-element reduce path is legal. They
-do **not** time anything and do **not** reproduce the large-shape gap.
-
-Emit notes for the strip (optional detail):
-[`fixtures/emit_compare_note.md`](fixtures/emit_compare_note.md).
-
-### What kind of PTOAS issue this is
-
-A **performance** residual on the full double-buffered schedule, not a “does not
-compile” bug. From `PERF_FINDINGS.md` (PipeUtilization @ 8192×2048):
-
-- VMI spends more core-time in vector and scalar; higher UB read bandwidth from
-  the vector unit.
-- AscendC shows higher MTE3 overlap while finishing sooner.
-- Gap is large-shape only → bandwidth / overlap / emit density, not a small-N
-  functional bug.
-- Strip-only `group=1` legalization is **not** the missing piece.
-
-Likely residual classes: denser AscendC MicroAPI packing of the 64-lane strip
-vs VMI dual `vcmax` + `vsel` recip; and/or MTE/VF overlap tax in lowered VMI
-double-buffer emit. Prefer an emit or pipe fix justified by `PERF_FINDINGS.md`
-(+ optional strip emit compare), not a wall-clock ratio alone.
-
-### Desired behavior
-
-1. VMI within noise of AscendC at **8192×2048** (ratio near 1.0), **or**
-2. A concrete emit/pipe change in PTOAS justified by the findings above.
-
-Keep the strip `group=1` path compiling. Do not treat strip-only PASS as closing
-this request.
-
-### Out of scope
-
-- Declaring a PTOAS patch before reading `PERF_FINDINGS.md`
-- Claiming the tiny strip fixtures reproduce the wall-clock gap
-- bf16 per-block, packed SF, fused roundtrip, cast_back (other asks)
+Do **not** treat strip-only PASS, or small residual pipe-metric differences while
+wall-clock is ~parity, as a reason to reopen this as a primary blocker.

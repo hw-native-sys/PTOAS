@@ -2,16 +2,17 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 """On-device AscendC vs VMI FP32 block-quant: correctness + µs.
 
-Dependencies: CANN, torch/torch_npu, PTOAS ptodsl. AscendC ``executable.so`` is
-loaded through the conda env's TVM host FFI (no product trees on PYTHONPATH).
+Dependencies: CANN, torch/torch_npu, PTOAS ptodsl.
+AscendC: ctypes launch of libfp32_block_quant.so (bisheng --shared).
 """
 from __future__ import annotations
 
 import argparse
-import importlib
+import ctypes
 import importlib.util
 import os
 import struct
+import subprocess
 import sys
 import tempfile
 from collections import defaultdict
@@ -20,14 +21,19 @@ from pathlib import Path
 from typing import Callable
 
 import torch
+import torch_npu  # noqa: F401  # registers torch.npu
 
 REPRO = Path(__file__).resolve().parents[1]
 FIXTURES = REPRO / "fixtures"
-ART = FIXTURES / "fp32_block_quant_artifact" / "executable.so"
+ASC_SO = FIXTURES / "fp32_block_quant_artifact" / "libfp32_block_quant.so"
+BUILD_SH = REPRO / "scripts" / "build_fp32_block_quant_asc.sh"
 N_CORES = int(os.environ.get("RG_N_CORES", "72"))
 
-_ASC_EXE = None
+_ASC_LIB: ctypes.CDLL | None = None
 _VMI_CACHE: dict[tuple[int, int], object] = {}
+# Reuse LaunchHandle: kn[grid, stream] builds a new handle each time and reloads
+# the native .so on first call (~10–20 ms), which destroys Event timing.
+_VMI_LAUNCH: dict[tuple[int, int], object] = {}
 
 
 def _device() -> str:
@@ -42,23 +48,46 @@ def _stream_ptr() -> int:
     return torch.npu.current_stream().npu_stream
 
 
-def load_asc():
-    global _ASC_EXE
-    if _ASC_EXE is not None:
-        return _ASC_EXE
-    if not ART.is_file():
-        raise FileNotFoundError(ART)
-    # Register the conda env's TVM host package side-effects, then load the .so.
-    importlib.import_module("".join(("ti", "le", "lang")))
-    from tvm import runtime
+def ensure_asc_lib() -> Path:
+    if ASC_SO.is_file() and os.environ.get("FP32_BQ_REBUILD", "") != "1":
+        return ASC_SO
+    if not BUILD_SH.is_file():
+        raise FileNotFoundError(BUILD_SH)
+    subprocess.run(["bash", str(BUILD_SH)], check=True)
+    if not ASC_SO.is_file():
+        raise FileNotFoundError(ASC_SO)
+    return ASC_SO
 
-    _ASC_EXE = runtime.load_module(str(ART))
-    return _ASC_EXE
+
+def load_asc() -> ctypes.CDLL:
+    global _ASC_LIB
+    if _ASC_LIB is not None:
+        return _ASC_LIB
+    so = ensure_asc_lib()
+    lib = ctypes.CDLL(str(so))
+    lib.call_fp32_block_quant.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int32,
+        ctypes.c_int32,
+    ]
+    lib.call_fp32_block_quant.restype = None
+    _ASC_LIB = lib
+    return lib
 
 
 def launch_asc(x: torch.Tensor, out: torch.Tensor, sf: torch.Tensor, *, do_sync: bool = True) -> None:
-    exe = load_asc()
-    exe(x, out, sf)
+    m, n = x.shape
+    load_asc().call_fp32_block_quant(
+        ctypes.c_void_p(_stream_ptr()),
+        ctypes.c_void_p(out.data_ptr()),
+        ctypes.c_void_p(sf.data_ptr()),
+        ctypes.c_void_p(x.data_ptr()),
+        ctypes.c_int32(m),
+        ctypes.c_int32(n // 32),
+    )
     if do_sync:
         _sync()
 
@@ -79,16 +108,24 @@ def compile_vmi(m: int, n: int):
     key = (m, n)
     if key not in _VMI_CACHE:
         mod = _load_vmi_module(m, n)
-        # Shape-specialized dumps use unique @pto.jit names to avoid cache collisions.
         kn_fn = getattr(mod, f"fp32_block_quant_{m}x{n}")
         _VMI_CACHE[key] = kn_fn.compile()
     return _VMI_CACHE[key]
 
 
+def _vmi_launch_handle(m: int, n: int):
+    key = (m, n)
+    h = _VMI_LAUNCH.get(key)
+    if h is None:
+        # stream=None → current torch_npu stream inside ptodsl launch.
+        h = compile_vmi(m, n)[N_CORES, None]
+        _VMI_LAUNCH[key] = h
+    return h
+
+
 def launch_vmi(x: torch.Tensor, out: torch.Tensor, sf: torch.Tensor, *, do_sync: bool = True) -> None:
     m, n = x.shape
-    kn = compile_vmi(m, n)
-    kn[N_CORES, _stream_ptr()](out.data_ptr(), sf.data_ptr(), x.data_ptr())
+    _vmi_launch_handle(m, n)(out.data_ptr(), sf.data_ptr(), x.data_ptr())
     if do_sync:
         _sync()
 
@@ -98,7 +135,6 @@ def sf_shape(m: int, n: int) -> tuple[int, int]:
 
 
 def io_gb(m: int, n: int) -> float:
-    # fp32 in + e4m3 out + f32 scales
     return (m * n * 4 + m * n + (m // 32) * (n // 32) * 4) / 1e9
 
 
@@ -164,20 +200,7 @@ def _bench_msprof_us(fn: Callable[[], None], *, rep: int) -> float:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def bench_us(fn: Callable[[], None], *, warmup: int = 5, rep: int = 30) -> float:
-    """Mean kernel time in µs.
-
-    Prefer torch_npu msprof PipeUtilization parse; fall back to NPU events.
-    Do not use external do_bench helpers that flush caches between shapes —
-    that can disturb the next shape when multiple shapes run in one process.
-    """
-    for _ in range(warmup):
-        fn()
-    _sync()
-    try:
-        return _bench_msprof_us(fn, rep=rep)
-    except Exception:
-        pass
+def _bench_event_us(fn: Callable[[], None], *, rep: int) -> float:
     start = torch.npu.Event(enable_timing=True)
     end = torch.npu.Event(enable_timing=True)
     start.record()
@@ -188,7 +211,27 @@ def bench_us(fn: Callable[[], None], *, warmup: int = 5, rep: int = 30) -> float
     return float(start.elapsed_time(end) * 1000.0 / rep)
 
 
-def run_shape(m: int, n: int, *, side: str, do_bench: bool) -> dict:
+def bench_us(
+    fn: Callable[[], None],
+    *,
+    warmup: int = 5,
+    rep: int = 30,
+    timer: str = "event",
+) -> float:
+    for _ in range(warmup):
+        fn()
+    _sync()
+    if timer == "msprof":
+        return _bench_msprof_us(fn, rep=rep)
+    if timer == "auto":
+        try:
+            return _bench_msprof_us(fn, rep=rep)
+        except Exception:
+            pass
+    return _bench_event_us(fn, rep=rep)
+
+
+def run_shape(m: int, n: int, *, side: str, do_bench: bool, timer: str) -> dict:
     torch.manual_seed(0)
     dev = _device()
     x = torch.randn(m, n, dtype=torch.float32, device=dev).clamp(-10, 10)
@@ -205,7 +248,6 @@ def run_shape(m: int, n: int, *, side: str, do_bench: bool) -> dict:
         launch_vmi(x, out_v, sf_v)
         result["vmi_ok"] = True
     if side == "both":
-        # Compare VMI to AscendC (bit-identical not required for e4m3; check SF + out)
         sf_miss = int((sf_v != sf_a).sum().item())
         out_miss = int((out_v.view(torch.uint8) != out_a.view(torch.uint8)).sum().item())
         result["sf_mismatch"] = sf_miss
@@ -215,7 +257,6 @@ def run_shape(m: int, n: int, *, side: str, do_bench: bool) -> dict:
             flush=True,
         )
         if sf_miss != 0 or out_miss != 0:
-            # Allow tiny float noise only if scale path diverges — for this dump expect 0.
             raise AssertionError(f"VMI vs AscendC mismatch sf={sf_miss} out={out_miss}")
 
     if do_bench:
@@ -225,7 +266,7 @@ def run_shape(m: int, n: int, *, side: str, do_bench: bool) -> dict:
             def ra():
                 launch_asc(x, out_a, sf_a, do_sync=False)
 
-            a_us = bench_us(ra)
+            a_us = bench_us(ra, timer=timer)
             result["asc_us"] = a_us
             result["asc_gbs"] = gb / a_us * 1e6
             print(f"AscendC {a_us:.1f} us  {result['asc_gbs']:.1f} GB/s", flush=True)
@@ -234,12 +275,11 @@ def run_shape(m: int, n: int, *, side: str, do_bench: bool) -> dict:
             def rv():
                 launch_vmi(x, out_v, sf_v, do_sync=False)
 
-            v_us = bench_us(rv)
+            v_us = bench_us(rv, timer=timer)
             result["vmi_us"] = v_us
             result["vmi_gbs"] = gb / v_us * 1e6
             print(f"VMI     {v_us:.1f} us  {result['vmi_gbs']:.1f} GB/s", flush=True)
         if side == "both":
-            # AscendC_us / VMI_us ≥ 1 means VMI faster (same convention as internal tables).
             ratio = result["asc_us"] / result["vmi_us"]
             result["asc_over_vmi"] = ratio
             print(f"AscendC_us/VMI_us = {ratio:.3f}  (≥1 ⇒ VMI faster)", flush=True)
@@ -251,20 +291,34 @@ def main() -> int:
     p.add_argument("--side", choices=("asc", "vmi", "both"), default="both")
     p.add_argument("--shapes", default="512x2048,8192x2048")
     p.add_argument("--no-bench", action="store_true")
+    p.add_argument(
+        "--timer",
+        choices=("event", "msprof", "auto"),
+        default=os.environ.get("FP32_BQ_TIMER", "event"),
+        help="Host µs source (default: npu Event; msprof ffts can mis-sum)",
+    )
     args = p.parse_args()
 
-    # Ensure ptodsl is importable
     ptoas = os.environ.get("PTOAS_ROOT", "")
     if ptoas:
         sys.path.insert(0, str(Path(ptoas) / "ptodsl"))
 
     torch.npu.set_device(int(_device().split(":")[1]))
+    if args.side in ("asc", "both"):
+        # Rebuild at most once per process when FP32_BQ_REBUILD=1.
+        ensure_asc_lib()
+        os.environ.pop("FP32_BQ_REBUILD", None)
+
     rows = []
     for token in args.shapes.split(","):
         m_s, n_s = token.lower().split("x")
         m, n = int(m_s), int(n_s)
-        print(f"\n=== fp32_block_quant {m}x{n} side={args.side} ===", flush=True)
-        rows.append(run_shape(m, n, side=args.side, do_bench=not args.no_bench))
+        print(f"\n=== fp32_block_quant {m}x{n} side={args.side} timer={args.timer} ===", flush=True)
+        rows.append(
+            run_shape(
+                m, n, side=args.side, do_bench=not args.no_bench, timer=args.timer
+            )
+        )
 
     print("\n# summary", flush=True)
     for r in rows:

@@ -1,17 +1,12 @@
-# Feature request 3 — AscendC vs VMI emit / pipe notes
+# Backlog — former feature request 3 (solved; not a blocker)
 
-## Primary evidence is the full kernel
+**Issue solved. Not a blocker now. Kept as backlog.**
 
-Wall-clock gap and pipe diagnosis live in
-[`PERF_FINDINGS.md`](PERF_FINDINGS.md) for
-`reference_asc_fp32_block_quant.asc` vs
-`current_vmi_fp32_block_quant_8192x2048.ptodsl.py`.
+Wall-clock at 8192×2048 is ~parity (~0.98× AscendC/VMI on msopprof) after
+serial abs-max rows. See [`PERF_FINDINGS.md`](PERF_FINDINGS.md).
 
-At **8192×2048**, msopprof Task Duration is ~27.0 µs (AscendC) vs ~31.5 µs (VMI)
-→ AscendC/VMI ≈ **0.86**. PipeUtilization: VMI higher `aiv_vec_ratio` /
-`aiv_scalar_ratio` and UB vector read BW; AscendC higher `aiv_mte3_ratio`.
-
-Strip fixtures below are **VF fragments only** — they do not reproduce the gap.
+Strip fixtures below are **VF fragments only** — they never reproduced the old
+wall gap and are not an open ask.
 
 ## Strip fragment (optional compile / emit detail)
 
@@ -24,11 +19,8 @@ Strip fixtures below are **VF fragments only** — they do not reproduce the gap
 
 - AscendC strip compiles with `bisheng`.
 - VMI strip lowers with `pto-test-opt` (check-script pass list).
-- The one-element reduce+store path is already legal; closing FR3 does **not**
-  wait on further strip legalization.
-- Optional: lower the strip and list extra VMI moves vs AscendC MicroAPI if that
-  helps motivate a denser emit. That alone is not enough — the full-kernel
-  numbers in `PERF_FINDINGS.md` are the claim.
+- The one-element reduce+store path is already legal; no further strip
+  legalization is needed to keep this off the open-issue list.
 
 ### How to inspect the strip emit
 
@@ -36,8 +28,9 @@ Strip fixtures below are **VF fragments only** — they do not reproduce the gap
    body in `pto.vecscope` and run `ptoas --emit-vpto`).
 2. Compile `reference_asc_fp32_strip_amax.asc` and inspect its vector / memory
    sequence.
-3. List any extra VMI moves, spills, or layout reshapes relative to AscendC.
+3. List any extra VMI moves, spills, or layout reshapes relative to AscendC
+   (optional; not required to reopen this ask).
 
 ## Strip emit findings
 
-_(optional detail — none required to keep FR3 open; see PERF_FINDINGS.md)_
+_(optional detail — see PERF_FINDINGS.md for the closed wall-clock claim)_

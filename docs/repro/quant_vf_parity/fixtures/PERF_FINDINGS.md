@@ -1,70 +1,72 @@
-# Feature request 3 — on-device performance findings
+# Backlog — former feature request 3 (solved; not a blocker)
+
+**Issue solved. Not a blocker now. Kept as backlog** for regression and history.
 
 FP32 → e4m3 block quantize with two on-chip faces (tile 32×512).
-AscendC: `reference_asc_fp32_block_quant.asc` + `fp32_block_quant_artifact/executable.so`.
-VMI: `current_vmi_fp32_block_quant_{M}x{N}.ptodsl.py`.
+AscendC: `reference_asc_fp32_block_quant.asc` + ctypes
+`fp32_block_quant_artifact/libfp32_block_quant.so` (`call_fp32_block_quant`).
+VMI: `current_vmi_fp32_block_quant_{M}x{N}.ptodsl.py` (known-best: pair /
+abs-max / quantize rows all Python `range()` → runtime `scf.for`).
 
 Measured 2026-08-05, device 1, 72 vector cores, CANN 9.1.0-beta.3.
-Host: [`scripts/bench_fp32_block_quant.py`](../scripts/bench_fp32_block_quant.py).
+Host: [`scripts/bench_fp32_block_quant.py`](../scripts/bench_fp32_block_quant.py)
+(`--timer event`).
 Profiler: `msprof op --aic-metrics=Default,PipeUtilization --kernel-name=…`.
 
 ## Wall-clock (host timer)
 
-Ratio = AscendC_us / VMI_us (≥1 means VMI faster). Host ffts parse can under-read
-absolute µs; use msopprof Task Duration for absolute times.
+Ratio = AscendC_us / VMI_us (≥1 means VMI faster). Host NPU Event under-reads
+absolute µs; use msopprof for absolute times.
 
 | Shape | AscendC us (host) | VMI us (host) | AscendC/VMI | Correctness |
 |-------|------------------:|--------------:|------------:|-------------|
-| 512×2048 | 3.1 | 3.2 | **0.97** | sf/out mismatch = 0 |
-| 8192×2048 | 14.6 | 17.2 | **0.85** | sf/out mismatch = 0 |
+| 512×2048 | 17.2 | 17.5 | **0.98** | sf/out mismatch = 0 |
+| 8192×2048 | 18.1 | 19.8 | **0.92** | sf/out mismatch = 0 |
 
 ## msopprof Task Duration (8192×2048)
 
 | Side | Kernel name | Task Duration (us) |
 |------|-------------|-------------------:|
-| AscendC | symbol in prebuilt `.so` (filter: `per_block_cast_kernel`) | **26.97** |
-| VMI | `fp32_block_quant_8192x2048_mix_aiv` | **31.52** |
+| AscendC | `fp32_block_quant_kernel` | **27.12** |
+| VMI | `fp32_block_quant_8192x2048_mix_aiv` | **27.66** |
 
-AscendC/VMI = **0.86**. Matches the known large-shape gap (~0.88 in product benches).
+AscendC/VMI = **0.98**. Serial abs-max closed the prior ~0.88–0.90 gap (unrolled
+abs-max VMI was ~30.5–31 µs).
+
+## Product zero-copy cross-check (Table B stack)
+
+| Shape | AscendC us | VMI us | AscendC/VMI |
+|-------|-----------:|-------:|------------:|
+| 512×2048 | 3.7 | 3.7 | **1.00** |
+| 8192×2048 | 27.2 | 27.8 | **0.98** |
 
 ## PipeUtilization (mean over 72 cores, 8192×2048)
 
 | Metric | AscendC | VMI | Note |
 |--------|--------:|----:|------|
-| aiv_time (us) | 25.3 | 28.0 | VMI longer on core |
-| aiv_vec_ratio | 0.335 | **0.465** | VMI spends more of the window in vector |
-| aiv_mte2_ratio | 0.938 | 0.883 | Both heavily overlap GM→UB copy |
-| aiv_mte3_ratio | **0.280** | 0.132 | AscendC stores overlap more with compute |
-| aiv_scalar_ratio | 0.037 | **0.085** | VMI more scalar tax |
-
-Both runs report: *MTE2 bandwidth utilization lower than 80% when active.*
-
-## MemoryUB (mean, 8192×2048)
-
-| Metric | AscendC | VMI |
-|--------|--------:|----:|
-| UB read BW (vector) GB/s | 46.1 | **63.4** |
-| UB write BW (vector) GB/s | 36.5 | 32.9 |
-| UB write BW (GM) GB/s | 34.3 | 31.0 |
+| aiv_time (us) | 25.1 | 25.6 | Near parity on core |
+| aiv_vec_ratio | 0.338 | **0.464** | VMI still denser in vector window |
+| aiv_mte2_ratio | 0.939 | 0.926 | Both heavily overlap GM→UB copy |
+| aiv_mte3_ratio | **0.285** | 0.193 | AscendC still overlaps store more |
+| aiv_scalar_ratio | 0.037 | 0.033 | Similar after serial abs-max |
 
 ## Insights
 
-1. **Same algorithm, large-shape gap.** At 512×2048 both sides are within noise (~0.97). At 8192×2048 VMI is ~14–17% slower (0.85–0.86×). This is not a functional bug (mismatches = 0).
+1. **Abs-max loop kind was the wall-clock limiter.** Explicit unroll of the
+   32-row abs-max strip cost ~11% vs serial `range`/`scf.for` at 8192×2048.
+   AscendC already used serial row loops.
 
-2. **VMI does more vector and scalar work per core-time.** Higher `aiv_vec_ratio` and `aiv_scalar_ratio`, plus higher UB read bandwidth from the vector unit, fit a denser AscendC MicroAPI strip (paired abs-max / scale store) versus VMI’s dual `vcmax(group=1)` + `vsel` recip expand + per-row reload.
+2. **`range` ≠ `pto.static_range` here.** `static_range` unrolls at AST-rewrite
+   time; over-applying it recreates a huge slow IR. Known-best keeps Python
+   `range()` for pair / abs-max / quantize.
 
-3. **AscendC overlaps store (MTE3) better.** Roughly 2× higher `aiv_mte3_ratio` while finishing sooner — copy/store pipeline is healthier on the AscendC double-buffer emit.
-
-4. **Not a missing legalization of `group=1`.** The one-element reduce/store path already compiles (see strip fixtures). The residual is emit / schedule density for the full double-buffered kernel.
-
-5. **What a PTOAS fix should target.** Reduce redundant UB reloads / scalar around the 64-lane strip, and/or improve MTE3 overlap of the VMI double-buffer emit so VMI’s pipe picture looks closer to AscendC at 8192×2048.
+3. **Residual (small).** msopprof still shows higher VMI `aiv_vec_ratio` and
+   lower `aiv_mte3_ratio` while finishing within ~2% of AscendC — emit/pipe
+   polish, not a functional bug (mismatches = 0).
 
 ## How to reproduce
 
 ```bash
-# Wall-clock + correctness
 PTOAS_ROOT=/path/to/PTOAS NPU_DEVICE=1 ./scripts/run_fp32_block_quant_device.sh
-
-# msopprof (filter out torch.randn with --kernel-name)
 ./scripts/run_msopprof_fp32_block_quant.sh both
 ```

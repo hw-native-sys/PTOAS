@@ -151,7 +151,8 @@ check_vmi_lower broken_vmi_dequant_dblbuf.pto
 check_vmi_lower working_vmi_dequant_narrow.pto
 note "Feature request 2 on-device mismatch: see fixtures/RECORDED_DEVICE_NOTES.md"
 
-# Feature request 3 — full FP32 block-quant (primary) + strip fragment
+# Backlog — former feature request 3 (solved; not a blocker)
+note "Backlog FR3: issue solved, not a blocker now — kept for regression only"
 check_asc reference_asc_fp32_block_quant.asc
 if [ -f "${FIXTURES}/current_vmi_fp32_block_quant_8192x2048.ptodsl.py" ]; then
   echo "=== current_vmi_fp32_block_quant_8192x2048.ptodsl.py (syntax / import) ===" | tee -a "${LOG}"
@@ -172,11 +173,11 @@ print('ast ok', p.name)
   fi
   echo | tee -a "${LOG}"
 fi
-note "Feature request 3 on-device µs + msopprof: fixtures/PERF_FINDINGS.md"
-note "Optional device run: ./scripts/run_fp32_block_quant_device.sh (skip if no NPU)"
+note "Backlog FP32 µs (solved wall gap): fixtures/PERF_FINDINGS.md"
+note "Optional backlog device run: ./scripts/run_fp32_block_quant_device.sh (skip if no NPU)"
 
 check_asc reference_asc_fp32_strip_amax.asc
 check_vmi_lower current_vmi_fp32_strip_amax.pto
-note "Feature request 3 strip fixtures are VF fragments only (not the perf claim)"
+note "Backlog strip fixtures are VF fragments only (not an open ask)"
 
 echo "Full log: ${LOG}" | tee -a "${LOG}"

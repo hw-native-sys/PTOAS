@@ -2,5 +2,5 @@ outputs/
 # Profiler droppings from local msprof runs
 localhost.localdomain_*_ascend_pt/
 
-# Keep the AscendC host binary for FR3 device bench (repo root ignores *.so).
-!fixtures/fp32_block_quant_artifact/executable.so
+# Keep AscendC ctypes launch lib for backlog FP32 device bench (repo root ignores *.so).
+!fixtures/fp32_block_quant_artifact/libfp32_block_quant.so

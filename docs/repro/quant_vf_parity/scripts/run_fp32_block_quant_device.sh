@@ -24,7 +24,10 @@ export PATH=\"\${PTOAS_ROOT}/build/tools/ptoas:\${PTOAS_ROOT}/build/tools/pto-te
 export PTO_FLAGS='--pto-backend=vpto --pto-level=level3 --cann-output-version=9.1.0-beta.3'
 export PTODSL_CACHE_DIR='${OUT}/ptodsl_cache'
 mkdir -p \"\${PTODSL_CACHE_DIR}\"
-python '${SCRIPT_DIR}/bench_fp32_block_quant.py' --side both --shapes 8192x2048,512x2048 2>&1 | tee '${OUT}/bench.txt'
+bash '${SCRIPT_DIR}/build_fp32_block_quant_asc.sh'
+# Do not leave FP32_BQ_REBUILD set — rebuild once above, then time cleanly.
+unset FP32_BQ_REBUILD || true
+python '${SCRIPT_DIR}/bench_fp32_block_quant.py' --side both --shapes 8192x2048,512x2048 --timer event 2>&1 | tee '${OUT}/bench.txt'
 "
 
 if command -v task-submit >/dev/null 2>&1; then

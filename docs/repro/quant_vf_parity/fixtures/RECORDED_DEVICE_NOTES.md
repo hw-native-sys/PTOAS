@@ -1,11 +1,12 @@
 # Recorded on-device results (AscendC vs VMI)
 
-These notes support feature requests 1–3. The compile check in
+These notes support the **open** feature requests (1–2). Former request 3 is
+**solved — not a blocker now** and is kept only as backlog. The compile check in
 `scripts/check_vmi_asc_residual.sh` only covers AscendC `bisheng` and VMI
 `pto-test-opt` / `ptoas`. On-device comparisons (AscendC result vs VMI result)
 were run outside this package.
 
-## Feature request 1 — block index controlling a vector body
+## Feature request 1 — block index controlling a vector body (**open — primary**)
 
 Minimized VMI that fails `ptoas` → `bisheng` with
 `Do not know how to expand the result of this operator!`:
@@ -19,7 +20,7 @@ While shrinking the dump: dynamic `set_flag` / `wait_flag` alone do **not**
 reproduce the expand error; `get_block_idx` feeding a compare that **requires**
 a vector body to run does.
 
-## Feature request 2 — dequant double-buffer numerics
+## Feature request 2 — dequant double-buffer numerics (**open**)
 
 Comparison: **AscendC result** vs **VMI result** (maximum absolute difference).
 
@@ -33,14 +34,12 @@ Vector bodies that lower on their own (bf16 scale expand + multiply):
 - Wide strip: `broken_vmi_dequant_dblbuf.pto` (256 lanes, group 8)
 - Narrow strip: `working_vmi_dequant_narrow.pto` (128 lanes, group 4)
 
-## Feature request 3 — FP32 strip abs-max performance
+## Backlog — former feature request 3 (solved; not a blocker)
 
-Both fixtures compile / lower today:
+**Issue solved. Not a blocker now. Kept as backlog.**
+
+Full-kernel wall-clock (~0.98× at 8192×2048) is in `PERF_FINDINGS.md`.
+Strip fixtures compile / lower today but are not an open ask:
 
 - AscendC: `reference_asc_fp32_strip_amax.asc`
 - VMI: `current_vmi_fp32_strip_amax.pto`
-
-Wall-clock and generated-code density vs AscendC are tracked in
-`emit_compare_note.md`. A PTOAS compiler change is only justified after that
-note records a concrete AscendC-vs-VMI emit difference (extra memory ops or
-layout work on the VMI side).
