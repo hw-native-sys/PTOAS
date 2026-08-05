@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from . import constraints as _constraints
 from . import registry as _registry
+from ._template_package import load_template
 from .metadata import ScalarSpec, ScalarType, TileSpec, VectorSpec, ViewSpec
-from TileOps import load_template
 
 
 def _build_tile_specs(descriptor, operand_specs: list) -> dict:

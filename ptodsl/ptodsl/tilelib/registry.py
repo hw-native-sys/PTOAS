@@ -138,7 +138,7 @@ def _load_default_templates(op: str, target: str) -> None:
     # Import lazily to avoid a registry/templates import cycle during package
     # initialization. The loader is cached and registers descriptors as a
     # module-import side effect.
-    from TileOps import load_template
+    from ._template_package import load_template
 
     load_template(op, target)
 

@@ -5,18 +5,15 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Compatibility loader for PTODSL TileLib templates.
-
-The template sources live in the top-level ``TileOps`` package.
-"""
+"""Compatibility loader for the canonical source or packaged TileOps."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from TileOps import load_template
-import TileOps as _tileops
+from .._template_package import load_template, tileops_package
 
+_tileops = tileops_package()
 __path__ = [str(Path(_tileops.__file__).resolve().parent)]
 
 __all__ = ["load_template"]
