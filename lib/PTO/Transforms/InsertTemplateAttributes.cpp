@@ -782,7 +782,7 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
 
   SmallVector<CandidateMetadata> parsedCandidates;
   parsedCandidates.reserve(candidates->size());
-  llvm::SmallDenseSet<int64_t, 8> candidateIds;
+  llvm::DenseSet<int64_t> candidateIds;
   for (const llvm::json::Value &entry : *candidates) {
     auto *metadata = entry.getAsObject();
     if (!metadata) {
