@@ -1,151 +1,196 @@
-# Feature request — AscendC vs VMI residuals after bf16 abs / G=4 broadcast
+# Feature requests — remaining quant gaps on VMI after bf16 abs / group-4 broadcast
 
-Audience: PTOAS maintainers.
+Audience: PTOAS maintainers reviewing this reproducer package.
 
-Background already landed elsewhere (`zjw/bf16_vmi_fixes`): bf16 `vabs` via
-sign-bit clear, and bf16 group-4 `group_broadcast`. This package keeps open
-residuals only. Each ask pairs an AscendC program that works with a nearly
-equivalent VMI/PTO program that is slower, wrong, or fails to emit.
+On top of [PR #1145](https://github.com/hw-native-sys/PTOAS/pull/1145)
+(bf16 absolute value via clearing the sign bit, and bf16 group-4 broadcast),
+several issues are still unfixed. Each section below pairs a working AscendC
+program with a nearly equivalent VMI/PTO program that fails to compile, produces
+wrong results, or is slower for a reason we want PTOAS to investigate.
 
-Pipe sync ops in the VMI dumps are already present as `set_flag` /
-`wait_flag` (and dyn forms). Turning on PTOAS InsertSync is not the request.
+Pipe synchronization (`set_flag` / `wait_flag`, including dynamic forms) is
+already present in the VMI dumps. Enabling InsertSync is not what these
+requests ask for.
 
 ---
 
-## Ask 1 — `get_block_idx` bound check around VF fails ptoas → bisheng
+## Feature request 1 — `get_block_idx` used to decide whether a vector body runs fails in ptoas → bisheng
 
 ### Problem
 
-Multi-buffer kernels often gate a vector-face body on a bound derived from
-`get_block_idx` (for example `block_idx / 8 < N`). AscendC expresses that with
-`GetBlockIdx` and compiles with `bisheng`.
+Multi-buffer kernels often take the hardware block index, form a simple bound
+(for example `block_idx / 8 < N`), and only then run a short vector load/store
+body. AscendC does this with `GetBlockIdx` and compiles with `bisheng`.
 
-On the VMI/PTO path, the same pattern dies in ptoas → bisheng with:
+The same pattern on the VMI/PTO path dies during device emission with:
 
 ```text
 Do not know how to expand the result of this operator!
 ```
 
-Minimization notes (important):
+What we checked while shrinking the dump:
 
-- `set_flag_dyn` / `wait_flag_dyn` alone **do not** reproduce the expand failure.
-- `get_block_idx` used only for MTE addressing can succeed.
-- The failure appears when `get_block_idx` feeds a compare that guards a VF
-  (`create_mask` / `vload` / `vstore`).
+- Dynamic `set_flag_dyn` / `wait_flag_dyn` alone do **not** cause this error.
+- Using `get_block_idx` only to compute memory addresses for MTE can succeed.
+- The failure shows up when `get_block_idx` feeds a compare that **requires** a
+  vector body to run (`create_mask` / `vload` / `vstore` under that `scf.if`).
 
-### What AscendC already does
+### Working AscendC reference
 
-See [`fixtures/reference_asc_block_idx_vf.asc`](fixtures/reference_asc_block_idx_vf.asc).
+[`fixtures/reference_asc_block_idx_vf.asc`](fixtures/reference_asc_block_idx_vf.asc)
+— `bisheng` compiles this today.
 
-### What VMI does today (broken emit)
+### Broken VMI / PTO today
 
-| Fixture | Role |
-|---------|------|
-| [`current_vmi_block_idx_vf.pto`](fixtures/current_vmi_block_idx_vf.pto) | Minimized repro (expand FAIL) |
-| [`current_vmi_multibuf_expand_full.pto`](fixtures/current_vmi_multibuf_expand_full.pto) | Full multi-buffer dump that first showed the failure |
+| Fixture | What it is |
+|---------|------------|
+| [`current_vmi_block_idx_vf.pto`](fixtures/current_vmi_block_idx_vf.pto) | Smallest program that still hits the expand error |
+| [`current_vmi_multibuf_expand_full.pto`](fixtures/current_vmi_multibuf_expand_full.pto) | Larger multi-buffer dump where the failure was first seen |
 
-### What we need
+### Desired behavior
 
-`get_block_idx` (and the integer ops that form a tile bound from it) must expand
-through VPTO / bisheng when they control a VF region, the same way they already
-do for plain MTE addressing.
+`get_block_idx` and the integer arithmetic that builds a tile bound from it must
+lower through ptoas and bisheng when that bound **controls** a vector region —
+the same way those ops already work when they only feed MTE addressing.
 
-### Criteria
+After a fix:
 
-1. AscendC reference still compiles with `bisheng`.
-2. After the fix, `current_vmi_block_idx_vf.pto` completes `ptoas` device
-   emission without the expand error above.
-3. Until then, the check script records the current FAIL with that error string.
+1. The AscendC reference still compiles with `bisheng`.
+2. `current_vmi_block_idx_vf.pto` finishes `ptoas` device emission without the
+   expand error above.
+3. Until then, `scripts/check_vmi_asc_residual.sh` should keep recording FAIL
+   and match that error string.
 
-### Non-goals
+### Out of scope
 
-- Asking PTOAS to invent the multi-buffer schedule
-- Treating InsertSync enablement as the fix
-- Filing dyn pipe-event ops as the primary bug (they are present in the full
-  dump but are not sufficient to reproduce expand)
+- Having PTOAS invent the multi-buffer schedule
+- Treating InsertSync as the fix
+- Treating dynamic pipe-event ops as the main bug (they appear in the full dump
+  but are not enough to reproduce the expand failure)
 
 ---
 
-## Ask 2 — Double-buffered dequant wrong numerics vs AscendC
+## Feature request 2 — Wide double-buffered dequant disagrees with AscendC
 
 ### Problem
 
-Dequant of e4m3 with UE8M0 scales (expand scale across a strip, multiply, store)
-is correct on AscendC under multi-buffer MTE+V. On VMI, the same algorithm with
-**two UB faces and a wide K-chunk (512 / 256-lane halves)** disagrees with
-AscendC (maxabs ≠ 0). The **narrower** schedule (smaller K face / 128-lane
-strips) matches AscendC.
+Dequantizing e4m3 data with UE8M0 scales (expand the scale across a strip,
+multiply, store) is correct on AscendC with multi-buffer copy + vector work.
+On VMI, the **same algorithm** with two on-chip buffer faces and a **wide**
+K-chunk (512 elements, worked as 256-lane halves) disagrees with AscendC
+(maximum absolute difference ≠ 0). The **narrower** schedule (smaller K face /
+128-lane strips) matches AscendC.
 
-So this is not “VMI cannot dequant”. It is shape- and buffering-sensitive wrong
-results on the VMI legalization / emission path. The checked-in `.pto` bodies
-are the bf16 expand+mul strip (legal contiguous path); the full double-buffer
-kernel dump is the `.ptodsl.py` used for the device mismatch.
+So VMI can dequant; the bug is sensitive to strip width and buffering depth on
+the VMI lower / emit path.
 
-### What AscendC already does
+Checked-in pieces:
 
-See [`fixtures/reference_asc_dequant_dblbuf.asc`](fixtures/reference_asc_dequant_dblbuf.asc).
+- Small `.pto` bodies: bf16 scale expand + multiply (legal contiguous path).
+- Full double-buffer kernel dump: `.ptodsl.py`, used for the on-device mismatch.
 
-### What VMI does today
+### Working AscendC reference
 
-| Fixture | Role |
-|---------|------|
-| [`broken_vmi_dequant_dblbuf.pto`](fixtures/broken_vmi_dequant_dblbuf.pto) | Wide-strip VF body (lowers) |
-| [`working_vmi_dequant_narrow.pto`](fixtures/working_vmi_dequant_narrow.pto) | Narrow-strip VF body (lowers; matched AscendC on device) |
-| [`broken_vmi_dequant_dblbuf.ptodsl.py`](fixtures/broken_vmi_dequant_dblbuf.ptodsl.py) | Full double-buffer kernel dump used for the device mismatch |
+[`fixtures/reference_asc_dequant_dblbuf.asc`](fixtures/reference_asc_dequant_dblbuf.asc)
+— `bisheng` compiles this today.
 
-Recorded numbers: [`fixtures/RECORDED_DEVICE_NOTES.md`](fixtures/RECORDED_DEVICE_NOTES.md).
+### VMI today
 
-### What we need
+| Fixture | What it is |
+|---------|------------|
+| [`broken_vmi_dequant_dblbuf.pto`](fixtures/broken_vmi_dequant_dblbuf.pto) | Wide-strip vector body (lowers; part of the failing schedule) |
+| [`working_vmi_dequant_narrow.pto`](fixtures/working_vmi_dequant_narrow.pto) | Narrow-strip vector body (lowers; matched AscendC on device) |
+| [`broken_vmi_dequant_dblbuf.ptodsl.py`](fixtures/broken_vmi_dequant_dblbuf.ptodsl.py) | Full double-buffer kernel dump used for the on-device mismatch |
+
+Recorded on-device numbers:
+[`fixtures/RECORDED_DEVICE_NOTES.md`](fixtures/RECORDED_DEVICE_NOTES.md).
+
+### Desired behavior
 
 The wide, two-face schedule must produce the same results as AscendC (and as the
-narrow VMI twin) for this dequant algorithm — fix in VMI layout / `vmi-to-vpto` /
-emission around multi-buffer, not by forcing every kernel onto the narrow shape.
+narrow VMI twin) for this dequant algorithm. Prefer a fix in VMI layout /
+`vmi-to-vpto` / emission around multi-buffering — not a rule that every kernel
+must use the narrow shape.
 
-### Criteria
+After a fix:
 
-1. Wide and narrow VF bodies keep lowering with `pto-test-opt`.
-2. After the fix, the wide full-kernel schedule matches AscendC (maxabs = 0) on
-   the recorded shape family in `RECORDED_DEVICE_NOTES.md`.
+1. Wide and narrow vector bodies still lower with `pto-test-opt`.
+2. The wide full-kernel schedule matches AscendC (maximum absolute difference
+   = 0) on the shapes listed in `RECORDED_DEVICE_NOTES.md`.
 
-### Non-goals
+### Out of scope
 
-- Product schedule knobs presented as the PTOAS fix
-- Claiming the narrow path is unacceptable forever (it is the control that works)
+- Presenting product schedule knobs as the PTOAS fix
+- Claiming the narrow path must be removed (it is the control case that works)
 
 ---
 
-## Ask 3 — FP32 strip reduce/store density (emit evidence required)
+## Feature request 3 — FP32 strip abs-max: VMI is slower than AscendC; need emit proof before a compiler change
 
-### Problem
+### What the programs do
 
-After `vcmax` / `vstore` with `group = 1` already legalizes to `1PT_B32`, a
-representative FP32 strip abs-amax + scale store is still slower on VMI than a
-nearly equivalent AscendC MicroAPI path in product measurements. That alone is
-not enough to demand a PTOAS change.
+Both sides compute an absolute maximum over an FP32 strip and write a scale
+value — a common building block for FP32 quant.
 
-### What AscendC already does
+- **AscendC (working reference):**
+  [`fixtures/reference_asc_fp32_strip_amax.asc`](fixtures/reference_asc_fp32_strip_amax.asc)
+  loads two 64-lane FP32 chunks, takes abs, reduces with `vmax`, stores the
+  result. Compiles with `bisheng` today.
+- **VMI (already compiles):**
+  [`fixtures/current_vmi_fp32_strip_amax.pto`](fixtures/current_vmi_fp32_strip_amax.pto)
+  does `vabs` then `vcmax` with `group = 1`. `pto-test-opt` lowers this today
+  (the one-element / one-part reduce+store path already works).
 
-See [`fixtures/reference_asc_fp32_strip_amax.asc`](fixtures/reference_asc_fp32_strip_amax.asc).
+### What is wrong today
 
-### What VMI does today (works)
+On real kernels that use this strip pattern, the VMI path is still slower than
+the AscendC MicroAPI path in wall-clock measurements. Correctness and basic
+lowering are **not** the open issue here.
 
-See [`fixtures/current_vmi_fp32_strip_amax.pto`](fixtures/current_vmi_fp32_strip_amax.pto).
+### What kind of PTOAS issue this might be
 
-### What we need
+This is a **performance** question, not a “does not compile” bug:
 
-Only if emit A/B shows redundant MTE, layout reshapes, or extra moves on the VMI
-side relative to AscendC: remove that tax in VMI layout / emission. If emit looks
-comparable, this is **not** a PTOAS legalization bug.
+1. If the machine code that PTOAS emits for the VMI fixture does extra memory
+   traffic, layout reshapes, or moves that the AscendC reference does not, then
+   that is a concrete PTOAS emit / layout problem to fix.
+2. If the two emits look similarly dense, the gap may be ISA choice or how the
+   larger kernel is scheduled — not something this small fixture can justify as
+   a PTOAS legalization change.
 
-Track progress in [`fixtures/emit_compare_note.md`](fixtures/emit_compare_note.md).
+A wall-clock ratio by itself does not tell which of those it is. That is why
+this package does not yet ask for a specific code change in PTOAS: we need a
+side-by-side look at the generated code first.
 
-### Criteria
+### Evidence in this package
 
-1. VMI fixture continues to lower (`group = 1` path stays valid).
-2. A concrete emit diff is attached before accepting a PTOAS code change for
-   this ask.
+| Side | Fixture | What the check script shows today |
+|------|---------|-----------------------------------|
+| AscendC | `reference_asc_fp32_strip_amax.asc` | Compiles (`bisheng`) |
+| VMI | `current_vmi_fp32_strip_amax.pto` | Lowers to VPTO (`pto-test-opt`) |
 
-### Non-goals
+How to compare the generated code (AscendC vs VMI):
 
-- Wall-time ratios as the sole proof
-- Re-opening pad-32 + `dist_mode="brc"` as the primary ask
+1. Lower the VMI fixture (`pto-test-opt` with the check-script passes, or
+   `ptoas --emit-vpto` with the body wrapped in `pto.vecscope`).
+2. Compile the AscendC fixture and inspect its vector / memory sequence.
+3. Record any extra VMI moves, spills, or layout reshapes in
+   [`fixtures/emit_compare_note.md`](fixtures/emit_compare_note.md).
+
+That note is empty of a real diff today — so this feature request stays as
+“reproducer + open performance question,” not “land this compiler patch.”
+
+### Desired behavior
+
+- Keep the current VMI fixture compiling (the `group = 1` reduce/store path
+  must remain valid).
+- If the emit comparison shows clear redundant work on the VMI side relative to
+  AscendC, remove that redundancy in VMI layout or emission so the strip is as
+  dense as the AscendC reference.
+- Do not accept a PTOAS code change for this item until that AscendC-vs-VMI emit
+  comparison is written down in `emit_compare_note.md`.
+
+### Out of scope
+
+- Using wall-clock ratios alone as proof of a compiler bug
+- Re-opening pad-32 + broadcast load mode as the main request

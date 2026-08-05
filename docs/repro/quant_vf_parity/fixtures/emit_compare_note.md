@@ -1,21 +1,31 @@
-# Ask 3 — emit compare note (FP32 strip amax)
+# Feature request 3 — AscendC vs VMI emit comparison (FP32 strip abs-max)
 
-## Status
+## What to compare
 
-`current_vmi_fp32_strip_amax.pto` lowers (`vcmax`/`vstore` with `group = 1` →
-`1PT_B32`). AscendC baseline `reference_asc_fp32_strip_amax.asc` compiles with
-`bisheng`.
+| Side | Fixture | Role in the comparison |
+|------|---------|------------------------|
+| AscendC | `reference_asc_fp32_strip_amax.asc` | Dense MicroAPI reference (two loads, abs, `vmax`, store) |
+| VMI | `current_vmi_fp32_strip_amax.pto` | Same algorithm as VMI: abs + `vcmax` with `group = 1` |
 
-A side-by-side emit dump (AscendC assembly / MicroAPI vs VMI→VPTO) has **not**
-yet shown a clear redundant MTE or layout tax that PTOAS must fix. Until that
-evidence exists, Ask 3 is **not** a PTOAS legalization bug — it may be ISA /
-schedule density on the AscendC side.
+## Status today
 
-## How to extend this note
+- AscendC fixture compiles with `bisheng`.
+- VMI fixture lowers with `pto-test-opt` (check-script pass list).
+- A side-by-side dump of **AscendC generated code** vs **VMI→VPTO generated
+  code** has not yet shown clear extra memory traffic or layout reshapes on the
+  VMI side. Until that is written here, feature request 3 is an open
+  performance investigation, not a proven PTOAS legalization bug.
 
-1. Lower with the check-script pass list (`pto-test-opt` → VPTO), or wrap the
-   body in `pto.vecscope` and use `ptoas --emit-vpto`.
-2. Compile `reference_asc_fp32_strip_amax.asc` and inspect the vector / MTE
+## How to fill this note
+
+1. Lower `current_vmi_fp32_strip_amax.pto` (check-script passes, or wrap the
+   body in `pto.vecscope` and run `ptoas --emit-vpto`).
+2. Compile `reference_asc_fp32_strip_amax.asc` and inspect its vector / memory
    sequence.
-3. List any extra VMI moves, spills, or layout reshapes here. Only then promote
-   Ask 3 to a concrete PTOAS change request in `FEATURE_REQUEST.md`.
+3. List below any extra VMI moves, spills, or layout reshapes relative to
+   AscendC. Only then ask for a concrete PTOAS code change in
+   `FEATURE_REQUEST.md`.
+
+## Findings
+
+_(none yet)_

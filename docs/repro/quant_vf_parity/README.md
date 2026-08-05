@@ -1,24 +1,25 @@
-# AscendC vs VMI residuals (block-idx VF emit, dequant buffering, FP32 density)
+# Remaining quant gaps: AscendC vs VMI (after PR #1145)
 
-After bf16 abs and group-4 broadcast landed on `zjw/bf16_vmi_fixes`, three
-residuals remain. This package states each one as an AscendC program that works
-beside a nearly equivalent VMI/PTO program that is slower, wrong, or fails to
-emit. Details: [`FEATURE_REQUEST.md`](FEATURE_REQUEST.md).
+On top of [PR #1145](https://github.com/hw-native-sys/PTOAS/pull/1145)
+(bf16 abs and group-4 broadcast), three issues remain. This package states each
+one as a working AscendC program next to a nearly equivalent VMI/PTO program
+that fails to emit, gets wrong results, or is slower. Full write-up:
+[`FEATURE_REQUEST.md`](FEATURE_REQUEST.md).
 
 ## Fixture map
 
-| Fixture | Ask | Role | Expected today |
-|---------|-----|------|----------------|
-| `reference_asc_block_idx_vf.asc` | 1 | AscendC block-idx guard | PASS (`bisheng`) |
-| `current_vmi_block_idx_vf.pto` | 1 | Minimized block-idx → VF | FAIL ptoas→bisheng expand |
-| `current_vmi_multibuf_expand_full.pto` | 1 | Full dump of the fail | FAIL expand (same class) |
-| `reference_asc_dequant_dblbuf.asc` | 2 | AscendC dequant VF | PASS (`bisheng`) |
-| `broken_vmi_dequant_dblbuf.pto` | 2 | Wide-strip VMI VF | PASS lower; device mismatch recorded |
-| `working_vmi_dequant_narrow.pto` | 2 | Narrow-strip VMI VF | PASS lower; device matched AscendC |
-| `reference_asc_fp32_strip_amax.asc` | 3 | AscendC FP32 strip amax | PASS (`bisheng`) |
-| `current_vmi_fp32_strip_amax.pto` | 3 | VMI `group=1` 1PT path | PASS lower |
+| Fixture | Feature request | Role | Expected today |
+|---------|-----------------|------|----------------|
+| `reference_asc_block_idx_vf.asc` | 1 | AscendC: block index decides if vector work runs | PASS (`bisheng`) |
+| `current_vmi_block_idx_vf.pto` | 1 | Smallest VMI that still hits the expand error | FAIL ptoas→bisheng expand |
+| `current_vmi_multibuf_expand_full.pto` | 1 | Larger dump of the same failure | FAIL expand (same class) |
+| `reference_asc_dequant_dblbuf.asc` | 2 | AscendC dequant vector body | PASS (`bisheng`) |
+| `broken_vmi_dequant_dblbuf.pto` | 2 | Wide-strip VMI vector body | PASS lower; on-device mismatch recorded |
+| `working_vmi_dequant_narrow.pto` | 2 | Narrow-strip VMI vector body | PASS lower; matched AscendC on device |
+| `reference_asc_fp32_strip_amax.asc` | 3 | AscendC FP32 strip abs-max | PASS (`bisheng`) |
+| `current_vmi_fp32_strip_amax.pto` | 3 | VMI FP32 abs + `vcmax` (`group = 1`) | PASS lower |
 
-Notes: [`fixtures/RECORDED_DEVICE_NOTES.md`](fixtures/RECORDED_DEVICE_NOTES.md),
+More detail: [`fixtures/RECORDED_DEVICE_NOTES.md`](fixtures/RECORDED_DEVICE_NOTES.md),
 [`fixtures/emit_compare_note.md`](fixtures/emit_compare_note.md).
 
 ## Layout
@@ -30,7 +31,7 @@ quant_vf_parity/
   PINS.md
   fixtures/
   scripts/            # env + check_vmi_asc_residual
-  historical/         # old product-harness scripts (not entrypoints)
+  historical/         # older AscendC/VMI fixtures (not entrypoints)
   outputs/            # gitignored
 ```
 
@@ -52,8 +53,10 @@ Results: `outputs/check_vmi_asc_residual/compile_results.txt`.
 
 ## How to read the result
 
-- **Ask 1:** AscendC PASS and VMI block-idx VF emit FAIL (expand error) means the
-  request is still open.
-- **Ask 2:** Both VF bodies should lower; device mismatch for the wide schedule
-  is documented in `RECORDED_DEVICE_NOTES.md`.
-- **Ask 3:** Lower PASS alone does not close the ask; see `emit_compare_note.md`.
+- **Feature request 1:** AscendC PASS and VMI emit FAIL with the expand error
+  means the request is still open.
+- **Feature request 2:** Both vector bodies should lower. The wide schedule’s
+  on-device mismatch vs AscendC is recorded in `RECORDED_DEVICE_NOTES.md`.
+- **Feature request 3:** Lower PASS only shows the VMI program is legal. Closing
+  this as a PTOAS change still needs an AscendC-vs-VMI emit comparison in
+  `emit_compare_note.md` (see FEATURE_REQUEST.md).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile/lower AscendC vs VMI residual fixtures; print PASS/FAIL for each path.
+# Compile/lower AscendC vs VMI fixtures for the feature requests; print PASS/FAIL.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPRO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -91,7 +91,7 @@ check_vmi_lower() {
   echo | tee -a "${LOG}"
 }
 
-# Ask 1: get_block_idx bound check around VF (expect expand FAIL today)
+# Feature request 1: get_block_idx controlling a vector body (expect expand FAIL today)
 check_asc reference_asc_block_idx_vf.asc
 
 echo "=== current_vmi_block_idx_vf.pto (ptoas device emit) ===" | tee -a "${LOG}"
@@ -99,7 +99,7 @@ BID="${FIXTURES}/current_vmi_block_idx_vf.pto"
 BID_LOG="${OUT}/current_vmi_block_idx_vf.emit.log"
 BID_OBJ="${OUT}/current_vmi_block_idx_vf.fatobj.o"
 if ! command -v ptoas >/dev/null 2>&1; then
-  fail "ptoas not found; skip Ask 1 emit"
+  fail "ptoas not found; skip feature request 1 emit"
 else
   set +e
   ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
@@ -108,9 +108,9 @@ else
   bid_rc=$?
   set -e
   if [ "${bid_rc}" -eq 0 ] && [ -s "${BID_OBJ}" ]; then
-    pass "current_vmi_block_idx_vf.pto emits (Ask 1 may be closed)"
+    pass "current_vmi_block_idx_vf.pto emits (feature request 1 may be closed)"
   else
-    fail "current_vmi_block_idx_vf.pto emit exit ${bid_rc} (Ask 1 open if expand error)"
+    fail "current_vmi_block_idx_vf.pto emit exit ${bid_rc} (feature request 1 open if expand error)"
     if grep -q "Do not know how to expand the result of this operator" "${BID_LOG}"; then
       note "matched expected expand failure string"
     fi
@@ -144,15 +144,15 @@ if [ -f "${FIXTURES}/current_vmi_multibuf_expand_full.pto" ] && command -v ptoas
   echo | tee -a "${LOG}"
 fi
 
-# Ask 2
+# Feature request 2
 check_asc reference_asc_dequant_dblbuf.asc
 check_vmi_lower broken_vmi_dequant_dblbuf.pto
 check_vmi_lower working_vmi_dequant_narrow.pto
-note "Ask 2 device mismatch: see fixtures/RECORDED_DEVICE_NOTES.md"
+note "Feature request 2 on-device mismatch: see fixtures/RECORDED_DEVICE_NOTES.md"
 
-# Ask 3
+# Feature request 3
 check_asc reference_asc_fp32_strip_amax.asc
 check_vmi_lower current_vmi_fp32_strip_amax.pto
-note "Ask 3 emit evidence: see fixtures/emit_compare_note.md"
+note "Feature request 3 AscendC-vs-VMI emit note: see fixtures/emit_compare_note.md"
 
 echo "Full log: ${LOG}" | tee -a "${LOG}"
