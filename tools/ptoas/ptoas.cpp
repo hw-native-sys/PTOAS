@@ -619,6 +619,13 @@ static llvm::cl::opt<bool> disableInferLayout(
     llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> disableVMIPredicateFold(
+    "disable-vmi-predicate-fold",
+    llvm::cl::desc(
+        "Disable VMIPredicateFold (A/B: keep statically-proven pad "
+        "vcmp/vsel that would otherwise DCE)"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> enableSoftPostUpdate(
     "enable-vpto-soft-postupdate",
     llvm::cl::desc("Enable VPTO soft post-update optimization"),
@@ -3107,9 +3114,14 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   // before any verifier, layout, or lowering pass sees them.
   pm.addNestedPass<func::FuncOp>(
       pto::createVMINormalizeSignlessIntToUnsignedPass());
+  // Fold statically proven vcmp/vsel (e.g. expert-pad when E covers indices)
+  // before unified→legacy lowering so dead pad work never reaches layout.
+  if (!disableVMIPredicateFold)
+    pm.addPass(pto::createVMIPredicateFoldPass());
   // Expand unified VMI ops to legacy ops before layout assignment,
   // so downstream passes only see legacy ops.
   pm.addPass(pto::createVMILowerUnifiedToLegacyPass());
+
   pm.addPass(createCanonicalizerPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createPTOValidateVMIIRPass());

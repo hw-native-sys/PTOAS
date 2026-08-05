@@ -1,0 +1,172 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-predicate-fold | FileCheck %s
+
+// Expert-pad style folds: vsel(vcmp(vci/vadds, vbrc(E), lt), score, neg_inf)
+
+module {
+  // CHECK-LABEL: func.func @pad_all_true_vci
+  // CHECK-NOT: pto.vmi.vcmp
+  // CHECK-NOT: pto.vmi.vsel
+  // CHECK: return %[[SCORE:.*]] : !pto.vmi.vreg<64xf32>
+  func.func @pad_all_true_vci(
+      %score: !pto.vmi.vreg<64xf32>,
+      %neg_inf: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xf32> {
+    %c0 = arith.constant 0 : i32
+    %c64 = arith.constant 64 : i32
+    %c64i = arith.constant 64 : index
+    %seed = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %idx = pto.vmi.vci %c0 : i32 -> !pto.vmi.vreg<64xi32>
+    %num_exp = pto.vmi.vbrc %c64 : i32 -> !pto.vmi.vreg<64xi32>
+    %m = pto.vmi.vcmp %idx, %num_exp, %seed {cmp = "lt"}
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.mask<64xpred>
+    %out = pto.vmi.vsel %m, %score, %neg_inf
+        : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @pad_all_false_vci
+  // CHECK-NOT: pto.vmi.vcmp
+  // CHECK-NOT: pto.vmi.vsel
+  // CHECK: return %[[NEG:.*]] : !pto.vmi.vreg<64xf32>
+  func.func @pad_all_false_vci(
+      %score: !pto.vmi.vreg<64xf32>,
+      %neg_inf: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xf32> {
+    %c64 = arith.constant 64 : i32
+    %c64i = arith.constant 64 : index
+    %seed = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %idx = pto.vmi.vci %c64 : i32 -> !pto.vmi.vreg<64xi32>
+    %num_exp = pto.vmi.vbrc %c64 : i32 -> !pto.vmi.vreg<64xi32>
+    %m = pto.vmi.vcmp %idx, %num_exp, %seed {cmp = "lt"}
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.mask<64xpred>
+    %out = pto.vmi.vsel %m, %score, %neg_inf
+        : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @pad_mixed_no_fold
+  // CHECK: pto.vmi.vcmp
+  // CHECK: pto.vmi.vsel
+  func.func @pad_mixed_no_fold(
+      %score: !pto.vmi.vreg<64xf32>,
+      %neg_inf: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xf32> {
+    %c32 = arith.constant 32 : i32
+    %c64 = arith.constant 64 : i32
+    %c64i = arith.constant 64 : index
+    %seed = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %idx = pto.vmi.vci %c32 : i32 -> !pto.vmi.vreg<64xi32>
+    %num_exp = pto.vmi.vbrc %c64 : i32 -> !pto.vmi.vreg<64xi32>
+    %m = pto.vmi.vcmp %idx, %num_exp, %seed {cmp = "lt"}
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.mask<64xpred>
+    %out = pto.vmi.vsel %m, %score, %neg_inf
+        : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @pad_vadds_all_false
+  // CHECK-NOT: pto.vmi.vcmp
+  // CHECK-NOT: pto.vmi.vsel
+  // CHECK: return %[[NEG:.*]] : !pto.vmi.vreg<64xf32>
+  func.func @pad_vadds_all_false(
+      %score: !pto.vmi.vreg<64xf32>,
+      %neg_inf: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xf32> {
+    %c0 = arith.constant 0 : i32
+    %c384 = arith.constant 384 : i32
+    %c64i = arith.constant 64 : index
+    %seed = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %iota0 = pto.vmi.vci %c0 : i32 -> !pto.vmi.vreg<64xi32>
+    %idx = pto.vmi.vadds %iota0, %c384, %seed
+        : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xi32>
+    %num_exp = pto.vmi.vbrc %c384 : i32 -> !pto.vmi.vreg<64xi32>
+    %m = pto.vmi.vcmp %idx, %num_exp, %seed {cmp = "lt"}
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.mask<64xpred>
+    %out = pto.vmi.vsel %m, %score, %neg_inf
+        : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @pad_affine_multipass_all_true
+  // iv in [0,1], pass_base = iv*384, index = vci(pass_base) → [0..447] < 768
+  // CHECK-NOT: pto.vmi.vcmp
+  // CHECK-NOT: pto.vmi.vsel
+  func.func @pad_affine_multipass_all_true(
+      %score: !pto.vmi.vreg<64xf32>,
+      %neg_inf: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xf32> {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c384 = arith.constant 384 : i32
+    %c768 = arith.constant 768 : i32
+    %c64i = arith.constant 64 : index
+    %seed = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %num_exp = pto.vmi.vbrc %c768 : i32 -> !pto.vmi.vreg<64xi32>
+    %out = scf.for %iv = %c0 to %c2 step %c1
+        iter_args(%acc = %score) -> (!pto.vmi.vreg<64xf32>) {
+      %iv_i32 = arith.index_cast %iv : index to i32
+      %pass_base = arith.muli %iv_i32, %c384 : i32
+      %idx = pto.vmi.vci %pass_base : i32 -> !pto.vmi.vreg<64xi32>
+      %m = pto.vmi.vcmp %idx, %num_exp, %seed {cmp = "lt"}
+          : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+          -> !pto.vmi.mask<64xpred>
+      %sel = pto.vmi.vsel %m, %acc, %neg_inf
+          : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+          -> !pto.vmi.vreg<64xf32>
+      scf.yield %sel : !pto.vmi.vreg<64xf32>
+    }
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @pad_dynamic_num_exp_no_fold
+  // CHECK: pto.vmi.vcmp
+  // CHECK: pto.vmi.vsel
+  func.func @pad_dynamic_num_exp_no_fold(
+      %score: !pto.vmi.vreg<64xf32>,
+      %neg_inf: !pto.vmi.vreg<64xf32>,
+      %e: i32)
+      -> !pto.vmi.vreg<64xf32> {
+    %c0 = arith.constant 0 : i32
+    %c64i = arith.constant 64 : index
+    %seed = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %idx = pto.vmi.vci %c0 : i32 -> !pto.vmi.vreg<64xi32>
+    %num_exp = pto.vmi.vbrc %e : i32 -> !pto.vmi.vreg<64xi32>
+    %m = pto.vmi.vcmp %idx, %num_exp, %seed {cmp = "lt"}
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.mask<64xpred>
+    %out = pto.vmi.vsel %m, %score, %neg_inf
+        : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @vsel_same_arms
+  // CHECK-NOT: pto.vmi.vsel
+  func.func @vsel_same_arms(
+      %m: !pto.vmi.mask<64xpred>,
+      %x: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xf32> {
+    %out = pto.vmi.vsel %m, %x, %x
+        : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    return %out : !pto.vmi.vreg<64xf32>
+  }
+}

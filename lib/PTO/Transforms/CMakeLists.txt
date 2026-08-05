@@ -57,6 +57,8 @@ add_mlir_dialect_library(PTOTransforms
   VMIControlFlowSupport.cpp
   VMILegalizeArithSelect.cpp
   VMIMaskGranularityAssignment.cpp
+  VMIMaskUtils.cpp
+  VMIPredicateFold.cpp
   VMILowerUnifiedToLegacy.cpp
   VMINormalizeSignlessIntToUnsigned.cpp
   VMILayoutAssignment.cpp
