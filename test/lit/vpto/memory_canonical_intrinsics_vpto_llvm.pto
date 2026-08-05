@@ -41,6 +41,22 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
+  func.func @canonical_vsldb_ui64(
+      %src: !pto.ptr<ui64, ub>, %dst: !pto.ptr<ui64, ub>) attributes {pto.kernel} {
+    %offset = arith.constant 0 : index
+    %c0 = arith.constant 0 : i16
+    %c1 = arith.constant 1 : i16
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vsldb %src, %c1, %c0, %mask
+          : !pto.ptr<ui64, ub>, i16, i16, !pto.mask<b32>
+          -> !pto.vreg<32xui64>
+      pto.vsts %value, %dst[%offset], %mask {dist = "PK_B64"}
+          : !pto.vreg<32xui64>, !pto.ptr<ui64, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
   func.func @canonical_fp8_block_post(
       %value: !pto.vreg<256xf8E4M3FN>,
       %dst: !pto.ptr<f8E4M3FN, ub>) attributes {pto.kernel} {
@@ -67,6 +83,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-LABEL: define void @canonical_x2_f16_mix_aiv
 // CHECK: call { <128 x half>, <128 x half> } @llvm.hivm.vldsx2.v128f16
 // CHECK: call void @llvm.hivm.vstsx2.v128i16(<128 x i16>
+
+// CHECK-LABEL: define void @canonical_vsldb_ui64_mix_aiv
+// CHECK: call <32 x i64> @llvm.hivm.vsldb.v32i64
 
 // CHECK-LABEL: define void @canonical_fp8_block_post_mix_aiv
 // CHECK: call ptr addrspace(6) @llvm.hivm.vsstb.post.v256fp8e4m3

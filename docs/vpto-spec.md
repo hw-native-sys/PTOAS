@@ -1223,11 +1223,6 @@ pto.vsts %value, %destination[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !pto.pt
 pto.vstsx2 %low, %high, %dest[%offset], "DIST", %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.ptr<T, ub>, index, !pto.mask<G>
 ```
 
-The two vectors and destination use one identical element type. The A5 dual
-store surface accepts 8/16/32-bit integers, `f16`, `bf16`, supported FP8
-formats, and packed FP4 pair formats; it does not accept `f32` or 64-bit
-elements.
-
 **Compare (two vectors + seed mask in, mask out):**
 
 ```mlir
@@ -1559,10 +1554,10 @@ pto.vsts %sum, %ub_tmp[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.
 
 ```mlir
 // AoS → SoA (deinterleave)
-%x, %y = pto.vldsx2 %ub_xy[%offset], "DINTLV_B16" : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+%x, %y = pto.vldsx2 %ub_xy[%offset], "DINTLV_B32" : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
 
 // SoA → AoS (interleave)
-pto.vstsx2 %x, %y, %ub_xy[%offset], "INTLV_B16", %all_mask : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
+pto.vstsx2 %x, %y, %ub_xy[%offset], "INTLV_B32", %all_mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 ---

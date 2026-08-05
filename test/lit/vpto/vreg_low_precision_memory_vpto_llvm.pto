@@ -32,7 +32,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @lowp_x2_and_block(%f4e1_src: !pto.ptr<!pto.f4E1M2x2, ub>,
                                %f4e1_dst: !pto.ptr<!pto.f4E1M2x2, ub>,
                                %fp8_dst: !pto.ptr<f8E4M3FN, ub>,
-                               %fp8_value: !pto.vreg<256xf8E4M3FN>) attributes {pto.kernel} {
+                               %fp8_value: !pto.vreg<256xf8E4M3FN>,
+                               %hif8_src: !pto.ptr<!pto.hif8, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1_i16 = arith.constant 1 : i16
     pto.vecscope {
@@ -42,6 +43,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %strided = pto.vsldb %f4e1_src, %c1_i16, %c1_i16, %mask : !pto.ptr<!pto.f4E1M2x2, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256x!pto.f4E1M2x2>
       pto.vsts %strided, %f4e1_dst[%c0], %mask : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b8>
       pto.vsstb %fp8_value, %fp8_dst, %c1_i16, %c1_i16, %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8>
+      %hif8_strided = pto.vsldb %hif8_src, %c1_i16, %c1_i16, %mask : !pto.ptr<!pto.hif8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256x!pto.hif8>
     }
     return
   }
