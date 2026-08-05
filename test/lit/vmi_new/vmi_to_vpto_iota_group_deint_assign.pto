@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-layout-rematerialize -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// P1 regression: no-layout surface IR (production path).
+// Widening f16→f32 naturally prefers deinterleaved=2. The internal group_iota
+// remains contiguous and layout assignment materializes the consumer edge:
+//   group_iota(contiguous) → ensure_layout(deinterleaved=2) → consumers
+
+module {
+  func.func @grouped_vci_elem_with_widen_deint(
+      %base: f32, %src: !pto.vmi.vreg<128xf16>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %wide = pto.vmi.vcvt %src
+        : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+    %idx = pto.vmi.vci %base {group = 2 : i64}
+        : f32 -> !pto.vmi.vreg<128xf32>
+    %mask = pto.vmi.create_mask %c128
+        : index -> !pto.vmi.mask<128xpred>
+    %sum = pto.vmi.vadd %wide, %idx, %mask
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>,
+          !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %sum, %dst[%c0]
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @grouped_vci_elem_with_widen_deint(
+// ASSIGN: %[[WIDE:.*]] = pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// Grouped producer must remain contiguous; conversion is via ensure_layout.
+// ASSIGN: %[[IOTA:.*]] = pto.vmi.group_iota
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[IDX:.*]] = pto.vmi.ensure_layout %[[IOTA]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.addf %[[WIDE]], %[[IDX]]
+// ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 2>
+// ASSIGN-NOT: pto.vmi.group_iota {{.*}} -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+
+// LOWER-LABEL: func.func @grouped_vci_elem_with_widen_deint(
+// Contiguous group=2 share: one physical vci, then layout conversion.
+// LOWER: pto.vci
+// LOWER: pto.vdintlv
+// LOWER: pto.vadd
+// LOWER: pto.vstsx2
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.

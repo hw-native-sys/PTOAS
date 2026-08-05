@@ -63,23 +63,31 @@ def VMIBroadcastOp : VMI_Op<"broadcast", [Pure]> {
 def VMIIotaOp : VMI_Op<"iota", [Pure]> {
   let summary = "Create a VMI logical index vector from a scalar base";
   let description = [{
-    Without `{group}`, produces a *continuous* ramp over the full logical
-    length L: `dst[i] = base + i` (ASC). For L=128 that is `base..base+127`
+    Produces a continuous ramp over the full logical length L:
+    `dst[i] = base + i` (ASC). For L=128 that is `base..base+127`
     (physical parts `base+0..63` then `base+64..127`).
+  }];
+  let arguments = (ins
+    AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
+    OptionalAttr<StrAttr>:$order
+  );
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = "$base attr-dict `:` type($base) `->` type($result)";
+}
 
-    With `{group = C}`, produces a **group-periodic** ramp (not continuous
-    across groups): each of the C groups of size `S = L / C` independently
-    gets `dst[g*S + j] = base + j`. Example `L=128, C=2, base=0`:
-    `[0..63 | 0..63]`. When `S` is a multiple of physical VL, parts that share
-    the same ramp may reuse one index register. When `S < VL` and `VL % S == 0`
-    (e.g. i32 `L=64, C=2` → `[0..31 | 0..31]` inside one VL64), lowering merges
-    masked `vci` runs via `vsel`. Grouped iota materializes as contiguous;
-    deinterleaved results go through contiguous iota + `ensure_layout`.
+def VMIGroupIotaOp : VMI_Op<"group_iota", [Pure]> {
+  let summary = "Create a contiguous group-periodic VMI index vector";
+  let description = [{
+    Internal legacy form for public `vci(..., group=C)` with C > 1. For logical
+    length L and group size S=L/C, produces
+    `dst[g*S + j] = base +/- j`. This producer is contiguous-only; consumers
+    requesting another layout receive an explicit `ensure_layout`.
   }];
   let arguments = (ins
     AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">:$base,
     OptionalAttr<StrAttr>:$order,
-    OptionalAttr<I64Attr>:$group
+    I64Attr:$group
   );
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;

@@ -310,6 +310,10 @@ def _physical_lanes_per_part(elem_type, *, context: str) -> int | None:
 
 
 def _check_vci_group_tiles_phys_vl(elem_type, size, group, *, context: str) -> None:
+    # One group is exactly the ordinary continuous iota, including tails that
+    # do not tile physical VL (for example i32 size=100).
+    if group == 1:
+        return
     group_size = size // group
     phys = _physical_lanes_per_part(elem_type, context=context)
     if phys is None:

@@ -5348,11 +5348,14 @@ FailureOr<Value> createIotaDeinterleavedChunk(Location loc, Type resultType,
       .getResult();
 }
 
-struct OneToNVMIIotaOpPattern : OpConversionPattern<VMIIotaOp> {
-  using OpConversionPattern<VMIIotaOp>::OpConversionPattern;
+template <typename IotaOp>
+struct OneToNVMIIotaOpPattern : OpConversionPattern<IotaOp> {
+  using OpConversionPattern<IotaOp>::OpConversionPattern;
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<IotaOp>::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(VMIIotaOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(IotaOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     VMILayoutAttr layout = resultVMIType.getLayoutAttr();
@@ -5391,8 +5394,8 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<VMIIotaOp> {
     // Contiguous materialization:
     //   * S % physVL == 0 → VCI chunk per distinct laneOffset (share parts).
     //   * physVL % S == 0 → sub-VL pack via mask + offset-by-S + vsel.
-    if (auto groupAttr = op.getGroupAttr()) {
-      int64_t numGroups = groupAttr.getInt();
+    if constexpr (std::is_same_v<IotaOp, VMIGroupIotaOp>) {
+      int64_t numGroups = op.getGroupAttr().getInt();
       int64_t logicalLanes = resultVMIType.getElementCount();
       if (numGroups <= 0 || logicalLanes % numGroups != 0)
         return rewriter.notifyMatchFailure(
@@ -11627,7 +11630,8 @@ void populateVMIConversionPatterns(
       typeConverter, patterns.getContext());
   patterns.add<
       OneToNVMIEnsureLayoutOpPattern, OneToNVMIEnsureMaskLayoutOpPattern,
-      OneToNVMIBroadcastOpPattern, OneToNVMIIotaOpPattern,
+      OneToNVMIBroadcastOpPattern, OneToNVMIIotaOpPattern<VMIIotaOp>,
+      OneToNVMIIotaOpPattern<VMIGroupIotaOp>,
       OneToNVMIConstantOpPattern, OneToNVMIConstantMaskOpPattern,
       OneToNVMICreateMaskOpPattern, OneToNVMICreateGroupMaskOpPattern,
       OneToNVMIMaskBinaryOpPattern<VMIMaskAndOp, PandOp>,

@@ -154,8 +154,31 @@ def main() -> None:
                 f"untileable group must mention physical lanes, got: {err}",
             )
 
-    print("ptodsl_vmi_vci_dynamic_index: PASS")
+        # P2: group=1 is a single group → equivalent to ungrouped; legal even
+        # when size does not tile physical VL (same as ungrouped size=100).
+        _check_vci_group_tiles_phys_vl(
+            i32, 100, 1, context="pto.vmi.vci(...)"
+        )
 
+    @pto.jit(target="a5", backend="vpto", mode="explicit")
+    def vmi_vci_group1_tail_probe():
+        dst = pto.alloc_tile(shape=[1, 128], dtype=pto.i32)
+        idx = pto.vmi.vci(pto.i32(0), size=100, group=1)
+        pto.vmi.vstore(
+            idx, dst.as_ptr(), pto.const(0, dtype=pto.index)
+        )
+
+    g1_tail = vmi_vci_group1_tail_probe.compile().mlir_text()
+    expect(
+        "pto.vmi.vci" in g1_tail,
+        f"group=1 size=100 must emit vci:\n{g1_tail[:1500]}",
+    )
+    expect(
+        "!pto.vmi.vreg<100xi32" in g1_tail,
+        f"group=1 size=100 must keep logical length 100:\n{g1_tail[:1500]}",
+    )
+
+    print("ptodsl_vmi_vci_dynamic_index: PASS")
 
 if __name__ == "__main__":
     main()

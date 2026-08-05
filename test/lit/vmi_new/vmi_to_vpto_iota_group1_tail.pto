@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+// P2 regression: group=1 must be equivalent to omitting group.
+// Ungrouped size=100 already works (vmi_to_vpto_iota_tail.pto).
+// It normalizes to ordinary iota before grouped physical-tiling constraints,
+// so the legal 100-lane tail remains the continuous ramp 0..99.
+
+module {
+  func.func @vmi_to_vpto_iota_group1_tail(
+      %base: i32, %offset: i32,
+      %mask: !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<i32, ub>) {
+    %c0 = arith.constant 0 : index
+    %value = pto.vmi.vci %base {group = 1 : i64}
+        : i32 -> !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vadds %value, %offset, %mask
+        : !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>, i32,
+          !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>,
+          !pto.ptr<i32, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_iota_group1_full_vl(
+      %base: i32, %offset: i32,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<i32, ub>) {
+    %c0 = arith.constant 0 : index
+    %value = pto.vmi.vci %base {group = 1 : i64}
+        : i32 -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vadds %value, %offset, %mask
+        : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, i32,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+          !pto.ptr<i32, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group1_tail(
+// Same as ungrouped contiguous tail: two physical vci chunks.
+// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
+// CHECK: arith.constant 64 : i32
+// CHECK: arith.addi %arg0
+// CHECK: %[[P1:.*]] = pto.vci
+// CHECK: pto.vadds %[[P0]]
+// CHECK: pto.vadds %[[P1]]
+// CHECK: pto.vsts
+// CHECK: pto.vsts
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group1_full_vl(
+// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
+// CHECK: pto.vadds %[[P0]]
+// CHECK: pto.vsts

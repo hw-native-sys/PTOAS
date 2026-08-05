@@ -464,11 +464,14 @@ its `repeat_stride`.
 These instructions produce a new logical vector from a scalar seed — either as
 a lane-wise ramp or a uniform broadcast.
 
-### `pto.vmi.vci(base, *, size, order=None) -> VRegType`
+### `pto.vmi.vci(base, *, size, order=None, group=None) -> VRegType`
 
 **Description**: Builds a logical lane-wise index ramp starting from a scalar
 base value. Use it when you need an index vector for lane addressing,
-gather/scatter offsets, or dynamic lane selection.
+gather/scatter offsets, or dynamic lane selection. With `group=C`, the logical
+vector is split into C equal groups and the ramp restarts from `base` in every
+group. `group=1` is exactly equivalent to omitting `group`, including logical
+tails that do not evenly tile the physical vector length.
 
 **Parameters**:
 
@@ -477,6 +480,7 @@ gather/scatter offsets, or dynamic lane selection.
 | `base` | `ScalarType` | Typed scalar starting value for the ramp |
 | `size` | `int` | Logical lane count of the result vector |
 | `order` | `str` or `None` | Ramp order: `"ASC"` for ascending (default if omitted), or `"DESC"` for descending |
+| `group` | `int` or `None` | Optional number of equal groups. Values greater than one produce a group-periodic ramp; `1` is equivalent to no grouping. |
 
 **Returns**:
 
@@ -489,6 +493,14 @@ gather/scatter offsets, or dynamic lane selection.
 ```python
 idx = pto.vmi.vci(pto.i32(0), size=64, order="ASC")
 out = pto.vmi.vselr(src, idx)
+```
+
+```python
+# [0..31 | 0..31]
+idx = pto.vmi.vci(pto.i32(0), size=64, group=2)
+
+# Identical to an ungrouped 100-lane continuous ramp: [0..99].
+tail = pto.vmi.vci(pto.i32(0), size=100, group=1)
 ```
 
 **Constraints**:

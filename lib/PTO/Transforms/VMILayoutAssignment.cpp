@@ -538,6 +538,12 @@ struct LayoutSolver {
 
   LogicalResult addConstraints() {
     WalkResult result = module.walk([&](Operation *op) -> WalkResult {
+      if (auto groupIota = dyn_cast<VMIGroupIotaOp>(op)) {
+        if (failed(setNaturalLayout(groupIota.getResult(),
+                                    getContiguousLayout(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
       if (auto maskAnd = dyn_cast<VMIMaskAndOp>(op)) {
         if (failed(uniteMask(maskAnd.getLhs(), maskAnd.getRhs(), op)) ||
             failed(uniteMask(maskAnd.getLhs(), maskAnd.getResult(), op)))

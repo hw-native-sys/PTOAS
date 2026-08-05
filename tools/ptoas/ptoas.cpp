@@ -3107,8 +3107,9 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   // before any verifier, layout, or lowering pass sees them.
   pm.addNestedPass<func::FuncOp>(
       pto::createVMINormalizeSignlessIntToUnsignedPass());
-  // Expand unified VMI ops to legacy ops before layout assignment,
-  // so downstream passes only see legacy ops.
+  // Expand unified VMI ops before layout assignment so grouped vci becomes
+  // the contiguous-only legacy group_iota producer. Layout assignment can
+  // then materialize any consumer-requested non-contiguous use explicitly.
   pm.addPass(pto::createVMILowerUnifiedToLegacyPass());
   pm.addPass(createCanonicalizerPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());

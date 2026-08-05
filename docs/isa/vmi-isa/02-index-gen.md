@@ -9,16 +9,27 @@
 
 ## `pto.vmi.vci`
 
-- **semantics:** Generate a per-lane index/counter vector from a single scalar base such as `[base, base±1, base±2, ...]`,  lane `i` gets `base + i` (ASC) or `base - i` (DESC). It is the index source for `vgather`/`vscatter` offsets.
+- **semantics:** Generate a per-lane index/counter vector from a single scalar base such as `[base, base±1, base±2, ...]`, lane `i` gets `base + i` (ASC) or `base - i` (DESC). It is the index source for `vgather`/`vscatter` offsets.
 
   ```c
   for (int i = 0; i < L; i++)
       dst[i] = base + (order == "ASC" ? i : -i);
   ```
 
+  With `group=C>1`, each group of `S=L/C` lanes restarts the ramp:
+
+  ```c
+  dst[g*S + j] = base + (order == "ASC" ? j : -j);
+  ```
+
+  `group=1` is normalized to ordinary continuous `iota`, so it has exactly the
+  same semantics and tail support as omitting `group`. Group-periodic iota is
+  an internal contiguous-only producer; layout assignment inserts
+  `ensure_layout` when a consumer requests a deinterleaved layout.
+
 - **syntax:**
   ```mlir
-  %result = pto.vmi.vci %base {order = "ASC"} : T -> !pto.vmi.vreg<L×T>
+  %result = pto.vmi.vci %base {order = "ASC", group = 2} : T -> !pto.vmi.vreg<L×T>
   ```
 - **operands:**
 
@@ -37,6 +48,7 @@
   | Attribute | Values | Default | Description |
   |---|---|---|---|
   | `order` | `"ASC"`, `"DESC"` | `"ASC"` | Index generation direction |
+  | `group` | positive integer | omitted | Number of equal groups. `1` is equivalent to omitted; values greater than one restart the ramp per group. |
 
 - **lowering to `pto.mi`:**
   ```

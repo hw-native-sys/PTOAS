@@ -955,21 +955,38 @@ LogicalResult VMIIotaOp::verify() {
     if (*order != "ASC" && *order != "DESC")
       return emitOpError("requires order to be ASC or DESC");
   }
-  if (auto groupAttr = getGroupAttr()) {
-    int64_t numGroups = groupAttr.getInt();
-    if (numGroups <= 0)
-      return emitOpError("requires group to be positive");
-    if (resultType.getElementCount() % numGroups != 0)
-      return emitOpError("requires group to evenly divide result logical lane "
-                         "count");
-    int64_t groupSize = resultType.getElementCount() / numGroups;
-    FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
-    if (succeeded(lanesPerPart) && groupSize % *lanesPerPart != 0 &&
-        *lanesPerPart % groupSize != 0)
-      return emitOpError("requires group_size to divide or be a multiple of "
-                         "physical lanes per part (")
-             << *lanesPerPart << ")";
+  return success();
+}
+
+LogicalResult VMIGroupIotaOp::verify() {
+  auto resultType = cast<VMIVRegType>(getResult().getType());
+  Type elementType = resultType.getElementType();
+  if (!isVMIIotaElementType(elementType))
+    return emitOpError("requires result element type to be integer 8/16/32 "
+                       "or f16/f32");
+  if (!isCompatibleScalarForSemanticType(elementType, getBase().getType()))
+    return emitOpError("requires base type to match result element type");
+  if (std::optional<StringRef> order = getOrder()) {
+    if (*order != "ASC" && *order != "DESC")
+      return emitOpError("requires order to be ASC or DESC");
   }
+
+  int64_t numGroups = getGroupAttr().getInt();
+  if (numGroups <= 1)
+    return emitOpError("requires group greater than one");
+  if (resultType.getElementCount() % numGroups != 0)
+    return emitOpError("requires group to evenly divide result logical lane "
+                       "count");
+  int64_t groupSize = resultType.getElementCount() / numGroups;
+  FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
+  if (succeeded(lanesPerPart) && groupSize % *lanesPerPart != 0 &&
+      *lanesPerPart % groupSize != 0)
+    return emitOpError("requires group_size to divide or be a multiple of "
+                       "physical lanes per part (")
+           << *lanesPerPart << ")";
+  if (VMILayoutAttr layout = resultType.getLayoutAttr();
+      layout && !layout.isContiguous())
+    return emitOpError("requires contiguous result layout");
   return success();
 }
 
@@ -2626,13 +2643,15 @@ LogicalResult VMIVciOp::verify() {
     if (resultType.getElementCount() % numGroups != 0)
       return emitOpError("requires group to evenly divide result logical lane "
                          "count");
-    int64_t groupSize = resultType.getElementCount() / numGroups;
-    FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
-    if (succeeded(lanesPerPart) && groupSize % *lanesPerPart != 0 &&
-        *lanesPerPart % groupSize != 0)
-      return emitOpError("requires group_size to divide or be a multiple of "
-                         "physical lanes per part (")
-             << *lanesPerPart << ")";
+    if (numGroups > 1) {
+      int64_t groupSize = resultType.getElementCount() / numGroups;
+      FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
+      if (succeeded(lanesPerPart) && groupSize % *lanesPerPart != 0 &&
+          *lanesPerPart % groupSize != 0)
+        return emitOpError("requires group_size to divide or be a multiple of "
+                           "physical lanes per part (")
+               << *lanesPerPart << ")";
+    }
   }
   return success();
 }

@@ -8,9 +8,12 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
-// Grouped vci on a deinterleaved result → contiguous group iota +
-// ensure_layout (vdintlv), then sitofp vcvt + interleaved store.
-// No unpack; vcvt/vstore are the real consumers.
+// Grouped vci on a *pre-annotated* deinterleaved result → contiguous group
+// iota + ensure_layout (vdintlv), then sitofp vcvt + interleaved store.
+//
+// NOTE: this only covers the short-circuit rewrite when layout is already
+// present at lower-unified time. Production surface IR has no layout yet —
+// see vmi_to_vpto_iota_group_deint_assign.pto for the real assignment path.
 
 module {
   func.func @vmi_to_vpto_iota_group2_deint_vcvt(

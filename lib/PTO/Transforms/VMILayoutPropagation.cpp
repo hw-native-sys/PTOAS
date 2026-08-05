@@ -351,6 +351,20 @@ public:
   }
 };
 
+class VMIContiguousResultLayoutTransfer final : public VMILayoutTransfer {
+public:
+  FailureOr<SmallVector<VMILayoutRelation, 4>>
+  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
+        const VMILayoutPropagator &propagator,
+        OpOperand *changedOperand) const override {
+    if (!isa<OpResult>(changedValue) || changedValue.getDefiningOp() != op ||
+        !changedLayout.isContiguous())
+      return failure();
+    return makeSingleRelation(SmallVector<VMILayoutFact, 4>{
+        valueFact(changedValue, changedLayout)});
+  }
+};
+
 class VMILoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, 4>>
@@ -809,6 +823,7 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
   static VMIBitcastTransfer bitcastTransfer;
   static VMIMaskGranularityCastTransfer maskGranularityCastTransfer;
   static VMIFreeResultLayoutTransfer freeResultLayoutTransfer;
+  static VMIContiguousResultLayoutTransfer contiguousResultLayoutTransfer;
   static VMILoadTransfer loadTransfer;
   static VMIDeinterleaveLoadTransfer deinterleaveLoadTransfer;
   static VMIGroupLoadTransfer groupLoadTransfer;
@@ -826,6 +841,8 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
   if (isa<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMICreateMaskOp,
           VMICreateGroupMaskOp, VMIConstantMaskOp>(op))
     return &freeResultLayoutTransfer;
+  if (isa<VMIGroupIotaOp>(op))
+    return &contiguousResultLayoutTransfer;
   if (isa<VMILoadOp>(op))
     return &loadTransfer;
   if (isa<VMIDeinterleaveLoadOp>(op))
