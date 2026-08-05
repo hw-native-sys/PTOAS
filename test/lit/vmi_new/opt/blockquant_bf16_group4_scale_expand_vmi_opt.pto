@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// Mini-kernel for bf16 block-quant scale expand (in-reg scale mul):
+//   abs-amax over a 256-lane tile with G=4 → compact slots=1 scales
+//   (same assignment rule as group_reduce_maxf_quant), truncf to bf16,
+//   then expand across one 128-lane VF strip via vbrc{group=4}.
+// That expand is group size 32 = two 32B blocks with slots=1 source, so it
+// requires kGroupBroadcastLayoutPatterns row {gb(2), gs(1), c()}. Without
+// the row tip rewrites toward slots=8 and fails ensure_layout.
+// Sibling: opt/per_block_bf16_group8_quant_vmi_opt.pto (L=256 / G=8 path).
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @blockquant_bf16_group4_scale_expand(
+      %src: !pto.ptr<bf16, ub>,
+      %dst: !pto.ptr<bf16, ub>,
+      %off: index) attributes {pto.kernel} {
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %mask256 = pto.vmi.create_mask %c256
+        : index -> !pto.vmi.mask<256xpred>
+    %x = pto.vmi.vload %src[%off]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %abs = pto.vmi.vabs %x
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xbf16>
+    %abs_f32 = pto.vmi.vcvt %abs
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+    %amax = pto.vmi.vcmax %abs_f32, %mask256 {group = 4}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<4xf32>
+    %scale_bf = pto.vmi.vcvt %amax {rounding = "R", saturate = "NOSAT"}
+        : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xbf16>
+    %scale128 = pto.vmi.vbrc %scale_bf {group = 4}
+        : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<128xbf16>
+    %x128 = pto.vmi.vload %src[%off]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %q = pto.vmi.vmul %x128, %scale128
+        : !pto.vmi.vreg<128xbf16>, !pto.vmi.vreg<128xbf16>
+        -> !pto.vmi.vreg<128xbf16>
+    pto.vmi.vstore %q, %dst[%off]
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @blockquant_bf16_group4_scale_expand(
+// ASSIGN: %[[X:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<{{.*}}>
+// ASSIGN: %[[ABS_F32:.*]] = pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[AMAX:.*]] = pto.vmi.group_reduce_maxf %[[ABS_F32]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: %[[SCALE:.*]] = pto.vmi.truncf %[[AMAX]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// Keep slots=1 into the expand (do not rewrite toward slots=8).
+// ASSIGN-NOT: ensure_layout %[[SCALE]]
+// ASSIGN: %[[SCALE128:.*]] = pto.vmi.group_broadcast %[[SCALE]]
+// ASSIGN-SAME: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[X128:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.mulf %[[X128]], %[[SCALE128]]
+
+// LOWER-LABEL: func.func @blockquant_bf16_group4_scale_expand(
+// bf16 abs via sign-bit clear (not absf).
+// LOWER-DAG: pto.vand
+// Contiguous full-chunk amax uses vcmax (not vcgmax).
+// LOWER-DAG: pto.vcmax
+// LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "NOSAT"}
+// Compact slots=1 expand over 128 lanes: vdup/vsel (not vselr slots=8 path).
+// LOWER: pto.vdup {{.*}} {position = "LOWEST"}
+// LOWER: pto.vsel
+// LOWER: pto.vmul
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
