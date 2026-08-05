@@ -766,19 +766,19 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
                         int64_t(waitFlag.getEventIdAttr().getEvent()), op, order,
                         nearest});
     } else if (auto getBuf = dyn_cast<pto::GetBufOp>(op)) {
-      auto opTypeOr = parseSyncOpTypeLikeAttr(getBuf.getOpTypeAttr());
-      if (succeeded(opTypeOr)) {
-        pto::PIPE pipe = mapSyncOpTypeToPipe(*opTypeOr);
+      // A spelling this does not decode drops the event, and a dropped event is
+      // indistinguishable from an absent one: the ordering the token establishes
+      // then reads as uncovered. `isConcreteSyncPipe` mirrors `verifyBufSyncOp`,
+      // which rejects PIPE_ALL and PIPE_UNASSIGNED on these ops.
+      pto::PIPE pipe = oracle::bufSyncPipe(getBuf.getOpTypeAttr());
+      if (pto::isConcreteSyncPipe(pipe))
         events.push_back({SyncEvent::GetBuf, slot, pipe, pipe,
                           int64_t(getBuf.getBufId()), op, order, nearest});
-      }
     } else if (auto rlsBuf = dyn_cast<pto::RlsBufOp>(op)) {
-      auto opTypeOr = parseSyncOpTypeLikeAttr(rlsBuf.getOpTypeAttr());
-      if (succeeded(opTypeOr)) {
-        pto::PIPE pipe = mapSyncOpTypeToPipe(*opTypeOr);
+      pto::PIPE pipe = oracle::bufSyncPipe(rlsBuf.getOpTypeAttr());
+      if (pto::isConcreteSyncPipe(pipe))
         events.push_back({SyncEvent::RlsBuf, slot, pipe, pipe,
                           int64_t(rlsBuf.getBufId()), op, order, nearest});
-      }
     } else if (auto setDyn = dyn_cast<pto::SetFlagDynOp>(op)) {
       // The rotating pair is what multi-buffering emits, and it was
       // previously invisible: the type chain below had no Dyn case, so the op
@@ -1709,4 +1709,3 @@ mlir::pto::createPTOCheckSyncSelfCoveragePass(unsigned maxViolations) {
   pass->maxViolations = maxViolations;
   return pass;
 }
-

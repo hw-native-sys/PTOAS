@@ -105,13 +105,10 @@ static PipelineType toPipelineType(pto::PIPE pipe) {
   return PipelineType::PIPE_UNASSIGNED;
 }
 
-/// get_buf/rls_buf name their pipe via `op_type`, which has TWO legal spellings.
-/// This mirrors `verifyBufSyncOp` (PTO.cpp): the attribute may be a plain
-/// PipeAttr, or a pipe_event_type/sync_op_type that must be mapped. Handling
-/// only the second (as this extractor originally did) silently decodes the pipe
-/// as UNASSIGNED for the first -- which quietly disables every pipe-keyed
-/// buffer-ID rule in G2.
-static pto::PIPE bufSyncPipe(mlir::Attribute opTypeAttr) {
+/// Mirrors `verifyBufSyncOp` (PTO.cpp): the attribute may be a plain PipeAttr, or a
+/// pipe_event_type/sync_op_type that must be mapped. Declared in the header because
+/// G1's coverage walk decodes the same attribute and must agree with this.
+pto::PIPE mlir::pto::oracle::bufSyncPipe(mlir::Attribute opTypeAttr) {
   if (!opTypeAttr)
     return pto::PIPE::PIPE_UNASSIGNED;
   if (auto pipeAttr = dyn_cast<pto::PipeAttr>(opTypeAttr))
