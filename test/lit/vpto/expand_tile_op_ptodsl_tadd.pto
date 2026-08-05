@@ -33,7 +33,8 @@
 // PREFUSION: pto.tadd
 // PREFUSION-SAME: candidates = [
 
-// SELECT: func.func {{.*}}@{{.*}}__template_tadd
+// SELECT-COUNT-2: call @{{.*}}__template_tadd
+// SELECT-COUNT-1: func.func {{.*}}@{{.*}}__template_tadd
 
 // EXPAND: func.func @TADD
 // EXPAND-NOT: pto.tadd ins
@@ -52,7 +53,10 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %b = pto.alloc_tile
       : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %dst = pto.alloc_tile
+    %dst0 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst1 = pto.alloc_tile
       : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
@@ -63,7 +67,17 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
           !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
                         blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       outs(
-        %dst
+        %dst0
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tadd ins(
+      %a, %b
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %dst1
           : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
                           blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return

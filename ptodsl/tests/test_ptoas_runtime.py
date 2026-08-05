@@ -10,8 +10,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ptoas import _core
+from ptodsl.tilelib import _compiler_runtime
 
 
 INPUT = (
@@ -28,8 +30,51 @@ class PTOASRuntimeTest(unittest.TestCase):
         self.assertTrue(INPUT.exists(), f"missing test input {INPUT}")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            for index in range(2):
-                output = Path(temp_dir) / f"result-{index}.mlir"
+            pto_output = Path(temp_dir) / "result-pto.mlir"
+            vpto_output = Path(temp_dir) / "result-vpto.mlir"
+
+            for output_mode, output in (
+                ("--emit-pto-ir", pto_output),
+                ("--emit-vpto", vpto_output),
+            ):
+                result = _core.main(
+                    [
+                        "ptoas",
+                        "--pto-arch=a5",
+                        "--pto-backend=vpto",
+                        output_mode,
+                        str(INPUT),
+                        "-o",
+                        str(output),
+                    ]
+                )
+
+                self.assertEqual(result, 0)
+                self.assertTrue(output.exists())
+
+            pto_ir = pto_output.read_text(encoding="utf-8")
+            vpto_ir = vpto_output.read_text(encoding="utf-8")
+            self.assertIn("pto.tadd ins", pto_ir)
+            self.assertNotIn("pto.vadd", pto_ir)
+            self.assertNotIn("pto.tadd ins", vpto_ir)
+            self.assertIn("pto.vadd", vpto_ir)
+
+    def test_reuses_imported_specialization_before_materializing_again(self):
+        calls = 0
+        original_materialize = _compiler_runtime.materialize
+
+        def counted_materialize(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original_materialize(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "result-vpto.mlir"
+            with mock.patch.object(
+                _compiler_runtime,
+                "materialize",
+                side_effect=counted_materialize,
+            ):
                 result = _core.main(
                     [
                         "ptoas",
@@ -42,9 +87,9 @@ class PTOASRuntimeTest(unittest.TestCase):
                     ]
                 )
 
-                self.assertEqual(result, 0)
-                self.assertTrue(output.exists())
-                self.assertIn("pto.vadd", output.read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)
+            self.assertEqual(calls, 1)
+            self.assertIn("pto.vadd", output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

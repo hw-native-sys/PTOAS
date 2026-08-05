@@ -1282,6 +1282,11 @@ static int runPTOASDriver(int argc, char **argv,
   mlir::pto::registerPTOASPassesAndCLOptions();
   llvm::cl::SetVersionPrinter(printPTOASVersion);
 
+  // The Python entry point may invoke the driver repeatedly in one process.
+  // Restore every registered LLVM option to its declared default before
+  // parsing the next invocation.
+  llvm::cl::ResetAllOptionOccurrences();
+
   const bool cliArchSpecified = hasCLIOption(argc, argv, "--pto-arch");
   const bool cliBackendSpecified = hasCLIOption(argc, argv, "--pto-backend");
 

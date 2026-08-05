@@ -783,8 +783,9 @@ struct ExpandState {
   func::FuncOp invokeTileLib(const SpecKey &key, Operation *tileOp,
                              ModuleOp mod, MLIRContext *ctx);
   func::FuncOp invokeInProcessTileLib(const SpecKey &key,
-                                      StringRef candidateId, ModuleOp mod,
-                                      MLIRContext *ctx);
+                                      StringRef candidateId,
+                                      const std::string &uniqueName,
+                                      ModuleOp mod, MLIRContext *ctx);
 
   LogicalResult expandTileOpsInFunction(func::FuncOp func, ModuleOp mod,
                                         MLIRContext *ctx);
@@ -944,6 +945,14 @@ static std::string buildUniqueFunctionBaseName(const SpecKey &key) {
   return uniqueName;
 }
 
+static std::string buildUniqueFunctionName(const SpecKey &key,
+                                           StringRef candidateId) {
+  std::string uniqueName = buildUniqueFunctionBaseName(key);
+  if (!candidateId.empty())
+    uniqueName += "__" + candidateId.str();
+  return uniqueName;
+}
+
 static std::string buildContextAttrsJson(const SpecKey &key) {
   std::string json = "{";
   for (size_t i = 0; i < key.contextAttrs.size(); ++i) {
@@ -967,6 +976,7 @@ static std::string buildContextAttrsJson(const SpecKey &key) {
 // ============================================================================
 func::FuncOp ExpandState::invokeInProcessTileLib(const SpecKey &key,
                                                  StringRef candidateId,
+                                                 const std::string &uniqueName,
                                                  ModuleOp mod,
                                                  MLIRContext *ctx) {
   if (!tileLibService)
@@ -1003,16 +1013,7 @@ func::FuncOp ExpandState::invokeInProcessTileLib(const SpecKey &key,
       return failure();
     }
 
-    std::string uniqueName = buildUniqueFunctionBaseName(key);
-    if (!candidateId.empty())
-      uniqueName += "__" + candidateId.str();
-
     SymbolTable targetSymTable(mod);
-    if (auto existingFunc = targetSymTable.lookup(uniqueName)) {
-      importedEntry = cast<func::FuncOp>(existingFunc);
-      return success();
-    }
-
     llvm::StringMap<std::string> plannedSymbols;
     for (func::FuncOp fn : sourceFuncs) {
       std::string newName = fn == sourceEntry
@@ -1100,7 +1101,13 @@ func::FuncOp ExpandState::invokeTileLib(const SpecKey &key,
     return nullptr;
   }
 
-  return invokeInProcessTileLib(key, selectedName.getValue(), mod, ctx);
+  std::string uniqueName =
+      buildUniqueFunctionName(key, selectedName.getValue());
+  if (auto existing = mod.lookupSymbol<func::FuncOp>(uniqueName))
+    return existing;
+
+  return invokeInProcessTileLib(key, selectedName.getValue(), uniqueName, mod,
+                                ctx);
 }
 
 // ============================================================================
