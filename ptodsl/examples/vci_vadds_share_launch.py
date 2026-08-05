@@ -23,8 +23,6 @@ Run under the CPU / camodel simulator:
     ptodsl/examples/vci_vadds_share_launch.py -- --groups 2
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 import time
@@ -62,16 +60,16 @@ def _make_kernel(num_groups: int):
         mode="explicit",
     )
     def kernel(out_ptr: pto.ptr(pto.i32, "gm")):
-        ub = pto.alloc_tile(shape=[1, cols], dtype=pto.i32)
+        ub = pto.castptr(pto.i64(0), pto.ptr(pto.i32, "ub"))
         mask = pto.vmi.create_mask(vl, size=vl)
         for _k in range(K_REMAT):
-            idx = pto.vmi.vci(0, size=vl, group=num_groups)
+            idx = pto.vmi.vci(pto.i32(0), size=vl, group=num_groups)
             out_idx = pto.vmi.vadds(idx, pto.i32(ADD_SCALAR), mask)
-            pto.vmi.vstore(out_idx, ub.as_ptr(), pto.const(0, dtype=pto.index))
+            pto.vmi.vstore(out_idx, ub, pto.const(0, dtype=pto.index))
         pto.set_flag("V", "MTE3", event_id=0)
         pto.wait_flag("V", "MTE3", event_id=0)
         pto.mte_ub_gm(
-            ub.as_ptr(),
+            ub,
             out_ptr,
             nbytes,
             nburst=(1, 0, 0),
