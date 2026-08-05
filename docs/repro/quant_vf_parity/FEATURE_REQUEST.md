@@ -125,72 +125,87 @@ After a fix:
 
 ---
 
-## Feature request 3 — FP32 strip abs-max: VMI is slower than AscendC; need emit proof before a compiler change
+## Feature request 3 — Full FP32 block-quant: VMI is slower than AscendC at large shape
 
-### What the programs do
+### What the programs do (same algorithm both sides)
 
-Both sides compute an absolute maximum over an FP32 strip and write a scale
-value — a common building block for FP32 quant.
+FP32 matrix → e4m3 + per-block scales (`32×32`), UE8M0-style scale round:
 
-- **AscendC (working reference):**
-  [`fixtures/reference_asc_fp32_strip_amax.asc`](fixtures/reference_asc_fp32_strip_amax.asc)
-  loads two 64-lane FP32 chunks, takes abs, reduces with `vmax`, stores the
-  result. Compiles with `bisheng` today.
-- **VMI (already compiles):**
-  [`fixtures/current_vmi_fp32_strip_amax.pto`](fixtures/current_vmi_fp32_strip_amax.pto)
-  does `vabs` then `vcmax` with `group = 1`. `pto-test-opt` lowers this today
-  (the one-element / one-part reduce+store path already works).
+1. Persistent tiles over the matrix with **two on-chip faces** overlapping copy
+   and vector work.
+2. Tile face: **32 rows × 512 cols** of FP32 in UB.
+3. Vector body, eight times per tile (each **64 cols**): abs-max over 32 rows;
+   two independent one-element reduces (low/high 32-lane halves) → two scales;
+   keep reciprocals in registers; store two scale floats; per row multiply +
+   convert to e4m3 and store.
+4. Copy quantized tile and scales back to GM.
 
-### What is wrong today
+Public name: `fp32_block_quant` (“double-buffered block quantize”).
 
-On real kernels that use this strip pattern, the VMI path is still slower than
-the AscendC MicroAPI path in wall-clock measurements. Correctness and basic
-lowering are **not** the open issue here.
+### Primary evidence (full kernel — reproduces the gap)
 
-### What kind of PTOAS issue this might be
+| Side | Artifact | Role |
+|------|----------|------|
+| AscendC | [`fixtures/reference_asc_fp32_block_quant.asc`](fixtures/reference_asc_fp32_block_quant.asc) + [`fixtures/fp32_block_quant_artifact/`](fixtures/fp32_block_quant_artifact/) | Double-buffered tile schedule; VF uses `__simd_callee__` return wrappers over MicroAPI (same pattern as the timed `.so`); `bisheng` / prebuilt `.so` |
+| VMI | [`fixtures/current_vmi_fp32_block_quant_8192x2048.ptodsl.py`](fixtures/current_vmi_fp32_block_quant_8192x2048.ptodsl.py) (and `…_512x2048…`) | Same schedule in VMI/PTO |
 
-This is a **performance** question, not a “does not compile” bug:
+Host (CANN + `torch_npu` / ACL + this PTOAS tree only — no product `PYTHONPATH`):
 
-1. If the machine code that PTOAS emits for the VMI fixture does extra memory
-   traffic, layout reshapes, or moves that the AscendC reference does not, then
-   that is a concrete PTOAS emit / layout problem to fix.
-2. If the two emits look similarly dense, the gap may be ISA choice or how the
-   larger kernel is scheduled — not something this small fixture can justify as
-   a PTOAS legalization change.
+```bash
+PTOAS_ROOT=/path/to/PTOAS NPU_DEVICE=1 ./scripts/run_fp32_block_quant_device.sh
+./scripts/run_msopprof_fp32_block_quant.sh both
+```
 
-A wall-clock ratio by itself does not tell which of those it is. That is why
-this package does not yet ask for a specific code change in PTOAS: we need a
-side-by-side look at the generated code first.
+Checked-in numbers and pipe interpretation:
+[`fixtures/PERF_FINDINGS.md`](fixtures/PERF_FINDINGS.md).
 
-### Evidence in this package
+| Shape | AscendC / VMI (msopprof or host) | Meaning |
+|-------|----------------------------------|---------|
+| 512×2048 | ~0.97 | Near parity (control) |
+| 8192×2048 | **~0.86** (msopprof ~27.0 vs ~31.5 µs) | VMI slower — primary claim |
 
-| Side | Fixture | What the check script shows today |
-|------|---------|-----------------------------------|
-| AscendC | `reference_asc_fp32_strip_amax.asc` | Compiles (`bisheng`) |
-| VMI | `current_vmi_fp32_strip_amax.pto` | Lowers to VPTO (`pto-test-opt`) |
+Correctness: scale and output lane mismatches vs AscendC = 0 before trusting timing.
 
-How to compare the generated code (AscendC vs VMI):
+### Strip fixtures (VF fragment only — do **not** claim the gap)
 
-1. Lower the VMI fixture (`pto-test-opt` with the check-script passes, or
-   `ptoas --emit-vpto` with the body wrapped in `pto.vecscope`).
-2. Compile the AscendC fixture and inspect its vector / memory sequence.
-3. Record any extra VMI moves, spills, or layout reshapes in
-   [`fixtures/emit_compare_note.md`](fixtures/emit_compare_note.md).
+| Side | Fixture | What they prove |
+|------|---------|-----------------|
+| AscendC | [`reference_asc_fp32_strip_amax.asc`](fixtures/reference_asc_fp32_strip_amax.asc) | Dense MicroAPI abs-max strip compiles |
+| VMI | [`current_vmi_fp32_strip_amax.pto`](fixtures/current_vmi_fp32_strip_amax.pto) | `vabs` + `vcmax(group=1)` lowers today |
 
-That note is empty of a real diff today — so this feature request stays as
-“reproducer + open performance question,” not “land this compiler patch.”
+These compile/lower checks only show the one-element reduce path is legal. They
+do **not** time anything and do **not** reproduce the large-shape gap.
+
+Emit notes for the strip (optional detail):
+[`fixtures/emit_compare_note.md`](fixtures/emit_compare_note.md).
+
+### What kind of PTOAS issue this is
+
+A **performance** residual on the full double-buffered schedule, not a “does not
+compile” bug. From `PERF_FINDINGS.md` (PipeUtilization @ 8192×2048):
+
+- VMI spends more core-time in vector and scalar; higher UB read bandwidth from
+  the vector unit.
+- AscendC shows higher MTE3 overlap while finishing sooner.
+- Gap is large-shape only → bandwidth / overlap / emit density, not a small-N
+  functional bug.
+- Strip-only `group=1` legalization is **not** the missing piece.
+
+Likely residual classes: denser AscendC MicroAPI packing of the 64-lane strip
+vs VMI dual `vcmax` + `vsel` recip; and/or MTE/VF overlap tax in lowered VMI
+double-buffer emit. Prefer an emit or pipe fix justified by `PERF_FINDINGS.md`
+(+ optional strip emit compare), not a wall-clock ratio alone.
 
 ### Desired behavior
 
-- Keep the current VMI fixture compiling (the `group = 1` reduce/store path
-  must remain valid).
-- If the emit comparison shows clear redundant work on the VMI side relative to
-  AscendC, remove that redundancy in VMI layout or emission so the strip is as
-  dense as the AscendC reference.
-- Do not accept a PTOAS code change for this item until that AscendC-vs-VMI emit
-  comparison is written down in `emit_compare_note.md`.
+1. VMI within noise of AscendC at **8192×2048** (ratio near 1.0), **or**
+2. A concrete emit/pipe change in PTOAS justified by the findings above.
+
+Keep the strip `group=1` path compiling. Do not treat strip-only PASS as closing
+this request.
 
 ### Out of scope
 
-- Using wall-clock ratios alone as proof of a compiler bug
-- Re-opening pad-32 + broadcast load mode as the main request
+- Declaring a PTOAS patch before reading `PERF_FINDINGS.md`
+- Claiming the tiny strip fixtures reproduce the wall-clock gap
+- bf16 per-block, packed SF, fused roundtrip, cast_back (other asks)

@@ -55,6 +55,7 @@ check_asc() {
   set +e
   "${BISHENG}" -O2 -fPIC -std=c++17 --npu-arch="${NPU_ARCH}" --cce-aicore-only -c \
     "${FIXTURES}/${name}" -o "${obj}" \
+    -I"${FIXTURES}" \
     -I"${ASCEND}/include" \
     -I"${ASCEND}/compiler/tikcpp/tikcfw" \
     -I"${ASCEND}/compiler/tikcpp/tikcfw/impl" \
@@ -150,9 +151,32 @@ check_vmi_lower broken_vmi_dequant_dblbuf.pto
 check_vmi_lower working_vmi_dequant_narrow.pto
 note "Feature request 2 on-device mismatch: see fixtures/RECORDED_DEVICE_NOTES.md"
 
-# Feature request 3
+# Feature request 3 — full FP32 block-quant (primary) + strip fragment
+check_asc reference_asc_fp32_block_quant.asc
+if [ -f "${FIXTURES}/current_vmi_fp32_block_quant_8192x2048.ptodsl.py" ]; then
+  echo "=== current_vmi_fp32_block_quant_8192x2048.ptodsl.py (syntax / import) ===" | tee -a "${LOG}"
+  set +e
+  PYTHONPATH="${PTOAS_ROOT}/ptodsl:${PYTHONPATH:-}" python3 -c "
+import ast, pathlib
+p = pathlib.Path('${FIXTURES}/current_vmi_fp32_block_quant_8192x2048.ptodsl.py')
+ast.parse(p.read_text())
+print('ast ok', p.name)
+" > "${OUT}/current_vmi_fp32_block_quant_8192x2048.ptodsl.log" 2>&1
+  ptodsl_rc=$?
+  set -e
+  if [ "${ptodsl_rc}" -eq 0 ]; then
+    pass "current_vmi_fp32_block_quant_8192x2048.ptodsl.py parses"
+  else
+    fail "current_vmi_fp32_block_quant_8192x2048.ptodsl.py parse exit ${ptodsl_rc}"
+    tail -20 "${OUT}/current_vmi_fp32_block_quant_8192x2048.ptodsl.log" | tee -a "${LOG}"
+  fi
+  echo | tee -a "${LOG}"
+fi
+note "Feature request 3 on-device µs + msopprof: fixtures/PERF_FINDINGS.md"
+note "Optional device run: ./scripts/run_fp32_block_quant_device.sh (skip if no NPU)"
+
 check_asc reference_asc_fp32_strip_amax.asc
 check_vmi_lower current_vmi_fp32_strip_amax.pto
-note "Feature request 3 AscendC-vs-VMI emit note: see fixtures/emit_compare_note.md"
+note "Feature request 3 strip fixtures are VF fragments only (not the perf claim)"
 
 echo "Full log: ${LOG}" | tee -a "${LOG}"
