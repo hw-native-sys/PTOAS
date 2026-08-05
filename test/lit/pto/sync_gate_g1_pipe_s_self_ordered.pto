@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G1-self excuses a PIPE_S -> PIPE_S dependency, on every arch. Neither allocator in
+// this tree orders such a pair -- `IsNoNeedToInsertSync` returns before running the
+// dependence analysis, and GraphSyncSolver's same-pipe path returns for PIPE_S
+// unconditionally -- so requiring one here makes the gate unsatisfiable, not strict.
+// The exclusion is COUNTED in its own field rather than folded into
+// `arch_guaranteed`, because no hardware guarantee is claimed for it.
+//
+// The input is an existing kernel rather than a purpose-built one: this file's whole
+// reason to exist is that `scalar_gm_tstore_sync.pto` compiles and runs while G1
+// rejected it, so the property is worth pinning on the real thing.
+
+// The dependency is excused and the kernel is clean. `deps=3` is `covered=2` plus the
+// one excused pair, so the count still balances and nothing was dropped.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/scalar_gm_tstore_sync.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=A3
+// A3: [sync-gate:g1-self] func=tstore_then_load_scalar_unknown_inttoptr compounds=4 deps=3 covered=2 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=1 unmappable=0 OK
+
+// THE SAME ON A5, which is the property that separates this exclusion from the
+// PIPE_V one. That is gated on A5 because only A5's codegen declines the barrier;
+// this is not gated, because both allocators decline PIPE_S on every arch.
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --check-sync-self-coverage %S/scalar_gm_tstore_sync.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=A5
+// A5: [sync-gate:g1-self] func=tstore_then_load_scalar_unknown_inttoptr compounds=4 deps=3 covered=2 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=1 unmappable=0 OK
+
+// NOT WIDENED TO "ANYTHING TOUCHING PIPE_S". A scalar op ordered against a tstore is
+// a cross-pipe pair, and it is still required and still covered by real sync --
+// `pipe_self_ordered=0` here is what shows the exclusion tests both endpoints.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %S/scalar_gm_tstore_sync.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=CROSS
+// CROSS: [sync-gate:g1-self] func=store_scalar_then_tstore compounds=3 deps=2 covered=2 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK

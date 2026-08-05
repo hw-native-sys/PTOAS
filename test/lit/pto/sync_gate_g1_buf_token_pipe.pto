@@ -20,12 +20,12 @@
 
 // The plain PipeAttr spelling.
 // RUN: ptoas --pto-arch=a5 --check-sync-self-coverage --emit-pto-ir %S/Inputs/oracle_buf_token_spellings.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=PIPEATTR
-// PIPEATTR: [sync-gate:g1-self] func=buf_chain_pipe_attr compounds=2 deps=1 covered=1 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+// PIPEATTR: [sync-gate:g1-self] func=buf_chain_pipe_attr compounds=2 deps=1 covered=1 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
 
 // The pipe_event_type spelling, which decoded correctly already. Pinned so a
 // regression that broke this one instead would not go unnoticed.
 // RUN: ptoas --pto-arch=a5 --check-sync-self-coverage --emit-pto-ir %S/Inputs/oracle_buf_token_spellings.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EVENTTYPE
-// EVENTTYPE: [sync-gate:g1-self] func=buf_chain_event_type compounds=2 deps=1 covered=1 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+// EVENTTYPE: [sync-gate:g1-self] func=buf_chain_event_type compounds=2 deps=1 covered=1 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
 
 // G2 and G3 read the same ops through the extractor, which already decoded all three
 // spellings. Pinning them here records that the three gates agree on this input: a

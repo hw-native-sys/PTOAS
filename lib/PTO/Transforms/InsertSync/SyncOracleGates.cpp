@@ -1383,6 +1383,33 @@ mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
         return;
       }
     }
+    // (a3) PIPE_S->PIPE_S, on every arch.
+    //
+    // THIS IS INFERENCE FROM COMPILER BEHAVIOUR, NOT AN ARCHITECTURAL FACT, and it is
+    // counted separately from `archGuaranteed` for that reason. No ISA or design
+    // document in this tree states the ordering the scalar pipe gives its own ops, and
+    // `pipe_barrier(PIPE_S)` is expressible and does reach the emitted code, so the
+    // omission below cannot be argued from the barrier being unavailable.
+    //
+    // What it does rest on is the same assumption encoded independently TWICE:
+    // `IsNoNeedToInsertSync` returns early for a same-pipe PIPE_S pair before any
+    // dependence analysis runs, deliberately -- the comment beside it declines to
+    // short-circuit same-pipe pairs in general -- and GraphSyncSolver's same-pipe
+    // barrier path (`SyncSolver.cpp`, guarded by `corePipeSrc == corePipeDst`) returns
+    // for PIPE_S unconditionally while gating PIPE_V and PIPE_M on `isRegBasedArch`.
+    // Two separate allocators decline to order this pair on every arch, so demanding
+    // it here would make the gate unsatisfiable rather than strict.
+    //
+    // Arch-independent, unlike (a1), because that is how both allocators key it.
+    {
+      auto srcPipe = anchorPipe(src->elementOp);
+      auto dstPipe = anchorPipe(dst->elementOp);
+      if (srcPipe && dstPipe && *srcPipe == pto::PIPE::PIPE_S &&
+          *dstPipe == pto::PIPE::PIPE_S) {
+        ++report.pipeSelfOrdered;
+        return;
+      }
+    }
     if (anchorPipeName(src->elementOp) == anchorPipeName(dst->elementOp))
       ++report.uncoveredSamePipe;
     else
@@ -1542,6 +1569,7 @@ void mlir::pto::oracle::printSelfCoverage(llvm::raw_ostream &os,
      << " carried=" << report.carriedDeps << "/"
      << report.carriedCovered << " arm_excluded=" << report.armExcluded
      << " arch_guaranteed=" << report.archGuaranteed
+     << " pipe_self_ordered=" << report.pipeSelfOrdered
      << " unmappable=" << report.unmappable
      << (uncovered == 0 ? " OK" : "") << "\n";
   unsigned shown = 0;
