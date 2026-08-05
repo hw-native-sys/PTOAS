@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A `get_buf`/`rls_buf` `op_type` has three legal spellings and G1-self must decode
+// every one: an undecoded spelling drops the op from the coverage walk, and a dropped
+// sync op is indistinguishable from an absent one, so the ordering the token
+// establishes is reported as an uncovered dependency.
+//
+// The two inputs are the same chain over the same two pipes, differing only in
+// spelling, so the pair is what makes the property testable -- either alone would
+// pass a gate that decoded only that one spelling.
+//
+// `--emit-pto-ir` stops before the backend on purpose. `pto.get_buf` in input IR does
+// not lower, and the property under test belongs to the gate, not to codegen.
+
+// The plain PipeAttr spelling.
+// RUN: ptoas --pto-arch=a5 --check-sync-self-coverage --emit-pto-ir %S/Inputs/oracle_buf_token_spellings.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=PIPEATTR
+// PIPEATTR: [sync-gate:g1-self] func=buf_chain_pipe_attr compounds=2 deps=1 covered=1 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+
+// The pipe_event_type spelling, which decoded correctly already. Pinned so a
+// regression that broke this one instead would not go unnoticed.
+// RUN: ptoas --pto-arch=a5 --check-sync-self-coverage --emit-pto-ir %S/Inputs/oracle_buf_token_spellings.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=EVENTTYPE
+// EVENTTYPE: [sync-gate:g1-self] func=buf_chain_event_type compounds=2 deps=1 covered=1 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+
+// G2 and G3 read the same ops through the extractor, which already decoded all three
+// spellings. Pinning them here records that the three gates agree on this input: a
+// decode gap in one gate alone shows up as two gates accepting what a third rejects.
+// RUN: ptoas --pto-arch=a5 --check-sync-interference --emit-pto-ir %S/Inputs/oracle_buf_token_spellings.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=G2
+// G2: [sync-gate:g2] func=buf_chain_pipe_attr view=ir records=4 errors=0 warnings=0 OK
+
+// RUN: ptoas --pto-arch=a5 --check-sync-ids --emit-pto-ir %S/Inputs/oracle_buf_token_spellings.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=G3
+// G3: [sync-gate:g3] func=buf_chain_pipe_attr view=ir records=4 violations=0 OK
