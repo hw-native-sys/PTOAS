@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// One event id, placed five ways. Three of them leave a runtime path that executes
+// one half of the pair without the other; two are legal and must stay silent.
+// lit excludes this directory from discovery.
+
+module {
+  // The set on one arm, the wait on the other. No path runs both, yet the counts
+  // balance and a flattened scan pops this wait against this set.
+  func.func @pair_split_across_arms(%a: !pto.partition_tensor_view<1x64xf32>,
+                                    %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    scf.if %p {
+      pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    } else {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    }
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // A guarded set with an unguarded wait: when the guard is false the wait has
+  // nothing to consume and the kernel hangs.
+  func.func @guarded_set_plain_wait(%a: !pto.partition_tensor_view<1x64xf32>,
+                                    %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    scf.if %p {
+      pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    }
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // The mirror: an unguarded set with a guarded wait leaks the id on the false path.
+  func.func @plain_set_guarded_wait(%a: !pto.partition_tensor_view<1x64xf32>,
+                                    %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    scf.if %p {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    }
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // LEGAL. Both halves on the same arm: the pair is equally guarded, so either the
+  // whole pair runs or neither half does.
+  func.func @pair_on_one_arm(%a: !pto.partition_tensor_view<1x64xf32>,
+                             %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    scf.if %p {
+      pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    }
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // LEGAL, AND THE SHAPE THAT BOUNDS THE RULE. The set is outside the loop and the
+  // wait inside it, so the two sit in different BLOCKS while carrying the same
+  // conditional guards. This is what the emitter overwhelmingly produces, and a rule
+  // comparing blocks rather than conditionals would reject it.
+  func.func @set_outside_loop_wait_inside(%a: !pto.partition_tensor_view<1x64xf32>,
+                                          %c: !pto.partition_tensor_view<1x64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    }
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+}

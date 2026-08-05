@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// G2 pairs a set_flag with the wait_flag that closes its id. Program order alone
+// cannot decide whether the two halves belong together: a pair placed on opposite
+// arms of an `scf.if` balances the scan and its counts match, while no runtime path
+// executes both. The pair must be EQUALLY GUARDED.
+//
+// Every run below is `not`: three of the five functions are illegal, so the gate
+// fails the pipeline. That also makes the file self-guarding -- if the rule were
+// removed entirely the run would succeed and `not` would fail, so the legal cases
+// below cannot pass vacuously.
+
+// The set on one arm, the wait on the other.
+// RUN: not ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_event_pair_guards.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ARMS
+// ARMS:      [sync-gate:g2] func=pair_split_across_arms view=ir records=2 errors=1 warnings=0
+// ARMS-NEXT:   !! #1 pto.wait_flag kind=event-id-pair-guard-mismatch MTE2->MTE3 id=0
+
+// A guarded set with an unguarded wait. The wait outlives its producer on the false
+// path and the kernel hangs, which the arm case alone would not have caught.
+// RUN: not ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_event_pair_guards.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GSET
+// GSET:      [sync-gate:g2] func=guarded_set_plain_wait view=ir records=2 errors=1 warnings=0
+// GSET-NEXT:   !! #1 pto.wait_flag kind=event-id-pair-guard-mismatch MTE2->MTE3 id=0
+
+// The mirror: an unguarded set whose wait is guarded leaks the id.
+// RUN: not ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_event_pair_guards.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=GWAIT
+// GWAIT:      [sync-gate:g2] func=plain_set_guarded_wait view=ir records=2 errors=1 warnings=0
+// GWAIT-NEXT:   !! #1 pto.wait_flag kind=event-id-pair-guard-mismatch MTE2->MTE3 id=0
+
+// LEGAL. Both halves under the same guard.
+// RUN: not ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_event_pair_guards.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ONEARM
+// ONEARM: [sync-gate:g2] func=pair_on_one_arm view=ir records=2 errors=0 warnings=0 OK
+
+// LEGAL, AND THE BOUND ON THE RULE. Set outside a loop, wait inside it: different
+// blocks, same guards. This is the shape the emitter produces most, so a rule keyed
+// on blocks rather than conditionals would reject working kernels -- this line is
+// what fails if the comparison is ever tightened that way.
+// RUN: not ptoas --pto-arch=a3 --check-sync-interference %S/Inputs/oracle_event_pair_guards.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=PRIME
+// PRIME: [sync-gate:g2] func=set_outside_loop_wait_inside view=ir records=2 errors=0 warnings=0 OK
