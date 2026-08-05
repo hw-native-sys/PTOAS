@@ -747,6 +747,10 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
   CoverageProfile profile;
 
   llvm::SmallVector<pto::PIPE> anchorPipes;
+  /// Parallel to `anchorPipes`, same index space, filled by the same walk. The edge
+  /// filter needs the op itself to ask whether a sync reaches it; building this list
+  /// in a second walk is what would let the two drift out of step.
+  llvm::SmallVector<Operation *> anchorOps;
   llvm::SmallVector<SyncEvent> events;
   std::string signatureText;
   // Deterministic iteration order: the carried-edge scan walks these.
@@ -775,6 +779,7 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
       pto::PIPE pipe = cast<pto::OpPipeInterface>(op).getPipe();
       unsigned index = anchorPipes.size();
       anchorPipes.push_back(pipe);
+      anchorOps.push_back(op);
       if (anchorIndex)
         (*anchorIndex)[op] = index;
       for (Operation *loop : chain) {
@@ -847,14 +852,45 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
   profile.anchorCount = anchorPipes.size();
 
   llvm::DenseSet<std::pair<unsigned, unsigned>> edges;
-  auto addEdges = [&](unsigned beforeSlot, pto::PIPE fromPipe,
-                      unsigned afterSlot, pto::PIPE toPipe, bool anyPipe) {
+  /// `reachedBy` is the op whose execution the edge depends on -- the CONSUMING end of
+  /// the mechanism: a barrier itself, the `wait_flag` of a flag pair, the `get_buf` of
+  /// a token pair. An edge is credited only when that op is reached on every path that
+  /// reaches the sink, because a sync the sink can skip establishes nothing.
+  ///
+  /// "Reached on every path" is tested as: the conditionals enclosing the sync must be
+  /// a PREFIX of those enclosing the sink. Enclosing LOOPS are not compared.
+  ///
+  /// NOT `DominanceInfo`, and the difference is not cosmetic. Structural dominance
+  /// says an op in a loop body never dominates an op after the loop, which withdraws
+  /// credit from a barrier inside a constant-trip-count loop -- it always executes, so
+  /// the ordering does hold. Measured: that rejection alone turns
+  /// `control_flow_nested_vec` from clean to three uncovered same-pipe dependencies.
+  /// A loop whose trip count can be zero is a real hole, and it is NOT covered here;
+  /// the carried rules test the loop spine for that case instead.
+  ///
+  /// Sink side only, deliberately. A sync inside an `scf.if` arm legitimately orders a
+  /// dependence whose sink is in that same arm -- every path reaching the sink passes
+  /// through it -- so also requiring the sync to be reached whenever the SOURCE is
+  /// would reject the shape the emitter produces most.
+  auto addEdges = [&](unsigned beforeSlot, pto::PIPE fromPipe, unsigned afterSlot,
+                      pto::PIPE toPipe, bool anyPipe, Operation *reachedBy) {
+    llvm::SmallVector<mlir::Region *, 4> syncGuards;
+    if (reachedBy)
+      syncGuards = conditionalGuards(reachedBy);
     for (unsigned i = 0; i < beforeSlot; ++i) {
       if (!anyPipe && anchorPipes[i] != fromPipe)
         continue;
       for (unsigned j = afterSlot; j < anchorPipes.size(); ++j) {
         if (!anyPipe && anchorPipes[j] != toPipe)
           continue;
+        if (reachedBy) {
+          llvm::SmallVector<mlir::Region *, 4> sinkGuards =
+              conditionalGuards(anchorOps[j]);
+          if (syncGuards.size() > sinkGuards.size() ||
+              !std::equal(syncGuards.begin(), syncGuards.end(),
+                          sinkGuards.begin()))
+            continue;
+        }
         if (i < j)
           edges.insert({i, j});
       }
@@ -865,10 +901,10 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
     const SyncEvent &ev = events[e];
     switch (ev.kind) {
     case SyncEvent::BarrierAll:
-      addEdges(ev.slot, ev.srcPipe, ev.slot, ev.dstPipe, /*anyPipe=*/true);
+      addEdges(ev.slot, ev.srcPipe, ev.slot, ev.dstPipe, /*anyPipe=*/true, ev.op);
       break;
     case SyncEvent::BarrierPipe:
-      addEdges(ev.slot, ev.srcPipe, ev.slot, ev.dstPipe, /*anyPipe=*/false);
+      addEdges(ev.slot, ev.srcPipe, ev.slot, ev.dstPipe, /*anyPipe=*/false, ev.op);
       break;
     case SyncEvent::SetFlag:
       // Pair with the next matching wait. G2 guarantees the interval discipline
@@ -877,7 +913,8 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
         const SyncEvent &wait = events[w];
         if (wait.kind == SyncEvent::WaitFlag && wait.srcPipe == ev.srcPipe &&
             wait.dstPipe == ev.dstPipe && wait.id == ev.id) {
-          addEdges(ev.slot, ev.srcPipe, wait.slot, wait.dstPipe, false);
+          // The WAIT is the consuming end: the sink is ordered only if the wait ran.
+          addEdges(ev.slot, ev.srcPipe, wait.slot, wait.dstPipe, false, wait.op);
           break;
         }
       }
@@ -888,7 +925,8 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
       for (size_t g = e + 1; g < events.size(); ++g) {
         const SyncEvent &get = events[g];
         if (get.kind == SyncEvent::GetBuf && get.id == ev.id)
-          addEdges(ev.slot, ev.srcPipe, get.slot, get.dstPipe, false);
+          // The acquire is the consuming end, as the wait is for a flag pair.
+          addEdges(ev.slot, ev.srcPipe, get.slot, get.dstPipe, false, get.op);
       }
       break;
     case SyncEvent::WaitFlag:
