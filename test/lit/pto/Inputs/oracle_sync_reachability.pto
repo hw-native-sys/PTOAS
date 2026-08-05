@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Four placements of one barrier, distinguishing "the sync sits before the sink in
+// program order" from "the sync is reached on every path that reaches the sink".
+// lit excludes this directory from discovery.
+
+module {
+  // The barrier runs only on the `then` path; both stores run regardless. On the
+  // false path they execute back to back with nothing ordering them.
+  func.func @sync_in_arm_outside_sink(%a: !pto.partition_tensor_view<1x64xf32>,
+                                      %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    scf.if %p {
+      pto.barrier <PIPE_MTE3>
+    }
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // The same kernel with the barrier hoisted out of the `if`. Identical dependencies,
+  // and this one really is ordered.
+  func.func @sync_hoisted_covers(%a: !pto.partition_tensor_view<1x64xf32>,
+                                 %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    pto.barrier <PIPE_MTE3>
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  // LEGAL. Barrier and sink in the SAME arm: every path reaching the sink passes
+  // through the barrier, so the ordering holds and the edge must survive. Rejecting
+  // this is what a rule keyed on the source side as well would do.
+  func.func @sync_and_sink_in_one_arm(%a: !pto.partition_tensor_view<1x64xf32>,
+                                      %c: !pto.partition_tensor_view<1x64xf32>, %p: i1) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    scf.if %p {
+      pto.barrier <PIPE_MTE3>
+      pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    }
+    return
+  }
+
+  // LEGAL, AND THE BOUND ON THE RULE. The barrier is inside a loop whose trip count is
+  // a constant 3, and the sink follows the loop. The barrier therefore always runs and
+  // the ordering holds -- but STRUCTURAL DOMINANCE says a body op never dominates an
+  // op after the loop, so a dominance-keyed rule reports this as uncovered. That is
+  // the false positive this line exists to catch.
+  func.func @sync_in_loop_outside_sink(%a: !pto.partition_tensor_view<1x64xf32>,
+                                       %c: !pto.partition_tensor_view<1x64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c3 = arith.constant 3 : index
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    scf.for %i = %c0 to %c3 step %c1 {
+      pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+      pto.barrier <PIPE_MTE3>
+    }
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+}

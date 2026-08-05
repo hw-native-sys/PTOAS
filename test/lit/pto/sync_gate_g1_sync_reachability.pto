@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A sync op earns coverage credit only where it is reached on every path that reaches
+// the sink. Program order alone does not decide that, and neither does structural
+// dominance -- the four functions below pin both boundaries.
+//
+// Every run is `not`: one of the four is genuinely uncovered, so the gate fails the
+// pipeline. That also stops the three legal cases passing vacuously, because dropping
+// the rule entirely makes the run succeed and `not` fail.
+
+// THE DEFECT. The barrier is on the `then` arm and both stores are outside the `if`,
+// so the false path runs them back to back. Credit must NOT be given.
+// RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_sync_reachability.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ARM
+// ARM:      [sync-gate:g1-self] func=sync_in_arm_outside_sink compounds=3 deps=3 covered=2 uncovered=1 (samepipe=1 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0
+// ARM-NEXT:   !! kind=uncovered-dependency waw anchor#1 (pto.tstore) -> anchor#2 (pto.tstore) PIPE_MTE3->PIPE_MTE3
+
+// The same dependencies with the barrier hoisted out of the `if`. This one is ordered,
+// which is what shows the rule keys on reachability and not on the presence of an `if`.
+// RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_sync_reachability.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=HOIST
+// HOIST: [sync-gate:g1-self] func=sync_hoisted_covers compounds=3 deps=3 covered=3 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
+
+// LEGAL. Barrier and sink in the same arm: every path reaching the sink passes through
+// the barrier. A rule that also required the sync to be reached whenever the SOURCE is
+// would reject this, and it is the shape the emitter produces most.
+// RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_sync_reachability.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ONEARM
+// ONEARM: [sync-gate:g1-self] func=sync_and_sink_in_one_arm compounds=3 deps=3 covered=3 uncovered=0 (samepipe=0 crosspipe=0) carried=0/0 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
+
+// LEGAL, AND THE BOUND ON THE RULE. The barrier is inside a constant-trip-count loop
+// and the sink follows the loop, so the barrier always runs. STRUCTURAL DOMINANCE
+// disagrees -- a body op does not dominate an op after the loop -- so a dominance-keyed
+// rule reports this uncovered. Enclosing loops are therefore not compared, and this is
+// the line that fails if they ever are.
+// RUN: not ptoas --pto-arch=a3 --check-sync-self-coverage %S/Inputs/oracle_sync_reachability.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=LOOP
+// LOOP: [sync-gate:g1-self] func=sync_in_loop_outside_sink compounds=3 deps=4 covered=4 uncovered=0 (samepipe=0 crosspipe=0) carried=1/1 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
