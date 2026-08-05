@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// One buffer-token chain, written twice in two of the spellings `PTO_PipeLikeAttr`
+// admits. Both name the same two pipes and establish the same ordering, so a gate
+// that decodes only one spelling reports different coverage for identical programs.
+// lit excludes this directory from discovery.
+
+module {
+  // The plain PipeAttr spelling.
+  func.func @buf_chain_pipe_attr(%a: !pto.partition_tensor_view<1x64xf32>,
+                                 %c: !pto.partition_tensor_view<1x64xf32>) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.get_buf "PIPE_MTE2", 0, 0
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.rls_buf "PIPE_MTE2", 0, 0
+    pto.get_buf "PIPE_MTE3", 0, 0
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    pto.rls_buf "PIPE_MTE3", 0, 0
+    return
+  }
+
+  // The pipe_event_type spelling. TLOAD maps to MTE2 and TSTORE_VEC to MTE3, so this
+  // is the same chain over the same pipes as above.
+  func.func @buf_chain_event_type(%a: !pto.partition_tensor_view<1x64xf32>,
+                                  %c: !pto.partition_tensor_view<1x64xf32>) {
+    %t = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.get_buf[#pto.pipe_event_type<TLOAD>, 0]
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>) outs(%t : !pto.tile_buf<vec, 1x64xf32>)
+    pto.rls_buf[#pto.pipe_event_type<TLOAD>, 0]
+    pto.get_buf[#pto.pipe_event_type<TSTORE_VEC>, 0]
+    pto.tstore ins(%t : !pto.tile_buf<vec, 1x64xf32>) outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    pto.rls_buf[#pto.pipe_event_type<TSTORE_VEC>, 0]
+    return
+  }
+}
