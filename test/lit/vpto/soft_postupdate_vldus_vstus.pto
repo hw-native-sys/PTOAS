@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+
+// CHECK-LABEL: func.func @loop_vldus_vstus
+// vstus offset is a post-access stride, not an initial address displacement.
+// CHECK-NOT: pto.addptr
+// CHECK: scf.for
+// CHECK: pto.vldus {{.*}}, %c64 {{.*}} -> !pto.vreg<64xf32>, !pto.align, !pto.ptr<f32, ub>
+// CHECK: pto.vstus {{.*}}, %c64_i32, {{.*}} -> !pto.align, !pto.ptr<f32, ub>
+// CHECK: scf.yield
+
+// CHECK-LABEL: func.func @sequential_vldus
+// CHECK: %{{.*}}, %{{.*}}, [[BASE1:%[a-zA-Z0-9_]+]] = pto.vldus {{.*}}, %c32
+// CHECK: %{{.*}}, %{{.*}}, [[BASE2:%[a-zA-Z0-9_]+]] = pto.vldus [[BASE1]], {{.*}}, %c32
+// CHECK: %{{.*}}, %{{.*}} = pto.vldus [[BASE2]], {{.*}}
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @loop_vldus_vstus(%src: !pto.ptr<f32, ub>,
+                              %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c192 = arith.constant 192 : index
+    %c64_i32 = arith.constant 64 : i32
+    pto.vecscope {
+      %load_align = pto.vldas %src : !pto.ptr<f32, ub> -> !pto.align
+      %store_align = pto.init_align : !pto.align
+      %final_src, %final_dst, %final_load_state, %final_store_state =
+          scf.for %iv = %c0 to %c192 step %c64
+          iter_args(%src_iter = %src, %dst_iter = %dst,
+                    %load_state = %load_align, %store_state = %store_align)
+          -> (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.align, !pto.align) {
+        %value, %next_load_state = pto.vldus %src_iter, %load_state
+            : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
+        %next_store_state = pto.vstus %store_state, %c64_i32, %value, %dst_iter
+            : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+        %next_src = pto.addptr %src_iter, %c64 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+        %next_dst = pto.addptr %dst_iter, %c64 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+        scf.yield %next_src, %next_dst, %next_load_state, %next_store_state
+            : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.align, !pto.align
+      }
+      pto.vstar %final_store_state, %final_dst : !pto.align, !pto.ptr<f32, ub>
+    }
+    return
+  }
+
+  func.func @sequential_vldus(%src: !pto.ptr<f32, ub>,
+                              %dst: !pto.ptr<f32, ub>,
+                              %x: index, %y: index) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %x16 = arith.addi %x, %c16 : index
+    %y16 = arith.addi %y, %c16 : index
+    %x32 = arith.addi %x, %c32 : index
+    %y32 = arith.addi %y, %c32 : index
+    %base0a = pto.addptr %src, %x : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base0 = pto.addptr %base0a, %y : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base1a = pto.addptr %src, %x16 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base1 = pto.addptr %base1a, %y16 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base2a = pto.addptr %src, %x32 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base2 = pto.addptr %base2a, %y32 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %align0 = pto.vldas %base0 : !pto.ptr<f32, ub> -> !pto.align
+      %v0, %align1 = pto.vldus %base0, %align0
+          : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
+      %v1, %align2 = pto.vldus %base1, %align1
+          : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
+      %v2, %align3 = pto.vldus %base2, %align2
+          : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
+      pto.vsts %v0, %dst[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v1, %dst[%c32], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v2, %dst[%c64], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}

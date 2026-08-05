@@ -2493,6 +2493,18 @@ static StringRef buildVstusCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.vstus").getValue();
 }
 
+static FailureOr<StringRef> buildVstusPostCallee(MLIRContext *context,
+                                                 Type valueType) {
+  std::string vec =
+      getMemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
+  auto lanes = getElementCountFromVectorLike(valueType);
+  if (vec.empty() || !lanes)
+    return failure();
+  return StringAttr::get(context, "llvm.hivm.vstus.post.v" +
+                                      std::to_string(*lanes) + vec)
+      .getValue();
+}
+
 static StringRef buildVsturCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.vstur").getValue();
 }
@@ -3225,6 +3237,18 @@ static FailureOr<StringRef> buildVldusCallee(MLIRContext *context,
   if (vec.empty() || !lanes)
     return failure();
   return StringAttr::get(context, "llvm.hivm.vldus.v" +
+                                      std::to_string(*lanes) + vec)
+      .getValue();
+}
+
+static FailureOr<StringRef> buildVldusPostCallee(MLIRContext *context,
+                                                 Type resultType) {
+  std::string vec =
+      getMemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
+  auto lanes = getElementCountFromVectorLike(resultType);
+  if (vec.empty() || !lanes)
+    return failure();
+  return StringAttr::get(context, "llvm.hivm.vldus.post.v" +
                                       std::to_string(*lanes) + vec)
       .getValue();
 }
@@ -7739,15 +7763,20 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto sourceType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
     SmallVector<Type> resultTypes;
+    bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     if (!sourceType ||
         failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)) ||
-        resultTypes.size() != 2 || adaptor.getAlign().getType() != resultTypes[1]) {
+        resultTypes.size() != (usePostIntrinsic ? 3u : 2u) ||
+        adaptor.getAlign().getType() != resultTypes[1] ||
+        (usePostIntrinsic && resultTypes[2] != adaptor.getSource().getType())) {
       return rewriter.notifyMatchFailure(op,
                                          "expected converted vldus operand/result types");
     }
 
     FailureOr<StringRef> calleeName =
-        buildVldusCallee(op.getContext(), op.getResult().getType());
+        usePostIntrinsic
+            ? buildVldusPostCallee(op.getContext(), op.getResult().getType())
+            : buildVldusCallee(op.getContext(), op.getResult().getType());
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported vldus signature");
 
@@ -7757,17 +7786,30 @@ public:
     // The installed no-post A5 vldus intrinsic returns an extra hidden base ptr.
     intrinsicResultTypes.push_back(adaptor.getSource().getType());
 
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{adaptor.getSource().getType(), adaptor.getAlign().getType()},
-        intrinsicResultTypes);
+    SmallVector<Value> args{adaptor.getSource(), adaptor.getAlign()};
+    if (usePostIntrinsic) {
+      Type elementType = getElementTypeFromVectorLike(op.getResult().getType());
+      auto incrementBytes =
+          convertElementOffsetToBytes(op, adaptor.getIncrement(), elementType);
+      if (failed(incrementBytes))
+        return rewriter.notifyMatchFailure(op,
+                                           "failed to convert vldus increment");
+      args.push_back(*incrementBytes);
+    }
+    SmallVector<Type> argTypes;
+    for (Value arg : args)
+      argTypes.push_back(arg.getType());
+    auto funcType = rewriter.getFunctionType(argTypes, intrinsicResultTypes);
     auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, intrinsicResultTypes,
-        ValueRange{adaptor.getSource(), adaptor.getAlign()});
+        op.getLoc(), *calleeName, intrinsicResultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     Value loaded = castFromMemoryPayloadABI(
         op.getLoc(), call.getResult(0), op.getResult().getType(),
         resultTypes[0], rewriter);
-    rewriter.replaceOp(op, ValueRange{loaded, call.getResult(1)});
+    SmallVector<Value> replacements{loaded, call.getResult(1)};
+    if (usePostIntrinsic)
+      replacements.push_back(call.getResult(2));
+    rewriter.replaceOp(op, replacements);
     return success();
   }
 
@@ -8106,14 +8148,26 @@ public:
     if (failed(offsetBytes))
       return rewriter.notifyMatchFailure(op, "failed to convert vstus offset");
 
-    Type resultType = this->getTypeConverter()->convertType(op.getAlignOut().getType());
+    SmallVector<Type> resultTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      resultTypes)))
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to convert vstus result types");
+    bool usePostIntrinsic = static_cast<bool>(op.getBaseOut());
     auto baseType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getBase().getType());
-    if (!resultType || !baseType || adaptor.getAlignIn().getType() != resultType) {
+    if (!baseType || resultTypes.size() != (usePostIntrinsic ? 2u : 1u) ||
+        adaptor.getAlignIn().getType() != resultTypes[0] ||
+        (usePostIntrinsic && resultTypes[1] != adaptor.getBase().getType())) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vstus operand/result types");
     }
 
-    StringRef calleeName = buildVstusCallee(op.getContext());
+    FailureOr<StringRef> calleeName = buildVstusCallee(op.getContext());
+    if (usePostIntrinsic)
+      calleeName =
+          buildVstusPostCallee(op.getContext(), op.getValue().getType());
+    if (failed(calleeName))
+      return rewriter.notifyMatchFailure(op, "unsupported vstus signature");
     Value value = castToMemoryPayloadABI(
         op.getLoc(), adaptor.getValue(), op.getValue().getType(), rewriter);
     SmallVector<Value> args{value, adaptor.getBase(), *offsetBytes,
@@ -8121,10 +8175,10 @@ public:
     auto funcType = rewriter.getFunctionType(
         TypeRange{value.getType(), adaptor.getBase().getType(),
                   (*offsetBytes).getType(), adaptor.getAlignIn().getType()},
-        TypeRange{resultType});
-    auto call =
-        rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{resultType}, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+        resultTypes);
+    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
+                                              resultTypes, args);
+    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }

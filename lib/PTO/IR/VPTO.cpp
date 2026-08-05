@@ -4969,6 +4969,11 @@ LogicalResult VldusOp::verify() {
     return emitOpError("requires a pointer-like source");
   if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM)
     return emitOpError("requires a UB-backed source");
+  if (static_cast<bool>(getIncrement()) != static_cast<bool>(getUpdatedBase()))
+    return emitOpError(
+        "requires increment and updated base result to appear together");
+  if (getUpdatedBase() && getUpdatedBase().getType() != getSource().getType())
+    return emitOpError("requires updated base result to match source type");
   return success();
 }
 
@@ -6725,6 +6730,8 @@ LogicalResult VstusOp::verify() {
     return emitOpError("requires a pointer-like base");
   if (classifyMemoryRole(getBase().getType()) == MemoryRole::GM)
     return emitOpError("requires a UB-backed base");
+  if (getBaseOut() && getBaseOut().getType() != getBase().getType())
+    return emitOpError("requires updated base result to match base type");
   return success();
 }
 

@@ -186,13 +186,17 @@ deinterleave forms.
 ### `pto.vldus`
 
 - **syntax:** `%result, %align_out = pto.vldus %source, %align : !pto.ptr<T, ub>, !pto.align -> !pto.vreg<NxT>, !pto.align`
+- **post-update syntax:** `%result, %align_out, %base_out = pto.vldus %source, %align, %increment : !pto.ptr<T, ub>, !pto.align, index -> !pto.vreg<NxT>, !pto.align, !pto.ptr<T, ub>`
 - **semantics:** Unaligned load using primed align state.
 - **inputs:**
   `%source` is the current UB address and `%align` is the incoming load
-  alignment state primed by `pto.vldas` or a prior `pto.vldus`.
+  alignment state primed by `pto.vldas` or a prior `pto.vldus`. In the
+  post-update form, `%increment` is the number of `T` elements by which the
+  base advances after this access.
 - **outputs:**
   `%result` is the assembled vector value and `%align_out` is the updated
-  alignment state.
+  alignment state. The post-update form additionally returns `%base_out`,
+  equivalent to `%source` advanced by `%increment` elements.
 - **constraints and limitations:**
   A matching `pto.vldas` MUST appear before the first dependent `pto.vldus`
   stream in the same vector loop. The installed no-post A5 interface keeps a
@@ -201,13 +205,16 @@ deinterleave forms.
   value and only exposes the updated align carrier. Reusing the original
   `%source` starts a new explicit access point; if the caller wants another
   no-post access, it should compute the next source pointer explicitly and pair
-  it with the required align setup.
+  it with the required align setup. The align carrier already has its own SSA
+  update chain in both forms; enabling base post-update does not change that
+  chain's semantics.
 - **Latency:** **9** cycles.
 
 **Unaligned load pattern:**
 ```mlir
 %align = pto.vldas %ub : !pto.ptr<f32, ub> -> !pto.align
 %vec, %align2 = pto.vldus %ub, %align : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
+%vec2, %align3, %next = pto.vldus %ub, %align2, %c64 : !pto.ptr<f32, ub>, !pto.align, index -> !pto.vreg<64xf32>, !pto.align, !pto.ptr<f32, ub>
 ```
 
 ---
@@ -661,13 +668,15 @@ These ops make reference-updated state explicit as SSA results.
 ### `pto.vstus`
 
 - **syntax:** `%align_out = pto.vstus %align_in, %offset, %value, %base : !pto.align, i32, !pto.vreg<NxT>, !pto.ptr<T, ub> -> !pto.align`
-- **semantics:** No-post unaligned store with scalar offset.
+- **post-update syntax:** `%align_out, %base_out = pto.vstus %align_in, %offset, %value, %base : !pto.align, i32, !pto.vreg<NxT>, !pto.ptr<T, ub> -> !pto.align, !pto.ptr<T, ub>`
+- **semantics:** Unaligned store with scalar stream advance and optional base post-update.
 - **inputs:**
-  `%align_in` is the incoming store-alignment state, `%offset` is the scalar
-  displacement, `%value` is the vector being stored, and `%base` is the UB base
-  pointer.
+  `%align_in` is the incoming store-alignment state, `%offset` is the number of
+  `T` elements by which the store stream advances, `%value` is the vector being
+  stored, and `%base` is the UB base pointer.
 - **outputs:**
-  `%align_out` is the updated buffered-tail state.
+  `%align_out` is the updated buffered-tail state. In the post-update form,
+  `%base_out` is `%base` advanced by `%offset` elements.
 - **constraints and limitations:**
   This is the scalar-offset stateful form of the unaligned store family. The
   scalar offset width MUST match the selected form, and a later flush op is
@@ -676,8 +685,10 @@ These ops make reference-updated state explicit as SSA results.
   `%base + %offset`". Instead, `%offset` describes how far the store stream
   advances at this step, and `%align_out` carries any residual tail that could
   not be committed yet. The no-post surface does not expose an updated base
-  pointer. A later flush op must therefore use an explicit destination/offset
-  pair that identifies the same logical flush point as this `pto.vstus`.
+  pointer, while the post-update form returns that pointer directly. The align
+  carrier remains an independent SSA state chain in either form. A later flush
+  op must use a destination/offset pair that identifies the same logical flush
+  point as this `pto.vstus` stream.
 - **Latency:** **9** cycles.
 
 ---

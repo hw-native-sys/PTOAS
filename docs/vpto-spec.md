@@ -1162,11 +1162,22 @@ dst[i] = mask[i] ? op(src0[i], src1[i]) : 0    // ZEROING mode
 ```mlir
 %align = pto.vldas %ub : !pto.ptr<f32, ub> -> !pto.align
 %vec, %align_out = pto.vldus %ub, %align : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
+%vec2, %align_out2, %next_ub = pto.vldus %ub, %align_out, %increment
+    : !pto.ptr<f32, ub>, !pto.align, index
+    -> !pto.vreg<64xf32>, !pto.align, !pto.ptr<f32, ub>
 
 %store_align = pto.init_align : !pto.align
 %next_align = pto.vstus %store_align, %offset, %vec, %ub
     : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+%next_align2, %next_store_ub = pto.vstus %next_align, %offset, %vec2, %ub
+    : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+    -> !pto.align, !pto.ptr<f32, ub>
 ```
+
+In the post-update forms, the base result advances by the load increment or
+store offset in pointer-element units. The `!pto.align` result remains the
+existing independent alignment-state update; base post-update does not alter
+its meaning.
 
 ---
 

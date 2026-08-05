@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -51,7 +52,7 @@ static constexpr unsigned kCanonicalAddressWidth = 16;
 // hardware alignment table, and `Byte` ops pass a raw byte offset. See
 // `strideUnitBytes` for the conversion.
 enum class StrideUnit {
-  Element,   // vlds/vsts/vldsx2/vstas: offset in pointer elements
+  Element,   // vector load/store offsets and increments in pointer elements
   Block,     // vsstb/vsldb: offset in 32-byte blocks
   Alignment, // pldi/psti/sprsti: op-specific hardware alignment units
   Byte,      // plds/psts/sprsts: scalar offset in bytes
@@ -67,10 +68,15 @@ enum class StrideConstraint {
 // post-update. base/strideOperand indices are operand positions.
 struct PostUpdateOpInfo {
   int baseOperandIdx;
-  int strideOperandIdx;
+  // A missing stride operand models an op whose explicit address offset is
+  // zero. Its post-update increment then comes entirely from base evolution.
+  std::optional<unsigned> strideOperandIdx;
   StrideUnit strideUnit;
   unsigned minResultsForPost; // numResults > this means already post-update
   StrideConstraint strideConstraint = StrideConstraint::Dynamic;
+  // Whether strideOperand contributes to the current access address. Stateful
+  // stream ops may use it only as the distance advanced after the access.
+  bool strideIsInitialOffset = true;
 };
 
 using PostUpdateTable = llvm::StringMap<PostUpdateOpInfo>;
@@ -81,10 +87,13 @@ static const PostUpdateTable &getPostUpdateTable() {
     //                       base  strideOp  strideUnit             minResults
     t["pto.vlds"] = {0, 1, StrideUnit::Element, 1};
     t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
+    t["pto.vldus"] = {0, std::nullopt, StrideUnit::Element, 2};
     t["pto.plds"] = {0, 1, StrideUnit::Byte, 1};
     t["pto.pldi"] = {0, 1, StrideUnit::Alignment, 1,
                      StrideConstraint::Constant};
     t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
+    t["pto.vstus"] = {3, 1, StrideUnit::Element, 1,
+                      StrideConstraint::Dynamic, false};
     t["pto.psts"] = {1, 2, StrideUnit::Byte, 0};
     t["pto.psti"] = {1, 2, StrideUnit::Alignment, 0,
                      StrideConstraint::Constant};
@@ -151,7 +160,9 @@ static void extractBaseAndStrideOperand(Operation *op,
                                         const PostUpdateOpInfo &info,
                                         Value &base, Value &strideOperand) {
   base = op->getOperand(info.baseOperandIdx);
-  strideOperand = op->getOperand(info.strideOperandIdx);
+  strideOperand = info.strideOperandIdx
+                      ? op->getOperand(*info.strideOperandIdx)
+                      : Value();
 }
 
 // Check if op already has an updated_base result.
@@ -1511,11 +1522,13 @@ static Operation *createPostUpdateOp(Operation *op,
   for (auto [i, operand] : llvm::enumerate(op->getOperands())) {
     if (static_cast<int>(i) == info.baseOperandIdx)
       state.addOperands(base);
-    else if (static_cast<int>(i) == info.strideOperandIdx)
+    else if (info.strideOperandIdx && i == *info.strideOperandIdx)
       state.addOperands(stride);
     else
       state.addOperands(operand);
   }
+  if (!info.strideOperandIdx)
+    state.addOperands(stride);
   state.addTypes(op->getResultTypes());
   state.addTypes(base.getType());
   state.addAttributes(op->getAttrs());
@@ -1531,7 +1544,7 @@ static Operation *createNormalOp(Operation *op, const PostUpdateOpInfo &info,
   for (auto [i, operand] : llvm::enumerate(op->getOperands())) {
     if (static_cast<int>(i) == info.baseOperandIdx)
       state.addOperands(base);
-    else if (static_cast<int>(i) == info.strideOperandIdx)
+    else if (info.strideOperandIdx && i == *info.strideOperandIdx)
       state.addOperands(zeroStride);
     else
       state.addOperands(operand);
@@ -1794,6 +1807,8 @@ using SequentialExprCache = DenseMap<Value, StrideExprRef>;
 // SSA value is reused without guessing at its semantics.
 static StrideExprRef buildSequentialExpr(Value value,
                                          SequentialExprCache &cache) {
+  if (!value)
+    return makeConst(0);
   if (auto constant = getConstantIntValue(value))
     return makeConst(*constant);
   if (auto it = cache.find(value); it != cache.end())
@@ -1903,18 +1918,28 @@ static bool validateSequentialRun(SequentialRun &run,
     return false;
 
   SequentialCandidate *first = run.candidates.front();
-  run.strideType = first->strideOperand.getType();
+  run.strideType = first->strideOperand
+                       ? first->strideOperand.getType()
+                       : IndexType::get(first->op->getContext());
+  Value initialOffsetOperand = first->info->strideIsInitialOffset
+                                   ? first->strideOperand
+                                   : Value();
   if (!canMaterializeAs(run.step, run.strideType) ||
       !constantsFitType(run.step, run.strideType) ||
       !satisfiesStrideConstraint(run.step,
                                  first->info->strideConstraint) ||
-      !canScaleInitialOffset(first->strideOperand, first->elemBytes,
+      !canScaleInitialOffset(initialOffsetOperand, first->elemBytes,
                              first->unitBytes))
     return false;
 
-  for (SequentialCandidate *candidate : run.candidates)
-    if (candidate->strideOperand.getType() != run.strideType)
+  for (SequentialCandidate *candidate : run.candidates) {
+    Type candidateStrideType =
+        candidate->strideOperand
+            ? candidate->strideOperand.getType()
+            : IndexType::get(candidate->op->getContext());
+    if (candidateStrideType != run.strideType)
       return false;
+  }
 
   SmallVector<Value> leaves;
   collectLeaves(run.step, leaves);
@@ -1956,16 +1981,19 @@ static unsigned countDeadDynamicAddPtrs(const SequentialRun &run) {
 }
 
 static unsigned initialPointerCost(const SequentialRun &run) {
-  auto initialOffset =
-      getConstantIntValue(run.candidates.front()->strideOperand);
+  SequentialCandidate *first = run.candidates.front();
+  if (!first->info->strideIsInitialOffset || !first->strideOperand)
+    return 0;
+  auto initialOffset = getConstantIntValue(first->strideOperand);
   return initialOffset && *initialOffset == 0 ? 0 : 1;
 }
 
 static bool isRunStrideUse(OpOperand &use, const SequentialRun &run) {
   return llvm::any_of(run.candidates, [&](SequentialCandidate *candidate) {
-    return use.getOwner() == candidate->op &&
+    return candidate->info->strideOperandIdx &&
+           use.getOwner() == candidate->op &&
            use.getOperandNumber() ==
-               static_cast<unsigned>(candidate->info->strideOperandIdx);
+               *candidate->info->strideOperandIdx;
   });
 }
 
@@ -1995,8 +2023,10 @@ static bool allUsesDisappearAfterRewrite(Operation *op,
 static bool cumulativeOffsetChainDefinitelyDies(
     const SequentialRun &run, DenseSet<Operation *> &deadOps) {
   for (SequentialCandidate *candidate :
-       llvm::drop_begin(run.candidates, 2))
-    collectCumulativeOffsetOps(candidate->strideOperand, deadOps);
+       llvm::drop_begin(run.candidates, 2)) {
+    if (candidate->strideOperand)
+      collectCumulativeOffsetOps(candidate->strideOperand, deadOps);
+  }
   return !deadOps.empty() &&
          llvm::all_of(deadOps, [&](Operation *op) {
            return allUsesDisappearAfterRewrite(op, deadOps, run);
@@ -2069,8 +2099,10 @@ static bool isProfitableDirectSymbolicLeafRun(
         return candidate->base == candidate->rootBase;
       }))
     return false;
-  auto firstOffset =
-      getConstantIntValue(run.candidates.front()->strideOperand);
+  Value firstStrideOperand = run.candidates.front()->strideOperand;
+  auto firstOffset = firstStrideOperand
+                         ? getConstantIntValue(firstStrideOperand)
+                         : std::optional<int64_t>(0);
   if (!firstOffset || *firstOffset != 0)
     return false;
 
@@ -2197,8 +2229,11 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     run.zeroStride = materializeSequential(makeConst(0), run.strideType,
                                            first->op->getLoc(), builder);
     builder.setInsertionPoint(first->op);
+    Value initialOffsetOperand = first->info->strideIsInitialOffset
+                                     ? first->strideOperand
+                                     : Value();
     run.currentPtr = createInitialPtr(
-        first->base, first->strideOperand, first->info->strideUnit,
+        first->base, initialOffsetOperand, first->info->strideUnit,
         first->elemBytes, first->unitBytes, first->op->getLoc(), builder);
   }
 
@@ -2306,7 +2341,9 @@ private:
       // stride; no IR is created until the candidate is known to be viable.
       DeltaCache deltaCache;
       StrideExprRef deltaBase = getStride(base, forOp, deltaCache);
-      StrideExprRef deltaOffset = getStride(strideOperand, forOp, deltaCache);
+      StrideExprRef deltaOffset =
+          strideOperand ? getStride(strideOperand, forOp, deltaCache)
+                        : makeConst(0);
 
       if (!deltaBase || !deltaOffset)
         continue;
@@ -2322,7 +2359,8 @@ private:
       Type exprResultType;
       if (!exprType(total, exprResultType))
         continue;
-      Type strideType = strideOperand.getType();
+      Type strideType =
+          strideOperand ? strideOperand.getType() : builder.getIndexType();
       if (exprResultType && exprResultType != strideType)
         continue;
 
@@ -2356,8 +2394,11 @@ private:
       Value strideNew = materialize(finalExpr, strideType, op.getLoc(), forOp,
                                     constCache, builder);
 
-      Value initPtr = computeInitialPtr(base, strideOperand, info->strideUnit,
-                                        *elemBytes, *unitBytes, forOp, builder);
+      Value initialOffsetOperand =
+          info->strideIsInitialOffset ? strideOperand : Value();
+      Value initPtr = computeInitialPtr(
+          base, initialOffsetOperand, info->strideUnit, *elemBytes, *unitBytes,
+          forOp, builder);
       if (!initPtr)
         continue;
 

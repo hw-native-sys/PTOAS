@@ -1596,18 +1596,22 @@ def PTO_VldusOp : PTO_VectorMicroOp<"vldus", [
   ]> {
   let arguments = (ins
     PTO_BufferType:$source,
-    PTO_AlignTypeConstraint:$align
+    PTO_AlignTypeConstraint:$align,
+    Optional<Index>:$increment
   );
 
   let results = (outs
     PTO_VectorType:$result,
-    PTO_AlignTypeConstraint:$updated_align
+    PTO_AlignTypeConstraint:$updated_align,
+    Optional<PTO_BufferType>:$updated_base
   );
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $source `,` $align attr-dict `:` type($source) `,` type($align) `->` type($result) `,` type($updated_align)
+    $source `,` $align (`,` $increment^)? attr-dict `:` type($source) `,` type($align)
+    (`,` type($increment)^)? `->` type($result) `,` type($updated_align)
+    (`,` type($updated_base)^)?
   }];
 }
 
@@ -3571,12 +3575,14 @@ def PTO_VstusOp : PTO_VectorMicroOp<"vstus", [
     PTO_VectorType:$value,
     PTO_BufferType:$base
   );
-  let results = (outs PTO_AlignTypeConstraint:$align_out);
+  let results = (outs PTO_AlignTypeConstraint:$align_out,
+                      Optional<PTO_BufferType>:$base_out);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     $align_in `,` $offset `,` $value `,` $base attr-dict `:` type($align_in) `,` type($offset) `,` type($value) `,` type($base) `->` type($align_out)
+    (`,` type($base_out)^)?
   }];
 }
 
