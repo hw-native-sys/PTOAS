@@ -77,6 +77,13 @@ struct SyncOpRecord {
 /// Human-readable name of an InsertSync PipelineType ("MTE2", "V", "ALL", ...).
 llvm::StringRef pipelineTypeName(PipelineType pipe);
 
+/// The pipe a `get_buf`/`rls_buf` `op_type` names.
+///
+/// `PTO_PipeLikeAttr` admits three spellings -- pipe_event_type, sync_op_type, and a
+/// plain PipeAttr. A decoder handling only the first two returns PIPE_UNASSIGNED for
+/// the third rather than failing, so its caller silently loses the op.
+pto::PIPE bufSyncPipe(mlir::Attribute opTypeAttr);
+
 /// Render a report and write it to stderr atomically.
 ///
 /// STDERR, NEVER STDOUT: stdout carries the emitted kernel source, so a report
