@@ -295,6 +295,8 @@ llvm::StringRef mlir::pto::oracle::interferenceKindName(InterferenceKind k) {
     return "event-id-wait-without-set";
   case InterferenceKind::EventIdUnclosed:
     return "event-id-unclosed";
+  case InterferenceKind::EventIdPairGuardMismatch:
+    return "event-id-pair-guard-mismatch";
   case InterferenceKind::BufIdNested:
     return "buf-id-nested";
   case InterferenceKind::BufIdReleaseWithoutAcquire:
@@ -336,8 +338,33 @@ struct BufOpen {
 /// and every overlap conflicts, exactly as before.
 constexpr int kNoOwner = -1;
 
+/// The `scf.if`/`scf.index_switch` REGIONS enclosing `op`, outermost first.
+///
+/// Loops are skipped on purpose. Two ops in different blocks of the same loop nest
+/// are still reached together whenever the loop body runs at all, and requiring the
+/// two halves of an event pair to share a block would reject the set-outside /
+/// wait-inside priming idiom, which is what the corpus overwhelmingly emits.
+llvm::SmallVector<mlir::Region *, 4> conditionalGuards(Operation *op) {
+  llvm::SmallVector<mlir::Region *, 4> guards;
+  for (Operation *p = op; p; p = p->getParentOp()) {
+    Operation *parent = p->getParentOp();
+    if (parent && isa<scf::IfOp, scf::IndexSwitchOp>(parent))
+      guards.push_back(p->getParentRegion());
+  }
+  std::reverse(guards.begin(), guards.end());
+  return guards;
+}
+
+/// One open interval. `op` is null in the pre-codegen record view, which carries no
+/// ops; a null disables only the checks that need a position in the IR.
+struct Open {
+  unsigned order;
+  int owner;
+  Operation *op;
+};
+
 struct LiveIntervals {
-  llvm::SmallVector<std::pair<unsigned, int>> opens; // (program order, owner)
+  llvm::SmallVector<Open> opens;
 
   /// Returns the order of an already-live interval that CONFLICTS with this open, or
   /// -1 if this open is legal.
@@ -348,22 +375,24 @@ struct LiveIntervals {
   /// wait, head and tail alike). Anything else still conflicts, INCLUDING a
   /// compensation op against a different hazard, which is the whole point of keying on
   /// the owner rather than just skipping compensation records.
-  int64_t open(unsigned order, int owner = kNoOwner) {
+  int64_t open(unsigned order, int owner = kNoOwner, Operation *op = nullptr) {
     int64_t live = -1;
     for (const auto &o : opens) {
-      if (owner != kNoOwner && o.second == owner)
+      if (owner != kNoOwner && o.owner == owner)
         continue; // same hazard: its own prime/drain, not a competing interval
-      live = int64_t(o.first);
+      live = int64_t(o.order);
       break;
     }
-    opens.push_back({order, owner});
+    opens.push_back({order, owner, op});
     return live;
   }
-  bool close() {
+  /// The interval this close pops, or nullopt when there is none to pop.
+  std::optional<Open> close() {
     if (opens.empty())
-      return false;
+      return std::nullopt;
+    Open top = opens.back();
     opens.pop_back();
-    return true;
+    return top;
   }
 };
 
@@ -379,8 +408,8 @@ void scanOpen(llvm::DenseMap<KeyT, LiveIntervals> &live, const KeyT &key,
               unsigned order, llvm::StringRef opName, llvm::StringRef keyName,
               InterferenceKind nestedKind,
               llvm::SmallVectorImpl<InterferenceViolation> &out,
-              int owner = kNoOwner) {
-  int64_t alreadyLive = live[key].open(order, owner);
+              int owner = kNoOwner, Operation *op = nullptr) {
+  int64_t alreadyLive = live[key].open(order, owner, op);
   if (alreadyLive >= 0)
     out.push_back({nestedKind, Severity::Error, order, unsigned(alreadyLive),
                    opName.str(), keyName.str(),
@@ -392,10 +421,23 @@ template <typename KeyT>
 void scanClose(llvm::DenseMap<KeyT, LiveIntervals> &live, const KeyT &key,
                unsigned order, llvm::StringRef opName, llvm::StringRef keyName,
                InterferenceKind orphanKind,
-               llvm::SmallVectorImpl<InterferenceViolation> &out) {
-  if (!live[key].close())
+               llvm::SmallVectorImpl<InterferenceViolation> &out,
+               Operation *op = nullptr) {
+  std::optional<Open> opened = live[key].close();
+  if (!opened) {
     out.push_back({orphanKind, Severity::Error, order, 0, opName.str(),
                    keyName.str(), "closes an id that no earlier op opened"});
+    return;
+  }
+  // The two halves must be equally guarded, or a path runs one without the other.
+  // A flattened scan cannot see this: the counts balance and the stack pairs them.
+  if (op && opened->op &&
+      conditionalGuards(opened->op) != conditionalGuards(op))
+    out.push_back({InterferenceKind::EventIdPairGuardMismatch, Severity::Error,
+                   order, opened->order, opName.str(), keyName.str(),
+                   "this op and the one that opened the id sit under different "
+                   "conditionals, so some path executes one without the other: a "
+                   "wait with no set hangs, a set with no wait leaks the id"});
 }
 
 } // namespace
@@ -421,10 +463,10 @@ mlir::pto::oracle::checkNonInterference(llvm::ArrayRef<IRSyncRecord> records) {
       std::string name = eventKeyName(rec.srcPipeType, rec.dstPipeType, rec.eventId);
       if (rec.opName == "pto.set_flag")
         scanOpen(eventLive, key, rec.order, rec.opName, name,
-                 InterferenceKind::EventIdNested, violations);
+                 InterferenceKind::EventIdNested, violations, kNoOwner, rec.op);
       else
         scanClose(eventLive, key, rec.order, rec.opName, name,
-                  InterferenceKind::EventIdWaitWithoutSet, violations);
+                  InterferenceKind::EventIdWaitWithoutSet, violations, rec.op);
     } else if (rec.opName == "pto.get_buf" || rec.opName == "pto.rls_buf") {
       // Buffer-ID legality. See SyncOracleGates.h for the rules, and
       // docs/bufid_sync_a5_design.md "Correctness Invariants" for the protocol.
@@ -529,7 +571,7 @@ mlir::pto::oracle::checkNonInterference(llvm::ArrayRef<IRSyncRecord> records) {
   llvm::SmallVector<InterferenceViolation> leaks;
   for (const auto &entry : eventLive)
     for (const auto &open : entry.second.opens) {
-      unsigned order = open.first;
+      unsigned order = open.order;
       leaks.push_back({InterferenceKind::EventIdUnclosed, Severity::Error,
                        order, order, "pto.set_flag",
                        eventKeyName(PipelineType(std::get<0>(entry.first)),

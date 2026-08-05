@@ -57,6 +57,11 @@ struct IRSyncRecord {
   /// Enclosing block. A get_buf and its rls_buf must sit in the SAME block, or
   /// the pair may not both execute (counter desync). Null for non-buf ops.
   mlir::Block *block = nullptr;
+  /// The op itself, for gates that must ask where it sits in the control flow. An
+  /// event pair is checked on its enclosing conditionals, which a block pointer
+  /// alone cannot answer: two blocks differ for loop nesting too, and that case is
+  /// legitimate.
+  mlir::Operation *op = nullptr;
   unsigned order = 0; // program order within the function
 };
 

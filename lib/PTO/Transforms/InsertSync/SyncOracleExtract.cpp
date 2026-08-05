@@ -181,6 +181,7 @@ mlir::pto::oracle::extractFromIR(func::FuncOp func) {
       return WalkResult::advance();
     }
 
+    rec.op = op;
     rec.order = records.size();
     records.push_back(std::move(rec));
     return WalkResult::advance();

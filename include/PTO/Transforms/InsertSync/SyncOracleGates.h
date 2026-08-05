@@ -205,6 +205,12 @@ enum class InterferenceKind {
   EventIdNested,
   EventIdWaitWithoutSet,
   EventIdUnclosed,
+  /// A set_flag and the wait_flag closing it sit under DIFFERENT conditionals, so
+  /// some path runs one without the other: a wait with no set hangs, a set with no
+  /// wait leaks the id. Loop nesting is deliberately not compared -- a set outside a
+  /// loop priming a wait inside it is the intended idiom, and the zero-trip case is
+  /// checked on the loop spine instead.
+  EventIdPairGuardMismatch,
   BufIdNested,                 // B1
   BufIdReleaseWithoutAcquire,  // B2
   BufIdUnclosed,               // B3
