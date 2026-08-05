@@ -7,7 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""Runtime equivalence checks for registered element-wise 1D/2D templates."""
+"""Runtime equivalence checks through element-wise 1D/2D TileOp selection."""
 
 from pathlib import Path
 import sys
@@ -29,7 +29,6 @@ _bootstrap_dsl_st_common()
 
 from common import assert_close, auto_main
 from ptodsl import pto
-from ptodsl._ast_rewrite import rewrite_jit_function
 from ptodsl.tilelib.templates.a5.tabs import (
     template_tabs,
     template_tabs_1d,
@@ -63,15 +62,28 @@ from ptodsl.tilelib.templates.a5.tsels import (
 SEED = 20260802
 GUARD_ELEMENTS = 32
 
-TABS_SHAPE = (1, 72)
+TABS_SHAPE = (2, 72)
+TABS_PADDED_SHAPE = (2, 80)
 TADD_SHAPE = (4, 80)
+TADD_PADDED_SHAPE = (4, 96)
 TADDS_SHAPE = (4, 96)
+TADDS_PADDED_SHAPE = (4, 128)
 TCMPS_DATA_SHAPE = (4, 256)
 TCMPS_MASK_SHAPE = (4, 32)
+TCMPS_PADDED_DATA_SHAPE = (4, 512)
+TCMPS_PADDED_MASK_SHAPE = (4, 64)
 TSELS_DATA_SHAPE = (4, 256)
 TSELS_MASK_SHAPE = (4, 32)
+TSELS_PADDED_DATA_SHAPE = (4, 512)
+TSELS_PADDED_MASK_SHAPE = (4, 64)
 TCVT_SHAPE = (4, 80)
+TCVT_PADDED_SHAPE = (4, 96)
 TEXPANDS_SHAPE = (4, 72)
+TEXPANDS_PADDED_SHAPE = (4, 80)
+
+# Each compact shape fills its physical column axis and selects 1D. The
+# corresponding padded shape keeps the same valid region but introduces a row
+# stride gap, which conservatively selects the 2D fallback.
 
 
 _TEMPLATE_PAIRS = (
@@ -91,11 +103,6 @@ for _flattened, _rowwise in _TEMPLATE_PAIRS:
         raise AssertionError(f"{_rowwise.name} is not a 2D candidate")
 
 
-_tcvt_f32_to_i16_2d_body = rewrite_jit_function(
-    template_tcvt_f32_to_i16.py_fn
-)
-
-
 def _ub_ptr(dtype, addr):
     return pto.castptr(
         pto.const(addr, dtype=pto.i64),
@@ -103,28 +110,48 @@ def _ub_ptr(dtype, addr):
     )
 
 
-def _load_to_ub(source, dtype, addr, byte_count):
+def _load_rows_to_ub(
+    source,
+    dtype,
+    addr,
+    rows,
+    valid_cols,
+    physical_cols,
+    element_bytes,
+):
     destination = _ub_ptr(dtype, addr)
+    row_bytes = valid_cols * element_bytes
+    physical_row_bytes = physical_cols * element_bytes
     pto.get_buf(pto.Pipe.MTE2, 0)
     pto.mte_gm_ub(
         source,
         destination,
         0,
-        byte_count,
-        nburst=(1, byte_count, byte_count),
+        row_bytes,
+        nburst=(rows, row_bytes, physical_row_bytes),
     )
     pto.rls_buf(pto.Pipe.MTE2, 0)
 
 
-def _store_from_ub(source_addr, dtype, destination, byte_count):
+def _store_rows_from_ub(
+    source_addr,
+    dtype,
+    destination,
+    rows,
+    valid_cols,
+    physical_cols,
+    element_bytes,
+):
     source = _ub_ptr(dtype, source_addr)
     logical_destination = pto.addptr(destination, GUARD_ELEMENTS)
+    row_bytes = valid_cols * element_bytes
+    physical_row_bytes = physical_cols * element_bytes
     pto.get_buf(pto.Pipe.MTE3, 0)
     pto.mte_ub_gm(
         source,
         logical_destination,
-        byte_count,
-        nburst=(1, byte_count, byte_count),
+        row_bytes,
+        nburst=(rows, physical_row_bytes, row_bytes),
     )
     pto.rls_buf(pto.Pipe.MTE3, 0)
 
@@ -151,19 +178,46 @@ def elementwise_tabs_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.f32, "gm"),
 ):
     rows, cols = TABS_SHAPE
-    byte_count = rows * cols * 4
 
-    src = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=0)
-    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=1024)
-    out_2d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=2048)
+    src_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=0)
+    src_2d = pto.alloc_tile(
+        shape=list(TABS_PADDED_SHAPE),
+        dtype=pto.f32,
+        valid_shape=[rows, cols],
+        addr=4096,
+    )
+    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=8192)
+    out_2d = pto.alloc_tile(
+        shape=list(TABS_PADDED_SHAPE),
+        dtype=pto.f32,
+        valid_shape=[rows, cols],
+        addr=12288,
+    )
 
-    _load_to_ub(src_ptr, pto.f32, 0, byte_count)
+    _load_rows_to_ub(src_ptr, pto.f32, 0, rows, cols, cols, 4)
+    _load_rows_to_ub(
+        src_ptr,
+        pto.f32,
+        4096,
+        rows,
+        cols,
+        TABS_PADDED_SHAPE[1],
+        4,
+    )
     _wait_for_loads()
-    template_tabs_1d.py_fn(src, out_1d)
-    template_tabs.py_fn(src, out_2d)
+    pto.tile.abs(src_1d, out_1d)
+    pto.tile.abs(src_2d, out_2d)
     _wait_for_stores()
-    _store_from_ub(1024, pto.f32, out_1d_ptr, byte_count)
-    _store_from_ub(2048, pto.f32, out_2d_ptr, byte_count)
+    _store_rows_from_ub(8192, pto.f32, out_1d_ptr, rows, cols, cols, 4)
+    _store_rows_from_ub(
+        12288,
+        pto.f32,
+        out_2d_ptr,
+        rows,
+        cols,
+        TABS_PADDED_SHAPE[1],
+        4,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -180,21 +234,51 @@ def elementwise_tadd_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i16, "gm"),
 ):
     rows, cols = TADD_SHAPE
-    byte_count = rows * cols * 2
 
-    lhs = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=0)
-    rhs = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=1024)
-    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=2048)
-    out_2d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=3072)
+    lhs_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=0)
+    rhs_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=4096)
+    lhs_2d = pto.alloc_tile(
+        shape=list(TADD_PADDED_SHAPE),
+        dtype=pto.i16,
+        valid_shape=[rows, cols],
+        addr=8192,
+    )
+    rhs_2d = pto.alloc_tile(
+        shape=list(TADD_PADDED_SHAPE),
+        dtype=pto.i16,
+        valid_shape=[rows, cols],
+        addr=12288,
+    )
+    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=16384)
+    out_2d = pto.alloc_tile(
+        shape=list(TADD_PADDED_SHAPE),
+        dtype=pto.i16,
+        valid_shape=[rows, cols],
+        addr=20480,
+    )
 
-    _load_to_ub(lhs_ptr, pto.i16, 0, byte_count)
-    _load_to_ub(rhs_ptr, pto.i16, 1024, byte_count)
+    _load_rows_to_ub(lhs_ptr, pto.i16, 0, rows, cols, cols, 2)
+    _load_rows_to_ub(rhs_ptr, pto.i16, 4096, rows, cols, cols, 2)
+    _load_rows_to_ub(
+        lhs_ptr, pto.i16, 8192, rows, cols, TADD_PADDED_SHAPE[1], 2
+    )
+    _load_rows_to_ub(
+        rhs_ptr, pto.i16, 12288, rows, cols, TADD_PADDED_SHAPE[1], 2
+    )
     _wait_for_loads()
-    template_tadd_1d.py_fn(lhs, rhs, out_1d)
-    template_tadd.py_fn(lhs, rhs, out_2d)
+    pto.tile.add(lhs_1d, rhs_1d, out_1d)
+    pto.tile.add(lhs_2d, rhs_2d, out_2d)
     _wait_for_stores()
-    _store_from_ub(2048, pto.i16, out_1d_ptr, byte_count)
-    _store_from_ub(3072, pto.i16, out_2d_ptr, byte_count)
+    _store_rows_from_ub(16384, pto.i16, out_1d_ptr, rows, cols, cols, 2)
+    _store_rows_from_ub(
+        20480,
+        pto.i16,
+        out_2d_ptr,
+        rows,
+        cols,
+        TADD_PADDED_SHAPE[1],
+        2,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -210,19 +294,46 @@ def elementwise_tadds_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i8, "gm"),
 ):
     rows, cols = TADDS_SHAPE
-    byte_count = rows * cols
 
-    src = pto.alloc_tile(shape=[rows, cols], dtype=pto.i8, addr=0)
-    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i8, addr=512)
-    out_2d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i8, addr=1024)
+    src_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i8, addr=0)
+    src_2d = pto.alloc_tile(
+        shape=list(TADDS_PADDED_SHAPE),
+        dtype=pto.i8,
+        valid_shape=[rows, cols],
+        addr=4096,
+    )
+    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i8, addr=8192)
+    out_2d = pto.alloc_tile(
+        shape=list(TADDS_PADDED_SHAPE),
+        dtype=pto.i8,
+        valid_shape=[rows, cols],
+        addr=12288,
+    )
 
-    _load_to_ub(src_ptr, pto.i8, 0, byte_count)
+    _load_rows_to_ub(src_ptr, pto.i8, 0, rows, cols, cols, 1)
+    _load_rows_to_ub(
+        src_ptr,
+        pto.i8,
+        4096,
+        rows,
+        cols,
+        TADDS_PADDED_SHAPE[1],
+        1,
+    )
     _wait_for_loads()
-    template_tadds_1d.py_fn(src, 7, out_1d)
-    template_tadds.py_fn(src, 7, out_2d)
+    pto.tile.adds(src_1d, 7, out_1d)
+    pto.tile.adds(src_2d, 7, out_2d)
     _wait_for_stores()
-    _store_from_ub(512, pto.i8, out_1d_ptr, byte_count)
-    _store_from_ub(1024, pto.i8, out_2d_ptr, byte_count)
+    _store_rows_from_ub(8192, pto.i8, out_1d_ptr, rows, cols, cols, 1)
+    _store_rows_from_ub(
+        12288,
+        pto.i8,
+        out_2d_ptr,
+        rows,
+        cols,
+        TADDS_PADDED_SHAPE[1],
+        1,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -239,28 +350,56 @@ def elementwise_tcmps_1d_2d_equivalence(
 ):
     data_rows, data_cols = TCMPS_DATA_SHAPE
     mask_rows, mask_cols = TCMPS_MASK_SHAPE
-    src_byte_count = data_rows * data_cols
-    dst_byte_count = mask_rows * mask_cols
 
-    src = pto.alloc_tile(shape=[data_rows, data_cols], dtype=pto.i8, addr=0)
+    src_1d = pto.alloc_tile(
+        shape=[data_rows, data_cols], dtype=pto.i8, addr=0
+    )
+    src_2d = pto.alloc_tile(
+        shape=list(TCMPS_PADDED_DATA_SHAPE),
+        dtype=pto.i8,
+        valid_shape=[data_rows, data_cols],
+        addr=4096,
+    )
     out_1d = pto.alloc_tile(
         shape=[mask_rows, mask_cols],
         dtype=pto.ui8,
-        addr=4096,
+        addr=8192,
     )
     out_2d = pto.alloc_tile(
-        shape=[mask_rows, mask_cols],
+        shape=list(TCMPS_PADDED_MASK_SHAPE),
         dtype=pto.ui8,
-        addr=4352,
+        valid_shape=[mask_rows, mask_cols],
+        addr=12288,
     )
 
-    _load_to_ub(src_ptr, pto.i8, 0, src_byte_count)
+    _load_rows_to_ub(
+        src_ptr, pto.i8, 0, data_rows, data_cols, data_cols, 1
+    )
+    _load_rows_to_ub(
+        src_ptr,
+        pto.i8,
+        4096,
+        data_rows,
+        data_cols,
+        TCMPS_PADDED_DATA_SHAPE[1],
+        1,
+    )
     _wait_for_loads()
-    template_tcmps_1d.py_fn(src, 5, out_1d)
-    template_tcmps.py_fn(src, 5, out_2d)
+    pto.tile.cmps(src_1d, 5, out_1d)
+    pto.tile.cmps(src_2d, 5, out_2d)
     _wait_for_stores()
-    _store_from_ub(4096, pto.ui8, out_1d_ptr, dst_byte_count)
-    _store_from_ub(4352, pto.ui8, out_2d_ptr, dst_byte_count)
+    _store_rows_from_ub(
+        8192, pto.ui8, out_1d_ptr, mask_rows, mask_cols, mask_cols, 1
+    )
+    _store_rows_from_ub(
+        12288,
+        pto.ui8,
+        out_2d_ptr,
+        mask_rows,
+        mask_cols,
+        TCMPS_PADDED_MASK_SHAPE[1],
+        1,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -278,35 +417,81 @@ def elementwise_tsels_1d_2d_equivalence(
 ):
     data_rows, data_cols = TSELS_DATA_SHAPE
     mask_rows, mask_cols = TSELS_MASK_SHAPE
-    mask_byte_count = mask_rows * mask_cols
-    data_byte_count = data_rows * data_cols
 
-    mask = pto.alloc_tile(shape=[mask_rows, mask_cols], dtype=pto.i8, addr=0)
-    src = pto.alloc_tile(
+    mask_1d = pto.alloc_tile(
+        shape=[mask_rows, mask_cols], dtype=pto.i8, addr=0
+    )
+    src_1d = pto.alloc_tile(
         shape=[data_rows, data_cols],
         dtype=pto.i8,
-        addr=256,
+        addr=4096,
     )
-    tmp = pto.alloc_tile(shape=[1, 256], dtype=pto.i8, addr=1280)
+    tmp_1d = pto.alloc_tile(shape=[1, 256], dtype=pto.i8, addr=8192)
     out_1d = pto.alloc_tile(
         shape=[data_rows, data_cols],
         dtype=pto.i8,
-        addr=2048,
+        addr=12288,
     )
-    out_2d = pto.alloc_tile(
-        shape=[data_rows, data_cols],
+    mask_2d = pto.alloc_tile(
+        shape=list(TSELS_PADDED_MASK_SHAPE),
         dtype=pto.i8,
-        addr=3072,
+        valid_shape=[mask_rows, mask_cols],
+        addr=16384,
+    )
+    src_2d = pto.alloc_tile(
+        shape=list(TSELS_PADDED_DATA_SHAPE),
+        dtype=pto.i8,
+        valid_shape=[data_rows, data_cols],
+        addr=20480,
+    )
+    tmp_2d = pto.alloc_tile(shape=[1, 256], dtype=pto.i8, addr=24576)
+    out_2d = pto.alloc_tile(
+        shape=list(TSELS_PADDED_DATA_SHAPE),
+        dtype=pto.i8,
+        valid_shape=[data_rows, data_cols],
+        addr=28672,
     )
 
-    _load_to_ub(mask_ptr, pto.i8, 0, mask_byte_count)
-    _load_to_ub(src_ptr, pto.i8, 256, data_byte_count)
+    _load_rows_to_ub(
+        mask_ptr, pto.i8, 0, mask_rows, mask_cols, mask_cols, 1
+    )
+    _load_rows_to_ub(
+        src_ptr, pto.i8, 4096, data_rows, data_cols, data_cols, 1
+    )
+    _load_rows_to_ub(
+        mask_ptr,
+        pto.i8,
+        16384,
+        mask_rows,
+        mask_cols,
+        TSELS_PADDED_MASK_SHAPE[1],
+        1,
+    )
+    _load_rows_to_ub(
+        src_ptr,
+        pto.i8,
+        20480,
+        data_rows,
+        data_cols,
+        TSELS_PADDED_DATA_SHAPE[1],
+        1,
+    )
     _wait_for_loads()
-    template_tsels_1d.py_fn(mask, src, tmp, -3, out_1d)
-    template_tsels.py_fn(mask, src, tmp, -3, out_2d)
+    pto.tile.sels(mask_1d, src_1d, -3, out_1d, tmp=tmp_1d)
+    pto.tile.sels(mask_2d, src_2d, -3, out_2d, tmp=tmp_2d)
     _wait_for_stores()
-    _store_from_ub(2048, pto.i8, out_1d_ptr, data_byte_count)
-    _store_from_ub(3072, pto.i8, out_2d_ptr, data_byte_count)
+    _store_rows_from_ub(
+        12288, pto.i8, out_1d_ptr, data_rows, data_cols, data_cols, 1
+    )
+    _store_rows_from_ub(
+        28672,
+        pto.i8,
+        out_2d_ptr,
+        data_rows,
+        data_cols,
+        TSELS_PADDED_DATA_SHAPE[1],
+        1,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -322,20 +507,46 @@ def elementwise_tcvt_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i16, "gm"),
 ):
     rows, cols = TCVT_SHAPE
-    src_byte_count = rows * cols * 4
-    dst_byte_count = rows * cols * 2
 
-    src = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=0)
-    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=2048)
-    out_2d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=3072)
+    src_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=0)
+    src_2d = pto.alloc_tile(
+        shape=list(TCVT_PADDED_SHAPE),
+        dtype=pto.f32,
+        valid_shape=[rows, cols],
+        addr=4096,
+    )
+    out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=8192)
+    out_2d = pto.alloc_tile(
+        shape=list(TCVT_PADDED_SHAPE),
+        dtype=pto.i16,
+        valid_shape=[rows, cols],
+        addr=12288,
+    )
 
-    _load_to_ub(src_ptr, pto.f32, 0, src_byte_count)
+    _load_rows_to_ub(src_ptr, pto.f32, 0, rows, cols, cols, 4)
+    _load_rows_to_ub(
+        src_ptr,
+        pto.f32,
+        4096,
+        rows,
+        cols,
+        TCVT_PADDED_SHAPE[1],
+        4,
+    )
     _wait_for_loads()
-    template_tcvt_f32_to_i16_1d.py_fn(src, out_1d)
-    _tcvt_f32_to_i16_2d_body(src, out_2d)
+    pto.tile.cvt(src_1d, out_1d)
+    pto.tile.cvt(src_2d, out_2d)
     _wait_for_stores()
-    _store_from_ub(2048, pto.i16, out_1d_ptr, dst_byte_count)
-    _store_from_ub(3072, pto.i16, out_2d_ptr, dst_byte_count)
+    _store_rows_from_ub(8192, pto.i16, out_1d_ptr, rows, cols, cols, 2)
+    _store_rows_from_ub(
+        12288,
+        pto.i16,
+        out_2d_ptr,
+        rows,
+        cols,
+        TCVT_PADDED_SHAPE[1],
+        2,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -350,16 +561,28 @@ def elementwise_texpands_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i32, "gm"),
 ):
     rows, cols = TEXPANDS_SHAPE
-    byte_count = rows * cols * 4
 
     out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i32, addr=0)
-    out_2d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i32, addr=2048)
+    out_2d = pto.alloc_tile(
+        shape=list(TEXPANDS_PADDED_SHAPE),
+        dtype=pto.i32,
+        valid_shape=[rows, cols],
+        addr=4096,
+    )
 
-    template_texpands_1d.py_fn(23, out_1d)
-    template_texpands.py_fn(23, out_2d)
+    pto.tile.expands(23, out_1d)
+    pto.tile.expands(23, out_2d)
     _wait_for_stores()
-    _store_from_ub(0, pto.i32, out_1d_ptr, byte_count)
-    _store_from_ub(2048, pto.i32, out_2d_ptr, byte_count)
+    _store_rows_from_ub(0, pto.i32, out_1d_ptr, rows, cols, cols, 4)
+    _store_rows_from_ub(
+        4096,
+        pto.i32,
+        out_2d_ptr,
+        rows,
+        cols,
+        TEXPANDS_PADDED_SHAPE[1],
+        4,
+    )
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
@@ -471,7 +694,7 @@ def _tcvt_inputs():
 
 CASES = [
     _equivalence_case(
-        "elementwise_tabs_f32_single_row_tail_1d_2d_equivalence",
+        "elementwise_tabs_f32_multirow_tail_1d_2d_equivalence",
         elementwise_tabs_1d_2d_equivalence,
         inputs=_tabs_inputs,
         expected=lambda src: np.abs(src),
