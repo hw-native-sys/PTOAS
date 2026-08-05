@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Minimized: get_block_idx → bound check → VF load/store.
+// ptoas → bisheng fails with:
+//   "Do not know how to expand the result of this operator!"
+// Full multi-buffer dump that first showed the failure:
+//   current_vmi_multibuf_expand_full.pto
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+    func.func @block_idx_guard_vf(%arg0: !pto.ptr<bf16, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      %c0_i64 = arith.constant 0 : i64
+      %ub0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+      %c0 = arith.constant 0 : index
+      %c6 = arith.constant 6 : index
+      %c1 = arith.constant 1 : index
+      scf.for %w = %c0 to %c6 step %c1 {
+        %bid = pto.get_block_idx
+        %c8_i64 = arith.constant 8 : i64
+        %q = arith.floordivsi %bid, %c8_i64 : i64
+        %qi = arith.index_cast %q : i64 to index
+        %c43 = arith.constant 43 : index
+        %ok = arith.cmpi slt, %qi, %c43 : index
+        scf.if %ok {
+          %c256 = arith.constant 256 : index
+          %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+          %ptr = pto.castptr %ub0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+          %c0i = arith.constant 0 : index
+          %v = pto.vmi.vload %ptr[%c0i] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+          pto.vmi.vstore %v, %ptr[%c0i], %mask : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<256xpred>
+        }
+      }
+      return
+    }
+  }
+}

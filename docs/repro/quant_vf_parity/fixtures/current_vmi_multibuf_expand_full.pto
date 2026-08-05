@@ -1,0 +1,195 @@
+// Full multi-buffer dump (dyn flags + get_block_idx + VF). Expand failure minimizes to current_vmi_block_idx_vf.pto.
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+    func.func @multibuf_expand_kernel(%arg0: !pto.ptr<bf16, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      %c0_i64 = arith.constant 0 : i64
+      %0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+      %c0 = arith.constant 0 : index
+      %c6 = arith.constant 6 : index
+      %c1 = arith.constant 1 : index
+      scf.for %arg1 = %c0 to %c6 step %c1 {
+        %c4 = arith.constant 4 : index
+        %1 = arith.cmpi sge, %arg1, %c4 : index
+        scf.if %1 {
+          %c4_0 = arith.constant 4 : index
+          %6 = arith.subi %arg1, %c4_0 : index
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %6]
+          %c9 = arith.constant 9 : index
+          %7 = arith.muli %arg1, %c9 : index
+          %8 = pto.get_block_idx
+          %c8_i64 = arith.constant 8 : i64
+          %9 = arith.floordivsi %8, %c8_i64 : i64
+          %10 = arith.index_cast %9 : i64 to index
+          %11 = arith.addi %7, %10 : index
+          %c52 = arith.constant 52 : index
+          %12 = arith.cmpi slt, %11, %c52 : index
+          scf.if %12 {
+            %14 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+            %c8192 = arith.constant 8192 : index
+            %15 = arith.muli %arg1, %c8192 : index
+            %c8192_2 = arith.constant 8192 : index
+            %16 = arith.subi %15, %c8192_2 : index
+            %17 = pto.addptr %14, %16 : <bf16, ub> -> <bf16, ub>
+            %c589824 = arith.constant 589824 : index
+            %18 = arith.muli %arg1, %c589824 : index
+            %19 = pto.get_block_idx
+            %c2_i64 = arith.constant 2 : i64
+            %20 = arith.floordivsi %19, %c2_i64 : i64
+            %c16384_i64 = arith.constant 16384 : i64
+            %21 = arith.muli %20, %c16384_i64 : i64
+            %22 = arith.index_cast %21 : i64 to index
+            %23 = arith.addi %18, %22 : index
+            %24 = pto.get_block_idx
+            %c2_i64_3 = arith.constant 2 : i64
+            %25 = arith.remsi %24, %c2_i64_3 : i64
+            %c1024_i64 = arith.constant 1024 : i64
+            %26 = arith.muli %25, %c1024_i64 : i64
+            %27 = arith.index_cast %26 : i64 to index
+            %28 = arith.addi %23, %27 : index
+            %c2359296 = arith.constant 2359296 : index
+            %29 = arith.subi %28, %c2359296 : index
+            %30 = pto.addptr %arg0, %29 : <bf16, gm> -> <bf16, gm>
+            %c8_i64_4 = arith.constant 8 : i64
+            %c2048_i64 = arith.constant 2048 : i64
+            %c4096_i64 = arith.constant 4096 : i64
+            %c2048_i64_5 = arith.constant 2048 : i64
+            %c4_i64 = arith.constant 4 : i64
+            pto.mte_ub_gm %17, %30, %c2048_i64_5 nburst(%c8_i64_4, %c2048_i64, %c4096_i64) l2_cache_ctl(%c4_i64) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0>} : !pto.ptr<bf16, ub>, !pto.ptr<bf16, gm>, i64, i64, i64, i64, i64
+          }
+          %c4_1 = arith.constant 4 : index
+          %13 = arith.subi %arg1, %c4_1 : index
+          pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %13]
+        }
+        %c5 = arith.constant 5 : index
+        %2 = arith.cmpi slt, %arg1, %c5 : index
+        %c3 = arith.constant 3 : index
+        %3 = arith.cmpi sge, %arg1, %c3 : index
+        %4 = arith.andi %2, %3 : i1
+        scf.if %4 {
+          %c3_0 = arith.constant 3 : index
+          %6 = arith.remsi %arg1, %c3_0 : index
+          pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %6]
+          %c3_1 = arith.constant 3 : index
+          %7 = arith.remsi %arg1, %c3_1 : index
+          pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %7]
+          %c9 = arith.constant 9 : index
+          %8 = arith.muli %arg1, %c9 : index
+          %9 = pto.get_block_idx
+          %c8_i64 = arith.constant 8 : i64
+          %10 = arith.floordivsi %9, %c8_i64 : i64
+          %11 = arith.index_cast %10 : i64 to index
+          %12 = arith.addi %8, %11 : index
+          %c43 = arith.constant 43 : index
+          %13 = arith.cmpi slt, %12, %c43 : index
+          scf.if %13 {
+            %c256 = arith.constant 256 : index
+            %16 = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+            %c0_4 = arith.constant 0 : index
+            %c8 = arith.constant 8 : index
+            %c1_5 = arith.constant 1 : index
+            scf.for %arg2 = %c0_4 to %c8 step %c1_5 {
+              %c0_6 = arith.constant 0 : index
+              %c4_7 = arith.constant 4 : index
+              %c1_8 = arith.constant 1 : index
+              scf.for %arg3 = %c0_6 to %c4_7 step %c1_8 {
+                %17 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+                %c3_9 = arith.constant 3 : index
+                %18 = arith.remsi %arg1, %c3_9 : index
+                %c8192 = arith.constant 8192 : index
+                %19 = arith.muli %18, %c8192 : index
+                %c1024 = arith.constant 1024 : index
+                %20 = arith.muli %arg2, %c1024 : index
+                %21 = arith.addi %19, %20 : index
+                %c256_10 = arith.constant 256 : index
+                %22 = arith.muli %arg3, %c256_10 : index
+                %23 = arith.addi %21, %22 : index
+                %24 = pto.addptr %17, %23 : <bf16, ub> -> <bf16, ub>
+                %c0_11 = arith.constant 0 : index
+                %25 = pto.vmi.vload %24[%c0_11] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+                %26 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+                %c3_12 = arith.constant 3 : index
+                %27 = arith.remsi %arg1, %c3_12 : index
+                %c8192_13 = arith.constant 8192 : index
+                %28 = arith.muli %27, %c8192_13 : index
+                %c1024_14 = arith.constant 1024 : index
+                %29 = arith.muli %arg2, %c1024_14 : index
+                %30 = arith.addi %28, %29 : index
+                %c256_15 = arith.constant 256 : index
+                %31 = arith.muli %arg3, %c256_15 : index
+                %32 = arith.addi %30, %31 : index
+                %c24576 = arith.constant 24576 : index
+                %33 = arith.addi %32, %c24576 : index
+                %34 = pto.addptr %26, %33 : <bf16, ub> -> <bf16, ub>
+                %c0_16 = arith.constant 0 : index
+                pto.vmi.vstore %25, %34[%c0_16], %16 : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<256xpred>
+              }
+            }
+          }
+          %c3_2 = arith.constant 3 : index
+          %14 = arith.remsi %arg1, %c3_2 : index
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %14]
+          %c3_3 = arith.constant 3 : index
+          %15 = arith.remsi %arg1, %c3_3 : index
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>, %15]
+        }
+        %c2 = arith.constant 2 : index
+        %5 = arith.cmpi slt, %arg1, %c2 : index
+        scf.if %5 {
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>, %arg1]
+          %c9 = arith.constant 9 : index
+          %6 = arith.muli %arg1, %c9 : index
+          %7 = pto.get_block_idx
+          %c8_i64 = arith.constant 8 : i64
+          %8 = arith.floordivsi %7, %c8_i64 : i64
+          %9 = arith.index_cast %8 : i64 to index
+          %10 = arith.addi %6, %9 : index
+          %c16 = arith.constant 16 : index
+          %11 = arith.cmpi slt, %10, %c16 : index
+          scf.if %11 {
+            %c589824 = arith.constant 589824 : index
+            %12 = arith.muli %arg1, %c589824 : index
+            %13 = pto.get_block_idx
+            %c2_i64 = arith.constant 2 : i64
+            %14 = arith.floordivsi %13, %c2_i64 : i64
+            %c16384_i64 = arith.constant 16384 : i64
+            %15 = arith.muli %14, %c16384_i64 : i64
+            %16 = arith.index_cast %15 : i64 to index
+            %17 = arith.addi %12, %16 : index
+            %18 = pto.get_block_idx
+            %c2_i64_0 = arith.constant 2 : i64
+            %19 = arith.remsi %18, %c2_i64_0 : i64
+            %c1024_i64 = arith.constant 1024 : i64
+            %20 = arith.muli %19, %c1024_i64 : i64
+            %21 = arith.index_cast %20 : i64 to index
+            %22 = arith.addi %17, %21 : index
+            %23 = pto.addptr %arg0, %22 : <bf16, gm> -> <bf16, gm>
+            %24 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+            %c8192 = arith.constant 8192 : index
+            %25 = arith.muli %arg1, %c8192 : index
+            %26 = pto.addptr %24, %25 : <bf16, ub> -> <bf16, ub>
+            %c8_i64_1 = arith.constant 8 : i64
+            %c4096_i64 = arith.constant 4096 : i64
+            %c2048_i64 = arith.constant 2048 : i64
+            %c0_i64_2 = arith.constant 0 : i64
+            %c2048_i64_3 = arith.constant 2048 : i64
+            pto.mte_gm_ub %23, %26, %c0_i64_2, %c2048_i64_3 nburst(%c8_i64_1, %c4096_i64, %c2048_i64) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0>} : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+          }
+          pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %arg1]
+        }
+      }
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+      return
+    }
+  }
+}

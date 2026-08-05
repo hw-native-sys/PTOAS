@@ -22,6 +22,14 @@ module {
         : !pto.vmi.vreg<256xi16> -> !pto.vmi.vreg<256xi16>
     return %abs : !pto.vmi.vreg<256xi16>
   }
+
+  // bf16: no absf — clear sign bit via bitcast + andi 0x7FFF (ASC vand path).
+  func.func @vmi_to_vpto_abs_bf16(
+      %value: !pto.vmi.vreg<128xbf16>) -> !pto.vmi.vreg<128xbf16> {
+    %abs = pto.vmi.vabs %value
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xbf16>
+    return %abs : !pto.vmi.vreg<128xbf16>
+  }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_absf(
@@ -39,6 +47,11 @@ module {
 // CHECK-DAG: %[[AI0:.*]] = pto.vabs %[[I0]], {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
 // CHECK-DAG: %[[AI1:.*]] = pto.vabs %[[I1]], {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
 // CHECK: return %[[AI0]], %[[AI1]]
+
+// CHECK-LABEL: func.func @vmi_to_vpto_abs_bf16(
+// CHECK-DAG: pto.vbitcast
+// CHECK-DAG: pto.vand
+// CHECK-NOT: pto.vabs {{.*}}bf16
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

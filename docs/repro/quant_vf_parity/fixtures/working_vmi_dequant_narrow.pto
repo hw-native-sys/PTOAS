@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Narrow twin: G=4 expand across 128 lanes (matched AscendC on device).
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @dequant_strip_narrow(
+      %scale_g: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<num_groups = 4, slots = 1>>,
+      %data: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> {
+    %scale = pto.vmi.vbrc %scale_g {group = 4}
+        : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<num_groups = 4, slots = 1>>
+        -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vmul %data, %scale
+        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+  }
+}

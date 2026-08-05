@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// VMI/PTO: multi-buffer pipe sync with dynamic event indices (loop IV / rem).
+// Minimized from a full double-buffer kernel that fails ptoas -> bisheng with:
+//   "Do not know how to expand the result of this operator!"
+// Constant EVENT_ID* set/wait already work; the dyn form must expand too.
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+    func.func @dyn_pipe_events(%arg0: !pto.ptr<bf16, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      %c0_i64 = arith.constant 0 : i64
+      %ub = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+      %c0 = arith.constant 0 : index
+      %c6 = arith.constant 6 : index
+      %c1 = arith.constant 1 : index
+      scf.for %w = %c0 to %c6 step %c1 {
+        %c3 = arith.constant 3 : index
+        %eid = arith.remsi %w, %c3 : index
+        %c4 = arith.constant 4 : index
+        %ge4 = arith.cmpi sge, %w, %c4 : index
+        scf.if %ge4 {
+          %w_m4 = arith.subi %w, %c4 : index
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %w_m4]
+          %dst = pto.castptr %ub : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+          %c8192 = arith.constant 8192 : index
+          %off = arith.muli %w, %c8192 : index
+          %ub_face = pto.addptr %dst, %off : <bf16, ub> -> <bf16, ub>
+          %gm = pto.addptr %arg0, %off : <bf16, gm> -> <bf16, gm>
+          %c8 = arith.constant 8 : i64
+          %c2048 = arith.constant 2048 : i64
+          %c4096 = arith.constant 4096 : i64
+          %c4_i64 = arith.constant 4 : i64
+          pto.mte_ub_gm %ub_face, %gm, %c2048 nburst(%c8, %c2048, %c4096) l2_cache_ctl(%c4_i64) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0>} : !pto.ptr<bf16, ub>, !pto.ptr<bf16, gm>, i64, i64, i64, i64, i64
+          pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %w_m4]
+        }
+        %c5 = arith.constant 5 : index
+        %lt5 = arith.cmpi slt, %w, %c5 : index
+        %ge3 = arith.cmpi sge, %w, %c3 : index
+        %mid = arith.andi %lt5, %ge3 : i1
+        scf.if %mid {
+          pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %eid]
+          pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %eid]
+          // Minimal VF touch so the waits are meaningful.
+          %c256 = arith.constant 256 : index
+          %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+          %ptr = pto.castptr %ub : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+          %c0i = arith.constant 0 : index
+          %v = pto.vmi.vload %ptr[%c0i] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+          pto.vmi.vstore %v, %ptr[%c0i], %mask : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<256xpred>
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %eid]
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>, %eid]
+        }
+        %c2 = arith.constant 2 : index
+        %lt2 = arith.cmpi slt, %w, %c2 : index
+        scf.if %lt2 {
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>, %w]
+          %src = pto.addptr %arg0, %w : <bf16, gm> -> <bf16, gm>
+          %dst2 = pto.castptr %ub : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+          %c8192b = arith.constant 8192 : index
+          %off2 = arith.muli %w, %c8192b : index
+          %ub2 = pto.addptr %dst2, %off2 : <bf16, ub> -> <bf16, ub>
+          %c8b = arith.constant 8 : i64
+          %c4096b = arith.constant 4096 : i64
+          %c2048b = arith.constant 2048 : i64
+          %c0b = arith.constant 0 : i64
+          pto.mte_gm_ub %src, %ub2, %c0b, %c2048b nburst(%c8b, %c4096b, %c2048b) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0>} : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+          pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %w]
+        }
+      }
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+      return
+    }
+  }
+}

@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// VMI: FP32 abs + group=1 vcmax (1PT path). Layouts assigned by pass pipeline.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @fp32_strip_amax_onept(%x: !pto.vmi.vreg<128xf32>) -> !pto.vmi.vreg<1xf32> {
+    %c128 = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+    %abs = pto.vmi.vabs %x : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    %amax = pto.vmi.vcmax %abs, %mask {group = 1}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf32>
+    return %amax : !pto.vmi.vreg<1xf32>
+  }
+}

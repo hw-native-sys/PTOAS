@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Current product-shaped VMI strip tax: full f32 widen before abs/mul.
+// Uses the full layout-assignment pipeline (like full VMI emission).
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @current_f32_widen_strip(
+      %src: !pto.ptr<bf16, ub>,
+      %dst: !pto.ptr<f32, ub>,
+      %off: index) attributes {pto.kernel} {
+    %c128 = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %xf = pto.vmi.vcvt %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
+    %xa = pto.vmi.vabs %xf, %mask
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %xa, %dst[%off] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}

@@ -1503,6 +1503,22 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
     if (auto vop = dyn_cast<VMIVabsOp>(op)) {
       Type elemType = getVMIElementType(vop.getResult());
       auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
+        // bf16 has no vector absf; clear the sign bit (ASC: vand with 0x7FFF).
+        if (elemType.isBF16()) {
+          auto srcTy = cast<VMIVRegType>(src.getType());
+          Type i16 = builder.getIntegerType(16);
+          auto iTy = VMIVRegType::get(builder.getContext(),
+                                      srcTy.getElementCount(), i16,
+                                      srcTy.getLayout());
+          Value asI = builder.create<VMIBitcastOp>(loc, iTy, src);
+          Value c = builder.create<arith::ConstantOp>(
+              loc, i16, builder.getIntegerAttr(i16, 0x7FFF));
+          Value maskVec =
+              builder.create<VMIBroadcastOp>(loc, iTy, c).getResult();
+          Value cleared =
+              builder.create<VMIAndIOp>(loc, iTy, asI, maskVec).getResult();
+          return builder.create<VMIBitcastOp>(loc, ty, cleared).getResult();
+        }
         if (isFloatType(elemType))
           return builder.create<VMIAbsFOp>(loc, ty, src).getResult();
         return builder.create<VMIAbsIOp>(loc, ty, src).getResult();

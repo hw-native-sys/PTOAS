@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Pre-patch: vabs(bf16) lowers to absf which rejects bf16.
+// On unpatched tip this FAILs; with the worktree patch it PASSes (see desired).
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @current_vabs_bf16(
+      %src: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> {
+    %out = pto.vmi.vabs %src
+        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+  }
+}
