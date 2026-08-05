@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # msopprof PipeUtilization on AscendC vs VMI FP32 block-quant (8192×2048).
+# Backlog only — former FR3; issue solved, not a blocker now.
 # Uses --kernel-name so torch.randn is not collected as the operator.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPRO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BACKLOG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPRO_ROOT="$(cd "${BACKLOG_ROOT}/.." && pwd)"
 OUT="${REPRO_ROOT}/outputs/fp32_block_quant/msopprof"
 NPU_DEVICE="${NPU_DEVICE:-1}"
 PTOAS_ROOT="${PTOAS_ROOT:-/home/jzhuang/work_dir/vmi_work_0804/PTOAS-main}"

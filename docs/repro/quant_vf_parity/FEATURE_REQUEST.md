@@ -18,7 +18,7 @@ requests ask for.
 |----------|--------|--------|
 | **Open — primary** | Feature request 1: `get_block_idx` bound cannot control a vector body | **Blocker** — VMI emit fails; blocks multi-buffer schedules that need that pattern |
 | **Open** | Feature request 2: wide double-buffered dequant disagrees with AscendC | **Still open** — numeric mismatch on the wide schedule |
-| Backlog | Former request 3: FP32 double-buffered block-quant wall-clock | **Solved as a product / schedule issue — not a PTOAS blocker now.** Kept only as backlog (fixtures + notes). |
+| Backlog | Former request 3: FP32 double-buffered block-quant wall-clock | **Solved — not a blocker now.** Parked under [`backlog/`](backlog/). |
 
 ---
 
@@ -141,33 +141,17 @@ After a fix:
 
 ---
 
-## Backlog — solved / not a blocker (kept for history)
+## Backlog — solved / not a blocker
 
 ### Former feature request 3 — FP32 double-buffered block-quant wall-clock
 
-**Issue solved. Not a blocker now. Kept only as backlog.**
+**Issue solved. Not a blocker now. Kept only as backlog** under
+[`backlog/`](backlog/) (fixtures + device scripts). Not part of `fixtures/`
+or the default check script.
 
-Wall-clock at large shape (8192×2048) is within noise of AscendC (~0.98× on
-msopprof and product zero-copy) after the VMI side uses **serial** abs-max row
-loops (`range` → `scf.for`). The earlier ~0.88× gap was from **explicitly
-unrolling** that abs-max strip (huge IR / slower), not from a missing PTOAS
-legalization of `vcmax(group=1)`.
+Wall-clock at 8192×2048 is within noise of AscendC (~0.98×) after serial
+abs-max rows (`range` → `scf.for`). The earlier ~0.88× gap was from unrolling
+that strip, not from missing `vcmax(group=1)` legalization.
 
-Fixtures and notes remain for regression and history:
-
-| Artifact | Role |
-|----------|------|
-| [`reference_asc_fp32_block_quant.asc`](fixtures/reference_asc_fp32_block_quant.asc) + [`fp32_block_quant_artifact/`](fixtures/fp32_block_quant_artifact/) | AscendC full kernel + ctypes launch lib |
-| [`current_vmi_fp32_block_quant_*.ptodsl.py`](fixtures/) | VMI full kernel (serial abs-max / pair / quantize) |
-| [`PERF_FINDINGS.md`](fixtures/PERF_FINDINGS.md) | Host + msopprof numbers after the fix |
-| Strip amax fixtures / [`emit_compare_note.md`](fixtures/emit_compare_note.md) | Fragment-only compile checks (never claimed the wall gap) |
-
-Optional re-run (not required to close an open ask):
-
-```bash
-PTOAS_ROOT=/path/to/PTOAS NPU_DEVICE=1 ./scripts/run_fp32_block_quant_device.sh
-./scripts/run_msopprof_fp32_block_quant.sh both
-```
-
-Do **not** treat strip-only PASS, or small residual pipe-metric differences while
-wall-clock is ~parity, as a reason to reopen this as a primary blocker.
+See [`backlog/README.md`](backlog/README.md) and
+[`backlog/fixtures/PERF_FINDINGS.md`](backlog/fixtures/PERF_FINDINGS.md).

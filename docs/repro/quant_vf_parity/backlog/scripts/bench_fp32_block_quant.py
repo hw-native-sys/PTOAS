@@ -23,10 +23,12 @@ from typing import Callable
 import torch
 import torch_npu  # noqa: F401  # registers torch.npu
 
-REPRO = Path(__file__).resolve().parents[1]
-FIXTURES = REPRO / "fixtures"
+# This script lives under backlog/scripts/; package root is two levels up.
+REPRO = Path(__file__).resolve().parents[2]
+BACKLOG = REPRO / "backlog"
+FIXTURES = BACKLOG / "fixtures"
 ASC_SO = FIXTURES / "fp32_block_quant_artifact" / "libfp32_block_quant.so"
-BUILD_SH = REPRO / "scripts" / "build_fp32_block_quant_asc.sh"
+BUILD_SH = BACKLOG / "scripts" / "build_fp32_block_quant_asc.sh"
 N_CORES = int(os.environ.get("RG_N_CORES", "72"))
 
 _ASC_LIB: ctypes.CDLL | None = None

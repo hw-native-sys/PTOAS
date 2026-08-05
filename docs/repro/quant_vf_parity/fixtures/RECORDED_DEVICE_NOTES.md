@@ -1,10 +1,11 @@
-# Recorded on-device results (AscendC vs VMI)
+# Recorded on-device results (open asks only)
 
-These notes support the **open** feature requests (1–2). Former request 3 is
-**solved — not a blocker now** and is kept only as backlog. The compile check in
-`scripts/check_vmi_asc_residual.sh` only covers AscendC `bisheng` and VMI
-`pto-test-opt` / `ptoas`. On-device comparisons (AscendC result vs VMI result)
-were run outside this package.
+Supports **open** feature requests 1–2. Former request 3 is **solved — not a
+blocker now**; see [`../backlog/`](../backlog/).
+
+The compile check in `scripts/check_vmi_asc_residual.sh` only covers AscendC
+`bisheng` and VMI `pto-test-opt` / `ptoas`. On-device comparisons were run
+outside this package.
 
 ## Feature request 1 — block index controlling a vector body (**open — primary**)
 
@@ -33,13 +34,3 @@ Vector bodies that lower on their own (bf16 scale expand + multiply):
 
 - Wide strip: `broken_vmi_dequant_dblbuf.pto` (256 lanes, group 8)
 - Narrow strip: `working_vmi_dequant_narrow.pto` (128 lanes, group 4)
-
-## Backlog — former feature request 3 (solved; not a blocker)
-
-**Issue solved. Not a blocker now. Kept as backlog.**
-
-Full-kernel wall-clock (~0.98× at 8192×2048) is in `PERF_FINDINGS.md`.
-Strip fixtures compile / lower today but are not an open ask:
-
-- AscendC: `reference_asc_fp32_strip_amax.asc`
-- VMI: `current_vmi_fp32_strip_amax.pto`

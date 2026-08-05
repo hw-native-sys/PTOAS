@@ -3,4 +3,4 @@ outputs/
 localhost.localdomain_*_ascend_pt/
 
 # Keep AscendC ctypes launch lib for backlog FP32 device bench (repo root ignores *.so).
-!fixtures/fp32_block_quant_artifact/libfp32_block_quant.so
+!backlog/fixtures/fp32_block_quant_artifact/libfp32_block_quant.so

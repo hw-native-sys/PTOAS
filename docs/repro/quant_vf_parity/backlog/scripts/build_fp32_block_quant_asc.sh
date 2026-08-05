@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build libfp32_block_quant.so from reference AscendC + ctypes host entry.
+# Backlog only — former FR3; issue solved, not a blocker now.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPRO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-FIXTURES="${REPRO_ROOT}/fixtures"
+BACKLOG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FIXTURES="${BACKLOG_ROOT}/fixtures"
 OUT_DIR="${FIXTURES}/fp32_block_quant_artifact"
 OUT_SO="${OUT_DIR}/libfp32_block_quant.so"
 NPU_ARCH="${ASCEND_NPU_ARCH:-dav-3510}"

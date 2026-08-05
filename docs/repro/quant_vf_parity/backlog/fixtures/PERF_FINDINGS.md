@@ -9,7 +9,7 @@ VMI: `current_vmi_fp32_block_quant_{M}x{N}.ptodsl.py` (known-best: pair /
 abs-max / quantize rows all Python `range()` → runtime `scf.for`).
 
 Measured 2026-08-05, device 1, 72 vector cores, CANN 9.1.0-beta.3.
-Host: [`scripts/bench_fp32_block_quant.py`](../scripts/bench_fp32_block_quant.py)
+Host: [`../scripts/bench_fp32_block_quant.py`](../scripts/bench_fp32_block_quant.py)
 (`--timer event`).
 Profiler: `msprof op --aic-metrics=Default,PipeUtilization --kernel-name=…`.
 
@@ -67,6 +67,7 @@ abs-max VMI was ~30.5–31 µs).
 ## How to reproduce
 
 ```bash
-PTOAS_ROOT=/path/to/PTOAS NPU_DEVICE=1 ./scripts/run_fp32_block_quant_device.sh
-./scripts/run_msopprof_fp32_block_quant.sh both
+# From package root (docs/repro/quant_vf_parity/)
+PTOAS_ROOT=/path/to/PTOAS NPU_DEVICE=1 ./backlog/scripts/run_fp32_block_quant_device.sh
+./backlog/scripts/run_msopprof_fp32_block_quant.sh both
 ```

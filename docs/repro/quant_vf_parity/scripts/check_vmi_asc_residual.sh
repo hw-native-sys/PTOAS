@@ -145,39 +145,13 @@ if [ -f "${FIXTURES}/current_vmi_multibuf_expand_full.pto" ] && command -v ptoas
   echo | tee -a "${LOG}"
 fi
 
-# Feature request 2
+# Feature request 2 (open)
 check_asc reference_asc_dequant_dblbuf.asc
 check_vmi_lower broken_vmi_dequant_dblbuf.pto
 check_vmi_lower working_vmi_dequant_narrow.pto
 note "Feature request 2 on-device mismatch: see fixtures/RECORDED_DEVICE_NOTES.md"
 
-# Backlog — former feature request 3 (solved; not a blocker)
-note "Backlog FR3: issue solved, not a blocker now — kept for regression only"
-check_asc reference_asc_fp32_block_quant.asc
-if [ -f "${FIXTURES}/current_vmi_fp32_block_quant_8192x2048.ptodsl.py" ]; then
-  echo "=== current_vmi_fp32_block_quant_8192x2048.ptodsl.py (syntax / import) ===" | tee -a "${LOG}"
-  set +e
-  PYTHONPATH="${PTOAS_ROOT}/ptodsl:${PYTHONPATH:-}" python3 -c "
-import ast, pathlib
-p = pathlib.Path('${FIXTURES}/current_vmi_fp32_block_quant_8192x2048.ptodsl.py')
-ast.parse(p.read_text())
-print('ast ok', p.name)
-" > "${OUT}/current_vmi_fp32_block_quant_8192x2048.ptodsl.log" 2>&1
-  ptodsl_rc=$?
-  set -e
-  if [ "${ptodsl_rc}" -eq 0 ]; then
-    pass "current_vmi_fp32_block_quant_8192x2048.ptodsl.py parses"
-  else
-    fail "current_vmi_fp32_block_quant_8192x2048.ptodsl.py parse exit ${ptodsl_rc}"
-    tail -20 "${OUT}/current_vmi_fp32_block_quant_8192x2048.ptodsl.log" | tee -a "${LOG}"
-  fi
-  echo | tee -a "${LOG}"
-fi
-note "Backlog FP32 µs (solved wall gap): fixtures/PERF_FINDINGS.md"
-note "Optional backlog device run: ./scripts/run_fp32_block_quant_device.sh (skip if no NPU)"
-
-check_asc reference_asc_fp32_strip_amax.asc
-check_vmi_lower current_vmi_fp32_strip_amax.pto
-note "Backlog strip fixtures are VF fragments only (not an open ask)"
+# Former FR3 lived under fixtures/; solved and moved — not checked here.
+note "Solved FP32 block-quant wall gap: not a blocker now — see backlog/ (not run by this script)"
 
 echo "Full log: ${LOG}" | tee -a "${LOG}"
