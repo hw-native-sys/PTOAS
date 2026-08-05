@@ -82,11 +82,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // CHECK-LABEL: define void @canonical_x2_f16_mix_aiv
 // CHECK: call { <128 x half>, <128 x half> } @llvm.hivm.vldsx2.v128f16
-// CHECK: call void @llvm.hivm.vstsx2.v128i16(<128 x i16>
+// CHECK: call void @llvm.hivm.vstsx2.v128f16(<128 x half>
 
 // CHECK-LABEL: define void @canonical_vsldb_ui64_mix_aiv
 // CHECK: call <32 x i64> @llvm.hivm.vsldb.v32i64
 
 // CHECK-LABEL: define void @canonical_fp8_block_post_mix_aiv
-// CHECK: call ptr addrspace(6) @llvm.hivm.vsstb.post.v256fp8e4m3
-// CHECK: call void @llvm.hivm.vsstb.v256fp8e4m3
+// CHECK: call ptr addrspace(6) @llvm.hivm.vsstb.post.v256i8
+// CHECK: call void @llvm.hivm.vsstb.v256i8

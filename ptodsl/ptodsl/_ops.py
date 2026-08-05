@@ -497,6 +497,7 @@ def vldus(source, align):
     op = _pto.VldusOp(
         result_type,
         _pto.AlignType.get(),
+        None,
         unwrap_surface_value(source),
         unwrap_surface_value(align),
     )
@@ -1789,6 +1790,7 @@ def vstus(align_in, offset, value, base):
     return wrap_surface_value(
         _pto.VstusOp(
             _pto.AlignType.get(),
+            None,
             unwrap_surface_value(align_in),
             _coerce_i32(offset, context="vstus(align, offset, value, base)"),
             unwrap_surface_value(value),
