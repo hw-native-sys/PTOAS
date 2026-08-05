@@ -403,8 +403,9 @@ void InsertSyncAnalysis::InsertSync(
 //
 // An access has no loop-carried dependence on itself when it moves far enough per
 // iteration that the memory two iterations touch never meets. This proves that for
-// a `pto.partition_view` whose offset is affine in the enclosing loop's induction
-// variable, which is the shape a store walking a tensor takes.
+// a `pto.partition_view` whose offset is affine in the induction variable of the loop
+// whose back edge carries the dependence, which is the shape a store walking a tensor
+// takes.
 //
 // Every condition is cumulative and the default is to keep the sync: each helper
 // refuses the moment an input is not a compile-time constant.
@@ -607,11 +608,10 @@ static bool partitionViewIterationsDisjoint(pto::PartitionViewOp view,
 /// Scoped to a self pair: the general case of two different accesses proven never to
 /// meet at any iteration distance needs a pairwise comparison this does not attempt.
 ///
-/// Multi-buffered accesses are refused rather than analysed. A base memory object
-/// with more than one address is a rotating slot set, where the carried dependence is
-/// real and merely sits at the rotation distance; excusing it would drop an ordering
-/// the program needs. This predicate only ever claims that no carried dependence
-/// exists at any distance, so the two cases are kept apart by construction.
+/// The multi-address refusal below is a precondition rather than a discriminator.
+/// A `pto.partition_view` source is constrained to `TensorViewType`; more than one
+/// base address arises only from a multi-tile argument or `pto.subview`, neither of
+/// which can inhabit that type.
 static bool isCarriedSelfDepAffineDisjoint(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound,
@@ -698,9 +698,7 @@ void InsertSyncAnalysis::MemAnalyze(
 
   // Carried deps whose two iterations provably touch disjoint memory. Kept separate
   // from the forward drop above because this case only arrives on the back-edge pass,
-  // which the forward drop deliberately does not look at. The forward drop's warning
-  // about back edges is about ROTATION -- a real dependence at the rotation distance --
-  // and rotating accesses are refused here, so the two claims cannot be confused.
+  // which the forward drop deliberately does not look at.
   if (forEndIndex.has_value()) {
     scf::ForOp carryingFor = carryingForOf(syncIR_, forEndIndex);
     auto isDroppableCarried = [&](const std::pair<const BaseMemInfo *,
