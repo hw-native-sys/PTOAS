@@ -194,6 +194,12 @@ struct VMIHistogramLayoutFact {
   VMILayoutAttr resultLayout;
 };
 
+struct VMIVselrLayoutFact {
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr indexLayout;
+  VMILayoutAttr resultLayout;
+};
+
 class VMILayoutSupport {
 public:
   FailureOr<VMILoadLayoutFact>
@@ -392,6 +398,17 @@ public:
 
   FailureOr<VMIHistogramLayoutFact>
   getVchistLayoutFact(VMIVchistOp op, std::string *reason = nullptr) const;
+
+  FailureOr<VMIVselrLayoutFact>
+  getPreferredVselrLayoutFact(VMIVselrOp op,
+                              std::string *reason = nullptr) const;
+
+  FailureOr<VMIVselrLayoutFact>
+  getVselrLayoutFact(VMIVselrOp op,
+                     std::string *reason = nullptr) const;
+
+  LogicalResult getVselrSupport(VMIVselrOp op,
+                                std::string *reason = nullptr) const;
 
   LogicalResult getGroupReduceAddFSupport(VMIGroupReduceAddFOp op,
                                           std::string *reason = nullptr) const;

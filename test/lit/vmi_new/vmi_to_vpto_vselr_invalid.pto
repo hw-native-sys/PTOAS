@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @vselr_width_mismatch(
+      %source: !pto.vmi.vreg<64xf32>, %index: !pto.vmi.vreg<64xi16>) {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xi16>
+        -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vselr' op requires index element storage width to match source element storage width
+
+// -----
+
+module {
+  func.func @vselr_short_f16(
+      %source: !pto.vmi.vreg<4xf16>, %index: !pto.vmi.vreg<4xi16>) {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<4xf16>, !pto.vmi.vreg<4xi16>
+        -> !pto.vmi.vreg<4xf16>
+    return
+  }
+}
+
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
+// CHECK-SAME: N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit
+// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements
+
+// -----
+
+module {
+  func.func @vselr_multichunk_source(
+      %source: !pto.vmi.vreg<128xf32>, %index: !pto.vmi.vreg<64xi32>) {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<64xi32>
+        -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
+// CHECK-SAME: N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit
+// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements
+
+// -----
+
+module {
+  func.func @vselr_all_multichunk(
+      %source: !pto.vmi.vreg<128xf32>, %index: !pto.vmi.vreg<128xi32>) {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xi32>
+        -> !pto.vmi.vreg<128xf32>
+    return
+  }
+}
+
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
+// CHECK-SAME: N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit
+// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements

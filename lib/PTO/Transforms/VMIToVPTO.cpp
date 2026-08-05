@@ -8954,6 +8954,47 @@ struct OneToNVMISelectOpPattern : OpConversionPattern<VMISelectOp> {
   }
 };
 
+struct OneToNVMIVselrOpPattern : OpConversionPattern<VMIVselrOp> {
+  using OpConversionPattern<VMIVselrOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(VMIVselrOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ValueRange sourceParts = adaptor.getSource();
+    ValueRange indexParts = adaptor.getIndex();
+    FailureOr<SmallVector<Type>> maybeResultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(maybeResultTypes))
+      return failure();
+    SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
+
+    if (sourceParts.size() != 1 || indexParts.size() != 1 ||
+        resultTypes.size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "vselr supports only one physical source/index/result part");
+
+    Value source = sourceParts.front();
+    Value index = indexParts.front();
+    auto sourceType = dyn_cast<VRegType>(source.getType());
+    auto indexType = dyn_cast<VRegType>(index.getType());
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    if (!sourceType || !indexType || !resultType ||
+        sourceType != resultType ||
+        sourceType.getElementCount() != indexType.getElementCount() ||
+        pto::getPTOStorageElemBitWidth(sourceType.getElementType()) !=
+            pto::getPTOStorageElemBitWidth(indexType.getElementType()))
+      return rewriter.notifyMatchFailure(
+          op, "vselr physical source/index/result type mismatch");
+
+    Value result =
+        rewriter.create<VselrOp>(op.getLoc(), resultType, source, index)
+            .getResult();
+    replaceOpWithFlatConvertedValues(rewriter, op, result,
+                                     *this->getTypeConverter());
+    return success();
+  }
+};
+
 struct OneToNVMIActivePrefixIndexOpPattern
     : OpConversionPattern<VMIActivePrefixIndexOp> {
   using OpConversionPattern<
@@ -11514,7 +11555,8 @@ void populateVMIConversionPatterns(
       OneToNVMIBinaryOpPattern<VMIShRSIOp, VshrOp>,
       OneToNVMIUnaryOpPattern<VMINotOp, VnotOp>,
       OneToNVMICmpOpPattern<VMICmpFOp>, OneToNVMICmpOpPattern<VMICmpIOp>,
-      OneToNVMISelectOpPattern, OneToNVMIActivePrefixIndexOpPattern,
+      OneToNVMISelectOpPattern, OneToNVMIVselrOpPattern,
+      OneToNVMIActivePrefixIndexOpPattern,
       OneToNVMICompressOpPattern, OneToNVMICompressStoreOpPattern,
       OneToNVMIReduceAddIOpPattern, OneToNVMIReduceAddFOpPattern,
       OneToNVMIGroupBroadcastOpPattern, OneToNVMIVdhistOpPattern,
@@ -12169,6 +12211,12 @@ checkSupportedReluShape(VMIReluOp op, std::string *reason = nullptr) {
   return success();
 }
 
+LogicalResult
+checkSupportedVselrShape(VMIVselrOp op, std::string *reason = nullptr) {
+  VMILayoutSupport supports;
+  return supports.getVselrSupport(op, reason);
+}
+
 void emitEnsureLayoutMaterializationError(VMIEnsureLayoutOp ensure,
                                           VMIVRegType sourceType,
                                           VMIVRegType resultType,
@@ -12659,6 +12707,18 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return emitMaskableUnsupported(
           op, "pto.vmi.select",
           cast<VMIVRegType>(select.getResult().getType()));
+    if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
+      std::string reason;
+      if (succeeded(checkSupportedVselrShape(vselr, &reason)))
+        return WalkResult::advance();
+      vselr.emitError()
+          << kVMIDiagUnsupportedPrefix
+          << "pto.vmi.vselr supports only contiguous lane_stride=1 layouts "
+             "with N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit "
+             "elements ("
+          << reason << ")";
+      return WalkResult::interrupt();
+    }
 
     if (auto cmpf = dyn_cast<VMICmpFOp>(op)) {
       WalkResult physical = emitMaskableUnsupported(

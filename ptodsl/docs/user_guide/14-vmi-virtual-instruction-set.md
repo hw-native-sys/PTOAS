@@ -747,6 +747,12 @@ out = pto.vmi.vselr(src, idx)
 **Constraints**:
 - The result type is inferred directly from `source`.
 - `index` must be an integer-typed VMI vector.
+- Source and index element storage widths must match and be 8, 16, or 32 bits.
+- Source, index, and result must use contiguous layout. The supported shapes
+  are exactly 256 lanes for 8-bit elements, 128 lanes for 16-bit elements, or
+  64 lanes for 32-bit elements.
+- Every index value must identify a valid lane in `source`; out-of-range index
+  behavior is unspecified.
 
 ---
 

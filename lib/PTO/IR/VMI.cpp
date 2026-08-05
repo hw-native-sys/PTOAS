@@ -3829,6 +3829,17 @@ LogicalResult VMIVselrOp::verify() {
   if (!isa<IntegerType>(indexType.getElementType()))
     return emitOpError("requires index element type to be integer");
 
+  unsigned sourceBits =
+      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  unsigned indexBits =
+      pto::getPTOStorageElemBitWidth(indexType.getElementType());
+  if (sourceBits != 8 && sourceBits != 16 && sourceBits != 32)
+    return emitOpError(
+        "requires source/result element storage width to be 8, 16, or 32 bits");
+  if (indexBits != sourceBits)
+    return emitOpError(
+        "requires index element storage width to match source element storage width");
+
   bool sourceHasLayout = isLayoutAssigned(sourceType);
   bool indexHasLayout = isLayoutAssigned(indexType);
   bool resultHasLayout = isLayoutAssigned(resultType);

@@ -37,7 +37,7 @@
 | 29 | `pto.vmi.vcmp` | 3: Eltwise | A | Elementwise compare → mask |
 | 30 | `pto.vmi.vcmps` | 3: Eltwise | A | Vector-scalar compare → mask |
 | 31 | `pto.vmi.vsel` | 3: Eltwise | A | Predicate select |
-| 32 | `pto.vmi.vselr` | 3: Eltwise | A | Dynamic lane permute |
+| 32 | `pto.vmi.vselr` | 3: Eltwise | C | Dynamic lane select; contiguous, exact-width shape |
 | 33 | `pto.vmi.vbrc` | 4: Broadcast | A/B | Broadcast scalar/group-slot |
 | 34 | `pto.vmi.vcadd` | 5: Reduce | B | Add-reduction |
 | 35 | `pto.vmi.vcmax` | 5: Reduce | B | Max-reduction |

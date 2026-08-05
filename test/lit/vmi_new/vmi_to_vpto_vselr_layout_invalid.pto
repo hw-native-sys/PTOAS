@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @vselr_non_contiguous_layout(
+      %source: !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %index: !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %result = pto.vmi.vselr %source, %index
+        : !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result
+        : !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vselr supports only contiguous lane_stride=1 layouts
+// CHECK-SAME: vselr requires contiguous layouts and exactly N=256 for 8-bit, N=128 for 16-bit, or N=64 for 32-bit elements

@@ -798,6 +798,18 @@ struct LayoutSolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
+      if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
+        VMILayoutSupport supports;
+        FailureOr<VMIVselrLayoutFact> fact =
+            supports.getPreferredVselrLayoutFact(vselr);
+        if (failed(fact))
+          return WalkResult::advance();
+        requestDataUse(vselr.getSourceMutable(), fact->sourceLayout);
+        requestDataUse(vselr.getIndexMutable(), fact->indexLayout);
+        if (failed(setNaturalLayout(vselr.getResult(), fact->resultLayout, op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
       if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
         if (failed(setNaturalLayout(activePrefix.getResult(),
                                     getContiguousLayout(), op)))

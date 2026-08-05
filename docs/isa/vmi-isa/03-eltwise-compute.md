@@ -1,6 +1,8 @@
 # 3. Eltwise Compute
 
-> **Category:** A (layout-passthrough). **Mask:** `Pg` (optional governing predicate, except `vselr` which has none).
+> **Category:** A (layout-passthrough) for ordinary per-lane operations;
+> `vselr` is classified separately as Category C below. **Mask:** `Pg`
+> (optional governing predicate, except `vselr` which has none).
 >
 > Pure per-lane ops. Layout passes through unchanged. An operand whose
 > cardinality along an axis is 1 becomes a broadcast (replicate-read, never
@@ -16,7 +18,7 @@
 - **semantics:** Unified fp/int elementwise add / subtract / multiply.
 
   ```c
-  for (int i = 0; i < L; i++)
+  for (int i = 0; i < N; i++)
       dst[i] = mask[i] ? lhs[i] + rhs[i] : (pmode_merge ? dst_old[i] : 0);
   ```
 
@@ -512,47 +514,54 @@ scalar type must match the vector element type.
 
 ### `pto.vmi.vselr`
 
+- **layout contract:** Category C (contiguous-required). Source, index, and
+  result use contiguous layout; an arbitrary input layout is not passed through
+  this operation. Compilation may materialize a contiguous representation at
+  this boundary. IR that reaches this operation with an assigned
+  non-contiguous layout is unsupported.
+
 - **semantics:** Dynamic lane permutation: `result[i] = source[index[i]]`.
 
   ```c
-  for (int i = 0; i < L; i++)
+  for (int i = 0; i < N; i++)
       dst[i] = src[index[i]];
   ```
 
 - **syntax:**
   ```mlir
-  %r = pto.vmi.vselr %source, %index : !pto.vmi.vreg<L×T>, !pto.vmi.vreg<L×index_T> -> !pto.vmi.vreg<L×T>
+  %r = pto.vmi.vselr %source, %index : !pto.vmi.vreg<N×T>, !pto.vmi.vreg<N×index_T> -> !pto.vmi.vreg<N×T>
   ```
 - **operands:**
 
   | Operand | Type | Description |
   |---|---|---|
-  | `source` | `!pto.vmi.vreg<L×T>` | Source vector to permute from |
-  | `index` | `!pto.vmi.vreg<L×index_T>` | Per-lane source lane index |
+  | `source` | `!pto.vmi.vreg<N×T>` | Source vector to select from |
+  | `index` | `!pto.vmi.vreg<N×index_T>` | Per-lane source lane index |
 
 - **results:**
 
   | Result | Type | Description |
   |---|---|---|
-  | `result` | `!pto.vmi.vreg<L×T>` | Permuted result |
+  | `result` | `!pto.vmi.vreg<N×T>` | Permuted result |
 
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
-- **lowering to `pto.mi:**
-  ```
-  K × pto.vselr (+ index reg setup)
-  ```
-  `#mi = K`, `dep = 1` (+1 for index setup). +1 index vreg.
+- **datatypes:** 8-, 16-, and 32-bit integer or floating-point source/result
+  elements; `index_T` must be an integer type with the same storage width as
+  `T`.
+- **constraints:** Source, index, and result have the same lane count. The
+  supported shapes are exactly `256×T` for 8-bit elements, `128×T` for 16-bit
+  elements, and `64×T` for 32-bit elements. Every `index[i]` must identify a
+  valid source lane; behavior is unspecified for an out-of-range index.
 
 - **notes:**
   - This is the permute/gather class — it is the register-resident realization
     of a grouped broadcast.
   - `vselr` takes no mask; the index vector encodes the permutation directly.
-  - Not A5-native `vselrv2` (that form is not available on A5).
+  - `vselrv2` is not available on A5 and does not add other supported shapes.
 
 - **example:**
   ```mlir
   %r = pto.vmi.vselr %src, %idx
-      : !pto.vmi.vreg<64×f16>, !pto.vmi.vreg<4×i16> -> !pto.vmi.vreg<4×f16>
+      : !pto.vmi.vreg<128×f16>, !pto.vmi.vreg<128×i16> -> !pto.vmi.vreg<128×f16>
   ```
 
 ---
