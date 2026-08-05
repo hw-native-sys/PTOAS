@@ -88,6 +88,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VMIMaskUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -280,28 +281,7 @@ lowerMaskedUnary(UnifiedOp op, OpBuilder &builder,
 // Category C1 helpers: vcmp / vcmps
 //===----------------------------------------------------------------------===//
 
-/// Returns true if `seed` is provably an all-active mask (every lane active),
-/// so `mask_and(x, seed)` is the identity and the AND can be skipped. Covers a
-/// `pset` (all lanes active by definition) and a `create_mask` whose
-/// active_lanes is a constant >= the mask lane count.
-static bool isAllActiveSeed(Value seed) {
-  Operation *def = seed.getDefiningOp();
-  if (!def) {
-    return false;
-  }
-  if (isa<VMIPsetOp>(def)) {
-    return true;
-  }
-  if (auto cm = dyn_cast<VMICreateMaskOp>(def)) {
-    auto maskTy = cast<VMIMaskType>(cm.getResult().getType());
-    if (auto cst = cm.getActiveLanes().getDefiningOp<arith::ConstantOp>()) {
-      if (auto ia = dyn_cast<IntegerAttr>(cst.getValue())) {
-        return ia.getInt() >= maskTy.getElementCount();
-      }
-    }
-  }
-  return false;
-}
+// isAllActiveSeed lives in VMIMaskUtils (shared with VMIPredicateFold).
 
 static bool isCompactGroupCount(int64_t count) {
   return count == kSingleGroupCount || count == mlir::pto::kValue2 ||

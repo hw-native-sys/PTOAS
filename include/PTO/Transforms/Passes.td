@@ -1132,6 +1132,28 @@ def VMINormalizeSignlessIntToUnsigned :
   let dependentDialects = ["pto::PTODialect"];
 }
 
+def VMIPredicateFold : Pass<"vmi-predicate-fold", "ModuleOp"> {
+  let summary = "Fold statically proven VMI vcmp/vsel predicates (pad DCE)";
+  let description = [{
+    Constant-proves lane ranges for `vci` / `vadds(vci(0), C)` / `vbrc(C)`
+    (and simple affine `iv*stride+C` bases with known `scf.for` bounds), then:
+
+      * folds `vcmp`/`vcmps` whose result is all-true or all-false
+      * rewrites `vsel(all_true, t, f) → t` and `vsel(all_false, t, f) → f`
+      * rewrites `vsel(m, x, x) → x`
+      * DCEs unused compare / broadcast defs
+
+    Enables frontends to always emit expert-pad `vcmp_lt`+`vsel` and rely on
+    the compiler when `num_experts` covers the index span at compile time.
+  }];
+  let constructor = "mlir::pto::createVMIPredicateFoldPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def VMILowerUnifiedToLegacy : Pass<"vmi-lower-unified-to-legacy", "ModuleOp"> {
   let summary = "Lower unified VMI ops to legacy equivalents before layout assignment";
   let description = [{
