@@ -10,7 +10,6 @@
 import ast
 from pathlib import Path
 import unittest
-from pathlib import Path
 
 import ptodsl.tilelib as tilelib
 from ptodsl.tilelib import ScalarSpec, ScalarType, TileSpec, VectorSpec, ViewSpec, select
