@@ -28,6 +28,7 @@ import inspect
 from dataclasses import dataclass
 from enum import Enum
 
+from .._types import _normalize_compact_mode
 from .metadata import ScalarSpec, VectorSpec, ViewSpec
 
 
@@ -363,32 +364,11 @@ def require_elementwise_1d(*operand_names, memory_spaces=("ub", "vec")):
         shapes = []
         valid_shapes = []
         for name in operand_names:
-            if context.get(f"{name}_kind") != "tile":
+            if not _is_flat_local_tile(context, name, allowed_memory_spaces):
                 return False
 
             shape = context.get(f"{name}_shape")
             valid_shape = context.get(f"{name}_valid_shape")
-            if not _is_static_rank2_shape(shape) or not _is_static_rank2_shape(
-                valid_shape
-            ):
-                return False
-            if any(
-                valid > physical
-                for valid, physical in zip(valid_shape, shape)
-            ):
-                return False
-            if context.get(f"{name}_memory_space") not in allowed_memory_spaces:
-                return False
-
-            config = context.get(f"{name}_config")
-            if (
-                config is None
-                or _enum_value(config.b_layout) != BLayout.ROW_MAJOR.value
-                or _enum_value(config.s_layout) != SLayout.NONE_BOX.value
-                or not _has_gap_free_row_stride(config.compact_mode)
-            ):
-                return False
-
             shapes.append(shape)
             valid_shapes.append(valid_shape)
 
@@ -437,32 +417,11 @@ def require_conversion_1d(
         shapes = []
         valid_shapes = []
         for name in operands:
-            if context.get(f"{name}_kind") != "tile":
+            if not _is_flat_local_tile(context, name, allowed_memory_spaces):
                 return False
 
             shape = context.get(f"{name}_shape")
             valid_shape = context.get(f"{name}_valid_shape")
-            if not _is_static_rank2_shape(shape) or not _is_static_rank2_shape(
-                valid_shape
-            ):
-                return False
-            if any(
-                valid > physical
-                for valid, physical in zip(valid_shape, shape)
-            ):
-                return False
-            if context.get(f"{name}_memory_space") not in allowed_memory_spaces:
-                return False
-
-            config = context.get(f"{name}_config")
-            if (
-                config is None
-                or _enum_value(config.b_layout) != BLayout.ROW_MAJOR.value
-                or _enum_value(config.s_layout) != SLayout.NONE_BOX.value
-                or not _has_gap_free_row_stride(config.compact_mode)
-            ):
-                return False
-
             shapes.append(shape)
             valid_shapes.append(valid_shape)
 
@@ -772,11 +731,9 @@ def _is_static_rank2_shape(shape) -> bool:
 
 
 def _has_gap_free_row_stride(compact_mode) -> bool:
-    return _enum_value(compact_mode) in {
+    return _normalize_compact_mode(_enum_value(compact_mode)) in {
         0,
         1,
-        "null",
-        "normal",
         "Null",
         "Normal",
     }

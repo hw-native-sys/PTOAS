@@ -627,7 +627,7 @@ def tile_buf_type(shape, dtype, valid_shape=None, *,
     return _pto.TileBufType.get(shape, elem, space_attr, valid_shape=valid_shape, config=cfg)
 
 
-def _compact_mode_token(value: str | int):
+def _normalize_compact_mode(value: str | int):
     if isinstance(value, int):
         return value
     aliases = {
@@ -638,7 +638,13 @@ def _compact_mode_token(value: str | int):
         "Normal": "Normal",
         "RowPlusOne": "RowPlusOne",
     }
-    token = aliases.get(str(value), str(value))
+    return aliases.get(str(value), str(value))
+
+
+def _compact_mode_token(value: str | int):
+    token = _normalize_compact_mode(value)
+    if isinstance(token, int):
+        return token
     try:
         return getattr(_pto.CompactMode, token)
     except AttributeError as exc:
