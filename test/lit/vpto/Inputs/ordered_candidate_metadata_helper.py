@@ -24,18 +24,20 @@ if args.method == "get_metadata":
                 "op": "pto.tadd",
                 "candidates": [
                     {
-                        "id": 99,
-                        "name": "preferred_1d",
-                        "loop_depth": 1,
-                        "is_post_update": False,
-                        "has_tail": True,
-                    },
-                    {
                         "id": 0,
                         "name": "fallback_2d",
+                        "priority": 0,
                         "loop_depth": 2,
                         "is_post_update": False,
                         "has_tail": False,
+                    },
+                    {
+                        "id": 99,
+                        "name": "preferred_1d",
+                        "priority": 10,
+                        "loop_depth": 1,
+                        "is_post_update": False,
+                        "has_tail": True,
                     },
                 ],
             }

@@ -6,8 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Candidate order comes from Python ranking. The preferred candidate
-// deliberately has the larger ID so an accidental ID sort fails this test.
+// The helper returns candidates in fallback-first order. The preferred
+// candidate deliberately has both higher priority and a larger ID, proving
+// that priority, rather than wire order or candidate ID, controls selection.
 //
 // RUN: pto-test-opt %s '-pto-insert-template-attributes=daemon-socket-path=unused tile-lib-pkg-path=%S/Inputs daemon-helper-module=ordered_candidate_metadata_helper' | FileCheck %s
 // RUN: pto-test-opt %s '-pto-insert-template-attributes=daemon-socket-path=unused tile-lib-pkg-path=%S/Inputs daemon-helper-module=ordered_candidate_metadata_helper' '-pto-expand-tile-op=daemon-socket-path=unused tile-lib-pkg-path=%S/Inputs daemon-helper-module=ordered_candidate_metadata_helper' | FileCheck %s --check-prefix=EXPAND --implicit-check-not=pto.tadd
