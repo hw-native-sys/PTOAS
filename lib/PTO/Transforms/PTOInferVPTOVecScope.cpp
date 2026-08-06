@@ -89,7 +89,11 @@ static bool isExplicitVectorScopeCarrier(Operation *op) {
 }
 
 static bool isForbiddenInsideInferredVectorScope(Operation *op) {
-  return isa<pto::VbitsortOp, pto::Vmrgsort4Op>(op);
+  // Bisheng cannot expand block-query results produced inside an AIV vector
+  // scope. Keep these scalar queries outside the inferred scope and capture
+  // their results instead.
+  return isa<pto::VbitsortOp, pto::Vmrgsort4Op, pto::GetBlockIdxOp,
+             pto::GetBlockNumOp>(op);
 }
 
 static bool isVectorScopeBoundaryOperation(Operation *op) {

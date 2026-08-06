@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.func @auto_vecscope_infer_block_query_boundary() {
+      %c0_i64 = arith.constant 0 : i64
+      %ub = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+      %c0 = arith.constant 0 : index
+      %c6 = arith.constant 6 : index
+      %c1 = arith.constant 1 : index
+      %c8_i64 = arith.constant 8 : i64
+      %c43 = arith.constant 43 : index
+
+      scf.for %iv = %c0 to %c6 step %c1 {
+        %block_idx = pto.get_block_idx
+        %quotient = arith.floordivsi %block_idx, %c8_i64 : i64
+        %index = arith.index_cast %quotient : i64 to index
+        %in_bounds = arith.cmpi slt, %index, %c43 : index
+        scf.if %in_bounds {
+          %value = pto.vlds %ub[%c0] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+          %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+          pto.vsts %value, %ub[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+        }
+      }
+      return
+    }
+
+    func.func @auto_vecscope_infer_block_num_boundary() {
+      %c0_i64 = arith.constant 0 : i64
+      %ub = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+      %c0 = arith.constant 0 : index
+      %c1_i64 = arith.constant 1 : i64
+      %block_num = pto.get_block_num
+      %has_blocks = arith.cmpi sge, %block_num, %c1_i64 : i64
+      scf.if %has_blocks {
+        %value = pto.vlds %ub[%c0] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+        %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+        pto.vsts %value, %ub[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+      }
+      return
+    }
+  }
+}
+
+// CHECK-LABEL: func.func @auto_vecscope_infer_block_query_boundary
+// CHECK: %[[BLOCK_IDX:.*]] = pto.get_block_idx
+// CHECK: scf.for
+// CHECK-NEXT: pto.vecscope {
+// CHECK-NOT: pto.get_block_idx
+// CHECK: arith.floordivsi %[[BLOCK_IDX]]
+// CHECK: scf.if
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: }
+
+// CHECK-LABEL: func.func @auto_vecscope_infer_block_num_boundary
+// CHECK: %[[BLOCK_NUM:.*]] = pto.get_block_num
+// CHECK-NEXT: pto.vecscope {
+// CHECK-NOT: pto.get_block_num
+// CHECK: arith.cmpi sge, %[[BLOCK_NUM]]
+// CHECK: scf.if
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: }
