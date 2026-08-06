@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
+
+// Grouped logical tails: physical arity is ceil(L / physVL); excess lanes in
+// the last chunk follow ordinary contiguous inactive/padding handling.
+//
+// i32 physVL=64:
+//   size=32, group=2 → S=16, one VL: [0..15|0..15|pad..], store mask VL32
+//   size=96, group=3 → S=32, two VL: full [0..31|0..31] + partial [0..31|pad],
+//                       second store mask VL32
+
+module {
+  func.func @vmi_to_vpto_iota_group_tail_i32_32_g2(
+      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<32xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 2 : i64}
+        : i32 -> !pto.vmi.vreg<32xi32>
+    %c1000 = arith.constant 1000 : i32
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<32xi32>, i32, !pto.vmi.mask<32xpred>
+        -> !pto.vmi.vreg<32xi32>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<32xi32>, !pto.ptr<i32, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_iota_group_tail_i32_96_g3(
+      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<96xpred>) {
+    %c0 = arith.constant 0 : index
+    %idx = pto.vmi.vci %base {group = 3 : i64}
+        : i32 -> !pto.vmi.vreg<96xi32>
+    %c1000 = arith.constant 1000 : i32
+    %out = pto.vmi.vadds %idx, %c1000, %mask
+        : !pto.vmi.vreg<96xi32>, i32, !pto.vmi.mask<96xpred>
+        -> !pto.vmi.vreg<96xi32>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<96xi32>, !pto.ptr<i32, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group_tail_i32_32_g2(
+// CHECK-SAME: %[[BASE:.*]]: i32
+// Sub-VL pack S=16 across one physical VL; consumer then stores with VL32 tail.
+// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK: pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
+// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// Tail mask on store: only 32 of 64 physical lanes active.
+// CHECK: %[[C32:.*]] = arith.constant 32 : i32
+// CHECK: pto.plt_b32 %[[C32]]
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_group_tail_i32_96_g3(
+// CHECK-SAME: %[[BASE:.*]]: i32
+// Two physical parts share the same S=32 sub-VL pattern.
+// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK: pto.vsel
+// CHECK: %[[PACKED:.*]] = pto.vsel
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
+// First chunk full VL store; second chunk partial (32 active).
+// CHECK: pto.vsts
+// CHECK: %[[C32:.*]] = arith.constant 32 : i32
+// CHECK: pto.plt_b32 %[[C32]]
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vmi.

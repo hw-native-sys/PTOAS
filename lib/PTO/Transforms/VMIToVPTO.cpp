@@ -5229,6 +5229,7 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
 ///     take lanes [g*S, (g+1)*S) from adj
 ///
 /// When S == physVL this is just `vci(base)` (single group fills the VL).
+/// When S == 1 every lane equals `base` — one `vdup(base)` (not O(VL) vsel).
 FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
                                                Value base, int64_t groupSize,
                                                StringAttr orderAttr,
@@ -5241,17 +5242,28 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
   if (groupSize <= 0 || lanesPerPart % groupSize != 0)
     return failure();
 
+  FailureOr<Value> allMask =
+      createAllTrueMaskForVReg(loc, vregType, rewriter);
+  if (failed(allMask))
+    return failure();
+
+  // group_size==1: dst[i] = base for every lane — broadcast, not a ramp pack.
+  if (groupSize == 1) {
+    return rewriter
+        .create<VdupOp>(loc, resultType, base, *allMask,
+                        /*position=*/nullptr)
+        .getResult();
+  }
+
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
   FailureOr<Value> full =
       createIotaContiguousChunk(loc, resultType, base, /*laneOffset=*/0,
                                 orderAttr, rewriter);
-  FailureOr<Value> allMask =
-      createAllTrueMaskForVReg(loc, vregType, rewriter);
   FailureOr<MaskType> maskType =
       getMaskTypeForVReg(vregType, rewriter.getContext());
   FailureOr<Value> zeroScalar =
       createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
-  if (failed(full) || failed(allMask) || failed(maskType) || failed(zeroScalar))
+  if (failed(full) || failed(maskType) || failed(zeroScalar))
     return failure();
 
   int64_t groupsPerChunk = lanesPerPart / groupSize;
@@ -5413,8 +5425,14 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<IotaOp> {
             op, "grouped iota currently supports contiguous layout only; "
                 "ensure_layout to contiguous before lowering");
 
-      if (static_cast<int64_t>(resultTypes.size()) * *lanesPerPart !=
-          logicalLanes)
+      // Allow grouped logical tails: physical arity is ceil(L / physVL), so
+      // capacity may exceed L (e.g. L=32,group=2 → 1×VL64 with lanes 32..63
+      // inactive; L=96,group=3 → 2×VL64 with last chunk partial). Padding
+      // lanes keep the same periodic pattern; consumers/stores apply the
+      // ordinary contiguous tail mask.
+      int64_t expectedArity =
+          (logicalLanes + *lanesPerPart - 1) / *lanesPerPart;
+      if (static_cast<int64_t>(resultTypes.size()) != expectedArity)
         return rewriter.notifyMatchFailure(
             op, "grouped contiguous iota physical result count mismatch");
 
