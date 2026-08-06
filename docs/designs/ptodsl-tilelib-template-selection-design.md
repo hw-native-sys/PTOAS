@@ -166,17 +166,27 @@ per-candidate reasons. If multiple candidates tie for the highest priority and
 no explicit candidate is requested, both normal selection and metadata
 insertion report ambiguity rather than silently picking one.
 
+Constraint predicates may depend on concrete operand metadata, so general
+overlap cannot be proven when templates are merely registered. In-tree catalog
+selection tests catch ties for their representative operand forms before
+compiler integration runs; metadata insertion retains the concrete check for
+forms that a catalog cannot exhaustively enumerate. The ambiguity diagnostic
+directs authors to assign distinct priorities or make the constraints mutually
+exclusive.
+
 For multi-candidate ops, candidate `id` values must be unique and stable. IDs
 identify versions; they do not rank them.
 
-The daemon returns legal candidates as a JSON array in Python ranking order.
-`InsertTemplateAttributes` validates the entries and unique IDs while
-preserving that array order. It must not reconstruct ranking from priority,
-candidate ID, JSON object order, registration order, or import order.
+The service returns legal candidates as a JSON array in Python ranking order.
+Each wire entry includes priority so `InsertTemplateAttributes` can defensively
+normalize the result by descending priority and reject a highest-priority tie.
+This protects selection across the compiler/service boundary if a response is
+unsorted. Candidate ID, JSON object order, registration order, and import order
+do not participate in ranking.
 
 ## Compact Candidate Attribute
 
-`InsertTemplateAttributes` stores the daemon's ordered candidates as a compact
+`InsertTemplateAttributes` stores the normalized candidates as a compact
 `candidates` array attribute on the TileOp. Each entry contains:
 
 - `id`
@@ -186,9 +196,11 @@ candidate ID, JSON object order, registration order, or import order.
 - `tail`
 
 This attribute is intentionally not a copy of the full Python metadata object.
-Legality has already happened in the service. The IR only needs a stable list of
-legal render targets and the small amount of metadata consumed by downstream
-passes. Array position is meaningful: candidate zero is the selected version.
+Legality has already happened in the service. Priority is consumed while
+validating and ordering the wire response; it is not persisted. The IR only
+needs a stable list of legal render targets and the small amount of metadata
+consumed by downstream passes. Array position is meaningful: candidate zero is
+the selected version.
 
 Do not add fields to the IR candidate payload simply because they exist in
 Python metadata. Add a field only when a C++ pass or IR-level test consumes it.

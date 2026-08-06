@@ -230,7 +230,8 @@ def _require_unambiguous_top_candidate(target: str, op: str, legal: list) -> Non
         names = ", ".join(descriptor.name for descriptor in winners)
         raise _registry.AmbiguousTemplate(
             f"multiple templates tie at priority {top_priority} for op={op!r} "
-            f"target={target!r}: {names}"
+            f"target={target!r}: {names}; assign distinct priorities or make "
+            "their constraints mutually exclusive"
         )
 
 

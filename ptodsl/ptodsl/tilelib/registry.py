@@ -117,7 +117,9 @@ class TileTemplateRegistry:
         if len(winners) > 1:
             names = ", ".join(d.name for d in winners)
             raise AmbiguousTemplate(
-                f"multiple templates tie at priority {top_priority} for op={op!r} target={target!r}: {names}"
+                f"multiple templates tie at priority {top_priority} for op={op!r} "
+                f"target={target!r}: {names}; assign distinct priorities or make "
+                "their constraints mutually exclusive"
             )
         return legal[0]
 

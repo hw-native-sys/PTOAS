@@ -48,6 +48,7 @@ constexpr llvm::StringLiteral kCandidatesAttr = "candidates";
 struct CandidateMetadata {
   int64_t id;
   std::string name;
+  int64_t priority;
   int64_t loopDepth;
   bool postUpdate;
   bool tail;
@@ -793,13 +794,14 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
 
     auto name = metadata->getString("name");
     auto id = metadata->getInteger("id");
+    auto priority = metadata->getInteger("priority");
     auto loopDepth = metadata->getInteger("loop_depth");
     auto postUpdate = metadata->getBoolean("is_post_update");
     auto tail = metadata->getBoolean("has_tail");
-    if (!name || !loopDepth || !postUpdate || !tail) {
+    if (!name || !priority || !loopDepth || !postUpdate || !tail) {
       operation->emitError(
           "InsertTemplateAttributes candidate metadata is missing name, "
-          "loop_depth, is_post_update, or has_tail");
+          "priority, loop_depth, is_post_update, or has_tail");
       return failure();
     }
     if (!id && candidates->size() != 1) {
@@ -819,10 +821,30 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
     parsedCandidates.push_back(CandidateMetadata{
         candidateId,
         name->str(),
+        *priority,
         *loopDepth,
         *postUpdate,
         *tail,
     });
+  }
+
+  llvm::sort(parsedCandidates,
+             [](const CandidateMetadata &left,
+                const CandidateMetadata &right) {
+               if (left.priority != right.priority)
+                 return left.priority > right.priority;
+               return left.name < right.name;
+             });
+  if (parsedCandidates.size() > 1 &&
+      parsedCandidates[0].priority == parsedCandidates[1].priority) {
+    operation->emitError(
+        "InsertTemplateAttributes found multiple legal templates tied at "
+        "the highest priority: ")
+        << parsedCandidates[0].name << " and " << parsedCandidates[1].name
+        << " at priority " << parsedCandidates[0].priority
+        << "; assign distinct priorities or make their constraints mutually "
+           "exclusive";
+    return failure();
   }
 
   Builder builder(operation->getContext());
