@@ -99,9 +99,10 @@ SyncModel mlir::pto::unified::buildSyncModel(
     // `LoopInstanceElement`, whose begin/end is where the synthesised head-set /
     // tail-wait sit -- so that span is what the event id is held over.
     //
-    // The old `if (end < start) end = start` clamp is DELETED, not patched (doc
-    // build order): a backward hazard never reaches the raw-inversion branch,
-    // because GetForEndIndex routes it to the (always-forward) carrying loop.
+    // The `end < start` clamp below is reachable only when GetForEndIndex is set
+    // but does not resolve to a loop element. A backward hazard that does resolve
+    // cannot reach it: GetForEndIndex routes it to the (always-forward) carrying
+    // loop.
     //
     // `endId + 1`, and the +1 is load-bearing -- an interval must COVER every
     // op it owns. `Interval` is half-open, so [beginId, endId) would exclude
@@ -410,11 +411,10 @@ unsigned mlir::pto::unified::synthesizeLoopCompensation(
     // field is named for. That flag DRIVES CODEGEN: `resolveSyncInsertAnchor` re-anchors
     // a compensation op to its block terminator and will even synthesise an `scf.if`
     // else-region for it, and `shouldInsertBefore` forces insert-before
-    // (`SyncCodegen`'s anchor resolution). This pass does not pass `isComp=true` --
-    // full grep: zero callers on this branch and on main -- so those four reads are
-    // dormant, and setting it here would activate placement logic no test covers, to
-    // buy an oracle detail. `compensationOf` is inert by construction: only the
-    // extractor and G2 read it.
+    // (`SyncCodegen`'s anchor resolution). Nothing constructs a SyncOperation with
+    // `isComp=true`, so those reads are dormant, and setting it here would activate
+    // placement logic no test covers. `compensationOf` is inert by construction:
+    // only the extractor and G2 read it.
     // Where the head-set will actually be emitted. Computed BEFORE the op is built,
     // because the SyncOperation records its own SyncIR index and the hazard's interval
     // has to agree with it -- see the interval extension below.

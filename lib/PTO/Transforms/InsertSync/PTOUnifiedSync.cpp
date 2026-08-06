@@ -84,12 +84,11 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 /// is exercised end to end on kernels that would not otherwise route: set on both
 /// halves of a pair, carried through the extractor, and printed by the dumper.
 ///
-/// Note what this deliberately does NOT do: it does not set the mechanism on
-/// one half and let the other inherit. It cannot. `GetMatchSync` runs inside
-/// InsertSyncAnalysis, when the pair is first built and both halves still
-/// default to EVENT; it never runs again. So an allocator must route BOTH
-/// halves of a hazard itself, and this injector mirrors that -- it marks a
-/// whole hazard group, which is the granularity the real allocator will use.
+/// Marks BOTH halves rather than one. `GetMatchSync` does propagate the mechanism
+/// to the half it creates, but it built this pair inside `InsertSyncAnalysis`,
+/// before any mechanism was chosen, so a later stamp on one half leaves the other
+/// on its constructed default. A whole hazard group is the granularity the
+/// allocator itself routes at.
 /// False when `mode` names nothing, which the caller must report. Only the two
 /// values below may reach the stamp: any other string used to arrive here and be
 /// treated as a request to route, so a misspelling silently stamped BUFID on
@@ -293,8 +292,7 @@ struct PTOUnifiedSyncPass
     }
     // `hazards=` on the model report means "orderings the front end found".
     // Capture it BEFORE compensation synthesis, which appends one group per
-    // loop-carried hazard -- reading it afterwards silently redefines the number
-    // (rmsnorm: 66 -> 74).
+    // loop-carried hazard -- reading it afterwards silently redefines the number.
     unsigned nHazards = syncOpsStorage.size();
 
     unsigned synthPairs =
@@ -349,10 +347,11 @@ struct PTOUnifiedSyncPass
     limits.bufIdCapacity = bufidCapacity;
     auto idViolations = oracle::checkDeviceIdLegality(syncOpRecords, limits);
     // A macro's library implementation consumes event ids that no PTO op names, so
-    // an id handed to a hazard spanning the call collides invisibly. The reservation
-    // itself is not built yet; this reports the collision so that when it is built,
-    // green means something. Folded into the same list as G3 because it is the same
-    // question -- is this id legal here -- answered against a different source.
+    // an id handed to a hazard spanning the call collides invisibly. `colorEventIds`
+    // already refuses a reserved id; this re-checks the result independently, because
+    // no other gate can see a use inside a library call. Folded into the same list as
+    // G3 because it is the same question -- is this id legal here -- answered against
+    // a different source.
     for (const auto &v :
          oracle::checkMacroHiddenEventCollisions(syncIR, syncOpRecords))
       idViolations.push_back(v);
@@ -374,7 +373,6 @@ struct PTOUnifiedSyncPass
       oracle::emitReport([&](llvm::raw_ostream &os) {
         os << "[unified-sync model] kernel=" << func.getSymName()
            << " K=" << bufidCapacity << " hazards=" << nHazards << "\n";
-        // `event_ids` are empty by design here: no allocator has run yet.
         oracle::printSyncOpRecords(os, func.getSymName(), syncOpRecords);
         oracle::printIdViolations(os, func.getSymName(), "syncops",
                                   syncOpRecords.size(), idViolations);
@@ -417,12 +415,9 @@ struct PTOUnifiedSyncPass
         // `multi_tile_affine_disjoint_slots` does (fe=2 inv=1) and what went unnoticed
         // because the number was printed and never read.
         //
-        // WARNING, not error, and the incumbent is the reason: it primes forward hazards
-        // too (verified -- on that kernel it emits two MTE2->MTE3 primes for a set-before-
-        // wait pair), so a divergence is not by itself wrong, and erroring would refuse
-        // multi-tile kernels that `--enable-insert-sync` compiles. The two predicates
-        // agree wherever the corpus exercises them, so this speaks only where they
-        // actually part company.
+        // WARNING, not error, and the incumbent is the reason: it primes forward
+        // hazards too, so a divergence is not by itself wrong, and erroring would
+        // refuse multi-tile kernels that `--enable-insert-sync` compiles.
         if (feCount != invCount)
           os << "[unified-sync compensation] !! predicate-divergence func="
              << func.getSymName() << " fe=" << feCount << " inv=" << invCount
@@ -517,8 +512,7 @@ struct PTOUnifiedSyncPass
     // head/tail pairs there, or they would be dropped silently here.
     //
     // Runs AFTER the in-pass gates: an allocation the oracle rejects is not
-    // emitted. (Today G2/G3 are clean on all 45 runnable kernels, so this
-    // emits for all of them.)
+    // emitted.
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();
     // Fail the pass on an unrealised hazard. Only the unified path signals failure:

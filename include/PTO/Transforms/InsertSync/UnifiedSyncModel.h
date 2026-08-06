@@ -93,19 +93,13 @@ struct Interval {
 /// `dstPipe`. Owns BOTH halves of the sync pair.
 ///
 /// THE BOTH-HALVES INVARIANT. The mechanism belongs to the HAZARD, never to an
-/// individual SyncOperation, and `SetMechanism` below is the only writer. This
-/// is not stylistic -- it is forced by the front-end:
-///
-///   `SyncOperation::GetMatchSync()` -- which copies the mechanism from a set to
-///   its wait -- runs inside InsertSyncAnalysis, at the moment the pair is first
-///   built, while BOTH halves still hold their TYPE-derived default. It never
-///   runs again. So there is no path by which stamping one half propagates to
-///   the other.
-///
-/// Route a hazard, and both halves move together. Stamp a lone SyncOperation and
-/// you get a set on one mechanism whose wait is on another -- which is not a
-/// pair at all, but two unrelated syncs, and no gate downstream would catch it
-/// (G1 sees the ordering, G2 sees no id conflict, G4 sees the same op count).
+/// individual SyncOperation, and `SetMechanism` below is the only writer.
+/// `GetMatchSync` does copy the mechanism to the half it creates, but it built
+/// this pair inside InsertSyncAnalysis, before any mechanism was chosen, so a
+/// later stamp on one half leaves the other on its TYPE-derived default. A set on
+/// one mechanism whose wait is on another is not a pair but two unrelated syncs,
+/// and no gate catches it: G1 sees the ordering, G2 sees no id conflict, G4 sees
+/// the same op count.
 class Hazard {
 public:
   using MECHANISM = SyncOperation::MECHANISM;
@@ -296,8 +290,9 @@ public:
   // nobody asked for. The cost therefore cannot be read off the hazard alone --
   // it needs the buffer's whole hazard group. That is what these two fields are.
 
-  /// Every buffer-id cluster this hazard's memory belongs to. Joined on TileKey;
-  /// empty when none of the hazard's tiles is buffer-id-clusterable.
+  /// Every buffer-id cluster this hazard's memory belongs to. Resolved per
+  /// `BaseMemInfo *`, by pointer identity with a `MemAlias` fallback; empty when
+  /// none of the hazard's tiles is buffer-id-clusterable.
   llvm::SmallVector<int, 2> bufferClusters;
 
   /// Does a genuine reverse (WAR) hazard exist on the SAME buffer -- i.e. a
@@ -360,13 +355,11 @@ struct ResourceModel {
 
 /// What a hazard costs on each resource class.
 ///
-/// SHAPE ONLY. The numbers here are an ordering, not a calibrated model,
-/// and NOTHING reads them yet: the policy that consumes alpha is the offload seam
-/// and a future flow policy may replace the scalar with a
-/// length-aware term. What this fixes is the *interface* -- that cost is a
-/// function of the hazard AND its buffer's hazard group, not of the hazard alone.
-/// Getting this wrong here would bake a flat buffer-ID cost into
-/// every later policy.
+/// SHAPE ONLY: an ordering, not a calibrated model. No allocation decision reads
+/// alpha -- `routeBuffers` tests `Buffer::isWrittenBack` directly, and only
+/// `printSyncModel` renders these numbers. What the type fixes is the interface:
+/// cost is a function of the hazard AND its buffer's hazard group, not of the
+/// hazard alone.
 struct Alpha {
   unsigned event = 1;
   unsigned bufid = 1;
@@ -403,8 +396,7 @@ struct Alpha {
 // behaviour, not from this struct's shape. `BufidSyncIdAlloc::computeLifeIntervals`
 // computes `inLoop` PER OP: an access outside a loop contributes its own
 // `syncIRIndex`, an access inside contributes the whole `[loopBegin, loopEnd]`,
-// and the result is min-start/max-end per logic id. That is the union span, and it
-// is what production does on 40 real a5 buffers today.
+// and the result is min-start/max-end per logic id. That is the union span.
 //
 // WHY UNION-SPAN AND NOT REFUSE, for the buffers that have no single loop scope:
 // over-reserving an id is WASTEFUL, NOT WRONG. The `get_buf`/`rls_buf` ops are
@@ -511,9 +503,8 @@ struct SyncModel {
 ///
 /// `syncIR` is read (not mutated) only to resolve a loop-carried hazard's
 /// CARRYING loop: `setOp->GetForEndIndex()` indexes a `LoopInstanceElement`
-/// whose `[beginId, endId)` is that hazard's event interval.
-/// This is why the `end < start` clamp is gone -- a backward hazard's interval is
-/// read off its carrying loop, forward, never inverted.
+/// whose `[beginId, endId)` is that hazard's event interval, so a backward
+/// hazard's interval is read forward off its carrying loop, never inverted.
 SyncModel buildSyncModel(const SyncOperations &syncOps, unsigned bufidCapacity,
                          const MemInfoToClusters &memInfoToClusters,
                          const SyncIRs &syncIR);
