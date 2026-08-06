@@ -72,10 +72,14 @@ struct SyncOpRecord {
   /// `static_cast<int>(SyncOperation::TYPE)`; -1 when unset. Gates switch on
   /// this, never on the `type` string.
   int typeCode = -1;
-  /// `static_cast<int>(SyncOperation::MECHANISM)`; -1 when unset. Which resource
-  /// class the allocator routed this sync to -- and so whether it is
-  /// SyncIR-positioned (event/barrier) or op-anchored (bufid). Gates switch on
-  /// this, never on the `mechanism` string.
+  /// `SyncOperation::MechanismName` of the resource class the allocator routed this
+  /// sync to -- and so whether it is SyncIR-positioned (event/barrier) or op-anchored
+  /// (bufid). Empty until the pre-codegen extractor fills it.
+  ///
+  /// RENDERING ONLY. Unlike `type`, this has no numeric companion, so nothing can
+  /// switch on it without string-matching a name. A gate that needs the mechanism as
+  /// a decision should get a `mechanismCode` beside this, the way `typeCode` sits
+  /// beside `type`, rather than compare these strings.
   std::string mechanism;
   int srcPipe = -1;
   int dstPipe = -1;
