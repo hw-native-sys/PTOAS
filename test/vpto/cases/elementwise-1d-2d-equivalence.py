@@ -71,7 +71,6 @@ TADDS_PADDED_SHAPE = (4, 128)
 TCMPS_DATA_SHAPE = (4, 256)
 TCMPS_MASK_SHAPE = (4, 32)
 TCMPS_PADDED_DATA_SHAPE = (4, 512)
-TCMPS_PADDED_MASK_SHAPE = (4, 64)
 TSELS_DATA_SHAPE = (4, 256)
 TSELS_MASK_SHAPE = (4, 32)
 TSELS_PADDED_DATA_SHAPE = (4, 512)
@@ -297,9 +296,8 @@ def elementwise_tcmps_1d_2d_equivalence(
         addr=8192,
     )
     out_2d = pto.alloc_tile(
-        shape=list(TCMPS_PADDED_MASK_SHAPE),
+        shape=[mask_rows, mask_cols],
         dtype=pto.ui8,
-        valid_shape=[mask_rows, mask_cols],
         addr=12288,
     )
 

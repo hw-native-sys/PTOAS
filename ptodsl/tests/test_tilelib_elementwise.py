@@ -1728,6 +1728,22 @@ class TileLibElementwiseTest(unittest.TestCase):
         self.assertEqual(selected.metadata.loop_depth, 2)
         self.assertEqual(mlir.count("scf.for"), 2)
 
+    def test_tcmps_fallback_keeps_flat_packed_predicate_rows(self):
+        specs = _compare_specs(
+            "pto.tcmps",
+            "f16",
+            src_shape=(4, 256),
+            dst_shape=(4, 64),
+            dst_valid_shape=(4, 32),
+        )
+        selected = select("pto.tcmps", "a5", specs)
+        mlir = selected.specialize(**specs).mlir_text()
+
+        self.assertEqual(selected.name, "template_tcmps")
+        self.assertEqual(selected.metadata.loop_depth, 2)
+        self.assertIn("arith.constant 16 : index", mlir)
+        self.assertNotIn("arith.constant 64 : index", mlir)
+
     def test_select_family_registers_preferred_1d_and_fallback_2d(self):
         cases = (
             ("pto.tsel", "f32", "i8", "US"),

@@ -106,11 +106,15 @@ def _emit_tcmps_2d(src, scalar, dst):
     lanes = pto.elements_per_vreg(dtype)
     cmp_mode = pto.get_op_attr("cmp_mode", "eq")
     dst_ptr = dst.as_ptr()
-    dst_stride = dst.shape[1]
 
+    # The destination is a linear packed-predicate byte stream. Its physical
+    # column count provides capacity; it is not the stride between logical
+    # predicate rows. Each row starts after the packed bytes emitted for the
+    # preceding row, preserving the existing TCMPS layout contract.
     if str(dtype) in {"f32", "i32"}:
         repeat_times = (valid_cols + lanes - 1) // lanes + 1
         iterations = repeat_times // 2
+        packed_row_bytes = iterations * 16
         for row in range(0, valid_rows, 1):
             remained = valid_cols
             for col in range(0, iterations, 1):
@@ -141,7 +145,7 @@ def _emit_tcmps_2d(src, scalar, dst):
                     first_cmp_b8,
                     second_cmp_b8,
                 )
-                store_offset = row * dst_stride + col * 16
+                store_offset = row * packed_row_bytes + col * 16
                 pto.psts(
                     packed_low,
                     dst_ptr,
@@ -149,13 +153,17 @@ def _emit_tcmps_2d(src, scalar, dst):
                     dist=pto.PredicateDist.PK,
                 )
     elif str(dtype) in {"f16", "i16"}:
+        bytes_per_iter = 16
+        iters_per_row = (valid_cols + lanes - 1) // lanes
         for row in range(0, valid_rows, 1):
             remained = valid_cols
             for col in range(0, valid_cols, lanes):
                 mask, remained = pto.make_mask(dtype, remained)
                 value = pto.vlds(src[row, col:])
                 cmp = pto.vcmps(value, scalar, mask, cmp_mode)
-                store_offset = row * dst_stride + col // 8
+                store_offset = (
+                    row * iters_per_row + col // lanes
+                ) * bytes_per_iter
                 pto.psts(
                     cmp,
                     dst_ptr,
@@ -163,13 +171,17 @@ def _emit_tcmps_2d(src, scalar, dst):
                     dist=pto.PredicateDist.PK,
                 )
     else:
+        bytes_per_iter = 32
+        iters_per_row = (valid_cols + lanes - 1) // lanes
         for row in range(0, valid_rows, 1):
             remained = valid_cols
             for col in range(0, valid_cols, lanes):
                 mask, remained = pto.make_mask(dtype, remained)
                 value = pto.vlds(src[row, col:])
                 cmp = pto.vcmps(value, scalar, mask, cmp_mode)
-                store_offset = row * dst_stride + col // 8
+                store_offset = (
+                    row * iters_per_row + col // lanes
+                ) * bytes_per_iter
                 pto.psts(
                     cmp,
                     dst_ptr,
