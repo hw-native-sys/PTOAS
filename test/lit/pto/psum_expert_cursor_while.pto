@@ -1,0 +1,82 @@
+// Minimal PTOAS repro: prefix-sum expert-cursor keep-mask.
+//
+// Algorithm:
+//   for token_id in 0..N-1:                 // carry expert_id
+//     while expert_id < E and token_id >= align(psum[expert_id]):
+//       expert_id += 1
+//     valid = expert_id < E and token_id < psum[expert_id]
+//     out[token_id] = valid ? 1 : 0
+//
+// Nested scf.if avoids evaluating psum[expert_id] when expert_id == E
+// (MLIR arith.andi does not short-circuit).
+//
+// Observed failure:
+//   error: Unsupported SCF op remained after pre-lowering
+// Reduced cousin (for + while + scf.if in while condition, no GM load)
+// also crashes the compiler (SIGSEGV) — see psum_for_while_if_condition.pto.
+//
+// RUN: not ptoas --pto-arch=a5 %s -o - 2>&1 | FileCheck %s
+
+module {
+  func.func @psum_expert_cursor(
+      %psum: !pto.ptr<i32, gm>,
+      %out: !pto.ptr<i32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c7 = arith.constant 7 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %false = arith.constant false
+
+    // Carry expert_id across the token loop (monotonic cursor).
+    %final_eid = scf.for %token_id = %c0 to %c16 step %c1
+        iter_args(%expert_id = %c0) -> (index) {
+      // while expert_id < 2 and token_id >= align8(psum[expert_id]): expert_id++
+      %eid_after = scf.while (%eid = %expert_id) : (index) -> index {
+        %lt_e = arith.cmpi slt, %eid, %c2 : index
+        %go = scf.if %lt_e -> (i1) {
+          %thr_i32 = pto.load_scalar %psum[%eid] : !pto.ptr<i32, gm> -> i32
+          %thr = arith.index_cast %thr_i32 : i32 to index
+          // align8(x) = ((x + 7) / 8) * 8
+          %thr_plus = arith.addi %thr, %c7 : index
+          %thr_div = arith.divui %thr_plus, %c8 : index
+          %aligned = arith.muli %thr_div, %c8 : index
+          %ge_thr = arith.cmpi uge, %token_id, %aligned : index
+          scf.yield %ge_thr : i1
+        } else {
+          scf.yield %false : i1
+        }
+        scf.condition(%go) %eid : index
+      } do {
+      ^bb0(%eid2: index):
+        %next = arith.addi %eid2, %c1 : index
+        scf.yield %next : index
+      }
+
+      %lt_e2 = arith.cmpi slt, %eid_after, %c2 : index
+      %valid = scf.if %lt_e2 -> (i1) {
+        %end_i32 = pto.load_scalar %psum[%eid_after] : !pto.ptr<i32, gm> -> i32
+        %end = arith.index_cast %end_i32 : i32 to index
+        %lt_tok = arith.cmpi ult, %token_id, %end : index
+        scf.yield %lt_tok : i1
+      } else {
+        scf.yield %false : i1
+      }
+
+      %val = scf.if %valid -> (i32) {
+        scf.yield %c1_i32 : i32
+      } else {
+        scf.yield %c0_i32 : i32
+      }
+      pto.store_scalar %val, %out[%token_id] : !pto.ptr<i32, gm>, i32
+      scf.yield %eid_after : index
+    }
+    return
+  }
+}
+
+// CHECK: Unsupported SCF op remained after pre-lowering
