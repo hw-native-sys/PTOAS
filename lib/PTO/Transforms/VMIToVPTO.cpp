@@ -31,6 +31,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
@@ -5222,14 +5223,16 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
 /// Pack group-periodic ramps inside one physical VL when S < physVL and
 /// physVL % S == 0 (e.g. i32 L=64,group=2 → [base..base+31 | base..base+31]).
 ///
-/// Recipe (matches reduce/quant "mask + offset-by-S + VOR/Vsel"):
-///   full = vci(base)                         // [base+0 .. base+VL)
-///   for g in 0..G-1:
-///     adj = full ∓ g*S                       // ASC: −; DESC: +
-///     take lanes [g*S, (g+1)*S) from adj
+/// Preferred recipes (O(1), independent of G = physVL/S):
+///   * S == 1 → vdup(base)
+///   * S power-of-2 (all legal sub-VL S on this ISA) →
+///       ASC:  vadds(vand(vci(0), S-1), base)
+///       DESC: vsub(vdup(base), vand(vci(0), S-1))
+///
+/// Fallback for non-pow2 integer / float bases (rare): per-group
+/// vci(base) ∓ g*S + lane-range vsel.
 ///
 /// When S == physVL this is just `vci(base)` (single group fills the VL).
-/// When S == 1 every lane equals `base` — one `vdup(base)` (not O(VL) vsel).
 FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
                                                Value base, int64_t groupSize,
                                                StringAttr orderAttr,
@@ -5256,6 +5259,46 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
   }
 
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
+  int64_t groupsPerChunk = lanesPerPart / groupSize;
+  if (groupsPerChunk == 1)
+    return createIotaContiguousChunk(loc, resultType, base, /*laneOffset=*/0,
+                                     orderAttr, rewriter);
+
+  // Power-of-2 S: dst[i] = base ± (i % S) via AND-mask (beats O(G) vsel pack
+  // and VL/2 VOR/mask duplication). Lane ids are always an ascending vci(0).
+  if (llvm::isPowerOf2_64(static_cast<uint64_t>(groupSize)) &&
+      isa<IntegerType>(base.getType())) {
+    FailureOr<Value> zeroScalar =
+        createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
+    FailureOr<Value> maskScalar = createScalarOffsetConstant(
+        loc, base.getType(), groupSize - 1, rewriter);
+    if (failed(zeroScalar) || failed(maskScalar))
+      return failure();
+
+    Value laneIds =
+        rewriter.create<VciOp>(loc, resultType, *zeroScalar, StringAttr{})
+            .getResult();
+    Value maskVec =
+        rewriter
+            .create<VdupOp>(loc, resultType, *maskScalar, *allMask,
+                            /*position=*/nullptr)
+            .getResult();
+    Value rem = rewriter
+                    .create<VandOp>(loc, resultType, laneIds, maskVec, *allMask)
+                    .getResult();
+    if (order == "DESC") {
+      Value baseVec =
+          rewriter
+              .create<VdupOp>(loc, resultType, base, *allMask,
+                              /*position=*/nullptr)
+              .getResult();
+      return rewriter.create<VsubOp>(loc, resultType, baseVec, rem, *allMask)
+          .getResult();
+    }
+    return rewriter.create<VaddsOp>(loc, resultType, rem, base, *allMask)
+        .getResult();
+  }
+
   FailureOr<Value> full =
       createIotaContiguousChunk(loc, resultType, base, /*laneOffset=*/0,
                                 orderAttr, rewriter);
@@ -5265,10 +5308,6 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
       createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
   if (failed(full) || failed(maskType) || failed(zeroScalar))
     return failure();
-
-  int64_t groupsPerChunk = lanesPerPart / groupSize;
-  if (groupsPerChunk == 1)
-    return *full;
 
   Value result = rewriter
                      .create<VdupOp>(loc, resultType, *zeroScalar, *allMask,
@@ -5405,7 +5444,7 @@ struct OneToNVMIIotaOpPattern : OpConversionPattern<IotaOp> {
     //
     // Contiguous materialization:
     //   * S % physVL == 0 → VCI chunk per distinct laneOffset (share parts).
-    //   * physVL % S == 0 → sub-VL pack via mask + offset-by-S + vsel.
+    //   * physVL % S == 0 → sub-VL: vdup (S=1) or vand(vci(0),S-1)+vadds(base).
     if constexpr (std::is_same_v<IotaOp, VMIGroupIotaOp>) {
       int64_t numGroups = op.getGroupAttr().getInt();
       int64_t logicalLanes = resultVMIType.getElementCount();

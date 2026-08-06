@@ -48,11 +48,16 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group_tail_i32_32_g2(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// Sub-VL pack S=16 across one physical VL; consumer then stores with VL32 tail.
-// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK: pto.vsel
+// Sub-VL pack S=16: vand(vci(0),15)+vadds(base); store with VL32 tail.
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[C15:.*]] = arith.constant 15 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C15]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
-// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // Tail mask on store: only 32 of 64 physical lanes active.
 // CHECK: %[[C32:.*]] = arith.constant 32 : i32
 // CHECK: pto.plt_b32 %[[C32]]
@@ -61,10 +66,14 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group_tail_i32_96_g3(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// Two physical parts share the same S=32 sub-VL pattern.
-// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK: pto.vsel
-// CHECK: %[[PACKED:.*]] = pto.vsel
+// Two physical parts share the same S=32 AND-mask pattern.
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[C31:.*]] = arith.constant 31 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C31]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
 // CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // CHECK: pto.vadds %[[PACKED]], %[[C1000]]

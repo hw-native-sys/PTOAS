@@ -9,8 +9,8 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
 // Sub-VL group-periodic contiguous iota: S < physVL and physVL % S == 0.
-// Materialize via vci(base) + per-group (∓ g*S) + lane-range vsel, then
-// consume with vadds(+1000) + vsts (no unpack).
+// Integer pow2 S: vand(vci(0), S-1) + vadds(base) — O(1), independent of G.
+// Consume with vadds(+1000) + vsts (no unpack).
 //
 // i32 physVL=64:  g2→S=32, g4→S=16, g8→S=8
 // i16 physVL=128: g2→S=64, g4→S=32
@@ -89,11 +89,13 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g2(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: %[[FULL:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK: pto.pset_b32 "PAT_VL32"
-// CHECK: pto.vsel
-// CHECK: pto.vadds %[[FULL]]
-// CHECK: %[[PACKED:.*]] = pto.vsel
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[C31:.*]] = arith.constant 31 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C31]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
 // CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // CHECK: pto.vsts
@@ -101,39 +103,56 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g4(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK-COUNT-3: pto.vsel
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[C15:.*]] = arith.constant 15 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C15]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
-// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i32_g8(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK-COUNT-7: pto.vsel
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[C7:.*]] = arith.constant 7 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C7]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
-// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i16_g2(
 // CHECK-SAME: %[[BASE:.*]]: i16
-// CHECK: pto.vci %[[BASE]] : i16 -> !pto.vreg<128xi16>
-// CHECK: pto.pset_b16 "PAT_VL64"
-// CHECK: pto.vsel
-// CHECK: pto.vadds
-// CHECK: pto.vsel
+// CHECK: %[[C0:.*]] = arith.constant 0 : i16
+// CHECK: %[[C63:.*]] = arith.constant 63 : i16
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i16 -> !pto.vreg<128xi16>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C63]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i16
-// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_subvl_i16_g4(
 // CHECK-SAME: %[[BASE:.*]]: i16
-// CHECK: pto.vci %[[BASE]] : i16 -> !pto.vreg<128xi16>
-// CHECK-COUNT-3: pto.vsel
+// CHECK: %[[C0:.*]] = arith.constant 0 : i16
+// CHECK: %[[C31:.*]] = arith.constant 31 : i16
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i16 -> !pto.vreg<128xi16>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C31]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i16
-// CHECK: pto.vadds {{.*}}, %[[C1000]]
+// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.
