@@ -4,18 +4,14 @@ Status: **proposal** (design only; no functional change in this PR)
 
 Date: 2026-08-06
 
-Motivation: TileLang / MoE kernels (e.g. Ascend `group_count`) need fail-fast
-SDC checks of the form `-1 <= expert_idx < num_groups`. Scalar SimtVF already
-has `T.device_assert` (printf + fake OOB store). VMI / VPTO kernels need an
-equivalent that survives the A5 fatobj pipeline.
-
 ## Summary
 
 | Item | Proposal |
 | --- | --- |
-| **P0 fix** | Lower `pto.trap` in VPTO→LLVM (EmitC already works) |
+| **P0a** | Lower `pto.trap` in VPTO→LLVM (unblocks A5 fatobj scalar assert) |
+| **P0b** | Fix EmitC / SIMT lowering of `pto.trap` (today emits AICore-only `trap()`) |
 | **P1 surface** | Add `pto.vmi.assert %fail_mask` |
-| **P1 lowering** | Implement assert as masked `vscatter` of a dummy value to UB base with signed index `-1` (deliberate UB OOB, same *class* of fault as SIMT fake `-1` store) |
+| **P1 lowering** | Masked `vscatter` of a dummy value to UB base with signed index `-1` (deliberate UB OOB; same fault *class* as SIMT fake `-1` store) |
 
 Camodel evidence (Ascend950PR_9599, 2026-08-06): live-lane
 `RV_VSCATTER` with index `-1` against UB base `0` reports
@@ -23,33 +19,112 @@ Camodel evidence (Ascend950PR_9599, 2026-08-06): live-lane
 
 ---
 
-## Part 1 — Fix `pto.trap` on the VPTO LLVM path
+## Background — why this is required
+
+### Product requirement: SDC range check in `group_count`
+
+MoE `group_count` consumes expert indices of shape `(tokens, topk)`. Contract
+(shared with CUDA TileKernels):
+
+```text
+allow expert_idx == -1          # padding / unused slot
+require -1 <= expert_idx < E    # otherwise silent wrong hist = SDC
+if expert_idx >= 0: count++
+```
+
+CUDA reference (`TileKernels/.../group_count_kernel.py`):
+
+```python
+expert_idx = T.int32(group_idx[i, j])
+T.device_assert(-1 <= expert_idx < num_groups)
+if expert_idx >= 0:
+    T.atomic_add(out_shared[expert_idx], 1)
+```
+
+Ascend ports need the same fail-fast behaviour for both:
+
+1. **SimtVF baselines** (`group_count_simt.py` / DMA variant)
+2. **VMI / VPTO production path** (`group_count_vmi.py`)
+
+Without a device-visible fault, an OOR index quietly corrupts the histogram.
+
+### How Ascend classic SIMT supports this today (works)
+
+TileLang `target="ascend"` + `T.SimtVF` lowers:
+
+```text
+T.device_assert(cond)
+  → device_assert(cond)          # tl_templates/ascend/debug.h
+  → assert(cond)                 # AscendC assert macro
+  → __assert_fail(...)           # asc_assert_simt_impl.h
+       printf DUMP_SIMT_ASSERT
+       __trap():  *((uint8_t __gm__*)-1) = 0   # deliberate GM OOB
+```
+
+Notes:
+
+- SIMT has **no** AICore `trap()` builtin. Fail-fast is **fake OOB store**.
+- Validated on camodel + board `.39`: inject `expert_idx=E` → host ACL
+  `507035` + `Device assert failed` / `[ASSERT] ... Assertion false`.
+- AICore AscendC assert uses real `trap()` (`asc_aicore_assert_impl.h`).
+
+So the working Ascend SIMT story is **outside PTOAS** (classic AscendC /
+TileLang Ascend codegen).
+
+### Does current PTO lowering support the same SIMT assert?
+
+**Short answer: not correctly / not end-to-end.**
+
+| Path | What happens today | SDC assert usable? |
+| --- | --- | --- |
+| TileLang Ascend SimtVF (`target=ascend`) | `device_assert` → `__assert_fail` → `__trap()` OOB | **Yes** (shipped) |
+| TileLang PTO scalar (`target=pto`) | `device_assert` → `pto.if_(cond==0)` + `pto.trap` | EmitC: emits `trap()` (AICore). VPTO: **compile fails** (`missing LLVMTranslationDialectInterface for pto.trap`) |
+| PTO `pto.simt_entry` + `pto.trap` | ODS marks `TrapOp` with `SimtOpInterface`, but EmitC always lowers to opaque call **`trap()`** | **No** — `trap()` is `CCE_INTRINSIC[aicore]` / `__builtin_cce_trap`. SIMT runtime exposes `__trap()` (OOB write), not `trap()` |
+| VMI / VPTO vector range check | no `pto.vmi.assert`; scalar reduce + `pto.trap` blocked on VPTO | **No** |
+
+Implications for this proposal:
+
+1. **VPTO→LLVM `pto.trap`** must be fixed for AICore / vector-side scalar
+   asserts (and for TileLang PTO `device_assert` on fatobj).
+2. **EmitC SIMT** must not blindly emit AICore `trap()` inside
+   `pto.simt_entry`. It should emit the SIMT fail-fast sequence (at least
+   `__asc_simt_vf::__trap()` / equivalent OOB store; printf optional).
+3. **VMI** still needs a masked assert (`pto.vmi.assert`) because a lane
+   predicate cannot be expressed as one scalar `pto.trap` without a
+   reduction that is not yet a first-class VMI surface.
+
+Until (2) lands, “rewrite group_count SIMT onto PTO SIMT + `pto.trap`”
+would regress relative to classic Ascend SimtVF.
+
+---
+
+## Part 1 — Fix `pto.trap` lowering
 
 ### Current state
 
 | Backend | Status |
 | --- | --- |
-| EmitC (`PTOToEmitC.cpp`) | **Works**: `pto.trap` → opaque call `trap()` |
-| Sample | `test/samples/Trap/trap.py` covers EmitC IR construction |
-| VPTO→LLVM (`VPTOLLVMEmitter.cpp`, `VPTOCANN900LLVMEmitter.cpp`) | **Missing**: no `LowerTrapOpPattern`; `pto.trap` survives into device LLVM translation and fails with `missing LLVMTranslationDialectInterface for pto.trap` |
+| EmitC AICore | Emits opaque `trap()` — matches CANN AICore intrinsic |
+| EmitC inside `pto.simt_entry` | **Incorrect**: same `trap()` call; SIMT needs `__trap()` / OOB store |
+| Sample | `test/samples/Trap/trap.py` covers EmitC IR construction only |
+| VPTO→LLVM (`VPTOLLVMEmitter.cpp`, `VPTOCANN900LLVMEmitter.cpp`) | **Missing**: no `LowerTrapOpPattern`; fails with `missing LLVMTranslationDialectInterface for pto.trap` |
 
-`TrapOp` is defined in `include/PTO/IR/PTOOps.td` as a nullary micro-op /
-SIMT op. Manual (`docs/PTO_IR_manual.md` §`pto.trap`) already says it should
-lower to a device trap/abort intrinsic.
+`TrapOp` is defined in `include/PTO/IR/PTOOps.td` as
+`[MicroOpInterface, SimtOpInterface]`. Manual (`docs/PTO_IR_manual.md`
+§`pto.trap`) says it should lower to a device trap/abort intrinsic — but
+does not distinguish AICore vs SIMT.
 
-TileLang PTO codegen emits `pto.TrapOp()` (or historically `_llvm_dialect.TrapOp()`)
-under `pto.if_(cond == 0)` for `tl.device_assert`. That path is blocked today
-on A5 VPTO fatobj builds.
+TileLang PTO codegen emits `pto.TrapOp()` under `pto.if_(cond == 0)` for
+`tl.device_assert`. That path is blocked on A5 VPTO fatobj today.
 
 ### Proposed fix
 
-Add a nullary lowering pattern next to other sync/config patterns in both
-emitters:
+#### 1a. VPTO→LLVM (AICore / vector)
 
 ```text
 pto.trap
-  → VPTO LLVM: func.call @trap()   # preferred, matches EmitC name
-  OR llvm.intr.trap                 # fallback if bisheng rejects @trap
+  → func.call @trap()     # preferred, matches EmitC / AICore intrinsic
+  OR llvm.intr.trap       # fallback if bisheng rejects @trap
 ```
 
 Concrete steps:
@@ -57,31 +132,36 @@ Concrete steps:
 1. **`LowerTrapOpPattern`** in `VPTOLLVMEmitter.cpp` and
    `VPTOCANN900LLVMEmitter.cpp`:
    - match `pto::TrapOp`
-   - emit `func.call` to callee `"trap"` with empty args (same string EmitC uses)
+   - emit `func.call` to callee `"trap"` with empty args
    - register planned decl `() -> ()`
    - erase the op
-2. Register the pattern in the conversion pattern set (near
-   `LowerMemBarOpPattern` / nullary config ops).
-3. Confirm whether Ascend device LLVM / bisheng resolves `trap` as an
-   intrinsic or needs an explicit declaration / `llvm.intr.trap`. Prefer the
-   EmitC-compatible name first; switch only if board/camodel compile fails.
-4. **Tests**
-   - lit: VPTO round-trip / LLVM emit contains the trap call (extend
-     `test/samples/Trap/` or add `test/vpto/.../trap`).
-   - Optional camodel: scalar `if` + `pto.trap` under false condition still
-     completes; under true condition, model reports a fault or host ACL error.
+2. Register near `LowerMemBarOpPattern` / nullary config ops.
+3. Confirm bisheng resolves `trap`; fall back only if needed.
+4. Lit + optional camodel for scalar `if` + `pto.trap`.
 
-### Out of scope for the trap fix
+#### 1b. EmitC SIMT context (required for PTO SIMT parity)
 
-- Message / printf payloads (SIMT `device_assert_with_msg` stays SimtVF-only
-  until a separate print story exists on VPTO).
-- Changing EmitC behaviour.
+```text
+pto.trap in AICore / non-simt func  →  trap()
+pto.trap in pto.simt_entry          →  SIMT __trap() / *((__gm__ uint8_t*)-1)=0
+                                      (+ optional printf like AscendC)
+```
+
+Acceptance for SIMT EmitC: a `pto.simt_entry` containing `pto.trap` compiles
+with bisheng SIMT and faults on board the same way as AscendC `__assert_fail`
+(host-visible device error). Do **not** call AICore `trap()` from SIMT.
+
+### Out of scope for the trap fix alone
+
+- Full message / printf payloads on VPTO (SIMT printf can stay AscendC-side
+  until a PTO print story exists).
+- VMI masked assert (Part 2).
 
 ### Acceptance
 
-- A kernel containing only `pto.trap` compiles through `ptoas --pto-backend=vpto`
-  without `LLVMTranslationDialectInterface` errors.
-- EmitC path remains green.
+- A kernel with only `pto.trap` compiles through `ptoas --pto-backend=vpto`.
+- EmitC AICore path remains green (`trap()`).
+- EmitC SIMT path emits SIMT-legal fail-fast, not AICore `trap()`.
 
 ---
 
@@ -242,18 +322,28 @@ T.vmi.device_assert(~ok)                 # fail-mask
 ## Suggested implementation PR sequence
 
 1. **This proposal PR** — design doc only (review API + lowering).
-2. **Trap fix PR** — `LowerTrapOpPattern` + lit (unblocks scalar
-   `tl.device_assert` → `pto.trap` on VPTO).
+2. **Trap fix PR**
+   - VPTO→LLVM `LowerTrapOpPattern` + lit (unblocks scalar
+     `tl.device_assert` → `pto.trap` on fatobj).
+   - EmitC SIMT context: `pto.trap` in `pto.simt_entry` → SIMT `__trap()` /
+     OOB store, **not** AICore `trap()`.
 3. **Assert feature PR** — ODS + PTODSL + `vmi-to-vpto` scatter lowering +
    camodel/board probes.
-4. **Consumer PR** — TileLang `group_count` / other MoE kernels switch to
-   `T.vmi.assert`.
+4. **Consumer PR** — TileLang VMI `group_count` switches to `T.vmi.assert`;
+   optional PTO SIMT rewrite can then match classic Ascend SimtVF behaviour.
 
 ## References
 
+- Requirement / CUDA reference:
+  `TileKernels/tile_kernels/moe/group_count_kernel.py`
+- Ascend SimtVF baseline (working today via AscendC, not PTO):
+  TileLang `group_count_simt.py` + `tl_templates/ascend/debug.h`
+- CANN SIMT fail-fast:
+  `asc_assert_simt_impl.h` (`__assert_fail` → `__trap()` OOB GM write)
+- CANN AICore fail-fast:
+  `asc_aicore_assert_impl.h` (`__assert_fail` → `trap()`)
 - Camodel / board probes (TileLang tree):
   - `examples/ascend/vmi/group_count/test_vmi_scatter_neg1_ub.py`
   - `examples/ascend/vmi/group_count/test_vmi_s32_to_u16_trap.py` (negative result)
 - EmitC trap: `lib/PTO/Transforms/PTOToEmitC.cpp` (`PTOTrapOpToEmitC`)
-- Op def: `include/PTO/IR/PTOOps.td` (`TrapOp`)
-- SIMT assert behaviour: TileLang Ascend `debug.h` + SimtVF `__assert_fail`
+- Op def: `include/PTO/IR/PTOOps.td` (`TrapOp`, `SimtOpInterface`)
