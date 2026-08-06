@@ -1537,8 +1537,6 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
 }
 
 //===----------------------------------------------------------------------===//
-// G1-self: absolute coverage against the dependency analysis
-//===----------------------------------------------------------------------===//
 // G1: coverage superset (differential)
 //===----------------------------------------------------------------------===//
 
@@ -1731,6 +1729,8 @@ void mlir::pto::oracle::printCoverageViolations(
   }
 }
 
+//===----------------------------------------------------------------------===//
+// G1-self: absolute coverage against the dependency analysis
 //===----------------------------------------------------------------------===//
 
 namespace {
