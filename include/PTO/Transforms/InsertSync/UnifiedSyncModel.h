@@ -333,8 +333,9 @@ struct Buffer {
   /// hazards on one buffer disagree, which is the split that hangs.
   bool isWrittenBack = false;
 
-  /// Union of every access, in SyncIR-index space. Accesses only -- no loop
-  /// widening. This is the tight fact; `bufidLoop` is the reservation.
+  /// Union of the hazards' own intervals, in SyncIR-index space: a forward hazard
+  /// contributes its tight [set, wait) range, a loop-carried one its whole carrying
+  /// loop. `bufidLoop` is the reservation derived from these.
   Interval accessRange{0, 0};
 
   /// Any access inside a loop.
@@ -356,9 +357,10 @@ struct Buffer {
   /// realised as a buffer-ID token, and NONE of them may take an event id.
   bool routedToBufid = false;
 
-  /// Peak per-direction overlap predicted for the directions this buffer touches,
-  /// and the smallest pool among them. Routing compares these; recorded so the
-  /// decision is auditable rather than a bare bool.
+  /// Peak per-direction overlap predicted for the directions this buffer touches
+  /// (the maximum over them), and the event pool of the direction that peak came
+  /// from -- not the minimum pool. Routing compares these; recorded so the decision
+  /// is auditable rather than a bare bool.
   unsigned predictedPeakOverlap = 0;
   unsigned smallestPool = 0;
 
@@ -402,7 +404,8 @@ struct SyncModel {
 /// Assigns no ids, emits no IR, and does not mutate the SyncOperations. `syncIR` is
 /// read only to resolve a loop-carried hazard's CARRYING loop:
 /// `setOp->GetForEndIndex()` indexes a `LoopInstanceElement` whose
-/// `[beginId, endId)` is that hazard's interval, read forward, never inverted.
+/// `[beginId, endId + 1)` is that hazard's interval -- the extra index covers the
+/// tail-wait that sits at endId -- read forward, never inverted.
 SyncModel buildSyncModel(const SyncOperations &syncOps, unsigned bufidCapacity,
                          const MemInfoToClusters &memInfoToClusters,
                          const SyncIRs &syncIR);
@@ -416,8 +419,10 @@ SyncModel buildSyncModel(const SyncOperations &syncOps, unsigned bufidCapacity,
 /// hazard, so one `SetEventIds` stamps all four with one id. Exactly one head and
 /// one tail per hazard.
 ///
-/// Also PLACES each pair into `syncIR` -- head into the carrying loop begin's
-/// `pipeBefore`, tail into the loop end's `pipeAfter`, with `push_front` so the
+/// Also PLACES each pair into `syncIR` -- head into the `pipeBefore` of the anchor
+/// `hoistAnchorFor` picks (the carrying loop's begin, or an earlier op in that
+/// loop's own enclosing region when one is legal), tail into the loop end's
+/// `pipeAfter`, with `push_front` so the
 /// tail precedes any existing loop-end set. `SyncCodegen` walks those lists, so
 /// owning the pair in `syncOps` alone would let emission drop it silently. Hence
 /// `syncIR` is mutable here.
@@ -487,7 +492,9 @@ unsigned seedHiddenMacroEvents(SyncModel &model, const SyncIRs &syncIR);
 /// are skipped -- they hold no id.
 ///
 /// Deterministic: hazards are ordered by (direction, interval start, hazard index)
-/// and always take the lowest free ids.
+/// and take the lowest free ids, except that the most recently freed id is skipped
+/// while another free id exists -- an event flag is one signal deep, so alternating
+/// between two ids restores a step of producer run-ahead.
 ///
 /// A rotating id is a RUNTIME value, recorded as -1 in the IR view, so G2/G3 cannot
 /// pair a rotating set with its wait there; the syncops view is the only place those

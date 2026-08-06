@@ -1441,9 +1441,10 @@ def PTOCheckSyncSelfCoverage
     The expected set reads none of the sync pass's decisions -- not its hazard
     selection, mechanism choice, ids, or emitted ops -- so a green result is
     independent of them. It is NOT a proof of correctness: pairs on mutually
-    exclusive `scf.if` arms are excluded, and on A5 `PIPE_V`->`PIPE_V` pairs are
-    credited to the target's intra-pipe ordering guarantee. Both exclusions are
-    counted and reported rather than dropped.
+    exclusive `scf.if` arms are excluded; `PIPE_S`->`PIPE_S` pairs are excluded on
+    every arch, on compiler behaviour rather than a stated guarantee; and on A5
+    `PIPE_V`->`PIPE_V` pairs are credited to the target's intra-pipe ordering
+    guarantee. All three exclusions are counted and reported rather than dropped.
     `InsertSyncAnalysis::IsMemInfoHasDependency`, which layers policy on top of
     `DepBetween`. It cannot, however, catch a dependency the front-end alias
     analysis itself misses; see SyncOracleGates.h for that limit.

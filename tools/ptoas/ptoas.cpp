@@ -484,9 +484,10 @@ static llvm::cl::opt<bool> checkSyncSelfCoverage(
     "check-sync-self-coverage",
     llvm::cl::desc("Run oracle gate G1-self: assert every dependency the "
                    "front-end analysis (DepBetween) reports is ordered by the "
-                   "emitted sync, except pairs on mutually exclusive scf.if arms "
-                   "and, on A5, PIPE_V->PIPE_V pairs the target orders itself; "
-                   "both exclusions are counted and reported. ABSOLUTE -- no "
+                   "emitted sync, except pairs on mutually exclusive scf.if arms, "
+                   "PIPE_S->PIPE_S pairs on every arch, and, on A5, "
+                   "PIPE_V->PIPE_V pairs the target orders itself; all three "
+                   "exclusions are counted and reported. ABSOLUTE -- no "
                    "reference profile and nothing inherited from the sync pass"),
     llvm::cl::init(false));
 

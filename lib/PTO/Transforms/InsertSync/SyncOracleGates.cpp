@@ -1800,11 +1800,11 @@ mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
   CoverageProfile profile = computeCoverage(func, &anchorIndex);
   unsigned n = profile.anchorCount;
 
-  // Transitive closure with distances. reach[i][j] = 0 (same iteration), 1
-  // (loop-carried), or ABSENT. Happens-before is transitive and the raw edge set
-  // is not closed -- pipe filtering breaks chains across three pipes -- so
-  // closing it is required to avoid false "uncovered". 1+1 is dropped: distance 2
-  // is not represented, and dropping is the conservative direction.
+  // Transitive closure with distances. reach[i][j] = 0 (same iteration), any
+  // distance up to the cap (loop-carried), or unreached. Happens-before is
+  // transitive and the raw edge set is not closed -- pipe filtering breaks chains
+  // across three pipes -- so closing it is required to avoid false "uncovered".
+  // Distances compose additively; only a sum above the cap is dropped.
   // The closure is CAPPED, and the cap direction is load-bearing.
   //
   // `reach[i][j]` holds the SMALLEST distance at which emitted sync orders i

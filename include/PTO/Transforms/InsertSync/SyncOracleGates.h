@@ -616,9 +616,10 @@ void printCoverageViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
 // a(PIPE_A) -> b(PIPE_B) -> c(PIPE_C) is covered by two pair-wise syncs while the
 // direct edge (a, c) is absent, since neither sync matches both endpoints' pipes.
 // Checking against the raw set would report a false "uncovered" there. So the
-// relation is closed before checking, with distances composing as
-// 0+0=0, 0+1=1, 1+0=1, and 1+1 DROPPED (distance 2 is not represented, and
-// dropping is the conservative direction).
+// relation is closed before checking, with distances composing ADDITIVELY
+// (0+0=0, 0+1=1, 1+1=2, ...). A composition is dropped only when the sum exceeds
+// `kMaxDistance` (32), leaving the pair unreached, which is the conservative
+// direction.
 //
 // THE MAPPING, and what happens to what it cannot map. Dependencies live over
 // `BaseMemInfo`, which carries no `Operation*`; coverage lives over anchor

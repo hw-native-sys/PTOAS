@@ -242,8 +242,8 @@ current colourer, not an invariant.
 ### 3. Same-pipe dependencies are reported uncovered, identically in both modes
 
 Summed over `test/samples`, across 124 functions producing a gate line, G1-self reports
-427 uncovered dependencies: 423 same-pipe, 4 cross-pipe. **The totals are identical
-under `--enable-insert-sync`** -- 427, 423 and 4 again -- so this is inherited, not
+433 uncovered dependencies: 429 same-pipe, 4 cross-pipe. **The totals are identical
+under `--enable-insert-sync`** -- 433, 429 and 4 again -- so this is inherited, not
 introduced by this pass. The equality is the load-bearing part; the magnitudes track
 the size of the sample corpus and move when it grows.
 
