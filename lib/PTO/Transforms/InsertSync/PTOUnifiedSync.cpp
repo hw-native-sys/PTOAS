@@ -143,29 +143,16 @@ struct PTOUnifiedSyncPass
     if (hasExplicitSync)
       return;
 
-    // Macro ops are supported: the ids their pto-isa library implementation
-    // consumes INSIDE the call are reserved before any id is handed out.
+    // Macro ops are supported. A macro op is one for which `getSyncMacroModel`
+    // returns a model; every model declares `hiddenEvents`, the fixed
+    // (direction, id) pairs the library's own `PtoSetWaitFlag<SRC, DST>()` calls
+    // use. Those uses are invisible in PTO IR -- no op names them -- so without a
+    // reservation the colourer would hand one to a compiler hazard whose interval
+    // spans the call, and nothing in the emitted IR would show it.
     //
-    // A macro op is one for which `getSyncMacroModel` returns a model. Every model
-    // declares `hiddenEvents`: the fixed (direction, id) pairs the library's own
-    // `PtoSetWaitFlag<SRC, DST>()` calls use, defaulted to EVENT_ID0. Those uses are
-    // invisible in PTO IR -- no op names them -- so without a reservation the
-    // colourer would hand one of them to a compiler hazard whose interval spans the
-    // call, and the library's wait would be satisfied by the wrong producer. Nothing
-    // in the emitted IR would show it.
-    //
-    // `seedHiddenMacroEvents` records those reservations and `colorEventIds` treats
-    // them as occupancy, so emission needs no special case: an id already taken is
-    // never offered.
-    //
-    // `checkMacroHiddenEventCollisions` reports such a collision on every run because
-    // no other gate can see it: G3 checks range rather than reservation, and G2 cannot
-    // see a use inside a library call.
-    //
-    // A reservation reduces effective pool capacity, so a kernel that fit in eight ids
-    // can be pushed into the spill path -- and on A3, where K is 0, no buffer-ID
-    // routing can absorb that. The spill path is therefore load-bearing for macro
-    // kernels, not a fallback.
+    // A reservation reduces effective pool capacity, so a kernel that fit in eight
+    // ids can be pushed into the spill path, and at K=0 no buffer-ID routing can
+    // absorb that. The spill path is load-bearing for macro kernels.
 
     // --- Reused front-end: build the hazard set H (no id assignment) --------
     MemoryDependentAnalyzer memAnalyzer;
@@ -216,24 +203,14 @@ struct PTOUnifiedSyncPass
     }
 
     // --- The unified data model ---------------------------------------------
-    // One Hazard per sync group, which is the granularity the both-halves
-    // invariant needs: a mechanism must be stamped on the set and the wait
-    // together or the pair is split across two resources and hangs. Each hazard
-    // carries its SyncIR interval and whether a reverse WAR exists on its buffer,
-    // which is what makes buffer-ID more expensive than an event for that buffer.
+    // One Hazard per sync group: a mechanism must be stamped on the set and the wait
+    // together or the pair is split across two resources and hangs.
     //
-    // Resolve each hazard's memory to its buffer-id cluster(s) with `MemAlias`, the
-    // relation BufidSyncAnalysis itself uses to decide two tiles are the same memory.
-    // Three alternatives are wrong:
-    //   `rootBuffer` is the root ALLOCATION, coarser than a buffer -- several buffers
-    //   share one root, so keying on it conflates tiles that do not alias.
-    //   A `(scope, baseAddr, size)` tuple is only a BUCKET in BufidSync, confirmed
-    //   with MemAlias afterwards, and it degenerates before addresses are assigned:
-    //   `baseAddresses` is empty, baseAddr collapses to 0, and distinct clusters
-    //   collide on one key.
-    //   Pointer identity is exact but incomplete -- the tile dedup drops the losing
-    //   BaseMemInfo objects, so some hazards retain no matching pointer.
-    // Hence pointer fast path, MemAlias fallback.
+    // Cluster identity is `MemAlias`, the relation BufidSyncAnalysis itself uses.
+    // Pointer identity alone is exact but incomplete, because the tile dedup drops
+    // the losing BaseMemInfo objects and some hazards then retain no matching
+    // pointer -- hence pointer fast path, MemAlias fallback. See
+    // `MemInfoToClusters` for the keys this must not be simplified back to.
     unified::MemInfoToClusters memInfoToClusters;
     {
       llvm::SmallVector<const BaseMemInfo *> hazardMemInfos;
@@ -270,16 +247,12 @@ struct PTOUnifiedSyncPass
 
     // --- Settle the operations before any id is assigned --------------------
     // Synthesise the head/tail compensation pair for every loop-carried hazard
-    // BEFORE coloring. Without it the in-body backward pair waits on a flag
-    // nothing raised and deadlocks on iteration 1 -- not an optimisation.
+    // BEFORE coloring; without it the in-body backward pair waits on a flag nothing
+    // raised and deadlocks on iteration 1.
     //
-    // The counts below are the one-of-each proof, printed rather than inferred:
-    // `fe` counts hazards flagged loop-carried by GetForEndIndex (the predicate
-    // the interval is derived from); `inv` counts raw-index inversion
-    // (wait before set) -- the SYMPTOM, reported alongside so any divergence is
-    // visible; `pairs` is the number of head/tail groups actually appended.
-    // fe == pairs is the invariant: one head and one tail per loop-carried
-    // hazard, no more (a double would push pairs above fe) and no fewer.
+    // `fe` counts hazards flagged loop-carried by GetForEndIndex, `inv` counts
+    // raw-index inversion (wait before set), `pairs` the head/tail groups appended.
+    // fe == pairs is the invariant: one head and one tail per loop-carried hazard.
     unsigned feCount = 0, invCount = 0;
     for (const unified::Hazard &h : model.hazards) {
       if (h.isBarrier())
@@ -308,10 +281,10 @@ struct PTOUnifiedSyncPass
 
     // --- Buffer-ID emission ---------------------------------------------------
     //
-    // Three things must land TOGETHER, because any two without the third is the
+    // Three things must land TOGETHER; any two without the third is the
     // split-mechanism shape that hangs:
-    //   1. stamp BUFID on every hazard of a routed buffer (and suppress its event
-    //      ops -- codegen dispatches on TYPE, so stamping alone changes nothing);
+    //   1. stamp BUFID on every hazard of a routed buffer, and suppress its event
+    //      ops -- codegen dispatches on TYPE, so stamping alone changes nothing;
     //   2. the colourer skips them, so they take no event id;
     //   3. get_buf/rls_buf are emitted for them.
     // (1) and (2) are here; (3) is after the event codegen below.
@@ -340,8 +313,6 @@ struct PTOUnifiedSyncPass
     unified::EventColorResult alloc = unified::colorEventIds(model);
 
     auto syncOpRecords = oracle::extractFromSyncOps(syncOpsStorage);
-
-
 
     oracle::DeviceIdLimits limits;
     limits.bufIdCapacity = bufidCapacity;
@@ -408,12 +379,8 @@ struct PTOUnifiedSyncPass
                << " omega=" << b.predictedPeakOverlap << ">pool="
                << b.smallestPool << " wb=yes lbufid=[" << b.bufidLoop.start << ","
                << b.bufidLoop.end << "]\n";
-        // `inv` is now COMPARED, not just printed. It counts hazards whose in-body wait
-        // precedes their set (a true index inversion, i.e. a genuine loop-carried WAR);
-        // `fe` counts those carrying the loop marker. A divergence means compensation was
-        // synthesised for a FORWARD hazard, which is what
-        // `multi_tile_affine_disjoint_slots` does (fe=2 inv=1) and what went unnoticed
-        // because the number was printed and never read.
+        // A divergence between `fe` and `inv` means compensation was synthesised for
+        // a FORWARD hazard, as `prefetch_disjoint_slots` shows.
         //
         // WARNING, not error, and the incumbent is the reason: it primes forward
         // hazards too, so a divergence is not by itself wrong, and erroring would
@@ -442,12 +409,10 @@ struct PTOUnifiedSyncPass
            << " (per-direction first-fit; ids reused across disjoint intervals)\n";
 
         // --- Placement of the synthesised compensation pairs ------------------
-        // SyncCodegen walks syncIR's pipe lists, so the synthesised pair must BE
-        // in them or it is dropped silently at emission. Per pair: where the head
-        // landed in the carrying loop begin's pipeBefore, where the tail landed in
-        // the loop end's pipeAfter, and -- the load-bearing part -- whether the
-        // tail PRECEDES any existing loop-end SET there (push_front). A tail after
-        // a set is the broken-sequence case and is reported ORDER_BAD.
+        // SyncCodegen walks syncIR's pipe lists, so the pair must BE in them or it
+        // is dropped silently at emission. The load-bearing part is whether the tail
+        // PRECEDES any existing loop-end SET there; a tail after a set is the
+        // broken-sequence case, reported ORDER_BAD.
         unsigned placedHead = 0, placedTail = 0, orderOk = 0, orderBad = 0;
         os << "[unified-sync placement] placement into syncIR pipe lists:\n";
         for (const unified::Hazard &h : model.hazards) {
@@ -524,25 +489,19 @@ struct PTOUnifiedSyncPass
     // --- (3) Emit get_buf/rls_buf for the routed buffers ---------------------
     //
     // REUSE, NOT REBUILD. `BufidSyncAnalysis::insertSyncOperations` +
-    // `BufidSyncIdAlloc` + `BufidSyncCodegen` are the production pipeline, and the
-    // interface accepts these routing decisions without contortion:
-    // `BufidSyncCodegen`'s ONLY dependency on the allocator is
-    // `getLogicToPhysical()`, and its input is a
-    // `DenseMap<Operation*, BufSyncPipeBuild>` that the analysis already produces
-    // over the same SyncIR and the same clusters routing ran on. The only addition
-    // is a FILTER: BufidSync emits for every cluster, only the routed ones are
-    // wanted here, and `BufSyncOperation` carries `logicId` so the filter is exact.
+    // `BufidSyncIdAlloc` + `BufidSyncCodegen` are the production pipeline, and it
+    // already runs over the same SyncIR and the same clusters routing ran on. The
+    // only addition is a FILTER: BufidSync emits for every cluster, only the routed
+    // ones are wanted, and `BufSyncOperation` carries `logicId`.
     //
-    // PHYSICAL IDS ARE DELEGATED to `BufidSyncIdAlloc`, deliberately, and NOT
-    // re-colored here. It is the same greedy left-edge scan, but over ONE pool of
-    // K shared across all directions -- unlike `colorEventIds`, which is per
-    // direction with a pool each. It also owns the two things a fresh colourer
-    // would have to reinvent with no test to justify them: the exhaustion path
-    // (`needsReuse` -> `reuseIds` -> `compactPhysicalIds`, which coalesces logic
-    // ids rather than failing) and `validateNoSamePhysicalIdNesting`. And its
-    // interval model is `computeLifeIntervals`' UNION SPAN, which is what the
-    // event colourer is aligned to. Duplicating it would fork the very interval
-    // semantics both mechanisms are meant to share.
+    // PHYSICAL IDS ARE DELEGATED to `BufidSyncIdAlloc`, not re-colored here. It is
+    // the same greedy left-edge scan but over ONE pool of K shared across all
+    // directions, unlike `colorEventIds` which is per direction. It also owns the
+    // exhaustion path (`needsReuse` -> `reuseIds` -> `compactPhysicalIds`, which
+    // coalesces logic ids rather than failing) and
+    // `validateNoSamePhysicalIdNesting`, and its interval model is
+    // `computeLifeIntervals`' union span -- the same semantics the event colourer is
+    // aligned to. Duplicating it would fork them.
     if (routedHazards > 0) {
       bufAnalysis.insertSyncOperations();
       bufAnalysis.optimizeSamePipeMerge();
