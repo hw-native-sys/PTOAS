@@ -901,7 +901,7 @@ mlir::pto::oracle::checkNonInterference(llvm::ArrayRef<SyncOpRecord> records) {
   llvm::SmallVector<InterferenceViolation> leaks;
   for (const auto &entry : eventLive)
     for (const auto &open : entry.second.opens) {
-      unsigned order = open.first;
+      unsigned order = open.order;
       leaks.push_back({InterferenceKind::EventIdUnclosed, Severity::Error,
                        order, order, "set_event",
                        eventKeyName(PipelineType(std::get<0>(entry.first)),
