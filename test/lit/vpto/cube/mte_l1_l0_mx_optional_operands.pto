@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mx_load_optional_operands(
+      %a_src: !pto.ptr<!pto.f8E8M0, l1>, %a_dst: !pto.ptr<f8E4M3FN, l0a>,
+      %b_src: !pto.ptr<!pto.f8E8M0, l1>, %b_dst: !pto.ptr<f8E4M3FN, l0b>)
+      attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c5 = arith.constant 5 : i64
+    %c8 = arith.constant 8 : i64
+    %c11 = arith.constant 11 : i64
+    %c13 = arith.constant 13 : i64
+    %c16 = arith.constant 16 : i64
+    %c17 = arith.constant 17 : i64
+    %c128 = arith.constant 128 : i64
+
+    pto.mte_l1_l0a_mx %a_src, %a_dst, m(%c16), k(%c128), start_row(%c0), start_col(%c2)
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0a>, i64, i64, i64, i64
+    pto.mte_l1_l0b_mx %b_src, %b_dst, dst_stride(%c13), x_step(%c17), y_start(%c5), src_stride(%c11), y_step(%c8), x_start(%c3)
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0b>, i64, i64, i64, i64, i64, i64
+    pto.mte_l1_l0a_mx %a_src, %a_dst, %c3, %c5, %c17, %c8, %c11, %c13
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0a>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @mx_load_optional_operands(
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i64
+// CHECK-DAG: %[[C3:.*]] = arith.constant 3 : i64
+// CHECK-DAG: %[[C5:.*]] = arith.constant 5 : i64
+// CHECK-DAG: %[[C8:.*]] = arith.constant 8 : i64
+// CHECK-DAG: %[[C11:.*]] = arith.constant 11 : i64
+// CHECK-DAG: %[[C13:.*]] = arith.constant 13 : i64
+// CHECK-DAG: %[[C16:.*]] = arith.constant 16 : i64
+// CHECK-DAG: %[[C17:.*]] = arith.constant 17 : i64
+// CHECK-DAG: %[[C128:.*]] = arith.constant 128 : i64
+// CHECK: pto.mte_l1_l0a_mx %{{.*}}, %{{.*}}, %[[C16]], %[[C128]], %[[C0]], %[[C2]]
+// CHECK: pto.mte_l1_l0b_mx %{{.*}}, %{{.*}}, %[[C3]], %[[C5]], %[[C17]], %[[C8]], %[[C11]], %[[C13]]
+// CHECK: pto.mte_l1_l0a_mx %{{.*}}, %{{.*}}, %[[C3]], %[[C5]], %[[C17]], %[[C8]], %[[C11]], %[[C13]]

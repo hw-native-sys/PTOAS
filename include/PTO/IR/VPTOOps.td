@@ -3074,41 +3074,53 @@ def PTO_MteL1L0bOp : PTO_MteOp<"mte_l1_l0b", [
 }
 
 def PTO_MteL1L0aMxOp : PTO_MteOp<"mte_l1_l0a_mx", [
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
     PTO_BufferLikeType:$destination,
-    Variadic<I64>:$controls
+    Optional<I64>:$m,
+    Optional<I64>:$k,
+    Optional<I64>:$start_row,
+    Optional<I64>:$start_col,
+    Optional<I64>:$x_start,
+    Optional<I64>:$y_start,
+    Optional<I64>:$x_step,
+    Optional<I64>:$y_step,
+    Optional<I64>:$src_stride,
+    Optional<I64>:$dst_stride
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `,` $destination `,` $controls attr-dict `:` type($source) `,`
-    type($destination) `,` type($controls)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MteL1L0bMxOp : PTO_MteOp<"mte_l1_l0b_mx", [
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
     PTO_BufferLikeType:$destination,
-    Variadic<I64>:$controls
+    Optional<I64>:$k,
+    Optional<I64>:$n,
+    Optional<I64>:$start_row,
+    Optional<I64>:$start_col,
+    Optional<I64>:$x_start,
+    Optional<I64>:$y_start,
+    Optional<I64>:$x_step,
+    Optional<I64>:$y_step,
+    Optional<I64>:$src_stride,
+    Optional<I64>:$dst_stride
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `,` $destination `,` $controls attr-dict `:` type($source) `,`
-    type($destination) `,` type($controls)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MteL0cL1Op : PTO_MteOp<"mte_l0c_l1", [

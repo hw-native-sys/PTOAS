@@ -5329,8 +5329,8 @@ def mte_l1_l0a_mx(
     m=None,
     k=None,
     *,
-    start_row=0,
-    start_col=0,
+    start_row=None,
+    start_col=None,
     x_start=None,
     y_start=None,
     x_step=None,
@@ -5341,48 +5341,51 @@ def mte_l1_l0a_mx(
     """``pto.mte_l1_l0a_mx`` – MX cube-side LEFT staging.
 
     Use either the existing shape-derived ``m``/``k`` form or provide all six
-    explicit MX controls. Both forms trace through the L1-to-L0A MX wrapper.
+    full MX operands. Both forms trace through the L1-to-L0A MX wrapper.
     """
-    controls = (x_start, y_start, x_step, y_step, src_stride, dst_stride)
-    has_explicit_controls = any(control is not None for control in controls)
-    if has_explicit_controls:
+    full_operands = (x_start, y_start, x_step, y_step, src_stride, dst_stride)
+    has_full_operands = any(operand is not None for operand in full_operands)
+    if has_full_operands:
         if m is not None or k is not None:
             raise TypeError(
-                "mte_l1_l0a_mx accepts either m/k or explicit MX controls, not both"
+                "mte_l1_l0a_mx accepts either m/k or full MX operands, not both"
             )
-        if start_row != 0 or start_col != 0:
+        # The legacy API defaulted these shape-only fields to zero. Continue
+        # accepting explicit zero so existing full-MX callers remain valid.
+        if ((start_row is not None and start_row != 0) or
+                (start_col is not None and start_col != 0)):
             raise TypeError(
-                "mte_l1_l0a_mx start_row/start_col are unavailable with explicit MX controls"
+                "mte_l1_l0a_mx start_row/start_col are unavailable with full MX operands"
             )
-        if any(control is None for control in controls):
+        if any(operand is None for operand in full_operands):
             raise TypeError(
-                "mte_l1_l0a_mx explicit MX controls require x_start, y_start, "
+                "mte_l1_l0a_mx full MX operands require x_start, y_start, "
                 "x_step, y_step, src_stride, and dst_stride"
             )
         _pto.MteL1L0aMxOp(
             unwrap_surface_value(source),
             unwrap_surface_value(destination),
-            [
-                _coerce_i64(x_start, context="mte_l1_l0a_mx x_start"),
-                _coerce_i64(y_start, context="mte_l1_l0a_mx y_start"),
-                _coerce_i64(x_step, context="mte_l1_l0a_mx x_step"),
-                _coerce_i64(y_step, context="mte_l1_l0a_mx y_step"),
-                _coerce_i64(src_stride, context="mte_l1_l0a_mx src_stride"),
-                _coerce_i64(dst_stride, context="mte_l1_l0a_mx dst_stride"),
-            ],
+            x_start=_coerce_i64(x_start, context="mte_l1_l0a_mx x_start"),
+            y_start=_coerce_i64(y_start, context="mte_l1_l0a_mx y_start"),
+            x_step=_coerce_i64(x_step, context="mte_l1_l0a_mx x_step"),
+            y_step=_coerce_i64(y_step, context="mte_l1_l0a_mx y_step"),
+            src_stride=_coerce_i64(src_stride, context="mte_l1_l0a_mx src_stride"),
+            dst_stride=_coerce_i64(dst_stride, context="mte_l1_l0a_mx dst_stride"),
         )
         return
     if m is None or k is None:
-        raise TypeError("mte_l1_l0a_mx requires m and k without explicit MX controls")
+        raise TypeError("mte_l1_l0a_mx requires m and k without full MX operands")
+    if start_row is None:
+        start_row = 0
+    if start_col is None:
+        start_col = 0
     _pto.MteL1L0aMxOp(
         unwrap_surface_value(source),
         unwrap_surface_value(destination),
-        [
-            _coerce_i64(m, context="mte_l1_l0a_mx m"),
-            _coerce_i64(k, context="mte_l1_l0a_mx k"),
-            _coerce_i64(start_row, context="mte_l1_l0a_mx start_row"),
-            _coerce_i64(start_col, context="mte_l1_l0a_mx start_col"),
-        ],
+        m=_coerce_i64(m, context="mte_l1_l0a_mx m"),
+        k=_coerce_i64(k, context="mte_l1_l0a_mx k"),
+        start_row=_coerce_i64(start_row, context="mte_l1_l0a_mx start_row"),
+        start_col=_coerce_i64(start_col, context="mte_l1_l0a_mx start_col"),
     )
 
 
@@ -5393,8 +5396,8 @@ def mte_l1_l0b_mx(
     k=None,
     n=None,
     *,
-    start_row=0,
-    start_col=0,
+    start_row=None,
+    start_col=None,
     x_start=None,
     y_start=None,
     x_step=None,
@@ -5405,48 +5408,51 @@ def mte_l1_l0b_mx(
     """``pto.mte_l1_l0b_mx`` – MX cube-side RIGHT staging.
 
     Use either the existing shape-derived ``k``/``n`` form or provide all six
-    explicit MX controls. Both forms trace through the L1-to-L0B MX wrapper.
+    full MX operands. Both forms trace through the L1-to-L0B MX wrapper.
     """
-    controls = (x_start, y_start, x_step, y_step, src_stride, dst_stride)
-    has_explicit_controls = any(control is not None for control in controls)
-    if has_explicit_controls:
+    full_operands = (x_start, y_start, x_step, y_step, src_stride, dst_stride)
+    has_full_operands = any(operand is not None for operand in full_operands)
+    if has_full_operands:
         if k is not None or n is not None:
             raise TypeError(
-                "mte_l1_l0b_mx accepts either k/n or explicit MX controls, not both"
+                "mte_l1_l0b_mx accepts either k/n or full MX operands, not both"
             )
-        if start_row != 0 or start_col != 0:
+        # The legacy API defaulted these shape-only fields to zero. Continue
+        # accepting explicit zero so existing full-MX callers remain valid.
+        if ((start_row is not None and start_row != 0) or
+                (start_col is not None and start_col != 0)):
             raise TypeError(
-                "mte_l1_l0b_mx start_row/start_col are unavailable with explicit MX controls"
+                "mte_l1_l0b_mx start_row/start_col are unavailable with full MX operands"
             )
-        if any(control is None for control in controls):
+        if any(operand is None for operand in full_operands):
             raise TypeError(
-                "mte_l1_l0b_mx explicit MX controls require x_start, y_start, "
+                "mte_l1_l0b_mx full MX operands require x_start, y_start, "
                 "x_step, y_step, src_stride, and dst_stride"
             )
         _pto.MteL1L0bMxOp(
             unwrap_surface_value(source),
             unwrap_surface_value(destination),
-            [
-                _coerce_i64(x_start, context="mte_l1_l0b_mx x_start"),
-                _coerce_i64(y_start, context="mte_l1_l0b_mx y_start"),
-                _coerce_i64(x_step, context="mte_l1_l0b_mx x_step"),
-                _coerce_i64(y_step, context="mte_l1_l0b_mx y_step"),
-                _coerce_i64(src_stride, context="mte_l1_l0b_mx src_stride"),
-                _coerce_i64(dst_stride, context="mte_l1_l0b_mx dst_stride"),
-            ],
+            x_start=_coerce_i64(x_start, context="mte_l1_l0b_mx x_start"),
+            y_start=_coerce_i64(y_start, context="mte_l1_l0b_mx y_start"),
+            x_step=_coerce_i64(x_step, context="mte_l1_l0b_mx x_step"),
+            y_step=_coerce_i64(y_step, context="mte_l1_l0b_mx y_step"),
+            src_stride=_coerce_i64(src_stride, context="mte_l1_l0b_mx src_stride"),
+            dst_stride=_coerce_i64(dst_stride, context="mte_l1_l0b_mx dst_stride"),
         )
         return
     if k is None or n is None:
-        raise TypeError("mte_l1_l0b_mx requires k and n without explicit MX controls")
+        raise TypeError("mte_l1_l0b_mx requires k and n without full MX operands")
+    if start_row is None:
+        start_row = 0
+    if start_col is None:
+        start_col = 0
     _pto.MteL1L0bMxOp(
         unwrap_surface_value(source),
         unwrap_surface_value(destination),
-        [
-            _coerce_i64(k, context="mte_l1_l0b_mx k"),
-            _coerce_i64(n, context="mte_l1_l0b_mx n"),
-            _coerce_i64(start_row, context="mte_l1_l0b_mx start_row"),
-            _coerce_i64(start_col, context="mte_l1_l0b_mx start_col"),
-        ],
+        k=_coerce_i64(k, context="mte_l1_l0b_mx k"),
+        n=_coerce_i64(n, context="mte_l1_l0b_mx n"),
+        start_row=_coerce_i64(start_row, context="mte_l1_l0b_mx start_row"),
+        start_col=_coerce_i64(start_col, context="mte_l1_l0b_mx start_col"),
     )
 
 

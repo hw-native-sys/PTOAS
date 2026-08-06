@@ -63,7 +63,7 @@ lp_vreg_ty = pto.vreg_type(256, pto.f8e4m3)
 
 Constructing scalar eager values or host tensor ABI contracts with a low-precision type is **not supported** — `pto.f8e4m3(1.0)` and `pto.tensor_spec(rank=2, dtype=pto.f8e4m3)` will raise an error.
 
-`pto.f8e8m0` is storage-only. Use it for MX scale storage, including an L1 source pointer passed to the explicit-control overload of `pto.mte_l1_l0a_mx` or `pto.mte_l1_l0b_mx`; it is not a scalar arithmetic type.
+`pto.f8e8m0` is storage-only. Use it for MX scale storage, including an L1 source pointer passed with the full MX field group to `pto.mte_l1_l0a_mx` or `pto.mte_l1_l0b_mx`; it is not a scalar arithmetic type.
 
 ### Integer literal guidance
 

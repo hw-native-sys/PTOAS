@@ -21,7 +21,7 @@ def _identity(value):
 
 
 class VectorCubeSurfaceTest(unittest.TestCase):
-    def test_mte_mx_explicit_controls_preserve_all_values(self):
+    def test_mte_mx_full_operands_preserve_all_values(self):
         source = object()
         destination = object()
         controls = {
@@ -36,41 +36,99 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         def coerce(value, *, context):
             return f"{context}:{value}"
 
-        expected = (
-            source,
-            destination,
-            "mte_l1_l0a_mx x_start:3",
-            "mte_l1_l0a_mx y_start:5",
-            "mte_l1_l0a_mx x_step:16",
-            "mte_l1_l0a_mx y_step:2",
-            "mte_l1_l0a_mx src_stride:8",
-            "mte_l1_l0a_mx dst_stride:2",
-        )
         with patch.object(_ops, "_require_explicit_mode"), \
              patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
              patch.object(_ops, "_coerce_i64", side_effect=coerce), \
              patch.object(_ops._pto, "MteL1L0aMxOp") as load_ca:
             pto.mte_l1_l0a_mx(source, destination, **controls)
-        load_ca.assert_called_once_with(source, destination, list(expected[2:]))
-
-        expected = (
+        load_ca.assert_called_once_with(
             source,
             destination,
-            "mte_l1_l0b_mx x_start:3",
-            "mte_l1_l0b_mx y_start:5",
-            "mte_l1_l0b_mx x_step:16",
-            "mte_l1_l0b_mx y_step:2",
-            "mte_l1_l0b_mx src_stride:8",
-            "mte_l1_l0b_mx dst_stride:2",
+            x_start="mte_l1_l0a_mx x_start:3",
+            y_start="mte_l1_l0a_mx y_start:5",
+            x_step="mte_l1_l0a_mx x_step:16",
+            y_step="mte_l1_l0a_mx y_step:2",
+            src_stride="mte_l1_l0a_mx src_stride:8",
+            dst_stride="mte_l1_l0a_mx dst_stride:2",
         )
+
         with patch.object(_ops, "_require_explicit_mode"), \
              patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
              patch.object(_ops, "_coerce_i64", side_effect=coerce), \
              patch.object(_ops._pto, "MteL1L0bMxOp") as load_cb:
             pto.mte_l1_l0b_mx(source, destination, **controls)
-        load_cb.assert_called_once_with(source, destination, list(expected[2:]))
+        load_cb.assert_called_once_with(
+            source,
+            destination,
+            x_start="mte_l1_l0b_mx x_start:3",
+            y_start="mte_l1_l0b_mx y_start:5",
+            x_step="mte_l1_l0b_mx x_step:16",
+            y_step="mte_l1_l0b_mx y_step:2",
+            src_stride="mte_l1_l0b_mx src_stride:8",
+            dst_stride="mte_l1_l0b_mx dst_stride:2",
+        )
 
-    def test_mte_mx_explicit_controls_require_a_complete_mode(self):
+    def test_mte_mx_shape_operands_are_named(self):
+        source = object()
+        destination = object()
+
+        def coerce(value, *, context):
+            return f"{context}:{value}"
+
+        with patch.object(_ops, "_require_explicit_mode"), \
+             patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops, "_coerce_i64", side_effect=coerce), \
+             patch.object(_ops._pto, "MteL1L0aMxOp") as load_ca:
+            pto.mte_l1_l0a_mx(
+                source, destination, 128, 256, start_row=3, start_col=5
+            )
+        load_ca.assert_called_once_with(
+            source,
+            destination,
+            m="mte_l1_l0a_mx m:128",
+            k="mte_l1_l0a_mx k:256",
+            start_row="mte_l1_l0a_mx start_row:3",
+            start_col="mte_l1_l0a_mx start_col:5",
+        )
+
+        with patch.object(_ops, "_require_explicit_mode"), \
+             patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops, "_coerce_i64", side_effect=coerce), \
+             patch.object(_ops._pto, "MteL1L0bMxOp") as load_cb:
+            pto.mte_l1_l0b_mx(
+                source, destination, 256, 128, start_row=5, start_col=3
+            )
+        load_cb.assert_called_once_with(
+            source,
+            destination,
+            k="mte_l1_l0b_mx k:256",
+            n="mte_l1_l0b_mx n:128",
+            start_row="mte_l1_l0b_mx start_row:5",
+            start_col="mte_l1_l0b_mx start_col:3",
+        )
+
+    def test_mte_mx_shape_operands_default_starts_to_zero(self):
+        source = object()
+        destination = object()
+
+        def coerce(value, *, context):
+            return f"{context}:{value}"
+
+        with patch.object(_ops, "_require_explicit_mode"), \
+             patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops, "_coerce_i64", side_effect=coerce), \
+             patch.object(_ops._pto, "MteL1L0aMxOp") as load_ca:
+            pto.mte_l1_l0a_mx(source, destination, 128, 256)
+        load_ca.assert_called_once_with(
+            source,
+            destination,
+            m="mte_l1_l0a_mx m:128",
+            k="mte_l1_l0a_mx k:256",
+            start_row="mte_l1_l0a_mx start_row:0",
+            start_col="mte_l1_l0a_mx start_col:0",
+        )
+
+    def test_mte_mx_full_operands_require_a_complete_mode(self):
         source = object()
         destination = object()
         complete_controls = {
@@ -85,8 +143,25 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         with patch.object(_ops, "_require_explicit_mode"):
             with self.assertRaisesRegex(TypeError, "require x_start"):
                 pto.mte_l1_l0a_mx(source, destination, x_start=3)
-            with self.assertRaisesRegex(TypeError, "either k/n or explicit"):
+            with self.assertRaisesRegex(TypeError, "either k/n or full"):
                 pto.mte_l1_l0b_mx(source, destination, 128, 256, **complete_controls)
+        with patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops, "_coerce_i64", side_effect=lambda value, *, context: f"{context}:{value}"), \
+             patch.object(_ops._pto, "MteL1L0aMxOp") as load_ca:
+            pto.mte_l1_l0a_mx(
+                source, destination, start_row=0, start_col=0,
+                **complete_controls
+            )
+        load_ca.assert_called_once_with(
+            source,
+            destination,
+            x_start="mte_l1_l0a_mx x_start:3",
+            y_start="mte_l1_l0a_mx y_start:5",
+            x_step="mte_l1_l0a_mx x_step:16",
+            y_step="mte_l1_l0a_mx y_step:2",
+            src_stride="mte_l1_l0a_mx src_stride:8",
+            dst_stride="mte_l1_l0a_mx dst_stride:2",
+        )
 
         self.assertFalse(hasattr(pto, "load_cbuf_to_ca_mx"))
         self.assertFalse(hasattr(pto, "load_cbuf_to_cb_mx"))

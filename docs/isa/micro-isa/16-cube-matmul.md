@@ -682,6 +682,39 @@ entry applies to one 32-element K group.
 - L1 source data is organized as 32B scale fragments in the same logical order
   as the associated data tile.
 
+### MX Scale Load Operands
+
+`pto.mte_l1_l0a_mx` and `pto.mte_l1_l0b_mx` store the following operands as
+independently optional fields, but a valid operation supplies exactly one
+complete operand group:
+
+- **Shape-derived group:** `m`, `k`, `start_row`, `start_col` for L0A, or
+  `k`, `n`, `start_row`, `start_col` for L0B. PTOAS derives the MX traversal
+  from the matrix shape and element type.
+- **Full MX group:** `x_start`, `y_start`, `x_step`, `y_step`, `src_stride`,
+  `dst_stride`. Use this group when the scale source has an explicit physical
+  layout that cannot be derived from the logical matrix shape.
+
+The two groups are mutually exclusive. A partial group is invalid. `x_start`
+and `y_start` are MX scale-fragment grid coordinates; `x_step` and `y_step`
+are grid traversal extents; `src_stride` and `dst_stride` are grid-row strides.
+The full MX values are not logical element counts or byte offsets.
+
+The named field spelling is available when an incomplete or mixed operation
+must be diagnosed. Complete groups print in the compact positional spelling
+used by the examples below.
+
+```mlir
+pto.mte_l1_l0a_mx %src, %dst,
+  x_start(%x_start), y_start(%y_start), x_step(%x_step), y_step(%y_step),
+  src_stride(%src_stride), dst_stride(%dst_stride)
+  : !pto.ptr<T, l1>, !pto.ptr<T, l0a>, i64, i64, i64, i64, i64, i64
+```
+
+`%src` must be in `l1` and address a 32-byte-aligned MX scale fragment.
+`%dst` must be in the matching `l0a` or `l0b` space. It is always the real
+staged L0 byte pointer and must be 16-byte aligned.
+
 ### `pto.mte_l1_l0a_mx`
 
 - **syntax:**
@@ -706,7 +739,10 @@ pto.mte_l1_l0a_mx %src, %dst, %m, %k, %start_row, %start_col
 **Constraints:**
 
 - `%src` must be in `l1`, `%dst` must be in `l0a`.
-- `%src` and `%dst` must satisfy 32B MX scale-fragment alignment.
+- `%src` must be 32-byte aligned to an MX scale fragment; `%dst` must be
+  16-byte aligned for the MX destination address unit.
+- Use either the complete shape-derived group or the complete full MX group
+  from [MX Scale Load Operands](#mx-scale-load-operands).
 
 **Example:**
 
@@ -741,7 +777,10 @@ pto.mte_l1_l0b_mx %src, %dst, %k, %n, %start_row, %start_col
 **Constraints:**
 
 - `%src` must be in `l1`, `%dst` must be in `l0b`.
-- `%src` and `%dst` must satisfy 32B MX scale-fragment alignment.
+- `%src` must be 32-byte aligned to an MX scale fragment; `%dst` must be
+  16-byte aligned for the MX destination address unit.
+- Use either the complete shape-derived group or the complete full MX group
+  from [MX Scale Load Operands](#mx-scale-load-operands).
 
 **Example:**
 

@@ -9,11 +9,15 @@
 // RUN: split-file %s %t
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_source.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-SOURCE
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_destination.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-DESTINATION
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_source_alignment.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-SOURCE-ALIGNMENT
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_alignment.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-ALIGNMENT
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_negative_x_step.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-NEGATIVE-X-STEP
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_negative_y_step.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-NEGATIVE-Y-STEP
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_negative_src_stride.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-NEGATIVE-SRC-STRIDE
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_negative_dst_stride.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-NEGATIVE-DST-STRIDE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_partial_shape_fields.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-PARTIAL-SHAPE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_mixed_fields.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-MIXED-FIELDS
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_five_positional_fields.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-FIVE-POSITIONAL
 
 //--- ca_source.pto
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
@@ -46,6 +50,19 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %c1 = arith.constant 1 : i64
     %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f8E8M0, l1>
     %dst = pto.castptr %c1 : i64 -> !pto.ptr<f8E4M3FN, l0a>
+    pto.mte_l1_l0a_mx %src, %dst, %c0, %c0, %c0, %c0
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0a>, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_source_alignment.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ca_source_alignment() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c1 : i64 -> !pto.ptr<!pto.f8E8M0, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f8E4M3FN, l0a>
     pto.mte_l1_l0a_mx %src, %dst, %c0, %c0, %c0, %c0
       : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0a>, i64, i64, i64, i64
     return
@@ -112,10 +129,54 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
   }
 }
 
+//--- ca_partial_shape_fields.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ca_partial_shape_fields() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c16 = arith.constant 16 : i64
+    %c64 = arith.constant 64 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f8E8M0, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f8E4M3FN, l0a>
+    pto.mte_l1_l0a_mx %src, %dst, m(%c16), k(%c64), start_row(%c0)
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0a>, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_mixed_fields.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @cb_mixed_fields() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c16 = arith.constant 16 : i64
+    %c64 = arith.constant 64 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f8E8M0, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f8E4M3FN, l0b>
+    pto.mte_l1_l0b_mx %src, %dst, k(%c64), n(%c16), start_row(%c0), start_col(%c0), x_start(%c0)
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0b>, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_five_positional_fields.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ca_five_positional_fields() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f8E8M0, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f8E4M3FN, l0a>
+    pto.mte_l1_l0a_mx %src, %dst, %c0, %c0, %c0, %c0, %c0
+      : !pto.ptr<!pto.f8E8M0, l1>, !pto.ptr<f8E4M3FN, l0a>, i64, i64, i64, i64, i64
+    return
+  }
+}
+
 // CA-SOURCE: 'pto.load_cbuf_to_ca_mx' op requires MAT source
 // CB-DESTINATION: 'pto.load_cbuf_to_cb_mx' op requires RIGHT destination
+// CA-SOURCE-ALIGNMENT: 'pto.mte_l1_l0a_mx' op statically known LOAD.MX source address must be aligned to 32 bytes, got 1
 // CA-ALIGNMENT: 'pto.mte_l1_l0a_mx' op statically known LOAD.MX destination address must be aligned to 16 bytes, got 1
 // CA-NEGATIVE-X-STEP: 'pto.mte_l1_l0a_mx' op x_step must be non-negative
 // CA-NEGATIVE-Y-STEP: 'pto.mte_l1_l0a_mx' op y_step must be non-negative
 // CA-NEGATIVE-SRC-STRIDE: 'pto.mte_l1_l0a_mx' op src_stride must be non-negative
 // CA-NEGATIVE-DST-STRIDE: 'pto.mte_l1_l0a_mx' op dst_stride must be non-negative
+// CA-PARTIAL-SHAPE: 'pto.mte_l1_l0a_mx' op shape-derived MX form requires start_col
+// CB-MIXED-FIELDS: 'pto.mte_l1_l0b_mx' op cannot mix shape-derived MX operands with full MX operands
+// CA-FIVE-POSITIONAL: expects either four shape-derived or six full positional MX operands

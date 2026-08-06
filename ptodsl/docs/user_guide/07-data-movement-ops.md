@@ -979,25 +979,27 @@ Cube compute step; it does not issue those transfers itself.
 
 ---
 
-#### `pto.mte_l1_l0a_mx(src: PtrType, dst: PtrType, m: int, k: int, *, start_row: int = 0, start_col: int = 0) -> None`
-#### `pto.mte_l1_l0b_mx(src: PtrType, dst: PtrType, k: int, n: int, *, start_row: int = 0, start_col: int = 0) -> None`
-#### `pto.mte_l1_l0a_mx(src: PtrType, dst: PtrType, *, x_start: int, y_start: int, x_step: int, y_step: int, src_stride: int, dst_stride: int) -> None`
-#### `pto.mte_l1_l0b_mx(src: PtrType, dst: PtrType, *, x_start: int, y_start: int, x_step: int, y_step: int, src_stride: int, dst_stride: int) -> None`
+#### `pto.mte_l1_l0a_mx(src: PtrType, dst: PtrType, m: int | None = None, k: int | None = None, *, start_row: int | None = None, start_col: int | None = None, x_start: int | None = None, y_start: int | None = None, x_step: int | None = None, y_step: int | None = None, src_stride: int | None = None, dst_stride: int | None = None) -> None`
+#### `pto.mte_l1_l0b_mx(src: PtrType, dst: PtrType, k: int | None = None, n: int | None = None, *, start_row: int | None = None, start_col: int | None = None, x_start: int | None = None, y_start: int | None = None, x_step: int | None = None, y_step: int | None = None, src_stride: int | None = None, dst_stride: int | None = None) -> None`
 
-**Description**: MX-mode variants of `mte_l1_l0a` and `mte_l1_l0b`. The shape-derived overloads preserve the existing behavior. The explicit-control overloads are for scale staging where traversal must not be inferred from matrix shape; they preserve every supplied control value through the existing PTO wrapper before it expands to the internal raw MX load.
+**Description**: MX-mode variants of `mte_l1_l0a` and `mte_l1_l0b`. Every control field is independently optional, but a PTODSL call must provide exactly one complete group: either the shape-derived fields or the full MX fields. The shape-derived group preserves existing behavior. Use the full group when scale traversal cannot be inferred from matrix shape; every supplied value is preserved.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `PtrType` (L1) | MX scale source pointer. `pto.f8e8m0` is supported as a storage element type. |
-| `dst` | `PtrType` (L0A or L0B) | Real staged L0 destination pointer. Pass the actual L0 address; do not divide or otherwise encode it in PTODSL. |
-| `m`, `k` or `k`, `n` | `int` | Shape-derived overload dimensions. Do not combine them with explicit controls. |
-| `start_row`, `start_col` | `int` | Shape-derived overload source offsets. Do not combine them with explicit controls. |
-| `x_start` | `int` | MX load x start position. |
-| `y_start` | `int` | MX load y start position. |
-| `x_step` | `int` | MX load x traversal step. |
-| `y_step` | `int` | MX load y traversal step. |
-| `src_stride` | `int` | MX load source stride. |
-| `dst_stride` | `int` | MX load destination stride. |
+| `src` | `PtrType` (L1) | 32-byte-aligned MX scale source pointer. `pto.f8e8m0` is supported as a storage element type. |
+| `dst` | `PtrType` (L0A or L0B) | 16-byte-aligned real staged L0 destination pointer. Pass the actual L0 address; do not divide or otherwise encode it in PTODSL. |
+| `m`, `k` or `k`, `n` | `int | None` | Shape-derived dimensions. Supply both dimensions and do not combine them with full MX fields. |
+| `start_row`, `start_col` | `int | None` | Shape-derived source offsets. They default to `0` when the shape-derived group is used. With full MX fields they must be omitted, except explicit literal `0` remains accepted for compatibility. |
+| `x_start`, `y_start` | `int | None` | Start coordinates in the MX scale-fragment grid. |
+| `x_step`, `y_step` | `int | None` | Traversal extents in MX scale-fragment grid units. |
+| `src_stride` | `int | None` | Distance between source traversal rows in MX scale-fragment grid units. |
+| `dst_stride` | `int | None` | Distance between destination traversal rows in MX scale-fragment grid units. |
+
+The full group is `x_start`, `y_start`, `x_step`, `y_step`, `src_stride`, and
+`dst_stride`; all six values are required together. Its values are MX
+scale-fragment grid coordinates or strides, not logical element counts or byte
+offsets. A partial group or a mixture of shape-derived and full fields raises
+`TypeError`.
 
 **Returns**: None (side-effect operation).
 
