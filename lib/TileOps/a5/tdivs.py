@@ -14,6 +14,7 @@ from ._elementwise import (
     _common_constraints,
     emit_scalar_binary_1d,
     emit_scalar_binary_2d,
+    traversal_metadata,
 )
 from .div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
 
@@ -62,14 +63,16 @@ def _emit_tdivs_body(src, scalar, dst, traversal, *, scalar_lhs=False):
     )
 
 
-def _register_tdivs(*, name, traversal, priority, candidate_id,
-                    scalar_lhs=False):
+def _register_tdivs(*, name, traversal, scalar_lhs=False):
     constraints = _common_constraints("src", "dst")
     constraints.append(_scalar_tile_tile if scalar_lhs else _tile_scalar_tile)
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        fallback_candidate_id=1 if scalar_lhs else 0,
+        candidate_count=2,
+    )
     if traversal == "1d":
         constraints.append(tilelib.require_elementwise_1d("src", "dst"))
-        loop_depth = 1
 
     if scalar_lhs:
 
@@ -123,29 +126,21 @@ def _register_tdivs(*, name, traversal, priority, candidate_id,
 template_tdivs_tile_scalar = _register_tdivs(
     name="template_tdivs_tile_scalar",
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 template_tdivs_scalar_tile = _register_tdivs(
     name="template_tdivs_scalar_tile",
     traversal="2d",
-    priority=0,
-    candidate_id=1,
     scalar_lhs=True,
 )
 
 template_tdivs_tile_scalar_1d = _register_tdivs(
     name="template_tdivs_tile_scalar_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=2,
 )
 
 template_tdivs_scalar_tile_1d = _register_tdivs(
     name="template_tdivs_scalar_tile_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=3,
     scalar_lhs=True,
 )

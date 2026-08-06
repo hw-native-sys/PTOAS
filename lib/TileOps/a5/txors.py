@@ -38,6 +38,4 @@ template_txors_1d = register_scalar_binary(
     tmp_matches_src_dst=False,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

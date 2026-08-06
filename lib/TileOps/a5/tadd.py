@@ -34,6 +34,4 @@ template_tadd_1d = register_binary(
     vector_op=_vadd,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

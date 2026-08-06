@@ -25,6 +25,4 @@ template_trems_1d = register_scalar_remainder(
     round_mode="F",
     has_tmp=True,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

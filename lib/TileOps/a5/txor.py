@@ -34,6 +34,4 @@ template_txor_1d = register_binary(
     dtypes=_TXOR_DTYPES,
     has_tmp=True,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

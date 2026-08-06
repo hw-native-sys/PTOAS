@@ -36,6 +36,4 @@ template_tneg_1d = register_unary(
     vector_op=pto.vneg,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

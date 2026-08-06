@@ -29,6 +29,4 @@ template_tmins_1d = register_scalar_binary(
     vector_op=pto.vmins,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

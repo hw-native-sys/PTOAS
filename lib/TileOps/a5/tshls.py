@@ -29,6 +29,4 @@ template_tshls_1d = register_scalar_binary(
     vector_op=pto.vshls,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

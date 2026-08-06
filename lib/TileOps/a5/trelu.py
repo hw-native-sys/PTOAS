@@ -29,6 +29,4 @@ template_trelu_1d = register_unary(
     vector_op=pto.vrelu,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

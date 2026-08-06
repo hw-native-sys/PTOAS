@@ -30,6 +30,4 @@ template_tor_1d = register_binary(
     vector_op=pto.vor,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

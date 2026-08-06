@@ -10,7 +10,7 @@
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
-from ._elementwise import emit_binary_1d, emit_binary_2d
+from ._elementwise import emit_binary_1d, emit_binary_2d, traversal_metadata
 from .div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
 
 
@@ -36,14 +36,13 @@ def _emit_tdiv(src0, src1, dst, traversal):
         emit_binary_2d(src0, src1, dst, divide)
 
 
-def _register_tdiv(*, name, traversal, priority, candidate_id):
+def _register_tdiv(*, name, traversal):
     constraints = []
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(traversal)
     if traversal == "1d":
         constraints.append(
             tilelib.require_elementwise_1d("src0", "src1", "dst")
         )
-        loop_depth = 1
 
     @tilelib.tile_template(
         op="pto.tdiv",
@@ -70,14 +69,10 @@ def _register_tdiv(*, name, traversal, priority, candidate_id):
 template_tdiv = _register_tdiv(
     name="template_tdiv",
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 
 template_tdiv_1d = _register_tdiv(
     name="template_tdiv_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

@@ -245,8 +245,6 @@ template_tadd = register_binary(
     vector_op=pto.vadd,
     dtypes=DTYPES,
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 template_tadd_1d = register_binary(
@@ -255,15 +253,16 @@ template_tadd_1d = register_binary(
     vector_op=pto.vadd,
     dtypes=DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )
 ```
 
-Candidate ID expresses identity, not preference. Every ID for the same
-operation must remain unique. The 1D registrar constraint must name every tile
-operand that participates in or constrains the traversal, including temporary
-TileOp operands.
+The shared registrars derive the fallback priority/ID as `0/0` and the
+preferred 1D priority/ID as `10/1`. Bespoke family registrars should use
+`traversal_metadata(...)` to retain this policy; multi-form families pass their
+fallback ID and form count so IDs remain unique. Candidate ID expresses
+identity, not preference. Every ID for the same operation must remain unique.
+The 1D registrar constraint must name every tile operand that participates in
+or constrains the traversal, including temporary TileOp operands.
 
 The first production users of this pattern are the ordinary unary operations
 `tabs`, `texp`, `tneg`, `tnot`, `trelu`, `trsqrt`, and `tsqrt`. Their original

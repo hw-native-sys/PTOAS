@@ -32,6 +32,4 @@ template_texp_1d = register_unary(
     vector_op=pto.vexp,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

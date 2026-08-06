@@ -16,6 +16,10 @@ from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
 
+FALLBACK_TRAVERSAL_PRIORITY = 0
+PREFERRED_TRAVERSAL_PRIORITY = 10
+
+
 def _ub_or_vec_row_major(operand_memory_spaces, operand_b_layouts, operand_s_layouts, **_):
     return (
         all(space in {"ub", "vec"} for space in operand_memory_spaces)
@@ -39,6 +43,30 @@ def _traversal_loop_depth(traversal):
     raise ValueError(
         f"unsupported element-wise traversal {traversal!r}; expected '1d' or '2d'"
     )
+
+
+def traversal_metadata(
+    traversal,
+    *,
+    priority=None,
+    candidate_id=None,
+    fallback_candidate_id=0,
+    candidate_count=1,
+):
+    """Resolve stable candidate metadata for a 2D/1D traversal pair."""
+
+    loop_depth = _traversal_loop_depth(traversal)
+    if priority is None:
+        priority = (
+            PREFERRED_TRAVERSAL_PRIORITY
+            if loop_depth == 1
+            else FALLBACK_TRAVERSAL_PRIORITY
+        )
+    if candidate_id is None:
+        candidate_id = fallback_candidate_id
+        if loop_depth == 1:
+            candidate_id += candidate_count
+    return loop_depth, priority, candidate_id
 
 
 def _with_traversal_constraint(traversal, operand_names, constraints):
@@ -215,10 +243,14 @@ def emit_scalar_fill_2d(scalar, dst):
 
 
 def register_unary(*, op, name, vector_op, dtypes, constraints=(),
-                   traversal="2d", priority=0, candidate_id=0):
+                   traversal="2d", priority=None, candidate_id=None):
     """Register a unary tile traversal using a public PTODSL vector operation."""
 
-    loop_depth = _traversal_loop_depth(traversal)
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        priority=priority,
+        candidate_id=candidate_id,
+    )
     candidate_constraints = _with_traversal_constraint(
         traversal,
         ("src", "dst"),
@@ -250,10 +282,14 @@ def register_unary(*, op, name, vector_op, dtypes, constraints=(),
 
 
 def register_binary(*, op, name, vector_op, dtypes, has_tmp=False,
-                    traversal="2d", priority=0, candidate_id=0):
+                    traversal="2d", priority=None, candidate_id=None):
     """Register a binary tile traversal, retaining an optional TileOp tmp operand."""
 
-    loop_depth = _traversal_loop_depth(traversal)
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        priority=priority,
+        candidate_id=candidate_id,
+    )
     if has_tmp:
         candidate_constraints = _with_traversal_constraint(
             traversal,
@@ -316,11 +352,16 @@ def register_binary(*, op, name, vector_op, dtypes, has_tmp=False,
 
 def register_scalar_binary(*, op, name, vector_op, dtypes, broadcast_scalar=False,
                            has_tmp=False, tmp_matches_src_dst=True,
-                           reverse_name=None, traversal="2d", priority=0,
-                           candidate_id=0, reverse_candidate_id=None):
+                           reverse_name=None, traversal="2d", priority=None,
+                           candidate_id=None, reverse_candidate_id=None):
     """Register a tile/scalar traversal using either a vector-scalar or broadcast op."""
 
-    loop_depth = _traversal_loop_depth(traversal)
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        priority=priority,
+        candidate_id=candidate_id,
+        candidate_count=2 if reverse_name else 1,
+    )
     if reverse_candidate_id is None:
         reverse_candidate_id = candidate_id + 1
     constraints = _common_constraints("src", "dst")
@@ -493,11 +534,15 @@ def register_scalar_binary(*, op, name, vector_op, dtypes, broadcast_scalar=Fals
     return template
 
 
-def register_scalar_fill(*, op, name, dtypes, traversal="2d", priority=0,
-                         candidate_id=0):
+def register_scalar_fill(*, op, name, dtypes, traversal="2d", priority=None,
+                         candidate_id=None):
     """Register a scalar-to-tile fill traversal."""
 
-    loop_depth = _traversal_loop_depth(traversal)
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        priority=priority,
+        candidate_id=candidate_id,
+    )
     constraints = [
         tilelib.check_memory_space("ub"),
         tilelib.check_layout("row_major"),
@@ -533,6 +578,8 @@ def register_scalar_fill(*, op, name, dtypes, traversal="2d", priority=0,
 
 
 __all__ = [
+    "FALLBACK_TRAVERSAL_PRIORITY",
+    "PREFERRED_TRAVERSAL_PRIORITY",
     "emit_binary_1d",
     "emit_binary_2d",
     "emit_elementwise_1d",
@@ -547,4 +594,5 @@ __all__ = [
     "register_scalar_binary",
     "register_scalar_fill",
     "register_unary",
+    "traversal_metadata",
 ]

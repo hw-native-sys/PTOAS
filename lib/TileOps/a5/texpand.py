@@ -31,6 +31,4 @@ template_texpands_1d = register_scalar_fill(
     name="template_texpands_1d",
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

@@ -11,6 +11,8 @@ from ptodsl import pto
 from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
+from ._elementwise import traversal_metadata
+
 
 _DTYPES = [
     ("f32", "f32", "ui8"),
@@ -190,9 +192,9 @@ def _emit_tcmps_2d(src, scalar, dst):
                 )
 
 
-def _register_tcmps(*, name, traversal, priority, candidate_id):
+def _register_tcmps(*, name, traversal):
     constraints = [_ub_or_vec_row_major]
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(traversal)
     if traversal == "1d":
         constraints.append(
             tilelib.require_predicate_compare_1d(
@@ -201,7 +203,6 @@ def _register_tcmps(*, name, traversal, priority, candidate_id):
                 flattened_destination=True,
             )
         )
-        loop_depth = 1
 
     @tilelib.tile_template(
         op="pto.tcmps",
@@ -230,13 +231,9 @@ def _register_tcmps(*, name, traversal, priority, candidate_id):
 template_tcmps = _register_tcmps(
     name="template_tcmps",
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 template_tcmps_1d = _register_tcmps(
     name="template_tcmps_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

@@ -10,7 +10,7 @@
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
-from ._elementwise import emit_unary_1d, emit_unary_2d
+from ._elementwise import emit_unary_1d, emit_unary_2d, traversal_metadata
 
 
 _DTYPES = [
@@ -43,12 +43,11 @@ def _emit_trecip(src, dst, traversal):
         emit_unary_2d(src, dst, reciprocal)
 
 
-def _register_trecip(*, name, traversal, priority, candidate_id):
+def _register_trecip(*, name, traversal):
     constraints = _base_constraints()
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(traversal)
     if traversal == "1d":
         constraints.append(tilelib.require_elementwise_1d("src", "dst"))
-        loop_depth = 1
 
     @tilelib.tile_template(
         op="pto.trecip",
@@ -74,14 +73,10 @@ def _register_trecip(*, name, traversal, priority, candidate_id):
 template_trecip = _register_trecip(
     name="template_trecip",
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 
 template_trecip_1d = _register_trecip(
     name="template_trecip_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

@@ -25,6 +25,4 @@ template_trem_1d = register_binary_remainder(
     round_mode="F",
     has_tmp=True,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

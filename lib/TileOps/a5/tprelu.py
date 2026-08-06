@@ -34,6 +34,4 @@ template_tprelu_1d = register_binary(
     dtypes=_TPRELU_DTYPES,
     has_tmp=True,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

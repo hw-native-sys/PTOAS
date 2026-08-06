@@ -12,6 +12,7 @@ from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
 from ._common import ub_row_major_constraints
+from ._elementwise import traversal_metadata
 
 
 _DTYPES = [
@@ -190,7 +191,7 @@ def _emit_tsel_2d(mask, src0, src1, dst):
                 pto.vsts(result, dst[row, col:], pred)
 
 
-def _register_tsel(*, name, traversal, priority, candidate_id):
+def _register_tsel(*, name, traversal):
     constraints = ub_row_major_constraints(
         "src0",
         "src1",
@@ -198,7 +199,7 @@ def _register_tsel(*, name, traversal, priority, candidate_id):
         "dst",
         require_same_valid_shape=False,
     )
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(traversal)
     if traversal == "1d":
         constraints.append(
             tilelib.require_predicate_select_1d(
@@ -210,7 +211,6 @@ def _register_tsel(*, name, traversal, priority, candidate_id):
                 memory_spaces=("ub",),
             )
         )
-        loop_depth = 1
 
     @tilelib.tile_template(
         op="pto.tsel",
@@ -246,13 +246,9 @@ def _register_tsel(*, name, traversal, priority, candidate_id):
 template_tsel = _register_tsel(
     name="template_tsel",
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 template_tsel_1d = _register_tsel(
     name="template_tsel_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

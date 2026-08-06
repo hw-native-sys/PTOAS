@@ -20,6 +20,11 @@ from ptodsl._surface_values import unwrap_surface_value, wrap_surface_value
 import ptodsl.tilelib as tilelib
 from ptoas.mlir.dialects import pto as _pto
 
+from ._elementwise import (
+    FALLBACK_TRAVERSAL_PRIORITY,
+    PREFERRED_TRAVERSAL_PRIORITY,
+)
+
 
 _PENDING_TCVT_1D = []
 
@@ -281,14 +286,14 @@ def _register_tcvt(
         traversal="2d",
         candidate_name=name,
         candidate_id=idx,
-        priority=0,
+        priority=FALLBACK_TRAVERSAL_PRIORITY,
     )
     _defer_tcvt_1d(
         register_form(
             traversal="1d",
             candidate_name=f"{name}_1d",
             candidate_id=None,
-            priority=10,
+            priority=PREFERRED_TRAVERSAL_PRIORITY,
             register=False,
         )
     )
@@ -332,7 +337,7 @@ def _register_tcvt_1d(
                 ),
             ),
         ],
-        priority=10,
+        priority=PREFERRED_TRAVERSAL_PRIORITY,
         id=None,
         loop_depth=1,
         is_post_update=False,

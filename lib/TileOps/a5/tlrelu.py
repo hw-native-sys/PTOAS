@@ -11,7 +11,11 @@ from ptodsl import pto, scalar
 import ptodsl.tilelib as tilelib
 from ptodsl._types import _resolve
 
-from ._elementwise import emit_scalar_binary_1d, emit_scalar_binary_2d
+from ._elementwise import (
+    emit_scalar_binary_1d,
+    emit_scalar_binary_2d,
+    traversal_metadata,
+)
 
 
 def _ub_or_vec_row_major(operand_memory_spaces, operand_b_layouts, operand_s_layouts, **_):
@@ -29,15 +33,14 @@ _DTYPES = [
 ]
 
 
-def _register_tlrelu(*, name, traversal, priority, candidate_id):
+def _register_tlrelu(*, name, traversal):
     constraints = [
         _ub_or_vec_row_major,
         tilelib.require_same_valid_shape("src", "dst"),
     ]
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(traversal)
     if traversal == "1d":
         constraints.append(tilelib.require_elementwise_1d("src", "dst"))
-        loop_depth = 1
 
     @tilelib.tile_template(
         op="pto.tlrelu",
@@ -77,13 +80,9 @@ def _register_tlrelu(*, name, traversal, priority, candidate_id):
 template_tlrelu = _register_tlrelu(
     name="template_tlrelu",
     traversal="2d",
-    priority=0,
-    candidate_id=0,
 )
 
 template_tlrelu_1d = _register_tlrelu(
     name="template_tlrelu_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

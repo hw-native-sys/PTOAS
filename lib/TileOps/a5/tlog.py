@@ -15,6 +15,7 @@ from ._elementwise import (
     emit_unary_1d,
     emit_unary_2d,
     register_unary,
+    traversal_metadata,
 )
 
 
@@ -48,7 +49,6 @@ template_tlog_1d = register_unary(
     dtypes=_DTYPES,
     constraints=[_is_default_precision],
     traversal="1d",
-    priority=10,
     candidate_id=2,
 )
 
@@ -89,14 +89,15 @@ def _register_tlog_high_precision(
     *,
     name,
     traversal,
-    priority,
-    candidate_id,
 ):
     constraints = _common_constraints("src", "dst") + [_is_high_precision]
-    loop_depth = 2
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        fallback_candidate_id=1,
+        candidate_count=2,
+    )
     if traversal == "1d":
         constraints.append(tilelib.require_elementwise_1d("src", "dst"))
-        loop_depth = 1
 
     @tilelib.tile_template(
         op="pto.tlog",
@@ -122,14 +123,10 @@ def _register_tlog_high_precision(
 template_tlog_high_precision = _register_tlog_high_precision(
     name="template_tlog_high_precision",
     traversal="2d",
-    priority=0,
-    candidate_id=1,
 )
 
 
 template_tlog_high_precision_1d = _register_tlog_high_precision(
     name="template_tlog_high_precision_1d",
     traversal="1d",
-    priority=10,
-    candidate_id=3,
 )

@@ -30,6 +30,4 @@ template_tshr_1d = register_binary(
     vector_op=pto.vshr,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

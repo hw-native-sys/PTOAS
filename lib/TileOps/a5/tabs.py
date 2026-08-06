@@ -29,6 +29,4 @@ template_tabs_1d = register_unary(
     vector_op=pto.vabs,
     dtypes=_DTYPES,
     traversal="1d",
-    priority=10,
-    candidate_id=1,
 )

@@ -16,6 +16,7 @@ from ._elementwise import (
     emit_binary_2d,
     emit_scalar_binary_1d,
     emit_scalar_binary_2d,
+    traversal_metadata,
 )
 
 
@@ -50,13 +51,18 @@ def _scalar_remainder(lhs, scalar, mask, *, round_mode, dtype):
 
 
 def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
-                              traversal="2d", priority=0, candidate_id=0):
+                              traversal="2d", priority=None,
+                              candidate_id=None):
     if traversal not in {"1d", "2d"}:
         raise ValueError(
             f"unsupported remainder traversal {traversal!r}; "
             "expected '1d' or '2d'"
         )
-    loop_depth = 1 if traversal == "1d" else 2
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        priority=priority,
+        candidate_id=candidate_id,
+    )
     constraints = ub_row_major_constraints("src0", "src1", "dst")
     if has_tmp:
         constraints = ub_row_major_constraints("src0", "src1", "tmp", "dst")
@@ -136,13 +142,18 @@ def _emit_binary(src0, src1, dst, round_mode, traversal):
 
 
 def register_scalar_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
-                              traversal="2d", priority=0, candidate_id=0):
+                              traversal="2d", priority=None,
+                              candidate_id=None):
     if traversal not in {"1d", "2d"}:
         raise ValueError(
             f"unsupported remainder traversal {traversal!r}; "
             "expected '1d' or '2d'"
         )
-    loop_depth = 1 if traversal == "1d" else 2
+    loop_depth, priority, candidate_id = traversal_metadata(
+        traversal,
+        priority=priority,
+        candidate_id=candidate_id,
+    )
     constraints = ub_row_major_constraints("src", "dst")
     if has_tmp:
         constraints = ub_row_major_constraints("src", "tmp", "dst")
