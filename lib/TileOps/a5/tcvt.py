@@ -12,11 +12,21 @@ forms use typed source and destination pointers so dtype width changes retain
 their existing logical-element addressing and distribution modes.
 """
 
+from dataclasses import replace
+
 from ptodsl import pto
 from ptodsl._ast_rewrite import rewrite_jit_function
 from ptodsl._surface_values import unwrap_surface_value, wrap_surface_value
 import ptodsl.tilelib as tilelib
 from ptoas.mlir.dialects import pto as _pto
+
+
+_PENDING_TCVT_1D = []
+
+
+def _defer_tcvt_1d(candidate):
+    _PENDING_TCVT_1D.append(candidate)
+    return candidate
 
 
 def _rowwise(src_shape, src_valid_shape, dst_shape, dst_valid_shape, src_config, dst_config, **_):
@@ -228,7 +238,9 @@ def _register_tcvt(
     mask_dtype="dst",
     convert_mask="store",
 ):
-    def register_form(*, traversal, candidate_name, candidate_id, priority):
+    def register_form(
+        *, traversal, candidate_name, candidate_id, priority, register=True
+    ):
         constraints = [_rowwise]
         if traversal == "1d":
             constraints.append(tilelib.require_conversion_1d())
@@ -247,6 +259,7 @@ def _register_tcvt(
             loop_depth=1 if traversal == "1d" else 2,
             is_post_update=False,
             tags=("convert", traversal),
+            register=register,
         )
         def template(src: pto.Tile, dst: pto.Tile):
             renderer = _render_tcvt_1d if traversal == "1d" else _render_tcvt
@@ -270,11 +283,14 @@ def _register_tcvt(
         candidate_id=idx,
         priority=0,
     )
-    register_form(
-        traversal="1d",
-        candidate_name=f"{name}_1d",
-        candidate_id=38 + idx,
-        priority=10,
+    _defer_tcvt_1d(
+        register_form(
+            traversal="1d",
+            candidate_name=f"{name}_1d",
+            candidate_id=None,
+            priority=10,
+            register=False,
+        )
     )
     return fallback
 
@@ -283,7 +299,6 @@ def _register_tcvt_1d(
     *,
     name,
     dtypes,
-    idx,
     renderer,
     source_elements_per_destination=1,
     tags=(),
@@ -318,15 +333,16 @@ def _register_tcvt_1d(
             ),
         ],
         priority=10,
-        id=38 + idx,
+        id=None,
         loop_depth=1,
         is_post_update=False,
         tags=("convert", "1d", *tags),
+        register=False,
     )
     def template(src: pto.Tile, dst: pto.Tile):
         renderer(src, dst)
 
-    return template
+    return _defer_tcvt_1d(template)
 
 
 template_tcvt_f32_to_i32 = _register_tcvt(
@@ -428,7 +444,6 @@ def _render_tcvt_f16_to_i16_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f16_to_i16_1d = _register_tcvt_1d(
     name="template_tcvt_f16_to_i16",
     dtypes=("f16", "i16"),
-    idx=3,
     renderer=_render_tcvt_f16_to_i16_1d,
 )
 
@@ -504,7 +519,6 @@ def _render_tcvt_f32_to_f32_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f32_to_f32_1d = _register_tcvt_1d(
     name="template_tcvt_f32_to_f32",
     dtypes=("f32", "f32"),
-    idx=17,
     renderer=_render_tcvt_f32_to_f32_1d,
 )
 
@@ -584,7 +598,6 @@ def _render_tcvt_f32_to_i16_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f32_to_i16_1d = _register_tcvt_1d(
     name="template_tcvt_f32_to_i16",
     dtypes=("f32", "i16"),
-    idx=15,
     renderer=_render_tcvt_f32_to_i16_1d,
 )
 
@@ -652,7 +665,6 @@ def _render_tcvt_f32_to_i64_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f32_to_i64_1d = _register_tcvt_1d(
     name="template_tcvt_f32_to_i64",
     dtypes=("f32", "i64"),
-    idx=16,
     renderer=_render_tcvt_f32_to_i64_1d,
 )
 
@@ -740,7 +752,6 @@ def _render_tcvt_f16_to_ui8_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f16_to_ui8_1d = _register_tcvt_1d(
     name="template_tcvt_f16_to_ui8",
     dtypes=("f16", "ui8"),
-    idx=18,
     renderer=_render_tcvt_f16_to_ui8_1d,
 )
 
@@ -843,7 +854,6 @@ def _render_tcvt_f16_to_si8_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f16_to_si8_1d = _register_tcvt_1d(
     name="template_tcvt_f16_to_si8",
     dtypes=("f16", "si8"),
-    idx=19,
     renderer=_render_tcvt_f16_to_si8_1d,
 )
 
@@ -1092,7 +1102,6 @@ def _render_tcvt_si8_to_i32_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_si8_to_i32_1d = _register_tcvt_1d(
     name="template_tcvt_si8_to_i32",
     dtypes=("si8", "i32"),
-    idx=32,
     renderer=_render_tcvt_si8_to_i32_1d,
 )
 
@@ -1202,14 +1211,12 @@ def template_tcvt_ui32_to_ui8(src: pto.Tile, dst: pto.Tile):
 template_tcvt_i32_to_ui8_1d = _register_tcvt_1d(
     name="template_tcvt_i32_to_ui8",
     dtypes=("i32", "ui8"),
-    idx=33,
     renderer=_render_32_to_ui8_1d,
 )
 
 template_tcvt_ui32_to_ui8_1d = _register_tcvt_1d(
     name="template_tcvt_ui32_to_ui8",
     dtypes=("ui32", "ui8"),
-    idx=34,
     renderer=_render_32_to_ui8_1d,
 )
 
@@ -1275,7 +1282,6 @@ def _render_tcvt_i16_to_ui8_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_i16_to_ui8_1d = _register_tcvt_1d(
     name="template_tcvt_i16_to_ui8",
     dtypes=("i16", "ui8"),
-    idx=35,
     renderer=_render_tcvt_i16_to_ui8_1d,
 )
 
@@ -1339,7 +1345,6 @@ def _render_tcvt_i32_to_i64_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_i32_to_i64_1d = _register_tcvt_1d(
     name="template_tcvt_i32_to_i64",
     dtypes=("i32", "i64"),
-    idx=27,
     renderer=_render_tcvt_i32_to_i64_1d,
 )
 
@@ -1454,14 +1459,12 @@ def template_tcvt_i64_to_i32(src: pto.Tile, dst: pto.Tile):
 template_tcvt_i64_to_f32_1d = _register_tcvt_1d(
     name="template_tcvt_i64_to_f32",
     dtypes=("i64", "f32"),
-    idx=36,
     renderer=_render_i64_to_f32_1d,
 )
 
 template_tcvt_i64_to_i32_1d = _register_tcvt_1d(
     name="template_tcvt_i64_to_i32",
     dtypes=("i64", "i32"),
-    idx=37,
     renderer=_render_i64_to_i32_1d,
 )
 
@@ -1547,7 +1550,6 @@ def _render_tcvt_f32_to_fp8_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f32_to_fp8_1d = _register_tcvt_1d(
     name="template_tcvt_f32_to_fp8",
     dtypes=(("f32", "f8e4m3"), ("f32", "f8e5m2")),
-    idx=11,
     renderer=_render_tcvt_f32_to_fp8_1d,
     tags=("low_precision",),
 )
@@ -1634,7 +1636,6 @@ def _render_tcvt_f32_to_hif8_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f32_to_hif8_1d = _register_tcvt_1d(
     name="template_tcvt_f32_to_hif8",
     dtypes=("f32", "hif8"),
-    idx=12,
     renderer=_render_tcvt_f32_to_hif8_1d,
     tags=("low_precision",),
 )
@@ -1705,7 +1706,6 @@ def _render_tcvt_f16_to_hif8_1d(src: pto.Tile, dst: pto.Tile):
 template_tcvt_f16_to_hif8_1d = _register_tcvt_1d(
     name="template_tcvt_f16_to_hif8",
     dtypes=("f16", "hif8"),
-    idx=13,
     renderer=_render_tcvt_f16_to_hif8_1d,
     tags=("low_precision",),
 )
@@ -1800,8 +1800,47 @@ template_tcvt_bf16_to_fp4_1d = _register_tcvt_1d(
         ("bf16", "f4e1m2x2"),
         ("bf16", "f4e2m1x2"),
     ),
-    idx=14,
     renderer=_render_tcvt_bf16_to_fp4_1d,
     source_elements_per_destination=2,
     tags=("low_precision",),
 )
+
+
+def _register_deferred_tcvt_1d():
+    """Assign stable 1D IDs after every 2D fallback is registered."""
+
+    registry = tilelib.default_registry()
+    fallbacks = {
+        candidate.name: candidate
+        for candidate in registry.lookup("pto.tcvt", "a5")
+        if candidate.metadata.loop_depth == 2
+    }
+    next_candidate_id = max(
+        candidate.metadata.id for candidate in fallbacks.values()
+    ) + 1
+    replacements = {}
+    for candidate in sorted(
+        _PENDING_TCVT_1D,
+        key=lambda item: fallbacks[
+            item.name.removesuffix("_1d")
+        ].metadata.id,
+    ):
+        assigned = replace(
+            candidate,
+            metadata=replace(
+                candidate.metadata,
+                id=next_candidate_id,
+            ),
+        )
+        registry.register(assigned)
+        replacements[id(candidate)] = assigned
+        next_candidate_id += 1
+
+    for global_name, value in tuple(globals().items()):
+        assigned = replacements.get(id(value))
+        if assigned is not None:
+            globals()[global_name] = assigned
+    _PENDING_TCVT_1D.clear()
+
+
+_register_deferred_tcvt_1d()
