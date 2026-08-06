@@ -103,67 +103,14 @@ for _flattened, _rowwise in _TEMPLATE_PAIRS:
         raise AssertionError(f"{_rowwise.name} is not a 2D candidate")
 
 
-def _ub_ptr(dtype, addr):
-    return pto.castptr(
-        pto.const(addr, dtype=pto.i64),
-        pto.ptr(dtype, "ub"),
+def _row_major_view(ptr, rows, cols, *, offset=0):
+    if offset:
+        ptr = pto.addptr(ptr, offset)
+    return pto.make_tensor_view(
+        ptr,
+        shape=[rows, cols],
+        strides=[cols, 1],
     )
-
-
-def _load_rows_to_ub(
-    source,
-    dtype,
-    addr,
-    rows,
-    valid_cols,
-    physical_cols,
-    element_bytes,
-):
-    destination = _ub_ptr(dtype, addr)
-    row_bytes = valid_cols * element_bytes
-    physical_row_bytes = physical_cols * element_bytes
-    pto.get_buf(pto.Pipe.MTE2, 0)
-    pto.mte_gm_ub(
-        source,
-        destination,
-        0,
-        row_bytes,
-        nburst=(rows, row_bytes, physical_row_bytes),
-    )
-    pto.rls_buf(pto.Pipe.MTE2, 0)
-
-
-def _store_rows_from_ub(
-    source_addr,
-    dtype,
-    destination,
-    rows,
-    valid_cols,
-    physical_cols,
-    element_bytes,
-):
-    source = _ub_ptr(dtype, source_addr)
-    logical_destination = pto.addptr(destination, GUARD_ELEMENTS)
-    row_bytes = valid_cols * element_bytes
-    physical_row_bytes = physical_cols * element_bytes
-    pto.get_buf(pto.Pipe.MTE3, 0)
-    pto.mte_ub_gm(
-        source,
-        logical_destination,
-        row_bytes,
-        nburst=(rows, physical_row_bytes, row_bytes),
-    )
-    pto.rls_buf(pto.Pipe.MTE3, 0)
-
-
-def _wait_for_loads():
-    pto.set_flag("MTE2", "V", event_id=0)
-    pto.wait_flag("MTE2", "V", event_id=0)
-
-
-def _wait_for_stores():
-    pto.set_flag("V", "MTE3", event_id=0)
-    pto.wait_flag("V", "MTE3", event_id=0)
 
 
 @pto.jit(
@@ -171,6 +118,7 @@ def _wait_for_stores():
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_tabs_1d_2d_equivalence(
     src_ptr: pto.ptr(pto.f32, "gm"),
@@ -178,6 +126,14 @@ def elementwise_tabs_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.f32, "gm"),
 ):
     rows, cols = TABS_SHAPE
+
+    src_view = _row_major_view(src_ptr, rows, cols)
+    out_1d_view = _row_major_view(
+        out_1d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
 
     src_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=0)
     src_2d = pto.alloc_tile(
@@ -194,31 +150,12 @@ def elementwise_tabs_1d_2d_equivalence(
         addr=12288,
     )
 
-    _load_rows_to_ub(src_ptr, pto.f32, 0, rows, cols, cols, 4)
-    _load_rows_to_ub(
-        src_ptr,
-        pto.f32,
-        4096,
-        rows,
-        cols,
-        TABS_PADDED_SHAPE[1],
-        4,
-    )
-    _wait_for_loads()
+    pto.tile.load(src_view, src_1d)
+    pto.tile.load(src_view, src_2d)
     pto.tile.abs(src_1d, out_1d)
     pto.tile.abs(src_2d, out_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(8192, pto.f32, out_1d_ptr, rows, cols, cols, 4)
-    _store_rows_from_ub(
-        12288,
-        pto.f32,
-        out_2d_ptr,
-        rows,
-        cols,
-        TABS_PADDED_SHAPE[1],
-        4,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 @pto.jit(
@@ -226,6 +163,7 @@ def elementwise_tabs_1d_2d_equivalence(
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_tadd_1d_2d_equivalence(
     lhs_ptr: pto.ptr(pto.i16, "gm"),
@@ -234,6 +172,15 @@ def elementwise_tadd_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i16, "gm"),
 ):
     rows, cols = TADD_SHAPE
+
+    lhs_view = _row_major_view(lhs_ptr, rows, cols)
+    rhs_view = _row_major_view(rhs_ptr, rows, cols)
+    out_1d_view = _row_major_view(
+        out_1d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
 
     lhs_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=0)
     rhs_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i16, addr=4096)
@@ -257,29 +204,14 @@ def elementwise_tadd_1d_2d_equivalence(
         addr=20480,
     )
 
-    _load_rows_to_ub(lhs_ptr, pto.i16, 0, rows, cols, cols, 2)
-    _load_rows_to_ub(rhs_ptr, pto.i16, 4096, rows, cols, cols, 2)
-    _load_rows_to_ub(
-        lhs_ptr, pto.i16, 8192, rows, cols, TADD_PADDED_SHAPE[1], 2
-    )
-    _load_rows_to_ub(
-        rhs_ptr, pto.i16, 12288, rows, cols, TADD_PADDED_SHAPE[1], 2
-    )
-    _wait_for_loads()
+    pto.tile.load(lhs_view, lhs_1d)
+    pto.tile.load(rhs_view, rhs_1d)
+    pto.tile.load(lhs_view, lhs_2d)
+    pto.tile.load(rhs_view, rhs_2d)
     pto.tile.add(lhs_1d, rhs_1d, out_1d)
     pto.tile.add(lhs_2d, rhs_2d, out_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(16384, pto.i16, out_1d_ptr, rows, cols, cols, 2)
-    _store_rows_from_ub(
-        20480,
-        pto.i16,
-        out_2d_ptr,
-        rows,
-        cols,
-        TADD_PADDED_SHAPE[1],
-        2,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 @pto.jit(
@@ -287,6 +219,7 @@ def elementwise_tadd_1d_2d_equivalence(
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_tadds_1d_2d_equivalence(
     src_ptr: pto.ptr(pto.i8, "gm"),
@@ -294,6 +227,14 @@ def elementwise_tadds_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i8, "gm"),
 ):
     rows, cols = TADDS_SHAPE
+
+    src_view = _row_major_view(src_ptr, rows, cols)
+    out_1d_view = _row_major_view(
+        out_1d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
 
     src_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i8, addr=0)
     src_2d = pto.alloc_tile(
@@ -310,31 +251,12 @@ def elementwise_tadds_1d_2d_equivalence(
         addr=12288,
     )
 
-    _load_rows_to_ub(src_ptr, pto.i8, 0, rows, cols, cols, 1)
-    _load_rows_to_ub(
-        src_ptr,
-        pto.i8,
-        4096,
-        rows,
-        cols,
-        TADDS_PADDED_SHAPE[1],
-        1,
-    )
-    _wait_for_loads()
+    pto.tile.load(src_view, src_1d)
+    pto.tile.load(src_view, src_2d)
     pto.tile.adds(src_1d, 7, out_1d)
     pto.tile.adds(src_2d, 7, out_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(8192, pto.i8, out_1d_ptr, rows, cols, cols, 1)
-    _store_rows_from_ub(
-        12288,
-        pto.i8,
-        out_2d_ptr,
-        rows,
-        cols,
-        TADDS_PADDED_SHAPE[1],
-        1,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 @pto.jit(
@@ -342,6 +264,7 @@ def elementwise_tadds_1d_2d_equivalence(
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_tcmps_1d_2d_equivalence(
     src_ptr: pto.ptr(pto.i8, "gm"),
@@ -350,6 +273,14 @@ def elementwise_tcmps_1d_2d_equivalence(
 ):
     data_rows, data_cols = TCMPS_DATA_SHAPE
     mask_rows, mask_cols = TCMPS_MASK_SHAPE
+
+    src_view = _row_major_view(src_ptr, data_rows, data_cols)
+    out_1d_view = _row_major_view(
+        out_1d_ptr, mask_rows, mask_cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, mask_rows, mask_cols, offset=GUARD_ELEMENTS
+    )
 
     src_1d = pto.alloc_tile(
         shape=[data_rows, data_cols], dtype=pto.i8, addr=0
@@ -372,35 +303,12 @@ def elementwise_tcmps_1d_2d_equivalence(
         addr=12288,
     )
 
-    _load_rows_to_ub(
-        src_ptr, pto.i8, 0, data_rows, data_cols, data_cols, 1
-    )
-    _load_rows_to_ub(
-        src_ptr,
-        pto.i8,
-        4096,
-        data_rows,
-        data_cols,
-        TCMPS_PADDED_DATA_SHAPE[1],
-        1,
-    )
-    _wait_for_loads()
+    pto.tile.load(src_view, src_1d)
+    pto.tile.load(src_view, src_2d)
     pto.tile.cmps(src_1d, 5, out_1d)
     pto.tile.cmps(src_2d, 5, out_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(
-        8192, pto.ui8, out_1d_ptr, mask_rows, mask_cols, mask_cols, 1
-    )
-    _store_rows_from_ub(
-        12288,
-        pto.ui8,
-        out_2d_ptr,
-        mask_rows,
-        mask_cols,
-        TCMPS_PADDED_MASK_SHAPE[1],
-        1,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 @pto.jit(
@@ -408,6 +316,7 @@ def elementwise_tcmps_1d_2d_equivalence(
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_tsels_1d_2d_equivalence(
     mask_ptr: pto.ptr(pto.i8, "gm"),
@@ -417,6 +326,15 @@ def elementwise_tsels_1d_2d_equivalence(
 ):
     data_rows, data_cols = TSELS_DATA_SHAPE
     mask_rows, mask_cols = TSELS_MASK_SHAPE
+
+    mask_view = _row_major_view(mask_ptr, mask_rows, mask_cols)
+    src_view = _row_major_view(src_ptr, data_rows, data_cols)
+    out_1d_view = _row_major_view(
+        out_1d_ptr, data_rows, data_cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, data_rows, data_cols, offset=GUARD_ELEMENTS
+    )
 
     mask_1d = pto.alloc_tile(
         shape=[mask_rows, mask_cols], dtype=pto.i8, addr=0
@@ -452,47 +370,14 @@ def elementwise_tsels_1d_2d_equivalence(
         addr=28672,
     )
 
-    _load_rows_to_ub(
-        mask_ptr, pto.i8, 0, mask_rows, mask_cols, mask_cols, 1
-    )
-    _load_rows_to_ub(
-        src_ptr, pto.i8, 4096, data_rows, data_cols, data_cols, 1
-    )
-    _load_rows_to_ub(
-        mask_ptr,
-        pto.i8,
-        16384,
-        mask_rows,
-        mask_cols,
-        TSELS_PADDED_MASK_SHAPE[1],
-        1,
-    )
-    _load_rows_to_ub(
-        src_ptr,
-        pto.i8,
-        20480,
-        data_rows,
-        data_cols,
-        TSELS_PADDED_DATA_SHAPE[1],
-        1,
-    )
-    _wait_for_loads()
+    pto.tile.load(mask_view, mask_1d)
+    pto.tile.load(src_view, src_1d)
+    pto.tile.load(mask_view, mask_2d)
+    pto.tile.load(src_view, src_2d)
     pto.tile.sels(mask_1d, src_1d, -3, out_1d, tmp=tmp_1d)
     pto.tile.sels(mask_2d, src_2d, -3, out_2d, tmp=tmp_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(
-        12288, pto.i8, out_1d_ptr, data_rows, data_cols, data_cols, 1
-    )
-    _store_rows_from_ub(
-        28672,
-        pto.i8,
-        out_2d_ptr,
-        data_rows,
-        data_cols,
-        TSELS_PADDED_DATA_SHAPE[1],
-        1,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 @pto.jit(
@@ -500,6 +385,7 @@ def elementwise_tsels_1d_2d_equivalence(
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_tcvt_1d_2d_equivalence(
     src_ptr: pto.ptr(pto.f32, "gm"),
@@ -507,6 +393,14 @@ def elementwise_tcvt_1d_2d_equivalence(
     out_2d_ptr: pto.ptr(pto.i16, "gm"),
 ):
     rows, cols = TCVT_SHAPE
+
+    src_view = _row_major_view(src_ptr, rows, cols)
+    out_1d_view = _row_major_view(
+        out_1d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
 
     src_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32, addr=0)
     src_2d = pto.alloc_tile(
@@ -523,31 +417,12 @@ def elementwise_tcvt_1d_2d_equivalence(
         addr=12288,
     )
 
-    _load_rows_to_ub(src_ptr, pto.f32, 0, rows, cols, cols, 4)
-    _load_rows_to_ub(
-        src_ptr,
-        pto.f32,
-        4096,
-        rows,
-        cols,
-        TCVT_PADDED_SHAPE[1],
-        4,
-    )
-    _wait_for_loads()
+    pto.tile.load(src_view, src_1d)
+    pto.tile.load(src_view, src_2d)
     pto.tile.cvt(src_1d, out_1d)
     pto.tile.cvt(src_2d, out_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(8192, pto.i16, out_1d_ptr, rows, cols, cols, 2)
-    _store_rows_from_ub(
-        12288,
-        pto.i16,
-        out_2d_ptr,
-        rows,
-        cols,
-        TCVT_PADDED_SHAPE[1],
-        2,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 @pto.jit(
@@ -555,12 +430,20 @@ def elementwise_tcvt_1d_2d_equivalence(
     target="a5",
     kernel_kind="vector",
     mode="explicit",
+    insert_sync=True,
 )
 def elementwise_texpands_1d_2d_equivalence(
     out_1d_ptr: pto.ptr(pto.i32, "gm"),
     out_2d_ptr: pto.ptr(pto.i32, "gm"),
 ):
     rows, cols = TEXPANDS_SHAPE
+
+    out_1d_view = _row_major_view(
+        out_1d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
+    out_2d_view = _row_major_view(
+        out_2d_ptr, rows, cols, offset=GUARD_ELEMENTS
+    )
 
     out_1d = pto.alloc_tile(shape=[rows, cols], dtype=pto.i32, addr=0)
     out_2d = pto.alloc_tile(
@@ -572,18 +455,8 @@ def elementwise_texpands_1d_2d_equivalence(
 
     pto.tile.expands(23, out_1d)
     pto.tile.expands(23, out_2d)
-    _wait_for_stores()
-    _store_rows_from_ub(0, pto.i32, out_1d_ptr, rows, cols, cols, 4)
-    _store_rows_from_ub(
-        4096,
-        pto.i32,
-        out_2d_ptr,
-        rows,
-        cols,
-        TEXPANDS_PADDED_SHAPE[1],
-        4,
-    )
-    pto.pipe_barrier(pto.Pipe.ALL)
+    pto.tile.store(out_1d, out_1d_view)
+    pto.tile.store(out_2d, out_2d_view)
 
 
 def _equivalence_case(
