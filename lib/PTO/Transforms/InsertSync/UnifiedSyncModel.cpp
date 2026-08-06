@@ -735,6 +735,14 @@ EventColorResult mlir::pto::unified::colorEventIds(SyncModel &model) {
         // unset sentinel 2147483647). "No id" was never a resting state: a hazard
         // must end on SOME mechanism, and barrier is the unbounded class that
         // makes the allocator total.
+        //
+        // That totality is what this path assumes and never re-checks: there is no
+        // "spill failed" branch below it. Assert the assumption where it is relied
+        // on, so a bounded barrier class cannot be introduced without this stopping
+        // compiling until a failure mode is written here.
+        static_assert(ResourceModel::barrierIsUnbounded,
+                      "the spill path has no failure branch, so the barrier class "
+                      "must be unbounded and always available");
         ++result.overflow;
         ++result.spilledToBarrier;
         h->SpillToBarrier();
