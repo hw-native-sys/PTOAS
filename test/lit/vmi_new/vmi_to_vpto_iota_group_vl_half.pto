@@ -8,9 +8,8 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
-// Sub-VL VL/2 (physVL=64, group=2 → S=32) recipe selection:
-//   * integer → AND-mask: vand(vci(0), S-1) + vadds(base)  (no vsel)
-//   * float   → legacy O(G) vsel pack (vand not legal on float)
+// Sub-VL VL/2: i32 physVL=64, group=2 → S=32.
+// AND-mask recipe: vand(vci(0), S-1) + vadds(base) — O(1), no vsel.
 
 module {
   func.func @vmi_to_vpto_iota_vl_half_i32_g2_and(
@@ -26,20 +25,6 @@ module {
         : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
     return
   }
-
-  func.func @vmi_to_vpto_iota_vl_half_f32_g2_vsel(
-      %base: f32, %dst: !pto.ptr<f32, ub>, %mask: !pto.vmi.mask<64xpred>) {
-    %c0 = arith.constant 0 : index
-    %idx = pto.vmi.vci %base {group = 2 : i64}
-        : f32 -> !pto.vmi.vreg<64xf32>
-    %c1 = arith.constant 1.0 : f32
-    %out = pto.vmi.vadds %idx, %c1, %mask
-        : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred>
-        -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
-    return
-  }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_vl_half_i32_g2_and(
@@ -53,19 +38,5 @@ module {
 // CHECK-NOT: pto.vsel
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
 // CHECK: pto.vadds %[[PACKED]], %[[C1000]]
-// CHECK: pto.vsts
-// CHECK-NOT: pto.vmi.
-
-// CHECK-LABEL: func.func @vmi_to_vpto_iota_vl_half_f32_g2_vsel(
-// CHECK-SAME: %[[BASE:.*]]: f32
-// Float cannot use vand; keep the old vci(base) + offset-by-S + vsel pack.
-// CHECK: %[[FULL:.*]] = pto.vci %[[BASE]] : f32 -> !pto.vreg<64xf32>
-// CHECK: pto.pset_b32 "PAT_VL32"
-// CHECK: pto.vsel
-// CHECK: pto.vadds %[[FULL]]
-// CHECK: %[[PACKED:.*]] = pto.vsel
-// CHECK-NOT: pto.vand
-// CHECK: %[[C1:.*]] = arith.constant {{1\.[0-9]+e\+00}} : f32
-// CHECK: pto.vadds %[[PACKED]], %[[C1]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.

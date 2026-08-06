@@ -5225,12 +5225,12 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
 ///
 /// Preferred recipes (O(1), independent of G = physVL/S):
 ///   * S == 1 → vdup(base)
-///   * S power-of-2 (all legal sub-VL S on this ISA) →
+///   * S power-of-2 integer (all legal sub-VL S on this ISA) →
 ///       ASC:  vadds(vand(vci(0), S-1), base)
 ///       DESC: vsub(vdup(base), vand(vci(0), S-1))
 ///
-/// Fallback for non-pow2 integer / float bases (rare): per-group
-/// vci(base) ∓ g*S + lane-range vsel.
+/// Residual fallback (non-integer base): per-group vci(base) ∓ g*S +
+/// lane-range vsel. Index iota is integer-only in practice.
 ///
 /// When S == physVL this is just `vci(base)` (single group fills the VL).
 FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
