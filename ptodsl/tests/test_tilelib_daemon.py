@@ -251,6 +251,18 @@ class TileLibDaemonTest(unittest.TestCase):
         self.assertEqual(spec.s_fractal_size, 32)
         self.assertEqual(spec.compact_mode, 2)
 
+    def test_tile_spec_reconstruction_normalizes_zero_fractal_size(self):
+        operand = _tile_spec()
+        operand["config"]["s_fractal_size"] = 0
+        descriptor = SimpleNamespace(
+            name="template_example",
+            param_names=("src",),
+        )
+
+        spec = _build_tile_specs(descriptor, [operand])["src"]
+
+        self.assertEqual(spec.s_fractal_size, 512)
+
     def test_render_preserves_fractal_and_compact_mode(self):
         operands = [_tile_spec(), _tile_spec(), _tile_spec()]
         for operand in operands:
