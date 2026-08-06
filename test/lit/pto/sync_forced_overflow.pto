@@ -141,9 +141,9 @@
 // reach uncovered=0, so what differs is which mechanism discharges a pair, not whether
 // it is discharged. Pinning both numbers makes a future shift in that balance visible.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELFU
-// SELFU: [sync-gate:g1-self] func=overflow_writeback compounds=25 deps=205 covered=139 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=66 unmappable=0 OK
+// SELFU: [sync-gate:g1-self] func=overflow_writeback compounds=25 deps=205 covered=139 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=66 pipe_self_ordered=0 unmappable=0 OK
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELFI
-// SELFI: [sync-gate:g1-self] func=overflow_writeback compounds=25 deps=205 covered=177 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=28 unmappable=0 OK
+// SELFI: [sync-gate:g1-self] func=overflow_writeback compounds=25 deps=205 covered=177 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=28 pipe_self_ordered=0 unmappable=0 OK
 //
 // AND THE COUNT FLOOR PASSES THE SAME FACT the coverage gate reports as loss: 55 ops
 // against 63. Two gates reading one reduction in opposite directions is the clearest

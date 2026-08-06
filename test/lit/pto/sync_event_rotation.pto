@@ -74,7 +74,7 @@
 //
 // With it modelled, the absolute gate closes on this kernel.
 // RUN: ptoas --pto-arch=a5 --enable-unified-sync --enable-unified-sync-debug --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELF
-// SELF: [sync-gate:g1-self] func=rot_d2_t1 compounds=2 deps=4 covered=4 uncovered=0 (samepipe=0 crosspipe=0) carried=3/3 arm_excluded=0 arch_guaranteed=0 unmappable=0 OK
+// SELF: [sync-gate:g1-self] func=rot_d2_t1 compounds=2 deps=4 covered=4 uncovered=0 (samepipe=0 crosspipe=0) carried=3/3 arm_excluded=0 arch_guaranteed=0 pipe_self_ordered=0 unmappable=0 OK
 //
 // NON-VACUITY, and this is the check that catches "dropped" masquerading as
 // "covered": with NO sync pass the SAME kernel must still DEMAND the carried

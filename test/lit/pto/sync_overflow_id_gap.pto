@@ -50,7 +50,7 @@
 // rls-before-get on the same id, which G1-self models directly. All 90 loop-carried
 // dependencies stay covered with the event pairs gone.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug --check-sync-self-coverage %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SELF
-// SELF: [sync-gate:g1-self] func=overflow_id_gap compounds=25 deps=205 covered=139 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=66 unmappable=0 OK
+// SELF: [sync-gate:g1-self] func=overflow_id_gap compounds=25 deps=205 covered=139 uncovered=0 (samepipe=0 crosspipe=0) carried=115/115 arm_excluded=0 arch_guaranteed=66 pipe_self_ordered=0 unmappable=0 OK
 
 // THE EMITTED FORM. get_buf/rls_buf present, sentinel absent, and the whole-core
 // serialisation gone -- exactly one PIPE_ALL survives (the auto-sync tail).
