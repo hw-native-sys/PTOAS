@@ -518,8 +518,10 @@ def require_predicate_compare_1d(
 
     ``flattened_destination`` models operations such as ``tcmps`` whose 1D
     form writes the packed predicate into one continuous destination prefix.
-    In that form, complete contiguous data rows and sufficient total
-    destination capacity are required instead of an exact packed row stride.
+    It accepts either an exact packed row stride or a destination row with one
+    predicate container element per physical data element. The latter is an
+    explicit logical-range capacity contract, not a packed-byte requirement;
+    arbitrary intermediate predicate-row padding remains a 2D fallback.
     """
 
     allowed_memory_spaces = frozenset(memory_spaces)
@@ -588,8 +590,11 @@ def require_predicate_compare_1d(
             valid_shape[1] == shape[1]
             for shape, valid_shape in zip(data_shapes, data_valid_shapes)
         )
-        destination_holds_logical_range = predicate_row_bytes >= max(
-            shape[1] for shape in data_shapes
+        required_logical_row_bytes = (
+            max(shape[1] for shape in data_shapes) * predicate_bytewidth
+        )
+        destination_holds_logical_range = (
+            predicate_row_bytes >= required_logical_row_bytes
         )
         if flattened_destination and destination_holds_logical_range:
             total_elements = valid_rows * valid_cols
