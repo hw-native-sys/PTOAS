@@ -821,6 +821,8 @@ __all__ = [
     "require_contiguous",
     "require_conversion_1d",
     "require_elementwise_1d",
+    "require_predicate_compare_1d",
+    "require_predicate_select_1d",
     "require_same_valid_shape",
     "require_valid_rows",
 ]
