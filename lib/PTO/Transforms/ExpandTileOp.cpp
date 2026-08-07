@@ -1147,6 +1147,15 @@ func::FuncOp ExpandState::invokeTileLibDaemon(const SpecKey &key,
         return;
       call.setCallee(renameIt->second);
     });
+    fn.walk([&](pto::SimtLaunchOp launch) {
+      StringRef callee = launch.getCallee();
+      if (callee.empty())
+        return;
+      auto renameIt = renamedSymbols.find(callee);
+      if (renameIt == renamedSymbols.end())
+        return;
+      launch.setCallee(renameIt->second);
+    });
   }
 
   auto cloned = clonedFuncs.front();
