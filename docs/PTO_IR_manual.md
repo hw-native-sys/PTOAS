@@ -7853,10 +7853,23 @@ elem mode:          mem[idx[i, j]] = src[i, j]
 
 **Results:** None. Writes into `mem` via DPS pattern.
 
+**Assembly Format:**
+
+```mlir
+pto.mscatter ins(%src, %idx : !pto.tile_buf<...>, !pto.tile_buf<...>)
+             outs(%mem : !pto.partition_tensor_view<...>)
+             {coalesce = #pto<coalesce row|elem>,
+              scatterAtomicOp = #pto<scatter_atomic_op none|add|max|min>,
+              scatterOob = #pto<scatter_oob undefined|skip|clamp|wrap>,
+              scatterConflict = #pto<scatter_conflict default|last>}
+```
+
+All attributes in the optional attribute dictionary are optional. When omitted, defaults apply: `scatterAtomicOp = none`, `scatterOob = undefined`, `scatterConflict` is absent.
+
 **Constraints & Verification:**
 
 - **Types (data and indices)**  
-  - `src` and `mem` must have the **same element type**. Supported element types: `i8`/`i16`/`i32`/`f16`/`bf16`/`f32`. On **A5** targets, `float8_e4m3` / `float8_e5m2` family and `!pto.hif8` element types are also supported.
+  - `src` and `mem` must have the **same element type**.
   - `idx` element type must be signless `i32`.
 
 - **Tile / memory roles**  
@@ -7870,15 +7883,26 @@ elem mode:          mem[idx[i, j]] = src[i, j]
   - Row mode: `idx valid_shape` may be `[1, src.valid_row]` or `[src.valid_row, 1]`.
   - The `[1, R]` row-mode variant uses `row_major`; the `[R, 1]` row-mode variant uses `col_major`.
 
+- **A2/A3 targets**:
+  - Supported src element types: `i8`/`i16`/`i32`/`f16`/`bf16`/`f32`.
+  - `scatterConflict` must **not** be specified (A5-only attribute).
+  - Executes on `PIPE_MTE3`.
+
+- **A5 targets**:
+  - Supported src element types: `i8`/`ui8`/`i16`/`ui16`/`i32`/`ui32`/`f16`/`bf16`/`f32`, plus `float8_e4m3` / `float8_e5m2` family and `!pto.hif8` types.
+  - `scatterConflict` may be specified (`default` or `last`).
+  - Executes on `PIPE_V`.
+
 - **Atomic modes**  
   - Default `scatterAtomicOp = none` lowers to the default `MSCATTER(mem, src, idx)` overload.
   - Non-default `scatterAtomicOp` values lower to `MSCATTER<Coalesce, ScatterAtomicOp::...>(mem, src, idx)`.
-  - `add` requires `i32`/`ui32`/`f16`/`f32`.
-  - `max`/`min` require signless `i32` or `f32`.
+  - `add` requires 32-bit integer/`f16`/`f32`.
+  - `max`/`min` require 32-bit integer or `f32`.
 
 - **Out-of-bounds modes**
   - Default `scatterOob = undefined` lowers to the `MSCATTER<Coalesce, ScatterAtomicOp::...>(mem, src, idx)` form when only atomic is specified, or to the default overload when both attrs are default.
   - Non-default `scatterOob` values lower to `MSCATTER<Coalesce, ScatterAtomicOp::..., ScatterOOB::...>(mem, src, idx)`.
+
 - **Coalesce and conflict modes**
   - If `coalesce` is omitted, PTOAS preserves the existing inference from the `idx` tile shape/layout.
   - If `coalesce` is specified, the `idx` tile shape/layout must match that mode.

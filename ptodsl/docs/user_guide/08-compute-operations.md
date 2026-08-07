@@ -358,6 +358,65 @@ The low-level alias `pto.tscatter` is also available when a kernel needs to bypa
 
 ---
 
+#### `pto.tile.mscatter(src: Tile, idx: Tile, table, *, coalesce: str, atomic: str = "none", oob: str = "undefined", conflict: str | None = None) -> None`
+
+**Description**: Scatter-stores elements from a VEC tile (`src`) into a global memory table using per-element or per-row indices. Unlike `scatter` which operates tile-to-tile, `mscatter` writes to global memory (GM) via a partition tensor view.
+
+**Coalesce modes**:
+
+- `coalesce="row"`: Each row `r` of `src` is written to `table[idx[r], :]`. The index tile has shape `[1, src.valid_row]` or `[src.valid_row, 1]`.
+- `coalesce="elem"`: Each element `src[i, j]` is written to `table[idx[i, j]]`. The index tile has the same shape as `src`.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | `Tile` | Source VEC tile with data to scatter |
+| `idx` | `Tile` | Index tile (dtype `i32`) specifying destination offsets |
+| `table` | partition tensor view or tensor with shape | Global destination table |
+| `coalesce` | `str` | Coalesce mode: `"row"` or `"elem"` |
+| `atomic` | `str` | Atomic operation: `"none"` (default), `"add"`, `"max"`, or `"min"` |
+| `oob` | `str` | Out-of-bounds handling: `"undefined"` (default), `"skip"`, `"clamp"`, or `"wrap"` |
+| `conflict` | `str | None` | Conflict resolution (A5 only): `None` (default), `"default"`, or `"last"` |
+
+**Constraints**:
+
+- `src` must be `loc=vec`, `blayout=row_major`, `slayout=none_box`.
+- `idx` must be `loc=vec`, dtype `i32`, `slayout=none_box`.
+- `atomic="add"` requires src dtype `i32`/`ui32`/`f16`/`f32`.
+- `atomic="max"`/`"min"` requires src dtype `i32` or `f32`.
+- `conflict` is only valid on A5 targets.
+
+**Example** — basic row scatter:
+
+```python
+src_tile = pto.alloc_tile(shape=[8, 32], dtype=pto.f32)
+idx_tile = pto.alloc_tile(shape=[8, 1], dtype=pto.i32)
+pto.tile.mscatter(src_tile, idx_tile, table_view, coalesce="row")
+```
+
+**Example** — elem scatter with atomic add and OOB skip:
+
+```python
+src_tile = pto.alloc_tile(shape=[8, 32], dtype=pto.f32)
+idx_tile = pto.alloc_tile(shape=[8, 32], dtype=pto.i32)
+pto.tile.mscatter(src_tile, idx_tile, table_view,
+                  coalesce="elem", atomic="add", oob="skip")
+```
+
+**Example** — conflict resolution (A5 only):
+
+```python
+src_tile = pto.alloc_tile(shape=[8, 32], dtype=pto.f32)
+idx_tile = pto.alloc_tile(shape=[8, 32], dtype=pto.i32)
+pto.tile.mscatter(src_tile, idx_tile, table_view,
+                  coalesce="elem", conflict="last")
+```
+
+The low-level alias `pto.mscatter` is also available when a kernel needs to bypass the `pto.tile` namespace.
+
+---
+
 ### 8.1.7 Broadcast and expansion
 
 Expansion ops take a narrow source (scalar, row vector, or column vector) and broadcast it to a full tile shape. They are useful for applying per-row or per-column coefficients to a tile.
