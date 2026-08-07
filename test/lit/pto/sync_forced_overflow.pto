@@ -68,20 +68,20 @@
 // `routed=0 skipped(not_written_back=12)`. `overflow_writeback` below supplies the
 // second dimension, so overflow alone is never mistaken for a routing condition.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=NOROUTE
-// NOROUTE: [unified-sync routing] func=forced_overflow_n12 buffer routing: considered=13 routed=0 hazards_covered=0 skipped(no_overflow=1 not_written_back=12 K=0:0) split=0 OK
+// NOROUTE: [unified-sync routing] func=forced_overflow_n12 buffer routing: considered=13 routed=0 hazards_covered=0 skipped(no_overflow=1 not_written_back=12 K=0:0) not_expressible=0 split=0 OK
 //
 // With write-back, 12 of 13 buffers route. The 13th is the output tile: its
 // direction does not overflow, so `no_overflow=1` -- the predicate discriminating,
 // not routing everything in sight. `split=0` is the ALL-OR-NOTHING assertion: no
 // hazard touches both a routed and an unrouted buffer, which is the shape that hangs.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=ROUTE
-// ROUTE:      [unified-sync routing] func=overflow_writeback buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) split=0 OK
+// ROUTE:      [unified-sync routing] func=overflow_writeback buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) not_expressible=0 split=0 OK
 // ROUTE-NEXT:     ROUTE overflow_writeback b#0 -> bufid omega=12>pool=8 wb=yes
 //
 // AND THE EMISSION HAPPENS: the routed hazards take no event
 // id and get get_buf/rls_buf instead. `get` == `rls` is the counter cycle closing.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=EMITWB
-// EMITWB: [unified-sync bufid] func=overflow_writeback bufid emission: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
+// EMITWB: [unified-sync bufid] func=overflow_writeback bufid emission: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK bracketed_hazards=24 unbracketed_hazards=0 suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
 //
 // ALL-OR-NOTHING is asserted by the compiler itself, per function, in the bufid
 // emission line above: `leaked_event_ops=0`. A whole-file `CHECK-NOT` was tried first and is

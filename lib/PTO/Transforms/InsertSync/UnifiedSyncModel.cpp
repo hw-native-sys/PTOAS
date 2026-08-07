@@ -162,6 +162,55 @@ SyncModel mlir::pto::unified::buildSyncModel(
     }
   }
 
+  // --- 4b. Is a token able to express this hazard at all? ------------------
+  //
+  // Mirrors the shapes `BufidSyncCodegen` and `BufidSyncAnalysis` exclude. Kept as a
+  // hazard fact rather than checked at the routing site so the reason a buffer was
+  // refused is visible in the model report.
+  //
+  // The encodable-pipe set is the one `BufidSyncCodegen::mapPipelineToSyncOpType`
+  // names; a pipe outside it fails the compilation rather than degrading, so it must
+  // be refused here instead.
+  auto encodablePipe = [](PipelineType p) {
+    switch (p) {
+    case PipelineType::PIPE_MTE1:
+    case PipelineType::PIPE_MTE2:
+    case PipelineType::PIPE_MTE3:
+    case PipelineType::PIPE_FIX:
+    case PipelineType::PIPE_V:
+    case PipelineType::PIPE_M:
+      return true;
+    default:
+      return false;
+    }
+  };
+  for (Hazard &h : model.hazards) {
+    if (h.isBarrier() || h.bufferClusters.empty())
+      continue;
+    if (h.srcPipe() == h.dstPipe())
+      continue;
+    if (!encodablePipe(h.srcPipe()) || !encodablePipe(h.dstPipe()))
+      continue;
+    bool scopesOk = true;
+    std::optional<pto::AddressSpace> scope;
+    for (const BaseMemInfo *mi : h.setOp()->depMemInfos) {
+      if (!mi)
+        continue;
+      if (mi->scope == pto::AddressSpace::GM) {
+        scopesOk = false;
+        break;
+      }
+      if (!scope)
+        scope = mi->scope;
+      else if (*scope != mi->scope) {
+        scopesOk = false;
+        break;
+      }
+    }
+    if (scopesOk && scope)
+      h.tokenExpressible = true;
+  }
+
   // --- 5. Buffers -- the unit routing decides on --------------------------
   //
   // Built AFTER hazards, because a buffer's facts derive from the hazards touching
@@ -512,6 +561,14 @@ BufferRouteResult mlir::pto::unified::routeBuffers(SyncModel &model) {
       ++result.skippedNoCapacity;
       continue;
     }
+
+    // Second routing reason, off unless asked for: this buffer carries a hazard whose
+    // consuming pipe lives in only one arm of a branch its wait was hoisted out of.
+    //
+    // THE UNIT IS STILL THE BUFFER, NOT THE HAZARD, and that is forced rather than
+    // chosen: the token protocol is a counter cycle, so a buffer with some hazards on
+    // events and some on get/rls deadlocks. One qualifying hazard therefore carries
+    // its whole buffer across, including that buffer's other hazards.
     // STRICT: omega == pool fits exactly, so routing it would be pure waste.
     if (!(worstPeak > tightestPool)) {
       ++result.skippedNoOverflow;
@@ -519,6 +576,24 @@ BufferRouteResult mlir::pto::unified::routeBuffers(SyncModel &model) {
     }
     if (!b.isWrittenBack) {
       ++result.skippedNotWrittenBack;
+      continue;
+    }
+
+    // EVERY hazard on the buffer must be token-expressible, not just the one that
+    // triggered routing. Routing is all-or-nothing, so one inexpressible hazard means
+    // the whole buffer stays on events -- otherwise that hazard's event ops are
+    // suppressed and nothing replaces them.
+    bool allExpressible = true;
+    for (const Hazard &h : model.hazards) {
+      if (h.isBarrier() || !llvm::is_contained(h.bufferClusters, b.logicId))
+        continue;
+      if (!h.tokenExpressible) {
+        allExpressible = false;
+        break;
+      }
+    }
+    if (!allExpressible) {
+      ++result.skippedNotExpressible;
       continue;
     }
     b.routedToBufid = true;

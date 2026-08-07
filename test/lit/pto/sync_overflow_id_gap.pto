@@ -29,12 +29,12 @@
 // with only the 2 hazards on the un-routed output tile -- `overflow=0`, so the
 // spill never fires here.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=ROUTED
-// ROUTED: [unified-sync routing] func=overflow_id_gap buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) split=0 OK
+// ROUTED: [unified-sync routing] func=overflow_id_gap buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) not_expressible=0 split=0 OK
 // ROUTED: [unified-sync coloring] interval coloring: assigned=2 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=0
 
 // The emission actually happened, and every acquire has its release.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=EMITTED
-// EMITTED: [unified-sync bufid] func=overflow_id_gap bufid emission: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
+// EMITTED: [unified-sync bufid] func=overflow_id_gap bufid emission: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK bracketed_hazards=24 unbracketed_hazards=0 suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
 
 // G2 -- the gate that caught the original defect -- is clean, and B1-B7 are being
 // applied to OUR buffer-ID allocation for the first time. No B5 (single-pipe id),

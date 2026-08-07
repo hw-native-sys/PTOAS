@@ -236,6 +236,22 @@ public:
   /// low and routes a forward-only hazard onto it.
   bool hasReverseWar = false;
 
+
+  /// Can this hazard be realised as a buffer-id token AT ALL? Routing must refuse a
+  /// buffer carrying any hazard for which this is false: suppressing the event ops
+  /// of a hazard no token can express loses the ordering outright.
+  ///
+  /// Four ways a hazard is inexpressible, each because the token names something
+  /// different from what the hazard needs:
+  ///   - SAME-PIPE. A token orders accesses to one buffer; ordering a pipe against
+  ///     itself needs a barrier, which is a different class.
+  ///   - NO CLUSTER. With no aliasing clique there is no token to take.
+  ///   - GM, or endpoints in DIFFERENT scopes. A token brackets a tile buffer;
+  ///     `BufidSyncAnalysis` excludes both shapes for the same reason.
+  ///   - A PIPE THE EMITTER CANNOT ENCODE. `BufidSyncCodegen` maps a pipe to a
+  ///     `SyncOpType` and fails the compilation on the ones it has no name for.
+  bool tokenExpressible = false;
+
 private:
   unsigned index_;
   SyncOperation *setOp_;  ///< never null
@@ -271,6 +287,7 @@ struct ResourceModel {
   /// the allocator total -- there is no "no id left" failure mode, only a worse
   /// schedule.
   static constexpr bool barrierIsUnbounded = true;
+
 };
 
 //===----------------------------------------------------------------------===//
@@ -541,6 +558,9 @@ struct BufferRouteResult {
   unsigned skippedNoOverflow = 0;
   unsigned skippedNotWrittenBack = 0;
   unsigned skippedNoCapacity = 0; ///< K == 0
+  /// Buffers refused because a hazard on them is not `tokenExpressible`. Refusing
+  /// is the whole point: routing such a buffer suppresses events no token replaces.
+  unsigned skippedNotExpressible = 0;
   /// ALL-OR-NOTHING violations: a hazard that touches BOTH a routed and an
   /// unrouted buffer, so it cannot be wholly on one mechanism. Must be 0.
   unsigned splitHazards = 0;

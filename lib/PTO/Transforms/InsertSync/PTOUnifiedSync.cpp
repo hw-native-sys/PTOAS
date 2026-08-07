@@ -370,6 +370,7 @@ struct PTOUnifiedSyncPass
            << " skipped(no_overflow=" << route.skippedNoOverflow
            << " not_written_back=" << route.skippedNotWrittenBack
            << " K=0:" << route.skippedNoCapacity << ")"
+           << " not_expressible=" << route.skippedNotExpressible
            << " split=" << route.splitHazards
            << (route.splitHazards == 0 ? " OK" : " !! SPLIT-MECHANISM") << "\n";
         for (const unified::Buffer &b : model.buffers)
@@ -503,29 +504,101 @@ struct PTOUnifiedSyncPass
     // `computeLifeIntervals`' union span -- the same semantics the event colourer is
     // aligned to. Duplicating it would fork them.
     if (routedHazards > 0) {
-      bufAnalysis.insertSyncOperations();
-      bufAnalysis.optimizeSamePipeMerge();
-
+      // --- Token sites come from the ALLOCATOR'S HAZARDS, not from
+      // --- BufidSyncAnalysis's own dependence set ------------------------------
+      //
+      // `BufidSyncAnalysis::collectDependencies` enumerates FORWARD pairs only
+      // (`for j = i + 1`), so a loop-carried hazard -- whose producer sits after its
+      // consumer in program order and whose ordering crosses the back edge -- can
+      // never appear in `depPairs_`. Feeding the emitter from that set while routing
+      // from this one suppressed such a hazard's event ops and emitted no token for
+      // it, losing the ordering with nothing to report it.
+      //
+      // A token DOES carry a loop-carried ordering, and needs no priming pair to do
+      // it: the counter starts free, so iteration N+1's `get_buf` blocks on
+      // iteration N's `rls_buf`. Only the emission was missing.
+      //
+      // So the sites are derived here, from each routed hazard, and BOTH endpoints
+      // are bracketed -- four anchors where the producer and consumer are distinct
+      // ops. Where several ops on the right pipe alias the cluster, ALL of them are
+      // bracketed rather than one being chosen: over-bracketing spends a token,
+      // under-bracketing loses an ordering, and those are not symmetric.
       auto &op2BufSync = bufAnalysis.getOp2BufSync();
+      op2BufSync.clear();
+
+      // Cluster -> its tiles' memInfos, for aliasing tests below.
+      llvm::DenseMap<int, llvm::SmallVector<const BaseMemInfo *>> clusterMemInfos;
+      for (const VirtualBufId &vb : clusters)
+        if (routedLogicIds.contains(vb.logicId))
+          for (const TileInfo &t : vb.tiles)
+            if (t.memInfo)
+              clusterMemInfos[vb.logicId].push_back(t.memInfo);
+
+      auto aliasesCluster = [&](const CompoundInstanceElement *cp, int logicId) {
+        auto it = clusterMemInfos.find(logicId);
+        if (it == clusterMemInfos.end())
+          return false;
+        for (const auto *vec : {&cp->defVec, &cp->useVec})
+          for (const BaseMemInfo *mi : *vec) {
+            if (!mi)
+              continue;
+            for (const BaseMemInfo *tm : it->second)
+              if (mi == tm ||
+                  memAnalyzer.MemAlias(const_cast<BaseMemInfo *>(mi),
+                                       const_cast<BaseMemInfo *>(tm)))
+                return true;
+          }
+        return false;
+      };
+
+      // Bracket one op for one (pipe, cluster), de-duplicated: the emitter would
+      // otherwise emit the same get/rls twice for an op touching the cluster twice.
       unsigned keptGet = 0, keptRls = 0;
-      llvm::SmallVector<Operation *> emptied;
-      for (auto &entry : op2BufSync) {
-        auto keep = [&](llvm::SmallVector<BufSyncOperation> &v, unsigned &n) {
-          llvm::SmallVector<BufSyncOperation> out;
-          for (const BufSyncOperation &b : v)
-            if (routedLogicIds.contains(b.logicId)) {
-              out.push_back(b);
-              ++n;
-            }
-          v = std::move(out);
+      auto bracket = [&](Operation *op, PipelineType pipe, int logicId,
+                         unsigned irIdx) {
+        if (!op)
+          return;
+        auto &build = op2BufSync[op];
+        auto present = [&](const llvm::SmallVector<BufSyncOperation> &v,
+                           BufSyncType ty) {
+          for (const BufSyncOperation &s : v)
+            if (s.type == ty && s.logicId == logicId && s.pipe == pipe)
+              return true;
+          return false;
         };
-        keep(entry.second.pipeBefore, keptGet);
-        keep(entry.second.pipeAfter, keptRls);
-        if (entry.second.pipeBefore.empty() && entry.second.pipeAfter.empty())
-          emptied.push_back(entry.first);
+        if (!present(build.pipeBefore, BufSyncType::GET_BUF)) {
+          build.pipeBefore.push_back(
+              {BufSyncType::GET_BUF, pipe, logicId, irIdx, irIdx});
+          ++keptGet;
+        }
+        if (!present(build.pipeAfter, BufSyncType::RLS_BUF)) {
+          build.pipeAfter.push_back(
+              {BufSyncType::RLS_BUF, pipe, logicId, irIdx, irIdx});
+          ++keptRls;
+        }
+      };
+
+      unsigned bracketedHazards = 0, unbracketedHazards = 0;
+      for (const unified::Hazard &h : model.hazards) {
+        if (h.mechanism() != SyncOperation::MECHANISM::BUFID || h.isBarrier())
+          continue;
+        bool anySite = false;
+        for (int c : h.bufferClusters) {
+          if (!routedLogicIds.contains(c))
+            continue;
+          // Both ends: producer sites on srcPipe, consumer sites on dstPipe.
+          for (const auto &element : syncIR) {
+            auto *cp = dyn_cast_or_null<CompoundInstanceElement>(element.get());
+            if (!cp || !cp->elementOp || !aliasesCluster(cp, c))
+              continue;
+            if (cp->kPipeValue == h.srcPipe() || cp->kPipeValue == h.dstPipe()) {
+              bracket(cp->elementOp, cp->kPipeValue, c, cp->GetIndex());
+              anySite = true;
+            }
+          }
+        }
+        anySite ? ++bracketedHazards : ++unbracketedHazards;
       }
-      for (Operation *op : emptied)
-        op2BufSync.erase(op);
 
       if (!op2BufSync.empty()) {
         BufidSyncIdAlloc idAlloc(bufAnalysis.getVirtualBufIds(), op2BufSync,
@@ -571,6 +644,9 @@ struct PTOUnifiedSyncPass
                << " physical_ids=" << idAlloc.getLogicToPhysical().size()
                << " nesting=" << (nestOk ? "OK" : "VIOLATION")
                << " emit=" << (emitOk ? "OK" : "FAILED")
+               << " bracketed_hazards=" << bracketedHazards
+               << " unbracketed_hazards=" << unbracketedHazards
+               << (unbracketedHazards == 0 ? "" : " !! UNBRACKETED")
                << " suppressed_event_ops=" << suppressed
                << " leaked_event_ops=" << leaked
                << (leaked == 0 ? " ALL-OR-NOTHING-OK" : " !! SPLIT-MECHANISM")
