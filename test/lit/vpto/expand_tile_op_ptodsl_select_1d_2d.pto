@@ -62,6 +62,7 @@
 // SELECT-LABEL: func.func private @{{.*}}__template_tsel(
 // SELECT: scf.for
 // SELECT: scf.for
+// SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.plds
 // SELECT: pto.vsel
@@ -79,6 +80,7 @@
 
 // SELECT-LABEL: func.func private @{{.*}}__template_tsels(
 // SELECT: pto.vdup
+// SELECT: scf.for
 // SELECT: scf.for
 // SELECT: scf.for
 // SELECT-NOT: scf.for

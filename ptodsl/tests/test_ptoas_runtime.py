@@ -88,7 +88,9 @@ class PTOASRuntimeTest(unittest.TestCase):
                 )
 
             self.assertEqual(result, 0)
-            self.assertEqual(calls, 1)
+            # The input has two identical 1D calls and one distinct 2D
+            # fallback, so only the duplicate 1D specialization is reused.
+            self.assertEqual(calls, 2)
             self.assertIn("pto.vadd", output.read_text(encoding="utf-8"))
 
 

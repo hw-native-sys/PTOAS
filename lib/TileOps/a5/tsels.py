@@ -164,9 +164,7 @@ def _emit_tsels_2d(mask, src, scalar, dst):
                 pto.vsts(selected0, dst[row, col:], pred0)
                 pto.vsts(selected1, dst[row, col + lanes:], pred1)
 
-            tail_cols = valid_cols - paired_cols
-            if tail_cols > 0:
-                col = paired_cols
+            for col in range(paired_cols, valid_cols, lanes):
                 mask_offset = row * mask_stride + col // 8
                 raw_mask = pto.plds(
                     mask_ptr,

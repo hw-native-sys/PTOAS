@@ -6,28 +6,28 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// The helper returns candidates in fallback-first order. The preferred
-// candidate deliberately has both higher priority and a larger ID, proving
-// that priority, rather than wire order or candidate ID, controls selection.
+// The preferred in-process candidate has both higher priority and a larger ID,
+// proving that candidate ID does not control compact-attribute ordering or
+// expansion.
 //
-// RUN: pto-test-opt %s '-pto-insert-template-attributes=daemon-socket-path=unused tile-lib-pkg-path=%S/Inputs daemon-helper-module=ordered_candidate_metadata_helper' | FileCheck %s
-// RUN: pto-test-opt %s '-pto-insert-template-attributes=daemon-socket-path=unused tile-lib-pkg-path=%S/Inputs daemon-helper-module=ordered_candidate_metadata_helper' '-pto-expand-tile-op=daemon-socket-path=unused tile-lib-pkg-path=%S/Inputs daemon-helper-module=ordered_candidate_metadata_helper' | FileCheck %s --check-prefix=EXPAND --implicit-check-not=pto.tadd
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND --implicit-check-not=pto.tadd
 
 // CHECK: pto.tadd
 // CHECK-SAME: candidates = [{
-// CHECK-SAME: id = 99 : i64
+// CHECK-SAME: id = 1 : i64
 // CHECK-SAME: loop_depth = 1 : i64
-// CHECK-SAME: name = "preferred_1d"
+// CHECK-SAME: name = "template_tadd_1d"
 // CHECK-SAME: postupdate = 0 : i64
-// CHECK-SAME: tail = 1 : i64
+// CHECK-SAME: tail = 0 : i64
 // CHECK-SAME: }, {
 // CHECK-SAME: id = 0 : i64
 // CHECK-SAME: loop_depth = 2 : i64
-// CHECK-SAME: name = "fallback_2d"
+// CHECK-SAME: name = "template_tadd"
 
 // EXPAND: func.func @candidate_order
-// EXPAND: call @{{.*}}__preferred_1d
-// EXPAND: func.func private @{{.*}}__preferred_1d
+// EXPAND: call @{{.*}}__template_tadd_1d
+// EXPAND: func.func private @{{.*}}__template_tadd_1d
 
 module attributes {pto.target_arch = "a5"} {
   func.func @candidate_order() {
