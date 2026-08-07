@@ -197,6 +197,40 @@ def named_nested_kernel():
     _ = v
 
 
+@pto.jit(target="a5")
+def named_augassign_kernel(x: pto.i32):
+    state = pto.declare_struct(NAMED_STRUCT)
+    state.n += x
+    _ = state.n
+
+
+@pto.jit(target="a5")
+def named_local_alias_kernel():
+    Inner = pto.struct({"x": pto.i32, "y": pto.f32})
+    Alias = Inner
+    Outer = pto.struct({"id": pto.i32, "inner": Alias})
+    s = pto.declare_struct(Outer)
+    s.inner.x = 1
+    v = s.inner.y
+    _ = v
+
+
+@pto.jit(target="a5")
+def named_ann_mismatch_kernel():
+    S = pto.struct({"x": pto.f32})
+    state = pto.declare_struct(S)
+    state.x: pto.i32 = 1
+    _ = state.x
+
+
+@pto.jit(target="a5")
+def named_dup_key_kernel():
+    S = pto.struct({"x": pto.i32, "x": pto.f32})
+    state = pto.declare_struct(S)
+    state.x = 1
+    _ = state.x
+
+
 class NamedStructMemberAccessTest(unittest.TestCase):
     def test_named_descriptor_exposes_fields(self):
         descriptor = pto.struct({"n": pto.i32, "sum": pto.f32})
@@ -244,6 +278,29 @@ class NamedStructMemberAccessTest(unittest.TestCase):
         # Nested member access resolves to position path [1, 0] / [1, 1].
         self.assertIn("[1, 0]", text)
         self.assertIn("[1, 1]", text)
+
+    def test_augassign_member_rewrites_to_read_write(self):
+        text = named_augassign_kernel.compile().mlir_text()
+        self.assertIn("pto.struct_get", text)
+        self.assertIn("pto.struct_set", text)
+        self.assertLess(
+            text.index("pto.struct_get"),
+            text.index("pto.struct_set"),
+            "state.n += x should read then write",
+        )
+
+    def test_local_descriptor_alias_nesting(self):
+        text = named_local_alias_kernel.compile().mlir_text()
+        self.assertIn("[1, 0]", text)  # s.inner.x -> path [1, 0]
+        self.assertIn("[1, 1]", text)  # s.inner.y -> path [1, 1]
+
+    def test_annassign_type_mismatch_rejected(self):
+        with self.assertRaisesRegex(SyntaxError, "does not match field type"):
+            named_ann_mismatch_kernel.compile()
+
+    def test_duplicate_literal_key_rejected(self):
+        with self.assertRaisesRegex(SyntaxError, "duplicate field name"):
+            named_dup_key_kernel.compile()
 
 
 if __name__ == "__main__":

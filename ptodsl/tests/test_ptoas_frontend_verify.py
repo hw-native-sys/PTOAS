@@ -348,6 +348,16 @@ def struct_member_frontend_verify_probe():
     _ = state.x
 
 
+@pto.jit(target="a5", backend="vpto", mode="explicit", kernel_kind="vector")
+def struct_member_vpto_probe(x: pto.i32):
+    Inner = pto.struct({"x": pto.i32, "y": pto.f32})
+    Alias = Inner
+    Outer = pto.struct({"id": pto.i32, "inner": Alias})
+    s = pto.declare_struct(Outer)
+    s.inner.x += x
+    _ = s.inner.y
+
+
 @pto.simt
 def vec_value_arith_simt_body(
     A_ptr: pto.ptr(pto.f32, "gm"),
@@ -472,6 +482,42 @@ def main() -> None:
     expect(
         ".f0" in joined_struct_member_emitc_cpp,
         "EmitC should lower named-member writes/reads to positional field access",
+    )
+
+    # Default (VPTO) backend named-member surface: local descriptor alias,
+    # nested member access, and += must all lower through the same canonical
+    # get/set ops into the VPTO child module.
+    struct_member_vpto_text = struct_member_vpto_probe.compile().mlir_text()
+    expect(
+        "pto.declare_struct" in struct_member_vpto_text
+        and "pto.struct_set" in struct_member_vpto_text
+        and "pto.struct_get" in struct_member_vpto_text,
+        "struct_member_vpto probe source MLIR should contain canonical struct ops after AST rewrite",
+    )
+    struct_member_vpto_frontend_texts = run_ptoas_frontend_verify(
+        ptoas_bin,
+        struct_member_vpto_text,
+        "struct_member_vpto_probe PTODSL artifact",
+    )
+    expect(
+        len(struct_member_vpto_frontend_texts) == 1,
+        "struct_member_vpto probe should lower to exactly one backend child module",
+    )
+    # The VPTO fast path lowers the (already canonical) struct ops to LLVM
+    # alloca/GEP/load/store, so the frontend output may be empty (object-output
+    # fallback) rather than retaining pto.struct_get/set.  The important
+    # contract is that the AST-rewritten named-member surface survives PTODSL
+    # compile -> PTOAS frontend without error.
+    struct_member_vpto_frontend_text = struct_member_vpto_frontend_texts[0]
+    expect(
+        struct_member_vpto_frontend_text == ""
+        or (
+            "pto.declare_struct" in struct_member_vpto_frontend_text
+            and "pto.struct_set" in struct_member_vpto_frontend_text
+            and "pto.struct_get" in struct_member_vpto_frontend_text
+        ),
+        "struct_member_vpto probe should lower through the VPTO frontend "
+        "(struct ops are lowered to object code or kept as IR)",
     )
 
     simt_gm_memory_text = simt_gm_memory_core_kernel.compile().mlir_text()

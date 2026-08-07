@@ -1498,10 +1498,21 @@ def _reject_control_flow_exits(stmts, context: str, *, reject_bare_returns: bool
             )
 
 
-# Sentinel marking a scalar leaf field in a statically-evaluated struct type.
-_SCALAR_FIELD = object()
 # Sentinel marking a struct field type that cannot be statically evaluated.
 _UNRESOLVABLE_FIELD = object()
+
+
+@dataclass(frozen=True)
+class _ScalarField:
+    """A scalar leaf field in a statically-evaluated struct type.
+
+    Carries an optional ``type_key`` (e.g. ``"pto.f32"``) so the member
+    rewriter can validate an assignment annotation against the field's actual
+    scalar type.  ``type_key`` is ``None`` when the type is not statically
+    known.
+    """
+
+    type_key: object = None
 
 
 @dataclass(frozen=True)
@@ -1531,6 +1542,17 @@ class _StructTypeMeta:
             return self.field_names.index(name)
         except ValueError:
             raise ValueError(f"unknown struct field {name!r}")
+
+
+def _normalize_type_key(key) -> str:
+    """Normalize a scalar type key for comparison.
+
+    Strips a leading ``pto.`` prefix so ``"pto.i32"`` and ``"i32"`` compare
+    equal.  Returns the key unchanged when it is not a string.
+    """
+    if isinstance(key, str):
+        return key[len("pto."):] if key.startswith("pto.") else key
+    return key
 
 
 def _duck_struct_descriptor(obj) -> bool:
@@ -1692,6 +1714,13 @@ class _StructMemberRewriter:
                 self._type_bindings[name] = meta
                 self._value_bindings.pop(name, None)
                 return [node]
+            # Assignment-form local type alias: Alias = Inner where Inner is a
+            # locally-bound struct type.  The alias inherits the descriptor so
+            # it can be reused in a nested pto.struct({...}) field.
+            if isinstance(node.value, ast.Name) and node.value.id in self._type_bindings:
+                self._type_bindings[name] = self._type_bindings[node.value.id]
+                self._value_bindings.pop(name, None)
+                return [node]
             if _is_pto_attr_call(node.value, "declare_struct"):
                 arg = node.value.args[0] if node.value.args else None
                 arg_meta = self._resolve_struct_arg(arg)
@@ -1714,7 +1743,7 @@ class _StructMemberRewriter:
         if any(m is not None for m in member_targets):
             if len(node.targets) == 1:
                 base, path, leaf = member_targets[0]
-                if leaf is not _SCALAR_FIELD:
+                if not isinstance(leaf, _ScalarField):
                     raise PTODSLAstRewriteError(
                         "ast_rewrite=True cannot write a whole nested struct member; "
                         "continue to a scalar leaf or use a full canonical "
@@ -1726,7 +1755,7 @@ class _StructMemberRewriter:
             for t, m in zip(node.targets, member_targets):
                 if m is not None:
                     base, path, leaf = m
-                    if leaf is not _SCALAR_FIELD:
+                    if not isinstance(leaf, _ScalarField):
                         raise PTODSLAstRewriteError(
                             "ast_rewrite=True cannot write a whole nested struct member"
                         )
@@ -1747,7 +1776,7 @@ class _StructMemberRewriter:
             resolved = self._resolve_member(node.target)
             if resolved is not None:
                 base, path, leaf = resolved
-                if leaf is not _SCALAR_FIELD:
+                if not isinstance(leaf, _ScalarField):
                     raise PTODSLAstRewriteError(
                         "ast_rewrite=True annotated struct member must reach a scalar "
                         "leaf; use a full canonical pto.struct_set(...) path"
@@ -1757,8 +1786,19 @@ class _StructMemberRewriter:
                 # to a known descriptor / MLIR Type.  A bare Name that is not a
                 # known static type (e.g. a function parameter) is treated as
                 # dynamic and rejected so the annotation is not silently dropped.
+                # When the field's scalar type is statically known, the
+                # annotation must match it.
                 if node.annotation is not None:
-                    self._require_static_annotation(node.annotation)
+                    ann_key = self._require_static_annotation(node.annotation)
+                    if (
+                        leaf.type_key is not None
+                        and ann_key is not None
+                        and _normalize_type_key(ann_key) != _normalize_type_key(leaf.type_key)
+                    ):
+                        raise PTODSLAstRewriteError(
+                            f"ast_rewrite=True struct member annotation {ann_key!r} "
+                            f"does not match field type {leaf.type_key!r}"
+                        )
                 if node.value is None:
                     raise PTODSLAstRewriteError(
                         "ast_rewrite=True does not support value-less annotated struct "
@@ -1775,7 +1815,7 @@ class _StructMemberRewriter:
             resolved = self._resolve_member(node.target)
             if resolved is not None:
                 base, path, leaf = resolved
-                if leaf is not _SCALAR_FIELD:
+                if not isinstance(leaf, _ScalarField):
                     raise PTODSLAstRewriteError(
                         "ast_rewrite=True augmented assignment must reach a scalar leaf"
                     )
@@ -1815,7 +1855,7 @@ class _StructMemberRewriter:
             resolved = self._resolve_member(node)
             if resolved is not None:
                 base, path, leaf = resolved
-                if leaf is _SCALAR_FIELD:
+                if isinstance(leaf, _ScalarField):
                     return self._struct_get_call(base, path, node)
                 raise PTODSLAstRewriteError(
                     "ast_rewrite=True cannot read a nested struct member as a value; "
@@ -1849,7 +1889,7 @@ class _StructMemberRewriter:
             return None
         path = []
         for attr in reversed(chain):
-            if meta is _SCALAR_FIELD:
+            if isinstance(meta, _ScalarField):
                 raise PTODSLAstRewriteError(
                     f"ast_rewrite=True struct member access descends into a scalar "
                     f"field; cannot read {attr!r} on a scalar member"
@@ -1958,7 +1998,12 @@ class _StructMemberRewriter:
             return _UNRESOLVABLE_FIELD
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "pto":
-                return _SCALAR_FIELD
+                return _ScalarField(node.attr)
+            obj = self._static_env.get(node.value.id)
+            if _duck_struct_descriptor(obj):
+                # A member of a known descriptor (e.g. a static dtype attribute)
+                # is treated as a scalar leaf whose type key is the attribute.
+                return _ScalarField(node.attr)
             return _UNRESOLVABLE_FIELD
         if isinstance(node, ast.Name):
             # Local type aliases (e.g. Inner = pto.struct(...)) take precedence
@@ -1970,7 +2015,8 @@ class _StructMemberRewriter:
             obj = self._static_env.get(node.id)
             if _duck_struct_descriptor(obj):
                 return self._meta_from_descriptor(obj)
-            return _SCALAR_FIELD
+            # An unknown name is a scalar leaf of unknown type.
+            return _ScalarField(None)
         return _UNRESOLVABLE_FIELD
 
     def _require_static_annotation(self, node):
@@ -1984,7 +2030,7 @@ class _StructMemberRewriter:
         """
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "pto":
-                return  # pto.i32 etc.
+                return node.attr  # pto.i32 -> "i32"
             raise PTODSLAstRewriteError(
                 "ast_rewrite=True struct member annotation must be a static dtype "
                 "annotation (e.g. pto.i32); got a dynamic annotation"
@@ -1992,10 +2038,10 @@ class _StructMemberRewriter:
         if isinstance(node, ast.Name):
             local = self._type_bindings.get(node.id)
             if local is not None:
-                return
+                return None
             obj = self._static_env.get(node.id)
             if _duck_struct_descriptor(obj):
-                return
+                return None
             raise PTODSLAstRewriteError(
                 f"ast_rewrite=True struct member annotation references unknown name "
                 f"{node.id!r}; only static pto.* dtype annotations are supported"
@@ -2015,7 +2061,7 @@ class _StructMemberRewriter:
             if _duck_struct_descriptor(fd):
                 types.append(self._meta_from_descriptor(fd))
             else:
-                types.append(_SCALAR_FIELD)
+                types.append(_ScalarField(None))
         return _StructTypeMeta(tuple(names), tuple(types))
 
 
