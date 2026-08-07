@@ -71,6 +71,7 @@ _TEMPLATE_MODULES = {
     ("a5", "pto.tmatmul.mx"): ".a5.tmatmul_mx",
     ("a5", "pto.tmatmul.mx.acc"): ".a5.tmatmul_mx",
     ("a5", "pto.tmatmul.mx.bias"): ".a5.tmatmul_mx",
+    ("a5", "pto.mscatter"): ".a5.mscatter",
     ("a5", "pto.tmov"): (
         ".a5.tmov",
         ".a5.tmov2bias",

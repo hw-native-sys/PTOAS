@@ -9267,7 +9267,7 @@ LogicalResult MScatterOp::verify() {
   if (!isSupportedMScatterAtomicPayloadElemType(srcElem, scatterAtomicOp))
     return emitOpError(
         "expects scatterAtomicOp-compatible src element type: add supports "
-        "i32/ui32/f16/f32, max/min support signless i32/f32");
+        "32-bit integer/f16/f32, max/min support 32-bit integer/f32");
 
   return success();
 }

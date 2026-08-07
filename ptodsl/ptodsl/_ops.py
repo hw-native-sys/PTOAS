@@ -4015,6 +4015,50 @@ def tscatter(src, dst, *, indexes=None, axis=None, mask_pattern=None):
     )
 
 
+def mscatter(src, idx, table, *, coalesce, atomic="none", oob="undefined", conflict=None):
+    """``pto.mscatter`` tile multi-scatter wrapper."""
+    if coalesce not in ("row", "elem"):
+        raise ValueError(f"coalesce must be 'row' or 'elem', got {coalesce!r}")
+    if atomic not in ("none", "add", "max", "min"):
+        raise ValueError(f"atomic must be 'none', 'add', 'max', or 'min', got {atomic!r}")
+    if oob not in ("undefined", "skip", "clamp", "wrap"):
+        raise ValueError(f"oob must be 'undefined', 'skip', 'clamp', or 'wrap', got {oob!r}")
+    if conflict is not None and conflict not in ("default", "last"):
+        raise ValueError(f"conflict must be None, 'default', or 'last', got {conflict!r}")
+    if atomic not in ("none",) and conflict == "last":
+        raise ValueError(
+            f"atomic={atomic!r} and conflict='last' cannot be combined"
+        )
+    if _is_partition_tensor_view(table):
+        mem = table
+    else:
+        table_shape = getattr(table, "shape", None)
+        if table_shape is None:
+            raise TypeError("mscatter requires table tensor_view with shape metadata")
+        rank = len(table_shape)
+        mem = partition_view(
+            table,
+            offsets=[0] * rank,
+            sizes=list(table_shape),
+        )
+    coalesce_attr = _pto.CoalesceAttr.get(getattr(_pto.Coalesce, coalesce.capitalize()))
+    atomic_attr = Attribute.parse(f"#pto<scatter_atomic_op {atomic}>")
+    oob_attr = Attribute.parse(f"#pto<scatter_oob {oob}>")
+    kwargs = dict(
+        coalesce=coalesce_attr,
+        scatter_atomic_op=atomic_attr,
+        scatter_oob=oob_attr,
+    )
+    if conflict is not None:
+        kwargs["scatter_conflict"] = Attribute.parse(f"#pto<scatter_conflict {conflict}>")
+    _pto.mscatter(
+        unwrap_surface_value(src),
+        unwrap_surface_value(idx),
+        unwrap_surface_value(mem),
+        **kwargs,
+    )
+
+
 def tsel(mask, src0, src1, dst, *, tmp=None):
     """``pto.tsel ins(mask, src0, src1, tmp) outs(dst)`` with synthesized scratch when omitted."""
     resolved_tmp = tmp if tmp is not None else _resolve_selection_tmp(dst, tmp, context="tsel")
@@ -6636,7 +6680,7 @@ __all__ = [
     "texpands", "treshape", "trowexpand", "tcolexpand",
     "trowexpandadd", "trowexpandsub", "trowexpandmul", "trowexpanddiv", "trowexpandmax", "trowexpandmin", "trowexpandexpdif",
     "tcolexpandadd", "tcolexpandsub", "tcolexpandmul", "tcolexpanddiv", "tcolexpandmax", "tcolexpandmin", "tcolexpandexpdif",
-    "tsort32", "tmrgsort", "tgather", "tscatter",
+    "tsort32", "tmrgsort", "tgather", "tscatter", "mscatter",
     "tsel", "tsels", "tcvt",
     "tnot", "tand", "tands", "tor", "tors", "txor", "txors", "tshl", "tshls", "tshr", "tshrs",
     "tpartadd", "tpartmul", "tpartmax", "tpartmin",

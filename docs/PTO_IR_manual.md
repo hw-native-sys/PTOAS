@@ -7873,7 +7873,7 @@ elem mode:          mem[idx[i, j]] = src[i, j]
 - **Atomic modes**  
   - Default `scatterAtomicOp = none` lowers to the default `MSCATTER(mem, src, idx)` overload.
   - Non-default `scatterAtomicOp` values lower to `MSCATTER<Coalesce, ScatterAtomicOp::...>(mem, src, idx)`.
-  - `add` requires `i32`/`f16`/`f32`.
+  - `add` requires `i32`/`ui32`/`f16`/`f32`.
   - `max`/`min` require signless `i32` or `f32`.
 
 - **Out-of-bounds modes**
@@ -7886,7 +7886,8 @@ elem mode:          mem[idx[i, j]] = src[i, j]
 
 **Hardware Mapping:**
 
-- Executes on the **DMA pipeline** (`PIPE_MTE3`)
+- **A5 targets**: Executes on the **Vector pipeline** (`PIPE_V`)
+- **A2/A3 targets**: Executes on the **DMA pipeline** (`PIPE_MTE3`)
 
 **Basic Example:**
 

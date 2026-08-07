@@ -534,6 +534,7 @@ static void appendOpContextAttrs(
       attrs.emplace_back("axis_value", axisAttr.getValue().str());
     }
   }
+  pto::appendMScatterContextAttrs(op, attrs);
   (void)(tryAppendPrecisionType<pto::TExpOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TLogOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TSqrtOp>(op, attrs) ||

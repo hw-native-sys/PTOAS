@@ -11,6 +11,11 @@
 
 #include "PTO/IR/PTO.h"
 
+#include "llvm/ADT/SmallVector.h"
+
+#include <string>
+#include <utility>
+
 namespace mlir::pto {
 
 /// Return whether an operation is a TileLib template expansion candidate.
@@ -22,6 +27,38 @@ inline bool isTileLibExpandableOp(Operation *op) {
   return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
               TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
               TFreeFromAicOp, TFreeFromAivOp>(op);
+}
+
+/// Append MScatterOp context attributes to the spec-key attribute list.
+/// Only non-default values are included to avoid spurious key divergence.
+inline void appendMScatterContextAttrs(
+    Operation *op,
+    SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
+  auto mscatter = dyn_cast<pto::MScatterOp>(op);
+  if (!mscatter)
+    return;
+  if (auto oobAttr = dyn_cast_or_null<pto::ScatterOOBAttr>(
+          mscatter.getProperties().scatterOob)) {
+    if (oobAttr.getValue() != pto::ScatterOOB::Undefined) {
+      attrs.emplace_back("scatter_oob",
+                         stringifyScatterOOB(oobAttr.getValue()).str());
+    }
+  }
+  if (auto atomicOpAttr = dyn_cast_or_null<pto::ScatterAtomicOpAttr>(
+          mscatter.getProperties().scatterAtomicOp)) {
+    auto atomicOpValue = atomicOpAttr.getValue();
+    if (atomicOpValue != pto::ScatterAtomicOp::None) {
+      attrs.emplace_back("scatter_atomic_op",
+                         stringifyScatterAtomicOp(atomicOpValue).str());
+    }
+  }
+  if (auto conflictAttr = dyn_cast_or_null<pto::ScatterConflictAttr>(
+          mscatter.getProperties().scatterConflict)) {
+    if (conflictAttr.getValue() != pto::ScatterConflict::Default) {
+      attrs.emplace_back("scatter_conflict",
+                         stringifyScatterConflict(conflictAttr.getValue()).str());
+    }
+  }
 }
 
 } // namespace mlir::pto

@@ -210,5 +210,7 @@ class _TileNamespace:
     fillpad_expand = staticmethod(_ops.tfillpad_expand)
     fillpad_inplace = staticmethod(_ops.tfillpad_inplace)
 
+    mscatter = staticmethod(_ops.mscatter)
+
 
 tile = _TileNamespace()
