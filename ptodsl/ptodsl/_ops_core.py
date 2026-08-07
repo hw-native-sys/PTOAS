@@ -29,6 +29,7 @@ from ._surface_values import (
     AllocatedBufferValue,
     MaskResultValue,
     PartitionTensorViewValue,
+    StructValue,
     TensorViewValue,
     TileSliceValue,
     TileValue,
@@ -186,7 +187,7 @@ def declare_struct(struct_type):
             "pto.declare_struct(...): expected a pto.struct_type(...) descriptor or !pto.struct type, "
             f"got {resolved_type}"
         )
-    return wrap_surface_value(_pto.DeclareStructOp(resolved_type).s)
+    return StructValue(_pto.DeclareStructOp(resolved_type).s)
 
 
 def struct_get(struct, path):

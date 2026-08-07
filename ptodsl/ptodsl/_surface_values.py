@@ -327,6 +327,37 @@ class RuntimeValue(_SurfaceValue):
         return wrap_surface_value(emit_runtime_bitwise_op("xor", unwrap_surface_value(other), self.value))
 
 
+class StructValue(RuntimeValue):
+    """Stack-local ``!pto.struct`` value backing ``pto.declare_struct(...)``.
+
+    Member access (``state.field``) is handled by the ``@pto.jit`` AST rewriter
+    when source is available; this class only provides a *diagnostic* fallback
+    so that member access on an un-rewritten function (source-less/REPL, or
+    ``ast_rewrite=False``) fails loudly instead of silently creating a plain
+    Python attribute or raising ``AttributeError``.
+    """
+
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        raise AttributeError(
+            "struct member access requires @pto.jit AST rewriting (default on); "
+            "keep the function source retrievable or use pto.struct_get / "
+            f"pto.struct_set instead. Attempted to read member {name!r}."
+        )
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            # Internal attributes (e.g. _value) are set by __init__ and helpers.
+            object.__setattr__(self, name, value)
+            return
+        raise AttributeError(
+            "struct member access requires @pto.jit AST rewriting (default on); "
+            "keep the function source retrievable or use pto.struct_get / "
+            f"pto.struct_set instead. Attempted to write member {name!r}."
+        )
+
+
 class VecValue(_SurfaceValue):
     """Author-facing builtin vector value backed by an MLIR vector SSA value."""
 

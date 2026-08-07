@@ -76,6 +76,8 @@ def rewrite_jit_function(
     section_rewriter = _SectionLexicalRewriter()
     function_def = section_rewriter.visit(function_def)
     if rewrite_control_flow:
+        member_rewriter = _StructMemberRewriter(static_env)
+        function_def.body = member_rewriter.rewrite_block(function_def.body)
         rewriter = _ControlFlowRewriter(
             static_env,
             section_uninitialized_aliases=section_rewriter.section_uninitialized_aliases,
@@ -1494,6 +1496,476 @@ def _reject_control_flow_exits(stmts, context: str, *, reject_bare_returns: bool
                 f"ast_rewrite=True does not support return/yield inside rewritten {context}; "
                 "assign values to locals and return after the rewritten control flow"
             )
+
+
+# Sentinel marking a scalar leaf field in a statically-evaluated struct type.
+_SCALAR_FIELD = object()
+# Sentinel marking a struct field type that cannot be statically evaluated.
+_UNRESOLVABLE_FIELD = object()
+
+
+@dataclass(frozen=True)
+class _StructTypeMeta:
+    """Static, pure-Python description of a ``pto.struct`` descriptor.
+
+    Built at rewrite time from ``pto.struct({...})`` / ``pto.struct_type(...)``
+    literals or from a descriptor found in ``static_env``.  It carries only the
+    field names and nesting needed to resolve member access ``state.a.b`` to an
+    integer path; the actual scalar leaf types are validated later by the
+    canonical ``pto.struct_get`` / ``pto.struct_set`` ops.
+    """
+
+    field_names: tuple
+    field_types: tuple
+
+    @property
+    def is_named(self) -> bool:
+        return self.field_names is not None and all(
+            n is not None for n in self.field_names
+        )
+
+    def field_index(self, name: str) -> int:
+        if self.field_names is None:
+            raise ValueError("positional struct has no field names")
+        try:
+            return self.field_names.index(name)
+        except ValueError:
+            raise ValueError(f"unknown struct field {name!r}")
+
+
+def _duck_struct_descriptor(obj) -> bool:
+    return (
+        obj is not None
+        and hasattr(obj, "field_names")
+        and hasattr(obj, "field_descriptors")
+        and hasattr(obj, "field_index")
+    )
+
+
+class _StructMemberRewriter:
+    """Rewrite ``state.field`` member access into canonical get/set calls.
+
+    Field names are resolved to integer paths entirely at rewrite time: the
+    rewriter statically evaluates ``pto.struct({...})`` / ``pto.struct_type(...)``
+    literals (and descriptors already in ``static_env``) into ``_StructTypeMeta``
+    metadata, tracks ``type_bindings`` / ``value_bindings`` across the function
+    body, and rewrites member reads/writes into ``pto.struct_get`` /
+    ``pto.struct_set`` with the integer path baked in.  No runtime helper and no
+    descriptor->value propagation is needed.
+    """
+
+    def __init__(self, static_env=None):
+        self._static_env = dict(static_env or {})
+        self._type_bindings = {}
+        self._value_bindings = {}
+        self._counter = 0
+
+    def _fresh(self, prefix: str) -> str:
+        value = f"__pto_struct_{prefix}_{self._counter}"
+        self._counter += 1
+        return value
+
+    def rewrite_block(self, stmts):
+        out = []
+        for stmt in stmts:
+            out.extend(self._rewrite_stmt(stmt))
+        return out
+
+    def _rewrite_stmt(self, stmt):
+        if isinstance(stmt, ast.Assign):
+            return self._rewrite_assign(stmt)
+        if isinstance(stmt, ast.AnnAssign):
+            return self._rewrite_annassign(stmt)
+        if isinstance(stmt, ast.AugAssign):
+            return self._rewrite_augassign(stmt)
+        if isinstance(stmt, ast.Delete):
+            return self._rewrite_delete(stmt)
+        if isinstance(stmt, ast.If):
+            return [self._rewrite_if(stmt)]
+        if isinstance(stmt, ast.For):
+            return [self._rewrite_for(stmt)]
+        if isinstance(stmt, ast.While):
+            return [self._rewrite_while(stmt)]
+        if isinstance(stmt, (ast.With, ast.AsyncWith)):
+            return [self._rewrite_with(stmt)]
+        if isinstance(stmt, ast.Try):
+            return [self._rewrite_try(stmt)]
+        if hasattr(ast, "TryStar") and isinstance(stmt, ast.TryStar):
+            return [self._rewrite_try(stmt)]
+        if isinstance(
+            stmt,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+        ):
+            return [stmt]
+        self._rewrite_expr_in_stmt(stmt)
+        return [stmt]
+
+    def _rewrite_expr_in_stmt(self, stmt):
+        for field, value in ast.iter_fields(stmt):
+            if isinstance(value, ast.AST):
+                setattr(stmt, field, self._rewrite_expr(value))
+            elif isinstance(value, list):
+                setattr(
+                    stmt,
+                    field,
+                    [self._rewrite_expr(v) if isinstance(v, ast.AST) else v for v in value],
+                )
+        return stmt
+
+    def _rewrite_if(self, stmt):
+        stmt.test = self._rewrite_expr(stmt.test)
+        saved_t, saved_v = dict(self._type_bindings), dict(self._value_bindings)
+        stmt.body = self.rewrite_block(stmt.body)
+        body_t, body_v = dict(self._type_bindings), dict(self._value_bindings)
+        self._type_bindings, self._value_bindings = dict(saved_t), dict(saved_v)
+        stmt.orelse = self.rewrite_block(stmt.orelse)
+        else_t, else_v = dict(self._type_bindings), dict(self._value_bindings)
+        self._type_bindings = self._merge_bindings(saved_t, body_t, else_t, "type")
+        self._value_bindings = self._merge_bindings(saved_v, body_v, else_v, "value")
+        return stmt
+
+    def _rewrite_for(self, stmt):
+        stmt.iter = self._rewrite_expr(stmt.iter)
+        saved_t, saved_v = dict(self._type_bindings), dict(self._value_bindings)
+        for n in _target_stores(stmt.target):
+            self._value_bindings.pop(n, None)
+            self._type_bindings.pop(n, None)
+        stmt.body = self.rewrite_block(stmt.body)
+        self._type_bindings, self._value_bindings = saved_t, saved_v
+        if stmt.orelse:
+            stmt.orelse = self.rewrite_block(stmt.orelse)
+        return stmt
+
+    def _rewrite_while(self, stmt):
+        stmt.test = self._rewrite_expr(stmt.test)
+        saved_t, saved_v = dict(self._type_bindings), dict(self._value_bindings)
+        stmt.body = self.rewrite_block(stmt.body)
+        self._type_bindings, self._value_bindings = saved_t, saved_v
+        if stmt.orelse:
+            stmt.orelse = self.rewrite_block(stmt.orelse)
+        return stmt
+
+    def _rewrite_with(self, stmt):
+        for item in stmt.items:
+            item.context_expr = self._rewrite_expr(item.context_expr)
+            if item.optional_vars is not None:
+                for n in _target_stores(item.optional_vars):
+                    self._value_bindings.pop(n, None)
+                    self._type_bindings.pop(n, None)
+        stmt.body = self.rewrite_block(stmt.body)
+        return stmt
+
+    def _rewrite_try(self, stmt):
+        stmt.body = self.rewrite_block(stmt.body)
+        for handler in stmt.handlers:
+            handler.body = self.rewrite_block(handler.body)
+        if stmt.orelse:
+            stmt.orelse = self.rewrite_block(stmt.orelse)
+        if stmt.finalbody:
+            stmt.finalbody = self.rewrite_block(stmt.finalbody)
+        return stmt
+
+    def _merge_bindings(self, base, a, b, kind):
+        merged = dict(base)
+        for name in set(a) | set(b):
+            va = a.get(name)
+            vb = b.get(name)
+            if name in merged:
+                if va == merged.get(name) and vb == merged.get(name):
+                    continue
+                merged.pop(name, None)
+            elif va is not None and vb is not None and va != vb:
+                raise PTODSLAstRewriteError(
+                    f"ast_rewrite=True struct {kind} binding for {name!r} is assigned "
+                    "incompatible struct types in different branches; declare it once "
+                    "before the conditional or use canonical pto.struct_get/set"
+                )
+        return merged
+
+    def _rewrite_assign(self, node):
+        node.value = self._rewrite_expr(node.value)
+
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            meta = self._eval_struct_meta(node.value)
+            if meta is not None:
+                self._type_bindings[name] = meta
+                self._value_bindings.pop(name, None)
+                return [node]
+            if _is_pto_attr_call(node.value, "declare_struct"):
+                arg = node.value.args[0] if node.value.args else None
+                arg_meta = self._resolve_struct_arg(arg)
+                if arg_meta is not None:
+                    self._value_bindings[name] = arg_meta
+                    return [node]
+                self._value_bindings.pop(name, None)
+                self._type_bindings.pop(name, None)
+                return [node]
+            if isinstance(node.value, ast.Name) and node.value.id in self._value_bindings:
+                self._value_bindings[name] = self._value_bindings[node.value.id]
+                return [node]
+            self._value_bindings.pop(name, None)
+            self._type_bindings.pop(name, None)
+
+        member_targets = [
+            self._resolve_member(t) if isinstance(t, ast.Attribute) else None
+            for t in node.targets
+        ]
+        if any(m is not None for m in member_targets):
+            if len(node.targets) == 1:
+                base, path, leaf = member_targets[0]
+                if leaf is not _SCALAR_FIELD:
+                    raise PTODSLAstRewriteError(
+                        "ast_rewrite=True cannot write a whole nested struct member; "
+                        "continue to a scalar leaf or use a full canonical "
+                        "pto.struct_set(...) path"
+                    )
+                return [self._struct_set_stmt(base, path, node.value)]
+            tmp = self._fresh("tmp")
+            out = [ast.Assign(targets=[ast.Name(tmp, ast.Store())], value=node.value)]
+            for t, m in zip(node.targets, member_targets):
+                if m is not None:
+                    base, path, leaf = m
+                    if leaf is not _SCALAR_FIELD:
+                        raise PTODSLAstRewriteError(
+                            "ast_rewrite=True cannot write a whole nested struct member"
+                        )
+                    out.append(
+                        self._struct_set_stmt(base, path, ast.Name(tmp, ast.Load()))
+                    )
+                else:
+                    out.append(ast.Assign(targets=[t], value=ast.Name(tmp, ast.Load())))
+                    self._cancel_binding(t)
+            return out
+
+        for t in node.targets:
+            self._cancel_binding(t)
+        return [node]
+
+    def _rewrite_annassign(self, node):
+        if isinstance(node.target, ast.Attribute):
+            resolved = self._resolve_member(node.target)
+            if resolved is not None:
+                base, path, leaf = resolved
+                if leaf is not _SCALAR_FIELD:
+                    raise PTODSLAstRewriteError(
+                        "ast_rewrite=True annotated struct member must reach a scalar "
+                        "leaf; use a full canonical pto.struct_set(...) path"
+                    )
+                if node.value is None:
+                    raise PTODSLAstRewriteError(
+                        "ast_rewrite=True does not support value-less annotated struct "
+                        "member access"
+                    )
+                node.value = self._rewrite_expr(node.value)
+                return [self._struct_set_stmt(base, path, node.value)]
+        if node.value is not None:
+            node.value = self._rewrite_expr(node.value)
+        return [node]
+
+    def _rewrite_augassign(self, node):
+        if isinstance(node.target, ast.Attribute):
+            resolved = self._resolve_member(node.target)
+            if resolved is not None:
+                base, path, leaf = resolved
+                if leaf is not _SCALAR_FIELD:
+                    raise PTODSLAstRewriteError(
+                        "ast_rewrite=True augmented assignment must reach a scalar leaf"
+                    )
+                node.value = self._rewrite_expr(node.value)
+                tmp = self._fresh("tmp")
+                read = ast.Assign(
+                    targets=[ast.Name(tmp, ast.Store())],
+                    value=self._struct_get_call(base, path, node.target),
+                )
+                aug = ast.AugAssign(
+                    target=ast.Name(tmp, ast.Load()),
+                    op=node.op,
+                    value=node.value,
+                )
+                set_stmt = self._struct_set_stmt(
+                    base, path, ast.Name(tmp, ast.Load())
+                )
+                return [read, aug, set_stmt]
+        node.value = self._rewrite_expr(node.value)
+        return [node]
+
+    def _rewrite_delete(self, node):
+        for t in node.targets:
+            if isinstance(t, ast.Attribute) and self._resolve_member(t) is not None:
+                raise PTODSLAstRewriteError(
+                    "ast_rewrite=True does not support del on struct fields"
+                )
+        return [node]
+
+    def _cancel_binding(self, t):
+        if isinstance(t, ast.Name):
+            self._value_bindings.pop(t.id, None)
+            self._type_bindings.pop(t.id, None)
+
+    def _rewrite_expr(self, node):
+        if isinstance(node, ast.Attribute):
+            resolved = self._resolve_member(node)
+            if resolved is not None:
+                base, path, leaf = resolved
+                if leaf is _SCALAR_FIELD:
+                    return self._struct_get_call(base, path, node)
+                raise PTODSLAstRewriteError(
+                    "ast_rewrite=True cannot read a nested struct member as a value; "
+                    "continue to a scalar leaf (e.g. state.pt.x) or use a full "
+                    "canonical pto.struct_get(...) path"
+                )
+            node.value = self._rewrite_expr(node.value)
+            return node
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, ast.AST):
+                setattr(node, field, self._rewrite_expr(value))
+            elif isinstance(value, list):
+                setattr(
+                    node,
+                    field,
+                    [self._rewrite_expr(v) if isinstance(v, ast.AST) else v for v in value],
+                )
+        return node
+
+    def _resolve_member(self, node):
+        chain = []
+        cur = node
+        while isinstance(cur, ast.Attribute):
+            chain.append(cur.attr)
+            cur = cur.value
+        if not isinstance(cur, ast.Name):
+            return None
+        base = cur.id
+        meta = self._value_bindings.get(base)
+        if meta is None:
+            return None
+        path = []
+        for attr in reversed(chain):
+            if meta is _SCALAR_FIELD:
+                raise PTODSLAstRewriteError(
+                    f"ast_rewrite=True struct member access descends into a scalar "
+                    f"field; cannot read {attr!r} on a scalar member"
+                )
+            if not isinstance(meta, _StructTypeMeta):
+                raise PTODSLAstRewriteError(
+                    f"ast_rewrite=True struct member access descends into a "
+                    f"non-struct field; cannot read {attr!r}"
+                )
+            if not meta.is_named:
+                raise PTODSLAstRewriteError(
+                    "ast_rewrite=True struct member access cannot descend into a "
+                    "positional (pto.struct_type) layer; use a full canonical "
+                    "pto.struct_get(...) path"
+                )
+            try:
+                idx = meta.field_index(attr)
+            except ValueError:
+                raise PTODSLAstRewriteError(
+                    f"ast_rewrite=True unknown struct field {attr!r}; expected one of "
+                    f"{[n for n in meta.field_names]}"
+                )
+            path.append(idx)
+            meta = meta.field_types[idx]
+        return base, tuple(path), meta
+
+    def _struct_get_call(self, base, path, node):
+        call = ast.Call(
+            func=_pto_attr("struct_get"),
+            args=[_name(base), self._path_tuple(path)],
+            keywords=[],
+        )
+        return ast.copy_location(call, node)
+
+    def _struct_set_stmt(self, base, path, value):
+        call = ast.Call(
+            func=_pto_attr("struct_set"),
+            args=[_name(base), self._path_tuple(path), value],
+            keywords=[],
+        )
+        return ast.Expr(value=call)
+
+    @staticmethod
+    def _path_tuple(path):
+        return ast.Tuple(elts=[ast.Constant(i) for i in path], ctx=ast.Load())
+
+    def _resolve_struct_arg(self, arg):
+        if arg is None:
+            return None
+        meta = self._eval_struct_meta(arg)
+        if meta is not None:
+            return meta
+        if isinstance(arg, ast.Name):
+            meta = self._type_bindings.get(arg.id)
+            if meta is not None:
+                return meta
+            obj = self._static_env.get(arg.id)
+            if _duck_struct_descriptor(obj):
+                return self._meta_from_descriptor(obj)
+        return None
+
+    def _eval_struct_meta(self, node):
+        if isinstance(node, ast.Call):
+            if _is_pto_attr_call(node, "struct"):
+                if len(node.args) != 1 or not isinstance(node.args[0], ast.Dict):
+                    return None
+                d = node.args[0]
+                names, types = [], []
+                for k, v in zip(d.keys, d.values):
+                    if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+                        return None
+                    sub = self._eval_field_type(v)
+                    if sub is _UNRESOLVABLE_FIELD:
+                        return None
+                    names.append(k.value)
+                    types.append(sub)
+                return _StructTypeMeta(tuple(names), tuple(types))
+            if _is_pto_attr_call(node, "struct_type"):
+                names, types = [], []
+                for a in node.args:
+                    sub = self._eval_field_type(a)
+                    if sub is _UNRESOLVABLE_FIELD:
+                        return None
+                    names.append(None)
+                    types.append(sub)
+                return _StructTypeMeta(tuple(names), tuple(types))
+            return None
+        if isinstance(node, ast.Name):
+            obj = self._static_env.get(node.id)
+            if _duck_struct_descriptor(obj):
+                return self._meta_from_descriptor(obj)
+            return None
+        return None
+
+    def _eval_field_type(self, node):
+        if isinstance(node, ast.Call):
+            sub = self._eval_struct_meta(node)
+            if sub is not None:
+                return sub
+            return _UNRESOLVABLE_FIELD
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "pto":
+                return _SCALAR_FIELD
+            return _UNRESOLVABLE_FIELD
+        if isinstance(node, ast.Name):
+            obj = self._static_env.get(node.id)
+            if _duck_struct_descriptor(obj):
+                return self._meta_from_descriptor(obj)
+            return _SCALAR_FIELD
+        return _UNRESOLVABLE_FIELD
+
+    def _meta_from_descriptor(self, obj):
+        field_names = getattr(obj, "field_names", None)
+        field_descriptors = getattr(obj, "field_descriptors", ())
+        names, types = [], []
+        for i, fd in enumerate(field_descriptors):
+            name = None if field_names is None else field_names[i]
+            names.append(name)
+            if _duck_struct_descriptor(fd):
+                types.append(self._meta_from_descriptor(fd))
+            else:
+                types.append(_SCALAR_FIELD)
+        return _StructTypeMeta(tuple(names), tuple(types))
 
 
 class _ControlFlowRewriter:

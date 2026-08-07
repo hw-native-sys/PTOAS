@@ -115,6 +115,44 @@ Python `int` literals can initialize integer and floating-point fields; Python `
 
 Structs cannot be used as `@pto.jit`, `@pto.tileop`, or `@pto.simt` parameters, or as `pto.for_(...).carry(...)` state. A struct declared outside an ordinary `pto.for_` may be read and mutated inside that loop. Struct values also cannot be returned, yielded, or passed as function arguments from their declaring scope.
 
+### Named fields and member access
+
+`pto.struct({...})` describes the same `!pto.struct<...>` as `pto.struct_type(...)`, but with named fields. Field names are compile-time constants that let you read and write members with Python attribute syntax; the member access lowers losslessly to the canonical `pto.struct_get` / `pto.struct_set` positional-path operations.
+
+```python
+pto.struct(fields: dict[str, FieldType]) -> StructTypeDescriptor
+```
+
+```text
+state.field             # pto.struct_get(state, [index])
+state.field = value     # pto.struct_set(state, [index], value)
+state.inner.field       # pto.struct_get(state, [i, j])
+```
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"type_system.struct_member","symbol":"type_system_struct_member_probe","compile":{}} -->
+```python
+Point = pto.struct({"x": pto.i32, "y": pto.f32})
+state = pto.declare_struct(Point)
+state.x = 1
+state.y = 2.5
+count = state.x
+scale = state.y
+```
+
+Nested named structs are accessed with chained members:
+
+```python
+Nested = pto.struct({
+    "id": pto.i32,
+    "pt": pto.struct({"x": pto.i32, "y": pto.f32}),
+})
+s = pto.declare_struct(Nested)
+s.pt.x = 1              # pto.struct_set(s, (1, 0), 1)
+v = s.pt.y              # pto.struct_get(s, (1, 1))
+```
+
+Field names must be valid Python identifiers that are not keywords, not start with an underscore, and not in the reserved set (`value`, `type`, `surface_metadata`, `field_*`, `resolve`, `declared_value`, `field_map`). Member access requires the AST source rewrite (the default `@pto.jit` mode); if source is unavailable or `ast_rewrite=False`, member access raises a clear error instead of silently creating a Python attribute. Use the canonical `pto.struct_get` / `pto.struct_set` with positional paths whenever member syntax is not available.
+
 ## 4.2 Vector register type
 
 Vector registers hold a fixed 256-byte payload. `pto.vreg(dtype)` infers the element count automatically:

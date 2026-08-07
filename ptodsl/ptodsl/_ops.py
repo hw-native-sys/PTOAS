@@ -42,6 +42,7 @@ from ._surface_values import (
     AllocatedBufferValue,
     MaskResultValue,
     PartitionTensorViewValue,
+    StructValue,
     TensorViewValue,
     TileSliceValue,
     TileValue,

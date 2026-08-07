@@ -46,10 +46,11 @@ def struct_carry_kernel():
 
 class StructSurfaceTest(unittest.TestCase):
     def test_public_namespace_exports_struct_surface(self):
-        for name in ("struct_type", "declare_struct", "struct_get", "struct_set"):
+        for name in ("struct_type", "struct", "declare_struct", "struct_get", "struct_set"):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(pto, name), name)
         self.assertIn("struct_type", _types.__all__)
+        self.assertIn("struct", _types.__all__)
 
     def test_struct_type_is_lazy_and_exposes_fields(self):
         descriptor = pto.struct_type(pto.i32, pto.struct_type(pto.f32, pto.i16))
@@ -168,6 +169,81 @@ class StructSurfaceTest(unittest.TestCase):
 
         with self.assertRaisesRegex(TypeError, "does not accept pto.struct_type"):
             pto.for_(0, 2, step=1).carry(state=STRUCT_TYPE)
+
+
+NAMED_STRUCT = pto.struct({"n": pto.i32, "sum": pto.f32})
+NAMED_NESTED = pto.struct({
+    "id": pto.i32,
+    "pt": pto.struct({"x": pto.i32, "y": pto.f32}),
+})
+
+
+@pto.jit(target="a5")
+def named_member_kernel(x: pto.i32, y: pto.f32):
+    state = pto.declare_struct(NAMED_STRUCT)
+    state.n = x
+    state.sum = y
+    count = state.n
+    total = state.sum
+    _ = count
+    _ = total
+
+
+@pto.jit(target="a5")
+def named_nested_kernel():
+    s = pto.declare_struct(NAMED_NESTED)
+    s.pt.x = 1
+    v = s.pt.y
+    _ = v
+
+
+class NamedStructMemberAccessTest(unittest.TestCase):
+    def test_named_descriptor_exposes_fields(self):
+        descriptor = pto.struct({"n": pto.i32, "sum": pto.f32})
+        self.assertEqual(descriptor.field_names, ("n", "sum"))
+        self.assertTrue(descriptor.is_named)
+        self.assertEqual(descriptor.field_index("n"), 0)
+        self.assertEqual(descriptor.field_index("sum"), 1)
+        self.assertEqual(descriptor.field_descriptor_at(1)[0], "sum")
+
+    def test_named_and_positional_resolve_to_same_type(self):
+        named = pto.struct({"n": pto.i32, "sum": pto.f32})
+        positional = pto.struct_type(pto.i32, pto.f32)
+        with make_context() as ctx, Location.unknown(ctx):
+            self.assertEqual(
+                str(named.resolve()),
+                str(positional.resolve()),
+            )
+
+    def test_named_field_rules(self):
+        with self.assertRaisesRegex(ValueError, "valid Python identifiers"):
+            pto.struct({"a-b": pto.i32})
+        with self.assertRaisesRegex(ValueError, "Python keyword"):
+            pto.struct({"class": pto.i32})
+        with self.assertRaisesRegex(ValueError, "underscore"):
+            pto.struct({"_x": pto.i32})
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            pto.struct({"value": pto.i32})
+        with self.assertRaisesRegex(TypeError, "dict"):
+            pto.struct([pto.i32, pto.f32])
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            pto.struct({})
+
+    def test_member_access_rewrites_to_canonical_ops(self):
+        text = named_member_kernel.compile().mlir_text()
+        self.assertIn("pto.struct_set", text)
+        self.assertIn("pto.struct_get", text)
+        # Field names ("n", "sum") must not leak into the IR.
+        for name in ("n", "sum"):
+            self.assertNotRegex(text, rf"\b{name}\b")
+
+    def test_nested_member_access_rewrites_to_path(self):
+        text = named_nested_kernel.compile().mlir_text()
+        self.assertIn("pto.struct_set", text)
+        self.assertIn("pto.struct_get", text)
+        # Nested member access resolves to position path [1, 0] / [1, 1].
+        self.assertIn("[1, 0]", text)
+        self.assertIn("[1, 1]", text)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ where the annotation is evaluated at *import* time (no active context), and
 the actual type is materialised later by the ``@pto.jit`` decorator.
 """
 
+import keyword
+
 from ptoas.mlir.dialects import pto as _pto
 from ptoas.mlir.dialects import arith
 from ptoas.mlir.dialects.builtin import UnrealizedConversionCastOp
@@ -156,17 +158,110 @@ class _MaskDescriptor(_DType):
     def __repr__(self):
         return f"<pto.mask {self._bits}>"
 
-class _StructDescriptor(_DType):
-    """Deferred ``!pto.struct<...>`` type assembled from scalar fields."""
+# Names used by the struct surface / _SurfaceValue that are reserved and cannot
+# be used as pto.struct({...}) field names.  Kept as a module-level frozenset so
+# tests can assert the exact conflict set.
+_STRUCT_RESERVED_FIELD_NAMES = frozenset({
+    "value", "type", "surface_metadata", "field_descriptors", "field_names",
+    "field_index", "field_descriptor_at", "resolve", "declared_value",
+    "field_map", "__getattr__", "__setattr__",
+})
 
-    def __init__(self, field_descriptors):
+
+def _validate_struct_field_name(name: str, *, context: str) -> None:
+    """Validate one named struct field name against the public naming rules."""
+    if not isinstance(name, str) or not name.isidentifier():
+        raise ValueError(
+            f"{context} field names must be valid Python identifiers; got {name!r}"
+        )
+    if keyword.iskeyword(name):
+        raise ValueError(
+            f"{context} field name {name!r} is a Python keyword and cannot be used "
+            "as a struct member"
+        )
+    if name.startswith("_"):
+        raise ValueError(
+            f"{context} field name {name!r} must not start with an underscore"
+        )
+    if name in _STRUCT_RESERVED_FIELD_NAMES:
+        raise ValueError(
+            f"{context} field name {name!r} is reserved and cannot be used as a "
+            "struct member"
+        )
+
+
+class _StructDescriptor(_DType):
+    """Deferred ``!pto.struct<...>`` type assembled from scalar fields.
+
+    Supports two construction paths:
+
+    - positional (``pto.struct_type(...)``): ``field_descriptors`` is order-
+      preserving, ``field_names`` is ``None``.
+    - named (``pto.struct({...})``): ``field_names`` holds the field names, and
+      ``field_index(name)`` maps a member name to its integer position.  The
+      resolved ``!pto.struct<...>`` is identical to the positional form.
+    """
+
+    def __init__(self, field_descriptors, field_names=None):
         self._field_descriptors = tuple(field_descriptors)
+        if field_names is None:
+            self._field_names = None
+            self._name_to_index = None
+        else:
+            if len(field_names) != len(self._field_descriptors):
+                raise ValueError(
+                    "struct field names must have the same length as field types"
+                )
+            self._field_names = tuple(field_names)
+            self._name_to_index = {name: i for i, name in enumerate(self._field_names)}
+
+    @classmethod
+    def from_named(cls, fields: dict) -> "_StructDescriptor":
+        """Build a named struct descriptor from a ``dict[str, field_type]``."""
+        if not isinstance(fields, dict):
+            raise TypeError(
+                "pto.struct(...): expected a dict[str, field_type]"
+            )
+        if not fields:
+            raise ValueError("pto.struct(...) requires at least one field")
+        names = []
+        for name, _field_type in fields.items():
+            _validate_struct_field_name(name, context="pto.struct(...)")
+            names.append(name)
+        return cls(tuple(fields.values()), field_names=tuple(names))
 
     @property
     def field_descriptors(self):
         return self._field_descriptors
 
-    def resolve(self) -> Type:
+    @property
+    def field_names(self):
+        """Return the ordered field names, or ``None`` for positional structs."""
+        return self._field_names
+
+    @property
+    def is_named(self) -> bool:
+        return self._field_names is not None
+
+    def field_index(self, name: str) -> int:
+        """Return the positional index of a named field."""
+        if self._name_to_index is None:
+            raise ValueError(
+                f"positional struct has no field names; cannot resolve {name!r}"
+            )
+        if name not in self._name_to_index:
+            raise ValueError(
+                f"unknown struct field {name!r}; expected one of "
+                f"{', '.join(repr(n) for n in self._field_names)}"
+            )
+        return self._name_to_index[name]
+
+    def field_descriptor_at(self, i: int):
+        """Return ``(name, descriptor)`` for field ``i`` (name may be ``None``)."""
+        name = None if self._field_names is None else self._field_names[i]
+        return name, self._field_descriptors[i]
+
+    def resolve(self, *, context: str = "pto.struct_type(...)") -> Type:
         struct_type_cls = getattr(_pto, "StructType", None)
         if struct_type_cls is None:
             raise TypeError(
@@ -174,14 +269,20 @@ class _StructDescriptor(_DType):
                 "Rebuild the PTO Python extension before using pto.struct_type(...)."
             )
         field_types = [
-            _resolve_struct_field_type(field, context="pto.struct_type(...)")
+            _resolve_struct_field_type(field, context=context)
             for field in self._field_descriptors
         ]
         return struct_type_cls.get(field_types)
 
     def __repr__(self):
-        fields = ", ".join(repr(field) for field in self._field_descriptors)
-        return f"<pto.struct {fields}>"
+        if self._field_names is None:
+            fields = ", ".join(repr(field) for field in self._field_descriptors)
+            return f"<pto.struct {fields}>"
+        fields = ", ".join(
+            f"{name}={repr(field)}"
+            for name, field in zip(self._field_names, self._field_descriptors)
+        )
+        return f"<pto.struct{{{fields}}}>"
 
 # Legal logical lane counts for VMI vreg/mask types on the formal PTODSL
 # surface: compact/group-slot flows use the first four values, full logical
@@ -598,6 +699,16 @@ def struct_type(*field_types) -> _StructDescriptor:
     return _StructDescriptor(field_types)
 
 
+def struct(fields: dict) -> _StructDescriptor:
+    """Return a named lazy descriptor for ``!pto.struct<...>``.
+
+    ``fields`` is an order-preserving ``dict[str, field_type]`` whose field names
+    become the struct member-access surface: ``state.field`` lowers to
+    ``pto.struct_set/get(state, [index], ...)``.``
+    """
+    return _StructDescriptor.from_named(fields)
+
+
 def vmi_vreg_type(lanes: int, elem) -> _VMIVRegDescriptor:
     """Return a lazy descriptor for ``!pto.vmi.vreg<lanesxelem>``."""
     return _VMIVRegDescriptor(lanes, elem)
@@ -714,7 +825,7 @@ __all__ = [
     "si8", "si16", "si32", "si64",
     "ui8", "ui16", "ui32", "ui64",
     "index",
-    "ptr", "vreg_type", "vec_type", "mask_type", "struct_type",
+    "ptr", "vreg_type", "vec_type", "mask_type", "struct_type", "struct",
     "vmi_vreg_type", "vmi_mask_type",
     "tile_buf_type", "tensor_view_type", "tensor_view_type_from_dims",
     "part_tensor_view_type", "part_tensor_view_type_from_dims",
