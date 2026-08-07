@@ -1,0 +1,27 @@
+// RUN: not ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mscatter_invalid_src_dtype(%dst: !pto.ptr<f64>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %dst_view = pto.make_tensor_view %dst,
+                shape = [%c256], strides = [%c1]
+                {layout = #pto.layout<nd>}
+              : !pto.tensor_view<?xf64>
+    %dst_part = pto.partition_view %dst_view,
+                offsets = [%c0], sizes = [%c256]
+              : !pto.tensor_view<?xf64>
+                -> !pto.partition_tensor_view<256xf64>
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f64, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mscatter ins(%src, %idx : !pto.tile_buf<loc=vec, dtype=f64, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                 outs(%dst_part : !pto.partition_tensor_view<256xf64>)
+                 {coalesce = #pto<coalesce elem>}
+    return
+  }
+}
+
+// CHECK: error: 'pto.mscatter' op expects src element type to be i8/ui8/i16/ui16/i32/ui32/f16/bf16/f32

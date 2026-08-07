@@ -9,15 +9,15 @@
 // Verify that ExpandTileOp rewrites pto.simt_launch callees when cloning
 // daemon-generated template functions that contain SIMT launches.
 //
-// RUN: rm -f %t.sock
-// RUN: python3 %S/Inputs/mock_simt_rename_daemon.py %t.sock &
+// RUN: SOCK=$(mktemp -u /tmp/sock_XXXXXX)
+// RUN: (python3 %S/Inputs/mock_simt_rename_daemon.py $SOCK &)
 // RUN: sleep 1
 // RUN: pto-test-opt \
-// RUN:   --pto-expand-tile-op='daemon-socket-path=%t.sock' \
+// RUN:   --pto-expand-tile-op="daemon-socket-path=$SOCK" \
 // RUN:   --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 // RUN: kill %1 2>/dev/null || true
-// RUN: rm -f %t.sock
+// RUN: rm -f $SOCK
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @test_simt_rename() {

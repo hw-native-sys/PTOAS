@@ -1,0 +1,29 @@
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --pto-insert-sync-debug=2 %s -o - 2>&1 | FileCheck %s
+
+module {
+  func.func @mscatter_macro_model(
+      %src_gm: !pto.partition_tensor_view<8x32xf32>,
+      %idx_gm: !pto.partition_tensor_view<8x32xi32>,
+      %dst_gm: !pto.partition_tensor_view<256xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%src_gm : !pto.partition_tensor_view<8x32xf32>)
+              outs(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%idx_gm : !pto.partition_tensor_view<8x32xi32>)
+              outs(%idx : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.mscatter ins(%src, %idx : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                 outs(%dst_gm : !pto.partition_tensor_view<256xf32>)
+                 {coalesce = #pto<coalesce elem>}
+    return
+  }
+}
+
+// CHECK-LABEL: After Sync Motion
+// CHECK:      COMPOUND pto.tload [PIPE_MTE2]
+// CHECK:      COMPOUND pto.tload [PIPE_MTE2]
+// CHECK:      COMPOUND pto.mscatter [PIPE_MTE3]

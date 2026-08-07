@@ -1285,6 +1285,70 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         self.assertEqual(reserve_op.call_args.args[3], True)
         self.assertEqual(import_op.call_args.args, ("fifo", "vector_kernel"))
 
+    def test_mscatter_basic_row_mode(self):
+        src = object()
+        idx = object()
+        table = SimpleNamespace(shape=(256,))
+
+        parsed_coalesce = object()
+        parsed_atomic = object()
+        parsed_oob = object()
+
+        with patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops._pto.CoalesceAttr, "get", return_value=parsed_coalesce) as coalesce_get, \
+             patch.object(_ops.Attribute, "parse", side_effect=lambda s: f"parsed:{s}") as attr_parse, \
+             patch.object(_ops._pto, "mscatter") as mscatter_op, \
+             patch.object(_ops, "_is_partition_tensor_view", return_value=False), \
+             patch.object(_ops, "partition_view", return_value=table) as pv:
+            pto.tile.mscatter(src, idx, table, coalesce="row")
+
+        self.assertIn("coalesce", mscatter_op.call_args.kwargs)
+        self.assertIn("scatter_atomic_op", mscatter_op.call_args.kwargs)
+        self.assertIn("scatter_oob", mscatter_op.call_args.kwargs)
+        self.assertNotIn("scatter_conflict", mscatter_op.call_args.kwargs)
+
+    def test_mscatter_elem_with_all_attrs(self):
+        src = object()
+        idx = object()
+        table = SimpleNamespace(shape=(256,))
+
+        with patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops._pto.CoalesceAttr, "get", return_value=object()), \
+             patch.object(_ops.Attribute, "parse", side_effect=lambda s: f"parsed:{s}") as attr_parse, \
+             patch.object(_ops._pto, "mscatter") as mscatter_op, \
+             patch.object(_ops, "_is_partition_tensor_view", return_value=False), \
+             patch.object(_ops, "partition_view", return_value=table):
+            pto.tile.mscatter(src, idx, table, coalesce="elem",
+                              atomic="add", oob="skip", conflict="last")
+
+        self.assertIn("scatter_conflict", mscatter_op.call_args.kwargs)
+        attr_parse_calls = [str(c.args[0]) for c in attr_parse.call_args_list]
+        self.assertTrue(any("scatter_conflict last" in c for c in attr_parse_calls))
+
+    def test_mscatter_invalid_coalesce(self):
+        with self.assertRaisesRegex(ValueError, "coalesce must be"):
+            pto.tile.mscatter(object(), object(), SimpleNamespace(shape=(256,)),
+                              coalesce="invalid")
+
+    def test_mscatter_invalid_atomic(self):
+        with self.assertRaisesRegex(ValueError, "atomic must be"):
+            pto.tile.mscatter(object(), object(), SimpleNamespace(shape=(256,)),
+                              coalesce="row", atomic="xor")
+
+    def test_mscatter_invalid_oob(self):
+        with self.assertRaisesRegex(ValueError, "oob must be"):
+            pto.tile.mscatter(object(), object(), SimpleNamespace(shape=(256,)),
+                              coalesce="row", oob="error")
+
+    def test_mscatter_invalid_conflict(self):
+        with self.assertRaisesRegex(ValueError, "conflict must be"):
+            pto.tile.mscatter(object(), object(), SimpleNamespace(shape=(256,)),
+                              coalesce="row", conflict="invalid")
+
+    def test_mscatter_table_without_shape(self):
+        with self.assertRaisesRegex(TypeError, "mscatter requires table"):
+            pto.tile.mscatter(object(), object(), object(), coalesce="row")
+
 
 if __name__ == "__main__":
     unittest.main()
