@@ -2889,12 +2889,15 @@ LogicalResult VMIVminOp::verify() {
   auto lhsType = cast<VMIVRegType>(getLhs().getType());
   auto rhsType = cast<VMIVRegType>(getRhs().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIFloatLikeType(lhsType.getElementType()))
-    return emitOpError("requires floating-point-like VMI element type");
-  if (failed(verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType)))
+  Type elementType = lhsType.getElementType();
+  if (!isVMIFloatLikeType(elementType) && !isVMIAnyI8I16I32Type(elementType))
+    return emitOpError(
+        "requires floating-point-like or i8, i16, or i32 VMI element type");
+  if (failed(verifyElementwiseVRegOp(getOperation(), lhsType, rhsType,
+                                     resultType)))
     return failure();
-  if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(),
-                                      resultType, getPmode())))
+  if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(), resultType,
+                                        getPmode())))
     return failure();
   return success();
 }
@@ -2903,12 +2906,15 @@ LogicalResult VMIVmaxOp::verify() {
   auto lhsType = cast<VMIVRegType>(getLhs().getType());
   auto rhsType = cast<VMIVRegType>(getRhs().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIFloatLikeType(lhsType.getElementType()))
-    return emitOpError("requires floating-point-like VMI element type");
-  if (failed(verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType)))
+  Type elementType = lhsType.getElementType();
+  if (!isVMIFloatLikeType(elementType) && !isVMIAnyI8I16I32Type(elementType))
+    return emitOpError(
+        "requires floating-point-like or i8, i16, or i32 VMI element type");
+  if (failed(verifyElementwiseVRegOp(getOperation(), lhsType, rhsType,
+                                     resultType)))
     return failure();
-  if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(),
-                                      resultType, getPmode())))
+  if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(), resultType,
+                                        getPmode())))
     return failure();
   return success();
 }
