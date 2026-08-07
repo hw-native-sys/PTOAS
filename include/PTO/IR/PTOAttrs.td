@@ -668,6 +668,19 @@ def PTO_RoundModeAttr : EnumAttr<PTO_Dialect, PTO_RoundModeEnum, "round_mode"> {
   let summary = "rounding mode attribute";
 }
 
+// HF32 transform mode. Ascend exposes nearest-zero and nearest-even
+// conversion modes independently of the enable bit.
+def PTO_HF32TransModeEnum : PTO_I32Enum<
+  "HF32TransMode", "HF32 transform rounding mode", [
+    I32EnumAttrCase<"NEAREST_EVEN", 0>,
+    I32EnumAttrCase<"NEAREST_ZERO", 1>
+  ]>;
+
+def PTO_HF32TransModeAttr : EnumAttr<PTO_Dialect, PTO_HF32TransModeEnum,
+                                     "hf32_trans_mode"> {
+  let summary = "HF32 transform rounding mode";
+}
+
 //===----------------------------------------------------------------------===//
 // MAD semantic controls
 //===----------------------------------------------------------------------===//

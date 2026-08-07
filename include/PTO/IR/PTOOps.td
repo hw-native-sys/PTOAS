@@ -3023,6 +3023,30 @@ def SetFFTsOp : PTO_Op<"set_ffts", [MemoryEffects<[MemRead, MemWrite]>]> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// HF32 Configuration Operation
+//===----------------------------------------------------------------------===//
+
+def SetHF32ModeOp : PTO_Op<"sethf32mode", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "Configure the global Cube HF32 transform mode";
+  let description = [{
+    Updates the HF32 mode used by subsequent Cube matrix operations. When
+    disabled, the transform mode is off; when enabled, `mode` selects
+    nearest-even or nearest-zero FP32-to-HF32 conversion.
+  }];
+
+  let arguments = (ins
+    BoolAttr:$enable,
+    PTO_HF32TransModeAttr:$mode
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `enable` `=` $enable `,` `mode` `=` $mode `}` attr-dict
+  }];
+}
+
 
 def PrintOp : PTO_Op<"print", [MemoryEffects<[MemRead, MemWrite]>]> {
   let summary = "Print debug: format string (attribute) and scalar value.";

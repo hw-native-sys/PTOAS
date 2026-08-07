@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// the CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the LICENSE file in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=VPTO
+// RUN: ptoas --pto-arch=a3 --pto-backend=emitc %s -o - | FileCheck %s --check-prefix=EMITC
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @sethf32mode() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.sethf32mode {enable = true, mode = #pto<hf32_trans_mode NEAREST_ZERO>}
+    pto.sethf32mode {enable = true, mode = #pto<hf32_trans_mode NEAREST_EVEN>}
+    pto.sethf32mode {enable = false, mode = #pto<hf32_trans_mode NEAREST_EVEN>}
+    return
+  }
+}
+
+// VPTO-LABEL: func.func @sethf32mode
+// VPTO: pto.get_ctrl
+// VPTO: pto.sbitset1
+// VPTO: pto.sbitset1
+// VPTO: pto.set_ctrl
+// VPTO: pto.sbitset1
+// VPTO: pto.sbitset0
+// VPTO: pto.set_ctrl
+// VPTO: pto.sbitset0
+// VPTO: pto.set_ctrl
+
+// EMITC-LABEL: sethf32mode
+// EMITC: AscendC::SetHF32Mode(AscendC::HF32Mode::ENABLE)
+// EMITC: AscendC::SetHF32TransMode(AscendC::HF32TransMode::NEAREST_ZERO)
+// EMITC: AscendC::SetHF32Mode(AscendC::HF32Mode::ENABLE)
+// EMITC: AscendC::SetHF32TransMode(AscendC::HF32TransMode::NEAREST_EVEN)
+// EMITC: AscendC::SetHF32Mode(AscendC::HF32Mode::DISABLE)

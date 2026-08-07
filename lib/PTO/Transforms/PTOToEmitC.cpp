@@ -5980,6 +5980,37 @@ struct PTOSetFFTsToEmitC : public OpConversionPattern<mlir::pto::SetFFTsOp> {
   }
 };
 
+struct PTOSetHF32ModeToEmitC
+    : public OpConversionPattern<mlir::pto::SetHF32ModeOp> {
+  using OpConversionPattern<mlir::pto::SetHF32ModeOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(mlir::pto::SetHF32ModeOp op, OpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    MLIRContext *ctx = rewriter.getContext();
+    StringRef enableToken = op.getEnable() ? "AscendC::HF32Mode::ENABLE"
+                                           : "AscendC::HF32Mode::DISABLE";
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "AscendC::SetHF32Mode",
+        rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, enableToken)}),
+        ArrayAttr{}, ValueRange{});
+
+    if (op.getEnable()) {
+      StringRef modeToken =
+          op.getMode() == pto::HF32TransMode::NEAREST_ZERO
+              ? "AscendC::HF32TransMode::NEAREST_ZERO"
+              : "AscendC::HF32TransMode::NEAREST_EVEN";
+      rewriter.create<emitc::CallOpaqueOp>(
+          op.getLoc(), TypeRange{}, "AscendC::SetHF32TransMode",
+          rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, modeToken)}),
+          ArrayAttr{}, ValueRange{});
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
   PTOSyncSetToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
                     PTOArch targetArch)
@@ -13626,6 +13657,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOStructSetToEmitC>(typeConverter, ctx);
   patterns.add<PTOTReshapeToEmitC>(typeConverter, ctx);
   patterns.add<PTOBitcastToEmitC>(typeConverter, ctx);
+  patterns.add<PTOSetHF32ModeToEmitC>(typeConverter, ctx);
   patterns.add<PTOSetQuantScalarToEmitC, PTOSetQuantVectorToEmitC>(
       typeConverter, ctx, targetArch);
   patterns.add<PTOTAllocToEmitC>(typeConverter, ctx, targetArch);

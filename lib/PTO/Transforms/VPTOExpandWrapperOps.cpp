@@ -548,6 +548,26 @@ static Value setCtrlBit(Location loc, Value ctrl, unsigned bitIndex, bool value,
   return rewriter.create<pto::Sbitset0Op>(loc, ctrl, bit).getResult();
 }
 
+struct ExpandHF32ModePattern : public OpRewritePattern<pto::SetHF32ModeOp> {
+  using OpRewritePattern<pto::SetHF32ModeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(pto::SetHF32ModeOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value ctrl = rewriter.create<pto::GetCtrlOp>(loc);
+    ctrl = setCtrlBit(loc, ctrl, 46, op.getEnable(), rewriter);
+    // Disabling HF32 must preserve the previously selected transform mode;
+    // AscendC::SetHF32Mode(DISABLE) does not write the trans-mode bit.
+    if (op.getEnable())
+      ctrl = setCtrlBit(loc, ctrl, 47,
+                        op.getMode() == pto::HF32TransMode::NEAREST_ZERO,
+                        rewriter);
+    rewriter.create<pto::SetCtrlOp>(loc, ctrl);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 static Value buildMadSemanticCtrl(Location loc, Value ctrl,
                                   bool isHif8,
                                   std::optional<pto::Tf32Mode> tf32Mode,
@@ -555,13 +575,12 @@ static Value buildMadSemanticCtrl(Location loc, Value ctrl,
                                   bool hasNDir,
                                   PatternRewriter &rewriter) {
   ctrl = setCtrlBit(loc, ctrl, 45, isHif8, rewriter);
+  // An absent tf32_mode means no per-MAD override. Preserve the global
+  // HF32/TF32 state already present in CTRL for this semantic MAD.
   if (tf32Mode) {
     ctrl = setCtrlBit(loc, ctrl, 46, true, rewriter);
     ctrl = setCtrlBit(loc, ctrl, 47,
                       *tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
-  } else {
-    ctrl = setCtrlBit(loc, ctrl, 46, false, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, 47, false, rewriter);
   }
   if (satMode)
     ctrl = setCtrlBit(loc, ctrl, 48, *satMode == pto::MadSatMode::NoSat,
@@ -2048,6 +2067,7 @@ struct VPTOExpandWrapperOpsPass
                  ExpandAtomicConfigPattern<pto::SetAtomicS32Op>,
                  ExpandAtomicConfigPattern<pto::SetAtomicS16Op>,
                  ExpandAtomicConfigPattern<pto::SetAtomicS8Op>,
+                 ExpandHF32ModePattern,
                  ExpandMadSemanticPattern<pto::MadOp>,
                  ExpandMadSemanticPattern<pto::MadAccOp>,
                  ExpandMadSemanticPattern<pto::MadBiasOp>,

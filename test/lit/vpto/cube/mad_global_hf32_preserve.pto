@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// the CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and limitations under the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mad_global_hf32_preserve(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    pto.sethf32mode {enable = true, mode = #pto<hf32_trans_mode NEAREST_ZERO>}
+    pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @mad_global_hf32_preserve
+// CHECK: pto.sbitset1 {{.*}}, {{.*}} : i64
+// CHECK: pto.sbitset1 {{.*}}, {{.*}} : i64
+// CHECK: pto.set_ctrl
+// CHECK: %[[MAD_CTRL:.*]] = pto.get_ctrl : i64
+// CHECK-NOT: pto.sbitset{{[01]}} {{.*}}, {{.*}} : i64
+// CHECK: pto.sbitset0 {{.*}}, {{.*}} : i64
+// CHECK: pto.sbitset0 {{.*}}, {{.*}} : i64
+// CHECK: pto.mad_raw
+// CHECK: pto.set_ctrl %[[MAD_CTRL]] : i64

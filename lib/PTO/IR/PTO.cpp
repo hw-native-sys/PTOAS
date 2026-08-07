@@ -3500,6 +3500,11 @@ LogicalResult mlir::pto::SetFFTsOp::verify() {
   return mlir::success();
 }
 
+LogicalResult mlir::pto::SetHF32ModeOp::verify() {
+  // The generated enum attribute constrains the transform mode value.
+  return mlir::success();
+}
+
 ParseResult mlir::pto::SyncSetOp::parse(OpAsmParser &parser,
                                         OperationState &result) {
   return parseSyncEventOpCommon(parser, result,
