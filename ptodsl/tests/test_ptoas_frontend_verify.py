@@ -339,6 +339,15 @@ def struct_frontend_verify_probe():
     _ = pto.struct_get(state, (1, 0))
 
 
+@pto.jit(target="a5", backend="emitc")
+def struct_member_frontend_verify_probe():
+    Point = pto.struct({"x": pto.i32, "y": pto.f32})
+    state = pto.declare_struct(Point)
+    state.x = 1
+    state.y = 3.5
+    _ = state.x
+
+
 @pto.simt
 def vec_value_arith_simt_body(
     A_ptr: pto.ptr(pto.f32, "gm"),
@@ -430,6 +439,39 @@ def main() -> None:
     expect(
         ".f0" in joined_struct_emitc_cpp and ".f1.f0" in joined_struct_emitc_cpp,
         "EmitC should lower PTODSL struct writes and nested reads to direct field access",
+    )
+
+    # Named-member surface (pto.struct({...}) + state.field) must go through the
+    # same AST rewrite -> canonical get/set -> EmitC field-access path.
+    struct_member_text = struct_member_frontend_verify_probe.compile().mlir_text()
+    expect(
+        "pto.declare_struct" in struct_member_text
+        and "pto.struct_set" in struct_member_text
+        and "pto.struct_get" in struct_member_text,
+        "struct_member probe source MLIR should contain the canonical struct ops after AST rewrite",
+    )
+    struct_member_frontend_texts = run_ptoas_frontend_verify(
+        ptoas_bin,
+        struct_member_text,
+        "struct_member_frontend_verify_probe PTODSL artifact",
+    )
+    expect(
+        len(struct_member_frontend_texts) == 1,
+        "struct_member probe should lower to exactly one backend child module",
+    )
+    struct_member_emitc_cpp_texts = run_ptoas_emitc(
+        ptoas_bin,
+        struct_member_text,
+        "struct_member_frontend_verify_probe PTODSL EmitC artifact",
+    )
+    expect(
+        len(struct_member_emitc_cpp_texts) == 1,
+        "struct_member probe should materialize one EmitC module",
+    )
+    joined_struct_member_emitc_cpp = "\n".join(struct_member_emitc_cpp_texts)
+    expect(
+        ".f0" in joined_struct_member_emitc_cpp,
+        "EmitC should lower named-member writes/reads to positional field access",
     )
 
     simt_gm_memory_text = simt_gm_memory_core_kernel.compile().mlir_text()

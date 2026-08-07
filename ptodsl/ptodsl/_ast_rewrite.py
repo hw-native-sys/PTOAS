@@ -1752,6 +1752,13 @@ class _StructMemberRewriter:
                         "ast_rewrite=True annotated struct member must reach a scalar "
                         "leaf; use a full canonical pto.struct_set(...) path"
                     )
+                # The annotation must be a static, ignorable type annotation:
+                # a pto.* dtype (pto.i32) or a name in static_env that resolves
+                # to a known descriptor / MLIR Type.  A bare Name that is not a
+                # known static type (e.g. a function parameter) is treated as
+                # dynamic and rejected so the annotation is not silently dropped.
+                if node.annotation is not None:
+                    self._require_static_annotation(node.annotation)
                 if node.value is None:
                     raise PTODSLAstRewriteError(
                         "ast_rewrite=True does not support value-less annotated struct "
@@ -1779,7 +1786,7 @@ class _StructMemberRewriter:
                     value=self._struct_get_call(base, path, node.target),
                 )
                 aug = ast.AugAssign(
-                    target=ast.Name(tmp, ast.Load()),
+                    target=ast.Name(tmp, ast.Store()),
                     op=node.op,
                     value=node.value,
                 )
@@ -1910,10 +1917,16 @@ class _StructMemberRewriter:
                 if len(node.args) != 1 or not isinstance(node.args[0], ast.Dict):
                     return None
                 d = node.args[0]
-                names, types = [], []
+                names, types, seen = [], [], set()
                 for k, v in zip(d.keys, d.values):
                     if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
                         return None
+                    if k.value in seen:
+                        raise PTODSLAstRewriteError(
+                            f"ast_rewrite=True pto.struct(...) has a duplicate field "
+                            f"name {k.value!r}; field names must be unique"
+                        )
+                    seen.add(k.value)
                     sub = self._eval_field_type(v)
                     if sub is _UNRESOLVABLE_FIELD:
                         return None
@@ -1948,11 +1961,49 @@ class _StructMemberRewriter:
                 return _SCALAR_FIELD
             return _UNRESOLVABLE_FIELD
         if isinstance(node, ast.Name):
+            # Local type aliases (e.g. Inner = pto.struct(...)) take precedence
+            # over static_env so nested named descriptors defined in the same
+            # function can be reused.
+            local = self._type_bindings.get(node.id)
+            if local is not None:
+                return local
             obj = self._static_env.get(node.id)
             if _duck_struct_descriptor(obj):
                 return self._meta_from_descriptor(obj)
             return _SCALAR_FIELD
         return _UNRESOLVABLE_FIELD
+
+    def _require_static_annotation(self, node):
+        """Require a struct-member annotation to be a static, ignorable type.
+
+        A member annotation must be a ``pto.*`` dtype attribute or a name in
+        ``static_env`` that resolves to a known descriptor / MLIR Type.  Any
+        other expression (a bare Name that is a function parameter or a local,
+        a call, a subscript, ...) is a dynamic annotation and is rejected so it
+        is not silently dropped.
+        """
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "pto":
+                return  # pto.i32 etc.
+            raise PTODSLAstRewriteError(
+                "ast_rewrite=True struct member annotation must be a static dtype "
+                "annotation (e.g. pto.i32); got a dynamic annotation"
+            )
+        if isinstance(node, ast.Name):
+            local = self._type_bindings.get(node.id)
+            if local is not None:
+                return
+            obj = self._static_env.get(node.id)
+            if _duck_struct_descriptor(obj):
+                return
+            raise PTODSLAstRewriteError(
+                f"ast_rewrite=True struct member annotation references unknown name "
+                f"{node.id!r}; only static pto.* dtype annotations are supported"
+            )
+        raise PTODSLAstRewriteError(
+            "ast_rewrite=True struct member annotation must be a static dtype "
+            "annotation (e.g. pto.i32); got a dynamic annotation"
+        )
 
     def _meta_from_descriptor(self, obj):
         field_names = getattr(obj, "field_names", None)
