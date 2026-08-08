@@ -26,7 +26,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_reduce_minf(
 // CHECK: %[[REDUCED:.*]] = pto.vcmin %arg0, %arg1 : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
-// CHECK: return %[[REDUCED]] : !pto.vreg<128xf16>
+// CHECK: return %[[REDUCED]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

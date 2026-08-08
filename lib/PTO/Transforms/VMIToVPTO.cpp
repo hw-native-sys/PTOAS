@@ -9642,6 +9642,53 @@ struct OneToNVMICompressStoreOpPattern
   }
 };
 
+enum class ReduceNeutralKind { Add, Max, Min };
+
+/// True when `init` is a compile-time splat of the reduction's algebraic
+/// identity (0 / -inf / +inf). Unified vcadd/vcmax invent this init in
+/// LowerUnified; combining it after the hardware reduce is a no-op.
+static bool isNeutralReduceInit(Value init, ReduceNeutralKind kind) {
+  auto cst = init.getDefiningOp<VMIConstantOp>();
+  if (!cst)
+    return false;
+  auto dense = dyn_cast<DenseElementsAttr>(cst.getValue());
+  if (!dense || dense.getNumElements() == 0)
+    return false;
+
+  auto floats = dense.tryGetValues<APFloat>();
+  if (succeeded(floats)) {
+    APFloat first = *floats->begin();
+    for (APFloat v : *floats)
+      if (!v.bitwiseIsEqual(first))
+        return false;
+    switch (kind) {
+    case ReduceNeutralKind::Add:
+      return first.isZero();
+    case ReduceNeutralKind::Max:
+      return first.isInfinity() && first.isNegative();
+    case ReduceNeutralKind::Min:
+      return first.isInfinity() && !first.isNegative();
+    }
+  }
+
+  auto ints = dense.tryGetValues<APInt>();
+  if (succeeded(ints)) {
+    APInt first = *ints->begin();
+    for (APInt v : *ints)
+      if (v != first)
+        return false;
+    switch (kind) {
+    case ReduceNeutralKind::Add:
+      return first.isZero();
+    case ReduceNeutralKind::Max:
+      return first.isMinSignedValue();
+    case ReduceNeutralKind::Min:
+      return first.isMaxSignedValue();
+    }
+  }
+  return false;
+}
+
 struct OneToNVMIReduceAddIOpPattern
     : OneToNOpConversionPattern<VMIReduceAddIOp> {
   using OneToNOpConversionPattern<VMIReduceAddIOp>::OneToNOpConversionPattern;
@@ -9680,6 +9727,13 @@ struct OneToNVMIReduceAddIOpPattern
             op, "reduce_addi requires every mask chunk to have the same "
                 "predicate type");
 
+    const bool skipNeutralCombine =
+        isNeutralReduceInit(op.getInit(), ReduceNeutralKind::Add);
+
+    auto ensureFirstLaneMask = [&]() -> FailureOr<Value> {
+      return createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
+    };
+
     FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
         op.getLoc(), sourceParts, maskParts, resultType, rewriter);
     if (succeeded(combined)) {
@@ -9688,34 +9742,47 @@ struct OneToNVMIReduceAddIOpPattern
               .create<VcaddOp>(op.getLoc(), resultType, *combined,
                                maskParts.front())
               .getResult();
+      Value result = reduced;
+      if (!skipNeutralCombine) {
+        FailureOr<Value> firstLaneMask = ensureFirstLaneMask();
+        if (failed(firstLaneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create reduce_addi first-lane mask");
+        result = rewriter
+                     .create<VaddOp>(op.getLoc(), resultType, reduced,
+                                     initParts.front(), *firstLaneMask)
+                     .getResult();
+      }
       replaceOpWithFlatConvertedValues(
           rewriter, op, SmallVector<Value>{reduced},
           *this->getTypeConverter());
       return success();
     }
 
-    Value accumulator = rewriter
-                            .create<VcaddOp>(op.getLoc(), resultType,
-                                             sourceParts.front(),
-                                             maskParts.front())
-                            .getResult();
-    if (sourceParts.size() == 1) {
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{accumulator},
-          *this->getTypeConverter());
-      return success();
-    }
-    FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to create reduce_addi first-lane mask");
-    for (size_t part = 1; part < sourceParts.size(); ++part) {
+    Value accumulator;
+    bool haveAcc = false;
+    FailureOr<Value> firstLaneMask;
+    bool haveFirstLaneMask = false;
+    for (auto [sourcePart, maskPart] :
+         llvm::zip_equal(sourceParts, maskParts)) {
       Value reduced =
           rewriter
               .create<VcaddOp>(op.getLoc(), resultType, sourceParts[part],
                                maskParts[part])
               .getResult();
+      if (!haveAcc) {
+        accumulator = skipNeutralCombine ? reduced : initParts.front();
+        haveAcc = true;
+        if (skipNeutralCombine)
+          continue;
+      }
+      if (!haveFirstLaneMask) {
+        firstLaneMask = ensureFirstLaneMask();
+        if (failed(firstLaneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create reduce_addi first-lane mask");
+        haveFirstLaneMask = true;
+      }
       accumulator = rewriter
                         .create<VaddOp>(op.getLoc(), resultType, reduced,
                                         accumulator, *firstLaneMask)
@@ -9767,6 +9834,13 @@ struct OneToNVMIReduceAddFOpPattern
             op, "reduce_addf requires every mask chunk to have the same "
                 "predicate type");
 
+    const bool skipNeutralCombine =
+        isNeutralReduceInit(op.getInit(), ReduceNeutralKind::Add);
+
+    auto ensureFirstLaneMask = [&]() -> FailureOr<Value> {
+      return createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
+    };
+
     FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
         op.getLoc(), sourceParts, maskParts, resultType, rewriter);
     if (succeeded(combined)) {
@@ -9775,34 +9849,47 @@ struct OneToNVMIReduceAddFOpPattern
               .create<VcaddOp>(op.getLoc(), resultType, *combined,
                                maskParts.front())
               .getResult();
+      Value result = reduced;
+      if (!skipNeutralCombine) {
+        FailureOr<Value> firstLaneMask = ensureFirstLaneMask();
+        if (failed(firstLaneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create reduce_addf first-lane mask");
+        result = rewriter
+                     .create<VaddOp>(op.getLoc(), resultType, reduced,
+                                     initParts.front(), *firstLaneMask)
+                     .getResult();
+      }
       replaceOpWithFlatConvertedValues(
           rewriter, op, SmallVector<Value>{reduced},
           *this->getTypeConverter());
       return success();
     }
 
-    Value accumulator = rewriter
-                            .create<VcaddOp>(op.getLoc(), resultType,
-                                             sourceParts.front(),
-                                             maskParts.front())
-                            .getResult();
-    if (sourceParts.size() == 1) {
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{accumulator},
-          *this->getTypeConverter());
-      return success();
-    }
-    FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to create reduce_addf first-lane mask");
-    for (size_t part = 1; part < sourceParts.size(); ++part) {
+    Value accumulator;
+    bool haveAcc = false;
+    FailureOr<Value> firstLaneMask;
+    bool haveFirstLaneMask = false;
+    for (auto [sourcePart, maskPart] :
+         llvm::zip_equal(sourceParts, maskParts)) {
       Value reduced =
           rewriter
               .create<VcaddOp>(op.getLoc(), resultType, sourceParts[part],
                                maskParts[part])
               .getResult();
+      if (!haveAcc) {
+        accumulator = skipNeutralCombine ? reduced : initParts.front();
+        haveAcc = true;
+        if (skipNeutralCombine)
+          continue;
+      }
+      if (!haveFirstLaneMask) {
+        firstLaneMask = ensureFirstLaneMask();
+        if (failed(firstLaneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create reduce_addf first-lane mask");
+        haveFirstLaneMask = true;
+      }
       accumulator = rewriter
                         .create<VaddOp>(op.getLoc(), resultType, reduced,
                                         accumulator, *firstLaneMask)
@@ -10503,6 +10590,16 @@ struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
             op, "min/max reduction requires every mask chunk to have "
                 "the same predicate type");
 
+    constexpr bool isMax =
+        std::is_same_v<CombineOp, VmaxOp>;
+    const bool skipNeutralCombine = isNeutralReduceInit(
+        op.getInit(),
+        isMax ? ReduceNeutralKind::Max : ReduceNeutralKind::Min);
+
+    auto ensureFirstLaneMask = [&]() -> FailureOr<Value> {
+      return createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
+    };
+
     FailureOr<Value> combined = combineEquivalentMaskedParts<CombineOp>(
         op.getLoc(), sourceParts, maskParts, resultType, rewriter);
     if (succeeded(combined)) {
@@ -10511,33 +10608,46 @@ struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
               .create<ChunkReduceOp>(op.getLoc(), resultType, *combined,
                                      maskParts.front())
               .getResult();
+      Value result = reduced;
+      if (!skipNeutralCombine) {
+        FailureOr<Value> firstLaneMask = ensureFirstLaneMask();
+        if (failed(firstLaneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create min/max reduction first-lane mask");
+        result = rewriter
+                     .create<CombineOp>(op.getLoc(), resultType, reduced,
+                                        initParts.front(), *firstLaneMask)
+                     .getResult();
+      }
       replaceOpWithFlatConvertedValues(
           rewriter, op, SmallVector<Value>{reduced}, *this->getTypeConverter());
       return success();
     }
 
-    Value accumulator = rewriter
-                            .create<ChunkReduceOp>(op.getLoc(), resultType,
-                                                   sourceParts.front(),
-                                                   maskParts.front())
-                            .getResult();
-    if (sourceParts.size() == 1) {
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{accumulator},
-          *this->getTypeConverter());
-      return success();
-    }
-    FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to create min/max reduction first-lane mask");
-    for (size_t part = 1; part < sourceParts.size(); ++part) {
+    Value accumulator;
+    bool haveAcc = false;
+    FailureOr<Value> firstLaneMask;
+    bool haveFirstLaneMask = false;
+    for (auto [sourcePart, maskPart] :
+         llvm::zip_equal(sourceParts, maskParts)) {
       Value reduced = rewriter
                           .create<ChunkReduceOp>(op.getLoc(), resultType,
                                                  sourceParts[part],
                                                  maskParts[part])
                           .getResult();
+      if (!haveAcc) {
+        accumulator = skipNeutralCombine ? reduced : initParts.front();
+        haveAcc = true;
+        if (skipNeutralCombine)
+          continue;
+      }
+      if (!haveFirstLaneMask) {
+        firstLaneMask = ensureFirstLaneMask();
+        if (failed(firstLaneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to create min/max reduction first-lane mask");
+        haveFirstLaneMask = true;
+      }
       accumulator = rewriter
                         .create<CombineOp>(op.getLoc(), resultType, reduced,
                                            accumulator, *firstLaneMask)

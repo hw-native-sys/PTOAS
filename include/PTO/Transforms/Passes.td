@@ -1133,15 +1133,17 @@ def VMINormalizeSignlessIntToUnsigned :
 }
 
 def VMIPredicateFold : Pass<"vmi-predicate-fold", "ModuleOp"> {
-  let summary = "Fold statically proven VMI vcmp/vsel predicates (pad DCE)";
+  let summary = "Fold statically proven VMI predicates and neutral identities";
   let description = [{
-    Constant-proves lane ranges for `vci` / `vadds(vci(0), C)` / `vbrc(C)`
-    (and simple affine `iv*stride+C` bases with known `scf.for` bounds), then:
+    Shared VMI predicate / neutral-element simplifier on unified IR:
 
-      * folds `vcmp`/`vcmps` whose result is all-true or all-false
-      * rewrites `vsel(all_true, t, f) → t` and `vsel(all_false, t, f) → f`
-      * rewrites `vsel(m, x, x) → x`
-      * DCEs unused compare / broadcast defs
+      * proves AllTrue / AllFalse masks from `create_mask`, range-proven
+        `vcmp`/`vcmps`, and mask algebra
+      * folds `vsel`/`select` identity / constant arms
+      * demasks AllTrue Variadic-mask compute; folds AllFalse pure ops
+        (`vdhist→acc`, merge passthru, reduce nils)
+      * peeps unrolled `vmax(-inf,x)` / `vadd(0,x)` first-iter identities
+      * materializes proven masks to `create_mask(VL|0)` and DCEs dead defs
 
     Enables frontends to always emit expert-pad `vcmp_lt`+`vsel` and rely on
     the compiler when `num_experts` covers the index span at compile time.
