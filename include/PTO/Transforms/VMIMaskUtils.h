@@ -8,8 +8,8 @@
 
 //===- VMIMaskUtils.h - Shared VMI predicate / seed helpers -----*- C++ -*-===//
 //
-// Helpers shared by VMILowerUnifiedToLegacy and VMIPredicateFold for proving
-// that a mask SSA value is statically all-active or all-inactive.
+// Helpers shared by VMILowerUnifiedToLegacy, VMIPredicateFold, and related
+// passes for proving mask shape and classifying compile-time predicates.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,9 +17,21 @@
 #define PTO_TRANSFORMS_VMIMASKUTILS_H
 
 #include "mlir/IR/Value.h"
+#include <optional>
 
 namespace mlir {
 namespace pto {
+
+/// Inclusive integer range used for affine / lane-index proofs.
+struct IntRange {
+  int64_t lo = 0;
+  int64_t hi = 0;
+
+  static IntRange splat(int64_t c) { return {c, c}; }
+};
+
+/// Compile-time mask lattice.
+enum class MaskLattice { Unknown, AllTrue, AllFalse };
 
 /// Returns true if `seed` is provably an all-active mask (every lane active),
 /// so `mask_and(x, seed)` is the identity. Covers a `pset` and a
@@ -29,6 +41,16 @@ bool isAllActiveSeed(Value seed);
 /// Returns true if `seed` is provably an all-inactive mask (every lane
 /// inactive). Covers `create_mask(0)`.
 bool isAllInactiveSeed(Value seed);
+
+/// Bound an integer SSA value over known constant / affine forms.
+std::optional<IntRange> matchAffineIntRange(Value v);
+
+/// Bound every lane of a VMI vector to an inclusive integer range when the
+/// producer is a statically analyzable index form (vci / vadds / vbrc / …).
+std::optional<IntRange> matchVectorLaneRange(Value v);
+
+/// Classify a VMI mask SSA value as AllTrue / AllFalse / Unknown.
+MaskLattice classifyMaskValue(Value mask);
 
 } // namespace pto
 } // namespace mlir

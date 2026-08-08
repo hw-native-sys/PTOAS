@@ -39,6 +39,14 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
         )
 
 
+def _pto_flags_from_env() -> list[str]:
+    """Extra ptoas CLI flags from PTO_FLAGS (space-separated), for A/B harnesses."""
+    raw = os.environ.get("PTO_FLAGS", "").strip()
+    if not raw:
+        return []
+    return raw.split()
+
+
 def _run_ptoas(
     mlir_path: Path,
     kernel_object: Path,
@@ -59,6 +67,7 @@ def _run_ptoas(
         cmd.append(f"--pto-level={pto_level}")
     if insert_sync is True:
         cmd.append("--enable-insert-sync")
+    cmd.extend(_pto_flags_from_env())
     cmd.extend([
         "--enable-tile-op-expand",
         str(mlir_path),
@@ -102,6 +111,7 @@ def _compile_config_text(
             f"pto_level={effective_pto_level}",
             f"backend={ptoas_overrides.get('backend')}",
             "enable_tile_op_expand=True",
+            f"pto_flags={' '.join(_pto_flags_from_env())}",
         ]
     )
 
