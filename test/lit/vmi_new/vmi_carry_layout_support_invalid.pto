@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @vaddc_unregistered_group_slots(
+      %lhs: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+      %rhs: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+      %mask: !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 2>>)
+      -> (!pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+          !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 2>>) {
+    %sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
+        : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+          !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+          !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 2>>
+        -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+           !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 2>>
+    return %sum, %carry
+        : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
+          !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 2>>
+  }
+}
+
+// CHECK: pto.vmi.vaddc requires matching 32-bit data and b32 mask parts
+// CHECK-SAME: add-carry ports do not match a legal layout table row
+
+// -----
+
+module {
+  func.func @vaddc_non_b32_physical_mask(
+      %lhs: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %rhs: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> (!pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>) {
+    %sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+           !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %sum, %carry
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// CHECK: pto.vmi.vaddc requires matching 32-bit data and b32 mask parts
+// CHECK-SAME: add-carry ports do not match a legal layout table row

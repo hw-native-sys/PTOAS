@@ -451,6 +451,12 @@ struct InterleaveLayoutPattern {
   LayoutPattern highLayout;
 };
 
+struct AddCarryLayoutPattern {
+  ElementBitsPattern dataBits;
+  MaskGranularityPattern maskGranularity;
+  LayoutPattern layout;
+};
+
 static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
     // Exact rows override the default legal relation for small shapes where the
     // compact lane-stride form is the natural cast layout.
@@ -602,6 +608,13 @@ static constexpr InterleaveLayoutPattern kVintlvLayoutPatterns[] = {
     {bits<8, 16, 32, 64>(), chunk<1>(), 0, c(), c(), c(), c(), c()},
     {bits<8, 16>(), chunk<1>(), 1, ls(2), ls(2), ls(2), ls(2), ls(2)},
     {bits<8>(), chunk<1>(), 1, ls(4), ls(4), ls(4), ls(4), ls(4)},
+};
+
+static constexpr AddCarryLayoutPattern kAddCarryLayoutPatterns[] = {
+    {bits<32>(), mb32(), c()},     {bits<32>(), mb32(), d(2)},
+    {bits<32>(), mb32(), d(4)},   {bits<32>(), mb32(), bd(2)},
+    {bits<32>(), mb32(), bd(4)},  {bits<32>(), mb32(), gs(1)},
+    {bits<32>(), mb32(), gs(8)},
 };
 
 struct DenseMemoryLayoutPattern {
@@ -1120,6 +1133,119 @@ static VMIInterleaveLayoutFact materializeInterleaveLayoutFact(
   fact.elementCount = key.elementCount;
   fact.lanesPerPart = key.lanesPerPart;
   return fact;
+}
+
+static VMIAddCarryLayoutFact materializeAddCarryLayoutFact(
+    MLIRContext *ctx, const AddCarryLayoutPattern &pattern, int64_t numGroups,
+    int64_t physicalArity) {
+  return VMIAddCarryLayoutFact{
+      materializeLayoutPattern(ctx, pattern.layout, numGroups), physicalArity};
+}
+
+static FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>>
+getAddCarryLayoutFactsForLayoutImpl(
+    VMIVRegType lhsType, VMIVRegType rhsType, VMIVRegType resultType,
+    ArrayRef<VMIMaskType> maskTypes, VMILayoutAttr requestedLayout,
+    bool preferredOnly, std::string *reason) {
+  auto fail = [&](const Twine &message)
+      -> FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>> {
+    if (reason)
+      *reason = message.str();
+    return failure();
+  };
+
+  if (lhsType.getElementCount() != rhsType.getElementCount() ||
+      lhsType.getElementCount() != resultType.getElementCount())
+    return fail("add-carry layout requires all data ports to share logical "
+                "lane count");
+  if (lhsType.getElementType() != rhsType.getElementType() ||
+      lhsType.getElementType() != resultType.getElementType())
+    return fail("add-carry layout requires all data ports to share element "
+                "type");
+  for (VMIMaskType maskType : maskTypes) {
+    if (maskType.getElementCount() != lhsType.getElementCount())
+      return fail("add-carry layout requires all mask ports to share the data "
+                  "lane count");
+    if (maskType.getGranularity() != "b32")
+      return fail("add-carry layout requires b32 mask granularity");
+  }
+
+  int64_t numGroups =
+      requestedLayout && requestedLayout.isGroupSlots()
+          ? requestedLayout.getNumGroups()
+          : 0;
+  SmallVector<VMIAddCarryLayoutFact, 4> facts;
+  for (const AddCarryLayoutPattern &pattern : kAddCarryLayoutPatterns) {
+    if (!matchesElementBitsPattern(pattern.dataBits,
+                                   lhsType.getElementType()))
+      continue;
+    if (llvm::any_of(maskTypes, [&](VMIMaskType maskType) {
+          return !matchesMaskGranularityPattern(pattern.maskGranularity,
+                                                maskType.getGranularity());
+        }))
+      continue;
+
+    VMILayoutAttr candidateLayout = materializeLayoutPattern(
+        lhsType.getContext(), pattern.layout, numGroups);
+    if (!candidateLayout ||
+        (requestedLayout && candidateLayout != requestedLayout))
+      continue;
+
+    auto assignedDataType = VMIVRegType::get(
+        lhsType.getContext(), lhsType.getElementCount(),
+        lhsType.getElementType(), candidateLayout);
+    FailureOr<int64_t> dataArity = getVMIPhysicalArity(assignedDataType);
+    if (failed(dataArity) || *dataArity < 1)
+      continue;
+
+    bool maskArityMatches = llvm::all_of(maskTypes, [&](VMIMaskType maskType) {
+      auto assignedMaskType = VMIMaskType::get(
+          maskType.getContext(), maskType.getElementCount(),
+          maskType.getGranularity(), candidateLayout);
+      FailureOr<int64_t> maskArity = getVMIPhysicalArity(assignedMaskType);
+      return succeeded(maskArity) && *maskArity == *dataArity;
+    });
+    if (!maskArityMatches)
+      continue;
+
+    facts.push_back(materializeAddCarryLayoutFact(
+        lhsType.getContext(), pattern, numGroups, *dataArity));
+    if (preferredOnly)
+      break;
+  }
+
+  if (facts.empty())
+    return fail("add-carry ports do not match a legal layout table row");
+  return facts;
+}
+
+static FailureOr<VMIAddCarryLayoutFact> getAddCarryLayoutFactImpl(
+    VMIVRegType lhsType, VMIVRegType rhsType, VMIVRegType resultType,
+    ArrayRef<VMIMaskType> maskTypes, std::string *reason) {
+  auto fail = [&](const Twine &message) -> FailureOr<VMIAddCarryLayoutFact> {
+    if (reason)
+      *reason = message.str();
+    return failure();
+  };
+
+  VMILayoutAttr layout = lhsType.getLayoutAttr();
+  if (!layout || rhsType.getLayoutAttr() != layout ||
+      resultType.getLayoutAttr() != layout ||
+      llvm::any_of(maskTypes, [&](VMIMaskType maskType) {
+        return maskType.getLayoutAttr() != layout;
+      }))
+    return fail("add-carry requires one assigned layout on every data, mask, "
+                "and carry port");
+
+  FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>> facts =
+      getAddCarryLayoutFactsForLayoutImpl(lhsType, rhsType, resultType,
+                                          maskTypes, layout,
+                                          /*preferredOnly=*/false, reason);
+  if (failed(facts))
+    return failure();
+  if (facts->size() != 1)
+    return fail("add-carry layout query produced ambiguous layout facts");
+  return facts->front();
 }
 
 static VMIVselrLayoutFact
@@ -2144,6 +2270,105 @@ VMILayoutSupport::getVdintlvLayoutFactForLayouts(
   return getInterleaveLayoutFactForLayoutsImpl(
       kVdintlvLayoutPatterns, lhsType, rhsType, maskType, lowType, highType,
       reason);
+}
+
+FailureOr<VMIAddCarryLayoutFact>
+VMILayoutSupport::getPreferredVaddcLayoutFact(VMIVaddcOp op,
+                                              std::string *reason) const {
+  SmallVector<VMIMaskType> maskTypes{
+      cast<VMIMaskType>(op.getMask().getType()),
+      cast<VMIMaskType>(op.getCarry().getType())};
+  FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>> facts =
+      getAddCarryLayoutFactsForLayoutImpl(
+          cast<VMIVRegType>(op.getLhs().getType()),
+          cast<VMIVRegType>(op.getRhs().getType()),
+          cast<VMIVRegType>(op.getResult().getType()), maskTypes,
+          /*requestedLayout=*/{}, /*preferredOnly=*/true, reason);
+  if (failed(facts))
+    return failure();
+  return facts->front();
+}
+
+FailureOr<VMIAddCarryLayoutFact>
+VMILayoutSupport::getPreferredVaddcsLayoutFact(VMIVaddcsOp op,
+                                               std::string *reason) const {
+  SmallVector<VMIMaskType> maskTypes{
+      cast<VMIMaskType>(op.getCarryIn().getType()),
+      cast<VMIMaskType>(op.getMask().getType()),
+      cast<VMIMaskType>(op.getCarry().getType())};
+  FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>> facts =
+      getAddCarryLayoutFactsForLayoutImpl(
+          cast<VMIVRegType>(op.getLhs().getType()),
+          cast<VMIVRegType>(op.getRhs().getType()),
+          cast<VMIVRegType>(op.getResult().getType()), maskTypes,
+          /*requestedLayout=*/{}, /*preferredOnly=*/true, reason);
+  if (failed(facts))
+    return failure();
+  return facts->front();
+}
+
+FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>>
+VMILayoutSupport::getVaddcLayoutFactsForLayout(VMIVaddcOp op,
+                                               VMILayoutAttr layout,
+                                               std::string *reason) const {
+  SmallVector<VMIMaskType> maskTypes{
+      cast<VMIMaskType>(op.getMask().getType()),
+      cast<VMIMaskType>(op.getCarry().getType())};
+  return getAddCarryLayoutFactsForLayoutImpl(
+      cast<VMIVRegType>(op.getLhs().getType()),
+      cast<VMIVRegType>(op.getRhs().getType()),
+      cast<VMIVRegType>(op.getResult().getType()), maskTypes, layout,
+      /*preferredOnly=*/false, reason);
+}
+
+FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>>
+VMILayoutSupport::getVaddcsLayoutFactsForLayout(VMIVaddcsOp op,
+                                                VMILayoutAttr layout,
+                                                std::string *reason) const {
+  SmallVector<VMIMaskType> maskTypes{
+      cast<VMIMaskType>(op.getCarryIn().getType()),
+      cast<VMIMaskType>(op.getMask().getType()),
+      cast<VMIMaskType>(op.getCarry().getType())};
+  return getAddCarryLayoutFactsForLayoutImpl(
+      cast<VMIVRegType>(op.getLhs().getType()),
+      cast<VMIVRegType>(op.getRhs().getType()),
+      cast<VMIVRegType>(op.getResult().getType()), maskTypes, layout,
+      /*preferredOnly=*/false, reason);
+}
+
+FailureOr<VMIAddCarryLayoutFact>
+VMILayoutSupport::getVaddcLayoutFact(VMIVaddcOp op,
+                                     std::string *reason) const {
+  SmallVector<VMIMaskType> maskTypes{
+      cast<VMIMaskType>(op.getMask().getType()),
+      cast<VMIMaskType>(op.getCarry().getType())};
+  return getAddCarryLayoutFactImpl(
+      cast<VMIVRegType>(op.getLhs().getType()),
+      cast<VMIVRegType>(op.getRhs().getType()),
+      cast<VMIVRegType>(op.getResult().getType()), maskTypes, reason);
+}
+
+FailureOr<VMIAddCarryLayoutFact>
+VMILayoutSupport::getVaddcsLayoutFact(VMIVaddcsOp op,
+                                      std::string *reason) const {
+  SmallVector<VMIMaskType> maskTypes{
+      cast<VMIMaskType>(op.getCarryIn().getType()),
+      cast<VMIMaskType>(op.getMask().getType()),
+      cast<VMIMaskType>(op.getCarry().getType())};
+  return getAddCarryLayoutFactImpl(
+      cast<VMIVRegType>(op.getLhs().getType()),
+      cast<VMIVRegType>(op.getRhs().getType()),
+      cast<VMIVRegType>(op.getResult().getType()), maskTypes, reason);
+}
+
+LogicalResult VMILayoutSupport::getVaddcSupport(VMIVaddcOp op,
+                                               std::string *reason) const {
+  return getVaddcLayoutFact(op, reason);
+}
+
+LogicalResult VMILayoutSupport::getVaddcsSupport(VMIVaddcsOp op,
+                                                std::string *reason) const {
+  return getVaddcsLayoutFact(op, reason);
 }
 
 FailureOr<VMILoadLayoutFact>

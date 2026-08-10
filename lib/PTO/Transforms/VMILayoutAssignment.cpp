@@ -656,16 +656,31 @@ struct LayoutSolver {
         return WalkResult::advance();
       }
       if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
+        VMILayoutSupport supports;
+        std::string reason;
+        if (failed(supports.getPreferredVaddcLayoutFact(addc, &reason))) {
+          addc.emitError() << kVMIDiagLayoutContractPrefix << reason;
+          return WalkResult::interrupt();
+        }
         if (failed(constrainElementwiseBinary(addc.getLhsMutable(),
                                               addc.getRhsMutable(),
-                                              addc.getResult(), op)))
+                                              addc.getResult(), op)) ||
+            failed(uniteMask(addc.getMask(), addc.getCarry(), op)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
       if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
+        VMILayoutSupport supports;
+        std::string reason;
+        if (failed(supports.getPreferredVaddcsLayoutFact(addcs, &reason))) {
+          addcs.emitError() << kVMIDiagLayoutContractPrefix << reason;
+          return WalkResult::interrupt();
+        }
         if (failed(constrainElementwiseBinary(addcs.getLhsMutable(),
                                               addcs.getRhsMutable(),
-                                              addcs.getResult(), op)))
+                                              addcs.getResult(), op)) ||
+            failed(uniteMask(addcs.getCarryIn(), addcs.getMask(), op)) ||
+            failed(uniteMask(addcs.getMask(), addcs.getCarry(), op)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }

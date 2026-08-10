@@ -170,7 +170,6 @@ public:
 
 static bool isSameLayoutOp(Operation *op) {
   return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
-             VMIVaddcOp, VMIVaddcsOp,
              VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp,
              VMIVmullOp, VMIFmaOp, VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp,
              VMIMaxIOp, VMINegFOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,
@@ -604,6 +603,62 @@ public:
   }
 };
 
+class VMIAddCarryTransfer final : public VMILayoutTransfer {
+public:
+  FailureOr<SmallVector<VMILayoutRelation, 4>>
+  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
+        const VMILayoutPropagator &propagator,
+        OpOperand *changedOperand) const override {
+    if (auto addc = dyn_cast<VMIVaddcOp>(op))
+      return queryVaddc(addc, changedLayout);
+    if (auto addcs = dyn_cast<VMIVaddcsOp>(op))
+      return queryVaddcs(addcs, changedLayout);
+    return failure();
+  }
+
+private:
+  FailureOr<SmallVector<VMILayoutRelation, 4>>
+  queryVaddc(VMIVaddcOp op, VMILayoutAttr changedLayout) const {
+    VMILayoutSupport supports;
+    FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>> facts =
+        supports.getVaddcLayoutFactsForLayout(op, changedLayout);
+    if (failed(facts) || facts->empty())
+      return failure();
+
+    SmallVector<VMILayoutRelation, 4> relations;
+    for (const VMIAddCarryLayoutFact &fact : *facts) {
+      relations.push_back(makeRelation(SmallVector<VMILayoutFact, 4>{
+          operandFact(op.getLhsMutable(), fact.layout),
+          operandFact(op.getRhsMutable(), fact.layout),
+          operandFact(op.getMaskMutable(), fact.layout),
+          valueFact(op.getResult(), fact.layout),
+          valueFact(op.getCarry(), fact.layout)}));
+    }
+    return relations;
+  }
+
+  FailureOr<SmallVector<VMILayoutRelation, 4>>
+  queryVaddcs(VMIVaddcsOp op, VMILayoutAttr changedLayout) const {
+    VMILayoutSupport supports;
+    FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>> facts =
+        supports.getVaddcsLayoutFactsForLayout(op, changedLayout);
+    if (failed(facts) || facts->empty())
+      return failure();
+
+    SmallVector<VMILayoutRelation, 4> relations;
+    for (const VMIAddCarryLayoutFact &fact : *facts) {
+      relations.push_back(makeRelation(SmallVector<VMILayoutFact, 4>{
+          operandFact(op.getLhsMutable(), fact.layout),
+          operandFact(op.getRhsMutable(), fact.layout),
+          operandFact(op.getCarryInMutable(), fact.layout),
+          operandFact(op.getMaskMutable(), fact.layout),
+          valueFact(op.getResult(), fact.layout),
+          valueFact(op.getCarry(), fact.layout)}));
+    }
+    return relations;
+  }
+};
+
 class VMIInterleaveTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, 4>>
@@ -834,6 +889,7 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
   static VMIGroupSlotLoadTransfer groupSlotLoadTransfer;
   static VMIGroupBroadcastLoadTransfer groupBroadcastLoadTransfer;
   static VMIGroupBroadcastTransfer groupBroadcastTransfer;
+  static VMIAddCarryTransfer addCarryTransfer;
   static VMIInterleaveTransfer interleaveTransfer;
   static VMIGatherTransfer gatherTransfer;
   static VMIStoreTransfer storeTransfer;
@@ -862,6 +918,8 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
     return &groupBroadcastLoadTransfer;
   if (isa<VMIGroupBroadcastOp>(op))
     return &groupBroadcastTransfer;
+  if (isa<VMIVaddcOp, VMIVaddcsOp>(op))
+    return &addCarryTransfer;
   if (isa<VMIVintlvOp, VMIVdintlvOp>(op))
     return &interleaveTransfer;
   if (isa<VMIGatherOp>(op))
