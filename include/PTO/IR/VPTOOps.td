@@ -483,7 +483,8 @@ class PTO_BinaryI64PureOp<string mnemonic> : PTO_Op<mnemonic, [Pure]> {
   }];
 }
 
-class PTO_UnaryI64ConfigOp<string mnemonic> : PTO_Op<mnemonic> {
+class PTO_UnaryI64ConfigOp<string mnemonic, list<Trait> traits = []>
+    : PTO_Op<mnemonic, traits> {
   let arguments = (ins I64:$value);
   let results = (outs);
 
@@ -562,7 +563,7 @@ def PTO_SetMte2NzParaOp : PTO_UnaryI64ConfigOp<"set_mte2_nz_para">;
 def PTO_SetPadValOutToL1Op : PTO_UnaryI64ConfigOp<"set_pad_val_outtol1">;
 // Reading CTRL is ordered with respect to set_ctrl. It must not be modeled as
 // Pure, otherwise CSE can reuse a value read before an intervening write.
-def PTO_GetCtrlOp : PTO_Op<"get_ctrl"> {
+def PTO_GetCtrlOp : PTO_Op<"get_ctrl", [VPTOSchedulingOpInterface]> {
   let arguments = (ins);
   let results = (outs I64:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
@@ -575,7 +576,8 @@ def PTO_GetVms4SrOp : PTO_Op<"get_vms4_sr", [Pure]> {
     attr-dict `:` type($list0) `,` type($list1) `,` type($list2) `,` type($list3)
   }];
 }
-def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<"set_ctrl">;
+def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<
+    "set_ctrl", [VPTOSchedulingOpInterface]>;
 def PTO_SetStoreAtomicCfgOp : PTO_UnaryI64ConfigOp<"set_store_atomic_cfg">;
 def PTO_StoreVfSimtInfoOp : PTO_SimtOp<"store_vfsimt_info"> {
   let summary = "Configure SIMT VF launch dimensions";

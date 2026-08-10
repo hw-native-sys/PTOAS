@@ -46,8 +46,36 @@ enum SchedClassID : unsigned {
   VectorClass,
   MTEClass,
   CubeClass,
+  ControlClass,
   UnknownClass,
 };
+
+static std::optional<SchedClassID> getSchedClassForPipe(PIPE pipe) {
+  switch (pipe) {
+  case PIPE::PIPE_S:
+    return ScalarClass;
+  case PIPE::PIPE_V:
+  case PIPE::PIPE_V2:
+    return VectorClass;
+  case PIPE::PIPE_M:
+    return CubeClass;
+  case PIPE::PIPE_MTE1:
+  case PIPE::PIPE_MTE2:
+  case PIPE::PIPE_MTE3:
+  case PIPE::PIPE_MTE4:
+  case PIPE::PIPE_MTE5:
+  case PIPE::PIPE_FIX:
+  case PIPE::VIRTUAL_PIPE_MTE2_L1A:
+  case PIPE::VIRTUAL_PIPE_MTE2_L1B:
+    return MTEClass;
+  case PIPE::PIPE_ALL:
+    return ControlClass;
+  case PIPE::PIPE_NUM:
+  case PIPE::PIPE_UNASSIGNED:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
 } // namespace
 
 VPTOGenericA5SchedModel::VPTOGenericA5SchedModel() {
@@ -79,6 +107,8 @@ VPTOGenericA5SchedModel::VPTOGenericA5SchedModel() {
       {VectorClass, "vector", true, 1, 1, {{VectorResource, 0, 1, 1}}, {}},
       {MTEClass, "mte", true, 1, 2, {{MTEResource, 0, 1, 1}}, {}},
       {CubeClass, "cube", true, 1, 4, {{CubeResource, 0, 1, 1}}, {}},
+      {ControlClass, "control", true, 1, 1,
+       {{ControlResource, 0, 1, 1}}, {}},
       {UnknownClass, "unknown", false, 1, 1, {{UnknownResource, 0, 1, 1}}, {}},
   };
 }
@@ -87,6 +117,10 @@ const VPTOSchedClass &
 VPTOGenericA5SchedModel::getSchedClass(Operation *op) const {
   if (!op || classifyVPTOSchedulingOp(op) == VPTOSchedulingClass::Structural)
     return schedClasses[StructuralClass];
+  if (auto pipeOp = dyn_cast<OpPipeInterface>(op))
+    if (std::optional<SchedClassID> schedClass =
+            getSchedClassForPipe(pipeOp.getPipe()))
+      return schedClasses[*schedClass];
   if (isa<VectorMicroOpInterface>(op))
     return schedClasses[VectorClass];
   if (isa<MteOpInterface>(op))
@@ -95,6 +129,12 @@ VPTOGenericA5SchedModel::getSchedClass(Operation *op) const {
     return schedClasses[CubeClass];
   if (isa<SimtOpInterface>(op))
     return schedClasses[ScalarClass];
+  if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op)) {
+    SmallVector<VPTOSchedulingEffect> effects;
+    scheduling.getVPTOSchedulingEffects(effects);
+    if (!effects.empty())
+      return schedClasses[ControlClass];
+  }
   return schedClasses[UnknownClass];
 }
 

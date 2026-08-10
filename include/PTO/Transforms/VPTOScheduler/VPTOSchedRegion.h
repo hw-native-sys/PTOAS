@@ -32,6 +32,7 @@ namespace mlir::pto {
 struct VPTOSchedulingCoverage {
   std::array<unsigned, 4> classCounts{};
   llvm::StringMap<unsigned> unsupportedOps;
+  llvm::StringMap<unsigned> unclassifiedOps;
 
   void record(Operation *op, VPTOSchedulingClass schedulingClass);
   unsigned getCount(VPTOSchedulingClass schedulingClass) const;

@@ -10,6 +10,8 @@
 
 #include "PTO/Transforms/VPTOScheduler/VPTOSchedRegion.h"
 
+#include "PTO/IR/PTO.h"
+
 #include "mlir/IR/OpDefinition.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -26,6 +28,11 @@ void VPTOSchedulingCoverage::record(
   ++classCounts[getClassIndex(schedulingClass)];
   if (op && schedulingClass == VPTOSchedulingClass::Unsupported)
     ++unsupportedOps[op->getName().getStringRef()];
+  if (op && schedulingClass == VPTOSchedulingClass::SchedulingBoundary &&
+      op->getNumRegions() == 0 &&
+      !op->hasTrait<OpTrait::IsTerminator>() &&
+      isa<VPTOSchedulingOpInterface>(op))
+    ++unclassifiedOps[op->getName().getStringRef()];
 }
 
 unsigned VPTOSchedulingCoverage::getCount(

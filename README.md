@@ -282,10 +282,25 @@ ptoas test/lit/pto/empty_func.pto --pto-level=level3 -o outputfile.cpp
 # public function signature 不能直接暴露 !pto.vmi.* 类型
 ptoas test/lit/vmi_new/vmi_ptoas_cli_pipeline.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto -o -
 
+# 输出 VPTO 调度分析，不改变 IR
+ptoas input.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto \
+  --vpto-scheduler=analyze -o output.cpp
+
+# off（默认）完全禁用；on 执行相同分析，不重排 IR
+ptoas input.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto \
+  --vpto-scheduler=on -o output.cpp
+
 # 查看当前 ptoas release 版本号
 ptoas --version
 
 ```
+
+`--vpto-scheduler` 在 VPTO 发射流水线的最终 CSE 之后、发射合法性校验之前运行。
+目标模型仅支持 A5 Vector kernel；规范化后的 Cube 子模块会被跳过，不生成
+调度分析报告。在非 A5 架构上显式启用该选项会报错并终止编译。
+`analyze`/`on` 的确定性报告写入标准错误，包括区域边界、依赖 DAG、关键路径、
+目标资源占用和寄存器压力；生成代码仍写入正常输出。设计与分析格式详见
+[`docs/designs/vpto-scheduler-framework.md`](docs/designs/vpto-scheduler-framework.md)。
 
 ### 5.2 Python 接口 (Python API)
 

@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
+// RUN: FileCheck %s < %t
+
+// CHECK-LABEL: vpto-scheduler: function=memory_and_implicit
+// CHECK: kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: kind=data strength=must latency=1 reason=implicit read of ctrl
+// CHECK: kind=output strength=must latency=0 reason=implicit write of ctrl
+// CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on ctrl
+// CHECK: kind=data strength=must latency=1 reason=implicit read of AR
+// CHECK: kind=output strength=must latency=0 reason=implicit write of AR
+// CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on AR
+// CHECK: coverage schedulable=7 structural=3 boundary=2 unsupported=0
+
+// CHECK-LABEL: vpto-scheduler: function=simt_barrier
+// CHECK: top-ready=1 bottom-ready=1
+// CHECK: kind=sync strength=must latency=0 reason=before scheduling barrier
+// CHECK: kind=sync strength=must latency=0 reason=after scheduling barrier
+// CHECK: coverage schedulable=3 structural=0 boundary=1 unsupported=0
+
+// CHECK-LABEL: vpto-scheduler: function=pipe_classification
+// CHECK: op=pto.ld_dev semantic=schedulable sched-class=scalar known=true
+
+// CHECK-LABEL: vpto-scheduler: function=memory_ranges
+// CHECK: edge=3->5 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=volatile_reads
+// CHECK: edge=1->2 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+
+// CHECK-LABEL: vpto-scheduler: function=post_update_address
+// CHECK: edge=1->2 kind=data strength=must latency=1 reason=post-update address operand #0
+
+// CHECK-LABEL: vpto-scheduler: function=vpto_memory_barrier
+// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=before scheduling barrier
+// CHECK: edge=1->2 kind=sync strength=must latency=0 reason=after scheduling barrier
+
+// CHECK-LABEL: vpto-scheduler: function=event_signal_wait
+// CHECK: edge=1->2 kind=sync strength=must latency=0 reason=event signal before wait
+
+// CHECK-LABEL: vpto-scheduler: function=dynamic_event_may_match
+// CHECK: edge=2->3 kind=sync strength=must latency=0 reason=event signal before wait
+
+// CHECK-LABEL: vpto-scheduler: function=event_pipe_order
+// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=source pipe execution before signal
+// CHECK: edge=4->5 kind=sync strength=must latency=0 reason=pipe synchronization before execution
+
+// CHECK-LABEL: vpto-scheduler: function=pipe_barrier_order
+// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=pipe execution before barrier
+// CHECK: edge=1->2 kind=sync strength=must latency=0 reason=pipe synchronization before execution
+
+// CHECK-LABEL: vpto-scheduler: function=buffer_id_order
+// CHECK: edge=0->2 kind=sync strength=must latency=0 reason=buffer acquire before release
+// CHECK: edge=2->3 kind=sync strength=must latency=0 reason=buffer release before acquire
+
+// CHECK-LABEL: vpto-scheduler: function=dynamic_buffer_may_match
+// CHECK: edge=2->3 kind=sync strength=must latency=0 reason=buffer acquire before release
+
+// CHECK-LABEL: vpto-scheduler: function=unclassified_micro_boundary
+// CHECK: block=0 regions=2
+// CHECK: region=0 before=block-start after=boundary:pto.dcci
+// CHECK: region=1 before=boundary:pto.dcci after=terminator
+// CHECK: unclassified-op=pto.dcci count=1
+
+module {
+  func.func @memory_and_implicit(%dst: !pto.ptr<ui32, ub>) {
+    pto.vecscope {
+      %c0 = arith.constant 0 : i32
+      pto.sprclr "AR"
+      pto.sprsti "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+      pto.sprclr "AR"
+      pto.sprsts "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+    }
+    %ctrl0 = arith.constant 0 : i64
+    %ctrl1 = arith.constant 1 : i64
+    pto.set_ctrl %ctrl0 : i64
+    %ctrl = pto.get_ctrl : i64
+    pto.set_ctrl %ctrl1 : i64
+    return
+  }
+
+  func.func @simt_barrier() attributes {pto.simt_entry} {
+    %x = pto.get_tid_x : i32
+    pto.syncthreads
+    %y = pto.get_tid_y : i32
+    return
+  }
+
+  func.func @pipe_classification(%src: !pto.ptr<i32, gm>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %value = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    return
+  }
+
+  func.func @memory_ranges(%dst: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %value = arith.constant 42 : i32
+    pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+    pto.st_dev %value, %dst[%c1] : !pto.ptr<i32, gm>, i32
+    pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+
+  func.func @volatile_reads(%src: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %first = pto.ld_dev %src[%c0] {volatile} : !pto.ptr<i32, gm> -> i32
+    %second = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    return
+  }
+
+  func.func @post_update_address(%dst: !pto.ptr<ui32, ub>) {
+    pto.vecscope {
+      %c0 = arith.constant 0 : i32
+      %updated = pto.sprsti "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+          -> !pto.ptr<ui32, ub>
+      pto.sprsts "AR", %updated[%c0] : !pto.ptr<ui32, ub>, i32
+    }
+    return
+  }
+
+  func.func @vpto_memory_barrier() {
+    pto.vecscope {
+      pto.sprclr "AR"
+      pto.mem_bar "VV_ALL"
+      pto.sprclr "AR"
+    }
+    return
+  }
+
+  func.func @event_signal_wait() {
+    pto.vecscope {
+      pto.sprclr "AR"
+      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      pto.sprclr "AR"
+    }
+    return
+  }
+
+  func.func @dynamic_event_may_match() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+    pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c1]
+    return
+  }
+
+  func.func @event_pipe_order() {
+    pto.vecscope {
+      pto.sprclr "AR"
+      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID1"]
+      pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID1"]
+      pto.sprclr "AR"
+    }
+    return
+  }
+
+  func.func @pipe_barrier_order() {
+    pto.vecscope {
+      pto.sprclr "AR"
+      pto.barrier #pto.pipe<PIPE_V>
+      pto.sprclr "AR"
+    }
+    return
+  }
+
+  func.func @buffer_id_order() {
+    pto.vecscope {
+      pto.get_buf "PIPE_V", 0, 0
+      pto.sprclr "AR"
+      pto.rls_buf "PIPE_V", 0, 0
+      pto.get_buf "PIPE_V", 0, 0
+      pto.sprclr "AR"
+    }
+    return
+  }
+
+  func.func @dynamic_buffer_may_match() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.get_buf_dyn "PIPE_V", %c0, 0
+    pto.rls_buf_dyn "PIPE_V", %c1, 0
+    return
+  }
+
+  func.func @unclassified_micro_boundary(%src: !pto.ptr<i32, gm>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %before = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    pto.dcci %src "SINGLE_CACHE_LINE" : !pto.ptr<i32, gm>
+    %after = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    return
+  }
+}

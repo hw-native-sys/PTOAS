@@ -374,6 +374,18 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
+enum class VPTOSchedulerCLIMode { Off, Analyze, On };
+
+static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
+    "vpto-scheduler",
+    llvm::cl::desc("VPTO scheduler mode"),
+    llvm::cl::values(
+        clEnumValN(VPTOSchedulerCLIMode::Off, "off", "Disable scheduling"),
+        clEnumValN(VPTOSchedulerCLIMode::Analyze, "analyze",
+                   "Report scheduling analysis without changing IR"),
+        clEnumValN(VPTOSchedulerCLIMode::On, "on", "Run scheduler in on mode")),
+    llvm::cl::init(VPTOSchedulerCLIMode::Off));
+
 static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
@@ -2970,6 +2982,13 @@ static void prepareVPTOForEmission(PassManager &pm) {
       pto::createPTONarrowVPTOLoopCountersPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
+  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off) {
+    pto::VPTOSchedulerOptions schedulerOptions;
+    schedulerOptions.mode = vptoSchedulerMode == VPTOSchedulerCLIMode::Analyze
+                                ? "analyze"
+                                : "on";
+    kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
+  }
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
@@ -3188,6 +3207,10 @@ int mlir::pto::compilePTOASModule(
   }
   if (enableBufidSync && arch != "a5") {
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
+    return 1;
+  }
+  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
+    llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
     return 1;
   }
 

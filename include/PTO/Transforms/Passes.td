@@ -1179,6 +1179,30 @@ def PTOValidateVPTOEmissionIR
                            "mlir::scf::SCFDialect"];
 }
 
+def VPTOScheduler : Pass<"pto-vpto-scheduler", "ModuleOp"> {
+  let summary = "Analyze emission-ready VPTO scheduling regions";
+  let description = [{
+    Builds block-local scheduling regions, typed dependency DAGs, target
+    resource timelines, and register-pressure summaries for emission-ready
+    VPTO IR. The target model supports A5 vector kernel modules only:
+    normalized cube kernel modules are skipped, while modules without an
+    explicit kernel kind remain available for standalone pass testing. A
+    module that explicitly names another target architecture is rejected.
+    `off` is an exact no-op. `analyze` emits a deterministic report without
+    mutating IR.
+  }];
+  let constructor = "mlir::pto::createVPTOSchedulerPass()";
+  let options = [
+    Option<"mode", "mode", "std::string", "\"off\"",
+           "Scheduler mode: off, analyze, or on">
+  ];
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::memref::MemRefDialect",
+                           "mlir::scf::SCFDialect",
+                           "mlir::arith::ArithDialect"];
+}
+
 def VPTOExpandWrapperOps
     : Pass<"vpto-expand-wrapper-ops", "func::FuncOp"> {
   let summary =

@@ -39,6 +39,7 @@ enum class VPTOSchedulingEffectKind {
   Event,
   Pipe,
   BufferId,
+  PostUpdate,
   VolatileMemory,
   AtomicMemory,
   Unknown,
@@ -46,11 +47,19 @@ enum class VPTOSchedulingEffectKind {
 
 /// One op-local effect which is not represented by ordinary SSA def-use or by
 /// MemoryEffectOpInterface.  `resource` names an implicit state domain; `value`
-/// optionally carries a dynamic event/buffer/address identity.
+/// optionally carries a dynamic event/buffer/address identity, and `attribute`
+/// carries its static identity.
 struct VPTOSchedulingEffect {
+  VPTOSchedulingEffect() = default;
+  VPTOSchedulingEffect(VPTOSchedulingEffectKind kind,
+                       llvm::StringRef resource, Value value = {},
+                       Attribute attribute = {})
+      : kind(kind), resource(resource), value(value), attribute(attribute) {}
+
   VPTOSchedulingEffectKind kind = VPTOSchedulingEffectKind::Unknown;
   llvm::StringRef resource;
   Value value;
+  Attribute attribute;
 };
 
 /// Classify an operation at the VPTO emission scheduling boundary.  Unknown or
