@@ -47,6 +47,9 @@ add_mlir_dialect_library(PTOTransforms
   VPTOMaskSimplify.cpp
   VPTOExpandWrapperOps.cpp
   VPTOSoftPostUpdate.cpp
+  VPTOScheduler/VPTOSchedDAG.cpp
+  VPTOScheduler/VPTOSchedDAGBuilder.cpp
+  VPTOScheduler/VPTOSchedRegion.cpp
   PTOVPTOPtrBoundary.cpp
   VPTOBufferMaterialization.cpp
   PTOValidateVPTOIR.cpp

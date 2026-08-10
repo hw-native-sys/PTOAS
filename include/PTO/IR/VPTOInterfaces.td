@@ -11,6 +11,35 @@
 
 include "mlir/IR/OpBase.td"
 
+def VPTOSchedulingOpInterface : OpInterface<"VPTOSchedulingOpInterface"> {
+  let description = [{
+    Exposes operation-local semantics needed by the emission-stage VPTO
+    scheduler when ordinary SSA def-use and MemoryEffectOpInterface are not
+    sufficient. The operation reports only its own effects; region formation,
+    alias analysis, and dependency construction are scheduler responsibilities.
+  }];
+  let cppNamespace = "::mlir::pto";
+  let methods = [
+    InterfaceMethod<
+      "Classify this operation for VPTO scheduling.",
+      "::mlir::pto::VPTOSchedulingClass", "getVPTOSchedulingClass",
+      (ins), [{}],
+      /*defaultImplementation=*/[{
+        return ::mlir::pto::getDefaultVPTOSchedulingClass(
+            $_op.getOperation());
+      }]>,
+    InterfaceMethod<
+      "Append implicit or special scheduling effects owned by this operation.",
+      "void", "getVPTOSchedulingEffects",
+      (ins "::llvm::SmallVectorImpl<::mlir::pto::VPTOSchedulingEffect> &":$effects),
+      [{}],
+      /*defaultImplementation=*/[{
+        ::mlir::pto::getDefaultVPTOSchedulingEffects($_op.getOperation(),
+                                                     effects);
+      }]>
+  ];
+}
+
 def PTO_MadSemanticOpInterface : OpInterface<"MadSemanticOpInterface"> {
   let description = [{
     Interface for semantic MAD-family ops. The interface is only a uniform view
