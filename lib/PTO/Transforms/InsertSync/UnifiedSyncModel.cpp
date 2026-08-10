@@ -13,6 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/InsertSync/UnifiedSyncModel.h"
+#include "PTO/IR/PTO.h"
+#include "mlir/IR/Matchers.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include <limits>
 #include <map>
@@ -209,6 +211,78 @@ SyncModel mlir::pto::unified::buildSyncModel(
     }
     if (scopesOk && scope)
       h.tokenExpressible = true;
+  }
+
+  // --- 4c. Address sharing between the endpoints' allocations ---------------
+  //
+  // Derived here so the model carries it with everything else it knows about a
+  // hazard. Read by reporting only -- see `Hazard::addressSharing`.
+  //
+  // Covers every non-barrier hazard, same-pipe included.
+  auto addrAllocOf = [](const BaseMemInfo *mi) -> pto::AllocTileOp {
+    if (!mi || !mi->rootBuffer)
+      return nullptr;
+    auto alloc = mi->rootBuffer.getDefiningOp<pto::AllocTileOp>();
+    if (!alloc || !alloc.getAddr())
+      return nullptr;
+    return alloc;
+  };
+  auto addrSlotOf = [](pto::AllocTileOp alloc)
+      -> std::optional<std::pair<pto::AddressSpace, uint64_t>> {
+    mlir::IntegerAttr c;
+    if (!mlir::matchPattern(alloc.getAddr(), mlir::m_Constant(&c)))
+      return std::nullopt;
+    auto tileType = dyn_cast<pto::TileBufType>(alloc.getResult().getType());
+    if (!tileType)
+      return std::nullopt;
+    auto asAttr =
+        dyn_cast_or_null<pto::AddressSpaceAttr>(tileType.getMemorySpace());
+    if (!asAttr)
+      return std::nullopt;
+    return std::make_pair(asAttr.getAddressSpace(),
+                          static_cast<uint64_t>(c.getInt()));
+  };
+  for (Hazard &h : model.hazards) {
+    if (h.isBarrier())
+      continue;
+    bool matched = false;
+    for (const BaseMemInfo *a : h.setOp()->depMemInfos) {
+      pto::AllocTileOp allocA = addrAllocOf(a);
+      if (!allocA)
+        continue;
+      auto slotA = addrSlotOf(allocA);
+      if (!slotA)
+        continue;
+      for (const BaseMemInfo *b : h.waitOp()->depMemInfos) {
+        pto::AllocTileOp allocB = addrAllocOf(b);
+        if (!allocB || allocB == allocA)
+          continue;
+        auto slotB = addrSlotOf(allocB);
+        if (!slotB || *slotA != *slotB)
+          continue;
+
+        // `depMemInfos` is unordered, so which endpoint matched on which side
+        // means nothing. Order by program position where that is defined.
+        Operation *first = allocA.getOperation();
+        Operation *second = allocB.getOperation();
+        if (first->getBlock() == second->getBlock() &&
+            second->isBeforeInBlock(first))
+          std::swap(first, second);
+
+        h.addressSharing =
+            allocA.getResult().getType() == allocB.getResult().getType()
+                ? Hazard::AddressSharing::Reuse
+                : Hazard::AddressSharing::AliasView;
+        h.sharedScope = slotA->first;
+        h.sharedAddress = slotA->second;
+        h.sharedAllocFirst = first;
+        h.sharedAllocSecond = second;
+        matched = true;
+        break;
+      }
+      if (matched)
+        break;
+    }
   }
 
   // --- 5. Buffers -- the unit routing decides on --------------------------
@@ -826,6 +900,12 @@ void mlir::pto::unified::printSyncModel(llvm::raw_ostream &os,
     }
     os << "]"
        << " revwar=" << (h.hasReverseWar ? "yes" : "no")
+       << " share="
+       << (h.addressSharing == Hazard::AddressSharing::Reuse
+               ? "reuse"
+               : h.addressSharing == Hazard::AddressSharing::AliasView
+                     ? "alias"
+                     : "none")
        << " alpha(e/b/bar)=" << a.event << "/" << a.bufid << "/" << a.barrier
        << " event_id=";
     // ALL ids, not just the first: a rotating hazard holds d of them.

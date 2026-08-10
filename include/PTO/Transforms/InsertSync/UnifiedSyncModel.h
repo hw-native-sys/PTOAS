@@ -252,6 +252,34 @@ public:
   ///     `SyncOpType` and fails the compilation on the ones it has no name for.
   bool tokenExpressible = false;
 
+  /// Why this hazard's two endpoints sit at one address, when they do.
+  ///
+  /// A hazard whose endpoints are DISTINCT allocations at the same address in the
+  /// same scope is ordered because the addresses coincide: no SSA value flows
+  /// between two distinct allocations, so the ordering is invisible as dataflow.
+  /// Classified by whether those allocations also share a tile type:
+  ///   - `Reuse`     -- same type, one buffer holding successive values;
+  ///   - `AliasView` -- different types over the same bytes, a reshape or
+  ///                    transpose view of live data.
+  ///
+  /// INFORMATIONAL ONLY. No routing, refusal, mechanism choice or emission may read
+  /// this. The type test is a heuristic: two same-typed tiles can be aliased on
+  /// purpose, and the ordering between them is then a real read-after-write through
+  /// memory. A decision taken on a wrong classification would drop a live ordering.
+  enum class AddressSharing {
+    None,      ///< one allocation on both sides, or the addresses differ
+    Reuse,     ///< distinct allocations, one address, SAME tile type
+    AliasView, ///< distinct allocations, one address, DIFFERING tile types
+  };
+  AddressSharing addressSharing = AddressSharing::None;
+
+  /// The shared slot and the two allocations in program order. Meaningful only when
+  /// `addressSharing != None`.
+  uint64_t sharedAddress = 0;
+  pto::AddressSpace sharedScope = pto::AddressSpace::Zero;
+  Operation *sharedAllocFirst = nullptr;
+  Operation *sharedAllocSecond = nullptr;
+
 private:
   unsigned index_;
   SyncOperation *setOp_;  ///< never null

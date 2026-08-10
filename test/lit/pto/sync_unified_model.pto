@@ -42,9 +42,14 @@
 // `baseAddresses` is empty before addresses are assigned, so baseAddr collapses to 0
 // and distinct clusters share one key. If these two ever read the same cluster, the
 // join has regressed to a degenerate key.
-// VADD-NEXT: h#0 pair MTE2->V iv=[1,2) pool=8 mech=event clusters=[1] revwar=no alpha(e/b/bar)=1/2/100 event_id=0
-// VADD-NEXT: h#1 pair V->MTE3 iv=[2,3) pool=8 mech=event clusters=[0] revwar=no alpha(e/b/bar)=1/2/100 event_id=0
-// VADD-NEXT: h#2 barrier ALL->ALL iv=[3,3) pool=8 mech=barrier clusters=[] revwar=no alpha(e/b/bar)=1/2/100 event_id=-
+// `share` records whether the hazard's two endpoints are distinct allocations at one
+// address, and whether those allocations have the same tile type (`reuse`) or
+// differing ones (`alias`). It reads `none` here because this kernel assigns no
+// explicit addresses -- they exist only under --pto-level=level3. The field is
+// informational: no routing, refusal, mechanism choice or emission may read it.
+// VADD-NEXT: h#0 pair MTE2->V iv=[1,2) pool=8 mech=event clusters=[1] revwar=no share=none alpha(e/b/bar)=1/2/100 event_id=0
+// VADD-NEXT: h#1 pair V->MTE3 iv=[2,3) pool=8 mech=event clusters=[0] revwar=no share=none alpha(e/b/bar)=1/2/100 event_id=0
+// VADD-NEXT: h#2 barrier ALL->ALL iv=[3,3) pool=8 mech=barrier clusters=[] revwar=no share=none alpha(e/b/bar)=1/2/100 event_id=-
 
 // Both pairs take id 0, and that is CORRECT rather than a collision: event flags are
 // per-(src,dst) DISJOINT hardware, so id 0 in MTE2->V is a different flag from id 0

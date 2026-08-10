@@ -339,11 +339,22 @@ struct PTOUnifiedSyncPass
                                             syncOpRecords.size(), interference);
       });
 
+    unsigned nShareReuse = 0;
+    unsigned nShareAlias = 0;
+    for (const unified::Hazard &h : model.hazards) {
+      if (h.addressSharing == unified::Hazard::AddressSharing::Reuse)
+        ++nShareReuse;
+      else if (h.addressSharing == unified::Hazard::AddressSharing::AliasView)
+        ++nShareAlias;
+    }
+
     // One atomic report: nested func passes run in parallel (see emitReport).
     if (debugEnabled)
       oracle::emitReport([&](llvm::raw_ostream &os) {
         os << "[unified-sync model] kernel=" << func.getSymName()
-           << " K=" << bufidCapacity << " hazards=" << nHazards << "\n";
+           << " K=" << bufidCapacity << " hazards=" << nHazards
+           << " share_reuse=" << nShareReuse
+           << " share_alias=" << nShareAlias << "\n";
         oracle::printSyncOpRecords(os, func.getSymName(), syncOpRecords);
         oracle::printIdViolations(os, func.getSymName(), "syncops",
                                   syncOpRecords.size(), idViolations);
