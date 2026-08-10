@@ -286,6 +286,7 @@ LogPrecision = _pto.LogPrecision
 RecipPrecision = _pto.RecipPrecision
 RsqrtPrecision = _pto.RsqrtPrecision
 SqrtPrecision = _pto.SqrtPrecision
+PrintFormat = _pto.PrintFormat
 
 
 class TensorView:
@@ -335,6 +336,7 @@ __all__ = [
     "RecipPrecision",
     "RsqrtPrecision",
     "SqrtPrecision",
+    "PrintFormat",
     "TensorView",
     "PartitionTensorView",
     "Tile",

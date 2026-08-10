@@ -13726,34 +13726,82 @@ struct EmitPTOManualPass
         return signalPassFailure();
     }
 
-        bool needsEventIdArrayHelper = false;
-        bool needsTRandomHelper = false;
-        bool needsGlobalTensorDataHelper = false;
-        mop.walk([&](Operation *op) {
-          if (isa<mlir::pto::DeclareEventIdArrayOp>(op))
-            needsEventIdArrayHelper = true;
-          if (isa<mlir::pto::TRandomOp>(op))
-            needsTRandomHelper = true;
-          if (auto cmo = dyn_cast<mlir::pto::CmoCacheInvalidOp>(op)) {
-            if (cmo.getAddr())
-              needsGlobalTensorDataHelper = true;
-          }
-          if (auto init = dyn_cast<mlir::pto::InitializeL2G2LPipeOp>(op)) {
-            if (isa<mlir::pto::TensorViewType>(init.getGmAddr().getType()))
-              needsGlobalTensorDataHelper = true;
-          }
-          if (isa<mlir::pto::PartitionViewOp>(op))
-            needsGlobalTensorDataHelper = true;
-        });
+    bool needsEventIdArrayHelper = false;
+    bool needsTRandomHelper = false;
+    bool needsGlobalTensorDataHelper = false;
+    bool needsTPrintInclude = false;
+    mop.walk([&](Operation *op) {
+      if (isa<mlir::pto::DeclareEventIdArrayOp>(op))
+        needsEventIdArrayHelper = true;
+      if (isa<mlir::pto::TRandomOp>(op))
+        needsTRandomHelper = true;
+      if (isa<mlir::pto::TPrintOp>(op))
+        needsTPrintInclude = true;
+      if (auto cmo = dyn_cast<mlir::pto::CmoCacheInvalidOp>(op)) {
+        if (cmo.getAddr())
+          needsGlobalTensorDataHelper = true;
+      }
+      if (auto init = dyn_cast<mlir::pto::InitializeL2G2LPipeOp>(op)) {
+        if (isa<mlir::pto::TensorViewType>(init.getGmAddr().getType()))
+          needsGlobalTensorDataHelper = true;
+      }
+      if (isa<mlir::pto::PartitionViewOp>(op))
+        needsGlobalTensorDataHelper = true;
+    });
 
-		    // 1. 插入头文件
-	    auto loc = mop->getLoc();
-	    OpBuilder builder(ctx);
-	    builder.setInsertionPointToStart(mop.getBody());
-	    builder.create<emitc::IncludeOp>(
-	        loc, "pto/pto-inst.hpp", /*is_standard_include=*/false);
-	    builder.create<emitc::VerbatimOp>(
-	        loc, builder.getStringAttr("using namespace pto;"));
+    auto loc = mop->getLoc();
+    OpBuilder builder(ctx);
+    builder.setInsertionPointToStart(mop.getBody());
+    if (needsTPrintInclude) {
+      // CANN 9.1 asc_printf.h defines a global conditional helper that can
+      // collide with std::conditional through unqualified lookup. Keep the
+      // workaround scoped to that include.
+      builder.create<emitc::IncludeOp>(
+          loc, "cstdint", /*is_standard_include=*/true);
+      builder.create<emitc::IncludeOp>(
+          loc, "type_traits", /*is_standard_include=*/true);
+      builder.create<emitc::VerbatimOp>(
+          loc, builder.getStringAttr(
+                   "#define conditional PTOAS_ASC_PRINTF_CONDITIONAL"));
+      builder.create<emitc::IncludeOp>(
+          loc, "utils/debug/asc_printf.h",
+          /*is_standard_include=*/false);
+      builder.create<emitc::VerbatimOp>(
+          loc, builder.getStringAttr("#undef conditional"));
+    }
+    builder.create<emitc::IncludeOp>(
+        loc, "pto/pto-inst.hpp", /*is_standard_include=*/false);
+    if (needsTPrintInclude) {
+      builder.create<emitc::VerbatimOp>(
+          loc, builder.getStringAttr(R"cpp(namespace cce {
+template <class... Args>
+AICORE inline void printf(const __gm__ char *fmt, Args &&...args) {
+  __asc_aicore::printf(fmt, args...);
+}
+})cpp"));
+      builder.create<emitc::IncludeOp>(
+          loc,
+          targetArch == PTOArch::A5 ? "pto/npu/a5/TPrint.hpp"
+                                    : "pto/npu/a2a3/TPrint.hpp",
+          /*is_standard_include=*/false);
+      builder.create<emitc::VerbatimOp>(
+          loc, builder.getStringAttr(R"cpp(#if !defined(_DEBUG) && !defined(__CPU_SIM)
+template <pto::PrintFormat Format = pto::PrintFormat::Width8_Precision4,
+          typename TileData>
+AICORE inline void TPRINT(TileData &src) {
+  TPRINT_IMPL<Format>(src);
+}
+
+template <pto::PrintFormat Format = pto::PrintFormat::Width8_Precision4,
+          typename TileData, typename GlobalData>
+AICORE inline void TPRINT(TileData &src, GlobalData &tmp) {
+  TPRINT_IMPL<Format>(src, tmp);
+}
+#endif
+)cpp"));
+    }
+    builder.create<emitc::VerbatimOp>(
+        loc, builder.getStringAttr("using namespace pto;"));
 
         // Emit a C++ definition for every !pto.struct used in the module, in
         // dependency order (nested structs first) so there is no

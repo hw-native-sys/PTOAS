@@ -191,6 +191,20 @@ def _current_target_arch():
     return getattr(current_module_spec, "target_arch", None)
 
 
+def _current_backend():
+    try:
+        from ._tracing.active import current_session
+        session = current_session()
+    except Exception:
+        return None
+    if session is None:
+        return None
+    current_module_spec = getattr(
+        session, "current_function_module_spec", session.module_spec
+    )
+    return getattr(current_module_spec, "backend", None)
+
+
 def _require_target_arch(surface: str, allowed: set[str]):
     target = _current_target_arch()
     if target is None:
@@ -3629,6 +3643,54 @@ def _tile_numel(shape, *, context: str):
     return numel
 
 
+_PRINT_FORMAT_ALIASES = {
+    "width8_precision4": "Width8_Precision4",
+    "width8_precision2": "Width8_Precision2",
+    "width10_precision6": "Width10_Precision6",
+    "Width8_Precision4": "Width8_Precision4",
+    "Width8_Precision2": "Width8_Precision2",
+    "Width10_Precision6": "Width10_Precision6",
+}
+
+
+def _coerce_print_format(print_format):
+    if print_format is None:
+        return None
+    if isinstance(print_format, Attribute):
+        return print_format
+    if isinstance(print_format, str):
+        enum_name = _PRINT_FORMAT_ALIASES.get(print_format)
+        if enum_name is None:
+            expected = ", ".join(sorted(_PRINT_FORMAT_ALIASES))
+            raise ValueError(f"pto.tile.print(print_format=...) expected one of: {expected}")
+        print_format = getattr(_pto.PrintFormat, enum_name)
+    return _pto.PrintFormatAttr.get(print_format)
+
+
+def tprint(src, *, tmp=None, print_format=None):
+    """``pto.tprint ins(src, tmp?)`` -- device-side debug print of a tile.
+
+    Pure side effect (``cce::printf``, no numeric result): a Vec tile prints
+    directly, while an Acc tile may pass a scratch GlobalTensor ``tmp`` to stage
+    the copy to GM. ``print_format`` requires ``tmp`` and accepts
+    ``"width8_precision4"``, ``"width8_precision2"``,
+    ``"width10_precision6"``, or ``pto.PrintFormat``.
+    """
+    backend = _current_backend()
+    if backend == "vpto":
+        raise ValueError(
+            "pto.tile.print is only supported by the EmitC backend; "
+            "VPTO lowering for TPRINT is not implemented"
+        )
+    if print_format is not None and tmp is None:
+        raise ValueError("pto.tile.print(print_format=...) requires tmp")
+    _pto.tprint(
+        unwrap_surface_value(src),
+        tmp=None if tmp is None else unwrap_surface_value(tmp),
+        print_format=_coerce_print_format(print_format),
+    )
+
+
 def treshape(src, *, shape, dtype=None, blayout=None):
     """``pto.treshape ins(src) -> result``."""
     src_value = unwrap_surface_value(src)
@@ -6741,7 +6803,7 @@ __all__ = [
     "trowsum", "trowmax", "trowmin", "trowprod", "trowargmax", "trowargmin",
     "tcolsum", "tcolmax", "tcolmin", "tcolprod", "tcolargmax", "tcolargmin",
     "tcmp", "tcmps",
-    "texpands", "treshape", "trowexpand", "tcolexpand",
+    "texpands", "tprint", "treshape", "trowexpand", "tcolexpand",
     "trowexpandadd", "trowexpandsub", "trowexpandmul", "trowexpanddiv", "trowexpandmax", "trowexpandmin", "trowexpandexpdif",
     "tcolexpandadd", "tcolexpandsub", "tcolexpandmul", "tcolexpanddiv", "tcolexpandmax", "tcolexpandmin", "tcolexpandexpdif",
     "tsort32", "tmrgsort", "tgather", "tscatter",

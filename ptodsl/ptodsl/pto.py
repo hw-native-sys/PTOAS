@@ -73,6 +73,7 @@ from ._surface_types import (   # noqa: F401
     RecipPrecision,
     RsqrtPrecision,
     SqrtPrecision,
+    PrintFormat,
     TensorView,
     PartitionTensorView,
     Tile,

@@ -12885,10 +12885,12 @@ void mlir::pto::TPrintOp::print(OpAsmPrinter &p) {
 mlir::LogicalResult mlir::pto::TPrintOp::verify() {
   auto srcType = getSrc().getType();
   Value tmp = getTPrintTmpIfPresent(*this);
+
   auto printFormatAttr =
       dyn_cast_or_null<pto::PrintFormatAttr>(getProperties().printFormat);
   if (printFormatAttr && !tmp)
     return emitOpError() << "expects printFormat only when tmp is present";
+
   if (auto tb = mlir::dyn_cast<mlir::pto::TileBufType>(srcType)) {
     auto elem = tb.getElementType();
     if (!(elem.isF16() || elem.isF32() ||

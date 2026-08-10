@@ -105,6 +105,8 @@ SqrtPrecision = _pto_mod.SqrtPrecision
 SqrtPrecisionAttr = _pto_mod.SqrtPrecisionAttr
 FmodPrecision = _pto_mod.FmodPrecision
 FmodPrecisionAttr = _pto_mod.FmodPrecisionAttr
+PrintFormat = _pto_mod.PrintFormat
+PrintFormatAttr = _pto_mod.PrintFormatAttr
 SaturationMode = _pto_mod.SaturationMode
 SaturationModeAttr = _pto_mod.SaturationModeAttr
 CmpMode = _pto_mod.CmpMode
@@ -284,6 +286,8 @@ __all__ = [
     "SqrtPrecisionAttr",
     "FmodPrecision",
     "FmodPrecisionAttr",
+    "PrintFormat",
+    "PrintFormatAttr",
     "SaturationMode",
     "SaturationModeAttr",
     "CmpMode",

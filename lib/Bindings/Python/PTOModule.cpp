@@ -213,6 +213,11 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
     .value("Default", mlir::pto::FmodPrecision::Default)
     .value("HighPrecision", mlir::pto::FmodPrecision::HighPrecision);
 
+    py::enum_<mlir::pto::PrintFormat>(m, "PrintFormat")
+    .value("Width8_Precision4", mlir::pto::PrintFormat::Width8_Precision4)
+    .value("Width8_Precision2", mlir::pto::PrintFormat::Width8_Precision2)
+    .value("Width10_Precision6", mlir::pto::PrintFormat::Width10_Precision6);
+
     py::enum_<mlir::pto::SaturationMode>(m, "SaturationMode")
     .value("ON", mlir::pto::SaturationMode::ON)
     .value("OFF", mlir::pto::SaturationMode::OFF);
@@ -578,6 +583,10 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                     mlirPTOAttrIsAFmodPrecisionAttr,
                     mlirPTOFmodPrecisionAttrGet,
                     mlirPTOFmodPrecisionAttrGetValue);
+    bindPTOEnumAttr(m, "PrintFormatAttr", "PrintFormat",
+                    mlirPTOAttrIsAPrintFormatAttr,
+                    mlirPTOPrintFormatAttrGet,
+                    mlirPTOPrintFormatAttrGetValue);
 
     mlir_attribute_subclass(
         m, "SaturationModeAttr",

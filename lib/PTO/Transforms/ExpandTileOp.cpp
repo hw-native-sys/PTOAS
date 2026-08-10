@@ -1174,6 +1174,21 @@ void ExpandTileOpPass::runOnOperation() {
   ModuleOp mod = getOperation();
   MLIRContext *ctx = &getContext();
 
+  bool isVPTOBackend = false;
+  if (auto backend = mod->getAttrOfType<StringAttr>("pto.backend"))
+    isVPTOBackend = backend.getValue() == "vpto";
+  if (isVPTOBackend) {
+    WalkResult unsupportedTPrint = mod.walk([&](pto::TPrintOp op) {
+      op.emitError("ExpandTileOp: pto.tprint is only supported by the "
+                   "EmitC backend; VPTO lowering for TPRINT is not implemented");
+      return WalkResult::interrupt();
+    });
+    if (unsupportedTPrint.wasInterrupted()) {
+      signalPassFailure();
+      return;
+    }
+  }
+
   bool hasExpandableOps = false;
   mod.walk([&](Operation *op) {
     if (pto::isTileLibExpandableOp(op)) {

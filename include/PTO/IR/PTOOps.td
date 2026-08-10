@@ -6923,7 +6923,8 @@ def TPrintOp: PTO_TOp<"tprint", [
 ]> {
   let summary = "TPRINT: Print the contents of a Tile or GlobalTensor for debugging purposes directly from device code.";
   let description = [{
-    pto-isa overloads support `TPRINT(src)` and `TPRINT<Format>(src, tmp)`.
+    pto-isa debug wrappers support `TPRINT(src)` and
+    `TPRINT<Format>(src, tmp)`.
     The optional tmp operand is used when printing Mat/Acc tiles through a
     scratch GlobalTensor, while Vec tiles and GlobalTensors can be printed
     without tmp.
@@ -6941,7 +6942,7 @@ def TPrintOp: PTO_TOp<"tprint", [
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
  }
 

@@ -679,6 +679,34 @@ def tile_surface_compute_probe():
 
 
 @pto.jit(target="a5")
+def tile_print_vpto_backend_probe():
+    src = pto.alloc_tile(shape=[1, 16], dtype=pto.f32)
+    pto.tile.print(src)
+
+
+@pto.jit(target="a5", backend="emitc")
+def tile_print_emitc_backend_probe():
+    src = pto.alloc_tile(shape=[1, 16], dtype=pto.f32)
+    pto.tile.print(src)
+
+
+@pto.jit(target="a5", backend="emitc")
+def tile_print_format_emitc_backend_probe(tmp_ptr: pto.ptr(pto.f32, "gm")):
+    src = pto.alloc_tile(shape=[1, 16], dtype=pto.f32)
+    tmp_view = pto.make_tensor_view(tmp_ptr, shape=[1, 16], strides=[16, 1])
+    tmp = pto.partition_view(tmp_view, offsets=[0, 0], sizes=[1, 16])
+    pto.tile.print(src, tmp=tmp, print_format="width8_precision2")
+
+
+@pto.jit(target="a5", backend="emitc")
+def tile_print_tmp_format_emitc_backend_probe(tmp_ptr: pto.ptr(pto.f32, "gm")):
+    src = pto.alloc_tile(shape=[1, 16], dtype=pto.f32)
+    tmp_view = pto.make_tensor_view(tmp_ptr, shape=[1, 16], strides=[16, 1])
+    tmp = pto.partition_view(tmp_view, offsets=[0, 0], sizes=[1, 16])
+    pto.tile.print(src, tmp=tmp, print_format="width10_precision6")
+
+
+@pto.jit(target="a5")
 def tile_surface_window_matmul_probe():
     src_mat = pto.alloc_tile(
         shape=[64, 64],
@@ -4819,6 +4847,7 @@ def main() -> None:
         ),
         ("explicit-level3-container", host_vec_copy_explicit_addr.compile(), None),
         ("same-backend-multi-child-container", kernel_module_compiled, None),
+        ("single-emitc-container", host_vec_copy_emitc.compile(), None),
         ("mixed-backend-container", emitc_entry_calls_vpto_kernel_module_probe.compile(), None),
         ("source-auto", source_native_build_compiled, None),
         ("source-explicit", source_explicit_native_build_compiled, None),
@@ -4841,7 +4870,15 @@ def main() -> None:
                 manifest_path=cache_dir / "manifest.json",
             )
 
-        def fake_run_ptoas(mlir_path, kernel_object, *, target_arch, insert_sync=None, backend=None, pto_level=None):
+        def fake_run_ptoas(
+            mlir_path,
+            kernel_object,
+            *,
+            target_arch,
+            insert_sync=None,
+            backend=None,
+            pto_level=None,
+        ):
             native_build_observations.append(
                 {
                     "mlir_path": mlir_path,
@@ -4853,7 +4890,7 @@ def main() -> None:
                     "mlir_text": mlir_path.read_text(encoding="utf-8"),
                 }
             )
-            kernel_object.write_text("fake fatobj\n", encoding="utf-8")
+            kernel_object.write_text("fake kernel object\n", encoding="utf-8")
 
         def fake_compile_launch_cpp(
             launch_cpp,
@@ -4986,6 +5023,10 @@ def main() -> None:
             "native build should keep the default insert-sync policy unset when _run_ptoas is called directly",
         )
         expect(
+            "--fatobj" not in ptoas_cmd,
+            "native build should use the existing native object path and not request ptoas fatobj emission by default",
+        )
+        expect(
             "--enable-tile-op-expand" in ptoas_cmd and str(mlir_path) in ptoas_cmd and str(kernel_object) in ptoas_cmd,
             "native build should still pass the shared PTOAS compile inputs and output path",
         )
@@ -5000,6 +5041,10 @@ def main() -> None:
                 insert_sync=True,
             )
         expect(len(ptoas_cmds) == 1, "native build should issue exactly one ptoas command when insert_sync is forced on")
+        expect(
+            "--fatobj" not in ptoas_cmds[0],
+            "native build should not pass --fatobj for the existing native object path",
+        )
         expect(
             "--enable-insert-sync" in ptoas_cmds[0],
             "native build should pass --enable-insert-sync when the compiled module explicitly requests it",
@@ -5128,6 +5173,38 @@ def main() -> None:
     expect(tile_sort_gather_text.count("pto.tgather") == 2, "tile gather wrappers should lower to pto.tgather")
     expect("#pto.mask_pattern<P0101>" in tile_sort_gather_text, "pto.tile.gather should preserve P0101")
     expect("#pto.mask_pattern<P1010>" in tile_sort_gather_text, "pto.tgather should preserve P1010")
+    expect_raises(
+        ValueError,
+        lambda: tile_print_vpto_backend_probe.compile().mlir_text(),
+        "pto.tile.print is only supported by the EmitC backend",
+    )
+    tile_print_emitc_text = tile_print_emitc_backend_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        tile_print_emitc_text,
+        "tile print EmitC backend specialization",
+    )
+    expect(
+        "pto.tprint" in tile_print_emitc_text,
+        "pto.tile.print should lower to pto.tprint on the EmitC backend",
+    )
+    tile_print_format_text = tile_print_format_emitc_backend_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        tile_print_format_text,
+        "tile print format EmitC backend specialization",
+    )
+    expect(
+        "printFormat = #pto<print_format width8_precision2>" in tile_print_format_text,
+        "pto.tile.print(tmp=..., print_format='width8_precision2') should preserve the print format attribute",
+    )
+    tile_print_tmp_format_text = tile_print_tmp_format_emitc_backend_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        tile_print_tmp_format_text,
+        "tile print tmp format EmitC backend specialization",
+    )
+    expect(
+        "printFormat = #pto<print_format width10_precision6>" in tile_print_tmp_format_text,
+        "pto.tile.print(tmp=..., print_format='width10_precision6') should preserve the print format attribute",
+    )
     tile_ci_text = tile_ci_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(tile_ci_text, "tile ci surface specialization")
     expect(tile_ci_text.count("pto.tci") == 2, "pto.tile.ci should lower to pto.tci")

@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
+
+module {
+  func.func @tprint_after_tload(%src: !pto.ptr<f32>) attributes {pto.entry} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16 valid_col = %c16 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>)
+              outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tprint ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void tprint_after_tload(
+// CHECK: TLOAD(
+// CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+// CHECK-NOT: set_flag(PIPE_MTE2, PIPE_V
+// CHECK-NOT: wait_flag(PIPE_MTE2, PIPE_V
+// CHECK: TPRINT(

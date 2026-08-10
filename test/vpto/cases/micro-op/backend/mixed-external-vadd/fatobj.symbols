@@ -1,0 +1,5 @@
++ external_vadd.vector|external_vadd_mix_aiv
++ mixed_external_vadd_kernel
+- __ptoas_abi_
+- external_vadd.vector.vector
+- external_vadd.cube.cube

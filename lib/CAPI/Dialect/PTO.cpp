@@ -424,6 +424,7 @@ DEFINE_PTO_ENUM_ATTR_CAPI(RemPrecision, RemPrecisionAttr, RemPrecision)
 DEFINE_PTO_ENUM_ATTR_CAPI(RsqrtPrecision, RsqrtPrecisionAttr, RsqrtPrecision)
 DEFINE_PTO_ENUM_ATTR_CAPI(SqrtPrecision, SqrtPrecisionAttr, SqrtPrecision)
 DEFINE_PTO_ENUM_ATTR_CAPI(FmodPrecision, FmodPrecisionAttr, FmodPrecision)
+DEFINE_PTO_ENUM_ATTR_CAPI(PrintFormat, PrintFormatAttr, PrintFormat)
 
 #undef DEFINE_PTO_ENUM_ATTR_CAPI
 

@@ -412,3 +412,35 @@ scratch = pto.alloc_buffer((32,), pto.f32)
 | `dtype` | Element type of the returned buffer, such as `pto.f32` or `pto.i32`. |
 
 The returned value wraps the buffer address together with its allocation metadata: shape, dtype, element type, element count, and byte size.
+
+## 4.11 Tile Debug Print
+
+`pto.tile.print` emits a device-side debug print of a tile's contents through the PTO-ISA `TPRINT` wrapper. It is a pure side effect: it produces no value and writes nothing back to a tile, so the call result is `None` and the op is not fusible. Use it only for debugging. It is currently supported only by the EmitC backend, where it lowers directly to a native `TPRINT` device call and is skipped by tile-op expansion.
+
+#### `pto.tile.print(src: Tile, *, tmp: View | None = None, print_format: str | pto.PrintFormat | None = None) -> None`
+
+**Description**: Prints `src` from device code. A Unified-Buffer (`vec`) tile prints directly; an accumulator tile may pass a scratch GlobalTensor `tmp` to stage the copy to GM before printing. `print_format` maps to the C++ `TPRINT<Format>(...)` template argument and requires `tmp`. Supported string values are `"width8_precision4"` (default), `"width8_precision2"`, and `"width10_precision6"`.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | `Tile` | Tile to print. Printable element types are `f32`, `f16`, `i32`, `i16`, `i8` |
+| `tmp` | `View` or `None` | Optional scratch GlobalTensor view (Acc-tile path). Default `None` — direct Vec print |
+| `print_format` | `str`, `pto.PrintFormat`, or `None` | Optional print format used with `tmp`. Default `None` uses `width8_precision4` |
+
+**Constraints**:
+
+- **Vec tiles print without `tmp`**: a tile printed without `tmp` must live in the `vec` (UB) address space.
+- **`tmp` is for formatted printing and Mat/Acc staging**: `print_format` requires `tmp`; on A5, `tmp`-based printing is supported for `vec`/`acc` tiles (Mat-tile printing with `tmp` is A2/A3 only).
+- **Backend support**: supported by the EmitC backend. VPTO lowering for `TPRINT` is not implemented.
+- **Hardware mapping**: executes on the **Scalar pipeline** (`PIPE_S`).
+
+**Example** — load a tile from GM and print it for debugging:
+
+```python
+src_view = pto.make_tensor_view(src_ptr, shape=[rows, cols], strides=[cols, 1])
+src_tile = pto.alloc_tile(shape=[rows, cols], dtype=pto.f32)
+pto.tile.load(src_view, src_tile)
+pto.tile.print(src_tile)
+```

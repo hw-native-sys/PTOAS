@@ -1,4 +1,4 @@
-// RUN: ptoas %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
 
 module {
   func.func @print_kernel() attributes {pto.entry} {
@@ -12,6 +12,16 @@ module {
   }
 }
 
+// CHECK: #include <cstdint>
+// CHECK: #include <type_traits>
+// CHECK: #define conditional PTOAS_ASC_PRINTF_CONDITIONAL
+// CHECK: #include "utils/debug/asc_printf.h"
+// CHECK: #undef conditional
+// CHECK: #include "pto/pto-inst.hpp"
+// CHECK: namespace cce {
+// CHECK: AICORE inline void printf(const __gm__ char *fmt, Args &&...args) {
+// CHECK: __asc_aicore::printf(fmt, args...);
+// CHECK: #include "pto/npu/a5/TPrint.hpp"
 // CHECK-LABEL: __global__ AICORE void print_kernel() {
 // CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[TILE_STORAGE:[_A-Za-z][_A-Za-z0-9]*]]
 // CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[TILE:[_A-Za-z][_A-Za-z0-9]*]] = [[TILE_STORAGE]];

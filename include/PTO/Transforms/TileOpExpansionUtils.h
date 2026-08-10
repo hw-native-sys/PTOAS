@@ -19,7 +19,7 @@ namespace mlir::pto {
 inline bool isTileLibExpandableOp(Operation *op) {
   if (!op || !isa<TileOpInterface>(op))
     return false;
-  return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
+  return !isa<TReshapeOp, TPrintOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
               TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
               TFreeFromAicOp, TFreeFromAivOp>(op);
 }

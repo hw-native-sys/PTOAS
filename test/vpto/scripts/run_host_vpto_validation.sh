@@ -332,6 +332,74 @@ run_ptodsl_case() {
   log "[$case_name] output dir: ${out_dir}"
 }
 
+verify_fatobj_symbols() {
+  local case_name="$1"
+  local case_dir="$2"
+  local kernel_fatobj="$3"
+  local symbol_spec="${case_dir}/fatobj.symbols"
+
+  [[ -f "${symbol_spec}" ]] || return 0
+
+  local nm_bin=""
+  if command -v llvm-nm >/dev/null 2>&1; then
+    nm_bin="$(command -v llvm-nm)"
+  elif command -v nm >/dev/null 2>&1; then
+    nm_bin="$(command -v nm)"
+  else
+    die "fatobj symbol validation requested for ${case_name}, but neither llvm-nm nor nm was found"
+  fi
+
+  local symbols
+  symbols="$("${nm_bin}" "${kernel_fatobj}" 2>&1)" || \
+    die "failed to inspect fatobj symbols for ${case_name}: ${symbols}"
+
+  local line op symbol
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "${line}" ]] || continue
+
+    op="${line:0:1}"
+    symbol="${line:1}"
+    symbol="${symbol#"${symbol%%[![:space:]]*}"}"
+    symbol="${symbol%"${symbol##*[![:space:]]}"}"
+    [[ -n "${symbol}" ]] || die "empty fatobj symbol rule in ${symbol_spec}: ${line}"
+
+    IFS='|' read -r -a alternatives <<< "${symbol}"
+    case "${op}" in
+      +)
+        local found=0
+        local alternative
+        for alternative in "${alternatives[@]}"; do
+          alternative="${alternative#"${alternative%%[![:space:]]*}"}"
+          alternative="${alternative%"${alternative##*[![:space:]]}"}"
+          if [[ "${symbols}" == *"${alternative}"* ]]; then
+            found=1
+            break
+          fi
+        done
+        [[ "${found}" == "1" ]] ||
+          die "${case_name} fatobj is missing expected symbol: ${symbol}"
+        ;;
+      -)
+        local alternative
+        for alternative in "${alternatives[@]}"; do
+          alternative="${alternative#"${alternative%%[![:space:]]*}"}"
+          alternative="${alternative%"${alternative##*[![:space:]]}"}"
+          [[ "${symbols}" != *"${alternative}"* ]] ||
+            die "${case_name} fatobj contains forbidden symbol: ${alternative}"
+        done
+        ;;
+      *)
+        die "invalid fatobj symbol rule in ${symbol_spec}: ${line}"
+        ;;
+    esac
+  done < "${symbol_spec}"
+
+  log "[$case_name] fatobj symbol checks passed"
+}
+
 build_one_impl() {
   local case_name="$1"
   local case_path="${CASES_ROOT}/${case_name}"
@@ -365,6 +433,7 @@ build_one_impl() {
   log "[$case_name] step 1/4: emit kernel fatobj"
   "${PTOAS_BIN}" "${ptoas_args[@]}" \
     "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
+  verify_fatobj_symbols "${case_name}" "${case_dir}" "${kernel_fatobj}"
 
   log "[$case_name] step 2/4: build launch object"
   build_launch_object "${case_dir}" "${launch_obj}"

@@ -5,10 +5,10 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
 
 module {
-  func.func @tprint_format_requires_tmp() attributes {pto.entry} {
+  func.func @tprint_format_without_tmp() attributes {pto.entry} {
     %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     pto.tprint ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
               {printFormat = #pto<print_format width8_precision2>}
@@ -16,4 +16,4 @@ module {
   }
 }
 
-// CHECK: error: 'pto.tprint' op expects printFormat only when tmp is present
+// CHECK: 'pto.tprint' op expects printFormat only when tmp is present
