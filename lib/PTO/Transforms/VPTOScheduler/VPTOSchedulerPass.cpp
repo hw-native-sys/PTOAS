@@ -54,9 +54,9 @@ static void printPressureVector(llvm::raw_ostream &os, StringRef label,
 static void printRegionReport(llvm::raw_ostream &os,
                               const VPTOSchedRegion &region, VPTOSchedDAG &dag,
                               const VPTOSchedModel &model) {
-  VPTOSchedBoundary topBoundary(dag, VPTOSchedDirection::Top);
+  VPTOSchedBoundary topBoundary(dag, model, VPTOSchedDirection::Top);
   unsigned topReady = topBoundary.getAvailable().size();
-  VPTOSchedBoundary bottomBoundary(dag, VPTOSchedDirection::Bottom);
+  VPTOSchedBoundary bottomBoundary(dag, model, VPTOSchedDirection::Bottom);
   unsigned bottomReady = bottomBoundary.getAvailable().size();
 
   unsigned knownClasses = 0;
@@ -99,9 +99,9 @@ static void printRegionReport(llvm::raw_ostream &os,
        << '\n';
   }
 
-  VPTOResourceTracker resourceTracker(model);
-  VPTORegPressureTracker pressureTracker(model, dag, VPTOSchedDirection::Top);
-  VPTONullHazardRecognizer hazardRecognizer;
+  VPTOResourceTracker &resourceTracker = topBoundary.getResourceTracker();
+  VPTORegPressureTracker &pressureTracker = topBoundary.getPressureTracker();
+  VPTOHazardRecognizer &hazardRecognizer = topBoundary.getHazardRecognizer();
   unsigned requestedCycle = 0;
   unsigned lastTimelineCycle = 0;
   for (const std::unique_ptr<VPTOSUnit> &unit : dag.getUnits()) {
@@ -164,6 +164,14 @@ static void printCoverage(llvm::raw_ostream &os,
      << " unsupported=" << coverage.getCount(VPTOSchedulingClass::Unsupported)
      << '\n';
 
+  SmallVector<std::pair<std::string, unsigned>> boundaryReasons;
+  for (const auto &entry : coverage.boundaryReasons)
+    boundaryReasons.emplace_back(entry.getKey().str(), entry.getValue());
+  llvm::sort(boundaryReasons);
+  for (const auto &[reason, count] : boundaryReasons)
+    os << "vpto-scheduler: boundary-reason=" << reason << " count=" << count
+       << '\n';
+
   SmallVector<std::pair<std::string, unsigned>> unsupported;
   for (const auto &entry : coverage.unsupportedOps)
     unsupported.emplace_back(entry.getKey().str(), entry.getValue());
@@ -181,8 +189,30 @@ static void printCoverage(llvm::raw_ostream &os,
        << '\n';
 }
 
+static void
+printRegisteredCoverage(llvm::raw_ostream &os,
+                        const VPTORegisteredSchedulingCoverage &coverage) {
+  os << "vpto-scheduler: registration-coverage registered="
+     << coverage.registered << " schedulable=" << coverage.schedulable
+     << " boundary=" << coverage.boundary
+     << " unclassified=" << coverage.unclassifiedOps.size() << '\n';
+  for (StringRef name : coverage.boundaryOps)
+    os << "vpto-scheduler: registered-boundary-op=" << name
+       << " reason=explicit-scheduling-boundary\n";
+  for (StringRef name : coverage.unclassifiedOps)
+    os << "vpto-scheduler: registered-unclassified-op=" << name << '\n';
+}
+
 static void analyzeFunction(func::FuncOp func, llvm::raw_ostream &os,
                             const VPTOSchedModel &model, StringRef mode) {
+  SmallVector<Operation *> vecScopes;
+  func.walk([&](Operation *op) {
+    if (isa<VecScopeOp, StrictVecScopeOp>(op))
+      vecScopes.push_back(op);
+  });
+  if (vecScopes.empty())
+    return;
+
   const VPTOSchedMachineModel &machine = model.getMachineModel();
   os << "vpto-scheduler: function=" << func.getSymName() << " mode=" << mode
      << " target=" << machine.target << " model=" << machine.version
@@ -208,14 +238,25 @@ static void analyzeFunction(func::FuncOp func, llvm::raw_ostream &os,
         }
         printRegionReport(os, region, **dag, model);
       }
-      for (Operation &op : block)
+      for (Operation &op : block) {
+        if (isa<VecScopeOp, StrictVecScopeOp>(op))
+          continue;
         for (Region &nestedRegion : op.getRegions())
           analyzeRegion(nestedRegion);
+      }
     }
   };
-  for (Region &region : func->getRegions())
-    analyzeRegion(region);
+  for (Operation *vecScope : vecScopes)
+    analyzeRegion(vecScope->getRegion(0));
   printCoverage(os, coverage);
+}
+
+static StringAttr findTargetArchitecture(ModuleOp module) {
+  for (ModuleOp current = module; current;
+       current = current->getParentOfType<ModuleOp>())
+    if (auto target = current->getAttrOfType<StringAttr>("pto.target_arch"))
+      return target;
+  return {};
 }
 
 struct VPTOSchedulerPass
@@ -229,24 +270,28 @@ struct VPTOSchedulerPass
       getOperation().emitError("unknown VPTO scheduler mode '") << mode << "'";
       return signalPassFailure();
     }
-    if (auto target =
-            getOperation()->getAttrOfType<StringAttr>("pto.target_arch");
-        target && target.getValue() != "a5") {
+    StringAttr target = findTargetArchitecture(getOperation());
+    if (!target) {
+      getOperation().emitError(
+          "VPTO scheduler requires target architecture 'a5', but neither "
+          "this module nor an enclosing module defines 'pto.target_arch'");
+      return signalPassFailure();
+    }
+    if (target.getValue() != "a5") {
       getOperation().emitError("VPTO scheduler requires target architecture "
                                "'a5', but module targets '")
           << target.getValue() << "'";
       return signalPassFailure();
     }
-    if (auto kernelKind =
-            getOperation()->getAttrOfType<FunctionKernelKindAttr>(
-                FunctionKernelKindAttr::name);
-        kernelKind &&
-        kernelKind.getKernelKind() != FunctionKernelKind::Vector)
+    if (auto kernelKind = getOperation()->getAttrOfType<FunctionKernelKindAttr>(
+            FunctionKernelKindAttr::name);
+        kernelKind && kernelKind.getKernelKind() != FunctionKernelKind::Vector)
       return;
 
     VPTOGenericA5SchedModel model;
     std::string report;
     llvm::raw_string_ostream os(report);
+    printRegisteredCoverage(os, auditRegisteredVPTOSchedulingOps(getContext()));
     getOperation().walk(
         [&](func::FuncOp func) { analyzeFunction(func, os, model, mode); });
     os.flush();

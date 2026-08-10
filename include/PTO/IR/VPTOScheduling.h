@@ -21,7 +21,12 @@
 
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+
+#include <cstdint>
+#include <optional>
+#include <string>
 
 namespace mlir::pto {
 
@@ -45,15 +50,23 @@ enum class VPTOSchedulingEffectKind {
   Unknown,
 };
 
+/// Completeness of an operation's ordinary memory semantics. `Unknown` means
+/// the operation lacks a complete declaration and must receive a conservative
+/// memory access; it does not describe an access with an unknown address.
+enum class VPTOMemoryBehavior {
+  None,
+  Explicit,
+  Unknown,
+};
+
 /// One op-local effect which is not represented by ordinary SSA def-use or by
 /// MemoryEffectOpInterface.  `resource` names an implicit state domain; `value`
 /// optionally carries a dynamic event/buffer/address identity, and `attribute`
 /// carries its static identity.
 struct VPTOSchedulingEffect {
   VPTOSchedulingEffect() = default;
-  VPTOSchedulingEffect(VPTOSchedulingEffectKind kind,
-                       llvm::StringRef resource, Value value = {},
-                       Attribute attribute = {})
+  VPTOSchedulingEffect(VPTOSchedulingEffectKind kind, llvm::StringRef resource,
+                       Value value = {}, Attribute attribute = {})
       : kind(kind), resource(resource), value(value), attribute(attribute) {}
 
   VPTOSchedulingEffectKind kind = VPTOSchedulingEffectKind::Unknown;
@@ -62,6 +75,47 @@ struct VPTOSchedulingEffect {
   Attribute attribute;
 };
 
+/// One normalized memory access owned by an operation. The operation semantic
+/// layer describes local access facts; alias roots and conflicts between two
+/// accesses are derived later by the scheduling DAG builder.
+struct VPTOMemoryAccess {
+  Value address;
+  Attribute addressSpace;
+  std::optional<int64_t> byteOffset;
+  std::optional<int64_t> byteSize;
+  bool reads = false;
+  bool writes = false;
+  bool ordered = false;
+  bool unknown = false;
+};
+
+/// Stable, operation-local input consumed by scheduling analyses. Clients must
+/// not recover operation-specific scheduling facts from names or operand
+/// positions after this structure has been produced.
+struct VPTOSchedulingSemantics {
+  VPTOSchedulingClass schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
+  bool classificationKnown = false;
+  SmallVector<VPTOSchedulingEffect> effects;
+  VPTOMemoryBehavior memoryBehavior = VPTOMemoryBehavior::Unknown;
+  SmallVector<VPTOMemoryAccess> memoryAccesses;
+};
+
+/// Input-independent audit of every registered PTO operation carrying the
+/// emission scheduling interface.
+struct VPTORegisteredSchedulingCoverage {
+  unsigned registered = 0;
+  unsigned schedulable = 0;
+  unsigned boundary = 0;
+  SmallVector<std::string> boundaryOps;
+  SmallVector<std::string> unclassifiedOps;
+};
+
+/// Return the normalized semantics for any operation at the VPTO emission
+/// scheduling boundary. Operations implementing VPTOSchedulingOpInterface
+/// provide their semantic record through that interface; other operations are
+/// classified conservatively.
+VPTOSchedulingSemantics getVPTOSchedulingSemantics(Operation *op);
+
 /// Classify an operation at the VPTO emission scheduling boundary.  Unknown or
 /// unsupported operations must be treated as region boundaries by clients.
 VPTOSchedulingClass classifyVPTOSchedulingOp(Operation *op);
@@ -69,9 +123,12 @@ VPTOSchedulingClass classifyVPTOSchedulingOp(Operation *op);
 /// Default implementations used by the scheduling op interface carried by
 /// VPTO micro-op families.  Individual ops can override the interface when a
 /// future target needs more precise semantics.
-VPTOSchedulingClass getDefaultVPTOSchedulingClass(Operation *op);
-void getDefaultVPTOSchedulingEffects(
-    Operation *op, SmallVectorImpl<VPTOSchedulingEffect> &effects);
+VPTOSchedulingSemantics getDefaultVPTOSchedulingSemantics(Operation *op);
+
+/// Audit the complete registered emission-op table without requiring an op to
+/// occur in the input module.
+VPTORegisteredSchedulingCoverage
+auditRegisteredVPTOSchedulingOps(MLIRContext &context);
 
 llvm::StringRef stringifyVPTOSchedulingClass(VPTOSchedulingClass value);
 

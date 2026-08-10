@@ -75,12 +75,15 @@ class VPTOSUnit {
 public:
   VPTOSUnit(unsigned id, unsigned originalIndex, Operation *op)
       : id(id), originalIndex(originalIndex), op(op),
-        schedulingClass(classifyVPTOSchedulingOp(op)) {}
+        semantics(getVPTOSchedulingSemantics(op)) {}
 
   unsigned getId() const { return id; }
   unsigned getOriginalIndex() const { return originalIndex; }
   Operation *getOperation() const { return op; }
-  VPTOSchedulingClass getSchedulingClass() const { return schedulingClass; }
+  VPTOSchedulingClass getSchedulingClass() const {
+    return semantics.schedulingClass;
+  }
+  const VPTOSchedulingSemantics &getSemantics() const { return semantics; }
   ArrayRef<VPTOSchedEdge *> getPredecessors() const { return predecessors; }
   ArrayRef<VPTOSchedEdge *> getSuccessors() const { return successors; }
 
@@ -102,7 +105,7 @@ private:
   unsigned id;
   unsigned originalIndex;
   Operation *op;
-  VPTOSchedulingClass schedulingClass;
+  VPTOSchedulingSemantics semantics;
   SmallVector<VPTOSchedEdge *> predecessors;
   SmallVector<VPTOSchedEdge *> successors;
   unsigned remainingPredecessors = 0;

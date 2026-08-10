@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VPTOSchedRegion.cpp - VPTO scheduling regions ---------------------===//
 
@@ -23,20 +25,21 @@ static unsigned getClassIndex(VPTOSchedulingClass schedulingClass) {
   return static_cast<unsigned>(schedulingClass);
 }
 
-void VPTOSchedulingCoverage::record(
-    Operation *op, VPTOSchedulingClass schedulingClass) {
+void VPTOSchedulingCoverage::record(Operation *op,
+                                    const VPTOSchedulingSemantics &semantics) {
+  VPTOSchedulingClass schedulingClass = semantics.schedulingClass;
   ++classCounts[getClassIndex(schedulingClass)];
   if (op && schedulingClass == VPTOSchedulingClass::Unsupported)
     ++unsupportedOps[op->getName().getStringRef()];
+  if (schedulingClass == VPTOSchedulingClass::SchedulingBoundary)
+    ++boundaryReasons[getVPTOSchedulingBoundaryReason(op)];
   if (op && schedulingClass == VPTOSchedulingClass::SchedulingBoundary &&
-      op->getNumRegions() == 0 &&
-      !op->hasTrait<OpTrait::IsTerminator>() &&
-      isa<VPTOSchedulingOpInterface>(op))
+      !semantics.classificationKnown)
     ++unclassifiedOps[op->getName().getStringRef()];
 }
 
-unsigned VPTOSchedulingCoverage::getCount(
-    VPTOSchedulingClass schedulingClass) const {
+unsigned
+VPTOSchedulingCoverage::getCount(VPTOSchedulingClass schedulingClass) const {
   return classCounts[getClassIndex(schedulingClass)];
 }
 
@@ -56,18 +59,15 @@ std::string mlir::pto::getVPTOSchedulingBoundaryReason(Operation *op) {
   return reason;
 }
 
-SmallVector<VPTOSchedRegion>
-VPTOSchedRegionBuilder::build(Block &block) const {
+SmallVector<VPTOSchedRegion> VPTOSchedRegionBuilder::build(Block &block) const {
   SmallVector<VPTOSchedRegion> regions;
   SmallVector<Operation *> current;
   Operation *precedingBoundary = nullptr;
   std::string precedingReason = "block-start";
 
-  auto flush = [&](Operation *followingBoundary,
-                   StringRef followingReason) {
+  auto flush = [&](Operation *followingBoundary, StringRef followingReason) {
     bool hasSchedulable = llvm::any_of(current, [](Operation *op) {
-      return classifyVPTOSchedulingOp(op) ==
-             VPTOSchedulingClass::Schedulable;
+      return classifyVPTOSchedulingOp(op) == VPTOSchedulingClass::Schedulable;
     });
     if (hasSchedulable) {
       VPTOSchedRegion &region = regions.emplace_back();
@@ -84,9 +84,10 @@ VPTOSchedRegionBuilder::build(Block &block) const {
 
   for (Operation &operation : block) {
     Operation *op = &operation;
-    VPTOSchedulingClass schedulingClass = classifyVPTOSchedulingOp(op);
+    VPTOSchedulingSemantics semantics = getVPTOSchedulingSemantics(op);
+    VPTOSchedulingClass schedulingClass = semantics.schedulingClass;
     if (coverage)
-      coverage->record(op, schedulingClass);
+      coverage->record(op, semantics);
 
     if (schedulingClass == VPTOSchedulingClass::SchedulingBoundary ||
         schedulingClass == VPTOSchedulingClass::Unsupported) {

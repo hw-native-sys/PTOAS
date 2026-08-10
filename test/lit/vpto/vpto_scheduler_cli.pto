@@ -11,6 +11,7 @@
 // RUN: ptoas --vpto-scheduler=analyze --help > /dev/null
 // RUN: ptoas --vpto-scheduler=on --help > /dev/null
 // RUN: not ptoas --vpto-scheduler=invalid %s -o %t 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' 2>&1 | FileCheck %s --check-prefix=MISSING-TARGET
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %S/auto_vecscope_infer_simple.pto -o %t.default.cpp
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=off %S/auto_vecscope_infer_simple.pto -o %t.off.cpp
 // RUN: diff %t.default.cpp %t.off.cpp
@@ -19,6 +20,7 @@
 // HELP: --vpto-scheduler=<value>
 // HELP-SAME: VPTO scheduler mode
 // INVALID: for the --vpto-scheduler option: Cannot find option named 'invalid'!
+// MISSING-TARGET: error: VPTO scheduler requires target architecture 'a5', but neither this module nor an enclosing module defines 'pto.target_arch'
 // PIPELINE: vpto-scheduler: function=auto_vecscope_infer_simple mode=analyze
 // PIPELINE: vpto-scheduler: coverage {{.*}} unsupported=0
 // PIPELINE-NOT: vpto-scheduler: unsupported-op=

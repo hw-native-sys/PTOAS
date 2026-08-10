@@ -11,6 +11,8 @@
 //===- VPTOSchedBoundary.cpp - VPTO scheduling boundary ------------------===//
 
 #include "PTO/Transforms/VPTOScheduler/VPTOSchedBoundary.h"
+#include "PTO/Transforms/VPTOScheduler/VPTORegPressureTracker.h"
+#include "PTO/Transforms/VPTOScheduler/VPTOSchedResourceTracker.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -21,8 +23,22 @@ using namespace mlir;
 using namespace mlir::pto;
 
 VPTOSchedBoundary::VPTOSchedBoundary(VPTOSchedDAG &dag,
+                                     const VPTOSchedModel &model,
                                      VPTOSchedDirection direction)
-    : direction(direction) {
+    : VPTOSchedBoundary(dag, model, direction,
+                        std::make_unique<VPTONullHazardRecognizer>()) {}
+
+VPTOSchedBoundary::VPTOSchedBoundary(
+    VPTOSchedDAG &dag, const VPTOSchedModel &model,
+    VPTOSchedDirection direction,
+    std::unique_ptr<VPTOHazardRecognizer> hazardRecognizer)
+    : direction(direction),
+      resourceTracker(std::make_unique<VPTOResourceTracker>(model)),
+      pressureTracker(
+          std::make_unique<VPTORegPressureTracker>(model, dag, direction)),
+      hazardRecognizer(std::move(hazardRecognizer)) {
+  if (!this->hazardRecognizer)
+    this->hazardRecognizer = std::make_unique<VPTONullHazardRecognizer>();
   dag.resetDependencyCounts();
   for (const std::unique_ptr<VPTOSUnit> &unit : dag.getUnits()) {
     unsigned dependencies = direction == VPTOSchedDirection::Top
@@ -31,6 +47,32 @@ VPTOSchedBoundary::VPTOSchedBoundary(VPTOSchedDAG &dag,
     if (dependencies == 0)
       insertAvailable(unit.get());
   }
+}
+
+VPTOSchedBoundary::~VPTOSchedBoundary() = default;
+
+VPTOResourceTracker &VPTOSchedBoundary::getResourceTracker() {
+  return *resourceTracker;
+}
+
+const VPTOResourceTracker &VPTOSchedBoundary::getResourceTracker() const {
+  return *resourceTracker;
+}
+
+VPTORegPressureTracker &VPTOSchedBoundary::getPressureTracker() {
+  return *pressureTracker;
+}
+
+const VPTORegPressureTracker &VPTOSchedBoundary::getPressureTracker() const {
+  return *pressureTracker;
+}
+
+VPTOHazardRecognizer &VPTOSchedBoundary::getHazardRecognizer() {
+  return *hazardRecognizer;
+}
+
+const VPTOHazardRecognizer &VPTOSchedBoundary::getHazardRecognizer() const {
+  return *hazardRecognizer;
 }
 
 void VPTOSchedBoundary::insertAvailable(VPTOSUnit *unit) {

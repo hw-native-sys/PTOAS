@@ -14,13 +14,37 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
 
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+template <typename... OpTys>
+static bool isOneOf(RegisteredOperationName operation) {
+  return ((operation.getTypeID() == TypeID::get<OpTys>()) || ...);
+}
+
+static bool hasRegisteredSchedulingClass(RegisteredOperationName operation) {
+  if (operation.hasInterface<OpPipeInterface>() ||
+      operation.hasInterface<VectorMicroOpInterface>() ||
+      operation.hasInterface<MteOpInterface>() ||
+      operation.hasInterface<CubeMicroOpInterface>() ||
+      operation.hasInterface<SimtOpInterface>())
+    return true;
+
+  return isOneOf<MemBarOp, DsbOp, FenceBarrierAllOp, SetFlagOp, WaitFlagOp,
+                 SetFlagDynOp, WaitFlagDynOp, GetBufOp, GetBufDynOp, RlsBufOp,
+                 RlsBufDynOp, BarrierOp, GetCtrlOp, SetCtrlOp>(operation);
+}
+
 static std::optional<PIPE> getExecutionPipe(Operation *op) {
   if (auto pipeOp = dyn_cast<OpPipeInterface>(op))
     return pipeOp.getPipe();
@@ -48,19 +72,172 @@ static PipeAttr getBufferSyncPipe(Operation *op, Attribute opType) {
     return {};
   return PipeAttr::get(op->getContext(), pipe);
 }
-} // namespace
 
-VPTOSchedulingClass mlir::pto::getDefaultVPTOSchedulingClass(Operation *op) {
-  if (getExecutionPipe(op))
-    return VPTOSchedulingClass::Schedulable;
-  SmallVector<VPTOSchedulingEffect> effects;
-  getDefaultVPTOSchedulingEffects(op, effects);
-  return effects.empty() ? VPTOSchedulingClass::SchedulingBoundary
-                         : VPTOSchedulingClass::Schedulable;
+static bool isMemoryAddress(Value value) {
+  return value && isa<pto::PtrType, BaseMemRefType>(value.getType());
 }
 
-void mlir::pto::getDefaultVPTOSchedulingEffects(
-    Operation *op, SmallVectorImpl<VPTOSchedulingEffect> &effects) {
+static Attribute getAddressSpace(Value value) {
+  if (auto pointer = dyn_cast<pto::PtrType>(value.getType()))
+    return pointer.getMemorySpace();
+  if (auto memref = dyn_cast<BaseMemRefType>(value.getType()))
+    return memref.getMemorySpace();
+  return {};
+}
+
+static bool isStoreLikeName(StringRef name) {
+  return name == "pto.store" || name == "pto.stg" || name == "pto.st_dev" ||
+         name.starts_with("pto.vst") || name.starts_with("pto.pst");
+}
+
+static std::optional<int64_t> getElementByteSize(Value pointer) {
+  Type elementType;
+  if (auto pointerType = dyn_cast<pto::PtrType>(pointer.getType()))
+    elementType = pointerType.getElementType();
+  else if (auto memrefType = dyn_cast<BaseMemRefType>(pointer.getType()))
+    elementType = memrefType.getElementType();
+  if (!elementType)
+    return std::nullopt;
+
+  int64_t elementCount = 1;
+  if (auto vectorType = dyn_cast<VectorType>(elementType)) {
+    if (vectorType.isScalable())
+      return std::nullopt;
+    elementCount = vectorType.getNumElements();
+    elementType = vectorType.getElementType();
+  }
+  if (!elementType.isIntOrFloat())
+    return std::nullopt;
+  unsigned bitWidth = elementType.getIntOrFloatBitWidth();
+  if (bitWidth == 0 || bitWidth % 8 != 0)
+    return std::nullopt;
+
+  int64_t byteSize;
+  if (llvm::MulOverflow(elementCount, static_cast<int64_t>(bitWidth / 8),
+                        byteSize))
+    return std::nullopt;
+  return byteSize;
+}
+
+static std::optional<int64_t> getConstantOffset(Value offset) {
+  APInt value;
+  if (!matchPattern(offset, m_ConstantInt(&value)) || !value.isSignedIntN(64))
+    return std::nullopt;
+  return value.getSExtValue();
+}
+
+template <typename OpTy>
+static void setStaticIndexedRange(OpTy op, VPTOMemoryAccess &access) {
+  if (access.address != op.getPtr())
+    return;
+  std::optional<int64_t> elementOffset = getConstantOffset(op.getOffset());
+  std::optional<int64_t> elementByteSize = getElementByteSize(access.address);
+  if (!elementOffset || !elementByteSize)
+    return;
+  int64_t byteOffset;
+  if (llvm::MulOverflow(*elementOffset, *elementByteSize, byteOffset))
+    return;
+  access.byteOffset = byteOffset;
+  access.byteSize = *elementByteSize;
+}
+
+static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
+  if (auto load = dyn_cast<PTOLoadOp>(op))
+    return setStaticIndexedRange(load, access);
+  if (auto store = dyn_cast<PTOStoreOp>(op))
+    return setStaticIndexedRange(store, access);
+  if (auto load = dyn_cast<PTOLdgOp>(op))
+    return setStaticIndexedRange(load, access);
+  if (auto store = dyn_cast<PTOStgOp>(op))
+    return setStaticIndexedRange(store, access);
+  if (auto load = dyn_cast<PTOLdDevOp>(op))
+    return setStaticIndexedRange(load, access);
+  if (auto store = dyn_cast<PTOStDevOp>(op))
+    return setStaticIndexedRange(store, access);
+}
+
+/// These operations have complete scheduler-specific state semantics and do
+/// not access ordinary memory. This classification deliberately does not add
+/// Pure: event, pipe, buffer-id, barrier, and register-state effects must
+/// remain visible to the scheduler and to general IR transformations.
+static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
+  return isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, GetBufOp,
+             GetBufDynOp, RlsBufOp, RlsBufDynOp, BarrierOp, MemBarOp, DsbOp,
+             FenceBarrierAllOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
+}
+
+static void collectMemoryAccesses(Operation *op,
+                                  VPTOSchedulingSemantics &semantics) {
+  SmallVectorImpl<VPTOMemoryAccess> &accesses = semantics.memoryAccesses;
+  if (hasKnownNoOrdinaryMemoryAccess(op)) {
+    semantics.memoryBehavior = VPTOMemoryBehavior::None;
+    return;
+  }
+
+  auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!memoryEffects) {
+    if (isMemoryEffectFree(op)) {
+      semantics.memoryBehavior = VPTOMemoryBehavior::None;
+      return;
+    }
+    semantics.memoryBehavior = VPTOMemoryBehavior::Unknown;
+    VPTOMemoryAccess access;
+    access.writes = true;
+    access.ordered = true;
+    access.unknown = true;
+    accesses.push_back(access);
+    return;
+  }
+
+  semantics.memoryBehavior = VPTOMemoryBehavior::Explicit;
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  memoryEffects.getEffects(effects);
+  bool storeLike = isStoreLikeName(op->getName().getStringRef());
+  for (const MemoryEffects::EffectInstance &effect : effects) {
+    Value value = effect.getValue();
+    if (value && !isMemoryAddress(value))
+      continue;
+    VPTOMemoryAccess access;
+    access.address = value;
+    access.addressSpace = value ? getAddressSpace(value) : Attribute();
+    access.reads = isa<MemoryEffects::Read>(effect.getEffect());
+    access.writes =
+        isa<MemoryEffects::Write, MemoryEffects::Allocate, MemoryEffects::Free>(
+            effect.getEffect());
+    if (value && storeLike)
+      access.writes = true;
+    access.unknown = !value || (!access.reads && !access.writes);
+    setStaticAccessRange(op, access);
+    accesses.push_back(access);
+  }
+
+  bool ordered =
+      llvm::any_of(semantics.effects, [](const VPTOSchedulingEffect &effect) {
+        return effect.kind == VPTOSchedulingEffectKind::AtomicMemory ||
+               effect.kind == VPTOSchedulingEffectKind::VolatileMemory;
+      });
+  if (!ordered) {
+    if (accesses.empty())
+      semantics.memoryBehavior = VPTOMemoryBehavior::None;
+    return;
+  }
+  if (accesses.empty()) {
+    VPTOMemoryAccess access;
+    access.reads = true;
+    access.writes = true;
+    access.ordered = true;
+    access.unknown = true;
+    accesses.push_back(access);
+  }
+  for (VPTOMemoryAccess &access : accesses)
+    access.ordered = true;
+}
+} // namespace
+
+VPTOSchedulingSemantics
+mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
+  VPTOSchedulingSemantics semantics;
+  SmallVectorImpl<VPTOSchedulingEffect> &effects = semantics.effects;
   if (isa<MemBarOp, DsbOp, FenceBarrierAllOp, SyncthreadsOp, ThreadfenceOp,
           ThreadfenceBlockOp>(op)) {
     effects.push_back(
@@ -68,9 +245,9 @@ void mlir::pto::getDefaultVPTOSchedulingEffects(
   }
   auto addStaticEvent = [&](Attribute srcPipe, Attribute dstPipe,
                             Attribute eventId, StringRef access) {
-    effects.push_back({VPTOSchedulingEffectKind::Event, access, Value(),
-                       ArrayAttr::get(op->getContext(),
-                                      {srcPipe, dstPipe, eventId})});
+    effects.push_back(
+        {VPTOSchedulingEffectKind::Event, access, Value(),
+         ArrayAttr::get(op->getContext(), {srcPipe, dstPipe, eventId})});
   };
   auto addDynamicEvent = [&](Attribute srcPipe, Attribute dstPipe,
                              Value eventId, StringRef access) {
@@ -115,13 +292,14 @@ void mlir::pto::getDefaultVPTOSchedulingEffects(
     if (!pipe)
       return;
     if (access == "acquire" && mode == 0)
-      effects.emplace_back(VPTOSchedulingEffectKind::Pipe,
-                           "wait-destination", Value(), pipe);
+      effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "wait-destination",
+                           Value(), pipe);
     if (access == "release")
       effects.emplace_back(
           VPTOSchedulingEffectKind::Pipe, "signal-source", Value(),
-          mode == 0 ? Attribute(pipe)
-                    : Attribute(PipeAttr::get(op->getContext(), PIPE::PIPE_ALL)));
+          mode == 0
+              ? Attribute(pipe)
+              : Attribute(PipeAttr::get(op->getContext(), PIPE::PIPE_ALL)));
   };
   auto addDynamicBuffer = [&](Attribute opType, Value bufferId, uint32_t mode,
                               StringRef access) {
@@ -130,13 +308,14 @@ void mlir::pto::getDefaultVPTOSchedulingEffects(
     if (!pipe)
       return;
     if (access == "acquire" && mode == 0)
-      effects.emplace_back(VPTOSchedulingEffectKind::Pipe,
-                           "wait-destination", Value(), pipe);
+      effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "wait-destination",
+                           Value(), pipe);
     if (access == "release")
       effects.emplace_back(
           VPTOSchedulingEffectKind::Pipe, "signal-source", Value(),
-          mode == 0 ? Attribute(pipe)
-                    : Attribute(PipeAttr::get(op->getContext(), PIPE::PIPE_ALL)));
+          mode == 0
+              ? Attribute(pipe)
+              : Attribute(PipeAttr::get(op->getContext(), PIPE::PIPE_ALL)));
   };
   if (auto acquire = dyn_cast<GetBufOp>(op))
     addStaticBuffer(acquire.getOpTypeAttr(), acquire.getBufIdAttr(),
@@ -203,23 +382,75 @@ void mlir::pto::getDefaultVPTOSchedulingEffects(
   if (isa<SetCtrlOp>(op))
     effects.push_back(
         {VPTOSchedulingEffectKind::ImplicitWrite, "ctrl", Value()});
+
+  collectMemoryAccesses(op, semantics);
+  if (getExecutionPipe(op) || !semantics.effects.empty()) {
+    semantics.schedulingClass = VPTOSchedulingClass::Schedulable;
+    semantics.classificationKnown = true;
+  } else if (isa<DcciOp>(op)) {
+    semantics.schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
+    semantics.classificationKnown = true;
+  }
+  return semantics;
+}
+
+VPTOSchedulingSemantics mlir::pto::getVPTOSchedulingSemantics(Operation *op) {
+  VPTOSchedulingSemantics semantics;
+  if (!op)
+    return semantics;
+  if (op->hasTrait<OpTrait::IsTerminator>() || op->getNumRegions() != 0) {
+    semantics.classificationKnown = true;
+    return semantics;
+  }
+
+  if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op))
+    return scheduling.getVPTOSchedulingSemantics();
+
+  if (isMemoryEffectFree(op)) {
+    semantics.schedulingClass = VPTOSchedulingClass::Structural;
+    semantics.classificationKnown = true;
+    semantics.memoryBehavior = VPTOMemoryBehavior::None;
+    return semantics;
+  }
+
+  if (op->getDialect() &&
+      op->getDialect()->getNamespace() == PTODialect::getDialectNamespace()) {
+    semantics.schedulingClass = VPTOSchedulingClass::Unsupported;
+    semantics.classificationKnown = true;
+    return semantics;
+  }
+
+  semantics.classificationKnown = true;
+  return semantics;
+}
+
+VPTORegisteredSchedulingCoverage
+mlir::pto::auditRegisteredVPTOSchedulingOps(MLIRContext &context) {
+  VPTORegisteredSchedulingCoverage coverage;
+  for (RegisteredOperationName operation : context.getRegisteredOperations()) {
+    if (operation.getDialectNamespace() != PTODialect::getDialectNamespace() ||
+        !operation.hasInterface<VPTOSchedulingOpInterface>())
+      continue;
+
+    ++coverage.registered;
+    if (hasRegisteredSchedulingClass(operation)) {
+      ++coverage.schedulable;
+      continue;
+    }
+    if (operation.getTypeID() == TypeID::get<DcciOp>()) {
+      ++coverage.boundary;
+      coverage.boundaryOps.push_back(operation.getStringRef().str());
+      continue;
+    }
+    coverage.unclassifiedOps.push_back(operation.getStringRef().str());
+  }
+  llvm::sort(coverage.boundaryOps);
+  llvm::sort(coverage.unclassifiedOps);
+  return coverage;
 }
 
 VPTOSchedulingClass mlir::pto::classifyVPTOSchedulingOp(Operation *op) {
-  if (!op || op->hasTrait<OpTrait::IsTerminator>() || op->getNumRegions() != 0)
-    return VPTOSchedulingClass::SchedulingBoundary;
-
-  if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op))
-    return scheduling.getVPTOSchedulingClass();
-
-  if (isMemoryEffectFree(op))
-    return VPTOSchedulingClass::Structural;
-
-  if (op->getDialect() &&
-      op->getDialect()->getNamespace() == PTODialect::getDialectNamespace())
-    return VPTOSchedulingClass::Unsupported;
-
-  return VPTOSchedulingClass::SchedulingBoundary;
+  return getVPTOSchedulingSemantics(op).schedulingClass;
 }
 
 StringRef mlir::pto::stringifyVPTOSchedulingClass(VPTOSchedulingClass value) {

@@ -35,6 +35,26 @@ add_dependencies(pto-test-opt
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-vpto-scheduler-tracker-test
+  pto-vpto-scheduler-tracker-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-vpto-scheduler-tracker-test PRIVATE
+  PTOIR
+  PTOTransforms
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSupport
+)
+
+add_dependencies(pto-vpto-scheduler-tracker-test
+  PTOOpsIncGen
+  PTOPassesIncGen
+)
+
 add_llvm_executable(pto-vfsimt-size-patcher-test
   pto-vfsimt-size-patcher-test.cpp
   PARTIAL_SOURCES_INTENDED

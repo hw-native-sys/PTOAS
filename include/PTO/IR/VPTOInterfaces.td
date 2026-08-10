@@ -21,21 +21,12 @@ def VPTOSchedulingOpInterface : OpInterface<"VPTOSchedulingOpInterface"> {
   let cppNamespace = "::mlir::pto";
   let methods = [
     InterfaceMethod<
-      "Classify this operation for VPTO scheduling.",
-      "::mlir::pto::VPTOSchedulingClass", "getVPTOSchedulingClass",
+      "Return the complete normalized semantics for VPTO scheduling.",
+      "::mlir::pto::VPTOSchedulingSemantics", "getVPTOSchedulingSemantics",
       (ins), [{}],
       /*defaultImplementation=*/[{
-        return ::mlir::pto::getDefaultVPTOSchedulingClass(
+        return ::mlir::pto::getDefaultVPTOSchedulingSemantics(
             $_op.getOperation());
-      }]>,
-    InterfaceMethod<
-      "Append implicit or special scheduling effects owned by this operation.",
-      "void", "getVPTOSchedulingEffects",
-      (ins "::llvm::SmallVectorImpl<::mlir::pto::VPTOSchedulingEffect> &":$effects),
-      [{}],
-      /*defaultImplementation=*/[{
-        ::mlir::pto::getDefaultVPTOSchedulingEffects($_op.getOperation(),
-                                                     effects);
       }]>
   ];
 }

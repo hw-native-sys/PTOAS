@@ -14,10 +14,6 @@
 
 #include "PTO/IR/PTO.h"
 
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Matchers.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -42,34 +38,10 @@ VPTOSchedDAGBuilder::build(const VPTOSchedRegion &region) const {
 }
 
 namespace {
-struct MemoryAccess {
-  Value address;
+struct ResolvedMemoryAccess {
+  VPTOMemoryAccess semantics;
   Value aliasRoot;
-  Attribute addressSpace;
-  std::optional<int64_t> byteOffset;
-  std::optional<int64_t> byteSize;
-  bool reads = false;
-  bool writes = false;
-  bool ordered = false;
-  bool unknown = false;
 };
-
-static bool isMemoryAddress(Value value) {
-  return value && isa<pto::PtrType, BaseMemRefType>(value.getType());
-}
-
-static Attribute getAddressSpace(Value value) {
-  if (auto pointer = dyn_cast<pto::PtrType>(value.getType()))
-    return pointer.getMemorySpace();
-  if (auto memref = dyn_cast<BaseMemRefType>(value.getType()))
-    return memref.getMemorySpace();
-  return {};
-}
-
-static bool isStoreLikeName(StringRef name) {
-  return name == "pto.store" || name == "pto.stg" || name == "pto.st_dev" ||
-         name.starts_with("pto.vst") || name.starts_with("pto.pst");
-}
 
 static Value getAliasRoot(Value value) {
   SmallPtrSet<Operation *, 8> visited;
@@ -85,172 +57,64 @@ static Value getAliasRoot(Value value) {
   return value;
 }
 
-static std::optional<int64_t> getElementByteSize(Value pointer) {
-  Type elementType;
-  if (auto pointerType = dyn_cast<pto::PtrType>(pointer.getType()))
-    elementType = pointerType.getElementType();
-  else if (auto memrefType = dyn_cast<BaseMemRefType>(pointer.getType()))
-    elementType = memrefType.getElementType();
-  if (!elementType)
-    return std::nullopt;
-
-  int64_t elementCount = 1;
-  if (auto vectorType = dyn_cast<VectorType>(elementType)) {
-    if (vectorType.isScalable())
-      return std::nullopt;
-    elementCount = vectorType.getNumElements();
-    elementType = vectorType.getElementType();
-  }
-  if (!elementType.isIntOrFloat())
-    return std::nullopt;
-  unsigned bitWidth = elementType.getIntOrFloatBitWidth();
-  if (bitWidth == 0 || bitWidth % 8 != 0)
-    return std::nullopt;
-
-  int64_t byteSize;
-  if (llvm::MulOverflow(elementCount, static_cast<int64_t>(bitWidth / 8),
-                        byteSize))
-    return std::nullopt;
-  return byteSize;
-}
-
-static std::optional<int64_t> getConstantOffset(Value offset) {
-  APInt value;
-  if (!matchPattern(offset, m_ConstantInt(&value)) ||
-      !value.isSignedIntN(64))
-    return std::nullopt;
-  return value.getSExtValue();
-}
-
-template <typename OpTy>
-static void setStaticIndexedRange(OpTy op, MemoryAccess &access) {
-  if (access.address != op.getPtr() || access.aliasRoot != access.address)
-    return;
-  std::optional<int64_t> elementOffset = getConstantOffset(op.getOffset());
-  std::optional<int64_t> elementByteSize =
-      getElementByteSize(access.address);
-  if (!elementOffset || !elementByteSize)
-    return;
-  int64_t byteOffset;
-  if (llvm::MulOverflow(*elementOffset, *elementByteSize, byteOffset))
-    return;
-  access.byteOffset = byteOffset;
-  access.byteSize = *elementByteSize;
-}
-
-static void setStaticAccessRange(Operation *op, MemoryAccess &access) {
-  if (auto load = dyn_cast<PTOLoadOp>(op))
-    return setStaticIndexedRange(load, access);
-  if (auto store = dyn_cast<PTOStoreOp>(op))
-    return setStaticIndexedRange(store, access);
-  if (auto load = dyn_cast<PTOLdgOp>(op))
-    return setStaticIndexedRange(load, access);
-  if (auto store = dyn_cast<PTOStgOp>(op))
-    return setStaticIndexedRange(store, access);
-  if (auto load = dyn_cast<PTOLdDevOp>(op))
-    return setStaticIndexedRange(load, access);
-  if (auto store = dyn_cast<PTOStDevOp>(op))
-    return setStaticIndexedRange(store, access);
-}
-
-static SmallVector<MemoryAccess> collectMemoryAccesses(Operation *op) {
-  SmallVector<MemoryAccess> accesses;
-  auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
-  if (!memoryEffects) {
-    if (!isMemoryEffectFree(op)) {
-      MemoryAccess access;
-      access.writes = true;
-      access.ordered = true;
-      access.unknown = true;
-      accesses.push_back(access);
-    }
-    return accesses;
-  }
-
-  SmallVector<MemoryEffects::EffectInstance> effects;
-  memoryEffects.getEffects(effects);
-  bool storeLike = isStoreLikeName(op->getName().getStringRef());
-  for (const MemoryEffects::EffectInstance &effect : effects) {
-    Value value = effect.getValue();
-    if (value && !isMemoryAddress(value))
-      continue;
-    MemoryAccess access;
-    access.address = value;
-    access.aliasRoot = value ? getAliasRoot(value) : Value();
-    access.addressSpace = value ? getAddressSpace(value) : Attribute();
-    access.reads = isa<MemoryEffects::Read>(effect.getEffect());
-    access.writes =
-        isa<MemoryEffects::Write, MemoryEffects::Allocate, MemoryEffects::Free>(
-            effect.getEffect());
-    if (value && storeLike)
-      access.writes = true;
-    access.unknown = !value || (!access.reads && !access.writes);
-    setStaticAccessRange(op, access);
-    accesses.push_back(access);
-  }
-
-  if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op)) {
-    SmallVector<VPTOSchedulingEffect> effects;
-    scheduling.getVPTOSchedulingEffects(effects);
-    bool ordered =
-        llvm::any_of(effects, [](const VPTOSchedulingEffect &effect) {
-          return effect.kind == VPTOSchedulingEffectKind::AtomicMemory ||
-                 effect.kind == VPTOSchedulingEffectKind::VolatileMemory;
-        });
-    if (ordered) {
-      if (accesses.empty()) {
-        MemoryAccess access;
-        access.reads = true;
-        access.writes = true;
-        access.ordered = true;
-        access.unknown = true;
-        accesses.push_back(access);
+static SmallVector<ResolvedMemoryAccess>
+resolveMemoryAccesses(const VPTOSchedulingSemantics &semantics) {
+  SmallVector<ResolvedMemoryAccess> accesses;
+  accesses.reserve(semantics.memoryAccesses.size());
+  for (const VPTOMemoryAccess &memoryAccess : semantics.memoryAccesses) {
+    ResolvedMemoryAccess access{memoryAccess, {}};
+    if (access.semantics.address) {
+      access.aliasRoot = getAliasRoot(access.semantics.address);
+      if (access.aliasRoot != access.semantics.address) {
+        access.semantics.byteOffset.reset();
+        access.semantics.byteSize.reset();
       }
-      for (MemoryAccess &access : accesses)
-        access.ordered = true;
     }
+    accesses.push_back(std::move(access));
   }
   return accesses;
 }
 
-static bool mayAlias(const MemoryAccess &lhs, const MemoryAccess &rhs) {
-  if (lhs.addressSpace && rhs.addressSpace &&
-      lhs.addressSpace != rhs.addressSpace)
+static bool mayAlias(const ResolvedMemoryAccess &lhs,
+                     const ResolvedMemoryAccess &rhs) {
+  if (lhs.semantics.addressSpace && rhs.semantics.addressSpace &&
+      lhs.semantics.addressSpace != rhs.semantics.addressSpace)
     return false;
-  if (!lhs.address || !rhs.address)
+  if (!lhs.semantics.address || !rhs.semantics.address)
     return true;
-  if (lhs.aliasRoot == rhs.aliasRoot && lhs.byteOffset && lhs.byteSize &&
-      rhs.byteOffset && rhs.byteSize) {
+  if (lhs.aliasRoot == rhs.aliasRoot && lhs.semantics.byteOffset &&
+      lhs.semantics.byteSize && rhs.semantics.byteOffset &&
+      rhs.semantics.byteSize) {
     int64_t lhsEnd;
     int64_t rhsEnd;
-    if (!llvm::AddOverflow(*lhs.byteOffset, *lhs.byteSize, lhsEnd) &&
-        !llvm::AddOverflow(*rhs.byteOffset, *rhs.byteSize, rhsEnd))
-      return *lhs.byteOffset < rhsEnd && *rhs.byteOffset < lhsEnd;
+    if (!llvm::AddOverflow(*lhs.semantics.byteOffset, *lhs.semantics.byteSize,
+                           lhsEnd) &&
+        !llvm::AddOverflow(*rhs.semantics.byteOffset, *rhs.semantics.byteSize,
+                           rhsEnd))
+      return *lhs.semantics.byteOffset < rhsEnd &&
+             *rhs.semantics.byteOffset < lhsEnd;
   }
   // Different roots in the same physical space remain conservative: memory
   // planning may have assigned overlapping ranges to distinct SSA roots.
   return true;
 }
 
-static bool needsMemoryOrder(const MemoryAccess &lhs, const MemoryAccess &rhs) {
+static bool needsMemoryOrder(const ResolvedMemoryAccess &lhs,
+                             const ResolvedMemoryAccess &rhs) {
   if (!mayAlias(lhs, rhs))
     return false;
-  if (lhs.ordered || rhs.ordered || lhs.unknown || rhs.unknown)
+  if (lhs.semantics.ordered || rhs.semantics.ordered || lhs.semantics.unknown ||
+      rhs.semantics.unknown)
     return true;
-  return lhs.writes || rhs.writes;
+  return lhs.semantics.writes || rhs.semantics.writes;
 }
 
-static bool isPostUpdateAddress(Value value) {
-  Operation *definingOp = value.getDefiningOp();
-  auto scheduling = dyn_cast_or_null<VPTOSchedulingOpInterface>(definingOp);
-  if (!scheduling)
-    return false;
-  SmallVector<VPTOSchedulingEffect> effects;
-  scheduling.getVPTOSchedulingEffects(effects);
-  return llvm::any_of(effects, [&](const VPTOSchedulingEffect &effect) {
-    return effect.kind == VPTOSchedulingEffectKind::PostUpdate &&
-           effect.value == value;
-  });
+static bool isPostUpdateAddress(const VPTOSUnit &producer, Value value) {
+  return llvm::any_of(
+      producer.getSemantics().effects, [&](const VPTOSchedulingEffect &effect) {
+        return effect.kind == VPTOSchedulingEffectKind::PostUpdate &&
+               effect.value == value;
+      });
 }
 
 static bool mayReferToSameEvent(const VPTOSchedulingEffect &lhs,
@@ -260,8 +124,7 @@ static bool mayReferToSameEvent(const VPTOSchedulingEffect &lhs,
   if (!lhsIdentity || !rhsIdentity || lhsIdentity.size() < 2 ||
       rhsIdentity.size() < 2)
     return true;
-  if (lhsIdentity[0] != rhsIdentity[0] ||
-      lhsIdentity[1] != rhsIdentity[1])
+  if (lhsIdentity[0] != rhsIdentity[0] || lhsIdentity[1] != rhsIdentity[1])
     return false;
   if (lhsIdentity.size() == 3 && rhsIdentity.size() == 3)
     return lhsIdentity[2] == rhsIdentity[2];
@@ -289,10 +152,10 @@ static bool mayReferToSameBuffer(const VPTOSchedulingEffect &lhs,
 } // namespace
 
 void VPTOSchedDAGBuilder::buildMemoryEdges(VPTOSchedDAG &dag) const {
-  SmallVector<SmallVector<MemoryAccess>> accesses;
+  SmallVector<SmallVector<ResolvedMemoryAccess>> accesses;
   accesses.reserve(dag.getUnits().size());
   for (const std::unique_ptr<VPTOSUnit> &unit : dag.getUnits())
-    accesses.push_back(collectMemoryAccesses(unit->getOperation()));
+    accesses.push_back(resolveMemoryAccesses(unit->getSemantics()));
 
   for (size_t successorIndex = 0; successorIndex < accesses.size();
        ++successorIndex) {
@@ -300,13 +163,15 @@ void VPTOSchedDAGBuilder::buildMemoryEdges(VPTOSchedDAG &dag) const {
       continue;
     for (size_t predecessorIndex = 0; predecessorIndex < successorIndex;
          ++predecessorIndex) {
-      bool ordered = llvm::any_of(
-          accesses[predecessorIndex], [&](const MemoryAccess &predecessor) {
-            return llvm::any_of(
-                accesses[successorIndex], [&](const MemoryAccess &successor) {
-                  return needsMemoryOrder(predecessor, successor);
-                });
-          });
+      bool ordered =
+          llvm::any_of(accesses[predecessorIndex],
+                       [&](const ResolvedMemoryAccess &predecessor) {
+                         return llvm::any_of(
+                             accesses[successorIndex],
+                             [&](const ResolvedMemoryAccess &successor) {
+                               return needsMemoryOrder(predecessor, successor);
+                             });
+                       });
       if (!ordered)
         continue;
       dag.addEdge(*dag.getUnits()[predecessorIndex],
@@ -341,12 +206,7 @@ void VPTOSchedDAGBuilder::buildImplicitAndSyncEdges(VPTOSchedDAG &dag) const {
       dag.addEdge(*lastBarrier, unit, VPTOSchedEdgeKind::Sync,
                   VPTOSchedEdgeStrength::Must, 0, "after scheduling barrier");
 
-    auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(unit.getOperation());
-    if (!scheduling)
-      continue;
-    SmallVector<VPTOSchedulingEffect> effects;
-    scheduling.getVPTOSchedulingEffects(effects);
-    for (const VPTOSchedulingEffect &effect : effects) {
+    for (const VPTOSchedulingEffect &effect : unit.getSemantics().effects) {
       if (effect.kind == VPTOSchedulingEffectKind::Barrier) {
         for (const std::unique_ptr<VPTOSUnit> &prior : dag.getUnits()) {
           if (prior->getOriginalIndex() >= unit.getOriginalIndex())
@@ -469,7 +329,7 @@ void VPTOSchedDAGBuilder::buildSSAEdges(VPTOSchedDAG &dag) const {
           model ? model->getSchedClass(predecessor->getOperation()).writeLatency
                 : 1;
       std::string reason =
-          (isPostUpdateAddress(operand)
+          (isPostUpdateAddress(*predecessor, operand)
                ? Twine("post-update address operand #") + Twine(operandIndex)
                : Twine("ssa operand #") + Twine(operandIndex))
               .str();

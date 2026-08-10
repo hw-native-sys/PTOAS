@@ -10,9 +10,9 @@
 
 //===- VPTOSchedBoundary.h - VPTO scheduling boundary ----------*- C++ -*-===//
 //
-// A boundary owns direction-local queues and cycle state.  Top and bottom
-// boundaries share an immutable DAG but update separate predecessor/successor
-// counters, which keeps the contract ready for a future bidirectional policy.
+// A boundary owns all direction-local scheduling state: ready queues, cycle,
+// resource reservations, register pressure, and hazard recognition. Top and
+// bottom boundaries share a DAG but never share mutable tracker state.
 //
 //===----------------------------------------------------------------------===//
 
@@ -27,9 +27,16 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <memory>
+
 namespace mlir::pto {
 
 enum class VPTOSchedDirection { Top, Bottom };
+
+class VPTOSchedModel;
+class VPTOResourceTracker;
+class VPTORegPressureTracker;
+class VPTOHazardRecognizer;
 
 struct VPTOPendingUnit {
   VPTOSUnit *unit = nullptr;
@@ -38,7 +45,12 @@ struct VPTOPendingUnit {
 
 class VPTOSchedBoundary {
 public:
-  VPTOSchedBoundary(VPTOSchedDAG &dag, VPTOSchedDirection direction);
+  VPTOSchedBoundary(VPTOSchedDAG &dag, const VPTOSchedModel &model,
+                    VPTOSchedDirection direction);
+  VPTOSchedBoundary(VPTOSchedDAG &dag, const VPTOSchedModel &model,
+                    VPTOSchedDirection direction,
+                    std::unique_ptr<VPTOHazardRecognizer> hazardRecognizer);
+  ~VPTOSchedBoundary();
 
   VPTOSchedDirection getDirection() const { return direction; }
   unsigned getCurrentCycle() const { return currentCycle; }
@@ -46,6 +58,13 @@ public:
   ArrayRef<VPTOPendingUnit> getPending() const { return pending; }
   bool empty() const { return available.empty() && pending.empty(); }
   bool isScheduled(VPTOSUnit *unit) const { return scheduled.contains(unit); }
+
+  VPTOResourceTracker &getResourceTracker();
+  const VPTOResourceTracker &getResourceTracker() const;
+  VPTORegPressureTracker &getPressureTracker();
+  const VPTORegPressureTracker &getPressureTracker() const;
+  VPTOHazardRecognizer &getHazardRecognizer();
+  const VPTOHazardRecognizer &getHazardRecognizer() const;
 
   /// Move a dependency-ready unit to a future cycle.  Resource and hazard
   /// trackers use this without mutating DAG readiness.
@@ -66,6 +85,9 @@ private:
   SmallVector<VPTOSUnit *> available;
   SmallVector<VPTOPendingUnit> pending;
   DenseSet<VPTOSUnit *> scheduled;
+  std::unique_ptr<VPTOResourceTracker> resourceTracker;
+  std::unique_ptr<VPTORegPressureTracker> pressureTracker;
+  std::unique_ptr<VPTOHazardRecognizer> hazardRecognizer;
 };
 
 StringRef stringifyVPTOSchedDirection(VPTOSchedDirection direction);

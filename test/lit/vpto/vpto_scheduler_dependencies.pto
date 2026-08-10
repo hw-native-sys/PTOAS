@@ -11,65 +11,80 @@
 
 // CHECK-LABEL: vpto-scheduler: function=memory_and_implicit
 // CHECK: kind=memory strength=must latency=0 reason=may-alias memory access in original order
-// CHECK: kind=data strength=must latency=1 reason=implicit read of ctrl
-// CHECK: kind=output strength=must latency=0 reason=implicit write of ctrl
-// CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on ctrl
 // CHECK: kind=data strength=must latency=1 reason=implicit read of AR
 // CHECK: kind=output strength=must latency=0 reason=implicit write of AR
 // CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on AR
-// CHECK: coverage schedulable=7 structural=3 boundary=2 unsupported=0
-
-// CHECK-LABEL: vpto-scheduler: function=simt_barrier
-// CHECK: top-ready=1 bottom-ready=1
-// CHECK: kind=sync strength=must latency=0 reason=before scheduling barrier
-// CHECK: kind=sync strength=must latency=0 reason=after scheduling barrier
-// CHECK: coverage schedulable=3 structural=0 boundary=1 unsupported=0
-
-// CHECK-LABEL: vpto-scheduler: function=pipe_classification
-// CHECK: op=pto.ld_dev semantic=schedulable sched-class=scalar known=true
+// CHECK: coverage schedulable=4 structural=1 boundary=0 unsupported=0
+// CHECK-NOT: vpto-scheduler: function=simt_barrier
+// CHECK-NOT: vpto-scheduler: function=pipe_classification
 
 // CHECK-LABEL: vpto-scheduler: function=memory_ranges
-// CHECK: edge=3->5 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory access in original order
 // CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=volatile_reads
-// CHECK: edge=1->2 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+
+// CHECK-LABEL: vpto-scheduler: function=unknown_memory_fallback
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory access in original order
 
 // CHECK-LABEL: vpto-scheduler: function=post_update_address
 // CHECK: edge=1->2 kind=data strength=must latency=1 reason=post-update address operand #0
 
 // CHECK-LABEL: vpto-scheduler: function=vpto_memory_barrier
+// CHECK-NOT: kind=memory
 // CHECK: edge=0->1 kind=sync strength=must latency=0 reason=before scheduling barrier
+// CHECK-NOT: kind=memory
 // CHECK: edge=1->2 kind=sync strength=must latency=0 reason=after scheduling barrier
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=event_signal_wait
+// CHECK-NOT: kind=memory
 // CHECK: edge=1->2 kind=sync strength=must latency=0 reason=event signal before wait
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=dynamic_event_may_match
-// CHECK: edge=2->3 kind=sync strength=must latency=0 reason=event signal before wait
+// CHECK-NOT: kind=memory
+// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=event signal before wait
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=event_pipe_order
+// CHECK-NOT: kind=memory
 // CHECK: edge=0->1 kind=sync strength=must latency=0 reason=source pipe execution before signal
+// CHECK-NOT: kind=memory
 // CHECK: edge=4->5 kind=sync strength=must latency=0 reason=pipe synchronization before execution
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=pipe_barrier_order
+// CHECK-NOT: kind=memory
 // CHECK: edge=0->1 kind=sync strength=must latency=0 reason=pipe execution before barrier
+// CHECK-NOT: kind=memory
 // CHECK: edge=1->2 kind=sync strength=must latency=0 reason=pipe synchronization before execution
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=buffer_id_order
+// CHECK-NOT: kind=memory
 // CHECK: edge=0->2 kind=sync strength=must latency=0 reason=buffer acquire before release
+// CHECK-NOT: kind=memory
 // CHECK: edge=2->3 kind=sync strength=must latency=0 reason=buffer release before acquire
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=dynamic_buffer_may_match
-// CHECK: edge=2->3 kind=sync strength=must latency=0 reason=buffer acquire before release
+// CHECK-NOT: kind=memory
+// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=buffer acquire before release
+// CHECK-NOT: kind=memory
 
-// CHECK-LABEL: vpto-scheduler: function=unclassified_micro_boundary
+// CHECK-LABEL: vpto-scheduler: function=explicit_micro_boundary
 // CHECK: block=0 regions=2
 // CHECK: region=0 before=block-start after=boundary:pto.dcci
-// CHECK: region=1 before=boundary:pto.dcci after=terminator
-// CHECK: unclassified-op=pto.dcci count=1
+// CHECK: region=1 before=boundary:pto.dcci after=block-end
+// CHECK: boundary-reason=boundary:pto.dcci count=1
+// CHECK-NOT: unclassified-op=pto.dcci
+// CHECK-LABEL: vpto-scheduler: function=strict_vecscope
+// CHECK: op=pto.sprclr semantic=schedulable sched-class=vector known=true
+// CHECK: coverage schedulable=1 structural=0 boundary=0 unsupported=0
 
-module {
+module attributes {pto.target_arch = "a5"} {
   func.func @memory_and_implicit(%dst: !pto.ptr<ui32, ub>) {
     pto.vecscope {
       %c0 = arith.constant 0 : i32
@@ -104,16 +119,33 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %value = arith.constant 42 : i32
-    pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
-    pto.st_dev %value, %dst[%c1] : !pto.ptr<i32, gm>, i32
-    pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+    pto.vecscope {
+      pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %dst[%c1] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+    }
     return
   }
 
   func.func @volatile_reads(%src: !pto.ptr<i32, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %first = pto.ld_dev %src[%c0] {volatile} : !pto.ptr<i32, gm> -> i32
-    %second = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    pto.vecscope {
+      %first = pto.ld_dev %src[%c0] {volatile} : !pto.ptr<i32, gm> -> i32
+      %second = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    }
+    return
+  }
+
+  func.func @unknown_memory_fallback(%src: !pto.ptr<i8, ub>,
+                                     %dst: !pto.ptr<i8, ub>) {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    pto.vecscope {
+      pto.copy_ubuf_to_ubuf %src, %dst, %c0, %c1, %c1, %c0, %c0
+          : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>, i64, i64, i64, i64, i64
+      pto.copy_ubuf_to_ubuf %src, %dst, %c0, %c1, %c1, %c0, %c0
+          : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>, i64, i64, i64, i64, i64
+    }
     return
   }
 
@@ -149,8 +181,10 @@ module {
   func.func @dynamic_event_may_match() {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
-    pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c1]
+    pto.vecscope {
+      pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+      pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c1]
+    }
     return
   }
 
@@ -189,17 +223,28 @@ module {
   func.func @dynamic_buffer_may_match() {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    pto.get_buf_dyn "PIPE_V", %c0, 0
-    pto.rls_buf_dyn "PIPE_V", %c1, 0
+    pto.vecscope {
+      pto.get_buf_dyn "PIPE_V", %c0, 0
+      pto.rls_buf_dyn "PIPE_V", %c1, 0
+    }
     return
   }
 
-  func.func @unclassified_micro_boundary(%src: !pto.ptr<i32, gm>)
+  func.func @explicit_micro_boundary(%src: !pto.ptr<i32, gm>)
       attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %before = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
-    pto.dcci %src "SINGLE_CACHE_LINE" : !pto.ptr<i32, gm>
-    %after = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    pto.vecscope {
+      %before = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+      pto.dcci %src "SINGLE_CACHE_LINE" : !pto.ptr<i32, gm>
+      %after = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    }
+    return
+  }
+
+  func.func @strict_vecscope() {
+    pto.strict_vecscope() {
+      pto.sprclr "AR"
+    } : () -> ()
     return
   }
 }

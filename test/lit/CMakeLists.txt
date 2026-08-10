@@ -27,6 +27,7 @@ configure_lit_site_cfg(
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-test-opt
+  pto-vpto-scheduler-tracker-test
   pto-vfsimt-size-patcher-test
   yaml2obj
 )

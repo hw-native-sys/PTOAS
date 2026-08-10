@@ -107,15 +107,15 @@ VPTOGenericA5SchedModel::VPTOGenericA5SchedModel() {
       {VectorClass, "vector", true, 1, 1, {{VectorResource, 0, 1, 1}}, {}},
       {MTEClass, "mte", true, 1, 2, {{MTEResource, 0, 1, 1}}, {}},
       {CubeClass, "cube", true, 1, 4, {{CubeResource, 0, 1, 1}}, {}},
-      {ControlClass, "control", true, 1, 1,
-       {{ControlResource, 0, 1, 1}}, {}},
+      {ControlClass, "control", true, 1, 1, {{ControlResource, 0, 1, 1}}, {}},
       {UnknownClass, "unknown", false, 1, 1, {{UnknownResource, 0, 1, 1}}, {}},
   };
 }
 
 const VPTOSchedClass &
 VPTOGenericA5SchedModel::getSchedClass(Operation *op) const {
-  if (!op || classifyVPTOSchedulingOp(op) == VPTOSchedulingClass::Structural)
+  VPTOSchedulingSemantics semantics = getVPTOSchedulingSemantics(op);
+  if (!op || semantics.schedulingClass == VPTOSchedulingClass::Structural)
     return schedClasses[StructuralClass];
   if (auto pipeOp = dyn_cast<OpPipeInterface>(op))
     if (std::optional<SchedClassID> schedClass =
@@ -129,12 +129,8 @@ VPTOGenericA5SchedModel::getSchedClass(Operation *op) const {
     return schedClasses[CubeClass];
   if (isa<SimtOpInterface>(op))
     return schedClasses[ScalarClass];
-  if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op)) {
-    SmallVector<VPTOSchedulingEffect> effects;
-    scheduling.getVPTOSchedulingEffects(effects);
-    if (!effects.empty())
-      return schedClasses[ControlClass];
-  }
+  if (!semantics.effects.empty())
+    return schedClasses[ControlClass];
   return schedClasses[UnknownClass];
 }
 

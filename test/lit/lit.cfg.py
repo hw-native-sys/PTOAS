@@ -76,6 +76,7 @@ tool_dirs = [config.ptoir_tools_dir, config.ptoir_test_tools_dir,
 tools = [
     'ptoas',
     'pto-test-opt',
+    'pto-vpto-scheduler-tracker-test',
     'pto-vfsimt-size-patcher-test',
     'yaml2obj',
 ]
