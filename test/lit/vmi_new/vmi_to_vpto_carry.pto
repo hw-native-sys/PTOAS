@@ -35,23 +35,6 @@ module {
     return %sum, %carry
         : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
   }
-
-  func.func @vmi_to_vpto_vaddc_deinterleaved(
-      %lhs: !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-      %rhs: !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
-      -> (!pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>) {
-    %sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
-        : !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-          !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
-        -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-           !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
-    return %sum, %carry
-        : !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
-  }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_vaddc(
@@ -62,9 +45,5 @@ module {
 // CHECK: %[[NEXT0:.*]], %[[NEXTCARRY0:.*]] = pto.vaddcs
 // CHECK: %[[NEXT1:.*]], %[[NEXTCARRY1:.*]] = pto.vaddcs
 // CHECK: return %[[NEXT0]], %[[NEXT1]], %[[NEXTCARRY0]], %[[NEXTCARRY1]]
-// CHECK-LABEL: func.func @vmi_to_vpto_vaddc_deinterleaved(
-// CHECK: %[[DEINT0:.*]], %[[DEINTCARRY0:.*]] = pto.vaddc
-// CHECK: %[[DEINT1:.*]], %[[DEINTCARRY1:.*]] = pto.vaddc
-// CHECK: return %[[DEINT0]], %[[DEINT1]], %[[DEINTCARRY0]], %[[DEINTCARRY1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

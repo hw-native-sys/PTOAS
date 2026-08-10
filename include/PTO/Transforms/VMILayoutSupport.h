@@ -104,11 +104,6 @@ struct VMIInterleaveLayoutFact {
   int64_t lanesPerPart = 0;
 };
 
-struct VMIAddCarryLayoutFact {
-  VMILayoutAttr layout;
-  int64_t physicalArity = 0;
-};
-
 struct VMIBitcastLayoutFact {
   VMILayoutAttr sourceLayout;
   VMILayoutAttr resultLayout;
@@ -321,30 +316,6 @@ public:
       VMIVRegType lowType, VMIVRegType highType,
       std::string *reason = nullptr) const;
 
-  FailureOr<VMIAddCarryLayoutFact>
-  getPreferredVaddcLayoutFact(VMIVaddcOp op,
-                              std::string *reason = nullptr) const;
-
-  FailureOr<VMIAddCarryLayoutFact>
-  getPreferredVaddcsLayoutFact(VMIVaddcsOp op,
-                               std::string *reason = nullptr) const;
-
-  FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>>
-  getVaddcLayoutFactsForLayout(VMIVaddcOp op, VMILayoutAttr layout,
-                               std::string *reason = nullptr) const;
-
-  FailureOr<SmallVector<VMIAddCarryLayoutFact, 4>>
-  getVaddcsLayoutFactsForLayout(VMIVaddcsOp op, VMILayoutAttr layout,
-                                std::string *reason = nullptr) const;
-
-  FailureOr<VMIAddCarryLayoutFact>
-  getVaddcLayoutFact(VMIVaddcOp op,
-                     std::string *reason = nullptr) const;
-
-  FailureOr<VMIAddCarryLayoutFact>
-  getVaddcsLayoutFact(VMIVaddcsOp op,
-                      std::string *reason = nullptr) const;
-
   FailureOr<VMIGroupSlotLayoutFact>
   getGroupSlotLoadLayoutFact(VMIVRegType resultType, int64_t numGroups,
                              std::string *reason = nullptr) const;
@@ -438,12 +409,6 @@ public:
 
   LogicalResult getVselrSupport(VMIVselrOp op,
                                 std::string *reason = nullptr) const;
-
-  LogicalResult getVaddcSupport(VMIVaddcOp op,
-                                std::string *reason = nullptr) const;
-
-  LogicalResult getVaddcsSupport(VMIVaddcsOp op,
-                                 std::string *reason = nullptr) const;
 
   LogicalResult getGroupReduceAddFSupport(VMIGroupReduceAddFOp op,
                                           std::string *reason = nullptr) const;

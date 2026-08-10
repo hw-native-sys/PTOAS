@@ -13008,14 +13008,70 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
   return success();
 }
 
+static LogicalResult
+checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
+                               VMIVRegType resultType,
+                               ArrayRef<VMIMaskType> maskTypes,
+                               std::string *reason = nullptr) {
+  auto fail = [&](const Twine &message) -> LogicalResult {
+    if (reason)
+      *reason = message.str();
+    return failure();
+  };
+
+  auto integerType = dyn_cast<IntegerType>(lhsType.getElementType());
+  if (!integerType || integerType.getWidth() != 32)
+    return fail("requires 32-bit integer data elements");
+  if (lhsType != rhsType || lhsType != resultType)
+    return fail("requires matching lhs, rhs, and result VMI types");
+  if (!lhsType.getLayoutAttr())
+    return fail("requires assigned data layout");
+  if (failed(checkSupportedMaskableVReg(lhsType)))
+    return fail("requires computable physical data parts");
+
+  FailureOr<int64_t> dataArity = getVMIPhysicalArity(lhsType);
+  if (failed(dataArity) || *dataArity < 1)
+    return fail("requires non-empty physical data parts");
+  for (VMIMaskType maskType : maskTypes) {
+    if (maskType.getLayoutAttr() != lhsType.getLayoutAttr())
+      return fail("requires all data and mask ports to share one layout");
+    if (maskType.getGranularity() != "b32")
+      return fail("requires b32 mask granularity");
+    FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+    if (failed(maskArity) || *maskArity != *dataArity)
+      return fail("requires matching physical arity on data and mask ports");
+    FailureOr<StringRef> physicalGranularity =
+        getVMIMaskPhysicalGranularity(maskType);
+    if (failed(physicalGranularity) || *physicalGranularity != "b32")
+      return fail("requires physical b32 mask parts");
+  }
+  FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(lhsType.getElementType());
+  if (failed(lanesPerPart) || *lanesPerPart != 64)
+    return fail("requires 64-lane 32-bit data parts");
+  return success();
+}
+
 LogicalResult checkSupportedVMIAddcShape(VMIVaddcOp op,
                                          std::string *reason = nullptr) {
-  return VMILayoutSupport().getVaddcSupport(op, reason);
+  return checkSupportedVMIAddCarryPorts(
+      cast<VMIVRegType>(op.getLhs().getType()),
+      cast<VMIVRegType>(op.getRhs().getType()),
+      cast<VMIVRegType>(op.getResult().getType()),
+      {cast<VMIMaskType>(op.getMask().getType()),
+       cast<VMIMaskType>(op.getCarry().getType())},
+      reason);
 }
 
 LogicalResult checkSupportedVMIAddcsShape(VMIVaddcsOp op,
                                           std::string *reason = nullptr) {
-  return VMILayoutSupport().getVaddcsSupport(op, reason);
+  return checkSupportedVMIAddCarryPorts(
+      cast<VMIVRegType>(op.getLhs().getType()),
+      cast<VMIVRegType>(op.getRhs().getType()),
+      cast<VMIVRegType>(op.getResult().getType()),
+      {cast<VMIMaskType>(op.getCarryIn().getType()),
+       cast<VMIMaskType>(op.getMask().getType()),
+       cast<VMIMaskType>(op.getCarry().getType())},
+      reason);
 }
 
 LogicalResult
