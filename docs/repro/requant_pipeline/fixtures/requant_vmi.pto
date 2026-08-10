@@ -1,0 +1,35 @@
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @requant_body(
+      %src: !pto.ptr<f8E4M3FN, ub>,
+      %input_scale: !pto.ptr<f32, ub>,
+      %dst: !pto.ptr<f8E4M3FN, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %q = pto.vmi.vload %src[%c0]
+        : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<256xf8E4M3FN>
+    %qf = pto.vmi.vcvt %q
+        : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
+    %scale8 = pto.vmi.vload %input_scale[%c0], %c1 {group = 8}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    %scale = pto.vmi.vbrc %scale8 {group = 8}
+        : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<256xf32>
+    %x = pto.vmi.vmul %qf, %scale, %mask
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xf32>
+    %amax = pto.vmi.vcmax %x, %mask {group = 8}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xf32>
+    %inv = pto.vmi.vbrc %amax {group = 8}
+        : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<256xf32>
+    %scaled = pto.vmi.vmul %x, %inv, %mask
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xf32>
+    %out = pto.vmi.vcvt %scaled {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
+    pto.vmi.vstore %out, %dst[%c0]
+        : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+    return
+  }
+}
