@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// ADDRESS-REUSE DIAGNOSTIC.
+//
+// Reports orderings whose two endpoints are distinct tile allocations placed at one
+// address, and classifies them by whether the two tiles have the same type:
+//
+//   * reuse-ordering -- identical types. One buffer holding successive values, so
+//     the ordering is an artifact of the reuse rather than of dataflow.
+//   * alias-view-ordering -- differing types over the same bytes, a reshape or
+//     transpose view. The ordering carries real dataflow and must be kept.
+//
+// The distinction is the whole point of the check: counting the two together would
+// attribute recoverable cost to orderings that are not removable at all.
+//
+// The type test is a heuristic. Two same-typed tiles can be aliased on purpose, and
+// then the ordering between them is a real read-after-write through memory. The
+// diagnostic cannot tell that from reuse, which is why it only reports.
+//
+// This test fails if the classification inverts, if either report is dropped, or if
+// the diagnostic starts firing with the flag absent. It does not pin cycle cost --
+// the diagnostic reports and never fails a compile.
+//===----------------------------------------------------------------------===//
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync --check-addr-reuse-war %S/Inputs/addr_reuse_war.pto 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync %S/Inputs/addr_reuse_war.pto 2>&1 | FileCheck %s --check-prefix=OFF --allow-empty
+
+// One of each class, and one distinct reused address. `alias_view_deps` is counted
+// separately and deliberately excluded from `orderings_from_reuse`.
+// CHECK: [addr-reuse-war] func=addr_reuse_war orderings_from_reuse=1 reuse_addresses=1 alias_view_deps=1
+
+// Differing types (1x64 against 8x8) at addr 512, so this is the alias view.
+// CHECK:      !! alias-view-ordering h#{{[0-9]+}} scope=vec addr=512 V->MTE2
+// CHECK-NEXT: first  alloc loc("v0"
+// CHECK-NEXT: second alloc loc("v1"
+
+// Identical types at addr 0, so this is the reuse. Allocations print in program
+// order, not in the order the endpoints happened to match.
+// CHECK:      !! reuse-ordering h#{{[0-9]+}} scope=vec addr=0 MTE3->MTE2
+// CHECK-NEXT: first  alloc loc("t0"
+// CHECK-NEXT: second alloc loc("t1"
+
+// Off by default: no report surface at all without the flag.
+// OFF-NOT: addr-reuse-war
+// OFF-NOT: reuse-ordering
+// OFF-NOT: alias-view-ordering

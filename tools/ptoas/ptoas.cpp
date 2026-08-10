@@ -425,6 +425,13 @@ static llvm::cl::opt<std::string> unifiedSyncForceMechanism(
                    "router would otherwise leave alone"),
     llvm::cl::init(""), llvm::cl::Hidden);
 
+static llvm::cl::opt<bool> checkAddrReuseWar(
+    "check-addr-reuse-war",
+    llvm::cl::desc("List the synchronization orderings whose two endpoints are "
+                   "distinct tile allocations placed at the same physical "
+                   "address in one scope. Reports; never fails"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> dumpSyncCoverage(
     "dump-sync-coverage",
     llvm::cl::desc("Write the happens-before edges this run's emitted sync induces, "
@@ -3591,7 +3598,8 @@ int mlir::pto::compilePTOASModule(
     pm.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOUnifiedSyncPass(arch == "a5" ? 32u : 0u,
                                       enableUnifiedSyncDebug,
-                                      unifiedSyncForceMechanism));
+                                      unifiedSyncForceMechanism,
+                                      checkAddrReuseWar));
   else if (enableInsertSync) {
     if (emitMlirIR)
       pm.addPass(std::make_unique<SerialAutoSyncPass>(

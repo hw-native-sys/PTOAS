@@ -188,7 +188,8 @@ std::unique_ptr<Pass> createPTODumpSyncExtractPass();
 /// buffer ids the arch exposes -- 0 on A3, 32 on A5 -- and it is the only arch input.
 std::unique_ptr<Pass>
 createPTOUnifiedSyncPass(unsigned bufidCapacity = 0, bool debugEnabled = false,
-                         llvm::StringRef forceMechanism = "");
+                         llvm::StringRef forceMechanism = "",
+                         bool checkAddrReuse = false);
 
 #undef GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION

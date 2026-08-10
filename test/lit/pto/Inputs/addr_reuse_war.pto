@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Shared input for the address-reuse diagnostic. Two allocation pairs share an
+// address, differing in exactly what the diagnostic classifies on:
+//   addr 0   -- two tiles of the SAME type, the second reusing the first's space
+//   addr 512 -- two tiles of DIFFERENT type over the same bytes, an alias view
+//
+// The two orderings are given DIFFERENT pipe directions on purpose. With the
+// same direction, program order lets one sync cover both and RemoveRedundantSync
+// keeps only one, leaving the other classification untested.
+//
+// Explicit `addr` operands are accepted only under --pto-level=level3.
+// lit excludes this directory from discovery.
+
+module {
+  func.func @addr_reuse_war(%a: !pto.partition_tensor_view<1x64xf32>,
+                            %b: !pto.partition_tensor_view<1x64xf32>,
+                            %c: !pto.partition_tensor_view<1x64xf32>,
+                            %d: !pto.partition_tensor_view<8x8xf32>) {
+    %a0 = arith.constant 0 : i64
+    %a512 = arith.constant 512 : i64
+
+    %t0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x64xf32>
+    %t1 = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x64xf32>
+    %v0 = pto.alloc_tile addr = %a512 : !pto.tile_buf<vec, 1x64xf32>
+    %v1 = pto.alloc_tile addr = %a512 : !pto.tile_buf<vec, 8x8xf32>
+
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>)
+              outs(%t0 : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tload ins(%b : !pto.partition_tensor_view<1x64xf32>)
+              outs(%v0 : !pto.tile_buf<vec, 1x64xf32>)
+
+    // V reads %v0; the load below writes %v1 over the same bytes: V -> MTE2.
+    pto.tadd ins(%t0, %v0 : !pto.tile_buf<vec, 1x64xf32>,
+                            !pto.tile_buf<vec, 1x64xf32>)
+             outs(%t0 : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tload ins(%d : !pto.partition_tensor_view<8x8xf32>)
+              outs(%v1 : !pto.tile_buf<vec, 8x8xf32>)
+
+    // MTE3 reads %t0; the load below writes %t1 over the same bytes: MTE3 -> MTE2.
+    pto.tstore ins(%t0 : !pto.tile_buf<vec, 1x64xf32>)
+               outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    pto.tload ins(%a : !pto.partition_tensor_view<1x64xf32>)
+              outs(%t1 : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tstore ins(%t1 : !pto.tile_buf<vec, 1x64xf32>)
+               outs(%c : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+}

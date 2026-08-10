@@ -114,12 +114,59 @@ static bool forceMechanismOnFirstHazard(SyncOperations &ops,
   return true;
 }
 
+/// Detailed listing for `--check-addr-reuse-war`: every hazard the model classified
+/// as sitting on a shared address, naming the two allocations that share it.
+///
+/// Reads `Hazard::addressSharing` and re-derives nothing. Reports only; never fails
+/// the pass -- sharing an address can be a deliberate footprint choice, and this
+/// cannot see the constraints the address map was built under.
+static void reportAddressReuseHazards(func::FuncOp func,
+                                      const unified::SyncModel &model) {
+  llvm::SmallVector<std::string> lines;
+  std::set<std::pair<int, uint64_t>> addresses;
+  unsigned reuseCount = 0;
+  unsigned aliasViewCount = 0;
+  for (const unified::Hazard &h : model.hazards) {
+    if (h.addressSharing == unified::Hazard::AddressSharing::None)
+      continue;
+    bool isReuse = h.addressSharing == unified::Hazard::AddressSharing::Reuse;
+    if (isReuse) {
+      addresses.insert({static_cast<int>(h.sharedScope), h.sharedAddress});
+      ++reuseCount;
+    } else {
+      ++aliasViewCount;
+    }
+    std::string s;
+    llvm::raw_string_ostream os(s);
+    os << "  !! " << (isReuse ? "reuse-ordering" : "alias-view-ordering") << " h#"
+       << h.index() << " scope=" << stringifyAddressSpace(h.sharedScope)
+       << " addr=" << h.sharedAddress << " "
+       << oracle::pipelineTypeName(h.srcPipe()) << "->"
+       << oracle::pipelineTypeName(h.dstPipe()) << "\n"
+       << "       first  alloc " << h.sharedAllocFirst->getLoc() << "\n"
+       << "       second alloc " << h.sharedAllocSecond->getLoc() << "\n";
+    lines.push_back(os.str());
+  }
+  if (lines.empty())
+    return;
+  oracle::emitReport([&](llvm::raw_ostream &os) {
+    os << "[addr-reuse-war] func=" << func.getSymName()
+       << " orderings_from_reuse=" << reuseCount
+       << " reuse_addresses=" << addresses.size()
+       << " alias_view_deps=" << aliasViewCount << "\n";
+    for (const std::string &l : lines)
+      os << l;
+  });
+}
+
 struct PTOUnifiedSyncPass
     : public mlir::pto::impl::PTOUnifiedSyncBase<PTOUnifiedSyncPass> {
   // Buffer-ID capacity K (0 = A3, 32 = A5). Zero disables buffer routing.
   unsigned bufidCapacity = 0;
   // TEST-ONLY: "" | "bufid" | "bufid-spill". See forceMechanismOnFirstHazard.
   std::string forceMechanism;
+  /// List the hazards whose endpoints are two allocations sharing an address.
+  bool checkAddrReuse = false;
   /// Print the allocator's model/routing/colouring reports. Off by default: the
   /// reports are verbose enough to bury a caller's own output. Gate violations are
   /// reported either way.
@@ -244,6 +291,9 @@ struct PTOUnifiedSyncPass
 
     unified::SyncModel model = unified::buildSyncModel(
         syncOpsStorage, bufidCapacity, memInfoToClusters, syncIR);
+
+    if (checkAddrReuse)
+      reportAddressReuseHazards(func, model);
 
     // --- Settle the operations before any id is assigned --------------------
     // Synthesise the head/tail compensation pair for every loop-carried hazard
@@ -674,10 +724,12 @@ struct PTOUnifiedSyncPass
 
 std::unique_ptr<Pass>
 mlir::pto::createPTOUnifiedSyncPass(unsigned bufidCapacity, bool debugEnabled,
-                                    llvm::StringRef forceMechanism) {
+                                    llvm::StringRef forceMechanism,
+                                    bool checkAddrReuse) {
   auto pass = std::make_unique<PTOUnifiedSyncPass>();
   pass->bufidCapacity = bufidCapacity;
   pass->debugEnabled = debugEnabled;
   pass->forceMechanism = forceMechanism.str();
+  pass->checkAddrReuse = checkAddrReuse;
   return pass;
 }
