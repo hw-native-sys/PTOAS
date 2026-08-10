@@ -293,7 +293,6 @@ getVPTOStructFieldAddress(ConversionPatternRewriter &rewriter, Location loc,
 struct PlannedDecl {
   std::string name;
   FunctionType type;
-  bool needsVscatterMemoryEffectsWorkaround = false;
 };
 
 struct LoweringState {
@@ -4487,33 +4486,17 @@ materializeDecls(ModuleOp module, ArrayRef<PlannedDecl> plannedDecls,
   OpBuilder builder(module.getBodyRegion());
   builder.setInsertionPointToStart(&module.getBodyRegion().front());
   for (const PlannedDecl &decl : plannedDecls) {
-    func::FuncOp func = module.lookupSymbol<func::FuncOp>(decl.name);
-    if (func) {
-      if (func.getFunctionType() != decl.type) {
+    if (func::FuncOp existing = module.lookupSymbol<func::FuncOp>(decl.name)) {
+      if (existing.getFunctionType() != decl.type) {
         diagOS << "VPTO LLVM emission failed: conflicting declaration for "
                << decl.name << "\n";
         return failure();
       }
-    } else {
-      func = builder.create<func::FuncOp>(module.getLoc(), decl.name, decl.type);
-      func.setPrivate();
-    }
-
-    if (!decl.needsVscatterMemoryEffectsWorkaround)
       continue;
-
-    // Work around a bug in older Bisheng releases: vscatter was not modeled
-    // as writing through its destination pointer, so EarlyCSE could eliminate
-    // a load after vscatter as redundant. Carry the intrinsic's real memory
-    // effects on its declaration through func-to-llvm. The dispatcher later
-    // rewrites LLVM 21's memory(...) spelling for Bisheng's LLVM 15 parser.
-    func->setAttr(
-        "memory_effects",
-        LLVM::MemoryEffectsAttr::get(
-            module.getContext(),
-            {LLVM::ModRefInfo::NoModRef, LLVM::ModRefInfo::Mod,
-             LLVM::ModRefInfo::NoModRef}));
-    func->setAttr("no_unwind", builder.getUnitAttr());
+    }
+    auto func =
+        builder.create<func::FuncOp>(module.getLoc(), decl.name, decl.type);
+    func.setPrivate();
   }
   return success();
 }
@@ -8456,8 +8439,7 @@ public:
         op.getLoc(), *calleeName, TypeRange{},
         ValueRange{adaptor.getValue(), adaptor.getDestination(),
                    adaptor.getOffsets(), adaptor.getMask()});
-    state.plannedDecls.push_back(
-        PlannedDecl{calleeName->str(), funcType, true});
+    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
   }
@@ -12265,6 +12247,16 @@ emitDeviceLLVMModule(ModuleOp deviceModule, StringRef kernelKind,
   }
 
   applyArtifactVisibilityLinkage(deviceModule, *llvmModule);
+  for (llvm::Function &func : *llvmModule) {
+    if (!func.getName().starts_with("llvm.hivm.vscatter."))
+      continue;
+    // Work around a bug in older Bisheng releases: vscatter was not modeled
+    // as writing through its destination pointer, so EarlyCSE could eliminate
+    // a load after vscatter as redundant.
+    func.setOnlyAccessesArgMemory();
+    func.addFnAttr(llvm::Attribute::NoUnwind);
+    func.addFnAttr(llvm::Attribute::WriteOnly);
+  }
   applySimtEntryCallingConvention(*llvmModule, simtEntryNames);
   if (failed(attachAIVectorScopeMetadata(*llvmModule, diagOS)))
     return failure();

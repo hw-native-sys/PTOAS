@@ -85,18 +85,9 @@ LogicalResult lowerVPTOModuleToLLVMIRText(
   }
   os.flush();
   // LLVM 21 prints arg-memory effects with memory(...), while the Bisheng
-  // LLVM 15 parser accepts only the equivalent legacy spellings.
-  constexpr StringLiteral modernWriteOnlyArgMem = "memory(argmem: write)";
-  size_t offset = 0;
-  while ((offset = output.find(modernWriteOnlyArgMem.str(), offset)) !=
-         std::string::npos) {
-    output.replace(offset, modernWriteOnlyArgMem.size(),
-                   "writeonly argmemonly");
-    offset += StringRef("writeonly argmemonly").size();
-  }
-
+  // LLVM 15 parser accepts only the equivalent legacy argmemonly spelling.
   constexpr StringLiteral modernArgMemOnly = "memory(argmem: readwrite)";
-  offset = 0;
+  size_t offset = 0;
   while ((offset = output.find(modernArgMemOnly.str(), offset)) !=
          std::string::npos) {
     output.replace(offset, modernArgMemOnly.size(), "argmemonly");
