@@ -2679,6 +2679,8 @@ def vmi_wrapper_dispatch_probe():
     int_rhs = pto.vmi.vload(int_other_ptr, offset, size=64)
     hist_mask = pto.vmi.create_mask(pto.const(256, dtype=pto.index), size=256)
     added = pto.vmi.vadd(lhs, rhs, mask)
+    carry_sum, carry = pto.vmi.vaddc(int_lhs, int_rhs, mask)
+    carry_next, carry_out = pto.vmi.vaddcs(carry_sum, int_rhs, carry, mask)
     subtracted = pto.vmi.vsub(lhs, rhs, mask)
     multiplied = pto.vmi.vmul(lhs, rhs, mask)
     divided = pto.vmi.vdiv(lhs, rhs, mask)
@@ -2742,6 +2744,8 @@ def vmi_wrapper_dispatch_probe():
     pto.vmi.vsstb(hi, dst_ptr, offset, pto.i16(8), mask)
 
     _ = group_mask
+    _ = carry_next
+    _ = carry_out
     _ = total
     _ = explicit_total
     _ = peak
@@ -6594,6 +6598,8 @@ def main() -> None:
         "pto.vmi.vsstb",
         "pto.vmi.vci",
         "pto.vmi.vadd",
+        "pto.vmi.vaddc",
+        "pto.vmi.vaddcs",
         "pto.vmi.vsub",
         "pto.vmi.vmul",
         "pto.vmi.vdiv",

@@ -170,6 +170,7 @@ public:
 
 static bool isSameLayoutOp(Operation *op) {
   return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
+             VMIVaddcOp, VMIVaddcsOp,
              VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp,
              VMIVmullOp, VMIFmaOp, VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp,
              VMIMaxIOp, VMINegFOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,

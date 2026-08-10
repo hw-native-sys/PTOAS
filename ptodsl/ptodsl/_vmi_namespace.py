@@ -341,6 +341,25 @@ def _derive_vmull_result_types(a, b, *, context: str):
     return lhs_type, rhs_type
 
 
+def _derive_add_carry_result_types(lhs, rhs, mask, *, carry_in=None, context: str):
+    lhs_type = _as_vmi_vreg_type(_type_of(lhs), context=context)
+    rhs_type = _as_vmi_vreg_type(_type_of(rhs), context=context)
+    if lhs_type != rhs_type:
+        raise TypeError(f"{context} requires lhs and rhs to have identical VMI vreg types")
+    element_type = lhs_type.element_type
+    if not IntegerType.isinstance(element_type) or IntegerType(element_type).width != 32:
+        raise TypeError(f"{context} requires 32-bit integer vectors")
+
+    mask_type = _as_vmi_mask_type(_type_of(mask), context=context)
+    if _vmi_mask_element_count(mask_type, context=context) != lhs_type.element_count:
+        raise TypeError(f"{context} requires the mask lane count to match the data vectors")
+    if carry_in is not None:
+        carry_in_type = _as_vmi_mask_type(_type_of(carry_in), context=context)
+        if carry_in_type != mask_type:
+            raise TypeError(f"{context} requires carry_in and mask to have identical VMI mask types")
+    return lhs_type, mask_type
+
+
 def _derive_hist_result_type(acc, *, context: str):
     """acc must be 16-bit unsigned or signless integer; result is always ui16."""
     acc_type = _as_vmi_vreg_type(_type_of(acc), context=context)
@@ -760,6 +779,45 @@ class _VMINamespace:
     def vadd(lhs, rhs, mask=None, **kw):
         """Emit VMI vector addition, selecting vector or scalar form by type."""
         return _emit_binary_or_vec_scalar("vadd", "vadds", lhs, rhs, mask, commutative=True, **kw)
+
+    @staticmethod
+    def vaddc(lhs, rhs, mask, *, loc=None, ip=None):
+        """Emit a 32-bit integer add with per-lane carry output."""
+        context = "pto.vmi.vaddc(...)"
+        mask_value = _required_mask(mask, context=context)
+        result_type, carry_type = _derive_add_carry_result_types(
+            lhs, rhs, mask_value, context=context
+        )
+        return _call_value(
+            "vaddc",
+            result_type,
+            carry_type,
+            _raw(lhs),
+            _raw(rhs),
+            mask_value,
+            loc=loc,
+            ip=ip,
+        )
+
+    @staticmethod
+    def vaddcs(lhs, rhs, carry_in, mask, *, loc=None, ip=None):
+        """Emit a 32-bit integer add with carry input and carry output."""
+        context = "pto.vmi.vaddcs(...)"
+        mask_value = _required_mask(mask, context=context)
+        result_type, carry_type = _derive_add_carry_result_types(
+            lhs, rhs, mask_value, carry_in=carry_in, context=context
+        )
+        return _call_value(
+            "vaddcs",
+            result_type,
+            carry_type,
+            _raw(lhs),
+            _raw(rhs),
+            _raw(carry_in),
+            mask_value,
+            loc=loc,
+            ip=ip,
+        )
 
     vsub = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vsub", lhs, rhs, mask, **kw))
 

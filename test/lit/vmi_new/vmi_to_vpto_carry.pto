@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vmi_to_vpto_vaddc(
+      %lhs: !pto.vmi.vreg<128xui32>,
+      %rhs: !pto.vmi.vreg<128xui32>,
+      %mask: !pto.vmi.mask<128xpred>)
+      -> (!pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>) {
+    %sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32>,
+          !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+    return %sum, %carry
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+  }
+
+  func.func @vmi_to_vpto_vaddcs(
+      %lhs: !pto.vmi.vreg<128xui32>,
+      %rhs: !pto.vmi.vreg<128xui32>,
+      %carry_in: !pto.vmi.mask<128xpred>,
+      %mask: !pto.vmi.mask<128xpred>)
+      -> (!pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>) {
+    %sum, %carry = pto.vmi.vaddcs %lhs, %rhs, %carry_in, %mask
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32>,
+          !pto.vmi.mask<128xpred>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+    return %sum, %carry
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_vaddc(
+// CHECK: %[[SUM0:.*]], %[[CARRY0:.*]] = pto.vaddc
+// CHECK: %[[SUM1:.*]], %[[CARRY1:.*]] = pto.vaddc
+// CHECK: return %[[SUM0]], %[[SUM1]], %[[CARRY0]], %[[CARRY1]]
+// CHECK-LABEL: func.func @vmi_to_vpto_vaddcs(
+// CHECK: %[[NEXT0:.*]], %[[NEXTCARRY0:.*]] = pto.vaddcs
+// CHECK: %[[NEXT1:.*]], %[[NEXTCARRY1:.*]] = pto.vaddcs
+// CHECK: return %[[NEXT0]], %[[NEXT1]], %[[NEXTCARRY0]], %[[NEXTCARRY1]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.

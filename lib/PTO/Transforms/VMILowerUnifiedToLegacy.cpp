@@ -77,9 +77,9 @@
 //   vprelu  → maxf + minf + mulf + addf
 //   Category C7/C8/C9 bypass mask/pmode synthesis here and skip pmode="merge".
 //
-// Category D — no legacy equivalent (explicitly skipped, 11 ops):
+// Category D — no legacy equivalent (explicitly skipped, 13 ops):
 //   vadds/vmuls/vmaxs/vmins/vshls/vshrs
-//   vintlv vdintlv vselr vgatherb vmull
+//   vaddc vaddcs vintlv vdintlv vselr vgatherb vmull
 //
 //===----------------------------------------------------------------------===//
 
@@ -1176,10 +1176,12 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
       worklist.push_back(op);
 
     // Category D — no legacy equivalent (require direct VMIToVPTO lowering):
-    //   plt, vector-scalar ops, vintlv, vdintlv, vselr, vgatherb, vmull
+    //   plt, vector-scalar ops, vaddc/vaddcs, vintlv, vdintlv, vselr,
+    //   vgatherb, vmull
     // These are intentionally NOT added to the worklist — they flow through
     // to VMIToVPTO which must provide direct 1:N lowering patterns.
     if (isa<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp,
+            VMIVaddcOp, VMIVaddcsOp,
             VMIVintlvOp, VMIVdintlvOp, VMIVselrOp, VMIVgatherbOp, VMIVmullOp>(
             op)) {
       op->emitRemark("VMI unified op has no legacy equivalent — "

@@ -272,6 +272,19 @@ struct MaskGranularitySolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
+      if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
+        if (failed(requestMaskUse(addc.getMaskMutable(), "b32", op)) ||
+            failed(requestMask(addc.getCarry(), "b32", op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
+        if (failed(requestMaskUse(addcs.getCarryInMutable(), "b32", op)) ||
+            failed(requestMaskUse(addcs.getMaskMutable(), "b32", op)) ||
+            failed(requestMask(addcs.getCarry(), "b32", op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
       if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
         auto resultType = cast<VMIVRegType>(activePrefix.getResult().getType());
         if (failed(requestMaskUse(

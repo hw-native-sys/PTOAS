@@ -79,6 +79,17 @@ def vmi_binary_add_compatibility_probe():
     _ = pto.vmi.vadds(source, 1.0, mask)
 
 
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vmi_add_carry_probe():
+    lhs_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.ui32)
+    rhs_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.ui32)
+    mask = pto.vmi.create_mask(64, size=64)
+    lhs = pto.vmi.vload(lhs_tile.as_ptr(), 0, size=64)
+    rhs = pto.vmi.vload(rhs_tile.as_ptr(), 0, size=64)
+    sum_value, carry = pto.vmi.vaddc(lhs, rhs, mask)
+    _, _ = pto.vmi.vaddcs(sum_value, rhs, carry, mask)
+
+
 def expect(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -100,6 +111,10 @@ def main() -> None:
         "pto.vmi.vadds" in vector_scalar_text,
         "vmi.vadd(vector, scalar, mask) should emit pto.vmi.vadds",
     )
+
+    carry_text = vmi_add_carry_probe.compile().mlir_text()
+    expect("pto.vmi.vaddc" in carry_text, "vmi.vaddc should emit pto.vmi.vaddc")
+    expect("pto.vmi.vaddcs" in carry_text, "vmi.vaddcs should emit pto.vmi.vaddcs")
 
     vector_scalar_text = vmi_binary_vector_scalar_probe.compile().mlir_text()
     for op_name in ("vmuls", "vmaxs", "vmins", "vshls", "vshrs"):

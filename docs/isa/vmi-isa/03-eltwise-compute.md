@@ -68,6 +68,26 @@
       : !pto.vmi.vreg<64×f32>, !pto.vmi.vreg<64×f32>, !pto.vmi.mask<64> -> !pto.vmi.vreg<64×f32>
   ```
 
+### `pto.vmi.vaddc` / `pto.vmi.vaddcs`
+
+Carry-chain integer adds are exposed as multi-result VMI operations so the
+frontend can preserve the hardware carry instruction instead of expanding the
+operation into an add/compare/select sequence.
+
+```mlir
+%sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
+    : !pto.vmi.vreg<Lxui32>, !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
+    -> !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
+%next, %carry2 = pto.vmi.vaddcs %lhs, %rhs, %carry, %mask
+    : !pto.vmi.vreg<Lxui32>, !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>, !pto.vmi.mask<L>
+    -> !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
+```
+
+Both operations require matching 32-bit integer data values. The execution
+mask, carry-in (for `vaddcs`), and carry-out use the same logical lane count,
+layout, and `b32` physical mask granularity as the data ports. They lower
+one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
+
 ### `pto.vmi.vdiv`
 
 - **semantics:** Elementwise floating-point divide.

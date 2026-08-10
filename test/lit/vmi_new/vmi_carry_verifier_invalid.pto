@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file 2>&1 | FileCheck %s
+
+module {
+  func.func @vaddc_f16_invalid(
+      %lhs: !pto.vmi.vreg<64xf16>, %rhs: !pto.vmi.vreg<64xf16>,
+      %mask: !pto.vmi.mask<64xpred>) {
+    %sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf16>, !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vaddc' op requires 32-bit integer vector element types
+
+// -----
+
+module {
+  func.func @vaddcs_carry_lane_mismatch(
+      %lhs: !pto.vmi.vreg<64xui32>, %rhs: !pto.vmi.vreg<64xui32>,
+      %carry_in: !pto.vmi.mask<32xpred>, %mask: !pto.vmi.mask<64xpred>) {
+    %sum, %carry = pto.vmi.vaddcs %lhs, %rhs, %carry_in, %mask
+        : !pto.vmi.vreg<64xui32>, !pto.vmi.vreg<64xui32>,
+          !pto.vmi.mask<32xpred>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vaddcs' op requires mask logical lane count to match data lane count

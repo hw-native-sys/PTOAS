@@ -24,7 +24,7 @@ EMISSION_TEST = ROOT / "ptodsl/tests/test_jit_compile.py"
 BACKEND_CAPABILITY = {
     name: "a5-vpto"
     for name in (
-        "vload vstore vsstb vci vadd vsub vmul vdiv vmax vmin vabs vneg "
+        "vload vstore vsstb vci vadd vaddc vaddcs vsub vmul vdiv vmax vmin vabs vneg "
         "vrelu vexp vln vsqrt vand vor vxor vnot vshl vshr vadds vmuls "
         "vmaxs vmins vshls vshrs vcmp vcmps vsel vselr vbrc vcadd vcmax "
         "vcmin vcvt vinterpret_cast vexpdif vaxpy vlrelu vprelu vmull "
@@ -48,9 +48,9 @@ def _indexed_ops():
 
 def main() -> None:
     indexed = _indexed_ops()
-    assert [number for number, _ in indexed] == list(range(1, 54))
+    assert [number for number, _ in indexed] == list(range(1, 56))
     names = [name for _, name in indexed]
-    assert len(names) == len(set(names)) == 53
+    assert len(names) == len(set(names)) == 55
     assert set(BACKEND_CAPABILITY) == set(names)
     assert set(PTODSL_ALIASES) <= set(names)
 

@@ -655,6 +655,20 @@ struct LayoutSolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
+      if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
+        if (failed(constrainElementwiseBinary(addc.getLhsMutable(),
+                                              addc.getRhsMutable(),
+                                              addc.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
+      if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
+        if (failed(constrainElementwiseBinary(addcs.getLhsMutable(),
+                                              addcs.getRhsMutable(),
+                                              addcs.getResult(), op)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
       if (auto fma = dyn_cast<VMIFmaOp>(op)) {
         if (failed(unite(fma.getLhs(), fma.getRhs(), op)) ||
             failed(unite(fma.getLhs(), fma.getAcc(), op)) ||

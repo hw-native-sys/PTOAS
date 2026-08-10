@@ -3543,6 +3543,45 @@ LogicalResult VMIVpreluOp::verify() {
   return success();
 }
 
+template <typename CarryOp>
+static LogicalResult verifyVMIAddCarryOp(CarryOp op, VMIMaskType carryInType,
+                                         bool hasCarryIn) {
+  auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
+  auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  auto maskType = cast<VMIMaskType>(op.getMask().getType());
+  auto carryType = cast<VMIMaskType>(op.getCarry().getType());
+
+  auto integerType = dyn_cast<IntegerType>(lhsType.getElementType());
+  if (!integerType || integerType.getWidth() != 32)
+    return op.emitOpError("requires 32-bit integer vector element types");
+
+  if (failed(verifyAllSameVRegShapeAndLayout(
+          op.getOperation(), {lhsType, rhsType, resultType},
+          /*requireSameElement=*/true)))
+    return failure();
+  if (failed(verifyMaskMatchesData(op.getOperation(), maskType, lhsType)) ||
+      failed(verifyMaskMatchesData(op.getOperation(), carryType, lhsType)))
+    return failure();
+  if (hasCarryIn &&
+      failed(verifyMaskMatchesData(op.getOperation(), carryInType, lhsType)))
+    return failure();
+
+  SmallVector<VMIMaskType> masks{maskType, carryType};
+  if (hasCarryIn)
+    masks.push_back(carryInType);
+  return verifyAllSameMaskShapeLayoutAndGranularity(op.getOperation(), masks);
+}
+
+LogicalResult VMIVaddcOp::verify() {
+  return verifyVMIAddCarryOp(*this, VMIMaskType{}, /*hasCarryIn=*/false);
+}
+
+LogicalResult VMIVaddcsOp::verify() {
+  return verifyVMIAddCarryOp(*this, cast<VMIMaskType>(getCarryIn().getType()),
+                             /*hasCarryIn=*/true);
+}
+
 LogicalResult VMIVmullOp::verify() {
   auto aType = cast<VMIVRegType>(getA().getType());
   auto bType = cast<VMIVRegType>(getB().getType());
