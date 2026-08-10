@@ -32,6 +32,7 @@ VPTOSchedDAGBuilder::build(const VPTOSchedRegion &region) const {
   buildSSAEdges(*dag);
   buildMemoryEdges(*dag);
   buildImplicitAndSyncEdges(*dag);
+  buildModelFallbackEdges(*dag);
   if (failed(dag->computeCriticalPaths()))
     return failure();
   dag->resetDependencyCounts();
@@ -246,8 +247,11 @@ void VPTOSchedDAGBuilder::buildSSAEdges(VPTOSchedDAG &dag) const {
         dag.addLiveIn(operand);
         continue;
       }
+      unsigned latency =
+          model ? model->getSchedClass(predecessor->getOperation()).writeLatency
+                : 1;
       dag.addEdge(*predecessor, unit, VPTOSchedEdgeKind::Data,
-                  VPTOSchedEdgeStrength::Must, /*latency=*/1,
+                  VPTOSchedEdgeStrength::Must, latency,
                   Twine("ssa operand #") + Twine(operandIndex));
     }
 
@@ -256,5 +260,24 @@ void VPTOSchedDAGBuilder::buildSSAEdges(VPTOSchedDAG &dag) const {
                        [&](Operation *user) { return !dag.lookup(user); }))
         dag.addLiveOut(result);
     }
+  }
+}
+
+void VPTOSchedDAGBuilder::buildModelFallbackEdges(VPTOSchedDAG &dag) const {
+  if (!model)
+    return;
+  ArrayRef<std::unique_ptr<VPTOSUnit>> units = dag.getUnits();
+  for (size_t index = 0; index < units.size(); ++index) {
+    VPTOSUnit &unit = *units[index];
+    if (model->getSchedClass(unit.getOperation()).known)
+      continue;
+    if (index != 0)
+      dag.addEdge(*units[index - 1], unit, VPTOSchedEdgeKind::Artificial,
+                  VPTOSchedEdgeStrength::Must, 0,
+                  "unknown sched class preserves predecessor order");
+    if (index + 1 != units.size())
+      dag.addEdge(unit, *units[index + 1], VPTOSchedEdgeKind::Artificial,
+                  VPTOSchedEdgeStrength::Must, 0,
+                  "unknown sched class preserves successor order");
   }
 }
