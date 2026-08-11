@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-PTOAS_BIN="${PTOAS_BIN:-${ROOT}/build/tools/ptoas/ptoas}"
-if [[ ! -x "${PTOAS_BIN}" ]]; then PTOAS_BIN="$(command -v ptoas || true)"; fi
-if [[ ! -x "${PTOAS_BIN}" && -x "${ROOT}/../ptoas-main/build/tools/ptoas/ptoas" ]]; then
-  PTOAS_BIN="${ROOT}/../ptoas-main/build/tools/ptoas/ptoas"
-fi
-if [[ ! -x "${PTOAS_BIN}" ]]; then echo "error: build ptoas or set PTOAS_BIN" >&2; exit 2; fi
-OUT="$(mktemp)"
-env -u PYTHONPATH "${PYTHON_BIN:-python3}" "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --emit-vpto \
-  "${ROOT}/docs/repro/requant_pipeline/fixtures/requant_vmi.pto" >"${OUT}"
-grep -q 'pto.vcgmax' "${OUT}"
-grep -q 'pto.vmul' "${OUT}"
-grep -q 'pto.vcvt' "${OUT}"
-echo "VPTO vector loads: $(grep -Ec 'pto.vlds|pto.vldsx2' "${OUT}")"
-echo "VPTO vector stores: $(grep -Ec 'pto.vsts' "${OUT}")"
-echo "PASS: requant fixture lowers to VPTO"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; MODE="${1:-all}"; OUT="${HERE}/outputs"; mkdir -p "${OUT}"
+set +u; source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; set -u
+PTOAS_BIN="${PTOAS_BIN:-$(conda run -n cann91_dev which ptoas | tail -1)}"
+BISHENG="${BISHENG:-${ASCEND_HOME_PATH}/tools/bisheng_compiler/bin/bisheng}"
+compile() {
+  env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --emit-vpto "${HERE}/fixtures/requant_vmi.pto" -o "${OUT}/requant.vpto"
+  grep -q 'pto.vcgmax' "${OUT}/requant.vpto"; grep -q 'pto.vcvt' "${OUT}/requant.vpto"; grep -q 'pto.vmul' "${OUT}/requant.vpto"
+  env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 "${HERE}/fixtures/requant_vmi.pto" -o "${OUT}/requant_vmi.o"
+  "${BISHENG}" -xcce -O2 -fPIC -std=c++17 --cce-aicore-arch=dav-c310-vec --cce-aicore-only -c \
+    "${HERE}/fixtures/reference_cce.cpp" -o "${OUT}/reference_device.o" -I"${ASCEND_HOME_PATH}/include" \
+    -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface"
+  echo "PASS: full GM/UB VMI and direct CCE kernels compile"
+}
+run() { python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; }
+case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac

@@ -1,28 +1,21 @@
-# Dequantize–reduce–requantize pipeline needs a fused lowering
+# Dequantize/reduce/requantize needs a fused lowering
 
-## Summary
+This standalone A5 package contains complete GM-to-UB-to-GM kernels for an FP8
+requantization chain: load FP8 and grouped input scales, widen and dequantize,
+compute new group maxima, rescale, convert back to FP8, and store FP8 plus the
+new scales. `fixtures/requant_vmi.pto` is stock PTOAS/VMI input and
+`fixtures/reference_cce.cpp` is a direct register-resident CCE peer.
 
-This case covers a low-level conversion pipeline: FP8 values are expanded with
-grouped input scales, reduced to new per-group maxima, rescaled, and converted
-back to FP8. The equivalent direct CCE implementation pipelines scale decode,
-vector arithmetic, reduction, and packed stores. Current VMI code is correct
-but remains far slower, especially when the input and output scale formats
-differ.
+Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
+The compile check verifies the reduction, multiply, conversion, and complete
+DMA envelope. Benchmark mode reports pinned A5 event medians:
 
-## Reproduce
+| Representative case | ASC us | VMI us | ASC/VMI |
+|---|---:|---:|---:|
+| small FP8, group 32 | 4.1403 | 7.1908 | 0.5758 |
+| small FP8, group 128 | 4.4532 | 11.3552 | 0.3922 |
+| large FP8, group 32 | 46.7131 | 140.8352 | 0.3317 |
 
-```bash
-bash docs/repro/requant_pipeline/check.sh
-```
-
-The check lowers the framework-free PTO fixture and reports the number of
-vector loads/stores and barriers in the resulting VPTO. For on-device A/B, use
-the same persistent loop and buffers for the VMI body and the direct sequence
-outlined in `fixtures/reference_cce.cpp`.
-
-## Requested behavior
-
-Lower this whole chain without intermediate UB round trips and reach at least
-98% of the direct CCE implementation. Grouped input-scale broadcast and output
-amax reduction should coexist in registers, and the compiler should reuse
-predicates/layout conversions across adjacent vector chunks.
+Parity is `ASC_us / VMI_us >= 0.98`. The requested lowering keeps input-scale
+broadcast and output amax reduction in registers, reuses predicates/layouts,
+and introduces no intermediate UB round trip.

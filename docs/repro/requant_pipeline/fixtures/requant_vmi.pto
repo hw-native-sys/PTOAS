@@ -1,11 +1,35 @@
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @requant_body(
-      %src: !pto.ptr<f8E4M3FN, ub>,
-      %input_scale: !pto.ptr<f32, ub>,
-      %dst: !pto.ptr<f8E4M3FN, ub>) attributes {pto.kernel} {
+      %src_gm: !pto.ptr<f8E4M3FN, gm>,
+      %input_scale_gm: !pto.ptr<f32, gm>,
+      %dst_gm: !pto.ptr<f8E4M3FN, gm>,
+      %output_scale_gm: !pto.ptr<f32, gm>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c256 = arith.constant 256 : index
+    %zero_i64 = arith.constant 0 : i64
+    %zero_u64 = builtin.unrealized_conversion_cast %zero_i64 : i64 to ui64
+    %src = pto.castptr %zero_u64 : ui64 -> !pto.ptr<f8E4M3FN, ub>
+    %s_i64 = arith.constant 32768 : i64
+    %s_u64 = builtin.unrealized_conversion_cast %s_i64 : i64 to ui64
+    %input_scale = pto.castptr %s_u64 : ui64 -> !pto.ptr<f32, ub>
+    %d_i64 = arith.constant 33792 : i64
+    %d_u64 = builtin.unrealized_conversion_cast %d_i64 : i64 to ui64
+    %dst = pto.castptr %d_u64 : ui64 -> !pto.ptr<f8E4M3FN, ub>
+    %os_i64 = arith.constant 34816 : i64
+    %os_u64 = builtin.unrealized_conversion_cast %os_i64 : i64 to ui64
+    %output_scale = pto.castptr %os_u64 : ui64 -> !pto.ptr<f32, ub>
+    %one_i64 = arith.constant 1 : i64
+    %b256 = arith.constant 256 : i64
+    %b32 = arith.constant 32 : i64
+    pto.mte_gm_ub %src_gm, %src, %zero_i64, %b256 nburst(%one_i64, %b256, %b256)
+      {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0>}
+      : !pto.ptr<f8E4M3FN, gm>, !pto.ptr<f8E4M3FN, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %input_scale_gm, %input_scale, %zero_i64, %b32 nburst(%one_i64, %b32, %b32)
+      {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0>}
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
     %q = pto.vmi.vload %src[%c0]
         : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<256xf8E4M3FN>
@@ -30,6 +54,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
     pto.vmi.vstore %out, %dst[%c0]
         : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+    pto.vmi.vstore %amax, %output_scale[%c0], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
+    pto.mte_ub_gm %dst, %dst_gm, %b256 nburst(%one_i64, %b256, %b256)
+      {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 0, 0, 0>}
+      : !pto.ptr<f8E4M3FN, ub>, !pto.ptr<f8E4M3FN, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %output_scale, %output_scale_gm, %b32 nburst(%one_i64, %b32, %b32)
+      {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 0, 0, 0>}
+      : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
     return
   }
 }
