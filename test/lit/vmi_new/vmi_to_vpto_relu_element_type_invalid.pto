@@ -18,4 +18,4 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vrelu' op requires signed/signless i32, f16, or f32 VMI element type
+// CHECK: 'pto.vmi.vrelu' op requires si32, f16, or f32 VMI element type

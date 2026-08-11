@@ -14420,7 +14420,7 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       relu.emitError()
           << kVMIDiagUnsupportedPrefix
           << "pto.vmi.relu direct lowering requires physical vreg parts with "
-             "b32 predicates for i32 or matching b16/b32 predicates for "
+             "b32 predicates for si32 or matching b16/b32 predicates for "
              "f16/f32 ("
           << reason << ")";
       return WalkResult::interrupt();

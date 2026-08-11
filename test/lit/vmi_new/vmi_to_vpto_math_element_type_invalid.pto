@@ -106,7 +106,21 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vabs' op requires signed/signless i8, i16, i32, f16, bf16, or f32 VMI element type
+// CHECK: 'pto.vmi.vabs' op requires si8, si16, si32, f16, bf16, or f32 VMI element type
+
+// -----
+
+module {
+  func.func @vmi_to_vpto_absi_signless_invalid(
+      %source: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>) {
+    %out = pto.vmi.vabs %source
+        : !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vabs' op requires si8, si16, si32, f16, bf16, or f32 VMI element type
 
 // -----
 

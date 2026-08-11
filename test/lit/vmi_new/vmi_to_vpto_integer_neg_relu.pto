@@ -16,11 +16,11 @@ module {
     return %neg : !pto.vmi.vreg<256xi16>
   }
 
-  func.func @vmi_to_vpto_relu_i32(
-      %value: !pto.vmi.vreg<128xi32>) -> !pto.vmi.vreg<128xi32> {
+  func.func @vmi_to_vpto_relu_si32(
+      %value: !pto.vmi.vreg<128xsi32>) -> !pto.vmi.vreg<128xsi32> {
     %relu = pto.vmi.vrelu %value
-        : !pto.vmi.vreg<128xi32> -> !pto.vmi.vreg<128xi32>
-    return %relu : !pto.vmi.vreg<128xi32>
+        : !pto.vmi.vreg<128xsi32> -> !pto.vmi.vreg<128xsi32>
+    return %relu : !pto.vmi.vreg<128xsi32>
   }
 }
 
@@ -29,9 +29,9 @@ module {
 // CHECK-DAG: %[[NEG1:.*]] = pto.vneg {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
 // CHECK: return %[[NEG0]], %[[NEG1]]
 
-// CHECK-LABEL: func.func @vmi_to_vpto_relu_i32(
-// CHECK-DAG: %[[RELU0:.*]] = pto.vrelu {{.*}} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
-// CHECK-DAG: %[[RELU1:.*]] = pto.vrelu {{.*}} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+// CHECK-LABEL: func.func @vmi_to_vpto_relu_si32(
+// CHECK-DAG: %[[RELU0:.*]] = pto.vrelu {{.*}} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// CHECK-DAG: %[[RELU1:.*]] = pto.vrelu {{.*}} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
 // CHECK: return %[[RELU0]], %[[RELU1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

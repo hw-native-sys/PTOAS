@@ -174,6 +174,15 @@ static bool matchesVMIIntSemantics(IntegerType intType,
   llvm_unreachable("bad VMIIntSignSemantics");
 }
 
+static bool isVMISignedI8I16I32Type(Type type) {
+  auto intType = dyn_cast<IntegerType>(type);
+  if (!intType ||
+      !matchesVMIIntSemantics(intType, VMIIntSignSemantics::Signed))
+    return false;
+  return intType.getWidth() == 8 || intType.getWidth() == 16 ||
+         intType.getWidth() == 32;
+}
+
 static bool isVMIIotaElementType(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type))
     return intType.getWidth() == 8 || intType.getWidth() == 16 ||
@@ -1456,9 +1465,9 @@ LogicalResult VMIAbsIOp::verify() {
   if (!isVMIIntegerLikeType(sourceType.getElementType())) {
     return emitOpError("requires integer-like VMI element type");
   }
-  if (!isVMISignedOrSignlessI8I16I32Type(sourceType.getElementType()))
-    return emitOpError("requires signless or signed i8, i16, or i32 VMI "
-                       "element type");
+  if (!isVMISignedI8I16I32Type(sourceType.getElementType())) {
+    return emitOpError("requires si8, si16, or si32 VMI element type");
+  }
   return verifyAllSameVRegShapeAndLayout(getOperation(),
                                          {sourceType, resultType},
                                          /*requireSameElement=*/true);
@@ -1497,11 +1506,12 @@ LogicalResult VMIReluOp::verify() {
   Type elementType = sourceType.getElementType();
   bool supportedInteger = false;
   if (auto intType = dyn_cast<IntegerType>(elementType)) {
-    supportedInteger = intType.getWidth() == 32 && !intType.isUnsigned();
+    supportedInteger =
+        intType.getWidth() == 32 &&
+        matchesVMIIntSemantics(intType, VMIIntSignSemantics::Signed);
   }
   if (!supportedInteger && !isVMIF16OrF32Type(elementType)) {
-    return emitOpError(
-        "requires signed/signless i32, f16, or f32 VMI element type");
+    return emitOpError("requires si32, f16, or f32 VMI element type");
   }
   return verifyAllSameVRegShapeAndLayout(getOperation(),
                                          {sourceType, resultType},
@@ -3276,15 +3286,10 @@ LogicalResult VMIVabsOp::verify() {
   Type eltTy = sourceType.getElementType();
   if (failed(verifyBF16x2ComputeElementType(getOperation(), eltTy)))
     return failure();
-  auto integerType = dyn_cast<IntegerType>(eltTy);
-  bool supportedInteger =
-      integerType && matchesVMIIntSemantics(
-                         integerType, VMIIntSignSemantics::Signed) &&
-      isVMIAnyI8I16I32Type(eltTy);
+  bool supportedInteger = isVMISignedI8I16I32Type(eltTy);
   if (!supportedInteger && !isVMIF16BF16OrF32Type(eltTy)) {
     return emitOpError(
-        "requires signed i8, i16, i32, f16, bf16, or f32 VMI "
-        "element type");
+        "requires si8, si16, si32, f16, bf16, or f32 VMI element type");
   }
 
   if (failed(verifyAllSameVRegShapeAndLayout(
@@ -3349,11 +3354,12 @@ LogicalResult VMIVreluOp::verify() {
   Type elementType = sourceType.getElementType();
   bool supportedInteger = false;
   if (auto intType = dyn_cast<IntegerType>(elementType)) {
-    supportedInteger = intType.getWidth() == 32 && !intType.isUnsigned();
+    supportedInteger =
+        intType.getWidth() == 32 &&
+        matchesVMIIntSemantics(intType, VMIIntSignSemantics::Signed);
   }
   if (!supportedInteger && !isVMIF16OrF32Type(elementType)) {
-    return emitOpError(
-        "requires signed/signless i32, f16, or f32 VMI element type");
+    return emitOpError("requires si32, f16, or f32 VMI element type");
   }
   if (failed(verifyAllSameVRegShapeAndLayout(
           getOperation(), {sourceType, resultType},

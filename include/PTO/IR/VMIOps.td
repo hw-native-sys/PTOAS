@@ -311,7 +311,7 @@ def VMILnOp : VMI_Op<"ln", [Pure]> {
 }
 
 def VMIReluOp : VMI_Op<"relu", [Pure]> {
-  let summary = "VMI floating-point or 32-bit integer elementwise ReLU";
+  let summary = "VMI floating-point or signed 32-bit integer elementwise ReLU";
   let arguments = (ins VMI_VRegTypeConstraint:$source);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
@@ -1061,7 +1061,7 @@ def VMIVabsOp : VMI_Op<"vabs", [Pure]> {
   let summary = "VMI elementwise absolute value (float/int unified)";
   let description = [{
     Computes the elementwise absolute value of a logical vector.
-    Supports both floating-point and integer element types.
+    Supports floating-point and explicitly signed integer element types.
 
     pmode governs inactive-lane behavior:
     - "merge" (default): inactive lanes pass through the source value.
@@ -1070,7 +1070,7 @@ def VMIVabsOp : VMI_Op<"vabs", [Pure]> {
     Example:
     ```
     %r = pto.vmi.vabs %v, %m {pmode = "zero"}
-      : !pto.vmi.vreg<128xi32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xi32>
+      : !pto.vmi.vreg<128xsi32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xsi32>
     ```
   }];
   let arguments = (ins

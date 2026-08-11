@@ -130,7 +130,9 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vmax %lhs, %rhs, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`,
+  `f32`. Integer signedness is taken from the element type; signless `iN`
+  uses unsigned semantics.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vmax / pto.vmin
@@ -155,10 +157,10 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vabs %src, %mask {pmode = "zero"} : !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **datatypes:** `si8`, `si16`, `si32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**
   ```
-  K × pto.vabs (i8-i32/f16/f32)
+  K × pto.vabs (si8/si16/si32/f16/f32)
   K × sign-bit clear (bf16)
   ```
   BF16 has no direct A5 vector-absolute instruction, so VMI implements it by
@@ -197,7 +199,7 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vrelu %src, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** signed/signless `i32`, `f16`, `f32`
+- **datatypes:** `si32`, `f16`, `f32`
 - **lowering to `pto.mi`:**
   ```
   K × pto.vrelu
