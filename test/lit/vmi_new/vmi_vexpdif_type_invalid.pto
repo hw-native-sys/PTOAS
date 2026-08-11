@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms of the CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. THIS SOFTWARE IS PROVIDED ON AN
+// "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository.
+
+// RUN: not pto-test-opt %s 2>&1 | FileCheck %s
+
+module {
+  func.func @vexpdif_mixed_sources(
+      %x: !pto.vmi.vreg<128xf16>,
+      %max: !pto.vmi.vreg<128xf32>,
+      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf32>,
+          !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    return %result : !pto.vmi.vreg<128xf32>
+  }
+}
+
+// CHECK: 'pto.vmi.vexpdif' op requires x and max to have the same element type

@@ -3748,18 +3748,12 @@ LogicalResult VMIVexpdifOp::verify() {
   auto maskType = cast<VMIMaskType>(getMask().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
 
-  if (failed(verifyBF16x2ComputeElementType(
-          getOperation(), xType.getElementType()))) {
-    return failure();
-  }
-
-  if (!isVMIFloatLikeType(xType.getElementType())) {
+  if (!isVMIF16OrF32Type(xType.getElementType())) {
     return emitOpError("requires x element type to be f16 or f32");
   }
 
-  auto maxElemType = dyn_cast<FloatType>(maxType.getElementType());
-  if (!maxElemType || maxElemType.getWidth() != 32) {
-    return emitOpError("requires max element type to be f32");
+  if (maxType.getElementType() != xType.getElementType()) {
+    return emitOpError("requires x and max to have the same element type");
   }
 
   auto resultElemType = dyn_cast<FloatType>(resultType.getElementType());
@@ -3772,7 +3766,7 @@ LogicalResult VMIVexpdifOp::verify() {
     return emitOpError(
         "requires x, max, and result logical lane counts to match");
 
-  if (failed(verifyMaskMatchesData(getOperation(), maskType, resultType))) {
+  if (failed(verifyMaskMatchesData(getOperation(), maskType, xType))) {
     return failure();
   }
 

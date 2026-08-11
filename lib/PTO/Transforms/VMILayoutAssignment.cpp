@@ -1142,6 +1142,29 @@ struct LayoutSolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
+      if (auto vexpdif = dyn_cast<VMIVexpdifOp>(op)) {
+        auto sourceType = cast<VMIVRegType>(vexpdif.getX().getType());
+        auto resultType = cast<VMIVRegType>(vexpdif.getResult().getType());
+        if (failed(unite(vexpdif.getX(), vexpdif.getMax(), op))) {
+          return WalkResult::interrupt();
+        }
+        if (sourceType.getElementType().isF32()) {
+          if (failed(unite(vexpdif.getX(), vexpdif.getResult(), op))) {
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        }
+
+        VMILayoutSupport supports;
+        FailureOr<VMICastLayoutFact> fact =
+            supports.getPreferredCastLayoutFact(sourceType, resultType);
+        if (succeeded(fact) &&
+            failed(setPreferredLayout(vexpdif.getResult(), fact->resultLayout,
+                                      op, getCastSeedPhase(*fact)))) {
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
       if (auto extf = dyn_cast<VMIExtFOp>(op)) {
         auto sourceType = cast<VMIVRegType>(extf.getSource().getType());
         auto resultType = cast<VMIVRegType>(extf.getResult().getType());

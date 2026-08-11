@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms of the CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. THIS SOFTWARE IS PROVIDED ON AN
+// "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vexpdif_f16(
+      %x: !pto.vmi.vreg<128xf16>,
+      %max: !pto.vmi.vreg<128xf16>,
+      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>,
+          !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    return %result : !pto.vmi.vreg<128xf32>
+  }
+}
+
+// ASSIGN-LABEL: func.func @vexpdif_f16(
+// ASSIGN-SAME: %arg0: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: %arg1: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: %arg2: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[MASK:.*]] = pto.vmi.ensure_mask_granularity
+// ASSIGN-SAME: -> !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[RESULT:.*]] = pto.vmi.vexpdif %arg0, %arg1, %[[MASK]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: return %[[RESULT]]
+
+// LOWER-LABEL: func.func @vexpdif_f16(
+// LOWER: %[[EVEN:.*]] = pto.vexpdif %arg0, %arg1, %{{.*}}, "EVEN"
+// LOWER: %[[ODD:.*]] = pto.vexpdif %arg0, %arg1, %{{.*}}, "ODD"
+// LOWER: return %[[EVEN]], %[[ODD]]
+// LOWER-NOT: pto.vsub
+// LOWER-NOT: pto.vexp {{.*}} :
+// LOWER-NOT: pto.vmi.

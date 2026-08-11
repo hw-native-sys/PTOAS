@@ -9642,27 +9642,65 @@ struct OneToNVMIVexpdifOpPattern : OpConversionPattern<VMIVexpdifOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
-    if (xParts.size() != maxParts.size() ||
-        xParts.size() != maskParts.size() ||
-        xParts.size() != resultTypes.size())
+    if (xParts.size() != maxParts.size() || xParts.size() != maskParts.size()) {
       return rewriter.notifyMatchFailure(op, "vexpdif physical arity mismatch");
+    }
 
+    auto sourceVMIType = cast<VMIVRegType>(op.getX().getType());
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
-    for (auto [x, max, mask, resultType] :
-         llvm::zip_equal(xParts, maxParts, maskParts, resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      auto maskType = dyn_cast<MaskType>(mask.getType());
-      if (!vregType || !maskType || !vregType.getElementType().isF32() ||
-          x.getType() != resultType || max.getType() != resultType ||
-          maskType.getGranularity() != "b32")
+
+    if (sourceVMIType.getElementType().isF32()) {
+      if (xParts.size() != resultTypes.size()) {
         return rewriter.notifyMatchFailure(
-            op, "fused vexpdif requires matching physical f32 parts and b32 masks");
-      results.push_back(
-          rewriter
-              .create<VexpdifOp>(op.getLoc(), resultType, x, max, mask,
-                                  rewriter.getStringAttr("EVEN"))
-              .getResult());
+            op, "f32 vexpdif requires one result per source part");
+      }
+      for (auto [x, max, mask, resultType] :
+           llvm::zip_equal(xParts, maxParts, maskParts, resultTypes)) {
+        auto vregType = dyn_cast<VRegType>(resultType);
+        auto maskType = dyn_cast<MaskType>(mask.getType());
+        if (!vregType || !maskType || !vregType.getElementType().isF32() ||
+            x.getType() != resultType || max.getType() != resultType ||
+            maskType.getGranularity() != "b32") {
+          return rewriter.notifyMatchFailure(
+              op, "f32 vexpdif requires matching f32 parts and b32 masks");
+        }
+        results.push_back(rewriter
+                              .create<VexpdifOp>(op.getLoc(), resultType, x,
+                                                 max, mask,
+                                                 rewriter.getStringAttr("ODD"))
+                              .getResult());
+      }
+    } else {
+      if (!sourceVMIType.getElementType().isF16() ||
+          resultTypes.size() != 2 * xParts.size()) {
+        return rewriter.notifyMatchFailure(
+            op, "f16 vexpdif requires EVEN/ODD f32 result parts");
+      }
+
+      static constexpr StringRef kParts[] = {"EVEN", "ODD"};
+      for (auto [partIndex, part] : llvm::enumerate(kParts)) {
+        for (auto [chunkIndex, x] : llvm::enumerate(xParts)) {
+          Value max = maxParts[chunkIndex];
+          Value mask = maskParts[chunkIndex];
+          Type resultType = resultTypes[partIndex * xParts.size() + chunkIndex];
+          auto xType = dyn_cast<VRegType>(x.getType());
+          auto resultVRegType = dyn_cast<VRegType>(resultType);
+          auto maskType = dyn_cast<MaskType>(mask.getType());
+          if (!xType || !resultVRegType || !maskType ||
+              !xType.getElementType().isF16() ||
+              !resultVRegType.getElementType().isF32() ||
+              max.getType() != x.getType() ||
+              maskType.getGranularity() != "b16")
+            return rewriter.notifyMatchFailure(
+                op, "f16 vexpdif requires matching f16 parts and b16 masks");
+          results.push_back(rewriter
+                                .create<VexpdifOp>(op.getLoc(), resultType, x,
+                                                   max, mask,
+                                                   rewriter.getStringAttr(part))
+                                .getResult());
+        }
+      }
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results,

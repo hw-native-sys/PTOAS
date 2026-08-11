@@ -75,7 +75,8 @@
 //   vexpdif → kept unified for direct VMI-to-VPTO fused lowering
 //   vlrelu  → maxf + minf + broadcast + mulf + addf
 //   vprelu  → maxf + minf + mulf + addf
-//   Category C7/C8/C9 bypass mask/pmode synthesis here and skip pmode="merge".
+//   Lowered Category C7/C8/C9 ops bypass mask/pmode synthesis here and skip
+//   pmode="merge".
 //
 // Category D — no legacy equivalent (explicitly skipped, 13 ops):
 //   vadds/vmuls/vmaxs/vmins/vshls/vshrs
@@ -1016,7 +1017,7 @@ static LogicalResult lowerVscatter(VMIVscatterOp op, OpBuilder &builder) {
 }
 
 //===----------------------------------------------------------------------===//
-// Category C9 helpers: vexpdif / vlrelu / vprelu (fused → legacy chains)
+// Category C9 helpers: vlrelu / vprelu (fused → legacy chains)
 //===----------------------------------------------------------------------===//
 
 /// Lower vlrelu (x>0 ? x : slope*x) to max(x,0) + slope*min(x,0).

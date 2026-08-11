@@ -2691,6 +2691,8 @@ def vmi_wrapper_dispatch_probe():
     int_other_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.i32)
     hist_acc_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.ui16)
     hist_src_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.ui8)
+    half_src_tile = pto.alloc_tile(shape=[1, 128], dtype=pto.f16)
+    half_max_tile = pto.alloc_tile(shape=[1, 128], dtype=pto.f16)
 
     src_ptr = src_tile.as_ptr()
     other_ptr = other_tile.as_ptr()
@@ -2699,6 +2701,8 @@ def vmi_wrapper_dispatch_probe():
     int_other_ptr = int_other_tile.as_ptr()
     hist_acc_ptr = hist_acc_tile.as_ptr()
     hist_src_ptr = hist_src_tile.as_ptr()
+    half_src_ptr = half_src_tile.as_ptr()
+    half_max_ptr = half_max_tile.as_ptr()
 
     offset = pto.const(0, dtype=pto.index)
     active_lanes = pto.const(64, dtype=pto.index)
@@ -2724,6 +2728,9 @@ def vmi_wrapper_dispatch_probe():
     int_lhs = pto.vmi.vload(int_src_ptr, offset, size=64)
     int_rhs = pto.vmi.vload(int_other_ptr, offset, size=64)
     hist_mask = pto.vmi.create_mask(pto.const(256, dtype=pto.index), size=256)
+    half_mask = pto.vmi.create_mask(pto.const(128, dtype=pto.index), size=128)
+    half_lhs = pto.vmi.vload(half_src_ptr, offset, size=128)
+    half_max = pto.vmi.vload(half_max_ptr, offset, size=128)
     added = pto.vmi.vadd(lhs, rhs, mask)
     carry_sum, carry = pto.vmi.vaddc(int_lhs, int_rhs, mask)
     carry_next, carry_out = pto.vmi.vaddcs(carry_sum, int_rhs, carry, mask)
@@ -2767,6 +2774,7 @@ def vmi_wrapper_dispatch_probe():
     hist = pto.vmi.vdhist(hist_acc, hist_src, hist_mask)
     cumul = pto.vmi.vchist(hist_acc, hist_src, hist_mask)
     exp_difference = pto.vmi.vexpdif(lhs, rhs, mask)
+    half_exp_difference = pto.vmi.vexpdif(half_lhs, half_max, half_mask)
     axpy = pto.vmi.vaxpy(lhs, rhs, 2.0, mask)
     leaky_relu = pto.vmi.vlrelu(lhs, 0.125, mask)
     parametric_relu = pto.vmi.vprelu(lhs, rhs, mask)
@@ -7016,12 +7024,20 @@ def main() -> None:
             f"pto.vmi.{op_name} should emit both omitted-group and explicit-group probes",
         )
     expect(
+        vmi_wrapper_dispatch_text.count("pto.vmi.vexpdif") == 2,
+        "VMI wrapper dispatch should cover both f32 and f16 vexpdif forms",
+    )
+    expect(
+        "!pto.vmi.vreg<128xf32>" in vmi_wrapper_dispatch_text,
+        "f16 vexpdif should produce a logical f32 result",
+    )
+    expect(
         vmi_wrapper_dispatch_text.count("group = 1") >= 6,
         "VMI reductions should make the omitted group equivalent to group=1",
     )
     expect(
-        vmi_wrapper_dispatch_text.count("pto.vmi.vload") == 7,
-        "vmi wrapper dispatch probe should lower seven explicit VMI loads",
+        vmi_wrapper_dispatch_text.count("pto.vmi.vload") == 9,
+        "vmi wrapper dispatch probe should lower nine explicit VMI loads",
     )
     expect(
         "pto.backend = \"vpto\"" in vmi_wrapper_dispatch_text,

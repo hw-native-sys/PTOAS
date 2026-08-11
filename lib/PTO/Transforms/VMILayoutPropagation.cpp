@@ -170,16 +170,14 @@ public:
 
 static bool isSameLayoutOp(Operation *op) {
   return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
-             VMIVaddcOp, VMIVaddcsOp,
-             VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp,
-             VMIVmullOp, VMIFmaOp, VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp,
-             VMIMaxIOp, VMINegFOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,
-             VMILnOp, VMIReluOp, VMIVexpdifOp, VMIFPToSIOp, VMISIToFPOp,
-             VMIAndIOp, VMIOrIOp,
-             VMIXOrIOp, VMIShLIOp, VMIShRUIOp, VMIShRSIOp, VMINotOp, VMICmpFOp,
-             VMICmpIOp, VMISelectOp, VMIMaskAndOp, VMIMaskOrOp,
-             VMIMaskXOrOp, VMIMaskNotOp, VMIActivePrefixIndexOp, VMICompressOp,
-             VMIExpandLoadOp>(op);
+             VMIVaddcOp, VMIVaddcsOp, VMIAddSOp, VMIMulSOp, VMIMaxSOp,
+             VMIMinSOp, VMIShlSOp, VMIShrSOp, VMIVmullOp, VMIFmaOp, VMIDivFOp,
+             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMIAbsFOp,
+             VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp, VMIFPToSIOp,
+             VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp,
+             VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp, VMISelectOp,
+             VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp, VMIMaskNotOp,
+             VMIActivePrefixIndexOp, VMICompressOp, VMIExpandLoadOp>(op);
 }
 
 static bool isCastOp(Operation *op) {
@@ -248,6 +246,70 @@ public:
       return relations;
     }
     return failure();
+  }
+};
+
+class VMIVexpdifTransfer final : public VMILayoutTransfer {
+public:
+  FailureOr<SmallVector<VMILayoutRelation, 4>>
+  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
+        const VMILayoutPropagator &propagator,
+        OpOperand *changedOperand) const override {
+    auto vexpdif = dyn_cast<VMIVexpdifOp>(op);
+    if (!vexpdif) {
+      return failure();
+    }
+
+    auto sourceType = dyn_cast<VMIVRegType>(vexpdif.getX().getType());
+    auto resultType = dyn_cast<VMIVRegType>(vexpdif.getResult().getType());
+    if (!sourceType || !resultType) {
+      return failure();
+    }
+
+    auto makeFacts = [&](VMILayoutAttr sourceLayout,
+                         VMILayoutAttr resultLayout) {
+      return makeRelation(SmallVector<VMILayoutFact, 4>{
+          operandFact(vexpdif.getXMutable(), sourceLayout),
+          operandFact(vexpdif.getMaxMutable(), sourceLayout),
+          operandFact(vexpdif.getMaskMutable(), sourceLayout),
+          valueFact(vexpdif.getResult(), resultLayout)});
+    };
+
+    if (sourceType.getElementType().isF32()) {
+      return makeSingleRelation(SmallVector<VMILayoutFact, 4>{
+          operandFact(vexpdif.getXMutable(), changedLayout),
+          operandFact(vexpdif.getMaxMutable(), changedLayout),
+          operandFact(vexpdif.getMaskMutable(), changedLayout),
+          valueFact(vexpdif.getResult(), changedLayout)});
+    }
+
+    VMICastLayoutPort port;
+    if (changedValue == vexpdif.getResult()) {
+      port = VMICastLayoutPort::Result;
+    } else if (changedValue == vexpdif.getX() ||
+               changedValue == vexpdif.getMax() ||
+               changedValue == vexpdif.getMask() ||
+               changedOperand == &vexpdif.getXMutable() ||
+               changedOperand == &vexpdif.getMaxMutable() ||
+               changedOperand == &vexpdif.getMaskMutable()) {
+      port = VMICastLayoutPort::Source;
+    } else {
+      return failure();
+    }
+
+    VMILayoutSupport supports;
+    FailureOr<SmallVector<VMICastLayoutFact, 4>> facts =
+        supports.getCastLayoutFactsForLayout(sourceType, resultType, port,
+                                             changedLayout);
+    if (failed(facts) || facts->empty()) {
+      return failure();
+    }
+
+    SmallVector<VMILayoutRelation, 4> relations;
+    for (const VMICastLayoutFact &fact : *facts) {
+      relations.push_back(makeFacts(fact.sourceLayout, fact.resultLayout));
+    }
+    return relations;
   }
 };
 
@@ -823,6 +885,7 @@ public:
 const VMILayoutTransfer *getTransfer(Operation *op) {
   static VMISameLayoutTransfer sameLayoutTransfer;
   static VMICastTransfer castTransfer;
+  static VMIVexpdifTransfer vexpdifTransfer;
   static VMIBitcastTransfer bitcastTransfer;
   static VMIMaskGranularityCastTransfer maskGranularityCastTransfer;
   static VMIFreeResultLayoutTransfer freeResultLayoutTransfer;
@@ -868,6 +931,9 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
     return &gatherTransfer;
   if (isa<VMIBitcastOp>(op))
     return &bitcastTransfer;
+  if (isa<VMIVexpdifOp>(op)) {
+    return &vexpdifTransfer;
+  }
   if (isa<VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op)) {
     // Same-width fp<->int: same-layout.  Widen/narrow: cast.
     auto srcType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());

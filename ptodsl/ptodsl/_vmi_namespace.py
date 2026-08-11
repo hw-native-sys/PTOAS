@@ -1118,9 +1118,32 @@ class _VMINamespace:
 
     @staticmethod
     def vexpdif(x, max_value, mask, *, pmode=None, loc=None, ip=None):
+        context = "pto.vmi.vexpdif(...)"
+        x_type = _as_vmi_vreg_type(_type_of(x), context=context)
+        max_type = _as_vmi_vreg_type(_type_of(max_value), context=context)
+        if x_type != max_type:
+            raise TypeError(
+                f"{context} requires x and max_value to have identical VMI vreg types"
+            )
+        if not (
+            F16Type.isinstance(x_type.element_type)
+            or F32Type.isinstance(x_type.element_type)
+        ):
+            raise TypeError(f"{context} requires f16 or f32 input vectors")
+        mask_type = _as_vmi_mask_type(_type_of(mask), context=context)
+        if (
+            _vmi_mask_element_count(mask_type, context=context)
+            != x_type.element_count
+        ):
+            raise TypeError(f"{context} requires mask and input lane counts to match")
+        result_type = _pto.VMIVRegType.get(
+            x_type.element_count,
+            F32Type.get(),
+            layout=x_type.layout if F32Type.isinstance(x_type.element_type) else None,
+        )
         return _call_value(
             "vexpdif",
-            _type_of(max_value),
+            result_type,
             _raw(x),
             _raw(max_value),
             _required_mask(mask, context="pto.vmi.vexpdif(...)"),

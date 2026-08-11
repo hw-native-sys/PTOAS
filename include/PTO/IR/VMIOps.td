@@ -1648,8 +1648,8 @@ def VMIVscatterOp : VMI_Op<"vscatter", [DeclareOpInterfaceMethods<MemoryEffectsO
 def VMIVexpdifOp : VMI_Op<"vexpdif", [Pure]> {
   let summary = "VMI fused exp(x - max) for softmax numerical stability";
   let description = [{
-    Computes exp(x - max) in a single hardware instruction.
-    x may be f16 or f32; max and result are always f32 (hardware constraint).
+    Computes exp(x - max). x and max use the same f16 or f32 element type.
+    The result preserves the logical lane count and always uses f32 elements.
 
     Example:
     ```
