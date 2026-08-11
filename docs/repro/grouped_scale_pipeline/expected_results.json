@@ -1,0 +1,5 @@
+[
+  {"case":"small_fp32_g32","asc_us":5.5633,"vmi_us":6.2189},
+  {"case":"ragged_bf16_g32","asc_us":34.6239,"vmi_us":67.5086},
+  {"case":"large_bf16_g32","asc_us":507.5570,"vmi_us":1810.7665}
+]

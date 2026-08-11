@@ -1,37 +1,30 @@
-# Grouped scale pipeline is substantially slower than the direct vector sequence
+# Grouped reduce/scale/convert pipeline is slower through VMI
 
-## Summary
+This is a framework-free A5 reproducer for a vector pattern that reduces 256
+BF16 lanes into eight group maxima, expands the eight values, scales the input,
+and converts it to FP8.  Both sides are complete GM-to-UB-to-GM kernels:
 
-This standalone case reduces a common vector pattern: load 256 BF16 values,
-compute eight independent maxima, broadcast eight scale values back over the
-256 lanes, multiply, convert to FP8, and store. The VMI spelling is compact and
-correct, but end-to-end kernels dominated by this pattern remain well below the
-throughput of an equivalent direct CCE implementation.
+- `fixtures/grouped_scale_vmi.pto` is compiled by stock PTOAS/VMI.
+- `fixtures/reference_cce.cpp` is the direct CCE peer and keeps the grouped
+  values in vector registers through E2B expansion and packed conversion.
 
-The fixture contains no framework dependency. It is a plain PTO/VMI module and
-the reference is a small CCE-style instruction sketch.
+Run `bash check.sh compile` to compile both sides and inspect the emitted VPTO.
+Run `bash check.sh benchmark` to print the pinned A5 event medians that selected
+this reduction, or `bash check.sh` for both.  Generated files go under
+`outputs/`.
 
-## Reproduce
+| Representative case | ASC us | VMI us | ASC/VMI |
+|---|---:|---:|---:|
+| small FP32, groups of 32 | 5.5633 | 6.2189 | 0.8946 |
+| ragged BF16, groups of 32 | 34.6239 | 67.5086 | 0.5129 |
+| large BF16, groups of 32 | 507.5570 | 1810.7665 | 0.2803 |
 
-```bash
-bash docs/repro/grouped_scale_pipeline/check.sh
-```
+The numbers are medians from the pinned A5 environment and are data rather
+than synthetic estimates. Device load can move absolute time; parity is defined
+as `ASC_us / VMI_us >= 0.98`. The reduced 256-lane fixture is intentionally
+small enough for compiler review while retaining the same reduction,
+broadcast, and conversion chain.
 
-The check lowers `fixtures/grouped_scale_vmi.pto` to VPTO and confirms that the
-group reduction and group broadcast survive as the expected low-level vector
-operations. On A5, wrap the same body in a persistent GM-to-UB/UB-to-GM loop and
-compare it with `fixtures/reference_cce.cpp` using identical buffers and event
-timing.
-
-## Observed behavior
-
-Across both small latency-bound tiles and large bandwidth-bound grids, kernels
-whose hot body is this pattern remain measurably behind the direct sequence.
-Padding or changing the outer grid helps occupancy but does not close the gap.
-
-## Requested behavior
-
-Please provide a lowering/scheduling path whose generated code reaches at least
-98% of the direct CCE reference throughput. In particular, grouped reduction
-results should remain in registers through broadcast and conversion, with no
-avoidable layout materialization, UB spill/reload, or redundant predicate work.
+Requested behavior: retain group results and predicates across broadcast and
+conversion, avoid layout materialization and UB spill/reload, and reach at
+least 98% of the direct CCE throughput.
