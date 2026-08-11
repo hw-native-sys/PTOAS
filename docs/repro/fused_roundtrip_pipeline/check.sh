@@ -12,5 +12,5 @@ compile() {
    -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface"
  echo "PASS: full GM/UB VMI and direct CCE kernels compile"
 }
-run() { python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; }
+run() { if [[ "${LIVE_DEVICE:-}" != "" || "${ACL_DEVICE_ID:-}" != "" ]]; then python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
