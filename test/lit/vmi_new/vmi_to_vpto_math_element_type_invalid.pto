@@ -144,10 +144,10 @@ module {
   func.func @vmi_to_vpto_vmuls_bf16_invalid(
       %source: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>,
       %scalar: bf16,
-      %mask: !pto.vmi.mask<128xpred, #pto.vmi.layout<contiguous>>) {
+      %mask: !pto.vmi.mask<128xpred>) {
     %out = pto.vmi.vmuls %source, %scalar, %mask
         : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, bf16,
-          !pto.vmi.mask<128xpred, #pto.vmi.layout<contiguous>>
+          !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
     return
   }
