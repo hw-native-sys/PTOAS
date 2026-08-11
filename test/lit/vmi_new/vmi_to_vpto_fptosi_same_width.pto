@@ -36,19 +36,6 @@ module {
         -> !pto.vreg<64xsi32>
     return %r : !pto.vreg<64xsi32>
   }
-
-  // ROUND_Z must survive both unified-to-legacy and VMI-to-VPTO lowering.
-  func.func @f32_to_s32_round_z(
-      %input: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
-      -> !pto.vreg<64xsi32> {
-    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
-        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
-    %r = "pto.vmi.unpack"(%cvt)
-        : (!pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>)
-        -> !pto.vreg<64xsi32>
-    return %r : !pto.vreg<64xsi32>
-  }
 }
 
 // CHECK-LABEL: func.func @f16_to_s16(
@@ -57,8 +44,4 @@ module {
 
 // CHECK-LABEL: func.func @f32_to_s32(
 // CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
-// CHECK-NOT: part
-
-// CHECK-LABEL: func.func @f32_to_s32_round_z(
-// CHECK: pto.vcvt {{.*}} {rnd = "Z", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
 // CHECK-NOT: part

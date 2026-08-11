@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=LEGACY
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=VPTO
+
+// Regression for issue #585: ROUND_Z must survive both lowering boundaries
+// for every supported floating-point-to-integer conversion contract.
+
+module {
+  func.func @f32_to_si32(
+      %input: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vreg<64xsi32> {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    %result = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<64xsi32>
+    return %result : !pto.vreg<64xsi32>
+  }
+
+  func.func @f32_to_si16(
+      %input: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vreg<128xsi16> {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>
+    %result = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<128xsi16>
+    return %result : !pto.vreg<128xsi16>
+  }
+
+  func.func @f16_to_si32(
+      %input: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<64xsi32>, !pto.vreg<64xsi32>) {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z"}
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+    %even, %odd = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>)
+        -> (!pto.vreg<64xsi32>, !pto.vreg<64xsi32>)
+    return %even, %odd : !pto.vreg<64xsi32>, !pto.vreg<64xsi32>
+  }
+
+  func.func @f16_to_si16(
+      %input: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vreg<128xsi16> {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>
+    %result = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<128xsi16>
+    return %result : !pto.vreg<128xsi16>
+  }
+
+  func.func @f16_to_si8(
+      %input: !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vreg<256xsi8> {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xsi8, #pto.vmi.layout<contiguous>>
+    %result = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<128xsi8, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<256xsi8>
+    return %result : !pto.vreg<256xsi8>
+  }
+
+  func.func @bf16_to_si32(
+      %input: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<64xsi32>, !pto.vreg<64xsi32>) {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+    %even, %odd = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>)
+        -> (!pto.vreg<64xsi32>, !pto.vreg<64xsi32>)
+    return %even, %odd : !pto.vreg<64xsi32>, !pto.vreg<64xsi32>
+  }
+
+  func.func @f16_to_ui8(
+      %input: !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vreg<256xui8> {
+    %cvt = pto.vmi.vcvt %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>
+    %result = "pto.vmi.unpack"(%cvt)
+        : (!pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<256xui8>
+    return %result : !pto.vreg<256xui8>
+  }
+}
+
+// LEGACY-COUNT-6: pto.vmi.fptosi {{.*}}rounding = "Z"
+// LEGACY: pto.vmi.fptoui {{.*}}rounding = "Z"
+
+// VPTO-LABEL: func.func @f32_to_si32(
+// VPTO: pto.vcvt {{.*}} {rnd = "Z", sat = "SAT"}
+// VPTO-NOT: part
+
+// VPTO-LABEL: func.func @f32_to_si16(
+// VPTO-DAG: pto.vcvt {{.*}} {part = "EVEN", rnd = "Z", sat = "SAT"}
+// VPTO-DAG: pto.vcvt {{.*}} {part = "ODD", rnd = "Z", sat = "SAT"}
+
+// VPTO-LABEL: func.func @f16_to_si32(
+// VPTO-DAG: pto.vcvt {{.*}} {part = "EVEN", rnd = "Z"}
+// VPTO-DAG: pto.vcvt {{.*}} {part = "ODD", rnd = "Z"}
+
+// VPTO-LABEL: func.func @f16_to_si16(
+// VPTO: pto.vcvt {{.*}} {rnd = "Z", sat = "SAT"}
+// VPTO-NOT: part
+
+// VPTO-LABEL: func.func @f16_to_si8(
+// VPTO-DAG: pto.vcvt {{.*}} {part = "EVEN", rnd = "Z", sat = "SAT"}
+// VPTO-DAG: pto.vcvt {{.*}} {part = "ODD", rnd = "Z", sat = "SAT"}
+
+// VPTO-LABEL: func.func @bf16_to_si32(
+// VPTO-DAG: pto.vcvt {{.*}} {part = "EVEN", rnd = "Z", sat = "SAT"}
+// VPTO-DAG: pto.vcvt {{.*}} {part = "ODD", rnd = "Z", sat = "SAT"}
+
+// VPTO-LABEL: func.func @f16_to_ui8(
+// VPTO-DAG: pto.vcvt {{.*}} {part = "EVEN", rnd = "Z", sat = "SAT"}
+// VPTO-DAG: pto.vcvt {{.*}} {part = "ODD", rnd = "Z", sat = "SAT"}
