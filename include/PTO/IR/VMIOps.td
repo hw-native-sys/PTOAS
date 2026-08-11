@@ -262,6 +262,14 @@ def VMINegFOp : VMI_Op<"negf", [Pure]> {
   let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 }
 
+def VMINegIOp : VMI_Op<"negi", [Pure]> {
+  let summary = "VMI integer elementwise negate";
+  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+}
+
 def VMIAbsFOp : VMI_Op<"absf", [Pure]> {
   let summary = "VMI floating-point elementwise absolute value";
   let arguments = (ins VMI_VRegTypeConstraint:$source);
@@ -303,7 +311,7 @@ def VMILnOp : VMI_Op<"ln", [Pure]> {
 }
 
 def VMIReluOp : VMI_Op<"relu", [Pure]> {
-  let summary = "VMI floating-point elementwise ReLU";
+  let summary = "VMI floating-point or 32-bit integer elementwise ReLU";
   let arguments = (ins VMI_VRegTypeConstraint:$source);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;

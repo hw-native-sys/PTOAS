@@ -716,6 +716,12 @@ struct LayoutSolver {
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
+      if (auto negi = dyn_cast<VMINegIOp>(op)) {
+        if (failed(unite(negi.getSource(), negi.getResult(), op))) {
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
       if (auto absf = dyn_cast<VMIAbsFOp>(op)) {
         if (failed(unite(absf.getSource(), absf.getResult(), op)))
           return WalkResult::interrupt();

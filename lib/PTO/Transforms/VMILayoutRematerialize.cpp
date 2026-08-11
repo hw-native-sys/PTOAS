@@ -168,6 +168,9 @@ static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
 
   if (auto negf = dyn_cast<VMINegFOp>(op))
     return rebuild(negf);
+  if (auto negi = dyn_cast<VMINegIOp>(op)) {
+    return rebuild(negi);
+  }
   if (auto absf = dyn_cast<VMIAbsFOp>(op))
     return rebuild(absf);
   if (auto absi = dyn_cast<VMIAbsIOp>(op))

@@ -130,6 +130,9 @@ getSinkableTernaryOperands(Operation *op) {
 static std::optional<UnaryVRegOperand> getSinkableUnaryOperand(Operation *op) {
   if (auto negf = dyn_cast<VMINegFOp>(op))
     return UnaryVRegOperand{&negf.getSourceMutable()};
+  if (auto negi = dyn_cast<VMINegIOp>(op)) {
+    return UnaryVRegOperand{&negi.getSourceMutable()};
+  }
   if (auto absf = dyn_cast<VMIAbsFOp>(op))
     return UnaryVRegOperand{&absf.getSourceMutable()};
   if (auto absi = dyn_cast<VMIAbsIOp>(op))

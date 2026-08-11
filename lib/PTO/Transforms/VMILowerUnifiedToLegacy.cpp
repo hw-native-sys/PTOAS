@@ -1515,8 +1515,12 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
     // ---- Category B: masked elementwise — unary ----
 
     if (auto vop = dyn_cast<VMIVnegOp>(op)) {
+      Type elemType = getVMIElementType(vop.getResult());
       auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        return builder.create<VMINegFOp>(loc, ty, src).getResult();
+        if (isFloatType(elemType)) {
+          return builder.create<VMINegFOp>(loc, ty, src).getResult();
+        }
+        return builder.create<VMINegIOp>(loc, ty, src).getResult();
       };
       (void)lowerMaskedUnary(vop, builder, createLegacy);
       continue;

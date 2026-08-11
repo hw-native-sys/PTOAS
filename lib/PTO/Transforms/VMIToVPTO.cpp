@@ -13036,6 +13036,7 @@ void populateVMIConversionPatterns(
       OneToNVMIBinaryOpPattern<VMIMaxFOp, VmaxOp>,
       OneToNVMIBinaryOpPattern<VMIMaxIOp, VmaxOp>,
       OneToNVMIUnaryOpPattern<VMINegFOp, VnegOp>,
+      OneToNVMIUnaryOpPattern<VMINegIOp, VnegOp>,
       OneToNVMIUnaryOpPattern<VMIAbsFOp, VabsOp>,
       OneToNVMIUnaryOpPattern<VMIAbsIOp, VabsOp>,
       OneToNVMIUnaryOpPattern<VMISqrtOp, VsqrtOp>,
@@ -14392,6 +14393,10 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     if (auto negf = dyn_cast<VMINegFOp>(op))
       return emitMaskableUnsupported(
           op, "pto.vmi.negf", cast<VMIVRegType>(negf.getResult().getType()));
+    if (auto negi = dyn_cast<VMINegIOp>(op)) {
+      return emitMaskableUnsupported(
+          op, "pto.vmi.negi", cast<VMIVRegType>(negi.getResult().getType()));
+    }
     if (auto absf = dyn_cast<VMIAbsFOp>(op))
       return emitMaskableUnsupported(
           op, "pto.vmi.absf", cast<VMIVRegType>(absf.getResult().getType()));
@@ -14415,7 +14420,8 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       relu.emitError()
           << kVMIDiagUnsupportedPrefix
           << "pto.vmi.relu direct lowering requires physical vreg parts with "
-             "b8/b16/b32 predicate masks and f16/f32 element type ("
+             "b32 predicates for i32 or matching b16/b32 predicates for "
+             "f16/f32 ("
           << reason << ")";
       return WalkResult::interrupt();
     }
