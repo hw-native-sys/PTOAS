@@ -1,5 +1,9 @@
 # Dequantize/reduce/requantize needs a fused lowering
 
+> **Scope warning:** this is currently a one-work-item PTO control. It is not
+> yet a faithful full-shape performance reproduction of the private study;
+> the full persistent multi-core schedule must be retained for that purpose.
+
 This standalone A5 package contains complete GM-to-UB-to-GM kernels for an FP8
 requantization chain: load FP8 and grouped input scales, widen and dequantize,
 compute new group maxima, rescale, convert back to FP8, and store FP8 plus the
