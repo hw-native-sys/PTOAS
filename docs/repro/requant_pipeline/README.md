@@ -13,7 +13,7 @@ With `ACL_DEVICE_ID`, benchmark mode builds and launches both sides through
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| one 256-value FP8 requant work item | 33.040 | 35.122 | 0.9407 |
+| one 256-value FP8 requant work item (64-launch batch) | 14.682 | 14.502 | 1.0124 |
 
 The compact VMI body is a low-level work-item control; earlier full-shape numbers were invalid Python launch-loop timings. Some runs also expose a PTOAS device-LLVM frontend crash.
 
