@@ -15,5 +15,5 @@ compile() {
     -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface"
   echo "PASS: fixed ABI compiles; typed pointer-table form is rejected by current PTODSL"
 }
-run() { if [[ "${LIVE_DEVICE:-}" != "" || "${ACL_DEVICE_ID:-}" != "" ]]; then python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
+run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
