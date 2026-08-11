@@ -14,12 +14,12 @@ compile() {
   grep -Eq 'pto.vselr|pto.vdup|pto.vlds.*BRC' "${OUT}/grouped_scale.vpto"
   env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
     "${HERE}/fixtures/grouped_scale_vmi.pto" -o "${OUT}/grouped_scale_vmi.o"
-  env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" python3 "${HERE}/benchmark.py" --compile-only
+  env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" PATH="${CONDA_PREFIX:-/home/jzhuang/.conda/envs/cann91_dev}/bin:$PATH" python3 "${HERE}/benchmark.py" --compile-only
   echo "PASS: stock PTOAS and stream-launchable direct CCE kernels compile"
 }
 run() {
   if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
-    python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"
+    task-submit --device "${ACL_DEVICE_ID}" --run "source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; source /home/jzhuang/miniconda/bin/activate cann91_dev; PATH=\$CONDA_PREFIX/bin:\$PATH python '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"
   else
     python3 "${HERE}/report.py" | tee "${OUT}/results.txt"
   fi
