@@ -1,5 +1,9 @@
 # Grouped reduce/scale/convert pipeline is slower through VMI
 
+> **Scope warning:** the checked-in PTO is a single 256-value work item. It is
+> useful for compiler/lowering review, but does not reproduce the private
+> full-shape persistent multi-core benchmark or its performance gap.
+
 This is a framework-free A5 reproducer for a vector pattern that reduces 256
 BF16 lanes into eight group maxima, expands the eight values, scales the input,
 and converts it to FP8.  Both sides are complete GM-to-UB-to-GM kernels:
