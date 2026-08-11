@@ -661,6 +661,19 @@ struct PTOUnifiedSyncPass
         anySite ? ++bracketedHazards : ++unbracketedHazards;
       }
 
+      // Checked BEFORE the emptiness guard below, deliberately. If bracketing found no
+      // site for ANY routed cluster then `op2BufSync` is empty, the whole block below is
+      // skipped -- and `Hazard::RouteToBufid` has already suppressed those hazards' event
+      // ops. That is the total-failure form of exactly what this counts, so testing it
+      // inside the block would miss the worst case.
+      if (unbracketedHazards != 0) {
+        func.emitError() << "unified allocator: " << unbracketedHazards
+                         << " routed hazard(s) got no token bracket while their event ops "
+                            "were suppressed, so those orderings are carried by neither "
+                            "mechanism";
+        return signalPassFailure();
+      }
+
       if (!op2BufSync.empty()) {
         BufidSyncIdAlloc idAlloc(bufAnalysis.getVirtualBufIds(), op2BufSync,
                                  syncIR, bufidCapacity, /*debugEnabled=*/false);
@@ -671,21 +684,69 @@ struct PTOUnifiedSyncPass
           idAlloc.reuseIds();
           idAlloc.compactPhysicalIds();
         }
-        std::string nestErr;
-        bool nestOk = idAlloc.validateNoSamePhysicalIdNesting(&nestErr);
+
+        // RE-CHECKED, because `reuseIds` is not guaranteed to converge: it leaves its
+        // `while (maxPhysicalIdUsed_ >= physicalBufIdCount_)` loop with the condition
+        // still true when no signature group holds two logic ids to merge.
+        // `BufidSyncCodegen` then casts the
+        // physical id to uint32_t with no range test, and an id past the pool aliases a
+        // different buffer's token -- corrupting an ordering that has nothing to do with
+        // this one. No oracle gate catches it either: the buf-id range check lives in the
+        // IRSyncRecord overload of `checkDeviceIdLegality`, which only PTOCheckSyncIds
+        // runs, while this pass calls the SyncOpRecord overload that has no buf-id branch.
+        if (idAlloc.needsReuse()) {
+          func.emitError()
+              << "unified allocator: buffer-id demand exceeds the pool of "
+              << bufidCapacity
+              << " and id reuse did not resolve it, so a physical id would fall outside "
+                 "the pool and alias another buffer's token";
+          return signalPassFailure();
+        }
+
         bufAnalysis.setLogicToPhysicalId(idAlloc.getLogicToPhysical());
         bufAnalysis.mergeGetRls();
 
-        BufidSyncCodegen bufCodegen(func, op2BufSync, idAlloc);
-        bool emitOk = succeeded(bufCodegen.run());
+        // VALIDATED AFTER THE MERGE, which is the order the production pass uses and the
+        // opposite of what this did before. `mergeGetRls` cancels an rls/get pair on one
+        // (logicId, pipe), turning two point-holds of a physical id into a single hold
+        // spanning both sites -- precisely the property being validated. Validating first
+        // inspects a structure that is not the one emitted. The validator reads
+        // `op2BufSync_` by reference, so after the merge it sees what codegen will see.
+        //
+        // A violation is a get_buf on an id already held, waiting for a release issued
+        // later in program order. That hangs, so it fails the pass rather than being
+        // reported.
+        std::string nestErr;
+        const bool nestOk = idAlloc.validateNoSamePhysicalIdNesting(&nestErr);
+        if (!nestOk) {
+          func.emitError() << "unified allocator: buffer-id token nesting is invalid: "
+                           << nestErr;
+          return signalPassFailure();
+        }
 
-        // ALL-OR-NOTHING, ASSERTED not assumed. Every event op belonging to a
-        // routed hazard must have been suppressed, or codegen emitted a set/wait
-        // for a buffer whose ordering is carried by the token -- the counter cycle
-        // missing a step, i.e. a hang. `leaked_event_ops` must be 0.
+        BufidSyncCodegen bufCodegen(func, op2BufSync, idAlloc);
+        const bool emitOk = succeeded(bufCodegen.run());
+        if (!emitOk) {
+          func.emitError() << "unified allocator: buffer-id emission failed, so the "
+                              "routed hazards have neither events nor tokens";
+          return signalPassFailure();
+        }
+
+        // ALL-OR-NOTHING. Every event op belonging to a routed hazard must have been
+        // suppressed, or codegen emitted a set/wait for a buffer whose ordering is
+        // carried by the token -- the counter cycle missing a step, i.e. a hang. Counted
+        // here and failed below, rather than only printed under the debug flag.
+        // Keyed on the ROUTED set, not on mechanism alone: `forceMechanismOnFirstHazard`
+        // stamps BUFID via SetMechanism without calling RouteToBufid, so those ops keep
+        // their event ops live by design and their cluster never enters `routedLogicIds`.
+        // Counting them here would fail a forced run with a message blaming routing.
         unsigned suppressed = 0, leaked = 0;
         for (const unified::Hazard &h : model.hazards) {
           if (h.mechanism() != SyncOperation::MECHANISM::BUFID)
+            continue;
+          if (!llvm::any_of(h.bufferClusters, [&](int c) {
+                return routedLogicIds.contains(c);
+              }))
             continue;
           for (SyncOperation *op :
                {h.setOp(), h.waitOp(), h.headOp(), h.tailOp()}) {
@@ -693,6 +754,17 @@ struct PTOUnifiedSyncPass
               continue;
             op->uselessSync ? ++suppressed : ++leaked;
           }
+        }
+
+        // Failed, not merely reported. A leaked event op means a routed hazard kept a
+        // set/wait alongside its token: the counter cycle missing a step, i.e. a hang.
+        // Previously computed and printed under the debug flag only, so a regression
+        // produced a warning string in a report nobody reads and a successful compile.
+        if (leaked != 0) {
+          func.emitError() << "unified allocator: " << leaked
+                           << " event op(s) of a routed hazard were not suppressed, so "
+                              "that ordering is carried by both mechanisms at once";
+          return signalPassFailure();
         }
 
         if (debugEnabled)
@@ -703,6 +775,9 @@ struct PTOUnifiedSyncPass
                << " anchor_ops=" << op2BufSync.size() << " get=" << keptGet
                << " rls=" << keptRls
                << " physical_ids=" << idAlloc.getLogicToPhysical().size()
+               // These read OK whenever the report prints, because a violation
+               // returned above. Written as tests anyway so the line keeps saying
+               // what it measures rather than asserting it.
                << " nesting=" << (nestOk ? "OK" : "VIOLATION")
                << " emit=" << (emitOk ? "OK" : "FAILED")
                << " bracketed_hazards=" << bracketedHazards
@@ -712,8 +787,6 @@ struct PTOUnifiedSyncPass
                << " leaked_event_ops=" << leaked
                << (leaked == 0 ? " ALL-OR-NOTHING-OK" : " !! SPLIT-MECHANISM")
                << "\n";
-            if (!nestOk)
-              os << "  !! " << nestErr << "\n";
           });
       }
     }
