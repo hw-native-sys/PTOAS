@@ -7,10 +7,8 @@ compile() {
  env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --emit-vpto "${HERE}/fixtures/fused_roundtrip_vmi.pto" -o "${OUT}/fused.vpto"
  grep -q 'pto.vcgmax' "${OUT}/fused.vpto"; test "$(grep -c 'pto.vcvt' "${OUT}/fused.vpto")" -ge 3
  env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 "${HERE}/fixtures/fused_roundtrip_vmi.pto" -o "${OUT}/fused_vmi.o"
- "${BISHENG}" -xcce -O2 -fPIC -std=c++17 --cce-aicore-arch=dav-c310-vec --cce-aicore-only -c "${HERE}/fixtures/reference_cce.cpp" \
-   -o "${OUT}/reference_device.o" -I"${ASCEND_HOME_PATH}/include" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw" \
-   -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface"
- echo "PASS: full GM/UB VMI and direct CCE kernels compile"
+ env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" python3 "${HERE}/benchmark.py" --compile-only
+ echo "PASS: VMI and stream-launchable A5 CCE kernels compile"
 }
 run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
