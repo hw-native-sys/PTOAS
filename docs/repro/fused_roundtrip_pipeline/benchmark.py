@@ -83,6 +83,22 @@ def load_vmi_module():
 
 def build_vmi() -> Path:
     """Lower the checked-in PTO program and use a stream-first dynamic-UB ABI."""
+    # Keep the reproducer self-contained: the pinned PTODSL source shipped in
+    # this repository provides the native-build helpers.  A site-installed
+    # ``ptodsl`` may be an older namespace package without ``_runtime``.
+    import sys
+    os.environ.setdefault("PTOAS_BIN", "/home/jzhuang/.conda/envs/cann91_dev/bin/ptoas")
+    root = HERE.parent.parent.parent
+    sys.path.insert(0, str(root / "ptodsl"))
+    # The installed extension supplies the MLIR Python bindings; the checked
+    # in ``ptoas`` namespace only supplies lightweight compatibility modules.
+    import importlib
+    import site
+    ptoas = importlib.import_module("ptoas")
+    for base in site.getsitepackages():
+        bindings = str(Path(base) / "ptoas")
+        if bindings not in ptoas.__path__:
+            ptoas.__path__.append(bindings)
     from ptodsl._runtime.native_build import _compile_launch_cpp, _link_shared_library, _run_ptoas
 
     OUT.mkdir(exist_ok=True)

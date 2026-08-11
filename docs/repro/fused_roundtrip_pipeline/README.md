@@ -24,8 +24,10 @@ short for the full tensor traffic and must be reconciled against the complete
 kernel timeline before publishing a ratio.  This guard prevents the report
 from repeating the earlier launch-floor error in the opposite direction.
 
-With the corrected TileLang-style 256-MB L2 flush before each event, the latest
-device-0 run measured CCE 5.883 µs and VMI 32.087 µs (CCE/VMI 0.1833). This is
-an extraction/methodology diagnostic, not yet the private study's ~0.8 ratio;
-the discrepancy requires msprof timeline reconciliation before treating it as
-a faithful production comparison.
+The current event sanity run is diagnostic only: it measured CCE 5.893 µs and
+VMI 31.552 µs (CCE/VMI 0.1868), while the authoritative original TileLang
+production case is CCE 22.328 µs versus VMI 27.349 µs (ratio 0.8164). The CCE
+body/launch extraction still does not account for the production timeline, so
+these values are deliberately not published as an accepted ratio; the report
+remains a compile/correctness witness until the full production schedule is
+retained.
