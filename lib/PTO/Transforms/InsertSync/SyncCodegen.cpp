@@ -296,9 +296,14 @@ void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
     // `--enable-insert-sync` cannot arrive here empty, because the backward-match
     // synthetics are always stamped with an id before being published into the sync
     // lists. So this is hardening for the unified path, not a fix to insert-sync.
+    //
+    // DELIBERATELY NO ASSERT. An assertion ahead of the diagnostic aborts an
+    // assertions build at precisely the point this guard exists to report, so the
+    // negative test that pins the message sees a crash instead. Failure propagates
+    // through `sawUnrealisedHazard_`, which the unified pass turns into
+    // signalPassFailure, and that works identically with assertions on or off.
     if (sync->eventIds.empty()) {
       sawUnrealisedHazard_ = true;
-      assert(false && "set/wait hazard reached codegen with no event id");
       func_.emitError()
           << "sync codegen: a " << SyncOperation::TypeName(sync->GetType())
           << " hazard (src pipe " << int(sync->GetActualSrcPipe()) << " -> dst pipe "
