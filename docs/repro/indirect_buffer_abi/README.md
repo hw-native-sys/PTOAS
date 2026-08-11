@@ -10,20 +10,23 @@ This package makes both facts executable:
 - `fixed_arguments.py` is the compileable fixed-argument control.
 - `indirect_api_negative.py` attempts the natural nested-pointer type and is
   required to fail on current PTODSL.
-- `reference_cce.cpp` is a complete address-table kernel with direct DMA.
+- `reference_device.asc` is the complete address-table kernel with direct DMA;
+  `reference_launch.cpp` supplies only its stream-first host ABI.
 - `desired_pointer_table.py` states the requested surface.
 
 Run `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
 With `ACL_DEVICE_ID`, benchmark mode compiles and launches
-the fixed-argument workaround through `torch_npu`, checks its copy result, and
-also retains the API rejection test for nested GM pointers.
+the direct CCE pointer-table kernel and the fixed-argument VMI control through
+`torch_npu`, checks both host goldens, and retains the API rejection test.
 
-| Representative case | Direct us | Stacked workaround us | Direct/workaround | extra copied bytes |
-|---|---:|---:|---:|---:|
-| payload 2560, 10 stages | 925.5155 | 3887.6199 | 0.2381 | 2,481,848,320 |
-| payload 4096, 10 stages | 1348.9992 | 4203.7893 | 0.3209 | 3,966,631,936 |
+| Verified device event median | Direct CCE us | Fixed-argument VMI us | CCE/VMI |
+|---|---:|---:|---:|
+| 10 layers, six device pointer tables | 37.686 | 159.406 | 0.2364 |
 
-Requested behavior: a bounds-checkable load from
+The live harness allocates each layer at the generated block stride and stores
+the six table entries as device addresses, so this is an actual pointer-table
+launch rather than a host-only ABI sketch. Requested behavior: a
+bounds-checkable load from
 `ptr<ptr<T, gm>, gm>` yielding `ptr<T, gm>`, correct memory effects, and host
 launcher support for an address-table tensor. It must remove the bulk staging
 copies and reach `direct_us / indirect_us >= 0.98`.
