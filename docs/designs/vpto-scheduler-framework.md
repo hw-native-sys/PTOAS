@@ -82,7 +82,7 @@ RegionBuilder 先产生 `VPTOSchedRegion`，DAGBuilder 再按 region 中的原�
 | 字段 | 含义 |
 | --- | --- |
 | `schedulingClass` | `Schedulable`、`Structural`、`SchedulingBoundary` 或 `Unsupported`。 |
-| `effects` | 隐式状态、barrier、event、pipe、buffer-id 和 post-update 等局部 effect。 |
+| `effects` | 隐式状态、vecscope 内 memory barrier 和 post-update 等局部 effect。 |
 | `memoryBehavior` | 普通内存语义的完整性：`None` 表示确定无访问，`Explicit` 表示由访问列表完整描述，`Unknown` 表示缺少完整声明。 |
 | `memoryAccesses` | 规范化的读写、地址空间、范围和顺序属性。 |
 
@@ -92,10 +92,9 @@ RegionBuilder 先产生 `VPTOSchedRegion`，DAGBuilder 再按 region 中的原�
 | --- | --- |
 | `kind` | effect 类型。 |
 | `resource` | effect 的逻辑域或动作名，例如 SPR 名、`ctrl`、`signal`。 |
-| `value` | dynamic event id、dynamic buffer id 或 post-update 地址结果。 |
-| `attribute` | static event identity、static buffer id 或 pipe identity。 |
+| `value` | 可选的 SSA identity；当前用于 post-update 地址结果。 |
 
-已定义的 effect kind 为 `ImplicitRead`、`ImplicitWrite`、`Barrier`、`Event`、`Pipe`、`BufferId`、`PostUpdate`、`VolatileMemory`、`AtomicMemory` 和 `Unknown`。`PostUpdate` 只标注 SSA 地址结果；`VolatileMemory` 和 `AtomicMemory` 只改变 memory ordering。这三类 effect 不直接生成同名 DAG edge。
+已定义的 effect kind 为 `ImplicitRead`、`ImplicitWrite`、`Barrier`、`PostUpdate`、`VolatileMemory`、`AtomicMemory` 和 `Unknown`。`PostUpdate` 只标注 SSA 地址结果；`VolatileMemory` 和 `AtomicMemory` 只改变 memory ordering。这三类 effect 不直接生成同名 DAG edge。
 
 `memoryAccesses` 中的每个 `VPTOMemoryAccess` 包含：
 
@@ -108,45 +107,39 @@ RegionBuilder 先产生 `VPTOSchedRegion`，DAGBuilder 再按 region 中的原�
 | `ordered` | 是否必须保留内存顺序。 |
 | `unknown` | 地址或读写类型是否无法可靠确定。 |
 
-接口只报告当前 operation 的事实，不判断两个 operation 是否存在依赖。SSA def-use、alias root、may-alias、event/buffer identity 匹配和依赖 edge 均由 DAGBuilder 统一计算。DAGBuilder 不应根据具体 operation 名称或 operand 位置重新推导已经进入 `VPTOSchedulingSemantics` 的局部语义。
+接口只报告当前 operation 的事实，不判断两个 operation 是否存在依赖。SSA def-use、alias root、may-alias 和依赖 edge 均由 DAGBuilder 统一计算。DAGBuilder 不应根据具体 operation 名称或 operand 位置重新推导已经进入 `VPTOSchedulingSemantics` 的局部语义。
 
-所有 `PTO_MicroOp` 都实现该接口。同步类 PTO op 中，set/wait flag、get/release buffer、pipe barrier 和全局 fence 也显式实现该接口。
+除 scope 外同步边界外，`PTO_MicroOp` 实现该接口。set/wait flag、get/release buffer、pipe barrier、`dsb`、`dcci` 和 SIMT barrier/fence 等同步操作不为了 scheduler 实现该接口。vecscope verifier 保证它们不会进入函数级调度 DAG。
 
 ### 3.2 默认分类策略
 
-分类按以下顺序执行：
+这里的分类决定 operation 是否进入调度 region，不是 TargetModel 中的硬件资源分类。RegionBuilder 按下表从上到下匹配；先匹配的规则优先：
 
-1. null、terminator 或包含 region 的操作是 `SchedulingBoundary`。
-2. 实现调度接口的操作使用接口分类：
-   - 能确定 execution pipe 时为 `Schedulable`；
-   - 否则只要能产生任一调度 effect，也为 `Schedulable`；
-   - 两者都没有时为 `SchedulingBoundary`。
-3. 未实现调度接口但 `isMemoryEffectFree` 的操作是 `Structural`。
-4. 其余 PTO dialect 操作是 `Unsupported`。
-5. 其余 dialect 的操作是 `SchedulingBoundary`。
+| 条件 | 分类 | RegionBuilder 行为 |
+| --- | --- | --- |
+| operation 为空、是 terminator 或包含 region | `SchedulingBoundary` | 结束当前片段，operation 不进入 region。 |
+| operation 实现 `VPTOSchedulingOpInterface` | 使用接口返回的分类 | 当前默认接口实现在能确定 execution pipe 或存在任一调度 effect 时返回 `Schedulable`；两者都没有时保留为 `SchedulingBoundary`。 |
+| operation 未实现调度接口，且 `isMemoryEffectFree` | `Structural` | 与相邻 `Schedulable` operation 一同进入 region，用于保留 SSA 计算；纯 structural 片段不生成 region。 |
+| operation 未实现调度接口，且属于 PTO dialect | `Unsupported` | 结束当前片段，operation 不进入 region，并计入 unsupported coverage。 |
+| 其他 operation | `SchedulingBoundary` | 结束当前片段，operation 不进入 region。 |
 
-execution pipe 的解析优先级为：
+默认接口实现解析 execution pipe 只是为了确认该 operation 具有已知的执行类别。解析优先级为：
 
-1. `OpPipeInterface::getPipe()`；
-2. Vector family -> `PIPE_V`；
-3. Cube family -> `PIPE_M`；
-4. SIMT family -> `PIPE_S`；
-5. MTE family -> `PIPE_ALL`。
+1. `OpPipeInterface::getPipe()` 提供的精确 pipe；
+2. Vector family fallback 为 `PIPE_V`；
+3. Cube family fallback 为 `PIPE_M`；
+4. SIMT family fallback 为 `PIPE_S`；
+5. MTE family fallback 为 `PIPE_ALL`。
 
-MTE fallback 使用 `PIPE_ALL`，表示 pipe 信息未知，后续同步匹配时与所有 pipe 保守相交。
+这组 fallback 覆盖所有实现调度接口的 PTO micro-op family，范围大于 scheduler pass 实际分析的 vecscope。当前 pass 只消费 vecscope，规范化流程不应在 vecscope 中产生 Cube operation；`Cube -> PIPE_M` 用于通用接口语义和注册覆盖，不表示 vecscope scheduler 支持调度 Cube operation。当前 vecscope verifier 没有按 operation family 建立完整白名单，因此该 fallback 也为手写或非规范 IR 提供保守分类。
+
+MTE 的 `PIPE_ALL` 只表示尚无精确 execution pipe，不能解释为 operation 占用所有硬件 pipe。进入 TargetModel 后，MTE family 仍映射到 MTE sched class；资源映射见 8.2 节。
 
 ### 3.3 当前显式 effect
 
 | 操作或属性 | effect |
 | --- | --- |
-| `mem_bar`、`dsb`、`fence.barrier_all`、`syncthreads`、`threadfence`、`threadfence_block` | `Barrier("memory-order")` |
-| static set/wait flag | `(src pipe, dst pipe, event id)` 的 `Event` |
-| dynamic set/wait flag | `(src pipe, dst pipe)` 属性和 dynamic id value 的 `Event` |
-| set flag | source pipe 上的 `Pipe("signal-source")` |
-| wait flag | destination pipe 上的 `Pipe("wait-destination")` |
-| `pto.barrier` | 指定 pipe 上的 `Pipe("barrier")` |
-| 普通可执行 micro-op | execution pipe 上的 `Pipe("execute")` |
-| get/release buffer | static 或 dynamic id 的 `BufferId`；部分 mode 另带 pipe effect |
+| `mem_bar` | `Barrier("memory-order")` |
 | atomic CAS/exchange/add/sub/min/max/and/or/xor | `AtomicMemory` |
 | 带 `volatile` 或 `is_volatile` 属性的接口 op | `VolatileMemory` |
 | 支持可选 `updated_base` 的已登记 memory op | 结果存在时产生 `PostUpdate` |
@@ -189,7 +182,7 @@ coverage 按函数统计所有遍历到的 vecscope 内操作，不限于已生�
 - 每种 `Unsupported` 操作的数量；
 - 每种 unclassified 操作的数量。
 
-unclassified 特指：实现调度接口、没有 region、不是 terminator，但默认分类仍为 `SchedulingBoundary` 的操作。unsupported 和 unclassified 名称在输出前按字典序排序。若 `pto.dcci` 出现在 vecscope 内，当前分类会把它作为 unclassified boundary；vecscope 外的 `pto.dcci` 不参与分类。
+unclassified 特指：实现调度接口、没有 region、不是 terminator，但默认分类仍为 `SchedulingBoundary` 的操作。unsupported 和 unclassified 名称在输出前按字典序排序。vecscope verifier 会在调度前拒绝 pipeline、system 和 cache 同步操作，因此这些操作不参与函数级 coverage。
 
 ## 5. DAG 数据结构
 
@@ -250,7 +243,7 @@ reads / writes / ordered / unknown
 - `Explicit`：普通内存访问已由 `memoryAccesses` 完整描述；
 - `Unknown`：缺少完整声明，`memoryAccesses` 包含保守的 unknown、ordered write。
 
-访问语义优先来自 `MemoryEffectOpInterface`。effect value 不是 `!pto.ptr` 或 memref 时忽略。可证明 memory-effect-free 的操作归为 `None`。set/wait flag、buffer-id 同步、pipe/memory barrier、`sprclr` 和 ctrl register 操作已由调度语义完整描述，也归为 `None`，但不添加 `Pure` trait。未实现内存接口且不属于上述两类的操作归为 `Unknown`。名称为 `pto.store`、`pto.stg`、`pto.st_dev`，或以 `pto.vst`、`pto.pst` 开头的操作会在语义归一化时额外标记为 write。上述操作特判均位于语义层，DAGBuilder 不识别具体 memory op。
+访问语义优先来自 `MemoryEffectOpInterface`。effect value 不是 `!pto.ptr` 或 memref 时忽略。可证明 memory-effect-free 的操作归为 `None`。`mem_bar`、`sprclr` 和 ctrl register 操作已由调度语义完整描述，也归为 `None`，但不添加 `Pure` trait。未实现内存接口且不属于上述两类的操作归为 `Unknown`。名称为 `pto.store`、`pto.stg`、`pto.st_dev`，或以 `pto.vst`、`pto.pst` 开头的操作会在语义归一化时额外标记为 write。上述操作特判均位于语义层，DAGBuilder 不识别具体 memory op。
 
 DAGBuilder 读取 SUnit 的 `memoryAccesses` 后，为每个 address 解析 alias root。alias root 通过已有 alias 信息沿 defining-op 链向上查找，并用 visited 集合防止循环。不同 SSA root 即使位于同一 address space，也保守视为可能别名，因为内存规划可能让它们复用同一物理区间。
 
@@ -301,53 +294,14 @@ offset 按 element 计数，字节区间为：
 
 ### 6.6 完整 Barrier
 
-`mem_bar`、`dsb`、`fence.barrier_all` 和三类 SIMT barrier/fence 被视为完整调度屏障，但仍是 region 内节点：
+`mem_bar` 是 vecscope 内唯一合法的同步操作，并被视为完整调度屏障：
 
 - region 中所有较早节点 -> barrier：`Sync/Must`，latency 0；
 - 最近完整 barrier -> 每个较晚节点：`Sync/Must`，latency 0。
 
-`pto.barrier` 不走该规则；它采用下一节的指定 pipe 规则。
+`pto.barrier`、set/wait flag、get/release buffer、`dsb`、`dcci`、CMO/fence、SIMT barrier/fence 和跨核同步均必须位于 vecscope 外。自动 vecscope 推断把它们作为边界，显式 vecscope 的 verifier 会拒绝嵌套使用。因此阶段一调度器不为这些 scope 外操作构造 event、pipe 或 buffer-id effect/edge。
 
-### 6.7 Event 同步
-
-set flag 记录 signal，wait flag 与所有较早且可能匹配的 signal 建立 `Sync/Must` edge，reason 为 `event signal before wait`。
-
-匹配规则：
-
-- static/static：source pipe、destination pipe 和 event id 全部相等；
-- 只要一方使用 dynamic id：source/destination pipe 相等即视为可能匹配；
-- 缺少完整 identity 时保守匹配。
-
-dynamic id 的 SSA 值目前不用于证明两个事件不同。signal 历史不会在 wait 后清除，因此一个 wait 可连接多个较早的可能匹配 signal。
-
-### 6.8 Pipe 顺序
-
-pipe effect 分为 execution、signal source、wait destination 和 pipe barrier。pipe 匹配要求 pipe 相同；任一方为 `PIPE_ALL` 或缺少可解析 pipe 时保守匹配。
-
-- 每个 set flag 与所有较早的匹配 source-pipe execution 建边：`source pipe execution before signal`。
-- 每个 wait flag 成为 destination-pipe gate；所有较晚的匹配 execution 从该 gate 接收 `pipe synchronization before execution` edge。
-- `pto.barrier` 同时约束两侧：较早匹配 execution -> barrier，barrier -> 较晚匹配 execution。
-
-普通 execution 只记录当前确定的 pipe；MTE fallback 的 `PIPE_ALL` 会匹配所有 pipe gate。
-
-### 6.9 Buffer-id 顺序
-
-get buffer 记录 acquire，release buffer 与所有较早的可能匹配 acquire 建边；后续 acquire 又与所有较早的可能匹配 release 建边：
-
-```text
-acquire -> release -> later acquire
-```
-
-两类边均为 `Sync/Must`、latency 0。static id 仅按 buffer-id attribute 精确比较；只要一方是 dynamic id 就保守匹配。当前 buffer identity 不包含 op type 或 pipe。
-
-当 op type 能映射为具体 pipe 时：
-
-- mode 0 acquire 同时作为该 pipe 的 wait-destination gate；
-- mode 0 release 同时作为该 pipe 的 signal-source gate；
-- 非零 mode release 使用 `PIPE_ALL` signal-source，等待所有已记录 execution；
-- op type 无法映射为具体 pipe 时，只保留 buffer-id 顺序。
-
-### 6.10 Unknown sched class 保序
+### 6.7 Unknown sched class 保序
 
 语义上允许进入 region、但目标模型返回 unknown sched class 的节点，会获得：
 
@@ -573,7 +527,7 @@ top.hazard.commit(unit, Top, cycle)
 - CLI 默认 off 与显式 off 等价，真实 A5 VPTO emission coverage 无 unsupported/ unclassified op；
 - SSA、memory、静态区间、volatile、post-update 地址依赖；
 - SPR/CTRL 的 Data、Anti、Output edge；
-- 完整 barrier、pipe barrier、static/dynamic event、pipe 执行顺序；
-- static/dynamic buffer-id 顺序；
-- unclassified micro-op 切分 region；
+- vecscope 内 `mem_bar` 的完整 barrier 顺序；
+- pipeline、buffer-id、system、cache 和 SIMT 同步操作的 vecscope verifier 与自动推断边界；
+- 登记接口覆盖无 unclassified 操作；
 - CV 分裂时只报告 Vector 子模块。

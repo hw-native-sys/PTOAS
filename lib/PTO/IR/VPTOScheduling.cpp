@@ -1,18 +1,15 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 //===- VPTOScheduling.cpp - VPTO scheduling semantics --------------------===//
 
 #include "PTO/IR/VPTOScheduling.h"
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/PTOSyncUtils.h"
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -40,9 +37,7 @@ static bool hasRegisteredSchedulingClass(RegisteredOperationName operation) {
       operation.hasInterface<SimtOpInterface>())
     return true;
 
-  return isOneOf<MemBarOp, DsbOp, FenceBarrierAllOp, SetFlagOp, WaitFlagOp,
-                 SetFlagDynOp, WaitFlagDynOp, GetBufOp, GetBufDynOp, RlsBufOp,
-                 RlsBufDynOp, BarrierOp, GetCtrlOp, SetCtrlOp>(operation);
+  return isOneOf<MemBarOp, GetCtrlOp, SetCtrlOp>(operation);
 }
 
 static std::optional<PIPE> getExecutionPipe(Operation *op) {
@@ -54,23 +49,11 @@ static std::optional<PIPE> getExecutionPipe(Operation *op) {
     return PIPE::PIPE_M;
   if (isa<SimtOpInterface>(op))
     return PIPE::PIPE_S;
-  // Raw MTE micro-ops do not all expose a precise OpPipeInterface yet.  Use
-  // PIPE_ALL as an unknown-pipe effect so synchronization remains conservative.
+  // Raw MTE micro-ops do not all expose a precise OpPipeInterface yet. Use
+  // PIPE_ALL as their conservative execution-pipe classification.
   if (isa<MteOpInterface>(op))
     return PIPE::PIPE_ALL;
   return std::nullopt;
-}
-
-static PipeAttr getBufferSyncPipe(Operation *op, Attribute opType) {
-  if (auto pipe = dyn_cast_or_null<PipeAttr>(opType))
-    return pipe;
-  FailureOr<SyncOpType> syncType = parseSyncOpTypeLikeAttr(opType);
-  if (failed(syncType))
-    return {};
-  PIPE pipe = mapSyncOpTypeToPipe(*syncType);
-  if (!isConcreteSyncPipe(pipe))
-    return {};
-  return PipeAttr::get(op->getContext(), pipe);
 }
 
 static bool isMemoryAddress(Value value) {
@@ -158,12 +141,10 @@ static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
 
 /// These operations have complete scheduler-specific state semantics and do
 /// not access ordinary memory. This classification deliberately does not add
-/// Pure: event, pipe, buffer-id, barrier, and register-state effects must
-/// remain visible to the scheduler and to general IR transformations.
+/// Pure: vector-memory barriers and register-state effects must remain visible
+/// to the scheduler and to general IR transformations.
 static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
-  return isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, GetBufOp,
-             GetBufDynOp, RlsBufOp, RlsBufDynOp, BarrierOp, MemBarOp, DsbOp,
-             FenceBarrierAllOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
+  return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
 }
 
 static void collectMemoryAccesses(Operation *op,
@@ -238,97 +219,10 @@ VPTOSchedulingSemantics
 mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   VPTOSchedulingSemantics semantics;
   SmallVectorImpl<VPTOSchedulingEffect> &effects = semantics.effects;
-  if (isa<MemBarOp, DsbOp, FenceBarrierAllOp, SyncthreadsOp, ThreadfenceOp,
-          ThreadfenceBlockOp>(op)) {
+  if (isa<MemBarOp>(op)) {
     effects.push_back(
         {VPTOSchedulingEffectKind::Barrier, "memory-order", Value()});
   }
-  auto addStaticEvent = [&](Attribute srcPipe, Attribute dstPipe,
-                            Attribute eventId, StringRef access) {
-    effects.push_back(
-        {VPTOSchedulingEffectKind::Event, access, Value(),
-         ArrayAttr::get(op->getContext(), {srcPipe, dstPipe, eventId})});
-  };
-  auto addDynamicEvent = [&](Attribute srcPipe, Attribute dstPipe,
-                             Value eventId, StringRef access) {
-    effects.push_back({VPTOSchedulingEffectKind::Event, access, eventId,
-                       ArrayAttr::get(op->getContext(), {srcPipe, dstPipe})});
-  };
-  if (auto set = dyn_cast<SetFlagOp>(op))
-    addStaticEvent(set.getSrcPipeAttr(), set.getDstPipeAttr(),
-                   set.getEventIdAttr(), "signal");
-  if (auto wait = dyn_cast<WaitFlagOp>(op))
-    addStaticEvent(wait.getSrcPipeAttr(), wait.getDstPipeAttr(),
-                   wait.getEventIdAttr(), "wait");
-  if (auto set = dyn_cast<SetFlagDynOp>(op))
-    addDynamicEvent(set.getSrcPipeAttr(), set.getDstPipeAttr(),
-                    set.getEventId(), "signal");
-  if (auto wait = dyn_cast<WaitFlagDynOp>(op))
-    addDynamicEvent(wait.getSrcPipeAttr(), wait.getDstPipeAttr(),
-                    wait.getEventId(), "wait");
-  if (auto set = dyn_cast<SetFlagOp>(op))
-    effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "signal-source",
-                         Value(), set.getSrcPipeAttr());
-  if (auto set = dyn_cast<SetFlagDynOp>(op))
-    effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "signal-source",
-                         Value(), set.getSrcPipeAttr());
-  if (auto wait = dyn_cast<WaitFlagOp>(op))
-    effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "wait-destination",
-                         Value(), wait.getDstPipeAttr());
-  if (auto wait = dyn_cast<WaitFlagDynOp>(op))
-    effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "wait-destination",
-                         Value(), wait.getDstPipeAttr());
-  if (auto barrier = dyn_cast<BarrierOp>(op))
-    effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "barrier", Value(),
-                         barrier.getPipeAttr());
-  if (std::optional<PIPE> pipe = getExecutionPipe(op))
-    effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "execute", Value(),
-                         PipeAttr::get(op->getContext(), *pipe));
-  auto addStaticBuffer = [&](Attribute opType, IntegerAttr bufferId,
-                             uint32_t mode, StringRef access) {
-    effects.emplace_back(VPTOSchedulingEffectKind::BufferId, access, Value(),
-                         bufferId);
-    PipeAttr pipe = getBufferSyncPipe(op, opType);
-    if (!pipe)
-      return;
-    if (access == "acquire" && mode == 0)
-      effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "wait-destination",
-                           Value(), pipe);
-    if (access == "release")
-      effects.emplace_back(
-          VPTOSchedulingEffectKind::Pipe, "signal-source", Value(),
-          mode == 0
-              ? Attribute(pipe)
-              : Attribute(PipeAttr::get(op->getContext(), PIPE::PIPE_ALL)));
-  };
-  auto addDynamicBuffer = [&](Attribute opType, Value bufferId, uint32_t mode,
-                              StringRef access) {
-    effects.emplace_back(VPTOSchedulingEffectKind::BufferId, access, bufferId);
-    PipeAttr pipe = getBufferSyncPipe(op, opType);
-    if (!pipe)
-      return;
-    if (access == "acquire" && mode == 0)
-      effects.emplace_back(VPTOSchedulingEffectKind::Pipe, "wait-destination",
-                           Value(), pipe);
-    if (access == "release")
-      effects.emplace_back(
-          VPTOSchedulingEffectKind::Pipe, "signal-source", Value(),
-          mode == 0
-              ? Attribute(pipe)
-              : Attribute(PipeAttr::get(op->getContext(), PIPE::PIPE_ALL)));
-  };
-  if (auto acquire = dyn_cast<GetBufOp>(op))
-    addStaticBuffer(acquire.getOpTypeAttr(), acquire.getBufIdAttr(),
-                    acquire.getMode(), "acquire");
-  if (auto acquire = dyn_cast<GetBufDynOp>(op))
-    addDynamicBuffer(acquire.getOpTypeAttr(), acquire.getBufId(),
-                     acquire.getMode(), "acquire");
-  if (auto release = dyn_cast<RlsBufOp>(op))
-    addStaticBuffer(release.getOpTypeAttr(), release.getBufIdAttr(),
-                    release.getMode(), "release");
-  if (auto release = dyn_cast<RlsBufDynOp>(op))
-    addDynamicBuffer(release.getOpTypeAttr(), release.getBufId(),
-                     release.getMode(), "release");
   if (isa<AtomicCasOp, AtomicExchOp, AtomicAddOp, AtomicSubOp, AtomicMinOp,
           AtomicMaxOp, AtomicAndOp, AtomicOrOp, AtomicXorOp>(op))
     effects.push_back(
@@ -387,9 +281,6 @@ mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   if (getExecutionPipe(op) || !semantics.effects.empty()) {
     semantics.schedulingClass = VPTOSchedulingClass::Schedulable;
     semantics.classificationKnown = true;
-  } else if (isa<DcciOp>(op)) {
-    semantics.schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
-    semantics.classificationKnown = true;
   }
   return semantics;
 }
@@ -435,11 +326,6 @@ mlir::pto::auditRegisteredVPTOSchedulingOps(MLIRContext &context) {
     ++coverage.registered;
     if (hasRegisteredSchedulingClass(operation)) {
       ++coverage.schedulable;
-      continue;
-    }
-    if (operation.getTypeID() == TypeID::get<DcciOp>()) {
-      ++coverage.boundary;
-      coverage.boundaryOps.push_back(operation.getStringRef().str());
       continue;
     }
     coverage.unclassifiedOps.push_back(operation.getStringRef().str());

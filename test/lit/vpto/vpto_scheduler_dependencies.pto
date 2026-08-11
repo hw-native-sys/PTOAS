@@ -38,48 +38,6 @@
 // CHECK: edge=1->2 kind=sync strength=must latency=0 reason=after scheduling barrier
 // CHECK-NOT: kind=memory
 
-// CHECK-LABEL: vpto-scheduler: function=event_signal_wait
-// CHECK-NOT: kind=memory
-// CHECK: edge=1->2 kind=sync strength=must latency=0 reason=event signal before wait
-// CHECK-NOT: kind=memory
-
-// CHECK-LABEL: vpto-scheduler: function=dynamic_event_may_match
-// CHECK-NOT: kind=memory
-// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=event signal before wait
-// CHECK-NOT: kind=memory
-
-// CHECK-LABEL: vpto-scheduler: function=event_pipe_order
-// CHECK-NOT: kind=memory
-// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=source pipe execution before signal
-// CHECK-NOT: kind=memory
-// CHECK: edge=4->5 kind=sync strength=must latency=0 reason=pipe synchronization before execution
-// CHECK-NOT: kind=memory
-
-// CHECK-LABEL: vpto-scheduler: function=pipe_barrier_order
-// CHECK-NOT: kind=memory
-// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=pipe execution before barrier
-// CHECK-NOT: kind=memory
-// CHECK: edge=1->2 kind=sync strength=must latency=0 reason=pipe synchronization before execution
-// CHECK-NOT: kind=memory
-
-// CHECK-LABEL: vpto-scheduler: function=buffer_id_order
-// CHECK-NOT: kind=memory
-// CHECK: edge=0->2 kind=sync strength=must latency=0 reason=buffer acquire before release
-// CHECK-NOT: kind=memory
-// CHECK: edge=2->3 kind=sync strength=must latency=0 reason=buffer release before acquire
-// CHECK-NOT: kind=memory
-
-// CHECK-LABEL: vpto-scheduler: function=dynamic_buffer_may_match
-// CHECK-NOT: kind=memory
-// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=buffer acquire before release
-// CHECK-NOT: kind=memory
-
-// CHECK-LABEL: vpto-scheduler: function=explicit_micro_boundary
-// CHECK: block=0 regions=2
-// CHECK: region=0 before=block-start after=boundary:pto.dcci
-// CHECK: region=1 before=boundary:pto.dcci after=block-end
-// CHECK: boundary-reason=boundary:pto.dcci count=1
-// CHECK-NOT: unclassified-op=pto.dcci
 // CHECK-LABEL: vpto-scheduler: function=strict_vecscope
 // CHECK: op=pto.sprclr semantic=schedulable sched-class=vector known=true
 // CHECK: coverage schedulable=1 structural=0 boundary=0 unsupported=0
@@ -164,79 +122,6 @@ module attributes {pto.target_arch = "a5"} {
       pto.sprclr "AR"
       pto.mem_bar "VV_ALL"
       pto.sprclr "AR"
-    }
-    return
-  }
-
-  func.func @event_signal_wait() {
-    pto.vecscope {
-      pto.sprclr "AR"
-      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-      pto.sprclr "AR"
-    }
-    return
-  }
-
-  func.func @dynamic_event_may_match() {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    pto.vecscope {
-      pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
-      pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c1]
-    }
-    return
-  }
-
-  func.func @event_pipe_order() {
-    pto.vecscope {
-      pto.sprclr "AR"
-      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-      pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID1"]
-      pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID1"]
-      pto.sprclr "AR"
-    }
-    return
-  }
-
-  func.func @pipe_barrier_order() {
-    pto.vecscope {
-      pto.sprclr "AR"
-      pto.barrier #pto.pipe<PIPE_V>
-      pto.sprclr "AR"
-    }
-    return
-  }
-
-  func.func @buffer_id_order() {
-    pto.vecscope {
-      pto.get_buf "PIPE_V", 0, 0
-      pto.sprclr "AR"
-      pto.rls_buf "PIPE_V", 0, 0
-      pto.get_buf "PIPE_V", 0, 0
-      pto.sprclr "AR"
-    }
-    return
-  }
-
-  func.func @dynamic_buffer_may_match() {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    pto.vecscope {
-      pto.get_buf_dyn "PIPE_V", %c0, 0
-      pto.rls_buf_dyn "PIPE_V", %c1, 0
-    }
-    return
-  }
-
-  func.func @explicit_micro_boundary(%src: !pto.ptr<i32, gm>)
-      attributes {pto.aicore} {
-    %c0 = arith.constant 0 : index
-    pto.vecscope {
-      %before = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
-      pto.dcci %src "SINGLE_CACHE_LINE" : !pto.ptr<i32, gm>
-      %after = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
     }
     return
   }

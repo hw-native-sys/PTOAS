@@ -1,20 +1,18 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
 // RUN: FileCheck %s < %t
 
 // The registration audit is independent of the operations present in the
 // input. This module intentionally contains no vecscope.
-// CHECK: vpto-scheduler: registration-coverage registered={{[1-9][0-9]*}} schedulable={{[1-9][0-9]*}} boundary=1 unclassified=0
-// CHECK-NEXT: vpto-scheduler: registered-boundary-op=pto.dcci reason=explicit-scheduling-boundary
+// CHECK: vpto-scheduler: registration-coverage registered={{[1-9][0-9]*}} schedulable={{[1-9][0-9]*}} boundary=0 unclassified=0
+// CHECK-NOT: vpto-scheduler: registered-boundary-op=
 // CHECK-NOT: vpto-scheduler: registered-unclassified-op=
 // CHECK-NOT: vpto-scheduler: function=
 

@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 //===- VPTOSchedDAGBuilder.cpp - VPTO scheduling DAG builder -------------===//
 
@@ -117,38 +115,6 @@ static bool isPostUpdateAddress(const VPTOSUnit &producer, Value value) {
       });
 }
 
-static bool mayReferToSameEvent(const VPTOSchedulingEffect &lhs,
-                                const VPTOSchedulingEffect &rhs) {
-  auto lhsIdentity = dyn_cast_or_null<ArrayAttr>(lhs.attribute);
-  auto rhsIdentity = dyn_cast_or_null<ArrayAttr>(rhs.attribute);
-  if (!lhsIdentity || !rhsIdentity || lhsIdentity.size() < 2 ||
-      rhsIdentity.size() < 2)
-    return true;
-  if (lhsIdentity[0] != rhsIdentity[0] || lhsIdentity[1] != rhsIdentity[1])
-    return false;
-  if (lhsIdentity.size() == 3 && rhsIdentity.size() == 3)
-    return lhsIdentity[2] == rhsIdentity[2];
-  // A dynamic id may equal any static or dynamic id for the same pipe pair.
-  return true;
-}
-
-static bool pipeEffectMatches(Attribute constraint, Attribute execution) {
-  auto constraintPipe = dyn_cast_or_null<PipeAttr>(constraint);
-  auto executionPipe = dyn_cast_or_null<PipeAttr>(execution);
-  if (!constraintPipe || !executionPipe)
-    return true;
-  return constraintPipe.getPipe() == PIPE::PIPE_ALL ||
-         executionPipe.getPipe() == PIPE::PIPE_ALL ||
-         constraintPipe == executionPipe;
-}
-
-static bool mayReferToSameBuffer(const VPTOSchedulingEffect &lhs,
-                                 const VPTOSchedulingEffect &rhs) {
-  if (lhs.attribute && rhs.attribute)
-    return lhs.attribute == rhs.attribute;
-  // A dynamic id may equal any static or dynamic buffer id.
-  return true;
-}
 } // namespace
 
 void VPTOSchedDAGBuilder::buildMemoryEdges(VPTOSchedDAG &dag) const {
@@ -183,21 +149,8 @@ void VPTOSchedDAGBuilder::buildMemoryEdges(VPTOSchedDAG &dag) const {
 }
 
 void VPTOSchedDAGBuilder::buildImplicitAndSyncEdges(VPTOSchedDAG &dag) const {
-  struct EventSignal {
-    VPTOSchedulingEffect effect;
-    VPTOSUnit *unit;
-  };
-  struct PipeGate {
-    Attribute pipe;
-    VPTOSUnit *unit;
-  };
   llvm::StringMap<VPTOSUnit *> lastWrite;
   llvm::StringMap<SmallVector<VPTOSUnit *>> readsSinceWrite;
-  SmallVector<EventSignal> eventSignals;
-  SmallVector<EventSignal> bufferAcquires;
-  SmallVector<EventSignal> bufferReleases;
-  SmallVector<PipeGate> pipeGates;
-  SmallVector<PipeGate> pipeExecutions;
   VPTOSUnit *lastBarrier = nullptr;
 
   for (const std::unique_ptr<VPTOSUnit> &unitOwner : dag.getUnits()) {
@@ -217,75 +170,6 @@ void VPTOSchedDAGBuilder::buildImplicitAndSyncEdges(VPTOSchedDAG &dag) const {
         }
         lastBarrier = &unit;
         continue;
-      }
-      if (effect.kind == VPTOSchedulingEffectKind::Event) {
-        if (effect.resource == "signal") {
-          eventSignals.push_back({effect, &unit});
-          continue;
-        }
-        if (effect.resource == "wait") {
-          for (const EventSignal &signal : eventSignals) {
-            if (!mayReferToSameEvent(signal.effect, effect))
-              continue;
-            dag.addEdge(*signal.unit, unit, VPTOSchedEdgeKind::Sync,
-                        VPTOSchedEdgeStrength::Must, 0,
-                        "event signal before wait");
-          }
-          continue;
-        }
-      }
-      if (effect.kind == VPTOSchedulingEffectKind::Pipe) {
-        if (effect.resource == "execute") {
-          for (const PipeGate &gate : pipeGates) {
-            if (!pipeEffectMatches(gate.pipe, effect.attribute))
-              continue;
-            dag.addEdge(*gate.unit, unit, VPTOSchedEdgeKind::Sync,
-                        VPTOSchedEdgeStrength::Must, 0,
-                        "pipe synchronization before execution");
-          }
-          pipeExecutions.push_back({effect.attribute, &unit});
-          continue;
-        }
-        if (effect.resource == "signal-source" ||
-            effect.resource == "barrier") {
-          for (const PipeGate &execution : pipeExecutions) {
-            if (!pipeEffectMatches(effect.attribute, execution.pipe))
-              continue;
-            dag.addEdge(*execution.unit, unit, VPTOSchedEdgeKind::Sync,
-                        VPTOSchedEdgeStrength::Must, 0,
-                        effect.resource == "barrier"
-                            ? "pipe execution before barrier"
-                            : "source pipe execution before signal");
-          }
-        }
-        if (effect.resource == "wait-destination" ||
-            effect.resource == "barrier")
-          pipeGates.push_back({effect.attribute, &unit});
-        continue;
-      }
-      if (effect.kind == VPTOSchedulingEffectKind::BufferId) {
-        if (effect.resource == "acquire") {
-          for (const EventSignal &release : bufferReleases) {
-            if (!mayReferToSameBuffer(release.effect, effect))
-              continue;
-            dag.addEdge(*release.unit, unit, VPTOSchedEdgeKind::Sync,
-                        VPTOSchedEdgeStrength::Must, 0,
-                        "buffer release before acquire");
-          }
-          bufferAcquires.push_back({effect, &unit});
-          continue;
-        }
-        if (effect.resource == "release") {
-          for (const EventSignal &acquire : bufferAcquires) {
-            if (!mayReferToSameBuffer(acquire.effect, effect))
-              continue;
-            dag.addEdge(*acquire.unit, unit, VPTOSchedEdgeKind::Sync,
-                        VPTOSchedEdgeStrength::Must, 0,
-                        "buffer acquire before release");
-          }
-          bufferReleases.push_back({effect, &unit});
-          continue;
-        }
       }
       if (effect.resource.empty())
         continue;

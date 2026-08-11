@@ -3797,6 +3797,24 @@ LogicalResult VRegType::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+static bool isForbiddenSynchronizationInsideVecScope(Operation *op) {
+  // High-level synchronization is forbidden before and after lowering.
+  if (isa<RecordEventOp, WaitEventOp, BarrierSyncOp>(op))
+    return true;
+
+  // Intra-core pipeline and buffer-id synchronization executes outside the
+  // vector interval that it orders.
+  if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, GetBufOp,
+          GetBufDynOp, RlsBufOp, RlsBufDynOp, BarrierOp>(op))
+    return true;
+
+  // Intra-block, cross-core, system, cache, and SIMT synchronization likewise
+  // delimit vector intervals. MemBarOp is intentionally not in this list.
+  return isa<SyncSetOp, SyncWaitOp, CmoCacheInvalidOp, FenceBarrierAllOp,
+             TSyncOp, SyncAllOp, DsbOp, DcciOp, SyncthreadsOp, ThreadfenceOp,
+             ThreadfenceBlockOp>(op);
+}
+
 LogicalResult VecScopeOp::verify() {
   Region &bodyRegion = getBody();
   if (bodyRegion.empty()) {
@@ -3807,6 +3825,18 @@ LogicalResult VecScopeOp::verify() {
   if (body.getNumArguments() != 0)
     return emitOpError() << "expects body block to have no arguments, got "
                          << body.getNumArguments();
+
+  Operation *boundaryOp = nullptr;
+  bodyRegion.walk([&](Operation *op) {
+    if (!isForbiddenSynchronizationInsideVecScope(op))
+      return WalkResult::advance();
+    boundaryOp = op;
+    return WalkResult::interrupt();
+  });
+  if (boundaryOp)
+    return boundaryOp->emitOpError()
+           << "must be outside 'pto.vecscope'; synchronization operations "
+              "delimit vector scopes";
 
   return success();
 }
@@ -3833,6 +3863,18 @@ LogicalResult StrictVecScopeOp::verify() {
                            << " to have type " << capture.getType()
                            << ", got " << blockArg.getType();
   }
+
+  Operation *boundaryOp = nullptr;
+  bodyRegion.walk([&](Operation *op) {
+    if (!isForbiddenSynchronizationInsideVecScope(op))
+      return WalkResult::advance();
+    boundaryOp = op;
+    return WalkResult::interrupt();
+  });
+  if (boundaryOp)
+    return boundaryOp->emitOpError()
+           << "must be outside 'pto.strict_vecscope'; synchronization "
+              "operations delimit vector scopes";
   return success();
 }
 

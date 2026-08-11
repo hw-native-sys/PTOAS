@@ -2680,7 +2680,7 @@ def TFreeOp : PTO_TOp<"tfree", [
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 
-def SetFlagOp : PTO_Op<"set_flag", [VPTOSchedulingOpInterface]> {
+def SetFlagOp : PTO_Op<"set_flag"> {
   let summary = "Set synchronization flag between pipes";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2695,7 +2695,7 @@ def SetFlagOp : PTO_Op<"set_flag", [VPTOSchedulingOpInterface]> {
   }];
 }
 
-def WaitFlagOp : PTO_Op<"wait_flag", [VPTOSchedulingOpInterface]> {
+def WaitFlagOp : PTO_Op<"wait_flag"> {
   let summary = "Wait for synchronization flag";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2710,7 +2710,7 @@ def WaitFlagOp : PTO_Op<"wait_flag", [VPTOSchedulingOpInterface]> {
   }];
 }
 
-def SetFlagDynOp : PTO_Op<"set_flag_dyn", [VPTOSchedulingOpInterface]> {
+def SetFlagDynOp : PTO_Op<"set_flag_dyn"> {
   let summary = "Set synchronization flag between pipes (dynamic event id)";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2723,7 +2723,7 @@ def SetFlagDynOp : PTO_Op<"set_flag_dyn", [VPTOSchedulingOpInterface]> {
   }];
 }
 
-def WaitFlagDynOp : PTO_Op<"wait_flag_dyn", [VPTOSchedulingOpInterface]> {
+def WaitFlagDynOp : PTO_Op<"wait_flag_dyn"> {
   let summary = "Wait for synchronization flag (dynamic event id)";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2743,7 +2743,7 @@ def WaitFlagDynOp : PTO_Op<"wait_flag_dyn", [VPTOSchedulingOpInterface]> {
 def PTO_PipeLikeAttr
     : AnyAttrOf<[PTO_PipeEventTypeAttr, PTO_SyncOpTypeAttr, PTO_PipeAttr]>;
 
-def GetBufOp : PTO_Op<"get_buf", [VPTOSchedulingOpInterface]> {
+def GetBufOp : PTO_Op<"get_buf"> {
   let summary = "Acquire a buffer-id token for a sync op type (A5)";
   let description = [{
     `pto.get_buf` participates in a buffer-id based ordering model. Operations
@@ -2775,7 +2775,7 @@ def GetBufOp : PTO_Op<"get_buf", [VPTOSchedulingOpInterface]> {
   }];
 }
 
-def GetBufDynOp : PTO_Op<"get_buf_dyn", [VPTOSchedulingOpInterface]> {
+def GetBufDynOp : PTO_Op<"get_buf_dyn"> {
   let summary = "Acquire a buffer-id token (dynamic buf-id)";
   let description = [{
     Dynamic variant of `pto.get_buf` where the buffer-id is provided as an
@@ -2796,7 +2796,7 @@ def GetBufDynOp : PTO_Op<"get_buf_dyn", [VPTOSchedulingOpInterface]> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def RlsBufOp : PTO_Op<"rls_buf", [VPTOSchedulingOpInterface]> {
+def RlsBufOp : PTO_Op<"rls_buf"> {
   let summary = "Release a buffer-id token for a sync op type (A5)";
   let description = [{
     Releases the previously acquired buffer-id token for the given op type
@@ -2822,7 +2822,7 @@ def RlsBufOp : PTO_Op<"rls_buf", [VPTOSchedulingOpInterface]> {
   }];
 }
 
-def RlsBufDynOp : PTO_Op<"rls_buf_dyn", [VPTOSchedulingOpInterface]> {
+def RlsBufDynOp : PTO_Op<"rls_buf_dyn"> {
   let summary = "Release a buffer-id token (dynamic buf-id)";
   let description = [{
     Dynamic variant of `pto.rls_buf` where the buffer-id is provided as an
@@ -2878,7 +2878,7 @@ def SyncWaitOp : PTO_Op<"sync.wait"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def BarrierOp : PTO_Op<"barrier", [VPTOSchedulingOpInterface]> {
+def BarrierOp : PTO_Op<"barrier"> {
   let summary = "Intra-pipeline memory barrier";
   let arguments = (ins PTO_PipeAttr:$pipe);
   let assemblyFormat = "$pipe attr-dict";
@@ -2911,8 +2911,7 @@ def CmoCacheInvalidOp : PTO_Op<"cmo.cacheinvalid"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def FenceBarrierAllOp : PTO_Op<"fence.barrier_all",
-    [VPTOSchedulingOpInterface]> {
+def FenceBarrierAllOp : PTO_Op<"fence.barrier_all"> {
   let summary = "All-direction memory fence for a visibility scope";
   let description = [{
     Memory fence for a visibility scope. Around signal/payload communication it

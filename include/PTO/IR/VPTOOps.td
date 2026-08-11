@@ -378,7 +378,10 @@ def VecScopeOp : PTO_Op<"vecscope", [SingleBlock, NoTerminator,
     `pto.vecscope` marks a structured vector-scope interval without overloading
     a dummy carrier loop with scope metadata. Lowering and emission passes may
     use the region boundary to preserve loop shape while treating the enclosed
-    body as one VPTO vector interval.
+    body as one VPTO vector interval. Pipeline, system, cache, SIMT, and
+    cross-core synchronization operations delimit vector scopes and must remain
+    outside the region. `pto.mem_bar` is the exception: it orders vector memory
+    operations within the region.
   }];
 
   let regions = (region SizedRegion<1>:$body);
@@ -394,7 +397,7 @@ def StrictVecScopeOp : PTO_Op<"strict_vecscope", [SingleBlock, NoTerminator,
     `pto.strict_vecscope` is the strict form of `pto.vecscope`. Values used by
     the body must be passed explicitly through op operands and corresponding
     block arguments; implicit SSA capture from the surrounding scope is
-    rejected.
+    rejected. It has the same synchronization boundary rules as `pto.vecscope`.
   }];
 
   let arguments = (ins Variadic<AnyType>:$captures);
@@ -418,7 +421,7 @@ def PTO_MemBarOp : PTO_MicroOp<"mem_bar"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def DsbOp : PTO_MicroOp<"dsb"> {
+def DsbOp : PTO_Op<"dsb", [MicroOpInterface]> {
   let summary = "Issue a low-level DSB memory barrier";
   let description = [{
     Lowers to `llvm.hivm.DSB(i64)`. The memory domain maps directly to the CCE
@@ -433,7 +436,7 @@ def DsbOp : PTO_MicroOp<"dsb"> {
   }];
 }
 
-def DcciOp : PTO_MicroOp<"dcci"> {
+def DcciOp : PTO_Op<"dcci", [MicroOpInterface]> {
   let summary = "Issue a low-level DCCI cache maintenance operation";
   let description = [{
     Lowers to the `llvm.hivm.DCCI*` intrinsic family. The pointer address space
@@ -989,7 +992,9 @@ def PTO_ConvertOp : PTO_SimtOp<"convert", [Pure]> {
   }];
 }
 
-def PTO_SyncthreadsOp : PTO_SimtOp<"syncthreads", [
+def PTO_SyncthreadsOp : PTO_Op<"syncthreads", [
+    MicroOpInterface,
+    SimtOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Synchronize all workitems in a SIMT VF entry";
@@ -1000,7 +1005,9 @@ def PTO_SyncthreadsOp : PTO_SimtOp<"syncthreads", [
   let assemblyFormat = [{ attr-dict }];
 }
 
-def PTO_ThreadfenceOp : PTO_SimtOp<"threadfence", [
+def PTO_ThreadfenceOp : PTO_Op<"threadfence", [
+    MicroOpInterface,
+    SimtOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Issue a SIMT workitem memory fence";
@@ -1011,7 +1018,9 @@ def PTO_ThreadfenceOp : PTO_SimtOp<"threadfence", [
   let assemblyFormat = [{ attr-dict }];
 }
 
-def PTO_ThreadfenceBlockOp : PTO_SimtOp<"threadfence_block", [
+def PTO_ThreadfenceBlockOp : PTO_Op<"threadfence_block", [
+    MicroOpInterface,
+    SimtOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Issue a SIMT block-scoped workitem memory fence";
