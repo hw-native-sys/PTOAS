@@ -14,6 +14,9 @@ This package makes both facts executable:
 - `desired_pointer_table.py` states the requested surface.
 
 Run `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
+With `LIVE_DEVICE` and `ACL_DEVICE_ID`, benchmark mode compiles and launches
+the fixed-argument workaround through `torch_npu`, checks its copy result, and
+also retains the API rejection test for nested GM pointers.
 
 | Representative case | Direct us | Stacked workaround us | Direct/workaround | extra copied bytes |
 |---|---:|---:|---:|---:|
