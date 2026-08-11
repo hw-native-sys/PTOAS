@@ -9,16 +9,13 @@ CCE peer with a minimal ctypes stream ABI.
 
 Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
 With `ACL_DEVICE_ID`, benchmark mode builds and launches both sides through
-`torch_npu`. A verified device-0 run uses a common 128x7168 output extent,
-passes both host goldens, and measures 32.960 us CCE versus 50553.814 us VMI.
+`torch_npu`. The fair control uses one 256-value work item and one launch per side, passes both host goldens, and records synchronized event medians.
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| 128x7168 FP8 requant work extent | 32.960 | 50553.814 | 0.0007 |
+| one 256-value FP8 requant work item | 33.040 | 35.122 | 0.9407 |
 
-The compact VMI body is tiled across the full output extent. Some runs also
-expose a PTOAS device-LLVM frontend crash; a successful compile gives the live
-timing above, while the CCE baseline remains independently launchable.
+The compact VMI body is a low-level work-item control; earlier full-shape numbers were invalid Python launch-loop timings. Some runs also expose a PTOAS device-LLVM frontend crash.
 
 The requested lowering must first compile this f8-to-f32 broadcast/reduce/f8
 sequence, then keep input-scale broadcast and output amax reduction in

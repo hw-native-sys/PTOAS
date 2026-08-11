@@ -1,7 +1,3 @@
 # Performance issue
 
-The standalone device-0 run launches both paths over 128x7168: CCE is 32.960
-us and VMI is 50553.814 us (ratio 0.0007), with both host goldens checked.
-Some runs also expose a PTOAS device-LLVM frontend crash. The direct CCE
-baseline proves the algorithm is fast and launchable independently. See
-`README.md`.
+The corrected one-launch control measures CCE 33.040 us and VMI 35.122 us (ratio 0.9407) on device 0. The earlier 50 ms number timed 28,672 host-side VMI launches. Some runs also expose a PTOAS device-LLVM frontend crash. See `README.md`.
