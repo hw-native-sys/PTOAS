@@ -9,7 +9,7 @@ CCE peer with a minimal ctypes stream ABI.
 
 Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
 With `ACL_DEVICE_ID`, benchmark mode builds and launches both sides through
-`torch_npu`. The fair control uses one 256-value work item and one launch per side, passes both host goldens, and records synchronized event medians.
+`torch_npu`. The fair control enqueues 64 identical 256-value launches between each event pair, synchronizes once, and reports per-launch medians for both sides.
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|

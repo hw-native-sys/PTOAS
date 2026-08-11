@@ -5,7 +5,7 @@ import argparse, ctypes, os, subprocess
 from pathlib import Path
 import torch, torch_npu  # noqa: F401
 HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"
-ROWS, WIDTH, WARMUP, SAMPLES = 1, 256, 20, 30
+ROWS, WIDTH, WARMUP, SAMPLES, BATCH = 1, 256, 20, 30, 64
 def cmd(a, **kw): subprocess.run(a, check=True, **kw)
 def bisheng(): return os.environ.get('BISHENG', f"{os.environ['ASCEND_HOME_PATH']}/bin/bisheng")
 def link(objs, so):
@@ -20,11 +20,12 @@ def build_vmi():
 def stream():
  p=torch.npu.current_stream()._as_parameter_; return p.value if hasattr(p,'value') else int(p)
 def median(fn):
- for _ in range(WARMUP): fn()
+ for _ in range(WARMUP):
+  for _ in range(BATCH): fn()
  torch.npu.synchronize(); v=[]
  for _ in range(SAMPLES):
-  a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); fn(); z.record(); v.append((a,z))
- torch.npu.synchronize(); v=[a.elapsed_time(z)*1000 for a,z in v]
+  a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); [fn() for _ in range(BATCH)]; z.record(); v.append((a,z))
+ torch.npu.synchronize(); v=[a.elapsed_time(z)*1000/BATCH for a,z in v]
  return sorted(v)[len(v)//2]
 def main():
  ap=argparse.ArgumentParser(); ap.add_argument('--compile-only',action='store_true'); ap.add_argument('--cce-only',action='store_true'); a=ap.parse_args()
@@ -38,5 +39,5 @@ def main():
  v=ctypes.CDLL(str(build_vmi())); vf=v.launch_requant_vmi; vf.argtypes=[ctypes.c_void_p]*5
  def vr():
   vf(st(),ctypes.c_void_p(src.data_ptr()),ctypes.c_void_p(ins.data_ptr()),ctypes.c_void_p(vd.data_ptr()),ctypes.c_void_p(vs.data_ptr()))
- vr(); torch.npu.synchronize(); vu=median(vr); print(f'device={DEV} shape={ROWS}x{WIDTH} samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal'); print(f'CCE_us={cu:.3f} VMI_us={vu:.3f} CCE_over_VMI={cu/vu:.4f}')
+ vr(); torch.npu.synchronize(); vu=median(vr); print(f'device={DEV} shape={ROWS}x{WIDTH} batch={BATCH} samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal'); print(f'CCE_us={cu:.3f} VMI_us={vu:.3f} CCE_over_VMI={cu/vu:.4f}')
 if __name__=='__main__': main()
