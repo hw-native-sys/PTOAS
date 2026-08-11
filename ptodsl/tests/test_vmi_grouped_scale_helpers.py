@@ -6,7 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Keep the VMI grouped-scale reduction aligned with the direct CCE path."""
+"""Keep the complete VMI grouped-scale pipeline aligned with direct CCE."""
 
 from pathlib import Path
 import tempfile
@@ -19,57 +19,59 @@ def bit_and(lhs, rhs, mask):
     return pto.vmi.vand(lhs, rhs, mask)
 
 
-def max(lhs, rhs, mask):
-    return pto.vmi.vmax(lhs, rhs, mask)
-
-
 def grouped_max(source, mask):
     return pto.vmi.vcmax(source, mask, group=8)
 
 
 @pto.jit(
-    name="vmi_grouped_scale_helpers",
+    name="vmi_grouped_scale_pipeline",
     kernel_kind="vector",
     target="a5",
     backend="vpto",
     mode="explicit",
     insert_sync=False,
 )
-def vmi_grouped_scale_helpers(
+def vmi_grouped_scale_pipeline(
     source_gm: pto.ptr(pto.bf16, "gm"),
+    destination_gm: pto.ptr(pto.f8e4m3, "gm"),
     scale_gm: pto.ptr(pto.bf16, "gm"),
 ):
-    source_ub = pto.castptr(0, pto.ptr(pto.bf16, "ub"))
-    scale_ub = pto.castptr(512, pto.ptr(pto.bf16, "ub"))
+    source_ub = pto.castptr(pto.ui64(0), pto.ptr(pto.bf16, "ub"))
+    destination_ub = pto.castptr(pto.ui64(32768), pto.ptr(pto.f8e4m3, "ub"))
+    scale_ub = pto.castptr(pto.ui64(33024), pto.ptr(pto.bf16, "ub"))
 
-    pto.copy_gm_to_ubuf(
-        source_gm, source_ub, 0, 1, 512, 0, 0, False, 0, 512, 512
-    )
-    pto.set_flag("PIPE_MTE2", "PIPE_V", "EVENT_ID0")
-    pto.wait_flag("PIPE_MTE2", "PIPE_V", "EVENT_ID0")
+    pto.mte_gm_ub(source_gm, source_ub, 0, 512, nburst=(1, 512, 512))
+    pto.set_flag("MTE2", "V", event_id=0)
+    pto.wait_flag("MTE2", "V", event_id=0)
 
     offset = pto.const(0, dtype=pto.index)
-    mask = pto.vmi.create_mask(128, size=128)
-    low, high = pto.vmi.vload(
-        source_ub, offset, size=128, dist_mode="dintlv"
-    )
-    low_bits = pto.vmi.vinterpret_cast(low, to_dtype=pto.ui16)
-    high_bits = pto.vmi.vinterpret_cast(high, to_dtype=pto.ui16)
-    abs_bits = pto.vmi.vbrc(pto.ui16(0x7FFF), size=128)
+    mask = pto.vmi.create_mask(256, size=256)
+    source = pto.vmi.vload(source_ub, offset, size=256)
+    source_bits = pto.vmi.vinterpret_cast(source, to_dtype=pto.ui16)
+    abs_bits = pto.vmi.vbrc(pto.ui16(0x7FFF), size=256)
 
-    # Direct CCE peer:
-    #   a0 = bit_and(pair.lo, abs_bits, m16)
-    #   a1 = bit_and(pair.hi, abs_bits, m16)
-    #   maxima = grouped_max(max(a0, a1, m16), m16)
-    a0 = bit_and(low_bits, abs_bits, mask)
-    a1 = bit_and(high_bits, abs_bits, mask)
-    maxima = grouped_max(max(a0, a1, mask), mask)
+    # VMI carries 256 logical lanes here. Lowering splits the bitwise abs into
+    # the CCE peer's two vand operations, combines the physical halves with
+    # vmax, and then emits vcgmax for the eight groups.
+    absolute = bit_and(source_bits, abs_bits, mask)
+    maxima = grouped_max(absolute, mask)
     scale = pto.vmi.vinterpret_cast(maxima, to_dtype=pto.bf16)
+    expanded_scale = pto.vmi.vbrc(scale, size=256, group=8)
+    scaled = pto.vmi.vmul(source, expanded_scale, mask)
+    scaled_f32 = pto.vmi.vcvt(scaled, to_dtype=pto.f32)
+    quantized = pto.vmi.vcvt(
+        scaled_f32,
+        to_dtype=pto.f8e4m3,
+        rounding="R",
+        saturate="SAT",
+    )
+    pto.vmi.vstore(quantized, destination_ub, offset)
     pto.vmi.vstore(scale, scale_ub, offset, group=8, stride=1)
 
-    pto.set_flag("PIPE_V", "PIPE_MTE3", "EVENT_ID1")
-    pto.wait_flag("PIPE_V", "PIPE_MTE3", "EVENT_ID1")
-    pto.copy_ubuf_to_gm(scale_ub, scale_gm, 0, 1, 16, 0, 16, 16)
+    pto.set_flag("V", "MTE3", event_id=1)
+    pto.wait_flag("V", "MTE3", event_id=1)
+    pto.mte_ub_gm(destination_ub, destination_gm, 256, nburst=(1, 256, 256))
+    pto.mte_ub_gm(scale_ub, scale_gm, 16, nburst=(1, 16, 16))
 
 
 def expect_count(text: str, op_name: str, expected: int) -> None:
@@ -81,13 +83,14 @@ def expect_count(text: str, op_name: str, expected: int) -> None:
 
 
 def main() -> None:
-    compiled = vmi_grouped_scale_helpers.compile()
+    compiled = vmi_grouped_scale_pipeline.compile()
     compiled.verify()
     source = compiled.mlir_text()
 
-    expect_count(source, "pto.vmi.vand", 2)
-    expect_count(source, "pto.vmi.vmax", 1)
+    expect_count(source, "pto.vmi.vand", 1)
     expect_count(source, "pto.vmi.vcmax", 1)
+    expect_count(source, "pto.vmi.vmul", 1)
+    expect_count(source, "pto.vmi.vcvt", 2)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         input_path = Path(temp_dir) / "grouped_scale.pto"
@@ -113,14 +116,26 @@ def main() -> None:
     expect_count(vpto, "pto.vmax", 1)
     expect_count(vpto, "pto.vcgmax", 1)
     expect_count(vpto, "pto.vbitcast", 3)
+    expect_count(vpto, "pto.vmul", 2)
+    expect_count(vpto, "pto.vcvt", 8)
+    expect_count(vpto, "pto.vor", 3)
+    expect_count(vpto, "pto.vsts", 2)
     if "DINTLV_B16" not in vpto:
         raise AssertionError(f"expected one deinterleaved BF16 load:\n{vpto}")
-    if "pto.vcvt" in vpto:
-        raise AssertionError(f"grouped-scale reduction must not convert through F32:\n{vpto}")
+    reduction = vpto[: vpto.index("pto.vcgmax")]
+    if "pto.vcvt" in reduction or "pto.vabs" in reduction:
+        raise AssertionError(
+            f"grouped-scale reduction must not convert through F32:\n{vpto}"
+        )
+    broadcast = vpto[vpto.index("pto.vcgmax") : vpto.index("pto.vmul")]
+    if "pto.vsts" in broadcast or "pto.vlds" in broadcast:
+        raise AssertionError(
+            f"grouped scale must stay in registers through broadcast:\n{vpto}"
+        )
     if "func.call" in vpto or "@bit_and" in vpto or "@grouped_max" in vpto:
         raise AssertionError(f"Python helpers must be traced inline:\n{vpto}")
 
-    print("ptodsl_vmi_grouped_scale_helpers: PASS")
+    print("ptodsl_vmi_grouped_scale_pipeline: PASS")
 
 
 if __name__ == "__main__":
