@@ -1,25 +1,19 @@
-# Fused grouped quantize–dequantize is slower than the direct sequence
+# Fused grouped quantize/dequantize is slower than direct CCE
 
-## Summary
+The reproducer quantizes a BF16 tile to FP8 using eight group scales and
+immediately dequantizes it. `fixtures/fused_roundtrip_vmi.pto` includes GM DMA,
+group reduction, scale expansion, FP8 conversion, reverse scaling, and output
+DMA. `fixtures/reference_cce.cpp` is the complete direct CCE control.
 
-The reduced fixture quantizes BF16 data to FP8 with eight scales and immediately
-dequantizes it. This is a single vector body with no application semantics. VMI
-expresses the dataflow naturally, but the generated pipeline does not match the
-throughput of a direct CCE implementation on several small and large grids.
+Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
 
-## Reproduce
+| Representative case | ASC us | VMI us | ASC/VMI |
+|---|---:|---:|---:|
+| small FP32 | 8.3281 | 8.7894 | 0.9475 |
+| large BF16 | 22.0386 | 27.3305 | 0.8064 |
+| wide BF16 | 7.2110 | 8.0451 | 0.8963 |
 
-```bash
-bash docs/repro/fused_roundtrip_pipeline/check.sh
-```
-
-For device measurement, place the body in a persistent GM/UB loop, validate the
-BF16 output against `fixtures/reference_cce.cpp`, clear L2 between measurements,
-and compare event-timed medians.
-
-## Requested behavior
-
-Keep grouped reduction, reciprocal broadcast, FP8 conversion, reverse scale
-broadcast, and dequantization in registers. Avoid redundant FP8 UB store/reload,
-layout materialization, and predicate setup. The target is at least 98% of the
-direct CCE reference throughput for the same tiling.
+These are pinned A5 event-timed medians. Absolute values vary with load; the
+acceptance threshold is `ASC_us / VMI_us >= 0.98`. Requested behavior is to
+keep maxima, scales, packed FP8 values, and predicates live across the entire
+round trip without a store/reload or layout materialization.
