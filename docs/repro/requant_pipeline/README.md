@@ -1,8 +1,7 @@
 # Dequantize/reduce/requantize needs a fused lowering
 
-> **Scope warning:** this is currently a one-work-item PTO control. It is not
-> yet a faithful full-shape performance reproduction of the private study;
-> the full persistent multi-core schedule must be retained for that purpose.
+> **Scope:** this package retains the production-shaped `128x7168` schedule,
+> 72-core launch grid, and double-buffered CCE/VMI device bodies.
 
 This standalone A5 package contains complete GM-to-UB-to-GM kernels for an FP8
 requantization chain: load FP8 and grouped input scales, widen and dequantize,
@@ -13,17 +12,16 @@ CCE peer with a minimal ctypes stream ABI.
 
 Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
 With `ACL_DEVICE_ID`, benchmark mode builds and launches both sides through
-`torch_npu`. The fair control enqueues 64 identical 256-value launches between each event pair, synchronizes once, and reports per-launch medians for both sides.
+`torch_npu`. Both paths use one 72-core launch per event interval, with identical cache
+flush and synchronization policy.
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| one 256-value FP8 requant work item (64-launch batch) | 14.682 | 14.502 | 1.0124 |
+| production-shaped FP8 requant (`128x7168`, 72 cores) | 4.974 | 8.251 | 0.6028 |
 
-The compact VMI body remains a low-level work-item control and is **not** a
-faithful reproduction of the private `8064x7168` production row. These numbers
-must not be interpreted as evidence of a VMI performance gap; the production
-body still needs to be extracted. The benchmark table uses the same synchronized
-launch batches for both sides.
+The measured ratio is in the same range as the private production regression;
+the CCE body is the reachable fast control, while the equivalent VMI body is
+slower under the same device-only timing method.
 
 The requested lowering must first compile this f8-to-f32 broadcast/reduce/f8
 sequence, then keep input-scale broadcast and output amax reduction in

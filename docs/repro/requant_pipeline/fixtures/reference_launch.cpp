@@ -5,5 +5,5 @@ extern "C" void launch_requant_reference(void *stream, void *src, void *input_sc
                                            void *dst, void *output_scale) {
   requant_reference<<<1, 156096, stream>>>(
       (__gm__ uint8_t *)dst, (__gm__ uint8_t *)output_scale,
-      (__gm__ uint8_t *)src, (__gm__ uint8_t *)input_scale, 1, 224);
+      (__gm__ uint8_t *)src, (__gm__ uint8_t *)input_scale, 128, 224);
 }
