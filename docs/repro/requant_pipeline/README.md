@@ -19,7 +19,11 @@ With `ACL_DEVICE_ID`, benchmark mode builds and launches both sides through
 |---|---:|---:|---:|
 | one 256-value FP8 requant work item (64-launch batch) | 14.682 | 14.502 | 1.0124 |
 
-The compact VMI body is a low-level work-item control; earlier full-shape numbers were invalid Python launch-loop timings. Some runs also expose a PTOAS device-LLVM frontend crash.
+The compact VMI body remains a low-level work-item control and is **not** a
+faithful reproduction of the private `8064x7168` production row. These numbers
+must not be interpreted as evidence of a VMI performance gap; the production
+body still needs to be extracted. The benchmark table uses the same synchronized
+launch batches for both sides.
 
 The requested lowering must first compile this f8-to-f32 broadcast/reduce/f8
 sequence, then keep input-scale broadcast and output amax reduction in

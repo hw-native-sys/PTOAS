@@ -6,6 +6,7 @@ from pathlib import Path
 import torch, torch_npu  # noqa: F401
 HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"
 ROWS, WIDTH, WARMUP, SAMPLES, BATCH = 1, 256, 20, 30, 64
+L2_FLUSH_MB = 256
 def cmd(a, **kw): subprocess.run(a, check=True, **kw)
 def bisheng(): return os.environ.get('BISHENG', f"{os.environ['ASCEND_HOME_PATH']}/bin/bisheng")
 def link(objs, so):
@@ -22,8 +23,9 @@ def stream():
 def median(fn):
  for _ in range(WARMUP):
   for _ in range(BATCH): fn()
- torch.npu.synchronize(); v=[]
+ torch.npu.synchronize(); v=[]; cache=torch.empty(L2_FLUSH_MB*1024*1024//4,dtype=torch.int32,device=DEV)
  for _ in range(SAMPLES):
+  cache.zero_()
   a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); [fn() for _ in range(BATCH)]; z.record(); v.append((a,z))
  torch.npu.synchronize(); v=[a.elapsed_time(z)*1000/BATCH for a,z in v]
  return sorted(v)[len(v)//2]
