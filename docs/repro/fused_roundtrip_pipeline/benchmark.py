@@ -19,7 +19,7 @@ DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
  # include host launch overhead and is not a fair kernel comparison.
 ROWS, WIDTH = 1, 256
 GRID, DYN_UB = 1, 102912
-WARMUP, SAMPLES = 20, 30
+WARMUP, SAMPLES, BATCH = 20, 30, 64
 
 
 def run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -82,14 +82,16 @@ def stream_ptr() -> int:
 
 def median_us(fn) -> float:
     for _ in range(WARMUP):
-        fn()
+        for _ in range(BATCH): fn()
     torch.npu.synchronize()
     samples = []
     for _ in range(SAMPLES):
         begin, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
-        begin.record(); fn(); end.record(); samples.append((begin, end))
+        begin.record()
+        for _ in range(BATCH): fn()
+        end.record(); samples.append((begin, end))
     torch.npu.synchronize()
-    samples = [begin.elapsed_time(end) * 1000.0 for begin, end in samples]
+    samples = [begin.elapsed_time(end) * 1000.0 / BATCH for begin, end in samples]
     return sorted(samples)[len(samples) // 2]
 
 
@@ -123,7 +125,7 @@ def main() -> None:
     torch.testing.assert_close(x.cpu(), expected, rtol=0, atol=0)
     torch.testing.assert_close(vmi_y.cpu(), expected, rtol=0, atol=0)
     cce_us, vmi_us = median_us(cce_run), median_us(vmi_run)
-    print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} dynamic_ub={DYN_UB} samples={SAMPLES} warmup={WARMUP}")
+    print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} batch={BATCH} samples={SAMPLES} warmup={WARMUP}")
     print("correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS cce_vmi_peer=PASS")
     print(f"CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
 
