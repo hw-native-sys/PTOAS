@@ -11,7 +11,7 @@
 
 module {
   func.func private @tstore_fp_arg(%src: !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, %fp: !pto.tile_buf<scaling, 1x32xf16>, %dst: !pto.partition_tensor_view<1x32xf16>) {
-    pto.tstore_fp ins(%src, %fp : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xf16>) outs(%dst : !pto.partition_tensor_view<1x32xf16>)
+    pto.tstore ins(%src : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major> fp %fp : !pto.tile_buf<scaling, 1x32xf16>) outs(%dst : !pto.partition_tensor_view<1x32xf16>)
     return
   }
 }
@@ -20,7 +20,7 @@ module {
 // NATIVE-SAME: !pto.tile_buf<acc
 // NATIVE-SAME: !pto.tile_buf<scaling
 // NATIVE-SAME: !pto.partition_tensor_view<1x32xf16>
-// NATIVE: pto.tstore_fp
+// NATIVE: pto.tstore
 
 // EMITC-LABEL: tstore_fp_arg(
 // EMITC: TSTORE_FP(

@@ -60,7 +60,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- .github/workflows/ci.yml docker/Dockerfile; then
+          if git diff --quiet -- \
+            .github/workflows/ci.yml \
+            .github/workflows/ci_sim.yml \
+            docker/Dockerfile \
+            docs/no_npu_compile_only_guide_zh.md \
+            test/npu_validation/scripts/run_remote_npu_validation.sh; then
             echo "pto-isa pin already up to date."
             echo "created_commit=false" >> "${GITHUB_OUTPUT}"
             exit 0
@@ -68,7 +73,12 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/ci.yml docker/Dockerfile
+          git add \
+            .github/workflows/ci.yml \
+            .github/workflows/ci_sim.yml \
+            docker/Dockerfile \
+            docs/no_npu_compile_only_guide_zh.md \
+            test/npu_validation/scripts/run_remote_npu_validation.sh
           git commit -m "chore(ci): bump pto-isa pin to ${{ steps.update.outputs.pto_isa_short }}"
           echo "created_commit=true" >> "${GITHUB_OUTPUT}"
 

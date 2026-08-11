@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// When the destination is physically wider than the sum of the source widths,
+// the materialized tmp must be sized by max(sum(src.cols), dst.cols) so it
+// satisfies the verifier's tmp.cols >= dst.cols constraint. Sizing it purely
+// from the source column sum (128) would fail against the 192-wide dst.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s
+
+module {
+  func.func @tmrgsort_dst_wider_than_srcs(%ex: vector<4xi16>) {
+    %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=192, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tmrgsort ins(%src0, %src1 no_tmp {exhausted = false} : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %ex : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=192, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, vector<4xi16>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @tmrgsort_dst_wider_than_srcs
+// CHECK: pto.tmrgsort ins(%{{.*}}, %{{.*}}, %{{.*}} {exhausted = false} : !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x192xf32>)

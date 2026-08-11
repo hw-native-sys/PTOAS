@@ -19,11 +19,11 @@ module attributes {pto.target_arch = "a5"} {
   %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x32xf16>
   %tv = pto.make_tensor_view %dst_gm, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
   %sv = pto.partition_view %tv, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<1x32xf16>
-  pto.tstore_fp ins(%acc_tile, %fp_tile : !pto.tile_buf<acc, 16x32xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xf16>)
+  pto.tstore ins(%acc_tile : !pto.tile_buf<acc, 16x32xf16, blayout=col_major, slayout=row_major> fp %fp_tile : !pto.tile_buf<scaling, 1x32xf16>)
                 outs(%sv : !pto.partition_tensor_view<1x32xf16>)
   pto.barrier #pto.pipe<PIPE_ALL>
   return
  }
 }
 
-// CHECK: expects src to have element type f32, i32
+// CHECK: expects A5 acc tstore src element type to be i32 or f32

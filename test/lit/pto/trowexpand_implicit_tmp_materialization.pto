@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module {
+  func.func @trowexpand_mode1_add_materializes_tmp() {
+    %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.trowexpandadd ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+                       outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @trowexpand_mode2_add_keeps_no_tmp() {
+    %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.trowexpandadd ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                       outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// A3-LABEL: func.func @trowexpand_mode1_add_materializes_tmp
+// A3: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 1x2048xf32>
+// A3: pto.trowexpandadd ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x1xf32{{.*}}>, !pto.tile_buf<vec, 1x2048xf32>)
+// A3-LABEL: func.func @trowexpand_mode2_add_keeps_no_tmp
+// A3: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x8xf32>)
+// A3-NOT: !pto.tile_buf<vec, 1x2048xf32>
+
+// A5-LABEL: func.func @trowexpand_mode1_add_materializes_tmp
+// A5: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x1xf32{{.*}}>)
+// A5-LABEL: func.func @trowexpand_mode2_add_keeps_no_tmp
+// A5-NOT: !pto.tile_buf<vec, 1x2048xf32>

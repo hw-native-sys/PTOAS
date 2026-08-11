@@ -132,9 +132,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     // --- textract_fp: acc(f32) -> mat(f16) with pre_quant ---
     pto.set_flag["PIPE_M", "PIPE_FIX", "EVENT_ID0"]
     pto.wait_flag["PIPE_M", "PIPE_FIX", "EVENT_ID0"]
-    pto.textract_fp ins(%acc_tile, %fp_tile, %c0_index, %c0_index :
-                        !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>,
-                        !pto.tile_buf<scaling, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>, index, index)
+    pto.textract ins(%acc_tile, %c0_index, %c0_index : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>, index, index fp %fp_tile : !pto.tile_buf<scaling, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)
                    outs(%dst_mat : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
 
     // --- Readback: textract_fp output x identity -> acc -> GM ---

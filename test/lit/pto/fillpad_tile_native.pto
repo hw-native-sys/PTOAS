@@ -14,27 +14,31 @@
 
 module {
   func.func private @tfillpad_arg(
-      %tile: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>) {
-    pto.tfillpad ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
-                 outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+      %src: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>,
+      %dst: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>) {
+    pto.tfillpad ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+                 outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
     return
   }
 
   func.func private @tfillpad_inplace_arg(
       %tile: !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>) {
-    pto.tfillpad_inplace ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
-                         outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+    pto.tfillpad ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+                 outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
     return
   }
 }
 
 // NATIVE-LABEL: func.func private @tfillpad_arg(
 // NATIVE: pto.tfillpad ins(%arg0
+// NATIVE-SAME: outs(%arg1
 // NATIVE-LABEL: func.func private @tfillpad_inplace_arg(
-// NATIVE: pto.tfillpad_inplace ins(%arg0
+// NATIVE: pto.tfillpad ins(%arg0
+// NATIVE-SAME: outs(%arg0
+// NATIVE-NOT: mode
 // NATIVE-NOT: memref<
 
 // EMITC-LABEL: tfillpad_arg(
 // EMITC: TFILLPAD(
 // EMITC-LABEL: tfillpad_inplace_arg(
-// EMITC: TFILLPAD_INPLACE(
+// EMITC: TFILLPAD<pto::TFillPadMode::InPlace>(

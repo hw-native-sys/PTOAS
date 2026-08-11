@@ -3273,6 +3273,9 @@ int mlir::pto::compilePTOASModule(
   }
 
   pm.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOMaterializeImplicitTmpPass(
+          effectiveLevel == PTOBuildLevel::Level3));
+  pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTORematerializeFixpipeVectorQuantPass());
 
   if (planMemoryImpl != "legacy" && planMemoryImpl != "modern") {

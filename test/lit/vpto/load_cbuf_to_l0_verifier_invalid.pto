@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_source.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-SOURCE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_destination.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-DESTINATION
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_negative_m_start.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-NEGATIVE-M-START
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_zero_m_step.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-ZERO-M-STEP
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_m_step_overflow.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-M-STEP-OVERFLOW
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_m_start_overflow.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-M-START-OVERFLOW
+
+//--- ca_source.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @invalid_source_space() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, ub>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0a>
+    pto.load_cbuf_to_ca %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1 : !pto.ptr<f16, ub>, !pto.ptr<f16, l0a>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_destination.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @invalid_destination_space() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0b>
+    pto.load_cbuf_to_ca %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1 : !pto.ptr<f16, l1>, !pto.ptr<f16, l0b>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_negative_m_start.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @invalid_control_values() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %cneg1 = arith.constant -1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0b>
+    pto.load_cbuf_to_cb %src, %dst, %cneg1, %c0, %c1, %c1, %c1, %c1 : !pto.ptr<f16, l1>, !pto.ptr<f16, l0b>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_zero_m_step.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @invalid_control_values() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0b>
+    pto.load_cbuf_to_cb %src, %dst, %c0, %c0, %c0, %c1, %c1, %c1 : !pto.ptr<f16, l1>, !pto.ptr<f16, l0b>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_m_step_overflow.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @invalid_control_values() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c256 = arith.constant 256 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0a>
+    pto.load_cbuf_to_ca %src, %dst, %c0, %c0, %c256, %c1, %c1, %c1 : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_m_start_overflow.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @invalid_control_values() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c65536 = arith.constant 65536 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0a>
+    pto.load_cbuf_to_ca %src, %dst, %c65536, %c0, %c1, %c1, %c1, %c1 : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+// CA-SOURCE: 'pto.load_cbuf_to_ca' op requires MAT source
+// CA-DESTINATION: 'pto.load_cbuf_to_ca' op requires LEFT destination
+// CB-NEGATIVE-M-START: 'pto.load_cbuf_to_cb' op m_start must be non-negative
+// CB-ZERO-M-STEP: 'pto.load_cbuf_to_cb' op m_step must be greater than zero
+// CA-M-STEP-OVERFLOW: 'pto.load_cbuf_to_ca' op m_step must be <= 255 to fit the hardware control field
+// CA-M-START-OVERFLOW: 'pto.load_cbuf_to_ca' op m_start must be <= 65535 to fit the hardware control field

@@ -148,15 +148,50 @@ def _fill(dst, row_start, row_stop, col_start, col_stop, scalar_tail_start=None)
 
 
 def _fill_inplace(dst, src_valid_rows, src_valid_cols, dst_valid_rows, dst_valid_cols):
-    _fill(dst, 0, src_valid_rows, src_valid_cols, dst_valid_cols)
-    _fill(dst, src_valid_rows, dst_valid_rows, 0, dst_valid_cols)
+    fill_scalar = _fill_scalar(dst)
+    dtype = dst.dtype
+    lanes = pto.elements_per_vreg(dtype)
+    cols = dst.shape[1]
+    dst_ptr = dst.as_ptr()
+
+    # Keep each store base vector-aligned and mask out the source prefix. This
+    # matches vstus/vstas semantics without issuing an unaligned vector store.
+    with pto.for_(0, src_valid_rows, step=1) as row:
+        dst_remained = dst_valid_cols
+        src_remained = src_valid_cols
+        col_loop = pto.for_(0, dst_valid_cols, step=lanes).carry(
+            dst_remained=dst_remained,
+            src_remained=src_remained,
+        )
+        with col_loop:
+            col = col_loop.iv
+            dst_mask, dst_remained = pto.make_mask(dtype, dst_remained)
+            src_mask, src_remained = pto.make_mask(dtype, src_remained)
+            fill_mask = pto.pxor(dst_mask, src_mask, dst_mask)
+            vec = pto.vdup(fill_scalar, fill_mask)
+            addr = pto.addptr(dst_ptr, row * cols + col)
+            pto.vsts(vec, addr, 0, fill_mask)
+            col_loop.update(
+                dst_remained=dst_remained,
+                src_remained=src_remained,
+            )
+
+    scalar_tail_start = _scalar_tail_start(dst, lanes)
+    _fill(
+        dst,
+        src_valid_rows,
+        dst_valid_rows,
+        0,
+        dst_valid_cols,
+        scalar_tail_start=scalar_tail_start,
+    )
 
 
-def register_fillpad(*, op, name, copy):
+def register_fillpad():
     @tilelib.tile_template(
-        op=op,
+        op="pto.tfillpad",
         target="a5",
-        name=name,
+        name="template_tfillpad",
         dtypes=_DTYPES,
         iteration_axis="none",
         op_engine="other",
@@ -168,20 +203,39 @@ def register_fillpad(*, op, name, copy):
         tags=("fillpad",),
     )
     def template(src: pto.Tile, dst: pto.Tile):
+        lowering_kind = pto.get_op_attr("lowering_kind", "normal")
         src_valid_rows, src_valid_cols = src.valid_shape
         dst_valid_rows, dst_valid_cols = dst.valid_shape
         lanes = pto.elements_per_vreg(dst.dtype)
         aligned_cols = (src_valid_cols // lanes) * lanes
-        if not copy:
+        if lowering_kind == "in_place":
             _fill_inplace(dst, src_valid_rows, src_valid_cols, dst_valid_rows, dst_valid_cols)
             return
-        if copy:
-            _copy_region(src, dst, src_valid_rows, 0, aligned_cols)
-        fill_row_stop = dst_valid_rows if op == "pto.tfillpad_expand" else src_valid_rows
+        if lowering_kind == "normal":
+            # Normal is the conservative fallback when memory planning cannot
+            # prove whether the two tile addresses alias. Preserve the entire
+            # valid source region before padding so this path is correct for
+            # both distinct and exactly aliased storage.
+            _copy_region(src, dst, src_valid_rows, 0, src_valid_cols)
+            _fill_inplace(
+                dst,
+                src_valid_rows,
+                src_valid_cols,
+                dst_valid_rows,
+                dst_valid_cols,
+            )
+            return
+        _copy_region(src, dst, src_valid_rows, 0, aligned_cols)
         scalar_tail_start = _scalar_tail_start(dst, lanes)
-        _fill(dst, 0, fill_row_stop, aligned_cols, dst_valid_cols, scalar_tail_start=scalar_tail_start)
-        if copy:
-            _copy_region(src, dst, src_valid_rows, aligned_cols, src_valid_cols)
+        _fill(
+            dst,
+            0,
+            dst_valid_rows,
+            aligned_cols,
+            dst_valid_cols,
+            scalar_tail_start=scalar_tail_start,
+        )
+        _copy_region(src, dst, src_valid_rows, aligned_cols, src_valid_cols)
         _fill(dst, src_valid_rows, dst_valid_rows, 0, dst_valid_cols, scalar_tail_start=scalar_tail_start)
 
     return template

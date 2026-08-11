@@ -6,8 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Floating-point tpow requires tmp scratch (used by PowF / TPowFloat).
-// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+// Floating-point tpow gets an implicit tmp before memplan.
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A5
 
 module {
   func.func @tpow_fp_missing_tmp() {
@@ -19,4 +20,8 @@ module {
   }
 }
 
-// CHECK: expects tmp when element type is floating-point
+// A3: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 1x16xf32>
+// A3: pto.tpow ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>)
+
+// A5: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 1x16xf32>
+// A5: pto.tpow ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>)

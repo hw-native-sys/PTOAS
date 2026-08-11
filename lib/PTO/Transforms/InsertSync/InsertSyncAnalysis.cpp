@@ -19,6 +19,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -39,6 +40,44 @@ namespace {
 
 static constexpr uint64_t kVectorRegisterSizeInBytes = 256U;
 static constexpr unsigned kPipeVPruneMinRepeat = 16U;
+
+static bool hasReadWriteScratchDependency(
+    Operation *op, const DepBaseMemInfoPairVec &dependencies) {
+  auto effectsOp = dyn_cast_or_null<MemoryEffectOpInterface>(op);
+  if (!effectsOp)
+    return false;
+
+  llvm::DenseSet<Value> reads;
+  llvm::DenseSet<Value> writes;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 8> effects;
+  effectsOp.getEffects(effects);
+  for (const auto &effect : effects) {
+    Value value = effect.getValue();
+    if (!value)
+      continue;
+    if (isa<MemoryEffects::Read>(effect.getEffect()))
+      reads.insert(value);
+    if (isa<MemoryEffects::Write>(effect.getEffect()))
+      writes.insert(value);
+  }
+
+  ValueRange dpsInits;
+  if (auto ptoDpsOp = dyn_cast<pto::PTO_DpsInitOpInterface>(op))
+    dpsInits = ptoDpsOp.getDpsInits();
+  else if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op))
+    dpsInits = dpsOp.getDpsInits();
+  return llvm::any_of(writes, [&](Value value) {
+    if (!reads.contains(value) || llvm::is_contained(dpsInits, value))
+      return false;
+    return llvm::any_of(dependencies, [&](const auto &dependency) {
+      auto matches = [&](const BaseMemInfo *info) {
+        return info &&
+               (info->baseBuffer == value || info->rootBuffer == value);
+      };
+      return matches(dependency.first) || matches(dependency.second);
+    });
+  });
+}
 
 struct RepeatAccessShape {
   SmallVector<int64_t, 2> fullShape;
@@ -508,6 +547,16 @@ bool InsertSyncAnalysis::CanPrunePipeVBarrier(
   if (!nowCompound || !frontCompound) return false;
   if (nowCompound->kPipeValue != PipelineType::PIPE_V ||
       frontCompound->kPipeValue != PipelineType::PIPE_V) {
+    return false;
+  }
+
+  // The same-access fast path only applies to a producer output consumed by
+  // the next op. A read/write non-DPS operand is scratch state; pruning its
+  // WAW dependency would allow two vector instructions to use it concurrently.
+  if (hasReadWriteScratchDependency(nowCompound->elementOp,
+                                    depBaseMemInfosVec) ||
+      hasReadWriteScratchDependency(frontCompound->elementOp,
+                                    depBaseMemInfosVec)) {
     return false;
   }
 

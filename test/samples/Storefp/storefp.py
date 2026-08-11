@@ -64,7 +64,7 @@ def build():
 
                 acc_tile = pto.AllocTileOp(acc_tile_ty).result
                 fp_tile = pto.AllocTileOp(fp_tile_ty).result
-                pto.TStoreFPOp(acc_tile, fp_tile, sv)
+                pto.TStoreOp(None, acc_tile, sv, fp=fp_tile)
                 func.ReturnOp([])
 
             m.operation.verify()

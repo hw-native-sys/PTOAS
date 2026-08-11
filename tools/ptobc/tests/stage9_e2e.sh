@@ -27,6 +27,9 @@ mkdir -p "${OUT_DIR}"
 should_skip_roundtrip() {
   local path="$1"
   case "$path" in
+    */tmov_fp_result_v0_reject.pto) return 0 ;;
+    */tstore_fp_extended_v0_reject.pto) return 0 ;;
+    */tstore_fp_result_v0_reject.pto) return 0 ;;
     */test/samples/Qwen3DecodeA5/*.pto) return 0 ;;
     */test/samples/Complex/mix_kernel.pto) return 0 ;;
     */test/samples/SCF/scf_for_break_like.pto) return 0 ;;

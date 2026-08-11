@@ -41,10 +41,10 @@ struct TestCase {
 static const TestCase kCases[] = {
 {"f32_64x16_noexpand", DataType::F32,
      LaunchTFILLPAD_INPLACE_f32_64x16_noexpand,
-     64, 16, 64, 16, sizeof(float)},
+     64, 16, 64, 7, sizeof(float)},
 {"f32_260x16_noexpand", DataType::F32,
      LaunchTFILLPAD_INPLACE_f32_260x16_noexpand,
-     260, 16, 260, 16, sizeof(float)},
+     260, 16, 260, 7, sizeof(float)},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 

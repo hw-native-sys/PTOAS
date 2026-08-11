@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A dynamic valid width cannot be proven 32-aligned at compile time, so the
+// tail path may need scratch. At level1/2 a tmp must be materialized (sized by
+// the full physical width); at level3 it must be rejected rather than silently
+// emitted in the 3-argument no-tmp form.
+
+// RUN: sed -E 's/ addr = %[A-Za-z0-9_]+//g' %s > %t.l2.pto && ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %t.l2.pto 2>&1 | FileCheck %s --check-prefix=L2
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %s 2>&1 | FileCheck %s --check-prefix=L3
+
+module {
+  func.func @tsort32_dynamic_width(%vr: index, %vc: index) {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 256 : i64
+    %a2 = arith.constant 512 : i64
+    %src = pto.alloc_tile addr = %a0 valid_row = %vr valid_col = %vc : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx = pto.alloc_tile addr = %a1 valid_row = %vr valid_col = %vc : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile addr = %a2 valid_row = %vr valid_col = %vc : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tsort32 ins(%src, %idx : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// L2-LABEL: func.func @tsort32_dynamic_width
+// L2: pto.tsort32 ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x48xf16, valid=?x?>, !pto.tile_buf<vec, 1x48xui32, valid=?x?>, !pto.tile_buf<vec, 1x48xf16>)
+
+// L3: error: 'pto.tsort32' op requires explicit tmp for tsort32 with dynamic or non-32-aligned width when PlanMemory is skipped

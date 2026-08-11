@@ -23,7 +23,7 @@ module {
 }
 
 // NATIVE-LABEL: func.func private @tcvt_arg(
-// NATIVE: pto.tcvt ins(%arg0 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 16x16xf32>) outs(%arg1 : !pto.tile_buf<vec, 16x16xf16>)
+// NATIVE: pto.tcvt ins(%arg0 {{.*}}rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>{{.*}} : !pto.tile_buf<vec, 16x16xf32>) outs(%arg1 : !pto.tile_buf<vec, 16x16xf16>)
 // NATIVE-NOT: memref<
 
 // EMITC-LABEL: tcvt_arg(

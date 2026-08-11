@@ -452,7 +452,7 @@ if opPolicy.notInplaceSafe:
 pto.ttrans
 pto.tgather
 pto.tands / pto.tors / pto.txors
-pto.tfillpad_expand
+pto.tfillpad // dst physical shape is larger than src
 pto.tfmod / pto.tfmods
 pto.trecip / pto.trsqrt
 pto.trowmax / pto.trowmin / pto.trowsum / pto.trowprod
@@ -461,7 +461,7 @@ pto.tcolargmax / pto.tcolargmin
 pto.tsort32 / pto.tmrgsort
 ```
 
-其中 `pto.tands` / `pto.tors` / `pto.txors` 和 `pto.tfillpad_expand` 是 PTOAS 侧额外保守标记的 non-inplace-safe op。它们虽然不是 scratch-output conflict，但后端/ISA 语义没有明确承诺 input/output alias 安全，memplan 不应通过地址复用隐式把它们变成 inplace 执行。
+其中 `pto.tands` / `pto.tors` / `pto.txors` 和推导为 expand lowering 的 `pto.tfillpad` 是 PTOAS 侧额外保守标记的 non-inplace-safe op。它们虽然不是 scratch-output conflict，但后端/ISA 语义没有明确承诺 input/output alias 安全，memplan 不应通过地址复用隐式把它们变成 inplace 执行。
 
 **适用场景 sample：算法本身不支持 input/output alias。**
 

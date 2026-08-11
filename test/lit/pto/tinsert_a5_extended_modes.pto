@@ -45,7 +45,7 @@ module attributes {"pto.target_arch" = "a5"} {
 
   // A5: acc->mat with fp (vector) quantization (generic MLIR form).
   // CHECK-LABEL: AICORE void tinsert_acc_mat_fp_quant(
-  // CHECK: TINSERT<{{.*}}TileType::Mat, int8_t{{.*}}, {{.*}}TileType::Acc, float{{.*}}, {{.*}}TileType::Scaling{{.*}}>(
+  // CHECK: TINSERT_FP(
   func.func @tinsert_acc_mat_fp_quant() {
     %c0 = arith.constant 0 : index
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>

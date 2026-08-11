@@ -8075,6 +8075,38 @@ static LogicalResult verifyMxLoadAlignment(Operation *op, Value source,
                                   kMxDestinationAddressUnitBytes);
 }
 
+template <typename OpTy>
+static LogicalResult verifyExplicitCubeBridgeLoadControls(OpTy op) {
+  auto checkConstRange = [&](Value value, StringRef name, int64_t min,
+                             int64_t max) -> LogicalResult {
+    APInt intValue;
+    if (!matchPattern(value, m_ConstantInt(&intValue)))
+      return success();
+    int64_t signedValue = intValue.getSExtValue();
+    if (signedValue < min)
+      return op.emitOpError()
+             << name
+             << (min == 0 ? " must be non-negative"
+                          : " must be greater than zero");
+    if (signedValue > max)
+      return op.emitOpError()
+             << name << " must be <= " << max
+             << " to fit the hardware control field";
+    return success();
+  };
+
+  constexpr int64_t kU16Max = 65535;
+  constexpr int64_t kU8Max = 255;
+  if (failed(checkConstRange(op.getMStart(), "m_start", 0, kU16Max)) ||
+      failed(checkConstRange(op.getKStart(), "k_start", 0, kU16Max)) ||
+      failed(checkConstRange(op.getMStep(), "m_step", 1, kU8Max)) ||
+      failed(checkConstRange(op.getKStep(), "k_step", 1, kU8Max)) ||
+      failed(checkConstRange(op.getSrcStride(), "src_stride", 1, kU16Max)) ||
+      failed(checkConstRange(op.getDstStride(), "dst_stride", 1, kU16Max)))
+    return failure();
+  return success();
+}
+
 LogicalResult MteL0cL1Op::verify() {
   if (!isBufferLike(getSource().getType()) ||
       !isBufferLike(getDestination().getType()))
@@ -8174,6 +8206,18 @@ LogicalResult LoadCbufToCbMxOp::verify() {
   return verifyCubeBridgeLoadStart(getOperation(), getXStartPosition(),
                                    "x_start_position", getYStartPosition(),
                                    "y_start_position");
+}
+
+LogicalResult LoadCbufToCaOp::verify() {
+  if (failed(verifyCubeBridgeLoadLikeOp(*this, AddressSpace::LEFT, "LEFT")))
+    return failure();
+  return verifyExplicitCubeBridgeLoadControls(*this);
+}
+
+LogicalResult LoadCbufToCbOp::verify() {
+  if (failed(verifyCubeBridgeLoadLikeOp(*this, AddressSpace::RIGHT, "RIGHT")))
+    return failure();
+  return verifyExplicitCubeBridgeLoadControls(*this);
 }
 
 void MteL1L0aOp::getEffects(

@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The unified five-operand pto.tinsert fp form must preserve its attrs and
+// accept every scaling dtype across the supported A5 Acc writeback forms.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand --mlir-print-ir-after=pto-expand-tile-op %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s --check-prefix=FINAL
+
+// SELECT-DAG: pre_relu(mode = normal_relu)
+// SELECT-DAG: pre_quant({{.*}}, mode = qf322fp8_pre_vec)
+// SELECT-DAG: pre_quant({{.*}}, mode = qf322hif8_pre_vec)
+// SELECT-DAG: pre_quant({{.*}}, mode = qs322bf16_pre_vec)
+// SELECT-DAG: %[[VEC1:.*]] = arith.constant 1 : i64
+// SELECT-DAG: pto.mte_l0c_ub {{.*}} dst_mode(%[[VEC1]])
+// SELECT-DAG: pto.castptr {{.*}} : !pto.ptr<si32, l0c> -> !pto.ptr<i32, l0c>
+
+// FINAL-LABEL: func.func @TINSERT_FP_ACC_TO_MAT_RELU_F16_SCALE()
+// FINAL-NOT: pto.tinsert
+// FINAL: pto.set_fpc
+// FINAL: pto.copy_matrix_cc_to_cbuf
+
+// FINAL-LABEL: func.func @TINSERT_FP_ACC_TO_VEC_ND_FP8_BF16_SCALE()
+// FINAL-NOT: pto.tinsert
+// FINAL: pto.set_fpc
+// FINAL: pto.copy_matrix_cc_to_ub
+
+// FINAL-LABEL: func.func @TINSERT_FP_ACC_TO_MAT_HIF8_F32_SCALE()
+// FINAL-NOT: pto.tinsert
+// FINAL: pto.set_fpc
+// FINAL: pto.copy_matrix_cc_to_cbuf
+
+// FINAL-LABEL: func.func @TINSERT_FP_ACC_TO_VEC_ND_SI32()
+// FINAL-NOT: pto.tinsert
+// FINAL: pto.set_fpc
+// FINAL: pto.copy_matrix_cc_to_ub
+
+// FINAL-LABEL: func.func @TINSERT_FP_ACC_TO_VEC_NZ()
+// FINAL-NOT: pto.tinsert
+// FINAL: pto.set_fpc
+// FINAL: pto.copy_matrix_cc_to_ub
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @TINSERT_FP_ACC_TO_MAT_RELU_F16_SCALE() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=i8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+                {reluPreMode = #pto<relu_pre_mode normal_relu>}
+    return
+  }
+
+  func.func @TINSERT_FP_ACC_TO_VEC_ND_FP8_BF16_SCALE() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=bf16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=bf16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                {accToVecMode = #pto.acc_to_vec_mode<single_mode_vec1>}
+    return
+  }
+
+  func.func @TINSERT_FP_ACC_TO_MAT_HIF8_F32_SCALE() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.hif8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=mat, dtype=!pto.hif8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TINSERT_FP_ACC_TO_VEC_ND_SI32() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TINSERT_FP_ACC_TO_VEC_NZ() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tinsert ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}

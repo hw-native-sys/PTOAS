@@ -13,7 +13,7 @@
 // RUN:   --mlir-print-ir-after=pto-insert-sync %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=WRITE
 
-// `tstore_fp` writes its GM destination. A following tload reads the same GM
+// The `tstore` fp form writes its GM destination. A following tload reads the same GM
 // partition, so insert-sync must emit a FIX -> MTE2 dependency after TSTORE_FP.
 
 module attributes {pto.target_arch = "a2a3"} {
@@ -25,7 +25,7 @@ module attributes {pto.target_arch = "a2a3"} {
     %c0_i64 = arith.constant 0 : i64
     %tmp = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x32xf16>
 
-    pto.tstore_fp ins(%src, %fp : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xf16>)
+    pto.tstore ins(%src : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major> fp %fp : !pto.tile_buf<scaling, 1x32xf16>)
                   outs(%dst : !pto.partition_tensor_view<1x32xf16>)
     pto.tload ins(%dst : !pto.partition_tensor_view<1x32xf16>)
               outs(%tmp : !pto.tile_buf<vec, 1x32xf16>)
@@ -44,7 +44,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
     pto.tmatmul ins(%lhs, %rhs : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 32x32xf16, blayout=row_major, slayout=col_major>)
                 outs(%acc : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major, fractal=1024>)
-    pto.tstore_fp ins(%acc, %fp : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major, fractal=1024>, !pto.tile_buf<scaling, 1x32xf16>)
+    pto.tstore ins(%acc : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major, fractal=1024> fp %fp : !pto.tile_buf<scaling, 1x32xf16>)
                   outs(%dst : !pto.partition_tensor_view<1x32xf16>)
     return
   }
@@ -54,10 +54,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // READ: pto.tmatmul
 // READ: pto.set_flag[<PIPE_M>, <PIPE_FIX>,
 // READ: pto.wait_flag[<PIPE_M>, <PIPE_FIX>,
-// READ: pto.tstore_fp
+// READ: pto.tstore
 
 // WRITE-LABEL: func.func @tstore_fp_writes_dst
-// WRITE: pto.tstore_fp
+// WRITE: pto.tstore
 // WRITE: pto.set_flag[<PIPE_FIX>, <PIPE_MTE2>,
 // WRITE: pto.wait_flag[<PIPE_FIX>, <PIPE_MTE2>,
 // WRITE: pto.tload

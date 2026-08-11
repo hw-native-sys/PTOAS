@@ -10,4 +10,4 @@
 from ._fillpad import register_fillpad
 
 
-template_tfillpad = register_fillpad(op="pto.tfillpad", name="template_tfillpad", copy=True)
+template_tfillpad = register_fillpad()

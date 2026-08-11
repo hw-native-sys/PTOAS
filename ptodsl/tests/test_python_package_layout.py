@@ -5,13 +5,20 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""PTODSL TileLib template for ``pto.tfillpad_inplace``."""
 
-from ._fillpad import register_fillpad
+import unittest
+from pathlib import Path
 
 
-template_tfillpad_inplace = register_fillpad(
-    op="pto.tfillpad_inplace",
-    name="template_tfillpad_inplace",
-    copy=False,
-)
+class PythonPackageLayoutTest(unittest.TestCase):
+    def test_tileops_is_declared_as_an_editable_python_package(self):
+        project_root = Path(__file__).resolve().parents[2]
+        pyproject = (project_root / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn("[tool.scikit-build.wheel.packages]", pyproject)
+        self.assertIn('TileOps = "lib/TileOps"', pyproject)
+        self.assertTrue((project_root / "lib/TileOps/__init__.py").is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()

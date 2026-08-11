@@ -57,7 +57,7 @@ def build():
                 tb1 = pto.AllocTileOp(tile_buf_32x1).result
 
                 pto.TLoadOp(None, sv0, tb0)
-                pto.TRowProdOp(tb0, tb_tmp, tb1)
+                pto.TRowProdOp(tb0, tb1, tmp=tb_tmp)
 
                 sv1 = pto.PartitionViewOp(tile_view_32x1, tv1, offsets=[c0, c0], sizes=[c32, c1]).result
                 pto.TStoreOp(None, tb1, sv1)

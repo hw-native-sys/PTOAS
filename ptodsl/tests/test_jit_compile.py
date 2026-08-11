@@ -2166,16 +2166,16 @@ def public_cube_surface_probe(
     pto.mte_l1_l0a(
         lhs_tile.as_ptr(),
         lhs_l0a.as_ptr(),
-        m,
-        k,
+        m=m,
+        k=k,
         start_row=start_row,
         start_col=start_col,
     )
     pto.mte_l1_l0b(
         rhs_tile.as_ptr(),
         rhs_l0b.as_ptr(),
-        k,
-        n,
+        k=k,
+        n=n,
         start_row=start_col,
         start_col=start_row,
         transpose=True,
@@ -2414,6 +2414,28 @@ def public_surface_exports_probe(
         dtype=pto.f32,
         memory_space=pto.MemorySpace.RIGHT,
         valid_shape=[16, 16],
+    )
+    pto.mte_l1_l0a(
+        lhs_tile.as_ptr(),
+        lhs_l0a.as_ptr(),
+        m_start=4,
+        k_start=0,
+        m_step=4,
+        k_step=16,
+        src_stride=16,
+        dst_stride=4,
+        transpose=True,
+    )
+    pto.mte_l1_l0b(
+        rhs_tile.as_ptr(),
+        rhs_l0b.as_ptr(),
+        m_start=4,
+        k_start=0,
+        m_step=4,
+        k_step=16,
+        src_stride=16,
+        dst_stride=4,
+        transpose=True,
     )
     lhs_l0a_mx = pto.alloc_tile(
         shape=[16, 32],
@@ -3823,6 +3845,14 @@ def main() -> None:
     expect(isinstance(fake_empty, _FakeTensor), "pto.empty_like(...) should preserve host tensor factory type")
     expect(fake_empty.shape == fake_tensor.shape, "pto.empty_like(...) should preserve the logical tensor shape")
     expect(not hasattr(pto, "scalar"), "pto.scalar should not remain in the public pto namespace")
+    expect(
+        not hasattr(pto, "load_cbuf_to_ca"),
+        "pto.load_cbuf_to_ca should not be exported; use pto.mte_l1_l0a(...) explicit control",
+    )
+    expect(
+        not hasattr(pto, "load_cbuf_to_cb"),
+        "pto.load_cbuf_to_cb should not be exported; use pto.mte_l1_l0b(...) explicit control",
+    )
     expect(hasattr(pto, "tile"), "pto.tile should be exported from the public namespace")
     expect(hasattr(pto, "vmi"), "pto.vmi should be exported from the public namespace")
     expect(hasattr(pto.tile, "load"), "pto.tile.load should be exported from the public tile namespace")
@@ -6872,6 +6902,17 @@ def main() -> None:
     expect("pto.vsstb" in vsstb_post_update_surface_text, "vsstb(..., post_update=ON) should still lower through pto.vsstb on the current VPTO IR")
     expect("-> !pto.ptr<f32, ub>" in vsstb_post_update_surface_text, "vsstb(..., post_update=ON) should request the updated destination pointer result")
     expect("pto.mte_l1_l0b" in public_surface_text, "mte_l1_l0b(...) should lower to pto.mte_l1_l0b")
+    expect(public_surface_text.count("pto.load_cbuf_to_ca") == 1, "explicit mte_l1_l0a(...) should lower directly to pto.load_cbuf_to_ca")
+    expect(public_surface_text.count("pto.load_cbuf_to_cb") == 1, "explicit mte_l1_l0b(...) should lower directly to pto.load_cbuf_to_cb")
+    explicit_ca_controls = (
+        r"pto\.load_cbuf_to_ca .*%c4_i64(?:_\d+)?, %c0_i64(?:_\d+)?, "
+        r"%c4_i64(?:_\d+)?, %c16_i64(?:_\d+)?, "
+        r"%c16_i64(?:_\d+)?, %c4_i64(?:_\d+)? \{transpose = true\}"
+    )
+    expect(
+        re.search(explicit_ca_controls, public_surface_text) is not None,
+        "explicit mte_l1_l0a controls should preserve independent source and destination strides",
+    )
     expect("pto.mte_l1_l0a_mx" in public_surface_text, "mte_l1_l0a_mx(...) should lower to pto.mte_l1_l0a_mx")
     expect("pto.mte_l1_l0b_mx" in public_surface_text, "mte_l1_l0b_mx(...) should lower to pto.mte_l1_l0b_mx")
     expect(

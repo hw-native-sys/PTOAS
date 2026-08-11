@@ -3121,14 +3121,21 @@ def tload(part, tile):
     _pto.TLoadOp(None, unwrap_surface_value(part), unwrap_surface_value(tile))
 
 
-def tstore(tile, part):
+def tstore(tile, part, *, fp=None):
     """``pto.tstore ins(tile) outs(part)``."""
-    _pto.TStoreOp(None, unwrap_surface_value(tile), unwrap_surface_value(part))
+    kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
+    _pto.TStoreOp(
+        None, unwrap_surface_value(tile), unwrap_surface_value(part), **kwargs
+    )
 
 
-def tmov(src, dst, *, mode=None):
+def tmov(src, dst, *, fp=None, mode=None):
     """``pto.tmov ins(src) outs(dst)`` – move data between tile domains."""
     kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
     if mode is not None:
         kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(mode, context="tmov(..., mode=...)")
     _pto.TMovOp(None, unwrap_surface_value(src), unwrap_surface_value(dst), **kwargs)
@@ -3136,30 +3143,46 @@ def tmov(src, dst, *, mode=None):
 
 def ttrans(src, tmp, dst):
     """``pto.ttrans ins(src, tmp) outs(dst)`` – tile transpose (DPS)."""
-    _pto.ttrans(
+    _pto.TTransOp(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
-def textract(src, dst, index_row, index_col):
+def textract(src, dst, index_row, index_col, *, fp=None, mode=None):
     """``pto.textract ins(src, index_row, index_col) outs(dst)``."""
+    kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
+    if mode is not None:
+        kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(
+            mode, context="textract(..., mode=...)"
+        )
     _pto.TExtractOp(
         unwrap_surface_value(src),
         _coerce_index(index_row, context="textract(index_row)"),
         _coerce_index(index_col, context="textract(index_col)"),
         unwrap_surface_value(dst),
+        **kwargs,
     )
 
 
-def tinsert(src, dst, index_row, index_col):
+def tinsert(src, dst, index_row, index_col, *, fp=None, mode=None):
     """``pto.tinsert ins(src, index_row, index_col) outs(dst)``."""
+    kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
+    if mode is not None:
+        kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(
+            mode, context="tinsert(..., mode=...)"
+        )
     _pto.TInsertOp(
         unwrap_surface_value(src),
         _coerce_index(index_row, context="tinsert(index_row)"),
         _coerce_index(index_col, context="tinsert(index_col)"),
         unwrap_surface_value(dst),
+        **kwargs,
     )
 
 
@@ -3490,8 +3513,8 @@ def trowsum(src, tmp, dst):
     """``pto.trowsum ins(src, tmp) outs(dst)``."""
     _pto.trowsum(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3499,8 +3522,8 @@ def trowmax(src, tmp, dst):
     """``pto.trowmax ins(src, tmp) outs(dst)``."""
     _pto.trowmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3508,8 +3531,8 @@ def trowmin(src, tmp, dst):
     """``pto.trowmin ins(src, tmp) outs(dst)``."""
     _pto.trowmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3517,8 +3540,8 @@ def trowprod(src, tmp, dst):
     """``pto.trowprod ins(src, tmp) outs(dst)``."""
     _pto.trowprod(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3526,8 +3549,8 @@ def trowargmax(src, tmp, dst):
     """``pto.trowargmax ins(src, tmp) outs(dst)``."""
     _pto.trowargmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3535,8 +3558,8 @@ def trowargmin(src, tmp, dst):
     """``pto.trowargmin ins(src, tmp) outs(dst)``."""
     _pto.trowargmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3578,8 +3601,8 @@ def tcolargmax(src, tmp, dst):
     """``pto.tcolargmax ins(src, tmp) outs(dst)``."""
     _pto.tcolargmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3587,8 +3610,8 @@ def tcolargmin(src, tmp, dst):
     """``pto.tcolargmin ins(src, tmp) outs(dst)``."""
     _pto.tcolargmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -4118,8 +4141,8 @@ def txor(src0, src1, tmp, dst):
     _pto.txor(
         unwrap_surface_value(src0),
         unwrap_surface_value(src1),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -4128,8 +4151,8 @@ def txors(src, scalar, tmp, dst):
     _pto.txors(
         unwrap_surface_value(src),
         _coerce_tile_scalar_operand(src, scalar, context="txors"),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -4206,24 +4229,8 @@ def tpartmin(src0, src1, dst):
 
 
 def tfillpad(src, dst):
-    """``pto.tfillpad ins(src) outs(dst)``."""
+    """``pto.tfillpad ins(src) outs(dst)`` with compiler-inferred lowering."""
     _pto.tfillpad(
-        unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-    )
-
-
-def tfillpad_expand(src, dst):
-    """``pto.tfillpad_expand ins(src) outs(dst)``."""
-    _pto.tfillpad_expand(
-        unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-    )
-
-
-def tfillpad_inplace(src, dst):
-    """``pto.tfillpad_inplace ins(src) outs(dst)``."""
-    _pto.tfillpad_inplace(
         unwrap_surface_value(src),
         unwrap_surface_value(dst),
     )
@@ -5354,18 +5361,78 @@ def mem_bar(barrier_type):
     _pto.MemBarOp(kind=_membar_attr(barrier_name))
 
 
+def _is_fp4_packed_pointer_value(value) -> bool:
+    type_text = str(getattr(value, "type", ""))
+    return type_text.startswith("!pto.ptr<!pto.f4") and "x2, " in type_text
+
+
+def _reject_explicit_fp4_load(source_value, *, op_name: str, source_role: str):
+    if _is_fp4_packed_pointer_value(source_value):
+        raise TypeError(
+            f"{op_name} explicit-control FP4 loads are not supported yet because "
+            "the compatibility wrapper would currently emit the regular load path; "
+            f"using FP4 in {source_role} may silently select an incorrect intrinsic. "
+            "Use the "
+            "shape-derived m/k or k/n form for FP4 L1-to-L0 loads."
+        )
+
+
 @_explicit_mode_only("pto.mte_l1_l0a(...)")
 def mte_l1_l0a(
     source,
     destination,
-    m,
-    k,
+    m=None,
+    k=None,
     *,
     start_row=0,
     start_col=0,
+    m_start=None,
+    k_start=None,
+    m_step=None,
+    k_step=None,
+    src_stride=None,
+    dst_stride=None,
     transpose=False,
 ):
-    """``pto.mte_l1_l0a`` – cube-side LEFT staging."""
+    """``pto.mte_l1_l0a`` – structured or explicit-control L1-to-L0A load.
+
+    Use either the existing shape-derived ``m``/``k`` form or provide all six
+    explicit L1-to-L0A controls. The explicit-control overload currently rejects
+    FP4 packed pointers; use the shape-derived form for FP4 staging.
+    """
+    controls = (m_start, k_start, m_step, k_step, src_stride, dst_stride)
+    has_explicit_controls = any(control is not None for control in controls)
+    if has_explicit_controls:
+        if m is not None or k is not None:
+            raise TypeError(
+                "mte_l1_l0a accepts either m/k or explicit controls, not both"
+            )
+        if start_row != 0 or start_col != 0:
+            raise TypeError(
+                "mte_l1_l0a start_row/start_col are unavailable with explicit controls"
+            )
+        if any(control is None for control in controls):
+            raise TypeError(
+                "mte_l1_l0a explicit controls require m_start, k_start, "
+                "m_step, k_step, src_stride, and dst_stride"
+            )
+        source_value = unwrap_surface_value(source)
+        destination_value = unwrap_surface_value(destination)
+        _reject_explicit_fp4_load(source_value, op_name="mte_l1_l0a", source_role="source")
+        _pto.LoadCbufToCaOp(
+            source_value,
+            destination_value,
+            _coerce_i64(m_start, context="mte_l1_l0a m_start"),
+            _coerce_i64(k_start, context="mte_l1_l0a k_start"),
+            _coerce_i64(m_step, context="mte_l1_l0a m_step"),
+            _coerce_i64(k_step, context="mte_l1_l0a k_step"),
+            _coerce_i64(src_stride, context="mte_l1_l0a src_stride"),
+            _coerce_i64(dst_stride, context="mte_l1_l0a dst_stride"),
+            transpose=transpose,
+        )
+        return
+    if m is None or k is None:
+        raise TypeError("mte_l1_l0a requires m and k without explicit controls")
     _pto.MteL1L0aOp(
         unwrap_surface_value(source),
         unwrap_surface_value(destination),
@@ -5381,14 +5448,58 @@ def mte_l1_l0a(
 def mte_l1_l0b(
     source,
     destination,
-    k,
-    n,
+    k=None,
+    n=None,
     *,
     start_row=0,
     start_col=0,
+    m_start=None,
+    k_start=None,
+    m_step=None,
+    k_step=None,
+    src_stride=None,
+    dst_stride=None,
     transpose=False,
 ):
-    """``pto.mte_l1_l0b`` – cube-side RIGHT staging."""
+    """``pto.mte_l1_l0b`` – structured or explicit-control L1-to-L0B load.
+
+    Use either the existing shape-derived ``k``/``n`` form or provide all six
+    explicit L1-to-L0B controls. The explicit-control overload currently rejects
+    FP4 packed pointers; use the shape-derived form for FP4 staging.
+    """
+    controls = (m_start, k_start, m_step, k_step, src_stride, dst_stride)
+    has_explicit_controls = any(control is not None for control in controls)
+    if has_explicit_controls:
+        if k is not None or n is not None:
+            raise TypeError(
+                "mte_l1_l0b accepts either k/n or explicit controls, not both"
+            )
+        if start_row != 0 or start_col != 0:
+            raise TypeError(
+                "mte_l1_l0b start_row/start_col are unavailable with explicit controls"
+            )
+        if any(control is None for control in controls):
+            raise TypeError(
+                "mte_l1_l0b explicit controls require m_start, k_start, "
+                "m_step, k_step, src_stride, and dst_stride"
+            )
+        source_value = unwrap_surface_value(source)
+        destination_value = unwrap_surface_value(destination)
+        _reject_explicit_fp4_load(source_value, op_name="mte_l1_l0b", source_role="source")
+        _pto.LoadCbufToCbOp(
+            source_value,
+            destination_value,
+            _coerce_i64(m_start, context="mte_l1_l0b m_start"),
+            _coerce_i64(k_start, context="mte_l1_l0b k_start"),
+            _coerce_i64(m_step, context="mte_l1_l0b m_step"),
+            _coerce_i64(k_step, context="mte_l1_l0b k_step"),
+            _coerce_i64(src_stride, context="mte_l1_l0b src_stride"),
+            _coerce_i64(dst_stride, context="mte_l1_l0b dst_stride"),
+            transpose=transpose,
+        )
+        return
+    if k is None or n is None:
+        raise TypeError("mte_l1_l0b requires k and n without explicit controls")
     _pto.MteL1L0bOp(
         unwrap_surface_value(source),
         unwrap_surface_value(destination),
@@ -6644,7 +6755,7 @@ __all__ = [
     "tsel", "tsels", "tcvt",
     "tnot", "tand", "tands", "tor", "tors", "txor", "txors", "tshl", "tshls", "tshr", "tshrs",
     "tpartadd", "tpartmul", "tpartmax", "tpartmin",
-    "tfillpad", "tfillpad_expand", "tfillpad_inplace",
+    "tfillpad",
     "ttri", "tthistogram",
     "chistv2",
     "as_ptr",

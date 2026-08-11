@@ -18,9 +18,9 @@ module {
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
     %mat_dst0 = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
     %mat_dst1 = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f8E5M2, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%acc_src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>, index, index)
+    pto.textract ins(%acc_src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
                     outs(%mat_dst0 : !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
-    pto.tinsert_fp ins(%acc_src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>, index, index)
+    pto.tinsert ins(%acc_src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
                    outs(%mat_dst1 : !pto.tile_buf<loc=mat, dtype=f8E5M2, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }

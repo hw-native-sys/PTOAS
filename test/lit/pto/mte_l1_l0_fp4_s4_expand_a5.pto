@@ -10,6 +10,7 @@
 // bridge ops, with K coordinates converted to s4 units instead of byte-path
 // defaults.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s --check-prefix=LLVM
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
   func.func @fp4_mte_l1_l0_expand(
@@ -30,3 +31,6 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // CHECK-LABEL: func.func @fp4_mte_l1_l0_expand
 // CHECK: pto.load_cbuf_to_ca_s4 {{.*}}, %c0_i64{{.*}}, %c0_i64{{.*}}, %c4_i64{{.*}}, %c1_i64{{.*}}, %c4_i64{{.*}}, %c4_i64{{.*}}, %c0_i64
 // CHECK: pto.load_cbuf_to_cb_s4 {{.*}}, %c0_i64{{.*}}, %c0_i64{{.*}}, %c4_i64{{.*}}, %c1_i64{{.*}}, %c4_i64{{.*}}, %c4_i64{{.*}}, %c1_i64
+// LLVM-LABEL: llvm.func @fp4_mte_l1_l0_expand
+// LLVM: llvm.call @llvm.hivm.LOAD.L1.TO.L0A.2Dv2.s4
+// LLVM: llvm.call @llvm.hivm.LOAD.L1.TO.L0B.2Dv2.s4

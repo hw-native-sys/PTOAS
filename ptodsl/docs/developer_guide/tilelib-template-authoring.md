@@ -145,6 +145,8 @@ forwards selected attributes as context attrs:
 - `cmp_mode`
 - `mask_pattern`
 - `precisionType`
+- `acc_to_vec_mode`
+- `relu_pre_mode`
 
 If a template needs a new op attribute, update the C++ context-attr forwarding
 before relying on it in Python. A template that silently assumes a default when

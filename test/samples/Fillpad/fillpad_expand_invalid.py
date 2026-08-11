@@ -23,7 +23,6 @@ def build():
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Zero, ctx)
-
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             src_ty = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
@@ -38,7 +37,7 @@ def build():
             with InsertionPoint(entry):
                 src = pto.AllocTileOp(src_ty).result
                 dst = pto.AllocTileOp(dst_ty).result
-                pto.TFillPadExpandOp(src, dst)
+                pto.TFillPadOp(src, dst)
                 func.ReturnOp([])
 
             ok = m.operation.verify()

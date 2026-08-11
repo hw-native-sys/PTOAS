@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=NOCAST
 
 module attributes {pto.target_arch = "a3"} {
   func.func @mgather_emitc_base(%src: !pto.ptr<f32>)
@@ -67,3 +68,10 @@ module attributes {pto.target_arch = "a3"} {
 
 // CHECK-LABEL: AICORE void mscatter_emitc_base(
 // CHECK: MSCATTER({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
+
+// Regression guard for issue #1165: the partition-view GlobalTensor must flow
+// into MGATHER/MSCATTER directly. No static-stride -> dynamic-stride
+// GlobalTensor C-style cast (`(GlobalTensor<...>)v`) may be emitted, since
+// there is no C++ converting constructor between differing Stride<...> template
+// instantiations and the generated C++ would fail to compile.
+// NOCAST-NOT: (GlobalTensor<

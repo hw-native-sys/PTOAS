@@ -132,7 +132,7 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
                 pto.TLoadOp(None, sv_out, ubTile)
 
                 # pto.trowmax ins(%src, %tmp) outs(%dst)
-                pto.TRowMaxOp(ubTile, ubTmpTile, ubReduceTile)
+                pto.TRowMaxOp(ubTile, ubReduceTile, tmp=ubTmpTile)
                 pto.TStoreOp(None, ubReduceTile, sv_reduce)
 
                 func.ReturnOp([])

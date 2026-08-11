@@ -6,14 +6,17 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "PTO/IR/PTO.h"
 #include "Utils.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Support/ErrorHandling.h"
+#include "PTO/IR/PTO.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/IR/Matchers.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #define DEBUG_TYPE "pto-utils"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -25,6 +28,96 @@ namespace pto {
 
 static constexpr llvm::StringLiteral kFrontendPipeIdAttrName =
     "__pto.frontend_id";
+
+FailureOr<bool> hasTFillPadExpandedPhysicalShape(TFillPadOp op) {
+  auto srcType = dyn_cast<TileBufType>(op.getSrc().getType());
+  auto dstType = dyn_cast<TileBufType>(op.getDst().getType());
+  if (!srcType || !dstType || srcType.getRank() != dstType.getRank())
+    return failure();
+
+  bool expanded = false;
+  for (auto [srcDim, dstDim] :
+       llvm::zip_equal(srcType.getShape(), dstType.getShape())) {
+    if (srcDim == dstDim)
+      continue;
+    if (ShapedType::isDynamic(srcDim) || ShapedType::isDynamic(dstDim) ||
+        dstDim < srcDim)
+      return failure();
+    expanded = true;
+  }
+  return expanded;
+}
+
+static Value peelTFillPadStorageAlias(Value value) {
+  constexpr unsigned kMaxDepth = 32;
+  for (unsigned depth = 0; value && depth < kMaxDepth; ++depth) {
+    Operation *def = value.getDefiningOp();
+    if (!def)
+      break;
+    if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def)) {
+      if (cast.getNumOperands() != 1 || cast.getNumResults() != 1)
+        break;
+      value = cast.getOperand(0);
+      continue;
+    }
+    if (auto bitcast = dyn_cast<BitcastOp>(def)) {
+      value = bitcast.getSrc();
+      continue;
+    }
+    if (auto reshape = dyn_cast<TReshapeOp>(def)) {
+      value = reshape.getSrc();
+      continue;
+    }
+    break;
+  }
+  return value;
+}
+
+static bool haveSameKnownTFillPadStartAddress(Value src, Value dst) {
+  src = peelTFillPadStorageAlias(src);
+  dst = peelTFillPadStorageAlias(dst);
+  if (src == dst)
+    return true;
+
+  auto srcAlloc = src.getDefiningOp<AllocTileOp>();
+  auto dstAlloc = dst.getDefiningOp<AllocTileOp>();
+  if (!srcAlloc || !dstAlloc || !srcAlloc.getAddr() || !dstAlloc.getAddr())
+    return false;
+
+  Value srcAddr = srcAlloc.getAddr();
+  Value dstAddr = dstAlloc.getAddr();
+  if (srcAddr == dstAddr)
+    return true;
+
+  IntegerAttr srcConst;
+  IntegerAttr dstConst;
+  return matchPattern(srcAddr, m_Constant(&srcConst)) &&
+         matchPattern(dstAddr, m_Constant(&dstConst)) &&
+         srcConst.getValue() == dstConst.getValue();
+}
+
+FailureOr<TFillPadLoweringKind>
+inferTFillPadLoweringKindAfterMemoryPlanning(TFillPadOp op) {
+  FailureOr<bool> expanded = hasTFillPadExpandedPhysicalShape(op);
+  if (failed(expanded))
+    return failure();
+
+  auto srcSpace = GetBufferSpaceAttr(op.getSrc());
+  auto dstSpace = GetBufferSpaceAttr(op.getDst());
+  bool isVec = srcSpace && dstSpace &&
+               srcSpace->getAddressSpace() == AddressSpace::VEC &&
+               dstSpace->getAddressSpace() == AddressSpace::VEC;
+
+  if (*expanded) {
+    if (!isVec)
+      return failure();
+    return TFillPadLoweringKind::Expand;
+  }
+  if (isVec &&
+      haveSameKnownTFillPadStartAddress(op.getSrc(), op.getDst()))
+    return TFillPadLoweringKind::InPlace;
+  return TFillPadLoweringKind::Normal;
+}
 
 std::optional<PhysicalSectionKind>
 inferPhysicalSectionKindFromPipe(Operation *op) {

@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module {
+  func.func @implicit_tcolsum_tmp() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=8, v_row=4, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolsum ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=8, v_row=4, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {isBinary = true}
+    return
+  }
+
+  func.func @implicit_tquant_tmp() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %fp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=8, cols=32, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tquant ins(%src, %fp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=i8, rows=8, cols=32, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type INT8_SYM>}
+    return
+  }
+
+  func.func @implicit_tpows_tmp() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 2.0 : f32
+    pto.tpows ins(%src, %scalar : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @implicit_tsort32_tmp() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=48, v_row=1, v_col=33, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=40, v_row=1, v_col=33, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=96, v_row=1, v_col=66, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tsort32 ins(%src, %idx : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=48, v_row=1, v_col=33, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=40, v_row=1, v_col=33, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=96, v_row=1, v_col=66, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @implicit_tcolsum_tmp
+// CHECK: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 2x8xf32>
+// CHECK: pto.tcolsum ins(%{{.*}}, %{{.*}} {{.*}}isBinary = true
+
+// CHECK-LABEL: func.func @implicit_tquant_tmp
+// CHECK: pto.tquant ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x8xf32>, !pto.tile_buf<vec, 8x1xf32, blayout=col_major>) outs(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xi8, valid=8x8>, !pto.tile_buf<vec, 8x8xf32>)
+
+// CHECK-LABEL: func.func @implicit_tpows_tmp
+// CHECK: pto.tpows ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x16xf32>, f32, !pto.tile_buf<vec, 1x16xf32>)
+
+// CHECK-LABEL: func.func @implicit_tsort32_tmp
+// CHECK: pto.tsort32 ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x48xf16, valid=1x33>, !pto.tile_buf<vec, 1x40xui32, valid=1x33>, !pto.tile_buf<vec, 1x48xf16, valid=1x33>)
+
+// A5-LABEL: func.func @implicit_tquant_tmp
+// A5: pto.tquant ins(%{{.*}}, %{{.*}} : {{.*}}) outs(%{{.*}} :
+// A5-NOT: pto.tquant ins({{.*}}) outs(%{{.*}}, %{{.*}}
+// A5-LABEL: func.func @implicit_tpows_tmp
+// A5: pto.tpows ins(%{{.*}}, %{{.*}}, %{{.*}} :

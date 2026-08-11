@@ -21,7 +21,7 @@
 // CHECK-DAG: func.func @TEXTRACT_FP_SI32_SI8
 // CHECK-DAG: func.func @TEXTRACT_FP_SI32_UI8
 // CHECK-DAG: func.func @TEXTRACT_FP_A2M
-// CHECK-NOT: pto.textract_fp
+// CHECK-NOT: pto.textract
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
 
@@ -30,8 +30,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -41,8 +40,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -52,8 +50,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -63,8 +60,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=si8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=si8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -74,8 +70,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=ui8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=ui8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -85,8 +80,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -96,8 +90,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -107,8 +100,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=si8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=si8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -118,8 +110,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=ui8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=ui8, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -129,8 +120,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %src = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }

@@ -129,8 +129,11 @@ def build_project(run_mode, soc_version, testcase, ptoas_bin, build_jobs=None):
             f"-DSOC_VERSION={soc_version}",
             f"-DTEST_CASE={testcase}",
             f"-DPTOAS_BIN={ptoas_bin}",
-            "..",
         ]
+        pto_isa_root = os.environ.get("PTO_ISA_ROOT")
+        if pto_isa_root:
+            cmake_cmd.append(f"-DPTO_ISA_ROOT={os.path.abspath(pto_isa_root)}")
+        cmake_cmd.append("..")
         subprocess.run(
             cmake_cmd,
             cwd=build_dir,

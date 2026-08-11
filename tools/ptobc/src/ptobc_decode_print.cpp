@@ -57,6 +57,14 @@ constexpr size_t kPTOBCMagicSize = 6;
 constexpr size_t kPTOBCHeaderSize = 14;
 constexpr size_t kPTOBCVersionOffset = 6;
 constexpr size_t kPTOBCPayloadLengthOffset = 10;
+constexpr uint16_t kTExtractOpcode = 0x1021;
+constexpr uint16_t kTExtractFpWireOpcode = 0x1022;
+constexpr uint16_t kTInsertOpcode = 0x102D;
+constexpr uint16_t kTInsertFpWireOpcode = 0x102E;
+constexpr uint16_t kTMovOpcode = 0x1038;
+constexpr uint16_t kTMovFpWireOpcode = 0x1039;
+constexpr uint16_t kTStoreOpcode = 0x1065;
+constexpr uint16_t kTStoreFpWireOpcode = 0x1066;
 
 struct Reader {
   const uint8_t* p;
@@ -507,6 +515,92 @@ materializeOperands(BuildCtx &bc, llvm::ArrayRef<uint64_t> operandIds) {
   return operands;
 }
 
+static void normalizeLegacyFpOperandOrder(
+    uint16_t opcode,
+    llvm::SmallVectorImpl<mlir::Value> &operands) {
+  if ((opcode == kTExtractFpWireOpcode ||
+       opcode == kTInsertFpWireOpcode) &&
+      operands.size() == 5) {
+    // Legacy wire order: src, fp, row, col, dst.
+    llvm::SmallVector<mlir::Value, 5> reordered{
+        operands[0], operands[2], operands[3], operands[4], operands[1]};
+    operands.assign(reordered.begin(), reordered.end());
+    return;
+  }
+  if ((opcode == kTMovFpWireOpcode || opcode == kTStoreFpWireOpcode) &&
+      operands.size() == 3) {
+    // Legacy wire order: src, fp, dst.
+    llvm::SmallVector<mlir::Value, 3> reordered{operands[0], operands[2],
+                                                operands[1]};
+    operands.assign(reordered.begin(), reordered.end());
+  }
+}
+
+static std::optional<llvm::SmallVector<int32_t, 6>>
+getUnifiedOperandSegments(uint16_t opcode,
+                          llvm::ArrayRef<mlir::Value> operands) {
+  switch (opcode) {
+  case kTExtractOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 0, 0};
+  case kTExtractFpWireOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 1, 0};
+  case kTInsertOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 0, 0};
+  case kTInsertFpWireOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 1, 0};
+  case kTMovOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 0, 0};
+  case kTMovFpWireOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 0};
+  case kTStoreOpcode:
+    if (operands.size() == 2)
+      return llvm::SmallVector<int32_t, 6>{1, 1, 0, 0};
+    if (operands.size() == 3) {
+      const bool thirdIsFp =
+          mlir::isa<mlir::pto::TileBufType>(operands.back().getType());
+      return llvm::SmallVector<int32_t, 6>{1, 1, thirdIsFp ? 1 : 0,
+                                           thirdIsFp ? 0 : 1};
+    }
+    return std::nullopt;
+  case kTStoreFpWireOpcode:
+    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 0};
+  default:
+    return std::nullopt;
+  }
+}
+
+static void setUnifiedOperandSegmentProperty(
+    mlir::Operation *op, uint16_t opcode, llvm::ArrayRef<int32_t> segments) {
+  switch (opcode) {
+  case kTExtractOpcode:
+  case kTExtractFpWireOpcode:
+    llvm::cast<mlir::pto::TExtractOp>(op)
+        .getProperties()
+        .setOperandSegmentSizes(segments);
+    return;
+  case kTInsertOpcode:
+  case kTInsertFpWireOpcode:
+    llvm::cast<mlir::pto::TInsertOp>(op)
+        .getProperties()
+        .setOperandSegmentSizes(segments);
+    return;
+  case kTMovOpcode:
+  case kTMovFpWireOpcode:
+    llvm::cast<mlir::pto::TMovOp>(op)
+        .getProperties()
+        .setOperandSegmentSizes(segments);
+    return;
+  case kTStoreOpcode:
+  case kTStoreFpWireOpcode:
+    llvm::cast<mlir::pto::TStoreOp>(op)
+        .getProperties()
+        .setOperandSegmentSizes(segments);
+    return;
+  default:
+    return;
+  }
+}
+
 static mlir::Operation *buildGenericOpFromReader(BuildCtx &bc, Reader &r,
                                                  mlir::Block &block,
                                                  uint64_t opId,
@@ -584,6 +678,7 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
   KnownOpImmediates imms = readKnownOpImmediates(r, *info);
   auto operandIds = readKnownOperandIds(bc, r, opcode, variant, *info, imms);
   auto operands = materializeOperands(bc, operandIds);
+  normalizeLegacyFpOperandOrder(opcode, operands);
 
   uint64_t numResults = info->num_results;
   llvm::SmallVector<mlir::Type, kResultTypeInlineCapacity> resultTypes;
@@ -620,11 +715,17 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
   state.addOperands(operands);
   state.addTypes(resultTypes);
   addAttrDictionary(state, getAttrDict(bc, attrId));
+  auto unifiedOperandSegments = getUnifiedOperandSegments(opcode, operands);
   addImmediateAttrs(bc, state, *info, imms);
   for (unsigned i = 0; i < info->num_regions; ++i)
     (void)state.addRegion();
 
   mlir::Operation *op = mlir::Operation::create(state);
+  // In MLIR 21, AttrSizedOperandSegments is stored as an inherent property.
+  // OperationState's generic attribute list does not initialize it, so update
+  // the generated property storage directly after creating the registered op.
+  if (unifiedOperandSegments)
+    setUnifiedOperandSegmentProperty(op, opcode, *unifiedOperandSegments);
   block.getOperations().push_back(op);
   registerDecodedOp(bc, opId, op);
   assignDecodedResults(bc, resStart, op, numResults);

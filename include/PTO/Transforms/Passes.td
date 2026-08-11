@@ -192,6 +192,22 @@ def PTORematerializeFixpipeVectorQuant
   let dependentDialects = ["mlir::pto::PTODialect", "mlir::func::FuncDialect"];
 }
 
+def PTOMaterializeImplicitTmp
+    : Pass<"pto-materialize-implicit-tmp", "func::FuncOp"> {
+  let summary = "Materialize implicit tmp tiles for PTO ops before memplan";
+  let description = [{
+    Rewrites PTO ops with optional tmp operands into explicit tmp forms when
+    the backend tmp-aware overload is required. The synthesized tmp is emitted
+    as tile-native `pto.alloc_tile(no addr)` so PlanMemory can assign its local
+    address together with other tile buffers.
+  }];
+  let constructor = "mlir::pto::createPTOMaterializeImplicitTmpPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
 def PlanMemory : Pass<"pto-plan-memory", "ModuleOp"> {
  let summary = "Plan memory for PTO Ops";
   let constructor = "mlir::pto::createPlanMemoryPass()";

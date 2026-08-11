@@ -28,7 +28,6 @@ def build():
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Zero, ctx)
-
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_32_16 = pto.TileBufType.get([32, 16], f32, vec, [32, 16], cfg, ctx)
@@ -62,7 +61,7 @@ def build():
                 dst_tb = pto.AllocTileOp(tile_buf_32_32).result
 
                 pto.TLoadOp(None, src_sv, src_tb)
-                pto.TFillPadExpandOp(src_tb, dst_tb)
+                pto.TFillPadOp(src_tb, dst_tb)
                 pto.TStoreOp(None, dst_tb, dst_sv)
 
                 func.ReturnOp([])

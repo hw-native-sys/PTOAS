@@ -939,6 +939,36 @@ Cube compute step; it does not issue those transfers itself.
 
 ### Operand loading: L1 → L0A / L0B
 
+#### `pto.mte_l1_l0a(src: PtrType, dst: PtrType, *, m_start: int, k_start: int, m_step: int, k_step: int, src_stride: int, dst_stride: int, transpose: bool = False) -> None`
+#### `pto.mte_l1_l0b(src: PtrType, dst: PtrType, *, m_start: int, k_start: int, m_step: int, k_step: int, src_stride: int, dst_stride: int, transpose: bool = False) -> None`
+
+**Description**: Explicit-control L1-to-L0A/L0B loads. This overload preserves
+the authored fractal-block control fields and does not infer strides from a
+logical tile shape. It currently rejects FP4 packed source pointers because
+the compatibility wrapper cannot yet guarantee selection of the FP4-specific
+L1-to-L0 intrinsic on this path. For FP4 packed operands, use the structured
+shape-derived `mte_l1_l0a(..., m, k, ...)` or `mte_l1_l0b(..., k, n, ...)`
+form below.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | `PtrType` (L1/MAT) | L1 source pointer; parent-allocation matrix offsets are represented by the control fields below. FP4 packed source pointers are not supported by this explicit-control overload. |
+| `dst` | `PtrType` (L0A/L0B) | L0 destination pointer; stage/version offsets belong in this pointer. |
+| `m_start`, `k_start` | `int` in `0..65535` | Source fractal-block coordinates at which the load begins. |
+| `m_step`, `k_step` | `int` in `1..255` | Number of fractal blocks transferred along the two source axes. |
+| `src_stride`, `dst_stride` | `int` in `1..65535` | Physical outer strides of the complete L1 and L0 allocations, in fractal-block units. They are independent of the transferred region extents. |
+| `transpose` | `bool` | Final hardware transpose attribute. |
+
+**Returns**: None (side-effect operation).
+
+Use this overload when a source/destination subregion has layout control that
+cannot be reconstructed from a canonical `m`/`k`/`n` tile shape. The pointer
+order is always `src, dst`.
+
+---
+
 #### `pto.mte_l1_l0a(src: PtrType, dst: PtrType, m: int, k: int, *, start_row: int, start_col: int, transpose: bool = False) -> None`
 
 **Description**: Structured L1-to-L0A (left-operand buffer) load.
@@ -1174,6 +1204,8 @@ pto.mte_l0c_gm(
 | GM → L1 | `mte_gm_l1` | gm | l1 |
 | GM → L1 (fractal) | `mte_gm_l1_frac` | gm | l1 |
 | L1 → UB | `mte_l1_ub` | l1 | ub |
+| L1 → L0A (explicit control) | `mte_l1_l0a` | l1 | l0a |
+| L1 → L0B (explicit control) | `mte_l1_l0b` | l1 | l0b |
 | L1 → L0A | `mte_l1_l0a` | l1 | l0a |
 | L1 → L0B | `mte_l1_l0b` | l1 | l0b |
 | L1 → L0A (MX) | `mte_l1_l0a_mx` | l1 | l0a |

@@ -49,13 +49,6 @@ CATALOG = {
     "pto.tcolsum": ("template_tcolsum", "pto.vadd", ("src", "dst"), "f32"),
     "pto.texpands": ("template_texpands_1d", "pto.vdup", ("scalar", "dst"), "f32"),
     "pto.textract": ("template_textract_vec2vec_nd", "pto.vlds", ("src", "index_row", "index_col", "dst"), "f32"),
-    "pto.textract_fp": (
-        "template_textract_fp_f32_f16",
-        "pto.mte_l0c_l1",
-        ("src", "fp", "index_row", "index_col", "dst"),
-        "f32",
-        "template_textract_fp_f32_f16",
-    ),
     "pto.tlrelu": ("template_tlrelu_1d", "pto.vlrelu", ("src", "slope", "dst"), "f32"),
     "pto.tlog": ("template_tlog_1d", "pto.vln", ("src", "dst"), "f32"),
     "pto.tdiv": ("template_tdiv_1d", "pto.vdiv", ("src0", "src1", "dst"), "f32"),
@@ -75,8 +68,6 @@ CATALOG = {
     "pto.tfmod": ("template_tfmod_1d", "pto.vtrc", ("src0", "src1", "dst"), "f32"),
     "pto.tfmods": ("template_tfmods_1d", "pto.vtrc", ("src", "scalar", "dst"), "f32"),
     "pto.tfillpad": ("template_tfillpad", "pto.vsts", ("src", "dst"), "f32"),
-    "pto.tfillpad_expand": ("template_tfillpad_expand", "pto.vsts", ("src", "dst"), "f32"),
-    "pto.tfillpad_inplace": ("template_tfillpad_inplace", "pto.vdup", ("src", "dst"), "f32"),
     "pto.tgemv": ("template_tgemv", "pto.mad", ("lhs", "rhs", "acc"), "f16"),
     "pto.tgemv.acc": ("template_tgemv_acc", "pto.mad_acc", ("acc_in", "lhs", "rhs", "dst"), "f16"),
     "pto.tgemv.bias": ("template_tgemv_bias", "pto.mad_bias", ("lhs", "rhs", "bias", "dst"), "f16"),
@@ -179,13 +170,6 @@ CATALOG = {
         "f32",
         "template_tstore_nd",
     ),
-    "pto.tstore_fp": (
-        "template_tstore_fp_acc_to_gm",
-        "pto.mte_l0c_gm",
-        ("src", "fp", "dst"),
-        "f32",
-        "template_tstore_fp_acc_to_gm",
-    ),
     "pto.tadds": ("template_tadds_1d", "pto.vadds", ("src", "scalar", "dst"), "f32"),
     "pto.tmaxs": ("template_tmaxs_1d", "pto.vmaxs", ("src", "scalar", "dst"), "f32"),
     "pto.tmins": ("template_tmins_1d", "pto.vmins", ("src", "scalar", "dst"), "f32"),
@@ -268,11 +252,10 @@ SHARED_RENDERED_OPS = (
     "pto.tilelang.instance",
 )
 OPS_WITHOUT_TILE_LOAD = {"pto.texpands"}
-OPS_WITHOUT_TILE_LOAD = OPS_WITHOUT_TILE_LOAD | {"pto.trandom", "pto.tsort32", "pto.tload", "pto.tstore", "pto.tstore_fp", "pto.textract_fp"}
-OPS_WITHOUT_TILE_LOAD = OPS_WITHOUT_TILE_LOAD | {"pto.tfillpad_inplace"}
+OPS_WITHOUT_TILE_LOAD = OPS_WITHOUT_TILE_LOAD | {"pto.trandom", "pto.tsort32", "pto.tload", "pto.tstore"}
 OPS_WITHOUT_TILE_LOAD = OPS_WITHOUT_TILE_LOAD | CUBE_OPS
 OPS_WITHOUT_VECTOR_STORE = {"pto.tcmp", "pto.tcmps", "pto.tsort32"}
-OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | {"pto.tload", "pto.tstore", "pto.tstore_fp", "pto.textract_fp"}
+OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | {"pto.tload", "pto.tstore"}
 OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | CUBE_OPS
 OPS_WITHOUT_MEMREF_SUBVIEW = {"pto.tcmps", "pto.tsort32"}
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {"pto.texpands", "pto.tdivs", "pto.tfillpad_inplace"}
@@ -320,7 +303,6 @@ OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {
     "pto.txors",
 }
 OPS_WITHOUT_LOOP = {"pto.tmrgsort"}
-OPS_WITHOUT_LOOP = OPS_WITHOUT_LOOP | {"pto.tstore_fp", "pto.textract_fp"}
 OPS_WITHOUT_LOOP = OPS_WITHOUT_LOOP | CUBE_OPS
 OPS_ALLOWING_CASTPTR = {"pto.tsel", "pto.tsels"}
 SCALAR_OPERANDS = {
@@ -341,8 +323,6 @@ SPECIAL_SCALAR_DTYPES = {
     ("pto.tshrs", "scalar"): "i16",
     ("pto.textract", "index_row"): "i32",
     ("pto.textract", "index_col"): "i32",
-    ("pto.textract_fp", "index_row"): "i32",
-    ("pto.textract_fp", "index_col"): "i32",
     ("pto.tinsert", "index_row"): "i32",
     ("pto.tinsert", "index_col"): "i32",
     ("pto.trandom", "key0"): "i32",
@@ -357,10 +337,6 @@ SPECIAL_OPERAND_DTYPES = {
     ("pto.tcmps", "dst"): "ui8",
     ("pto.trandom", "dst"): "ui32",
     ("pto.tsort32", "idx"): "ui32",
-    ("pto.textract_fp", "fp"): "f32",
-    ("pto.textract_fp", "dst"): "f16",
-    ("pto.tstore_fp", "fp"): "f16",
-    ("pto.tstore_fp", "dst"): "f16",
     ("pto.trowargmax", "dst"): "i32",
     ("pto.trowargmin", "dst"): "i32",
     ("pto.tdequant", "scale"): "f32",
@@ -395,17 +371,14 @@ SPECIAL_MEMORY_SPACES = {}
 VIEW_OPERANDS = {
     ("pto.tload", "src"),
     ("pto.tstore", "dst"),
-    ("pto.tstore_fp", "dst"),
 }
 VIEW_SHAPES = {
     ("pto.tload", "src"): (1, 1, 1, 8, 64),
     ("pto.tstore", "dst"): (1, 1, 1, 8, 64),
-    ("pto.tstore_fp", "dst"): (1, 1, 1, 8, 64),
 }
 VIEW_STRIDES = {
     ("pto.tload", "src"): (512, 512, 512, 64, 1),
     ("pto.tstore", "dst"): (512, 512, 512, 64, 1),
-    ("pto.tstore_fp", "dst"): (512, 512, 512, 64, 1),
 }
 for _op in CUBE_OPS:
     SPECIAL_MEMORY_SPACES[(_op, "lhs")] = "left"
@@ -416,11 +389,6 @@ for _op in CUBE_OPS:
     SPECIAL_MEMORY_SPACES[(_op, "bias")] = "bias"
     SPECIAL_MEMORY_SPACES[(_op, "lhs_scale")] = "scaling"
     SPECIAL_MEMORY_SPACES[(_op, "rhs_scale")] = "scaling"
-SPECIAL_MEMORY_SPACES[("pto.textract_fp", "src")] = "acc"
-SPECIAL_MEMORY_SPACES[("pto.textract_fp", "fp")] = "scaling"
-SPECIAL_MEMORY_SPACES[("pto.textract_fp", "dst")] = "mat"
-SPECIAL_MEMORY_SPACES[("pto.tstore_fp", "src")] = "acc"
-SPECIAL_MEMORY_SPACES[("pto.tstore_fp", "fp")] = "scaling"
 
 for _op in ("pto.tgemv", "pto.tgemv.acc", "pto.tgemv.bias", "pto.tgemv.mx", "pto.tgemv.mx.acc", "pto.tgemv.mx.bias"):
     SPECIAL_VALID_SHAPES[(_op, "lhs")] = (1, 64)
@@ -1557,7 +1525,7 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertEqual(selected.name, "template_tstore_nd")
                 self.assertIn("pto.mte_ub_gm", selected.specialize(**specs).mlir_text())
 
-    def test_textract_fp_versions_render(self):
+    def test_textract_fp_forms_use_unified_op(self):
         signatures = {
             ("f32", "f32", "i32", "i32", "si8"): "template_textract_fp_f32_si8",
             ("f32", "f32", "i32", "i32", "ui8"): "template_textract_fp_f32_ui8",
@@ -1595,9 +1563,34 @@ class TileLibCatalogTest(unittest.TestCase):
                         memory_space="mat",
                     ),
                 }
-                selected = select("pto.textract_fp", "a5", specs)
+                selected = select("pto.textract", "a5", specs)
                 self.assertEqual(selected.name, expected_name)
                 self.assertIn("pto.mte_l0c_l1", selected.specialize(**specs).mlir_text())
+
+    def test_tstore_fp_form_uses_unified_op(self):
+        specs = {
+            "src": TileSpec(
+                shape=(16, 32),
+                dtype=ScalarType("f32"),
+                memory_space="acc",
+                valid_shape=(16, 32),
+                b_layout="col_major",
+                s_layout="row_major",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 1, 16, 32),
+                dtype=ScalarType("f16"),
+                strides=(512, 512, 512, 32, 1),
+            ),
+            "fp": TileSpec(
+                shape=(1, 32),
+                dtype=ScalarType("f16"),
+                memory_space="scaling",
+            ),
+        }
+        selected = select("pto.tstore", "a5", specs)
+        self.assertEqual(selected.name, "template_tstore_fp_acc_to_gm")
+        self.assertIn("pto.mte_l0c_gm", selected.specialize(**specs).mlir_text())
 
     def test_tinsert_acc_to_mat_basic_renders(self):
         for dst_dtype in ("f16", "bf16"):
