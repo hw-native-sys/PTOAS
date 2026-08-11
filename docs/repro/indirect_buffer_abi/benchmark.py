@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, ctypes, os, subprocess
 from pathlib import Path
 import torch, torch_npu  # noqa: F401
-HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"; WARMUP,SAMPLES=10,20
+HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"; WARMUP,SAMPLES,BATCH=10,20,64
 def cmd(a, **kw): subprocess.run(a,check=True,**kw)
 def bisheng(): return os.environ.get('BISHENG',f"{os.environ['ASCEND_HOME_PATH']}/bin/bisheng")
 def link(o,so):
@@ -17,11 +17,12 @@ def build_vmi():
 def sp():
  p=torch.npu.current_stream()._as_parameter_; return p.value if hasattr(p,'value') else int(p)
 def med(fn):
- for _ in range(WARMUP): fn()
+ for _ in range(WARMUP):
+  for _ in range(BATCH): fn()
  torch.npu.synchronize(); v=[]
  for _ in range(SAMPLES):
-  a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); fn(); z.record(); v.append((a,z))
- torch.npu.synchronize(); v=[a.elapsed_time(z)*1000 for a,z in v]
+  a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); [fn() for _ in range(BATCH)]; z.record(); v.append((a,z))
+ torch.npu.synchronize(); v=[a.elapsed_time(z)*1000/BATCH for a,z in v]
  return sorted(v)[len(v)//2]
 def main():
  ap=argparse.ArgumentParser(); ap.add_argument('--compile-only',action='store_true'); a=ap.parse_args()
@@ -43,5 +44,5 @@ def main():
  def cr(): cf(stream(),ctypes.c_void_p(tables[0].data_ptr()),ctypes.c_void_p(initial.data_ptr()),ctypes.c_void_p(tables[1].data_ptr()),ctypes.c_void_p(tables[2].data_ptr()),ctypes.c_void_p(tables[3].data_ptr()),ctypes.c_void_p(tables[4].data_ptr()),ctypes.c_void_p(tables[5].data_ptr()))
  a0=torch.ones(10*64,dtype=torch.float32,device=DEV); a1=torch.ones_like(a0); a2=torch.empty_like(a0)
  def vr(): vf(stream(),ctypes.c_void_p(a0.data_ptr()),ctypes.c_void_p(a1.data_ptr()),ctypes.c_void_p(a2.data_ptr()))
- cr(); vr(); torch.npu.synchronize(); assert all(bool(torch.all(x.cpu()==0)) for x in residual) and bool(torch.all(a2.cpu()==1)); cu,vu=med(cr),med(vr); print(f'device={DEV} cce_layers=10 vmi_fixed_transfers=10 cce_grid=1 vmi_grid=1 samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS pointer_table_addresses=DEVICE'); print(f'CCE_us={cu:.3f} fixed_argument_VMI_us={vu:.3f} CCE_over_fixed_VMI={cu/vu:.4f} comparison=ABI_CONTROL_ONLY')
+ cr(); vr(); torch.npu.synchronize(); assert all(bool(torch.all(x.cpu()==0)) for x in residual) and bool(torch.all(a2.cpu()==1)); cu,vu=med(cr),med(vr); print(f'device={DEV} cce_layers=10 vmi_fixed_transfers=10 cce_grid=1 vmi_grid=1 batch={BATCH} samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS pointer_table_addresses=DEVICE'); print(f'CCE_us={cu:.3f} fixed_argument_VMI_us={vu:.3f} CCE_over_fixed_VMI={cu/vu:.4f} comparison=ABI_CONTROL_ONLY')
 if __name__=='__main__': main()

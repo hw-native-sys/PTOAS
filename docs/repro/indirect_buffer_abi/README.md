@@ -21,7 +21,7 @@ the direct CCE pointer-table kernel and the fixed-argument VMI control through
 
 | Verified device-0 event median | Direct CCE us | Fixed-argument VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| 10 transfers, one launch per side | 36.992 | 31.588 | 1.1711 |
+| 10 transfers, 64-launch synchronized batches | see live output | see live output | per-launch |
 
 The live harness allocates each layer at the generated block stride and stores
 the six table entries as device addresses, so this is an actual pointer-table
