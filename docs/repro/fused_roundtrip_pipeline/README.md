@@ -1,5 +1,10 @@
 # Fused grouped quantize/dequantize: fair one-launch control
 
+> **Scope warning:** this public fixture is a 256-value low-level control, not
+> a faithful full-shape performance reproduction. The private study's gap
+> comes from persistent multi-core tiling and must be reproduced with that
+> schedule before using this report as performance evidence.
+
 The reproducer quantizes a BF16 tile to FP8 using eight group scales and
 immediately dequantizes it. `fixtures/fused_roundtrip_vmi.pto` includes GM DMA,
 group reduction, scale expansion, FP8 conversion, reverse scaling, and output
