@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; MODE="${1:-all}"; OUT="${HERE}/outputs"; mkdir -p "${OUT}"
-set +u; source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; set -u
-PTOAS_BIN="${PTOAS_BIN:-$(conda run -n cann91_dev which ptoas | tail -1)}"; BISHENG="${BISHENG:-${ASCEND_HOME_PATH}/tools/bisheng_compiler/bin/bisheng}"
-compile() {
- env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --emit-vpto "${HERE}/fixtures/fused_roundtrip_vmi.pto" -o "${OUT}/fused.vpto"
- grep -q 'pto.vcgmax' "${OUT}/fused.vpto"; test "$(grep -c 'pto.vcvt' "${OUT}/fused.vpto")" -ge 3
- env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 "${HERE}/fixtures/fused_roundtrip_vmi.pto" -o "${OUT}/fused_vmi.o"
- env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" python3 "${HERE}/benchmark.py" --compile-only
- echo "PASS: VMI and stream-launchable A5 CCE kernels compile"
-}
-run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
-case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh
+MODE="${1:-all}"
+case "$MODE" in
+  compile) ACL_DEVICE_ID="${ACL_DEVICE_ID:-0}" python3 "$HERE/benchmark.py" --compile-only ;;
+  benchmark|correctness) : "${ACL_DEVICE_ID:?set ACL_DEVICE_ID=0 or 1}"; task-submit --device "$ACL_DEVICE_ID" --run "python3 '$HERE/benchmark.py'" ;;
+  all) ACL_DEVICE_ID="${ACL_DEVICE_ID:-0}" python3 "$HERE/benchmark.py" --compile-only; : "${ACL_DEVICE_ID:?set ACL_DEVICE_ID=0 or 1}"; task-submit --device "$ACL_DEVICE_ID" --run "python3 '$HERE/benchmark.py'" ;;
+  *) echo "usage: $0 [compile|correctness|benchmark|all]" >&2; exit 2 ;;
+esac

@@ -1,5 +1,9 @@
 [
- {"case":"small_fp32","asc_us":8.3281,"vmi_us":8.7894},
- {"case":"large_bf16","asc_us":22.0386,"vmi_us":27.3305},
- {"case":"wide_bf16","asc_us":7.2110,"vmi_us":8.0451}
+  {
+    "case": "full_bf16_8192x2048_72core_persistent",
+    "timing_authority": "pending_full_timeline_validation",
+    "cce_us": null,
+    "vmi_us": null,
+    "cce_over_vmi": null
+  }
 ]

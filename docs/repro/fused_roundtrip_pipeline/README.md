@@ -1,25 +1,25 @@
-# Fused grouped quantize/dequantize: fair one-launch control
+# Persistent BF16 FP8 round-trip: CCE versus VMI
 
-> **Scope warning:** this public fixture is a 256-value low-level control, not
-> a faithful full-shape performance reproduction. The private study's gap
-> comes from persistent multi-core tiling and must be reproduced with that
-> schedule before using this report as performance evidence.
+This is a standalone 72-core workload, not a one-tile timing control.  Both
+kernels process the same contiguous BF16 tensor (`8192 x 2048`) with the same
+three-stage persistent schedule and the same launch grid.  The CCE body keeps
+the vector pipeline and DMA overlap explicit; the VMI body keeps the complete
+group reduction, scale encoding, FP8 conversion, reverse scaling, and DMA
+pipeline in [`full_roundtrip_vmi.py`](fixtures/full_roundtrip_vmi.py).
 
-The reproducer quantizes a BF16 tile to FP8 using eight group scales and
-immediately dequantizes it. `fixtures/fused_roundtrip_vmi.pto` includes GM DMA,
-group reduction, scale expansion, FP8 conversion, reverse scaling, and output
-DMA. `fixtures/reference_cce.cpp` is the complete direct CCE control.
+Run on CANN 9.1 with one device variable:
 
-Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
-Set `ACL_DEVICE_ID` to run the live PTO/VMI launch and exact
-one-value round-trip check through `torch_npu`.
+```bash
+conda activate cann91_dev
+source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh
+ACL_DEVICE_ID=0 bash check.sh compile
+ACL_DEVICE_ID=0 bash check.sh benchmark
+```
 
-| Verified device-0 event median | CCE us | VMI us | CCE/VMI |
-|---|---:|---:|---:|
-| one 256-value BF16 round trip | 32.661 | 32.875 | 0.9935 |
-
-The live control uses one 256-value work item and one device launch per side.
-Earlier multi-row figures were invalid host-loop timings. Absolute values vary
-with load; the threshold is `CCE_us / VMI_us >= 0.98`. Requested behavior is to
-keep maxima, scales, packed FP8 values, and predicates live across the entire
-round trip without a store/reload or layout materialization.
+The benchmark first checks finite output and CCE/VMI agreement within one FP8
+quantization step.  It also emits both batched events and raw profiler records.
+The profiler record parser is intentionally marked `msprof_debug_reps`, rather
+than an acceptance result: the currently observed CCE record is implausibly
+short for the full tensor traffic and must be reconciled against the complete
+kernel timeline before publishing a ratio.  This guard prevents the report
+from repeating the earlier launch-floor error in the opposite direction.
