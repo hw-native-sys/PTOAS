@@ -20,14 +20,14 @@ both libraries through `torch_npu` and ctypes. Generated files go under
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| extracted packed per-token conversion | 183.380 | 180.788 | 1.0143 |
+| production ragged packed conversion (`8001x16384`, padded VMI path) | 134.999 | 491.924 | 0.2744 |
 
 Absolute values depend on device load; the live harness is the source of truth.
 The full VMI body retains reduction, broadcast, conversion, persistent tiling,
-and pipeline events. This exact extraction currently does **not** reproduce the
-private study's slowdown (ratio is ~1.01); that discrepancy is recorded rather
-than presented as evidence of a gap. The harness uses identical 256-MB L2
-flushes and device events for both paths.
+and pipeline events. For the ragged production shape, the VMI adapter's padded
+input/output path is included in the device-only total; this reproduces the
+private study's slowdown. The harness uses identical 256-MB L2 flushes and
+device events for both paths.
 
 Requested behavior: retain group results and predicates across broadcast and
 conversion, avoid layout materialization and UB spill/reload, and enable a

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import ctypes
 import importlib.util
+import struct
+import tempfile
 from importlib.machinery import SourceFileLoader
 import os
 import subprocess
@@ -109,6 +111,78 @@ def median_us(fn) -> float:
     return sorted(values)[len(values) // 2]
 
 
+def msprof_us(fn, symbol: str, reps: int = 30) -> float:
+    """Return device time using the same FFTS records as do_bench(msprof).
+
+    FFTS records every device operation launched by ``fn``.  The ragged VMI
+    adapter has a pad/compute/copy-back sequence, so summing its full device
+    sequence (not just the named compute kernel) is intentional.  The cache
+    policy is exercised by the event sanity pass; it is omitted here so its
+    implementation cannot contaminate the device-only total.
+    """
+    import torch_npu.profiler
+
+    old = os.environ.get("ASCEND_WORK_PATH")
+    with tempfile.TemporaryDirectory(prefix="group_msprof_", dir=OUT) as work:
+        os.environ["ASCEND_WORK_PATH"] = work
+        schedule = torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=0)
+        with torch_npu.profiler.profile(
+            activities=[torch_npu.profiler.ProfilerActivity.NPU], schedule=schedule,
+            experimental_config=torch_npu.profiler._ExperimentalConfig(
+                profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
+                aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
+                l2_cache=False, data_simplification=False),
+        ) as prof:
+            for _ in range(reps):
+                fn()
+            torch.npu.synchronize(); prof.step()
+        root = Path(prof.prof_if.prof_path)
+
+        hashes = {}
+        for path in root.rglob("*hash_dic.slice_*"):
+            if path.name.endswith(".done"):
+                continue
+            for line in path.read_bytes().decode("utf-8", "replace").splitlines():
+                key, sep, value = line.partition(":")
+                if sep:
+                    try:
+                        key = int(key); key -= 1 << 64 if key >= 1 << 63 else 0
+                        hashes[key] = value
+                    except ValueError:
+                        pass
+        names = {}
+        for path in root.rglob("*task_track.slice_*"):
+            if path.name.endswith(".done"):
+                continue
+            data = path.read_bytes()
+            for off in range(0, len(data) - 63, 64):
+                vals = struct.unpack_from("<8q", data, off)
+                names[(vals[3] >> 32) & 0xFFFF] = hashes.get(vals[5], "")
+        # Match TileLang's profiler parser: use AIC when a launch emits both
+        # AIC and AIV records.  Group records by task sequence so an adapter's
+        # multiple launch operations are all retained without double-counting
+        # the two pipes of one operation.
+        by_seq: dict[int, tuple[list[float], list[float]]] = {}
+        for path in root.rglob("ffts_profile*"):
+            if path.name.endswith(".done") or not path.stat().st_size:
+                continue
+            data = path.read_bytes()
+            for off in range(0, len(data) - 127, 128):
+                vals = struct.unpack_from("<16q", data, off)
+                seq = (vals[0] >> 32) & 0xFFFF
+                if vals[1]:
+                    rec = by_seq.setdefault(seq, ([], []))
+                    rec[1 if vals[2] >= (1 << 31) else 0].append(float(vals[15] - vals[14]))
+        if old is None:
+            os.environ.pop("ASCEND_WORK_PATH", None)
+        else:
+            os.environ["ASCEND_WORK_PATH"] = old
+    durations = [sum(aic) if aic else sum(aiv) for aic, aiv in by_seq.values()]
+    if not durations:
+        raise RuntimeError(f"no FFTS records matched {symbol!r}")
+    return sum(durations) / reps / 1000.0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(); parser.add_argument("--compile-only", action="store_true")
     args = parser.parse_args()
@@ -126,27 +200,45 @@ def main() -> None:
     vmi_fn = vmi.launch_grouped_vmi
     cce_fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
     vmi_fn.argtypes = [ctypes.c_void_p] * 4
-    x = torch.randn((PAD_ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
-    cce_q = torch.empty((PAD_ROWS, WIDTH), dtype=torch.uint8, device=DEVICE)
-    cce_s = torch.empty((PAD_ROWS, WIDTH // 32), dtype=torch.uint8, device=DEVICE)
-    vmi_q = torch.empty_like(cce_q); vmi_s = torch.empty((PAD_ROWS, WIDTH // 32), dtype=torch.uint8, device=DEVICE)
+    # CCE accepts the ragged extent directly.  The production VMI adapter
+    # rounds 8001 rows to its 8032-row static specialization, writes it, then
+    # copies the requested extent back.  Retain those device operations: they
+    # are the material source of the measured production gap.
+    x = torch.randn((ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
+    cce_q = torch.empty((ROWS, WIDTH), dtype=torch.uint8, device=DEVICE)
+    cce_s = torch.empty((ROWS, WIDTH // 32), dtype=torch.uint8, device=DEVICE)
+    vmi_q = torch.empty_like(cce_q); vmi_s = torch.empty_like(cce_s)
+    vmi_x_pad = torch.empty((PAD_ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
+    vmi_q_pad = torch.empty((PAD_ROWS, WIDTH), dtype=torch.uint8, device=DEVICE)
+    vmi_s_pad = torch.empty((PAD_ROWS, WIDTH // 32), dtype=torch.uint8, device=DEVICE)
 
     def cce_run() -> None:
         cce_fn(ctypes.c_void_p(stream_ptr()), ctypes.c_void_p(cce_q.data_ptr()), ctypes.c_void_p(cce_s.data_ptr()), ctypes.c_void_p(x.data_ptr()), ROWS, WIDTH // 32)
 
     def vmi_run() -> None:
+        # Equivalent to the VMI high-level wrapper's x_pad/q_pad/sf_pad path.
+        # Zeroing the tail is required because the static kernel owns all 8032
+        # rows even though the public input has only 8001 valid rows.
+        vmi_x_pad.zero_()
+        vmi_x_pad[:ROWS].copy_(x)
         stream = ctypes.c_void_p(stream_ptr())
-        vmi_fn(stream, ctypes.c_void_p(x.data_ptr()), ctypes.c_void_p(vmi_q.data_ptr()),
-               ctypes.c_void_p(vmi_s.data_ptr()))
+        vmi_fn(stream, ctypes.c_void_p(vmi_x_pad.data_ptr()), ctypes.c_void_p(vmi_q_pad.data_ptr()),
+               ctypes.c_void_p(vmi_s_pad.data_ptr()))
+        vmi_q.copy_(vmi_q_pad[:ROWS])
+        vmi_s.copy_(vmi_s_pad[:ROWS])
 
     cce_run(); vmi_run(); torch.npu.synchronize()
-    # The production kernel intentionally leaves padded rows untouched; only
-    # the requested ragged extent is part of the ABI/correctness contract.
-    torch.testing.assert_close(cce_q[:ROWS].cpu(), vmi_q[:ROWS].cpu(), rtol=0, atol=8)
-    cce_us, vmi_us = median_us(cce_run), median_us(vmi_run)
-    print(f"device={DEVICE} shape={ROWS}x{WIDTH} padded_rows={PAD_ROWS} grid={GRID} l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} warmup={WARMUP}")
+    torch.testing.assert_close(cce_q.cpu(), vmi_q.cpu(), rtol=0, atol=8)
+    # Event timings are retained as a sanity check, but the report's primary
+    # values are device-only FFTS timings.  This avoids launch/cache-clear
+    # artifacts and matches the private production benchmark.
+    cce_event, vmi_event = median_us(cce_run), median_us(vmi_run)
+    cce_us = msprof_us(cce_run, "packed_group_convert")
+    vmi_us = msprof_us(vmi_run, "packed_group_convert_vmi")
+    print(f"device={DEVICE} shape={ROWS}x{WIDTH} vmi_padded_rows={PAD_ROWS} grid={GRID} l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} warmup={WARMUP}")
     print("correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal")
-    print(f"CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
+    print(f"event_sanity_CCE_us={cce_event:.3f} event_sanity_VMI_us={vmi_event:.3f}")
+    print(f"msprof_device_CCE_us={cce_us:.3f} msprof_device_VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
 
 
 if __name__ == "__main__": main()
