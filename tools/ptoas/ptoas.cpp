@@ -3409,6 +3409,11 @@ int mlir::pto::compilePTOASModule(
                     "disabled.\n";
     return 1;
   }
+  if (hasTAssign && enableUnifiedSync) {
+    llvm::errs() << "Error: pto.tassign requires --enable-unified-sync to be "
+                    "disabled.\n";
+    return 1;
+  }
 
   bool hasUserPlannedMultiAddrs = false;
   module->walk([&](pto::AllocMultiTileOp op) {

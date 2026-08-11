@@ -1,5 +1,6 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 %s | FileCheck %s
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync %s 2>&1 | FileCheck %s --check-prefix=ERR
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-unified-sync %s 2>&1 | FileCheck %s --check-prefix=UNIERR
 // RUN: not ptoas --pto-level=level2 --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=LV2ERR
 
 module {
@@ -42,4 +43,9 @@ module {
 // CHECK: TPRINT{{(<.*>)?}}([[T]]);
 
 // ERR: pto.tassign requires --enable-insert-sync to be disabled
+// Every automatic synchronization mode must refuse pto.tassign, not just the ones that
+// happened to be listed first. The address a tassign rebinds is not modelled by the
+// memory analysis all of these modes share, so a mode that accepts it silently emits
+// synchronization computed against the wrong addresses.
+// UNIERR: pto.tassign requires --enable-unified-sync to be disabled
 // LV2ERR: pto.tassign is only supported when --pto-level=level3.
