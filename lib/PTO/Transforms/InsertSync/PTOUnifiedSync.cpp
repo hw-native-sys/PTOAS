@@ -329,6 +329,26 @@ struct PTOUnifiedSyncPass
     // colourer sees the reduced demand.
     unified::BufferRouteResult route = unified::routeBuffers(model);
 
+    // REFUSED BEFORE ANY HAZARD IS TOUCHED. A split hazard names both a routed and an
+    // unrouted buffer, and routing is all-or-nothing, so there is no correct thing to do
+    // with it: stamping BUFID suppresses the event ops of the unrouted half without
+    // giving it a token, and declining leaves the routed half's buffer half-converted.
+    // The plan is rejected whole instead, while `model.hazards` is still untouched --
+    // `RouteToBufid` below is the first mutation, and it must not run on a plan this
+    // shape.
+    //
+    // Closing routing over each buffer-hazard component would let the plan proceed with
+    // a smaller routed set. That is a strictly better answer and a separate change; it is
+    // not needed for correctness, and refusing is what makes the invariant hold today.
+    if (route.splitHazards != 0) {
+      func.emitError()
+          << "unified allocator: " << route.splitHazards
+          << " hazard(s) span both a routed and an unrouted buffer, and routing is "
+             "all-or-nothing, so no mechanism can carry them wholly -- refusing the "
+             "routing plan rather than emitting a partially converted one";
+      return signalPassFailure();
+    }
+
     // --- Buffer-ID emission ---------------------------------------------------
     //
     // Three things must land TOGETHER; any two without the third is the

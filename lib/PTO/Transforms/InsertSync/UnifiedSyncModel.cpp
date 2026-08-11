@@ -674,9 +674,9 @@ BufferRouteResult mlir::pto::unified::routeBuffers(SyncModel &model) {
     ++result.routed;
   }
 
-  // ALL-OR-NOTHING, asserted rather than assumed. A hazard touching both a routed
-  // and an unrouted buffer cannot be wholly on one mechanism -- that is the split
-  // that hangs, so it is counted and must be 0.
+  // ALL-OR-NOTHING. A hazard touching both a routed and an unrouted buffer cannot be
+  // wholly on one mechanism -- that is the split that hangs. Counted here; the caller
+  // refuses the whole plan when this is non-zero, before it mutates any hazard.
   for (const Hazard &h : model.hazards) {
     if (h.isBarrier() || h.bufferClusters.empty())
       continue;
