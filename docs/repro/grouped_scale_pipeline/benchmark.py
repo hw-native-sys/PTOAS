@@ -69,6 +69,17 @@ extern "C" void launch_grouped_reference(void* s, void* out, void* sf, void* x, 
 def build_vmi() -> Path:
     OUT.mkdir(exist_ok=True)
     env = os.environ.copy(); env.pop("PYTHONPATH", None)
+    import sys
+    os.environ.setdefault("PTOAS_BIN", "/home/jzhuang/.conda/envs/cann91_dev/bin/ptoas")
+    root = HERE.parent.parent.parent
+    sys.path.insert(0, str(root / "ptodsl"))
+    import importlib
+    import site
+    ptoas = importlib.import_module("ptoas")
+    for base in site.getsitepackages():
+        bindings = str(Path(base) / "ptoas")
+        if bindings not in ptoas.__path__:
+            ptoas.__path__.append(bindings)
     from ptodsl._runtime.native_build import _compile_launch_cpp, _link_shared_library, _run_ptoas
     obj, host, library = OUT / "grouped_vmi.o", OUT / "grouped_vmi_host.o", OUT / "libgrouped_vmi.so"
     source = HERE / "fixtures/production_group_vmi.pto"

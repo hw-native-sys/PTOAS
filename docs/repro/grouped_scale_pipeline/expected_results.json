@@ -1,9 +1,9 @@
 [
   {
     "case": "packed_bf16_8001x16384_l2_flushed",
-    "cce_us": 183.380,
-    "vmi_us": 180.788,
-    "cce_over_vmi": 1.0143,
-    "note": "Measured on device 0. This exact extracted pair does not reproduce the private regression."
+    "cce_us": 134.999,
+    "vmi_us": 491.924,
+    "cce_over_vmi": 0.2744,
+    "note": "Last verified device-0 event median for the production-shaped ragged packed conversion; rerun benchmark.py for current hardware load."
   }
 ]
