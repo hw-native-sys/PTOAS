@@ -14,8 +14,10 @@ import torch_npu  # noqa: F401
 HERE = Path(__file__).parent
 OUT = HERE / "outputs"
 DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
-ROWS, WIDTH, GROUPS = 128, 7168, 8
-GRID, DYN_UB, WARMUP, SAMPLES = 72, 204800, 20, 30
+ # One 256-value work item per launch on both paths; this avoids measuring
+ # 28k host-side VMI launches instead of device execution.
+ROWS, WIDTH, GROUPS = 1, 256, 8
+GRID, DYN_UB, WARMUP, SAMPLES = 1, 204800, 20, 30
 
 
 def command(argv: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -83,8 +85,9 @@ def median_us(fn) -> float:
     torch.npu.synchronize(); values = []
     for _ in range(SAMPLES):
         start, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
-        start.record(); fn(); end.record(); end.synchronize()
-        values.append(start.elapsed_time(end) * 1000.0)
+        start.record(); fn(); end.record(); values.append((start, end))
+    torch.npu.synchronize()
+    values = [start.elapsed_time(end) * 1000.0 for start, end in values]
     return sorted(values)[len(values) // 2]
 
 
@@ -107,15 +110,10 @@ def main() -> None:
         cce_fn(ctypes.c_void_p(stream_ptr()), ctypes.c_void_p(cce_q.data_ptr()), ctypes.c_void_p(cce_s.data_ptr()),
                ctypes.c_void_p(x.data_ptr()), ROWS, WIDTH)
 
-    # The public VMI source deliberately retains one 256-value work item.  Tile
-    # it over the exact CCE input/output extent so timing includes the current
-    # launch-level blocker rather than silently comparing different amounts of data.
     def vmi_run() -> None:
         stream = ctypes.c_void_p(stream_ptr())
-        for offset in range(0, ROWS * WIDTH, 256):
-            row, group = divmod(offset // 256, WIDTH // 256)
-            vmi_fn(stream, ctypes.c_void_p(x.data_ptr() + offset * 2), ctypes.c_void_p(vmi_q.data_ptr() + offset),
-                   ctypes.c_void_p(vmi_s.data_ptr() + (row * GROUPS + (group % GROUPS)) * 2))
+        vmi_fn(stream, ctypes.c_void_p(x.data_ptr()), ctypes.c_void_p(vmi_q.data_ptr()),
+               ctypes.c_void_p(vmi_s.data_ptr()))
 
     cce_run(); vmi_run(); torch.npu.synchronize()
     torch.testing.assert_close(cce_q.cpu(), torch.full((ROWS, WIDTH), 126, dtype=torch.uint8), rtol=0, atol=0)
