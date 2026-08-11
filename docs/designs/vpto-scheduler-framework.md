@@ -118,10 +118,11 @@ RegionBuilder 先产生 `VPTOSchedRegion`，DAGBuilder 再按 region 中的原�
 | 条件 | 分类 | RegionBuilder 行为 |
 | --- | --- | --- |
 | operation 为空、是 terminator 或包含 region | `SchedulingBoundary` | 结束当前片段，operation 不进入 region。 |
-| operation 实现 `VPTOSchedulingOpInterface` | 使用接口返回的分类 | 当前默认接口实现在能确定 execution pipe 或存在任一调度 effect 时返回 `Schedulable`；两者都没有时保留为 `SchedulingBoundary`。 |
+| operation 实现 `VPTOSchedulingOpInterface` | 使用接口返回的分类 | 当前默认接口实现在能确定 execution pipe 或存在任一调度 effect 时返回 `Schedulable`；接口也可显式返回 `SchedulingBoundary` 或 `Unsupported`。 |
 | operation 未实现调度接口，且 `isMemoryEffectFree` | `Structural` | 与相邻 `Schedulable` operation 一同进入 region，用于保留 SSA 计算；纯 structural 片段不生成 region。 |
-| operation 未实现调度接口，且属于 PTO dialect | `Unsupported` | 结束当前片段，operation 不进入 region，并计入 unsupported coverage。 |
-| 其他 operation | `SchedulingBoundary` | 结束当前片段，operation 不进入 region。 |
+| 未命中以上规则 | `SchedulingBoundary`，`classificationKnown=false` | 作为保守边界结束当前片段，并计入 unclassified coverage。 |
+
+`SchedulingBoundary` 和 `Unsupported` 都会切断 region，但含义不同。前者表示接口明确声明的调度边界；后者表示接口明确声明 scheduler 当前不支持该 operation。`Unsupported` 不作为 dialect 或接口缺失的默认值。任何缺少显式分类的 operation 都使用安全的 boundary 行为，并由 `classificationKnown=false` 保留“尚未分类”的事实。
 
 默认接口实现解析 execution pipe 只是为了确认该 operation 具有已知的执行类别。解析优先级为：
 
@@ -131,7 +132,7 @@ RegionBuilder 先产生 `VPTOSchedRegion`，DAGBuilder 再按 region 中的原�
 4. SIMT family fallback 为 `PIPE_S`；
 5. MTE family fallback 为 `PIPE_ALL`。
 
-这组 fallback 覆盖所有实现调度接口的 PTO micro-op family，范围大于 scheduler pass 实际分析的 vecscope。当前 pass 只消费 vecscope，规范化流程不应在 vecscope 中产生 Cube operation；`Cube -> PIPE_M` 用于通用接口语义和注册覆盖，不表示 vecscope scheduler 支持调度 Cube operation。当前 vecscope verifier 没有按 operation family 建立完整白名单，因此该 fallback 也为手写或非规范 IR 提供保守分类。
+这组 fallback 由所有实现调度接口的 PTO micro-op family 共用，范围大于 scheduler pass 实际分析的 vecscope。当前 pass 只消费 vecscope，规范化流程不应在 vecscope 中产生 Cube operation；`Cube -> PIPE_M` 只保证通用接口查询能够描述 Cube family，不表示 vecscope scheduler 支持调度 Cube operation。当前 vecscope verifier 没有按 operation family 建立完整白名单，因此该 fallback 也为手写或非规范 IR 提供保守分类。
 
 MTE 的 `PIPE_ALL` 只表示尚无精确 execution pipe，不能解释为 operation 占用所有硬件 pipe。进入 TargetModel 后，MTE family 仍映射到 MTE sched class；资源映射见 8.2 节。
 
@@ -179,10 +180,11 @@ reason 的固定形式为：
 coverage 按函数统计所有遍历到的 vecscope 内操作，不限于已生成的 region：
 
 - 四类操作总数；
+- unclassified 操作总数；
 - 每种 `Unsupported` 操作的数量；
 - 每种 unclassified 操作的数量。
 
-unclassified 特指：实现调度接口、没有 region、不是 terminator，但默认分类仍为 `SchedulingBoundary` 的操作。unsupported 和 unclassified 名称在输出前按字典序排序。vecscope verifier 会在调度前拒绝 pipeline、system 和 cache 同步操作，因此这些操作不参与函数级 coverage。
+unclassified 特指：未命中显式分类规则，因而以 `SchedulingBoundary` 和 `classificationKnown=false` 保守处理的操作。`Unsupported` 则必须由调度接口显式返回，并携带 `classificationKnown=true`。unsupported 和 unclassified 名称在输出前按字典序排序。vecscope verifier 会在调度前拒绝 pipeline、system 和 cache 同步操作，因此这些操作不参与函数级 coverage。
 
 ## 5. DAG 数据结构
 
@@ -331,7 +333,7 @@ height(node) = max(height(node), height(successor) + edge.latency)
 
 数据结构已经预留以下字段：
 
-- machine：target、version、issue width、micro-op buffer size、completeness；
+- machine：target、version、issue width、micro-op buffer size；
 - resource：units、buffer size、group members；
 - sched class：micro-ops、write latency、resource reservations、read advance；
 - pressure set：limit、weight、spill cost。
@@ -496,7 +498,7 @@ top.hazard.commit(unit, Top, cycle)
 
 ### 12.4 Coverage 报告
 
-每个函数最后输出四类 coverage 总数，以及排序后的 `unsupported-op` 和 `unclassified-op` 明细。unknown sched class 不在该明细中，而是在 region 汇总的 `unknown-classes` 和节点 `known=false` 中体现；其保序原因由 artificial edge 输出。
+每个函数最后输出四类 operation 总数和 unclassified 总数，以及排序后的 `unsupported-op` 和 `unclassified-op` 明细。unclassified 是分类完整性元数据，其 operation 已计入 `SchedulingBoundary`，因此不构成第五种 scheduling class。unknown sched class 不在该明细中，而是在 region 汇总的 `unknown-classes` 和节点 `known=false` 中体现；其保序原因由 artificial edge 输出。
 
 ## 13. 当前保证与限制
 
@@ -529,5 +531,5 @@ top.hazard.commit(unit, Top, cycle)
 - SPR/CTRL 的 Data、Anti、Output edge；
 - vecscope 内 `mem_bar` 的完整 barrier 顺序；
 - pipeline、buffer-id、system、cache 和 SIMT 同步操作的 vecscope verifier 与自动推断边界；
-- 登记接口覆盖无 unclassified 操作；
+- 未显式分类的 operation 采用安全 boundary，并由函数 coverage 报告为 unclassified；
 - CV 分裂时只报告 Vector 子模块。

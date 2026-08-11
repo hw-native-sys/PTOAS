@@ -39,7 +39,6 @@ public:
     machine.target = "test";
     machine.version = "tracker-test-v1";
     machine.issueWidth = 2;
-    machine.completeness = VPTOSchedModelCompleteness::Complete;
 
     resources = {
         {MultiUnitResource, "multi-unit", 2, 0, {}},

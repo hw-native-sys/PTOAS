@@ -24,7 +24,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
 
 namespace mlir::pto {
 
@@ -93,16 +92,6 @@ struct VPTOSchedulingSemantics {
   SmallVector<VPTOMemoryAccess> memoryAccesses;
 };
 
-/// Input-independent audit of every registered PTO operation carrying the
-/// emission scheduling interface.
-struct VPTORegisteredSchedulingCoverage {
-  unsigned registered = 0;
-  unsigned schedulable = 0;
-  unsigned boundary = 0;
-  SmallVector<std::string> boundaryOps;
-  SmallVector<std::string> unclassifiedOps;
-};
-
 /// Return the normalized semantics for any operation at the VPTO emission
 /// scheduling boundary. Operations implementing VPTOSchedulingOpInterface
 /// provide their semantic record through that interface; other operations are
@@ -117,11 +106,6 @@ VPTOSchedulingClass classifyVPTOSchedulingOp(Operation *op);
 /// VPTO micro-op families.  Individual ops can override the interface when a
 /// future target needs more precise semantics.
 VPTOSchedulingSemantics getDefaultVPTOSchedulingSemantics(Operation *op);
-
-/// Audit the complete registered emission-op table without requiring an op to
-/// occur in the input module.
-VPTORegisteredSchedulingCoverage
-auditRegisteredVPTOSchedulingOps(MLIRContext &context);
 
 llvm::StringRef stringifyVPTOSchedulingClass(VPTOSchedulingClass value);
 

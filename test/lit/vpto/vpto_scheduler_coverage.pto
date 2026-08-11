@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
+// RUN: FileCheck %s < %t
+
+// An operation without an explicit scheduling classification is excluded from
+// the region as a conservative boundary and reported as unclassified. It is
+// not implicitly treated as an explicitly unsupported operation.
+
+// CHECK-LABEL: vpto-scheduler: function=unclassified_fallback
+// CHECK: vpto-scheduler: block=0 regions=1
+// CHECK: vpto-scheduler: coverage schedulable=1 structural=0 boundary=1 unsupported=0 unclassified=1
+// CHECK: vpto-scheduler: boundary-reason=boundary:pto.set_mov_pad_val count=1
+// CHECK: vpto-scheduler: unclassified-op=pto.set_mov_pad_val count=1
+// CHECK-NOT: vpto-scheduler: unsupported-op=pto.set_mov_pad_val
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @unclassified_fallback() {
+    %c0 = arith.constant 0 : i32
+    pto.vecscope {
+      pto.set_mov_pad_val %c0 : i32
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    }
+    return
+  }
+}

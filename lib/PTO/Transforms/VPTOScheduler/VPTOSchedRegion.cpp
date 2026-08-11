@@ -41,6 +41,13 @@ VPTOSchedulingCoverage::getCount(VPTOSchedulingClass schedulingClass) const {
   return classCounts[getClassIndex(schedulingClass)];
 }
 
+unsigned VPTOSchedulingCoverage::getUnclassifiedCount() const {
+  unsigned count = 0;
+  for (const auto &entry : unclassifiedOps)
+    count += entry.getValue();
+  return count;
+}
+
 std::string mlir::pto::getVPTOSchedulingBoundaryReason(Operation *op) {
   if (!op)
     return "block-boundary";

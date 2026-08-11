@@ -12,9 +12,7 @@
 #include "PTO/IR/PTO.h"
 
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/IR/OperationSupport.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -24,22 +22,6 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
-template <typename... OpTys>
-static bool isOneOf(RegisteredOperationName operation) {
-  return ((operation.getTypeID() == TypeID::get<OpTys>()) || ...);
-}
-
-static bool hasRegisteredSchedulingClass(RegisteredOperationName operation) {
-  if (operation.hasInterface<OpPipeInterface>() ||
-      operation.hasInterface<VectorMicroOpInterface>() ||
-      operation.hasInterface<MteOpInterface>() ||
-      operation.hasInterface<CubeMicroOpInterface>() ||
-      operation.hasInterface<SimtOpInterface>())
-    return true;
-
-  return isOneOf<MemBarOp, GetCtrlOp, SetCtrlOp>(operation);
-}
-
 static std::optional<PIPE> getExecutionPipe(Operation *op) {
   if (auto pipeOp = dyn_cast<OpPipeInterface>(op))
     return pipeOp.getPipe();
@@ -304,35 +286,11 @@ VPTOSchedulingSemantics mlir::pto::getVPTOSchedulingSemantics(Operation *op) {
     return semantics;
   }
 
-  if (op->getDialect() &&
-      op->getDialect()->getNamespace() == PTODialect::getDialectNamespace()) {
-    semantics.schedulingClass = VPTOSchedulingClass::Unsupported;
-    semantics.classificationKnown = true;
-    return semantics;
-  }
-
-  semantics.classificationKnown = true;
+  // Any operation that reaches this fallback has no explicit scheduling
+  // classification. Keep it out of scheduling regions conservatively and let
+  // function coverage report the missing classification. Unsupported is
+  // reserved for operations whose scheduling interface returns it explicitly.
   return semantics;
-}
-
-VPTORegisteredSchedulingCoverage
-mlir::pto::auditRegisteredVPTOSchedulingOps(MLIRContext &context) {
-  VPTORegisteredSchedulingCoverage coverage;
-  for (RegisteredOperationName operation : context.getRegisteredOperations()) {
-    if (operation.getDialectNamespace() != PTODialect::getDialectNamespace() ||
-        !operation.hasInterface<VPTOSchedulingOpInterface>())
-      continue;
-
-    ++coverage.registered;
-    if (hasRegisteredSchedulingClass(operation)) {
-      ++coverage.schedulable;
-      continue;
-    }
-    coverage.unclassifiedOps.push_back(operation.getStringRef().str());
-  }
-  llvm::sort(coverage.boundaryOps);
-  llvm::sort(coverage.unclassifiedOps);
-  return coverage;
 }
 
 VPTOSchedulingClass mlir::pto::classifyVPTOSchedulingOp(Operation *op) {

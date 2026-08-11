@@ -160,6 +160,7 @@ static void printCoverage(llvm::raw_ostream &os,
      << " boundary="
      << coverage.getCount(VPTOSchedulingClass::SchedulingBoundary)
      << " unsupported=" << coverage.getCount(VPTOSchedulingClass::Unsupported)
+     << " unclassified=" << coverage.getUnclassifiedCount()
      << '\n';
 
   SmallVector<std::pair<std::string, unsigned>> boundaryReasons;
@@ -187,20 +188,6 @@ static void printCoverage(llvm::raw_ostream &os,
        << '\n';
 }
 
-static void
-printRegisteredCoverage(llvm::raw_ostream &os,
-                        const VPTORegisteredSchedulingCoverage &coverage) {
-  os << "vpto-scheduler: registration-coverage registered="
-     << coverage.registered << " schedulable=" << coverage.schedulable
-     << " boundary=" << coverage.boundary
-     << " unclassified=" << coverage.unclassifiedOps.size() << '\n';
-  for (StringRef name : coverage.boundaryOps)
-    os << "vpto-scheduler: registered-boundary-op=" << name
-       << " reason=explicit-scheduling-boundary\n";
-  for (StringRef name : coverage.unclassifiedOps)
-    os << "vpto-scheduler: registered-unclassified-op=" << name << '\n';
-}
-
 static void analyzeFunction(func::FuncOp func, llvm::raw_ostream &os,
                             const VPTOSchedModel &model, StringRef mode) {
   SmallVector<Operation *> vecScopes;
@@ -214,8 +201,6 @@ static void analyzeFunction(func::FuncOp func, llvm::raw_ostream &os,
   const VPTOSchedMachineModel &machine = model.getMachineModel();
   os << "vpto-scheduler: function=" << func.getSymName() << " mode=" << mode
      << " target=" << machine.target << " model=" << machine.version
-     << " completeness="
-     << stringifyVPTOSchedModelCompleteness(machine.completeness)
      << " issue-width=" << machine.issueWidth << '\n';
 
   VPTOSchedulingCoverage coverage;
@@ -289,7 +274,6 @@ struct VPTOSchedulerPass
     VPTOGenericA5SchedModel model;
     std::string report;
     llvm::raw_string_ostream os(report);
-    printRegisteredCoverage(os, auditRegisteredVPTOSchedulingOps(getContext()));
     getOperation().walk(
         [&](func::FuncOp func) { analyzeFunction(func, os, model, mode); });
     os.flush();

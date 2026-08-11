@@ -21,7 +21,6 @@
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
 
 #include <optional>
 #include <string>
@@ -32,14 +31,11 @@ using VPTOSchedResourceID = unsigned;
 using VPTOSchedClassID = unsigned;
 using VPTOPressureSetID = unsigned;
 
-enum class VPTOSchedModelCompleteness { Minimal, Partial, Complete };
-
 struct VPTOSchedMachineModel {
   std::string target;
   std::string version;
   unsigned issueWidth = 1;
   unsigned microOpBufferSize = 0;
-  VPTOSchedModelCompleteness completeness = VPTOSchedModelCompleteness::Minimal;
 };
 
 struct VPTOSchedResource {
@@ -118,9 +114,6 @@ private:
   SmallVector<VPTORegPressureSet> pressureSets;
   SmallVector<VPTOSchedClass> schedClasses;
 };
-
-StringRef
-stringifyVPTOSchedModelCompleteness(VPTOSchedModelCompleteness completeness);
 
 } // namespace mlir::pto
 

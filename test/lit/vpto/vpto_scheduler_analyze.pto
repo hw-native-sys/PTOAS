@@ -19,7 +19,7 @@
 // OFF-LABEL: func.func @scheduler_analysis
 // OFF: pto.vadd
 
-// ANALYZE: vpto-scheduler: function=scheduler_analysis mode=analyze target=a5 model=generic-a5-v1 completeness=minimal issue-width=1
+// ANALYZE: vpto-scheduler: function=scheduler_analysis mode=analyze target=a5 model=generic-a5-v1 issue-width=1
 // ANALYZE: vpto-scheduler: block=0 regions=1
 // ANALYZE: vpto-scheduler: region=0 before=block-start after=block-end nodes=3
 // ANALYZE: vpto-scheduler: node=0 original-index=0 op=pto.pset_b32 semantic=schedulable sched-class=vector known=true
@@ -29,7 +29,7 @@
 // ANALYZE-SAME: delta={vector:0,predicate:1
 // ANALYZE: vpto-scheduler: timeline cycle=0 issue=1
 // ANALYZE-NOT: op=pto.set_ctrl
-// ANALYZE: vpto-scheduler: coverage schedulable=3 structural=0 boundary=0 unsupported=0
+// ANALYZE: vpto-scheduler: coverage schedulable=3 structural=0 boundary=0 unsupported=0 unclassified=0
 
 // ON: vpto-scheduler: function=scheduler_analysis mode=on
 // INVALID: error: unknown VPTO scheduler mode 'invalid'

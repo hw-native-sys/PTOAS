@@ -22,7 +22,7 @@
 // INVALID: for the --vpto-scheduler option: Cannot find option named 'invalid'!
 // MISSING-TARGET: error: VPTO scheduler requires target architecture 'a5', but neither this module nor an enclosing module defines 'pto.target_arch'
 // PIPELINE: vpto-scheduler: function=auto_vecscope_infer_simple mode=analyze
-// PIPELINE: vpto-scheduler: coverage {{.*}} unsupported=0
+// PIPELINE: vpto-scheduler: coverage {{.*}} unsupported=0 unclassified=0
 // PIPELINE-NOT: vpto-scheduler: unsupported-op=
 // PIPELINE-NOT: vpto-scheduler: unclassified-op=
 

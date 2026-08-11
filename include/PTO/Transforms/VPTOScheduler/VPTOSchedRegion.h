@@ -37,6 +37,7 @@ struct VPTOSchedulingCoverage {
 
   void record(Operation *op, const VPTOSchedulingSemantics &semantics);
   unsigned getCount(VPTOSchedulingClass schedulingClass) const;
+  unsigned getUnclassifiedCount() const;
 };
 
 struct VPTOSchedRegion {

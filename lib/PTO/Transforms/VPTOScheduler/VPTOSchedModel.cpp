@@ -14,7 +14,6 @@
 #include "PTO/IR/VPTOScheduling.h"
 
 #include "mlir/IR/BuiltinTypes.h"
-#include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -81,7 +80,6 @@ VPTOGenericA5SchedModel::VPTOGenericA5SchedModel() {
   machine.version = "generic-a5-v1";
   machine.issueWidth = 1;
   machine.microOpBufferSize = 0;
-  machine.completeness = VPTOSchedModelCompleteness::Minimal;
 
   resources = {
       {ScalarResource, "scalar", 1, 0, {}},
@@ -148,17 +146,4 @@ VPTOGenericA5SchedModel::getPressure(Value value) const {
   if (type.isIntOrIndexOrFloat())
     return {{ScalarPressure, 1}};
   return {{SpecialPressure, 1}};
-}
-
-StringRef mlir::pto::stringifyVPTOSchedModelCompleteness(
-    VPTOSchedModelCompleteness completeness) {
-  switch (completeness) {
-  case VPTOSchedModelCompleteness::Minimal:
-    return "minimal";
-  case VPTOSchedModelCompleteness::Partial:
-    return "partial";
-  case VPTOSchedModelCompleteness::Complete:
-    return "complete";
-  }
-  llvm_unreachable("unknown VPTO scheduling model completeness");
 }

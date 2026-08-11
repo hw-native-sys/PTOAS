@@ -14,7 +14,7 @@
 // CHECK: kind=data strength=must latency=1 reason=implicit read of AR
 // CHECK: kind=output strength=must latency=0 reason=implicit write of AR
 // CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on AR
-// CHECK: coverage schedulable=4 structural=1 boundary=0 unsupported=0
+// CHECK: coverage schedulable=4 structural=1 boundary=0 unsupported=0 unclassified=0
 // CHECK-NOT: vpto-scheduler: function=simt_barrier
 // CHECK-NOT: vpto-scheduler: function=pipe_classification
 
@@ -40,7 +40,7 @@
 
 // CHECK-LABEL: vpto-scheduler: function=strict_vecscope
 // CHECK: op=pto.sprclr semantic=schedulable sched-class=vector known=true
-// CHECK: coverage schedulable=1 structural=0 boundary=0 unsupported=0
+// CHECK: coverage schedulable=1 structural=0 boundary=0 unsupported=0 unclassified=0
 
 module attributes {pto.target_arch = "a5"} {
   func.func @memory_and_implicit(%dst: !pto.ptr<ui32, ub>) {
