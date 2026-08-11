@@ -19,13 +19,13 @@ With `ACL_DEVICE_ID`, benchmark mode compiles and launches
 the direct CCE pointer-table kernel and the fixed-argument VMI control through
 `torch_npu`, checks both host goldens, and retains the API rejection test.
 
-| Verified device event median | Direct CCE us | Fixed-argument VMI us | CCE/VMI |
+| Verified device-0 event median | Direct CCE us | Fixed-argument VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| 10 layers, six device pointer tables | 37.686 | 159.406 | 0.2364 |
+| 10 transfers, one launch per side | 36.992 | 31.588 | 1.1711 |
 
 The live harness allocates each layer at the generated block stride and stores
 the six table entries as device addresses, so this is an actual pointer-table
-launch rather than a host-only ABI sketch. Requested behavior: a
+launch rather than a host-only ABI sketch. The VMI value is an ABI-only control, not the full pointer-table workload. Requested behavior: a
 bounds-checkable load from
 `ptr<ptr<T, gm>, gm>` yielding `ptr<T, gm>`, correct memory effects, and host
 launcher support for an address-table tensor. It must remove the bulk staging

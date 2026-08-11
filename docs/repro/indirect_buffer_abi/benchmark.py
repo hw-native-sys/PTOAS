@@ -20,7 +20,8 @@ def med(fn):
  for _ in range(WARMUP): fn()
  torch.npu.synchronize(); v=[]
  for _ in range(SAMPLES):
-  a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); fn(); z.record(); z.synchronize(); v.append(a.elapsed_time(z)*1000)
+  a,z=torch.npu.Event(enable_timing=True),torch.npu.Event(enable_timing=True); a.record(); fn(); z.record(); v.append((a,z))
+ torch.npu.synchronize(); v=[a.elapsed_time(z)*1000 for a,z in v]
  return sorted(v)[len(v)//2]
 def main():
  ap=argparse.ArgumentParser(); ap.add_argument('--compile-only',action='store_true'); a=ap.parse_args()
@@ -40,8 +41,7 @@ def main():
  def ptrs(items): return torch.tensor([x.data_ptr() for x in items],dtype=torch.int64,device=DEV)
  tables=[ptrs(comb),ptrs(layer_in),ptrs(layer_out),ptrs(post),ptrs(pre),ptrs(residual)]; stream=lambda:ctypes.c_void_p(sp())
  def cr(): cf(stream(),ctypes.c_void_p(tables[0].data_ptr()),ctypes.c_void_p(initial.data_ptr()),ctypes.c_void_p(tables[1].data_ptr()),ctypes.c_void_p(tables[2].data_ptr()),ctypes.c_void_p(tables[3].data_ptr()),ctypes.c_void_p(tables[4].data_ptr()),ctypes.c_void_p(tables[5].data_ptr()))
- a0=torch.ones(64,dtype=torch.float32,device=DEV); a1=torch.ones_like(a0); a2=torch.empty_like(a0)
- def vr():
-  for _ in range(10): vf(stream(),ctypes.c_void_p(a0.data_ptr()),ctypes.c_void_p(a1.data_ptr()),ctypes.c_void_p(a2.data_ptr()))
- cr(); vr(); torch.npu.synchronize(); assert all(bool(torch.all(x.cpu()==0)) for x in residual) and bool(torch.all(a2.cpu()==1)); cu,vu=med(cr),med(vr); print(f'device={DEV} layers=10 pointer_tables=6 samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS pointer_table_addresses=DEVICE'); print(f'CCE_us={cu:.3f} fixed_argument_VMI_us={vu:.3f} CCE_over_fixed_VMI={cu/vu:.4f}')
+ a0=torch.ones(10*64,dtype=torch.float32,device=DEV); a1=torch.ones_like(a0); a2=torch.empty_like(a0)
+ def vr(): vf(stream(),ctypes.c_void_p(a0.data_ptr()),ctypes.c_void_p(a1.data_ptr()),ctypes.c_void_p(a2.data_ptr()))
+ cr(); vr(); torch.npu.synchronize(); assert all(bool(torch.all(x.cpu()==0)) for x in residual) and bool(torch.all(a2.cpu()==1)); cu,vu=med(cr),med(vr); print(f'device={DEV} cce_layers=10 vmi_fixed_transfers=10 cce_grid=1 vmi_grid=1 samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS pointer_table_addresses=DEVICE'); print(f'CCE_us={cu:.3f} fixed_argument_VMI_us={vu:.3f} CCE_over_fixed_VMI={cu/vu:.4f} comparison=ABI_CONTROL_ONLY')
 if __name__=='__main__': main()
