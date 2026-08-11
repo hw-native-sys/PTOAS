@@ -1,10 +1,8 @@
 # Grouped reduce/scale/convert pipeline is slower through VMI
 
-> **Scope:** the checked-in PTO now retains a production-shaped 72-core,
-> `8192x2048` persistent schedule with double-buffered UB. On the pinned
-> CANN/PTOAS toolchain its device-LLVM backend currently crashes while lowering
-> this full body; that crash is the VMI blocker. The matching CCE body compiles
-> independently and is launchable.
+> **Scope:** the checked-in PTO and CCE retain the extracted production-shaped
+> `8001x16384` packed per-token schedule (8032 padded rows, 72 workers,
+> double-buffered UB). Both compile and launch on the pinned toolchain.
 
 This is a framework-free A5 reproducer for a vector pattern that reduces 256
 BF16 lanes into eight group maxima, expands the eight values, scales the input,
@@ -22,11 +20,14 @@ both libraries through `torch_npu` and ctypes. Generated files go under
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| one 256-value BF16 grouped conversion | 32.922 | 32.680 | 1.0074 |
+| extracted packed per-token conversion | 183.380 | 180.788 | 1.0143 |
 
 Absolute values depend on device load; the live harness is the source of truth.
 The full VMI body retains reduction, broadcast, conversion, persistent tiling,
-and pipeline events; it is no longer a launch-floor micro-control.
+and pipeline events. This exact extraction currently does **not** reproduce the
+private study's slowdown (ratio is ~1.01); that discrepancy is recorded rather
+than presented as evidence of a gap. The harness uses identical 256-MB L2
+flushes and device events for both paths.
 
 Requested behavior: retain group results and predicates across broadcast and
 conversion, avoid layout materialization and UB spill/reload, and enable a

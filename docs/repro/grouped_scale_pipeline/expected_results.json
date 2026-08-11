@@ -1,5 +1,9 @@
 [
-  {"case":"small_fp32_g32","asc_us":5.5633,"vmi_us":6.2189},
-  {"case":"ragged_bf16_g32","asc_us":34.6239,"vmi_us":67.5086},
-  {"case":"large_bf16_g32","asc_us":507.5570,"vmi_us":1810.7665}
+  {
+    "case": "packed_bf16_8001x16384_l2_flushed",
+    "cce_us": 183.380,
+    "vmi_us": 180.788,
+    "cce_over_vmi": 1.0143,
+    "note": "Measured on device 0. This exact extracted pair does not reproduce the private regression."
+  }
 ]

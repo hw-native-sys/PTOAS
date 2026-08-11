@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import importlib.util
+from importlib.machinery import SourceFileLoader
 import os
 import subprocess
 from pathlib import Path
@@ -16,8 +18,9 @@ OUT = HERE / "outputs"
 DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
  # One 256-value work item per launch on both paths; this avoids measuring
  # 28k host-side VMI launches instead of device execution.
-ROWS, WIDTH, GROUPS = 8192, 2048, 8
-GRID, DYN_UB, WARMUP, SAMPLES, BATCH = 72, 139264, 8, 20, 8
+ROWS, PAD_ROWS, WIDTH = 8001, 8032, 16384
+GRID, DYN_UB, WARMUP, SAMPLES = 72, 223232, 8, 30
+L2_FLUSH_MB = 256
 
 
 def command(argv: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -50,9 +53,9 @@ def build_cce() -> Path:
              "--npu-arch=dav-3510", *includes(), "-c", str(HERE / "fixtures/production_group_cce.asc"), "-o", str(body)])
     host_src = OUT / "grouped_host.cpp"
     host_src.write_text('''#include <stdint.h>
-extern "C" __global__ [aicore] void production_group(__gm__ uint8_t*, __gm__ float*, __gm__ uint16_t*, int, int);
+extern "C" __global__ [aicore] void packed_group_convert(__gm__ uint8_t*, __gm__ uint8_t*, __gm__ uint16_t*, int, int);
 extern "C" void launch_grouped_reference(void* s, void* out, void* sf, void* x, int n, int stride) {
-  production_group<<<72, 139264, s>>>((__gm__ uint8_t*)out, (__gm__ float*)sf, (__gm__ uint16_t*)x, n, stride);
+  packed_group_convert<<<72, 223232, s>>>((__gm__ uint8_t*)out, (__gm__ uint8_t*)sf, (__gm__ uint16_t*)x, n, stride);
 }
 ''')
     command([bisheng(), "-xcce", "-Xhost-start", "-Xhost-end", "-fPIC", "-O2", "-std=c++17",
@@ -64,21 +67,24 @@ extern "C" void launch_grouped_reference(void* s, void* out, void* sf, void* x, 
 def build_vmi() -> Path:
     OUT.mkdir(exist_ok=True)
     env = os.environ.copy(); env.pop("PYTHONPATH", None)
-    ptoas = os.environ.get("PTOAS_BIN") or subprocess.check_output(
-        ["conda", "run", "-n", "cann91_dev", "which", "ptoas"], text=True).strip().splitlines()[-1]
+    from ptodsl._runtime.native_build import _compile_launch_cpp, _link_shared_library, _run_ptoas
     obj, host, library = OUT / "grouped_vmi.o", OUT / "grouped_vmi_host.o", OUT / "libgrouped_vmi.so"
-    command([ptoas, "--pto-arch=a5", "--pto-backend=vpto", "--pto-level=level3",
-             str(HERE / "fixtures/grouped_scale_vmi.pto"), "-o", str(obj)], env=env)
+    source = HERE / "fixtures/production_group_vmi.pto"
+    loader = SourceFileLoader("production_group_vmi", str(source))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec); loader.exec_module(module)
+    compiled = module.packed_group_convert_vmi.compile()
+    mlir = OUT / "grouped_vmi.mlir"; mlir.write_text(compiled.mlir_text())
+    _run_ptoas(mlir, obj, target_arch="a5", backend="vpto", pto_level="level3")
     host_src = OUT / "grouped_vmi_host.cpp"
     host_src.write_text('''#include <stdint.h>
-extern "C" __global__ [aicore] void main_kernel(__gm__ uint16_t*, __gm__ uint8_t*, __gm__ float*);
+extern "C" __global__ [aicore] void packed_group_convert_vmi(__gm__ uint16_t*, __gm__ uint8_t*, __gm__ uint8_t*);
 extern "C" void launch_grouped_vmi(void *stream, void *x, void *y, void *s) {
-  main_kernel<<<72, 139264, stream>>>((__gm__ uint16_t*)x, (__gm__ uint8_t*)y, (__gm__ float*)s);
+  packed_group_convert_vmi<<<72, 223232, stream>>>((__gm__ uint16_t*)x, (__gm__ uint8_t*)y, (__gm__ uint8_t*)s);
 }
 ''')
-    command([bisheng(), "-xcce", "-Xhost-start", "-Xhost-end", "-fPIC", "-O2", "-std=c++17",
-             "--cce-aicore-arch=dav-c310", "-c", str(host_src), "-o", str(host)])
-    link([obj, host], library)
+    _compile_launch_cpp(host_src, host, kernel_kind="vector", target_arch="a5", export_macro="GROUPED_VMI_EXPORTS")
+    _link_shared_library(host, obj, library, kernel_kind="vector")
     return library
 
 
@@ -89,15 +95,17 @@ def stream_ptr() -> int:
 
 def median_us(fn) -> float:
     for _ in range(WARMUP):
-        for _ in range(BATCH): fn()
+        fn()
     torch.npu.synchronize(); values = []
+    cache = torch.empty(L2_FLUSH_MB * 1024 * 1024 // 4, dtype=torch.int32, device=DEVICE)
     for _ in range(SAMPLES):
+        cache.zero_()
         start, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
         start.record()
-        for _ in range(BATCH): fn()
+        fn()
         end.record(); values.append((start, end))
     torch.npu.synchronize()
-    values = [start.elapsed_time(end) * 1000.0 / BATCH for start, end in values]
+    values = [start.elapsed_time(end) * 1000.0 for start, end in values]
     return sorted(values)[len(values) // 2]
 
 
@@ -118,10 +126,10 @@ def main() -> None:
     vmi_fn = vmi.launch_grouped_vmi
     cce_fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
     vmi_fn.argtypes = [ctypes.c_void_p] * 4
-    x = torch.randn((ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
-    cce_q = torch.empty((ROWS, WIDTH), dtype=torch.uint8, device=DEVICE)
-    cce_s = torch.empty((ROWS, WIDTH // 32), dtype=torch.float32, device=DEVICE)
-    vmi_q = torch.empty_like(cce_q); vmi_s = torch.empty((ROWS, WIDTH // 32), dtype=torch.float32, device=DEVICE)
+    x = torch.randn((PAD_ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
+    cce_q = torch.empty((PAD_ROWS, WIDTH), dtype=torch.uint8, device=DEVICE)
+    cce_s = torch.empty((PAD_ROWS, WIDTH // 32), dtype=torch.uint8, device=DEVICE)
+    vmi_q = torch.empty_like(cce_q); vmi_s = torch.empty((PAD_ROWS, WIDTH // 32), dtype=torch.uint8, device=DEVICE)
 
     def cce_run() -> None:
         cce_fn(ctypes.c_void_p(stream_ptr()), ctypes.c_void_p(cce_q.data_ptr()), ctypes.c_void_p(cce_s.data_ptr()), ctypes.c_void_p(x.data_ptr()), ROWS, WIDTH // 32)
@@ -132,11 +140,11 @@ def main() -> None:
                ctypes.c_void_p(vmi_s.data_ptr()))
 
     cce_run(); vmi_run(); torch.npu.synchronize()
-    if not bool(torch.isfinite(cce_s.cpu()).all()) or not bool(torch.isfinite(vmi_s.cpu()).all()):
-        raise RuntimeError("non-finite scale output")
-    torch.testing.assert_close(cce_q.cpu(), vmi_q.cpu(), rtol=0, atol=8)
+    # The production kernel intentionally leaves padded rows untouched; only
+    # the requested ragged extent is part of the ABI/correctness contract.
+    torch.testing.assert_close(cce_q[:ROWS].cpu(), vmi_q[:ROWS].cpu(), rtol=0, atol=8)
     cce_us, vmi_us = median_us(cce_run), median_us(vmi_run)
-    print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} batch={BATCH} samples={SAMPLES} warmup={WARMUP}")
+    print(f"device={DEVICE} shape={ROWS}x{WIDTH} padded_rows={PAD_ROWS} grid={GRID} l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} warmup={WARMUP}")
     print("correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal")
     print(f"CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
 

@@ -9,11 +9,11 @@ set +u; source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; set -u
 PTOAS_BIN="${PTOAS_BIN:-$(conda run -n cann91_dev which ptoas | tail -1)}"
 compile() {
   env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --emit-vpto \
-    "${HERE}/fixtures/grouped_scale_vmi.pto" -o "${OUT}/grouped_scale.vpto"
+    "${HERE}/fixtures/production_group_vmi.pto" -o "${OUT}/grouped_scale.vpto"
   grep -q 'pto.vcgmax' "${OUT}/grouped_scale.vpto"
   grep -Eq 'pto.vselr|pto.vdup|pto.vlds.*BRC' "${OUT}/grouped_scale.vpto"
   env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
-    "${HERE}/fixtures/grouped_scale_vmi.pto" -o "${OUT}/grouped_scale_vmi.o"
+    "${HERE}/fixtures/production_group_vmi.pto" -o "${OUT}/grouped_scale_vmi.o"
   env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" PATH="${CONDA_PREFIX:-/home/jzhuang/.conda/envs/cann91_dev}/bin:$PATH" python3 "${HERE}/benchmark.py" --compile-only
   echo "PASS: stock PTOAS and stream-launchable direct CCE kernels compile"
 }
