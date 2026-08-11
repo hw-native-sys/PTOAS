@@ -25,7 +25,12 @@ OUT = HERE / "outputs"
 DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
 ROWS, WIDTH, GRID = 8192, 2048, 72
 CCE_DYN_UB, VMI_DYN_UB = 27136, 126208
-WARMUP, SAMPLES, BATCH = 8, 20, 16
+WARMUP, SAMPLES = 8, 40
+# Keep this aligned with TileLang's ``do_bench`` policy.  The flush happens
+# before the start event, so it evicts cache state without contributing to the
+# reported kernel duration.  A batch of launches would make the second and
+# subsequent launches artificially L2-hot for this bandwidth-sensitive case.
+L2_FLUSH_MB = 256
 MSPROF_REPS = 30
 
 
@@ -108,19 +113,22 @@ def stream_ptr() -> int:
 
 def median_us(fn) -> float:
     for _ in range(WARMUP):
-        for _ in range(BATCH):
-            fn()
+        fn()
     torch.npu.synchronize()
-    samples = []
+    cache = torch.empty(L2_FLUSH_MB * 1024 * 1024 // 4, dtype=torch.int32, device=DEVICE)
+    samples: list[tuple[torch.npu.Event, torch.npu.Event]] = []
     for _ in range(SAMPLES):
+        # ``zero_`` is queued before ``begin``.  Stream ordering makes the
+        # eviction complete before the kernel while the event interval remains
+        # device-kernel-only, exactly as tilelang.profiler.bench.do_bench.
+        cache.zero_()
         begin, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
         begin.record()
-        for _ in range(BATCH):
-            fn()
+        fn()
         end.record()
         samples.append((begin, end))
     torch.npu.synchronize()
-    values = sorted(begin.elapsed_time(end) * 1000.0 / BATCH for begin, end in samples)
+    values = sorted(begin.elapsed_time(end) * 1000.0 for begin, end in samples)
     return values[len(values) // 2]
 
 
@@ -232,7 +240,7 @@ def main() -> None:
     cce_event, vmi_event = median_us(cce_run), median_us(vmi_run)
     print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} cce_dyn_ub={CCE_DYN_UB} vmi_dyn_ub={VMI_DYN_UB}")
     print("correctness=PASS cce_vmi_peer=PASS")
-    print(f"event_sanity_batch={BATCH} CCE_us={cce_event:.3f} VMI_us={vmi_event:.3f}")
+    print(f"event_l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} CCE_us={cce_event:.3f} VMI_us={vmi_event:.3f} CCE_over_VMI={cce_event / vmi_event:.4f}")
     if args.profile:
         cce_us, vmi_us = msprof_us(cce_run, "full_roundtrip_cce"), msprof_us(vmi_run, "full_roundtrip_vmi")
         print(f"msprof_diagnostic_reps={MSPROF_REPS} CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f}")

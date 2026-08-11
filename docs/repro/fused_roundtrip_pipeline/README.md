@@ -23,3 +23,9 @@ than an acceptance result: the currently observed CCE record is implausibly
 short for the full tensor traffic and must be reconciled against the complete
 kernel timeline before publishing a ratio.  This guard prevents the report
 from repeating the earlier launch-floor error in the opposite direction.
+
+With the corrected TileLang-style 256-MB L2 flush before each event, the latest
+device-0 run measured CCE 5.883 µs and VMI 32.087 µs (CCE/VMI 0.1833). This is
+an extraction/methodology diagnostic, not yet the private study's ~0.8 ratio;
+the discrepancy requires msprof timeline reconciliation before treating it as
+a faithful production comparison.
