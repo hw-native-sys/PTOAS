@@ -1,5 +1,7 @@
 # Performance issue
 
-Stock A5 VMI lowering for the grouped reduce/broadcast/convert chain compiles,
-but representative measured ratios are 0.28–0.89 against direct CCE. Expected
-parity is at least 0.98. See `README.md` for complete fixtures and commands.
+The standalone device-1 harness measures 32.543 us for the direct CCE kernel
+and 17557.001 us for the equivalent tiled VMI work extent. The CCE result is
+both host-golden checked and independently demonstrates that this algorithmic
+pattern is fast on A5. See `README.md` for the complete compile, ctypes launch,
+correctness, and timing command.

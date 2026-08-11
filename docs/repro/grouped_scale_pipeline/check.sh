@@ -7,7 +7,6 @@ OUT="${HERE}/outputs"
 mkdir -p "${OUT}"
 set +u; source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; set -u
 PTOAS_BIN="${PTOAS_BIN:-$(conda run -n cann91_dev which ptoas | tail -1)}"
-BISHENG="${BISHENG:-${ASCEND_HOME_PATH}/tools/bisheng_compiler/bin/bisheng}"
 compile() {
   env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --emit-vpto \
     "${HERE}/fixtures/grouped_scale_vmi.pto" -o "${OUT}/grouped_scale.vpto"
@@ -15,12 +14,8 @@ compile() {
   grep -Eq 'pto.vselr|pto.vdup|pto.vlds.*BRC' "${OUT}/grouped_scale.vpto"
   env -u PYTHONPATH "${PTOAS_BIN}" --pto-arch=a5 --pto-backend=vpto --pto-level=level3 \
     "${HERE}/fixtures/grouped_scale_vmi.pto" -o "${OUT}/grouped_scale_vmi.o"
-  "${BISHENG}" -xcce -O2 -fPIC -std=c++17 --cce-aicore-arch=dav-c310-vec \
-    --cce-aicore-only -c "${HERE}/fixtures/reference_cce.cpp" \
-    -o "${OUT}/reference_device.o" -I"${HERE}/fixtures" \
-    -I"${ASCEND_HOME_PATH}/include" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw" \
-    -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface"
-  echo "PASS: stock PTOAS and direct CCE kernels compile"
+  env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" python3 "${HERE}/benchmark.py" --compile-only
+  echo "PASS: stock PTOAS and stream-launchable direct CCE kernels compile"
 }
 run() {
   if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
