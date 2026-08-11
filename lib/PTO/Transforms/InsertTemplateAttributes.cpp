@@ -473,6 +473,9 @@ static bool tryAppendPrecisionType(
   return true;
 }
 
+// Candidate discovery runs before memory planning, so address-dependent
+// context such as tfillpad's lowering_kind intentionally belongs only to the
+// post-planning specialization key built by ExpandTileOp.
 static void appendOpContextAttrs(
     Operation *op, SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
   if (auto tcvt = dyn_cast<pto::TCvtOp>(op)) {
@@ -490,6 +493,14 @@ static void appendOpContextAttrs(
     if (auto cmpModeAttr = tcmps.getCmpModeAttr())
       attrs.emplace_back("cmp_mode",
                          stringifyCmpMode(cmpModeAttr.getValue()).str());
+  }
+  if (auto tinsert = dyn_cast<pto::TInsertOp>(op)) {
+    if (auto modeAttr = tinsert.getAccToVecModeAttr()) {
+      attrs.emplace_back("acc_to_vec_mode",
+                         stringifyAccToVecMode(modeAttr.getValue()).str());
+    }
+    attrs.emplace_back("relu_pre_mode",
+                       stringifyReluPreMode(tinsert.getReluPreMode()).str());
   }
   if (auto tmrgsort = dyn_cast<pto::TMrgSortOp>(op))
     attrs.emplace_back("exhausted",

@@ -76,6 +76,8 @@ createPlanMemoryModernPass(const PlanMemoryOptions &options);
 std::unique_ptr<Pass> createPTORemoveRedundantBarrierPass();
 std::unique_ptr<Pass> createPTOValidateIntToPtrUsesPass();
 std::unique_ptr<Pass> createPTORematerializeFixpipeVectorQuantPass();
+std::unique_ptr<Pass>
+createPTOMaterializeImplicitTmpPass(bool requireExplicitTmp = false);
 std::unique_ptr<Pass> createPTOResolveBufferSelectPass();
 std::unique_ptr<Pass> createInferPTOLayoutPass();
 std::unique_ptr<Pass> createPTOA5NormalizeTMovPass();

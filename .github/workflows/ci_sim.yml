@@ -116,10 +116,10 @@ jobs:
       PYPTO_REF: ef6ce7cd8bd33b4c93b58dc34830a20b145736ac
       PYPTO_WORKSPACE: ${{ github.workspace }}/.work/pypto-ci
       PYPTO_RUN_WORKSPACE: ${{ github.workspace }}/.work/pypto-run-ci
-      # GitHub pin containing the two-argument Soft SYNCALL ABI from f24f7b7
-      # and the follow-up CPU-Sim duplicate-stub fix. The GitCode mirror carries
-      # the ABI as d56d42d within the separate ce3262e3 remote-validation pin.
-      PTO_ISA_COMMIT: a8168c6ca8ae22b06e4ea440506f0a87e446e9a2
+      # GitHub pin containing the unified TFILLPAD API, the two-argument Soft
+      # SYNCALL ABI, and the follow-up CPU-Sim duplicate-stub fix. Keep this
+      # separate from the GitCode pins managed by update_pto_isa_pin.py.
+      PTO_ISA_COMMIT: e948507e18ec4f39037a04914b97e77f5b9d75e3
       PTO_ISA_ROOT: ${{ github.workspace }}/.work/pto-isa-ci
     steps:
       - name: Checkout

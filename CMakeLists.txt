@@ -35,7 +35,7 @@ if((NOT DEFINED MLIR_DIR OR MLIR_DIR STREQUAL "")
       "MLIR package directory derived from LLVM_BUILD_DIR")
 endif()
 
-project(ptoas VERSION 0.57)
+project(ptoas VERSION 0.58)
 
 # Wheel builds carry the same Linux hardening policy as release CMake builds.
 # Including the cache settings here keeps the policy backend-independent.

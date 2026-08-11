@@ -174,7 +174,7 @@ def build():
 
                 # Compute ACC then quantize ACC->MAT using fp (SCALING) tile.
                 pto.TGemvOp(None, a_tile, b_tile, acc_tile)
-                pto.TMovFPOp(acc_tile, fp_scaling, out_mat)
+                pto.TMovOp(None, acc_tile, out_mat, fp=fp_scaling)
 
                 pto.TStoreOp(None, acc_tile, sv_out)
 

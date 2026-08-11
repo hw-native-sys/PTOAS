@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module {
+  func.func @implicit_arg_reduction_tmps() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %col_max = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %col_min = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %row_max = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=8, v_row=2, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %row_min = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=8, v_row=2, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolargmax ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%col_max : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcolargmin ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%col_min : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.trowargmax ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%row_max : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=8, v_row=2, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.trowargmin ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%row_min : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=8, v_row=2, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// A3-LABEL: func.func @implicit_arg_reduction_tmps
+// A3: pto.tcolargmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 2x16xf32>)
+// A3: pto.tcolargmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 2x16xf32>)
+// A3: pto.trowargmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 2x16xf32>)
+// A3: pto.trowargmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 2x16xf32>)
+// A5-LABEL: func.func @implicit_arg_reduction_tmps
+// A5: pto.tcolargmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 1x8xf32>)
+// A5: pto.tcolargmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 1x8xf32>)
+// A5: pto.trowargmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 1x8xf32>)
+// A5: pto.trowargmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<vec, 1x8xf32>)

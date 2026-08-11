@@ -67,7 +67,7 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)  # result=None, valid_dims=[]
 
                 # pto.trowsum ins(%src, %tmp) outs(%dst)
-                pto.TRowSumOp(tb0, tb_tmp, tb1)
+                pto.TRowSumOp(tb0, tb1, tmp=tb_tmp)
 
                 # %8 = subview on output tensor_view
                 sv1 = pto.PartitionViewOp(tile_view_32x1, tv1, offsets=[c0, c0], sizes=[c32, c1]).result

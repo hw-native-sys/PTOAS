@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         help="Path to the Dockerfile that vendors pto-isa.",
     )
     parser.add_argument(
+        "--compile-only-guide",
+        default="docs/no_npu_compile_only_guide_zh.md",
+        help="Path to the no-NPU compile-only guide.",
+    )
+    parser.add_argument(
         "--remote-validation-script",
         default="test/npu_validation/scripts/run_remote_npu_validation.sh",
         help="Path to the remote NPU validation runner that falls back to a pinned pto-isa commit.",
@@ -83,6 +88,21 @@ def replace_exactly_once(
     return new_text
 
 
+def replace_exact_count(
+    text: str,
+    pattern: str,
+    replacement: str,
+    path: pathlib.Path,
+    expected_count: int,
+) -> str:
+    new_text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+    if count != expected_count:
+        raise RuntimeError(
+            f"expected {expected_count} matches for pattern {pattern!r} in {path}, got {count}"
+        )
+    return new_text
+
+
 def update_ci_workflow(path: pathlib.Path, commit: str) -> bool:
     original = read_text(path)
     updated = original
@@ -118,6 +138,21 @@ def update_dockerfile(path: pathlib.Path, commit: str) -> bool:
         r"^(# pinned: https://gitcode\.com/cann/pto-isa/commit/)([0-9a-f]{40})$",
         rf"\g<1>{commit}",
         path,
+    )
+    if updated != original:
+        write_text(path, updated)
+        return True
+    return False
+
+
+def update_compile_only_guide(path: pathlib.Path, commit: str) -> bool:
+    original = read_text(path)
+    updated = replace_exact_count(
+        original,
+        r"^(export PTO_ISA_COMMIT=)([0-9a-f]{40})$",
+        rf"\g<1>{commit}",
+        path,
+        expected_count=2,
     )
     if updated != original:
         write_text(path, updated)
@@ -168,6 +203,19 @@ def extract_docker_commit(path: pathlib.Path) -> tuple[str, str]:
     return arg_match.group(1), comment_match.group(1)
 
 
+def extract_compile_only_commits(path: pathlib.Path) -> tuple[str, str]:
+    matches = re.findall(
+        r"^export PTO_ISA_COMMIT=([0-9a-f]{40})$",
+        read_text(path),
+        flags=re.MULTILINE,
+    )
+    if len(matches) != 2:
+        raise RuntimeError(
+            f"expected two pinned pto-isa commits in {path}, got {len(matches)}"
+        )
+    return matches[0], matches[1]
+
+
 def extract_remote_validation_commit(path: pathlib.Path) -> str:
     text = read_text(path)
     match = re.search(
@@ -183,11 +231,13 @@ def extract_remote_validation_commit(path: pathlib.Path) -> str:
 def verify(
     ci_path: pathlib.Path,
     docker_path: pathlib.Path,
+    compile_only_guide_path: pathlib.Path,
     remote_validation_path: pathlib.Path,
     commit: str,
 ) -> None:
     ci_default, ci_env = extract_ci_commit(ci_path)
     docker_arg, docker_comment = extract_docker_commit(docker_path)
+    guide_setup, guide_run = extract_compile_only_commits(compile_only_guide_path)
     remote_validation_commit = extract_remote_validation_commit(
         remote_validation_path
     )
@@ -196,6 +246,8 @@ def verify(
         f"{ci_path}:runtime_default": ci_env,
         f"{docker_path}:arg": docker_arg,
         f"{docker_path}:comment": docker_comment,
+        f"{compile_only_guide_path}:setup": guide_setup,
+        f"{compile_only_guide_path}:run": guide_run,
         f"{remote_validation_path}:fallback": remote_validation_commit,
     }
     mismatches = {name: value for name, value in values.items() if value != commit}
@@ -209,17 +261,31 @@ def main() -> int:
     commit = args.commit or resolve_head_commit(args.repo_url)
     ci_path = pathlib.Path(args.ci_workflow)
     docker_path = pathlib.Path(args.dockerfile)
+    compile_only_guide_path = pathlib.Path(args.compile_only_guide)
     remote_validation_path = pathlib.Path(args.remote_validation_script)
 
     if args.check:
-        verify(ci_path, docker_path, remote_validation_path, commit)
+        verify(
+            ci_path,
+            docker_path,
+            compile_only_guide_path,
+            remote_validation_path,
+            commit,
+        )
         print(commit)
         return 0
 
     update_ci_workflow(ci_path, commit)
     update_dockerfile(docker_path, commit)
+    update_compile_only_guide(compile_only_guide_path, commit)
     update_remote_validation_script(remote_validation_path, commit)
-    verify(ci_path, docker_path, remote_validation_path, commit)
+    verify(
+        ci_path,
+        docker_path,
+        compile_only_guide_path,
+        remote_validation_path,
+        commit,
+    )
     print(commit)
     return 0
 

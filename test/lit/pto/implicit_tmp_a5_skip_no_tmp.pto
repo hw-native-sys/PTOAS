@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: sed -E 's/ addr = %[A-Za-z0-9_]+//g' %s > %t.level2.pto && ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %t.level2.pto 2>&1 | FileCheck %s --check-prefix=A5
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module {
+  func.func @a5_skip_no_tmp_overloads() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i32 = arith.constant 0 : i32
+    %a0 = arith.constant 0 : i64
+    %a256 = arith.constant 256 : i64
+    %a512 = arith.constant 512 : i64
+    %a768 = arith.constant 768 : i64
+    %a1024 = arith.constant 1024 : i64
+    %a1280 = arith.constant 1280 : i64
+    %a1536 = arith.constant 1536 : i64
+    %a1792 = arith.constant 1792 : i64
+    %a2048 = arith.constant 2048 : i64
+    %seq = pto.alloc_tile addr = %a0 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tci ins(%c0_i32 : i32)
+      outs(%seq : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    %cvt_src = pto.alloc_tile addr = %a256 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cvt_dst = pto.alloc_tile addr = %a512 : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcvt ins(%cvt_src : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%cvt_dst : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    %q_src = pto.alloc_tile addr = %a768 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %q_fp = pto.alloc_tile addr = %a1024 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=1, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %q_dst = pto.alloc_tile addr = %a1280 : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tquant ins(%q_src, %q_fp : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=1, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%q_dst : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type INT8_SYM>}
+
+    %re_src0 = pto.alloc_tile addr = %a1536 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %re_src1 = pto.alloc_tile addr = %a1792 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=1, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %re_dst = pto.alloc_tile addr = %a2048 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.trowexpandadd ins(%re_src0, %re_src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=1, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%re_dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// A5-LABEL: func.func @a5_skip_no_tmp_overloads
+// A5: pto.tci ins(%{{.*}} : i32) outs(
+// A5: pto.tcvt ins(%{{.*}} {{.*}} : !pto.tile_buf<vec, 1x16xf32>) outs(%{{.*}} : !pto.tile_buf<vec, 1x16xf16>)
+// A5: pto.tquant ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 8x1xf32, valid=1x1, blayout=col_major>)
+// A5: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 8x1xf32, valid=1x1, blayout=col_major>)

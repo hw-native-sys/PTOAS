@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync \
+// RUN:   --emit-pto-ir %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @textract_acc_to_vec_sync() {
+    %c0 = arith.constant 0 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 4096 : i64
+    %addr2 = arith.constant 8192 : i64
+    %src = pto.alloc_tile addr = %addr0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %mid = pto.alloc_tile addr = %addr1 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile addr = %addr2 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+                 outs(%mid : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                 {accToVecMode = #pto.acc_to_vec_mode<dual_mode_split_m>}
+    pto.tabs ins(%mid : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @textract_acc_to_vec_sync
+// CHECK: pto.textract
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_V>, <EVENT_ID0>]
+// CHECK: pto.wait_flag[<PIPE_FIX>, <PIPE_V>, <EVENT_ID0>]
+// CHECK: pto.tabs

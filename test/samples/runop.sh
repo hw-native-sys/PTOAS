@@ -989,25 +989,20 @@ PY
 
     if [[ "$base" == "fillpad" ]]; then
       if ! grep -Fq "TFILLPAD(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD() lowering for pto.tfillpad"
+        echo -e "${A}(${base}.py)\tFAIL\tmissing compiler-inferred TFILLPAD lowering"
         overall=1
         continue
       fi
-      if grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad should not lower via TFILLPAD_EXPAND()"
+      if grep -Fq "TFILLPAD<pto::TFillPadMode::" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tplain fillpad selected a non-normal TFILLPAD mode"
         overall=1
         continue
       fi
     fi
 
     if [[ "$base" == "fillpad_expand" ]]; then
-      if ! grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_EXPAND() lowering for pto.tfillpad_expand"
-        overall=1
-        continue
-      fi
-      if grep -Fq "TFILLPAD(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad_expand should not lower via TFILLPAD()"
+      if ! grep -Fq "TFILLPAD<pto::TFillPadMode::Expand>" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD<...Expand> lowering"
         overall=1
         continue
       fi
@@ -1032,13 +1027,8 @@ PY
     fi
 
     if [[ "$base" == "fillpad_inplace" ]]; then
-      if ! grep -Fq "TFILLPAD_INPLACE(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD_INPLACE() lowering for pto.tfillpad_inplace"
-        overall=1
-        continue
-      fi
-      if grep -Fq "TFILLPAD_EXPAND(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tpto.tfillpad_inplace should not lower via TFILLPAD_EXPAND()"
+      if ! grep -Fq "TFILLPAD<pto::TFillPadMode::InPlace>" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD<...InPlace> lowering"
         overall=1
         continue
       fi
@@ -1046,7 +1036,7 @@ PY
 
     if [[ "$base" == "extract_fp" ]]; then
       if ! grep -Fq "TEXTRACT_FP(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TEXTRACT_FP() lowering for pto.textract_fp"
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TEXTRACT_FP() lowering for pto.textract fp form"
         overall=1
         continue
       fi
@@ -1054,7 +1044,7 @@ PY
 
     if [[ "$base" == "tinsert_fp" ]]; then
       if ! grep -Fq "TINSERT_FP(" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing TINSERT_FP() lowering for pto.tinsert_fp"
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TINSERT_FP() lowering for pto.tinsert fp form"
         overall=1
         continue
       fi

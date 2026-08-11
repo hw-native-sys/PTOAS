@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""PTODSL TileLib templates for ``pto.tstore`` and ``pto.tstore_fp``."""
+"""PTODSL TileLib templates for ``pto.tstore``."""
 
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
@@ -292,7 +292,7 @@ def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView)
 
 
 @tilelib.tile_template(
-    op="pto.tstore_fp",
+    op="pto.tstore",
     target="a5",
     name="template_tstore_fp_acc_to_gm",
     dtypes=(("f32", "f16", "f16"), ("f32", "bf16", "bf16")),
@@ -305,7 +305,7 @@ def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView)
     is_post_update=False,
     tags=("store", "acc", "gm", "fp"),
 )
-def template_tstore_fp_acc_to_gm(src: pto.Tile, fp: pto.Tile, dst: pto.PartitionTensorView):
+def template_tstore_fp_acc_to_gm(src: pto.Tile, dst: pto.PartitionTensorView, fp: pto.Tile):
     m, n = src.valid_shape
     strides = dst.strides
     quant_mode = "qf322bf16_pre_vec" if str(fp.dtype) == "bf16" else "qf322f16_pre_vec"

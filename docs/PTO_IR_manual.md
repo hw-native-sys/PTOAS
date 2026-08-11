@@ -1320,7 +1320,7 @@ Lowering maps `%ctx` to `pto::PrefetchAsyncContext`, emits
 
 ##### `pto.tstore` - Store Tile to Partition View
 
-**Summary:** Stores a 2-D tile buffer back to a 2-D partition view. Supports phase/atomic/relu/pre-quant controls that lower to the corresponding `TSTORE` template overload family.
+**Summary:** Stores a 2-D tile buffer back to a 2-D partition view. Supports phase/atomic/relu/pre-quant controls and an optional scaling tile. The scaling-tile form lowers to `TSTORE_FP`.
 
 **Semantics:**
 
@@ -1335,6 +1335,7 @@ For each element (i, j) in the tile valid region:
 |------|------|---------|-------------|
 | `src` | `pto.tile_buf` | `NA` |Source tile buffer |
 | `dst` | `PartitionTensorViewType` | `NA` | Destination partition view |
+| `fp` | `pto.tile_buf` (optional) | `NA` | Scaling tile (`loc=scaling`) for accumulator conversion |
 | `preQuantScalar` | `i64` (optional) | `NA` |Optional scalar used by pre-quantized `acc` store forms |
 | `stPhase` | `#pto<st_phase ...>` | `unspecified` | Store phase selector (`unspecified/partial/final`) |
 | `atomicType` | `#pto<atomic_type ...>` | `atomic_none` | Atomic mode (`atomic_none/atomic_add`) |
@@ -1348,7 +1349,9 @@ For each element (i, j) in the tile valid region:
   - `src` must be `!pto.tile_buf`, `dst` must be `!pto.partition_tensor_view`.
   - Static `dst` shape dims must be positive, and static `src` valid-shape dims
     must be non-negative.
-  - If `preQuantScalar` is present, `src` must be `loc=acc`.
+  - `fp` and `preQuantScalar` are mutually exclusive.
+  - If `fp` or `preQuantScalar` is present, `src` must be `loc=acc`.
+  - `fp` must use `loc=scaling`; the fp form uses the default `stPhase`.
   - If `reluPreMode != no_relu`, `src` must be `loc=acc`.
 - A2/A3 checks:
   - `src.loc` must be one of `vec/mat/acc`.
@@ -1615,6 +1618,9 @@ For each element (i, j):
 | `src` | `pto.tile_buf` | Source tile |
 | `tmp` | `pto.tile_buf` | Temporary workspace operand required by the current DPS form |
 | `dst` | `pto.tile_buf` | Destination tile |
+| `fp` | `pto.tile_buf` | Optional scaling tile (`loc=scaling`) for accumulator conversion |
+| `preQuantScalar` | `i64` | Optional scalar pre-quant parameter |
+| `accToVecMode` | `pto.acc_to_vec_mode` | Optional A5 acc-to-vec mode |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -7976,7 +7982,9 @@ dst[i + indexRow, j + indexCol] = src[i, j]
 
 **Hardware Mapping:**
 
-- Lowers to **`TINSERT(dst, src, indexRow, indexCol)`**
+- Without `fp`, lowers to **`TINSERT(dst, src, indexRow, indexCol)`**.
+- With `fp`, lowers to **`TINSERT_FP(dst, src, fp, indexRow, indexCol)`**;
+  an explicit A5 `accToVecMode` selects the fp-parameterized `TINSERT` overload.
 - Uses the target data-movement pipeline: `Vec -> Vec` uses `PIPE_V`, A5
   `Vec -> Mat` uses `PIPE_MTE3`, and regular `Acc -> Mat` uses `PIPE_FIX`.
 
@@ -7984,6 +7992,7 @@ dst[i + indexRow, j + indexCol] = src[i, j]
 
 ```mlir
 pto.tinsert ins(%src, %row, %col : !pto.tile_buf<...>, index, index) outs(%dst : !pto.tile_buf<...>)
+pto.tinsert ins(%src, %row, %col : !pto.tile_buf<...>, index, index fp %fp : !pto.tile_buf<scaling, ...>) outs(%dst : !pto.tile_buf<...>)
 ```
 
 ---
@@ -8006,6 +8015,9 @@ dst[i, j] = src[i + indexRow, j + indexCol]
 | `indexRow` | `Index` | Starting row |
 | `indexCol` | `Index` | Starting column |
 | `dst` | `pto.tile_buf` | Destination tile |
+| `fp` | `pto.tile_buf` | Optional scaling tile (`loc=scaling`) for accumulator conversion |
+| `preQuantScalar` | `i64` | Optional scalar pre-quant parameter |
+| `accToVecMode` | `pto.acc_to_vec_mode` | Optional A5 acc-to-vec mode |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -8026,25 +8038,29 @@ dst[i, j] = src[i + indexRow, j + indexCol]
 
 **Hardware Mapping:**
 
-- Executes on the **Vector pipeline** (`PIPE_V`)
+- Base forms lower to `TEXTRACT`; an `fp` form without mode lowers to
+  `TEXTRACT_FP`, while an explicit A5 `accToVecMode` selects the
+  fp-parameterized `TEXTRACT` overload.
 
 **Basic Example:**
 
 ```mlir
-pto.textract ins(%src[%row, %col] : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
+pto.textract ins(%src, %row, %col : !pto.tile_buf<...>, index, index) outs(%dst : !pto.tile_buf<...>)
+pto.textract ins(%src, %row, %col : !pto.tile_buf<...>, index, index fp %fp : !pto.tile_buf<scaling, ...>) outs(%dst : !pto.tile_buf<...>)
 ```
 
 ---
 
 ##### `pto.tfillpad` - Fill Padding Region
 
-**Summary:** Copies `src` into `dst` and fills padded elements using `dst`'s PadVal.
+**Summary:** Unified padding operation. PTOAS infers normal, in-place, or expand lowering from physical shapes and post-PlanMemory addresses.
 
 **Semantics:**
 
 ```
-For valid elements: dst = src
-For padded elements: dst = PadVal(dst)
+normal:   copy valid src elements, then fill dst padding
+in_place: keep valid data already in shared storage, then fill dst padding
+expand:   copy src into a possibly larger dst, then fill the expanded region
 ```
 
 **Arguments:**
@@ -8061,116 +8077,30 @@ For padded elements: dst = PadVal(dst)
 
 - `dst.pad` must not be `null`.
 - `src` and `dst` element sizes must match, and the element size must be `1`, `2`, or `4` bytes.
-- `dst.rows/cols` must match `src.rows/cols`.
-- If `padValue` is present, `dst` must be `loc=mat` and `padValue` must equal the tile type's `pad`.
+- If source and destination physical shapes differ, every destination dimension must be at least the corresponding source dimension; PTOAS then infers expand lowering.
+- If physical shapes are equal, exact starting-address equality after PlanMemory selects in-place lowering; otherwise PTOAS selects normal lowering.
+- `valid_shape` does not participate in expand inference.
+- In-place and expand lowering require both operands to use `loc=vec`.
+- If `padValue` is present, `dst` must be `loc=mat`, and `padValue` must equal the tile type's `pad`.
+- MAT always uses Normal lowering, including when source and destination share the same starting address.
 - For `loc=mat`, `src` and `dst` must be lowerable to the same `TFILLPAD` tile specialization, i.e. `validShape` and `pad` must be identical.
 
 **Hardware Mapping:**
 
-- Executes on the **Vector pipeline** (`PIPE_V`)
+- VEC forms execute on the **Vector pipeline** (`PIPE_V`).
+- The normal homogeneous MAT form executes on `PIPE_MTE1`.
+- Normal lowers to `TFILLPAD(dst, src)`; compiler-inferred in-place and expand forms lower to `TFILLPAD<pto::TFillPadMode::InPlace/Expand>(dst, src)`.
 
 **Basic Example:**
 
 ```mlir
 pto.tfillpad ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
 
-pto.tfillpad ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
-           {padValue = #pto.pad_value<max>}
-```
+pto.tfillpad ins(%tile : !pto.tile_buf<vec, 32x32xf32, pad=1>)
+             outs(%tile : !pto.tile_buf<vec, 32x32xf32, pad=1>)
 
----
-
-##### `pto.tfillpad_expand` - Fill Padding Region With Expand
-
-**Summary:** Copies `src` into `dst` and fills padded elements using `dst`'s PadVal, allowing `dst` to be larger than `src`.
-
-**Semantics:**
-
-```
-For valid elements: dst = src
-For padded elements: dst = PadVal(dst)
-Constraint: dst.rows >= src.rows and dst.cols >= src.cols
-```
-
-**Arguments:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `src` | `pto.tile_buf` | Source tile |
-| `dst` | `pto.tile_buf` | Destination tile (with pad config, may be larger) |
-
-**Results:** None. Writes into `dst` via DPS pattern.
-
-**Constraints & Verification:**
-
-- The operation has a custom verifier.
-- For `loc=mat`, cross-layer behavior with heterogeneous (`src`/`dst`) expand shape is not finalized in this release; `tfillpad_expand` is not covered by the `tfillpad`-specific lowerability check.
-
-**Hardware Mapping:**
-
-- Executes on the **Vector pipeline** (`PIPE_V`)
-
-**Basic Example:**
-
-```mlir
-pto.tfillpad_expand ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
-```
-
----
-
-##### `pto.tfillpad_inplace` - Fill Padding Region In Place
-
-**Summary:** Fills the padding region in place on shared backing storage. `src` provides the valid-region bounds and `dst` provides the target pad bounds/configuration.
-
-**Semantics:**
-
-```
-For elements inside src valid_shape:
-    dst keeps the existing value
-For padded elements described by dst:
-    dst = PadVal(dst)
-```
-
-This operation is intended for the in-place case where `src` and `dst` refer to the same tile storage, often the same SSA value.
-
-**Arguments:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `src` | `pto.tile_buf` | Source tile supplying valid-region bounds |
-| `dst` | `pto.tile_buf` | Destination tile supplying pad configuration and receiving the in-place update |
-
-**Results:** None. Writes into `dst` via DPS pattern.
-
-**Assembly Format:**
-
-```
-pto.tfillpad_inplace ins(<src> : <src_type>)
-                     outs(<dst> : <dst_type>)
-```
-
-**Constraints & Verification:**
-
-- `dst.pad` must not be `null`.
-- `src` and `dst` element sizes must match, and the element size must be `1`, `2`, or `4` bytes.
-- `src.rows/cols` and `dst.rows/cols` must have the same static shape.
-- The verifier uses the same non-expand shape constraints as `pto.tfillpad`.
-- Unlike `pto.tfillpad_expand`, `dst` is not allowed to have a larger static shape than `src`.
-
-**Hardware Mapping:**
-
-- Executes on the **Vector pipeline** (`PIPE_V`)
-- EmitC lowers to `TFILLPAD_INPLACE(dst, src)`
-
-**Basic Example:**
-
-```mlir
-pto.tfillpad_inplace ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                         v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                         fractal=512, pad=1>)
-                     outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                         v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                         fractal=512, pad=1>)
+pto.tfillpad ins(%src_small : !pto.tile_buf<vec, 16x16xf32>)
+             outs(%dst_large : !pto.tile_buf<vec, 32x32xf32, pad=1>)
 ```
 
 ---
@@ -8568,54 +8498,6 @@ pto.tget_scale_addr ins(%src : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, c
 
 ---
 
-##### `pto.tmov.fp` - Move/Convert with Scaling Tile
-
-**Summary:** Legacy dedicated fp-TMOV op. New code should prefer `pto.tmov` with an `fp` operand, which lowers to the same `TMOV_FP` / fp-parameterized `TMOV` APIs.
-
-**Semantics:**
-
-```
-dst[i, j] = Convert(src[i, j]; fp)   // target-defined quantization/dequantization
-```
-
-**Arguments:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `src` | `pto.tile_buf` | Source tile |
-| `fp` | `pto.tile_buf` | Scaling (fp) tile |
-| `dst` | `pto.tile_buf` | Destination tile |
-
-**Results:** None. Writes into `dst` via DPS pattern.
-
-**Constraints & Verification:**
-
-- **Implementation checks (A2A3)**
-  - Src data type only support `f32` or `i32`.
-  - `fp` must use `loc=scaling`.
-  - Source TileType only support `loc=acc`.
-  - Destination TileType only support `loc=mat`.
-  - Destination SFractalSize only support fractalABSize(512).
-  - Src layout format should be (Blayout: ColMajor, Slayout: RowMajor).
-  - Dst layout format should be (Blayout: ColMajor, Slayout: RowMajor).
-- **Implementation checks (A5)**
-  - Src data type only support `f32` or `i32`.
-  - `fp` must use `loc=scaling`.
-  - Src layout format should be (Blayout: ColMajor, Slayout: RowMajor).
-
-**Hardware Mapping:**
-
-- Executes on the **Vector pipeline** (`PIPE_V`) for accumulator conversion
-
-**Basic Example:**
-
-```mlir
-pto.tmov.fp ins(%acc, %fp : !pto.tile_buf<...>, !pto.tile_buf<...>)
-           outs(%dst : !pto.tile_buf<...>)
-```
-
----
-
 ##### `pto.tquant` - Quantize Tile with Scaling Tile
 
 **Summary:** Quantizes `f32` source tile elements into a lower-precision integer format using a scaling (`fp`) tile. The quantization mode is controlled by the `quant_type` attribute.
@@ -8727,51 +8609,6 @@ pto.tquant.mx ins(%src : !pto.tile_buf<...>)
               outs(%dst, %exp, %max, %scaling : !pto.tile_buf<...>, !pto.tile_buf<...>,
                                                   !pto.tile_buf<...>, !pto.tile_buf<...>)
               {quant_type = #pto<quant_type MXFP8>}
-```
-
----
-
-##### `pto.tstore_fp` - Store Accumulator with Scaling
-
-**Summary:** Stores an accumulator tile into global memory using a scaling (`fp`) tile.
-
-**Semantics:**
-
-```
-dst[...] = Convert(src[i, j]; fp)
-```
-
-**Arguments:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `src` | `pto.tile_buf` | Source accumulator tile |
-| `fp` | `pto.tile_buf` | Scaling tile |
-| `dst` | `PartitionTensorViewType` | Destination memory |
-
-**Results:** None. Writes into `dst` via DPS pattern.
-
-**Constraints & Verification:**
-
-- **Implementation checks (A2A3)**
-  - Source TileType only suport `loc==acc`
-  - Source dtype must be `i32` or `f32`.
-  - Shape constraints: `1 <= cols <= 4095`;
-  - Runtime: `1 <= src valid column <= 4095`.
-  - `fp` is used to configure scaling/FPC state; no separate PTO-visible static constraint is enforced on its shape.
-- **Implementation checks (A5)**
-  - Source TileType only suport `loc==acc`
-  - `fp` is used to configure scaling/FPC state; no separate PTO-visible static constraint is enforced on its shape.
-
-**Hardware Mapping:**
-
-- Executes on the **DMA pipeline** (`PIPE_MTE3`)
-
-**Basic Example:**
-
-```mlir
-pto.tstore_fp ins(%acc, %fp : !pto.tile_buf<...>, !pto.tile_buf<...>)
-             outs(%dst : memref<...>)
 ```
 
 ---

@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --mlir-print-ir-after=pto-resolve-reserved-buffers %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
-// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-insert-sync %s | FileCheck %s --check-prefix=EMITC
+// RUN: ptoas --pto-level=level2 --pto-arch=a5 --mlir-print-ir-after=pto-resolve-reserved-buffers %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
+// RUN: ptoas --pto-level=level2 --pto-arch=a3 --enable-insert-sync %s | FileCheck %s --check-prefix=EMITC
 
 module {
   func.func private @trowexpand_arg(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=8, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 8x16xf32>) {

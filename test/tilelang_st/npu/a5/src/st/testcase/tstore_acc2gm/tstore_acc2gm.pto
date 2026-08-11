@@ -386,7 +386,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     // TSTORE_FP: ACC f32 + scaling f16 -> GM f16 (qf322f16_pre_vec)
     %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
-    pto.tstore_fp ins(%acc_c, %fp_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xf16>)
+    pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major> fp %fp_tile : !pto.tile_buf<scaling, 1x32xf16>)
                   outs(%sv_dst : !pto.partition_tensor_view<16x32xf16>)
 
     pto.barrier #pto.pipe<PIPE_ALL>
@@ -430,7 +430,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     // TSTORE_FP: ACC f32 + scaling bf16 -> GM bf16 (qf322bf16_pre_vec)
     %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
     %sv_dst = pto.partition_view %tv_dst, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x32xbf16>
-    pto.tstore_fp ins(%acc_c, %fp_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>, !pto.tile_buf<scaling, 1x32xbf16>)
+    pto.tstore ins(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major> fp %fp_tile : !pto.tile_buf<scaling, 1x32xbf16>)
                   outs(%sv_dst : !pto.partition_tensor_view<16x32xbf16>)
 
     pto.barrier #pto.pipe<PIPE_ALL>

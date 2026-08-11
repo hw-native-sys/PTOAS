@@ -30,9 +30,9 @@ module {
 // CHECK: func.func @tcvt_low_precision_a5_valid() attributes {pto.kernel_kind = #pto.kernel_kind<vector>}
 // CHECK: pto.declare_tile -> !pto.tile_buf<vec, 16x8x!pto.f4E1M2x2>
 // CHECK: pto.declare_tile -> !pto.tile_buf<vec, 16x16x!pto.hif8>
-// CHECK: pto.tcvt ins(%{{.*}} {rmode = #pto<round_mode CAST_RINT>, satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<vec, 16x16xf32>
+// CHECK: pto.tcvt ins(%{{.*}} {{.*}}rmode = #pto<round_mode CAST_RINT>, satmode = #pto<saturation_mode OFF>{{.*}} : !pto.tile_buf<vec, 16x16xf32>
 // CHECK: outs(%{{.*}} : !pto.tile_buf<vec, 16x16xf8E4M3FN>)
-// CHECK: pto.tcvt ins(%{{.*}} {rmode = #pto<round_mode CAST_RINT>, satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<vec, 16x16xbf16>
+// CHECK: pto.tcvt ins(%{{.*}} {{.*}}rmode = #pto<round_mode CAST_RINT>, satmode = #pto<saturation_mode OFF>{{.*}} : !pto.tile_buf<vec, 16x16xbf16>
 // CHECK: outs(%{{.*}} : !pto.tile_buf<vec, 16x8x!pto.f4E1M2x2>)
-// CHECK: pto.tcvt ins(%{{.*}} {rmode = #pto<round_mode CAST_RINT>, satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<vec, 16x16x!pto.hif8>
+// CHECK: pto.tcvt ins(%{{.*}} {{.*}}rmode = #pto<round_mode CAST_RINT>, satmode = #pto<saturation_mode OFF>{{.*}} : !pto.tile_buf<vec, 16x16x!pto.hif8>
 // CHECK: outs(%{{.*}} : !pto.tile_buf<vec, 16x16xf32>)

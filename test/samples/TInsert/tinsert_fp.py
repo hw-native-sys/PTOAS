@@ -64,7 +64,7 @@ def build():
                 src = pto.AllocTileOp(src_ty).result
                 fp = pto.AllocTileOp(fp_ty).result
                 dst = pto.AllocTileOp(dst_ty).result
-                pto.TInsertFPOp(src, fp, c0, c0, dst)
+                pto.TInsertOp(src, c0, c0, dst, fp=fp)
                 func.ReturnOp([])
 
             m.operation.verify()

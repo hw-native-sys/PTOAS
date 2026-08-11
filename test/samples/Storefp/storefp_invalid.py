@@ -56,7 +56,7 @@ def build():
                 dst = entry.arguments[0]
                 src_tile = pto.AllocTileOp(src_tile_ty).result
                 fp_tile = pto.AllocTileOp(fp_tile_ty).result
-                pto.TStoreFPOp(src_tile, fp_tile, dst)
+                pto.TStoreOp(None, src_tile, dst, fp=fp_tile)
                 func.ReturnOp([])
 
             ok = m.operation.verify()

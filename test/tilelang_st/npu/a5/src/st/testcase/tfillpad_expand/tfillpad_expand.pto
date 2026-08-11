@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// TileLang ST kernels for pto.tfillpad_expand: copy src to dst and fill padding.
+// TileLang ST kernels for compiler-inferred tfillpad expand lowering: copy src to dst and fill padding.
 // Matches C++ test cases: case 8, 9
 // Compiled by ptoas --enable-insert-sync --enable-tile-op-expand --pto-backend=vpto
 //
@@ -50,18 +50,18 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       sizes = [%c1, %c1, %c1, %c260, %c32]
       : !pto.tensor_view<1x1x1x260x32xui16> -> !pto.partition_tensor_view<1x1x1x260x32xui16>
 
-    // Src tile: LoadPadVal=Min (pad=3), src physical=260x32, v_row=259, v_col=7
+    // Src tile: LoadPadVal=Min (pad=3), src physical=259x32, v_row=259, v_col=7
     %src = pto.alloc_tile
-      : !pto.tile_buf<vec, 260x32xui16, valid=259x7, pad=3>
+      : !pto.tile_buf<vec, 259x32xui16, valid=259x7, pad=3>
     // Dst tile: FillPadVal=Max (pad=2), dst physical=260x32, v_row=260, v_col=32 (full output)
     %dst = pto.alloc_tile
       : !pto.tile_buf<vec, 260x32xui16, pad=2>
 
     pto.tload ins(%src_part : !pto.partition_tensor_view<1x1x1x259x7xui16>)
-              outs(%src : !pto.tile_buf<vec, 260x32xui16, valid=259x7, pad=3>)
+              outs(%src : !pto.tile_buf<vec, 259x32xui16, valid=259x7, pad=3>)
 
-    pto.tfillpad_expand ins(%src : !pto.tile_buf<vec, 260x32xui16, valid=259x7, pad=3>)
-                        outs(%dst : !pto.tile_buf<vec, 260x32xui16, pad=2>)
+    pto.tfillpad ins(%src : !pto.tile_buf<vec, 259x32xui16, valid=259x7, pad=3>)
+                 outs(%dst : !pto.tile_buf<vec, 260x32xui16, pad=2>)
 
     pto.tstore ins(%dst : !pto.tile_buf<vec, 260x32xui16, pad=2>)
                outs(%dst_part : !pto.partition_tensor_view<1x1x1x260x32xui16>)
@@ -101,18 +101,18 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       sizes = [%c1, %c1, %c1, %c260, %c64]
       : !pto.tensor_view<1x1x1x260x64xi8> -> !pto.partition_tensor_view<1x1x1x260x64xi8>
 
-    // Src tile: LoadPadVal=Min (pad=3), src physical=260x64, v_row=259, v_col=7
+    // Src tile: LoadPadVal=Min (pad=3), src physical=259x64, v_row=259, v_col=7
     %src = pto.alloc_tile
-      : !pto.tile_buf<vec, 260x64xi8, valid=259x7, pad=3>
+      : !pto.tile_buf<vec, 259x64xi8, valid=259x7, pad=3>
     // Dst tile: FillPadVal=Max (pad=2), dst physical=260x64, v_row=260, v_col=64 (full output)
     %dst = pto.alloc_tile
       : !pto.tile_buf<vec, 260x64xi8, pad=2>
 
     pto.tload ins(%src_part : !pto.partition_tensor_view<1x1x1x259x7xi8>)
-              outs(%src : !pto.tile_buf<vec, 260x64xi8, valid=259x7, pad=3>)
+              outs(%src : !pto.tile_buf<vec, 259x64xi8, valid=259x7, pad=3>)
 
-    pto.tfillpad_expand ins(%src : !pto.tile_buf<vec, 260x64xi8, valid=259x7, pad=3>)
-                        outs(%dst : !pto.tile_buf<vec, 260x64xi8, pad=2>)
+    pto.tfillpad ins(%src : !pto.tile_buf<vec, 259x64xi8, valid=259x7, pad=3>)
+                 outs(%dst : !pto.tile_buf<vec, 260x64xi8, pad=2>)
 
     pto.tstore ins(%dst : !pto.tile_buf<vec, 260x64xi8, pad=2>)
                outs(%dst_part : !pto.partition_tensor_view<1x1x1x260x64xi8>)

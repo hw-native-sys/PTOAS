@@ -37,6 +37,12 @@
 
 namespace mlir {
 namespace pto {
+  enum class TFillPadLoweringKind {
+    Normal,
+    InPlace,
+    Expand,
+  };
+
   enum class PhysicalSectionKind {
     Vector,
     Cube,
@@ -44,6 +50,10 @@ namespace pto {
 
   std::optional<PhysicalSectionKind>
   inferPhysicalSectionKindFromPipe(Operation *op);
+
+  FailureOr<bool> hasTFillPadExpandedPhysicalShape(TFillPadOp op);
+  FailureOr<TFillPadLoweringKind>
+  inferTFillPadLoweringKindAfterMemoryPlanning(TFillPadOp op);
 
   const std::set<pto::AddressSpace> LocalBufferSpace{
     pto::AddressSpace::VEC, pto::AddressSpace::MAT, pto::AddressSpace::ACC, pto::AddressSpace::LEFT, pto::AddressSpace::RIGHT, pto::AddressSpace::BIAS, pto::AddressSpace::SCALING};

@@ -18,7 +18,7 @@ module {
       %fp: !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>,
       %row: index, %col: index,
       %dst: !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>) {
-    pto.textract_fp ins(%src, %fp, %row, %col : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>, index, index)
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
                     outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
@@ -28,16 +28,18 @@ module {
       %fp: !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>,
       %row: index, %col: index,
       %dst: !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>) {
-    pto.tinsert_fp ins(%src, %fp, %row, %col : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>, index, index)
+    pto.tinsert ins(%src, %row, %col : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
                    outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
     return
   }
 }
 
 // NATIVE-LABEL: func.func private @textract_fp_arg(
-// NATIVE: pto.textract_fp ins(%arg0, %arg1, %arg2, %arg3
+// NATIVE: pto.textract ins(%arg0, %arg2, %arg3
+// NATIVE-SAME: fp %arg1
 // NATIVE-LABEL: func.func private @tinsert_fp_arg(
-// NATIVE: pto.tinsert_fp ins(%arg0, %arg1, %arg2, %arg3
+// NATIVE: pto.tinsert ins(%arg0, %arg2, %arg3
+// NATIVE-SAME: fp %arg1
 // NATIVE-NOT: memref<
 
 // EMITC-LABEL: textract_fp_arg(

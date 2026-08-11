@@ -3121,14 +3121,21 @@ def tload(part, tile):
     _pto.TLoadOp(None, unwrap_surface_value(part), unwrap_surface_value(tile))
 
 
-def tstore(tile, part):
+def tstore(tile, part, *, fp=None):
     """``pto.tstore ins(tile) outs(part)``."""
-    _pto.TStoreOp(None, unwrap_surface_value(tile), unwrap_surface_value(part))
+    kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
+    _pto.TStoreOp(
+        None, unwrap_surface_value(tile), unwrap_surface_value(part), **kwargs
+    )
 
 
-def tmov(src, dst, *, mode=None):
+def tmov(src, dst, *, fp=None, mode=None):
     """``pto.tmov ins(src) outs(dst)`` – move data between tile domains."""
     kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
     if mode is not None:
         kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(mode, context="tmov(..., mode=...)")
     _pto.TMovOp(None, unwrap_surface_value(src), unwrap_surface_value(dst), **kwargs)
@@ -3136,30 +3143,46 @@ def tmov(src, dst, *, mode=None):
 
 def ttrans(src, tmp, dst):
     """``pto.ttrans ins(src, tmp) outs(dst)`` – tile transpose (DPS)."""
-    _pto.ttrans(
+    _pto.TTransOp(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
-def textract(src, dst, index_row, index_col):
+def textract(src, dst, index_row, index_col, *, fp=None, mode=None):
     """``pto.textract ins(src, index_row, index_col) outs(dst)``."""
+    kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
+    if mode is not None:
+        kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(
+            mode, context="textract(..., mode=...)"
+        )
     _pto.TExtractOp(
         unwrap_surface_value(src),
         _coerce_index(index_row, context="textract(index_row)"),
         _coerce_index(index_col, context="textract(index_col)"),
         unwrap_surface_value(dst),
+        **kwargs,
     )
 
 
-def tinsert(src, dst, index_row, index_col):
+def tinsert(src, dst, index_row, index_col, *, fp=None, mode=None):
     """``pto.tinsert ins(src, index_row, index_col) outs(dst)``."""
+    kwargs = {}
+    if fp is not None:
+        kwargs["fp"] = unwrap_surface_value(fp)
+    if mode is not None:
+        kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(
+            mode, context="tinsert(..., mode=...)"
+        )
     _pto.TInsertOp(
         unwrap_surface_value(src),
         _coerce_index(index_row, context="tinsert(index_row)"),
         _coerce_index(index_col, context="tinsert(index_col)"),
         unwrap_surface_value(dst),
+        **kwargs,
     )
 
 
@@ -3490,8 +3513,8 @@ def trowsum(src, tmp, dst):
     """``pto.trowsum ins(src, tmp) outs(dst)``."""
     _pto.trowsum(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3499,8 +3522,8 @@ def trowmax(src, tmp, dst):
     """``pto.trowmax ins(src, tmp) outs(dst)``."""
     _pto.trowmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3508,8 +3531,8 @@ def trowmin(src, tmp, dst):
     """``pto.trowmin ins(src, tmp) outs(dst)``."""
     _pto.trowmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3517,8 +3540,8 @@ def trowprod(src, tmp, dst):
     """``pto.trowprod ins(src, tmp) outs(dst)``."""
     _pto.trowprod(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3526,8 +3549,8 @@ def trowargmax(src, tmp, dst):
     """``pto.trowargmax ins(src, tmp) outs(dst)``."""
     _pto.trowargmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3535,8 +3558,8 @@ def trowargmin(src, tmp, dst):
     """``pto.trowargmin ins(src, tmp) outs(dst)``."""
     _pto.trowargmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3578,8 +3601,8 @@ def tcolargmax(src, tmp, dst):
     """``pto.tcolargmax ins(src, tmp) outs(dst)``."""
     _pto.tcolargmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -3587,8 +3610,8 @@ def tcolargmin(src, tmp, dst):
     """``pto.tcolargmin ins(src, tmp) outs(dst)``."""
     _pto.tcolargmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -4118,8 +4141,8 @@ def txor(src0, src1, tmp, dst):
     _pto.txor(
         unwrap_surface_value(src0),
         unwrap_surface_value(src1),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -4128,8 +4151,8 @@ def txors(src, scalar, tmp, dst):
     _pto.txors(
         unwrap_surface_value(src),
         _coerce_tile_scalar_operand(src, scalar, context="txors"),
-        unwrap_surface_value(tmp),
         unwrap_surface_value(dst),
+        tmp=unwrap_surface_value(tmp),
     )
 
 
@@ -4206,24 +4229,8 @@ def tpartmin(src0, src1, dst):
 
 
 def tfillpad(src, dst):
-    """``pto.tfillpad ins(src) outs(dst)``."""
+    """``pto.tfillpad ins(src) outs(dst)`` with compiler-inferred lowering."""
     _pto.tfillpad(
-        unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-    )
-
-
-def tfillpad_expand(src, dst):
-    """``pto.tfillpad_expand ins(src) outs(dst)``."""
-    _pto.tfillpad_expand(
-        unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-    )
-
-
-def tfillpad_inplace(src, dst):
-    """``pto.tfillpad_inplace ins(src) outs(dst)``."""
-    _pto.tfillpad_inplace(
         unwrap_surface_value(src),
         unwrap_surface_value(dst),
     )
@@ -6748,7 +6755,7 @@ __all__ = [
     "tsel", "tsels", "tcvt",
     "tnot", "tand", "tands", "tor", "tors", "txor", "txors", "tshl", "tshls", "tshr", "tshrs",
     "tpartadd", "tpartmul", "tpartmax", "tpartmin",
-    "tfillpad", "tfillpad_expand", "tfillpad_inplace",
+    "tfillpad",
     "ttri", "tthistogram",
     "chistv2",
     "as_ptr",

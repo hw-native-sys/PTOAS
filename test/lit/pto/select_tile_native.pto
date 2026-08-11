@@ -10,8 +10,8 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-insert-sync %s | FileCheck %s --check-prefix=EMITC
 
 module {
-  func.func private @tsel_arg(%mask: !pto.tile_buf<vec, 2x128xi8>, %a: !pto.tile_buf<vec, 2x128xf16>, %b: !pto.tile_buf<vec, 2x128xf16>, %tmp: !pto.tile_buf<vec, 2x128xf16>, %dst: !pto.tile_buf<vec, 2x128xf16>) {
-    pto.tsel ins(%mask, %a, %b, %tmp : !pto.tile_buf<vec, 2x128xi8>, !pto.tile_buf<vec, 2x128xf16>, !pto.tile_buf<vec, 2x128xf16>, !pto.tile_buf<vec, 2x128xf16>) outs(%dst : !pto.tile_buf<vec, 2x128xf16>)
+  func.func private @tsel_arg(%mask: !pto.tile_buf<vec, 2x128xi8>, %a: !pto.tile_buf<vec, 2x128xf16>, %b: !pto.tile_buf<vec, 2x128xf16>, %tmp: !pto.tile_buf<vec, 1x16xi32>, %dst: !pto.tile_buf<vec, 2x128xf16>) {
+    pto.tsel ins(%mask, %a, %b, %tmp : !pto.tile_buf<vec, 2x128xi8>, !pto.tile_buf<vec, 2x128xf16>, !pto.tile_buf<vec, 2x128xf16>, !pto.tile_buf<vec, 1x16xi32>) outs(%dst : !pto.tile_buf<vec, 2x128xf16>)
     return
   }
   func.func private @tsels_arg(%mask: !pto.tile_buf<vec, 2x128xi8>, %src: !pto.tile_buf<vec, 2x128xi16>, %tmp: !pto.tile_buf<vec, 1x128xi16>, %dst: !pto.tile_buf<vec, 2x128xi16>, %scalar: i16) {

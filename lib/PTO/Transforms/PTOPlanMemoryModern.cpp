@@ -11,6 +11,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -261,7 +262,7 @@ static InplacePolicy getInplacePolicy(Operation *op) {
 
   policy.notInplaceSafe = isOneOf(
       name, {
-                "pto.tands",      "pto.tfillpad_expand", "pto.tfmod",
+                "pto.tands",      "pto.tfmod",
                 "pto.tfmods",     "pto.tgather",         "pto.tmrgsort",
                 "pto.tors",       "pto.trecip",          "pto.trsqrt",
                 "pto.tsort32",    "pto.ttrans",          "pto.trowargmax",
@@ -269,6 +270,11 @@ static InplacePolicy getInplacePolicy(Operation *op) {
                 "pto.trowprod",   "pto.trowsum",         "pto.tcolargmax",
                 "pto.tcolargmin", "pto.tcvt",            "pto.txors",
             });
+
+  if (auto fillPad = dyn_cast<TFillPadOp>(op)) {
+    auto expanded = hasTFillPadExpandedPhysicalShape(fillPad);
+    policy.notInplaceSafe |= failed(expanded) || *expanded;
+  }
 
   if (name == "pto.tsel") {
     policy.forbidOutputAliasOperands.push_back(0); // mask
@@ -586,8 +592,14 @@ struct PlannerAnalysis {
     if (outputRoots.empty())
       return;
 
-    for (Value scratch : getWrittenNonDpsOperands(op, dpsInits))
+    for (Value scratch : getWrittenNonDpsOperands(op, dpsInits)) {
       addForbidAliasBetweenRoots(getRoots(scratch), outputRoots);
+      for (Value operand : op->getOperands()) {
+        if (operand == scratch || llvm::is_contained(dpsInits, operand))
+          continue;
+        addForbidAliasBetweenRoots(getRoots(scratch), getRoots(operand));
+      }
+    }
   }
 
   void recordInplacePolicyConflicts(Operation *op, ValueRange dpsInits) {

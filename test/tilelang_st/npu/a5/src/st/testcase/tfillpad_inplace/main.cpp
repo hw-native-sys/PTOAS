@@ -37,9 +37,9 @@ struct TestCase {
 };
 
 static const TestCase kCases[] = {
-    // Case: float, 260x16, no expansion (inplace: single buffer)
+    // Case: float, fill cols 7..15 in place in a single buffer.
     {"f32_260x16_noexpand", DataType::F32,
-     260, 16, 260, 16, sizeof(float)},
+     260, 16, 260, 7, sizeof(float)},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 

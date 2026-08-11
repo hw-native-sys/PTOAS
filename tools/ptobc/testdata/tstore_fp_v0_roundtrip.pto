@@ -15,7 +15,7 @@ module {
     %dst_part = pto.partition_view %dst_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<32x32xi8> -> !pto.partition_tensor_view<32x32xi8>
     %acc_tile = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp_tile = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tstore_fp ins(%acc_tile, %fp_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst_part : !pto.partition_tensor_view<32x32xi8>)
+    pto.tstore ins(%acc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0> fp %fp_tile : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst_part : !pto.partition_tensor_view<32x32xi8>)
     return
   }
 }

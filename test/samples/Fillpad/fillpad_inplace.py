@@ -27,7 +27,6 @@ def build():
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Zero, ctx)
-
             cfg = pto.TileBufConfigAttr.get(bl, sl, pto.TileConfig.fractalABSize, pd, ctx)
             tile_ty = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
@@ -50,7 +49,7 @@ def build():
 
                 tile = pto.AllocTileOp(tile_ty).result
                 pto.TLoadOp(None, sv0, tile)
-                pto.TFillPadInplaceOp(tile, tile)
+                pto.TFillPadOp(tile, tile)
                 pto.TStoreOp(None, tile, sv1)
                 func.ReturnOp([])
 

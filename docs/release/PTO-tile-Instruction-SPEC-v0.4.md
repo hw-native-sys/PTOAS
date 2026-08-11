@@ -1757,7 +1757,7 @@ pto.tsels ins(%mask, %src, %tmp, %scalar :
 > **Category:** Tile-local fill, pad, and expansion materialization
 > **Pipeline:** PIPE_V
 
-This chapter documents the TileLib fill / padding families. These ops preserve or materialize valid data and then synthesize the remaining destination region from the destination tile's padding policy.
+This chapter documents the unified TileLib fill / padding operation. It preserves or materializes valid data and then synthesizes the remaining destination region from the destination tile's padding policy.
 
 The destination tile's `pad` / `pad_value` configuration determines which value is written into the synthesized padding or expansion region.
 
@@ -1770,7 +1770,7 @@ The destination tile's `pad` / `pad_value` configuration determines which value 
 pto.tfillpad ins(%src : !pto.tile_buf<...>)
              outs(%dst : !pto.tile_buf<...>)
 ```
-- **semantics:** copy valid data from `src` into `dst`, then fill the remaining destination region according to `dst`'s pad policy.
+- **semantics:** PTOAS infers normal, in-place, or expand behavior from physical tile shapes and post-PlanMemory addresses. Users do not specify a mode.
 
 **Parameter Table:**
 
@@ -1779,46 +1779,33 @@ pto.tfillpad ins(%src : !pto.tile_buf<...>)
 | `src` | `pto.tile_buf` | Source tile. |
 | `dst` | `pto.tile_buf` | Destination tile carrying the pad configuration. |
 
+**Inference Table:**
+
+| Compiler condition | Behavior | PTO-ISA mapping |
+|--------------------|----------|-----------------|
+| VEC, equal physical shapes, and different or unprovable addresses | Copy valid data, then fill padding. | `TFILLPAD(dst, src)` |
+| VEC, equal physical shapes, and identical starting addresses after memory planning | Skip the copy phase and fill padding on shared storage. | `TFILLPAD<pto::TFillPadMode::InPlace>(dst, src)` |
+| VEC, destination physical shape is at least the source shape in every dimension and larger in at least one | Copy into the larger destination and fill the expanded region. | `TFILLPAD<pto::TFillPadMode::Expand>(dst, src)` |
+| Supported non-VEC form, regardless of address equality | Use the architecture's normal overload. | `TFILLPAD(dst, src)` |
+
 **Constraints:**
 
 - Source and destination element types must be compatible.
 - The destination tile must carry a meaningful pad configuration.
-- This family is VEC-oriented.
+- In-place and expand lowering are VEC-only. Normal lowering also supports the homogeneous MAT overload.
+- Expand inference compares physical `shape`, not `valid_shape`.
+- Equal physical shapes use exact starting-address equality after PlanMemory to select in-place lowering; an unprovable address relationship selects normal lowering.
+- MAT always uses Normal lowering, including when source and destination share the same starting address.
 
 **Example:**
 
 ```mlir
 pto.tfillpad ins(%src : !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
              outs(%dst : !pto.tile_buf<vec, 8x64xf32, pad=1>)
-```
 
----
+pto.tfillpad ins(%tile : !pto.tile_buf<vec, 32x32xf32, pad=1>)
+             outs(%tile : !pto.tile_buf<vec, 32x32xf32, pad=1>)
 
-### 12.2 `pto.tfillpad_expand`
-
-- **syntax:**
-```mlir
-pto.tfillpad_expand ins(%src : !pto.tile_buf<...>)
-                    outs(%dst : !pto.tile_buf<...>)
-```
-- **semantics:** copy valid data from `src` into `dst`, then fill row/column expansion according to `dst`'s pad policy when the destination valid region or backing shape is larger than the source.
-
-**Parameter Table:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `src` | `pto.tile_buf` | Source tile. |
-| `dst` | `pto.tile_buf` | Larger destination tile carrying the pad configuration. |
-
-**Constraints:**
-
-- `dst` may be larger than `src` in valid region or physical shape.
-- The fill value is derived from `dst.pad_value`.
-- A unified VEC-oriented template handles the supported element families.
-
-**Example:**
-
-```mlir
-pto.tfillpad_expand ins(%src : !pto.tile_buf<vec, 4x32xf32>)
-                    outs(%dst : !pto.tile_buf<vec, 8x64xf32, pad=1>)
+pto.tfillpad ins(%src_small : !pto.tile_buf<vec, 4x32xf32>)
+             outs(%dst_large : !pto.tile_buf<vec, 8x64xf32, pad=1>)
 ```

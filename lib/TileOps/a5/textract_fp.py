@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""PTODSL TileLib templates for ``pto.textract_fp``."""
+"""PTODSL TileLib templates for the ``pto.textract`` fp form."""
 
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
@@ -27,7 +27,7 @@ def _register_textract_fp(name, signatures, quant_mode, template_id):
         signatures = (signatures,)
 
     @tilelib.tile_template(
-        op="pto.textract_fp",
+        op="pto.textract",
         target="a5",
         name=name,
         dtypes=tuple(signatures),
@@ -40,7 +40,7 @@ def _register_textract_fp(name, signatures, quant_mode, template_id):
         is_post_update=False,
         tags=("extract", "acc", "mat", "fp"),
     )
-    def _template(src: pto.Tile, fp: pto.Tile, index_row: pto.i32, index_col: pto.i32, dst: pto.Tile):
+    def _template(src: pto.Tile, index_row: pto.i32, index_col: pto.i32, dst: pto.Tile, fp: pto.Tile):
         m, n = dst.valid_shape
         src_ptr = src.as_ptr()
         if str(src.dtype) == "si32":
@@ -60,39 +60,39 @@ def _register_textract_fp(name, signatures, quant_mode, template_id):
 
 template_textract_fp_f32_si8 = _register_textract_fp(
     "template_textract_fp_f32_si8",
-    ("f32", "f32", "i32", "i32", "si8"),
+    ("f32", "i32", "i32", "si8", "f32"),
     "qf322b8_pre_vec",
     0,
 )
 template_textract_fp_f32_ui8 = _register_textract_fp(
     "template_textract_fp_f32_ui8",
-    ("f32", "f32", "i32", "i32", "ui8"),
+    ("f32", "i32", "i32", "ui8", "f32"),
     "qf322b8_pre_vec",
     1,
 )
 template_textract_fp_f32_f16 = _register_textract_fp(
     "template_textract_fp_f32_f16",
-    ("f32", "f32", "i32", "i32", "f16"),
+    ("f32", "i32", "i32", "f16", "f32"),
     "qf322f16_pre_vec",
     2,
 )
 template_textract_fp_f32_bf16 = _register_textract_fp(
     "template_textract_fp_f32_bf16",
-    ("f32", "f32", "i32", "i32", "bf16"),
+    ("f32", "i32", "i32", "bf16", "f32"),
     "qf322bf16_pre_vec",
     3,
 )
 template_textract_fp_f32_f32 = _register_textract_fp(
     "template_textract_fp_f32_f32",
-    ("f32", "f32", "i32", "i32", "f32"),
+    ("f32", "i32", "i32", "f32", "f32"),
     "qf322f32_pre_vec",
     4,
 )
 template_textract_fp_si32_si8 = _register_textract_fp(
     "template_textract_fp_si32_si8",
     (
-        ("si32", "f32", "i32", "i32", "si8"),
-        ("i32", "f32", "i32", "i32", "si8"),
+        ("si32", "i32", "i32", "si8", "f32"),
+        ("i32", "i32", "i32", "si8", "f32"),
     ),
     "req8_vec",
     5,
@@ -100,8 +100,8 @@ template_textract_fp_si32_si8 = _register_textract_fp(
 template_textract_fp_si32_ui8 = _register_textract_fp(
     "template_textract_fp_si32_ui8",
     (
-        ("si32", "f32", "i32", "i32", "ui8"),
-        ("i32", "f32", "i32", "i32", "ui8"),
+        ("si32", "i32", "i32", "ui8", "f32"),
+        ("i32", "i32", "i32", "ui8", "f32"),
     ),
     "req8_vec",
     6,
@@ -109,8 +109,8 @@ template_textract_fp_si32_ui8 = _register_textract_fp(
 template_textract_fp_si32_f16 = _register_textract_fp(
     "template_textract_fp_si32_f16",
     (
-        ("si32", "f32", "i32", "i32", "f16"),
-        ("i32", "f32", "i32", "i32", "f16"),
+        ("si32", "i32", "i32", "f16", "f32"),
+        ("i32", "i32", "i32", "f16", "f32"),
     ),
     "deqf16_vec",
     7,
@@ -118,8 +118,8 @@ template_textract_fp_si32_f16 = _register_textract_fp(
 template_textract_fp_si32_bf16 = _register_textract_fp(
     "template_textract_fp_si32_bf16",
     (
-        ("si32", "f32", "i32", "i32", "bf16"),
-        ("i32", "f32", "i32", "i32", "bf16"),
+        ("si32", "i32", "i32", "bf16", "f32"),
+        ("i32", "i32", "i32", "bf16", "f32"),
     ),
     "qs322bf16_pre_vec",
     8,

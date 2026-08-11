@@ -9,7 +9,7 @@
 
 
 
-// CHECK: expects A5 textract_fp element types to be
+// CHECK: expects A5 acc preQuantScalar textract element types to be
 
 
 
@@ -39,13 +39,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
 
 
-    pto.textract_fp ins(%src, %fp, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16,
+    pto.textract ins(%src, %c0, %c0 : !pto.tile_buf<loc=acc, dtype=si32, rows=16, cols=16, v_row=16, v_col=16,
 
-                                     blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+                                     blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
 
-                                     !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
-
-                                     blayout=col_major, slayout=row_major, fractal=1024, pad=0>, index, index)
+                                     blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
 
                  outs(%dst : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
 

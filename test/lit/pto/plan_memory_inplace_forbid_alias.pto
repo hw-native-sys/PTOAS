@@ -26,14 +26,14 @@ module attributes {"pto.target_arch" = "a3"} {
     %mask = pto.alloc_tile : !pto.tile_buf<vec, 16x32xi8>
     %src0 = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
     %src1 = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
-    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x16xi32>
     %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
 
     pto.tsel ins(%mask, %src0, %src1, %tmp
                  : !pto.tile_buf<vec, 16x32xi8>,
                    !pto.tile_buf<vec, 16x16xf16>,
                    !pto.tile_buf<vec, 16x16xf16>,
-                   !pto.tile_buf<vec, 16x16xf16>)
+                   !pto.tile_buf<vec, 1x16xi32>)
              outs(%dst : !pto.tile_buf<vec, 16x16xf16>)
     return
   }

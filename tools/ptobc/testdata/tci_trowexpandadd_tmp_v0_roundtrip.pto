@@ -10,9 +10,9 @@ module {
   func.func @tci_trowexpandadd_tmp_v0() {
     %c0_i16 = arith.constant 0 : i16
 
-    %tci_tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tci_tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=512, v_row=1, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %tci_dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tci ins(%c0_i16, %tci_tmp : i16, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tci ins(%c0_i16, %tci_tmp : i16, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=512, v_row=1, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
             outs(%tci_dst : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 
     %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>

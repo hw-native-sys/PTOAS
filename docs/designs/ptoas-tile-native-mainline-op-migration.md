@@ -161,8 +161,7 @@ PTO tile/view IR
 | `pto.tgemv_mx` | MX scale role |
 | `pto.tgemv_mx_acc` | MX scale + accumulator effects |
 | `pto.tgemv_mx_bias` | MX scale + bias effects |
-| `pto.tmov` | identity removal、view metadata 和 src/dst alias |
-| `pto.tmov_fp` | fp/pre-quant optional operands和地址空间 |
+| `pto.tmov` | identity removal、view metadata、src/dst alias，以及 fp/pre-quant optional operands 和地址空间 |
 | `pto.tabs` | unary Read(src)/Write(dst) |
 | `pto.tand` | binary input/output effects |
 | `pto.tands` | scalar form operand 顺序 |
@@ -186,12 +185,9 @@ PTO tile/view IR
 | `pto.tdiv` | precision attr 和 inplace policy |
 | `pto.tdivs` | scalar 顺序和 precision attr |
 | `pto.texpands` | shape扩展和 scalar operand |
-| `pto.textract` | tile role、offset 和可选 pre-quant |
-| `pto.textract_fp` | fp tile role和地址空间 |
-| `pto.tinsert` | materialize pass 当前对 tile config 有特殊推断；目标是由 result type 完整携带 |
-| `pto.tinsert_fp` | fp/pre-quant tile role |
-| `pto.tfillpad` | src/dst alias 和 A5 MAT/PIPE 选择 |
-| `pto.tfillpad_inplace` | same-SSA inplace 和 MemoryEffects |
+| `pto.textract` | tile role、offset、fp tile 地址空间和可选 pre-quant |
+| `pto.tinsert` | materialize pass 当前对 tile config 有特殊推断；包含 fp/pre-quant tile role，目标是由 result type 完整携带 |
+| `pto.tfillpad` | 基于 physical shape 和 PlanMemory 地址推导 lowering、src/dst alias、MemoryEffects 和 A5 MAT/PIPE 选择 |
 | `pto.tsetval` | tile writer 和 result type |
 | `pto.tgetval` | tile reader和 scalar result |
 | `pto.tgather` | optional tmp、compare/index form 和 sync macro model |

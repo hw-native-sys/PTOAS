@@ -27,22 +27,22 @@ CASES = [
         "name": "f32_64x16_noexpand",
         "dtype": np.float32,
         "src_shape": (64, 16),
-        "src_valid": (64, 16),
+        "src_valid": (64, 7),
         "dst_shape": (64, 16),
         "dst_valid": (64, 16),
         "fill_padval": "Max",
         "eps": 1e-6,
     },
-    # ========== Case: float, src_valid == dst_valid (no expansion) ==========
+    # ========== Case: float, fill cols 7..15 in place ==========
 
     {
         "name": "f32_260x16_noexpand",
         "dtype": np.float32,
         "src_shape": (260, 16),         # src physical
-        "src_valid": (260, 16),         # src valid = dst valid (no expansion)
+        "src_valid": (260, 7),          # valid data before in-place padding
         "dst_shape": (260, 16),         # dst physical
         "dst_valid": (260, 16),         # dst valid = full output
-        "fill_padval": "Max",           # FillPadVal (not used since no expansion)
+        "fill_padval": "Max",           # fill cols 7..15 in the same tile
         "eps": 1e-6,
     },
 ]

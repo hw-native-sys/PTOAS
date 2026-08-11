@@ -140,6 +140,7 @@ context attrs. Current examples include:
 | `cmp_mode` | `tcmp`, `tcmps` |
 | `mask_pattern` | gather-side paths |
 | `precisionType` | high-precision math families |
+| `acc_to_vec_mode`, `relu_pre_mode` | `tinsert` accumulator writeback paths |
 
 When a new TileLangDSL version depends on an op attribute, the PTODSL migration
 should first decide whether the attribute is a real context attr. If it changes

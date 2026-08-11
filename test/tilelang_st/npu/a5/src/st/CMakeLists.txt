@@ -40,6 +40,9 @@ else()
 endif()
 
 set(PTO_ISA_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../../../pto-isa" CACHE PATH "Path to pto-isa repo")
+if(NOT EXISTS "${PTO_ISA_ROOT}/include/pto/pto-inst.hpp")
+    message(FATAL_ERROR "Cannot find ${PTO_ISA_ROOT}/include/pto/pto-inst.hpp")
+endif()
 set(PTO_TILELANG_ST_COMMON_DIR
     "${CMAKE_CURRENT_LIST_DIR}/common")
 set(ASCEND_DRIVER_PATH /usr/local/Ascend/driver)
@@ -81,6 +84,9 @@ set(CMAKE_CPP_COMPILE_OPTIONS
 include_directories(
     ${ASCEND_HOME_PATH}/include
     ${ASCEND_DRIVER_PATH}/kernel/inc
+)
+include_directories(BEFORE
+    ${PTO_ISA_ROOT}/include
 )
 
 add_subdirectory(testcase)

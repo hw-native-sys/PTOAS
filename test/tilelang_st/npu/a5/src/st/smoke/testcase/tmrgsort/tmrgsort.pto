@@ -107,7 +107,7 @@ func.func @TMRGSORT_f16_topk_1280_512(%src_ptr: !pto.ptr<f16>, %dst_ptr: !pto.pt
   %block1_tile = pto.alloc_tile
     : !pto.tile_buf<vec, 1x512xf16, valid=1x256>
   %merge_tmp_tile = pto.alloc_tile
-    : !pto.tile_buf<vec, 1x1280xf16>
+    : !pto.tile_buf<vec, 1x1536xf16>
   %merge_dst_tile = pto.alloc_tile
     : !pto.tile_buf<vec, 1x1280xf16, valid=1x512>
   %ex_vec = arith.constant dense<0> : vector<4xi16>
@@ -159,7 +159,7 @@ func.func @TMRGSORT_f16_topk_1280_512(%src_ptr: !pto.ptr<f16>, %dst_ptr: !pto.pt
   pto.tmrgsort ins(%block0_tile, %block1_tile, %merge_tmp_tile {exhausted = false} :
                   !pto.tile_buf<vec, 1x1024xf16>,
                   !pto.tile_buf<vec, 1x512xf16, valid=1x256>,
-                  !pto.tile_buf<vec, 1x1280xf16>)
+                  !pto.tile_buf<vec, 1x1536xf16>)
              outs(%merge_dst_tile, %ex_vec :
                   !pto.tile_buf<vec, 1x1280xf16, valid=1x512>,
                   vector<4xi16>)

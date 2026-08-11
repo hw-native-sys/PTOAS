@@ -63,7 +63,7 @@ def build():
                 pto.TLoadOp(None, sv0, tb_src)
 
                 # transpose: ttrans ins(%src, %tmp) outs(%dst)
-                pto.TTransOp(tb_src, tb_tmp, tb_dst)
+                pto.TTransOp(tb_src, tb_dst, tmp=tb_tmp)
 
                 # output subview
                 sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result

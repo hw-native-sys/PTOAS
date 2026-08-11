@@ -7,35 +7,41 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Test that ExpandTileOp + InlineLibCall + FoldTileBufIntrinsics pipeline
-// expands pto.tfillpad (inplace mode) via the PTODSL TileLib template
+// expands pto.tfillpad with compiler-inferred in-place lowering via the PTODSL TileLib template
 //
 // Pipeline: ExpandTileOp -> InlineLibCall -> FoldTileBufIntrinsics
 //
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
 
 // After the full tile-op-expand path on the VPTO backend, the original
-// pto.tfillpad (inplace) should be lowered to vector-style VPTO IR.
+// Compiler-inferred in-place lowering should produce vector-style VPTO IR.
 // CHECK: func.func @TFILLPAD_INPLACE
 // CHECK-NOT: pto.tfillpad ins
+// CHECK: %[[MAX:.*]] = arith.constant 3.40282347E+38 : f32
+// Unaligned right padding uses an aligned store base and masks out the source
+// prefix, matching vstus/vstas behavior without overwriting valid elements.
 // CHECK: pto.vecscope
 // CHECK: pto.castptr
-// CHECK-DAG: pto.vdup
-// CHECK-DAG: pto.vlds
+// CHECK-DAG: pto.pxor
+// CHECK-DAG: pto.vdup %[[MAX]],
 // CHECK-DAG: pto.vsts
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TFILLPAD_INPLACE() {
-    // 原地操作：src 和 dst 是同一个 Tile
-    // 有效区域 8x48，总容量 16x64
-    %tile = pto.alloc_tile
-      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=8, v_col=48,
-                      blayout=row_major, slayout=none_box, fractal=512, pad=1>
+    %c0 = arith.constant 0 : i64
+    %src = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=7,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=3>
+    %dst = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=2>
 
-    // src 和 dst 相同，表示原地填充 padding
-    pto.tfillpad ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=8, v_col=48,
-                              blayout=row_major, slayout=none_box, fractal=512, pad=1>)
-                 outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=8, v_col=48,
-                                   blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+    // Column 7 is deliberately unaligned. The runtime ST separately models
+    // the PTO-ISA in-place calling convention with aliased tile addresses.
+    pto.tfillpad ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=7,
+                              blayout=row_major, slayout=none_box, fractal=512, pad=3>)
+                 outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                   blayout=row_major, slayout=none_box, fractal=512, pad=2>)
     return
   }
 }

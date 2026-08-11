@@ -11,7 +11,7 @@
 """Generate golden data for tfillpad_inplace test cases.
 
 For tfillpad_inplace:
-  - Only one tile, valid_shape smaller than tile shape
+  - Source and destination tile handles alias the same UB storage
   - Input: full tile shape (rows x cols), random values in valid region, zeros in padding
   - Golden: full tile shape with valid region copied and padding filled with MAX (PadValue.Max)
 """
@@ -73,15 +73,18 @@ for case in CASES:
     dst_r, dst_c = dst_shape
     dst_vr, dst_vc = dst_valid
 
-    # Input: src valid region data (random values)
-    input_data = np.random.uniform(1.0, 10.0, size=(src_vr, src_vc)).astype(dtype)
+    # Input occupies the full physical buffer; only src_valid contains data.
+    input_data = np.zeros(src_shape, dtype=dtype)
+    input_data[:src_vr, :src_vc] = np.random.uniform(
+        1.0, 10.0, size=(src_vr, src_vc)
+    ).astype(dtype)
 
     # Golden: dst full region
     # Copy src.valid region to dst[:src_vr, :src_vc]
     # Fill cols src_vc to dst_vc with FillPadVal
     # Fill rows src_vr to dst_vr with FillPadVal (row expansion, if any)
     golden = np.zeros(dst_shape, dtype=dtype)
-    golden[:src_vr, :src_vc] = input_data
+    golden[:src_vr, :src_vc] = input_data[:src_vr, :src_vc]
 
     # Fill column padding (cols src_vc to dst_vc)
     if dst_vc > src_vc:
