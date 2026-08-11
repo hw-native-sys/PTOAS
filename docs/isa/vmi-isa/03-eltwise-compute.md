@@ -130,9 +130,7 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vmax %lhs, %rhs, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`,
-  `f32`. Integer signedness is taken from the element type; signless `iN`
-  uses unsigned semantics.
+- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**
   ```
   K × pto.vmax / pto.vmin
