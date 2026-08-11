@@ -11,7 +11,7 @@ compile() {
 }
 run() {
   if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
-    python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"
+    task-submit --device "${ACL_DEVICE_ID}" --run "source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; source /home/jzhuang/miniconda/bin/activate cann91_dev; PATH=\$CONDA_PREFIX/bin:\$PATH python '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"
   else
     python3 "${HERE}/report.py" | tee "${OUT}/results.txt"
   fi
