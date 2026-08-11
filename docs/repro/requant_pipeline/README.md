@@ -7,7 +7,7 @@ new scales. `fixtures/requant_vmi.pto` is stock PTOAS/VMI input and
 `fixtures/reference_cce.cpp` is a direct register-resident CCE peer.
 
 Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
-With `LIVE_DEVICE` and `ACL_DEVICE_ID`, benchmark mode builds and launches the
+With `ACL_DEVICE_ID`, benchmark mode builds and launches the
 VMI fixture through `torch_npu` and checks its finite scale output. The compile
 check verifies the reduction, multiply, conversion, and complete DMA envelope.
 The table is historical pinned A5 event medians:

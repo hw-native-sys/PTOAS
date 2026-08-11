@@ -4,7 +4,7 @@ from __future__ import annotations
 import ctypes, os, subprocess
 from pathlib import Path
 import torch, torch_npu  # noqa: F401
-HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('LIVE_DEVICE',os.environ.get('ACL_DEVICE_ID','0'))}"
+HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"
 def main():
  torch.npu.set_device(DEV); OUT.mkdir(exist_ok=True); env=os.environ.copy(); env.pop('PYTHONPATH',None)
  ptoas=os.environ.get('PTOAS_BIN') or subprocess.check_output(['conda','run','-n','cann91_dev','which','ptoas'],text=True).strip().splitlines()[-1]
