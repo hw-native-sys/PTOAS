@@ -202,6 +202,16 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
  
   // 2. Local Memory (UB/L1)
+  // TWO SOURCES set these addresses, not one. PTOPlanMemory writes them back to
+  // allocation roots; and under --pto-level=level3 the caller writes them itself as a
+  // constant `addr` operand on alloc_tile, which PTOIRTranslator records with the flag
+  // set. "Known" means the analyzer can trust the address is real and stable, NOT that a
+  // particular pass produced it.
+  //
+  // Comparing these ranges is also the only way two DISTINCT roots at partially
+  // overlapping addresses are seen to alias, which is what makes aliasing non-transitive
+  // and lets a buffer clique hold more than one tile.
+  //
   // PTOPlanMemory writes physical addresses back to allocation roots. Once an
   // async MTE3 store has consumed the source SSA, a later allocation can reuse
   // the same physical range with a different alloc_tile root. Compare those

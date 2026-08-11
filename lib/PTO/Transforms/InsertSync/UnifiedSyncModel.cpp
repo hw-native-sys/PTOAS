@@ -219,6 +219,12 @@ SyncModel mlir::pto::unified::buildSyncModel(
   // hazard. Read by reporting only -- see `Hazard::addressSharing`.
   //
   // Covers every non-barrier hazard, same-pipe included.
+  //
+  // The address is read straight off the `pto.alloc_tile` operand. `MemAlias` reaches the
+  // same addresses by a different route -- `BaseMemInfo::baseAddresses` guarded by
+  // `hasKnownPhysicalAddresses`, which PTOIRTranslator sets for a local alloc_tile whose
+  // addr is a non-negative constant -- so the two agree on level3. Reading the operand is
+  // a directness choice, not a workaround for a missing flag.
   auto addrAllocOf = [](const BaseMemInfo *mi) -> pto::AllocTileOp {
     if (!mi || !mi->rootBuffer)
       return nullptr;
