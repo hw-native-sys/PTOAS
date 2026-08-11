@@ -9,13 +9,16 @@ CCE peer with a minimal ctypes stream ABI.
 
 Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
 With `ACL_DEVICE_ID`, benchmark mode builds and launches both sides through
-`torch_npu`. The direct CCE side was verified on device 1 at 29.542 us for a
-128x7168 all-zero FP8 input and passed an exact all-zero output golden.
+`torch_npu`. A verified device-0 run uses a common 128x7168 output extent,
+passes both host goldens, and measures 32.960 us CCE versus 50553.814 us VMI.
 
-The current VMI fixture is itself the blocker: PTOAS reaches device LLVM and
-the CANN compiler frontend exits 139. This is a reproducible VMI failure, not
-a missing launch dependency; the CCE baseline is still compiled, launched,
-timed, and host-golden checked independently.
+| Verified device-0 event median | CCE us | VMI us | CCE/VMI |
+|---|---:|---:|---:|
+| 128x7168 FP8 requant work extent | 32.960 | 50553.814 | 0.0007 |
+
+The compact VMI body is tiled across the full output extent. Some runs also
+expose a PTOAS device-LLVM frontend crash; a successful compile gives the live
+timing above, while the CCE baseline remains independently launchable.
 
 The requested lowering must first compile this f8-to-f32 broadcast/reduce/f8
 sequence, then keep input-scale broadcast and output amax reduction in

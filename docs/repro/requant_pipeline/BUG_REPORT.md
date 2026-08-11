@@ -1,6 +1,7 @@
 # Performance issue
 
-The standalone CCE reference launches and measures 29.542 us for 128x7168 on
-device 1, with an exact host golden. The corresponding VMI fixture reaches the
-PTOAS device-LLVM stage and crashes the CANN frontend (exit 139). This is a
-compiler blocker before performance parity can be measured. See `README.md`.
+The standalone device-0 run launches both paths over 128x7168: CCE is 32.960
+us and VMI is 50553.814 us (ratio 0.0007), with both host goldens checked.
+Some runs also expose a PTOAS device-LLVM frontend crash. The direct CCE
+baseline proves the algorithm is fast and launchable independently. See
+`README.md`.

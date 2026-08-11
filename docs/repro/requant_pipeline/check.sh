@@ -9,5 +9,11 @@ compile() {
   env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" python3 "${HERE}/benchmark.py" --cce-only
   echo "PASS: direct CCE library compiles, launches, and passes its host golden"
 }
-run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
+run() {
+  if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
+    python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"
+  else
+    python3 "${HERE}/report.py" | tee "${OUT}/results.txt"
+  fi
+}
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
