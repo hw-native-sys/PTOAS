@@ -1,0 +1,1 @@
+[sync-cov] func=oracle_vadd anchors=4 sig=0x123456789abcdef0 edge_count=3 edges=0-2,1-2,2-3 bedge_count=0 bedges= barrier_all=1

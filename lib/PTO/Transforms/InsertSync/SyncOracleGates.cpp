@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/InsertSync/SyncOracleGates.h"
+#include "llvm/Support/xxhash.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
@@ -1178,8 +1179,12 @@ CoverageProfile mlir::pto::oracle::computeCoverage(
   });
 
   profile.anchorCount = anchorPipes.size();
-  profile.anchorSignature =
-      static_cast<uint64_t>(llvm::hash_value(llvm::StringRef(signatureText)));
+  // xxh3, NOT llvm::hash_value: this value crosses a process boundary, and
+  // llvm::hash_value seeds itself from a function address when
+  // LLVM_ENABLE_ABI_BREAKING_CHECKS is on, so ASLR makes identical source hash
+  // differently in every run.
+  profile.anchorSignature = llvm::xxh3_64bits(llvm::StringRef(signatureText));
+  profile.signatureVersion = kCoverageSignatureVersion;
 
   llvm::DenseSet<std::pair<unsigned, unsigned>> edges;
   /// `reachedBy` is the op whose execution the edge depends on -- the CONSUMING end of
@@ -1551,6 +1556,8 @@ mlir::pto::oracle::coverageViolationKindName(CoverageViolationKind k) {
     return "anchor-signature-mismatch";
   case CoverageViolationKind::MissingReference:
     return "missing-reference-profile";
+  case CoverageViolationKind::ProfileVersionMismatch:
+    return "coverage-profile-version-mismatch";
   }
   return "?";
 }
@@ -1559,6 +1566,20 @@ llvm::SmallVector<CoverageViolation>
 mlir::pto::oracle::checkCoverageSuperset(const CoverageProfile &cand,
                                          const CoverageProfile &ref) {
   llvm::SmallVector<CoverageViolation> violations;
+
+  // Checked BEFORE the signature, because a stale profile's signature is guaranteed to
+  // differ and reporting that as an anchor mismatch would blame the kernel for a
+  // format change.
+  if (ref.signatureVersion != cand.signatureVersion) {
+    violations.push_back(
+        {CoverageViolationKind::ProfileVersionMismatch, 0, 0,
+         "the reference profile was written with signature version " +
+             std::to_string(ref.signatureVersion) + " but this build writes version " +
+             std::to_string(cand.signatureVersion) +
+             " -- regenerate it with --dump-sync-coverage; the stored digest is not "
+             "comparable with the one computed here"});
+    return violations;
+  }
 
   if (cand.anchorCount != ref.anchorCount ||
       cand.anchorSignature != ref.anchorSignature) {
@@ -1620,7 +1641,9 @@ void mlir::pto::oracle::printCoverage(llvm::raw_ostream &os,
     os << p.carriedEdges[i].from << "-" << p.carriedEdges[i].to << "@"
        << p.carriedEdges[i].distance;
   }
-  os << " barrier_all=" << p.barrierAll << "\n";
+  os << " barrier_all=" << p.barrierAll
+     // APPENDED, like the carried-edge fields above and for the same reason.
+     << " sigver=" << p.signatureVersion << "\n";
 }
 
 llvm::StringMap<CoverageProfile>
@@ -1648,6 +1671,11 @@ mlir::pto::oracle::parseCoverage(llvm::StringRef text) {
       } else if (key == "sig") {
         if (value.getAsInteger(0, p.anchorSignature))
           p.anchorSignature = 0;
+      } else if (key == "sigver") {
+        // Absent in a profile from an older build, which leaves the member 0 and makes
+        // the version check below reject it.
+        if (value.getAsInteger(10, p.signatureVersion))
+          p.signatureVersion = 0;
       } else if (key == "edges" && !value.empty()) {
         llvm::SmallVector<llvm::StringRef> pairs;
         value.split(pairs, ',', -1, /*KeepEmpty=*/false);

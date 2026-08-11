@@ -494,7 +494,17 @@ struct CoverageProfile {
   llvm::SmallVector<CarriedEdge> carriedEdges;
   /// Hash of the anchor sequence. A differing signature means the two runs did not
   /// compile the same program, so their edge sets are not comparable.
+  ///
+  /// Must be computed with a digest that is STABLE ACROSS PROCESSES, since the value is
+  /// written to a file by one ptoas run and compared by another. `llvm::hash_value` is
+  /// not: under LLVM_ENABLE_ABI_BREAKING_CHECKS its seed is the address of a function,
+  /// so ASLR changes it every execution and identical source compares unequal.
   uint64_t anchorSignature = 0;
+
+  /// Which digest produced `anchorSignature`. A profile from an older build parses this
+  /// as 0 and is rejected as stale rather than silently compared against a value
+  /// computed a different way.
+  unsigned signatureVersion = 0;
   /// PIPE_ALL barriers seen. Reported by the differential gate and never
   /// differenced into its verdict: a reference that discharges hazards with
   /// barriers is denser by construction, and so is a candidate that is simply
@@ -517,7 +527,17 @@ enum class CoverageViolationKind {
   MissingBackwardOrdering,
   AnchorMismatch,
   MissingReference,
+  /// The persisted profile was written by a build whose signature digest differs from
+  /// this one's. Reported SEPARATELY from AnchorMismatch on purpose: the profile is
+  /// stale, not the program, and telling the two apart is the difference between
+  /// "regenerate the profile" and "your kernel changed".
+  ProfileVersionMismatch,
 };
+
+/// Bumped whenever the digest behind `CoverageProfile::anchorSignature` changes, so a
+/// profile written by an older build is refused instead of compared. Version 1 was
+/// `llvm::hash_value`, which is not stable across processes; version 2 is xxh3.
+constexpr unsigned kCoverageSignatureVersion = 2;
 
 llvm::StringRef coverageViolationKindName(CoverageViolationKind kind);
 

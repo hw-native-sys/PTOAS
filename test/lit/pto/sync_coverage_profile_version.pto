@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// PERSISTED COVERAGE PROFILES CARRY A DIGEST VERSION.
+//
+// The G1 differential gate writes a profile in one ptoas process and compares it in
+// another, so the anchor signature has to be reproducible across processes. It once used
+// llvm::hash_value, which seeds itself from a function address when
+// LLVM_ENABLE_ABI_BREAKING_CHECKS is on -- so under an assertion build ASLR changed the
+// digest every run and identical source compared unequal. It is xxh3 now.
+//
+// That change makes every previously written profile incomparable. This test pins that
+// such a profile is refused EXPLICITLY rather than being silently mistaken for a changed
+// kernel.
+//
+// The stored profile below is deliberately wrong in BOTH ways: it has no sigver field
+// (an older build wrote it) and its signature does not match this kernel either. The
+// version verdict must win, because that is the difference between telling someone to
+// regenerate a stale file and telling them their program changed.
+//===----------------------------------------------------------------------===//
+
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --check-sync-coverage=%S/Inputs/coverage_profile_v1.cov %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=STALE
+
+// Refused by version, naming both versions so the fix is obvious from the message alone.
+// STALE: coverage-profile-version-mismatch
+// STALE: signature version 0 but this build writes version 2
+// STALE: regenerate it with --dump-sync-coverage
+
+// And NOT blamed on the kernel, even though the stored signature is also wrong.
+// STALE-NOT: anchor-signature-mismatch
+
+// A profile this build wrote round-trips, so the version check is not simply refusing
+// everything.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --dump-sync-coverage %S/Inputs/oracle_vadd.pto 2> %t.fresh > /dev/null
+// RUN: FileCheck %s --check-prefix=FRESH --input-file=%t.fresh
+// FRESH: [sync-cov] func=oracle_vadd anchors=4 sig=0x{{[0-9a-f]+}} {{.*}} sigver=2
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-coverage=%t.fresh %S/Inputs/oracle_vadd.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=ROUNDTRIP --allow-empty
+// ROUNDTRIP-NOT: coverage-profile-version-mismatch
+// ROUNDTRIP-NOT: anchor-signature-mismatch
