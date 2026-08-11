@@ -8,7 +8,7 @@ import torch_npu  # noqa: F401
 
 HERE = Path(__file__).parent
 OUT = HERE / "outputs"
-DEVICE = f"npu:{os.environ.get('LIVE_DEVICE', os.environ.get('ACL_DEVICE_ID', '0'))}"
+DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
 
 def build_vmi():
     OUT.mkdir(exist_ok=True)

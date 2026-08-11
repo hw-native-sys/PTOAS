@@ -23,7 +23,7 @@ compile() {
   echo "PASS: stock PTOAS and direct CCE kernels compile"
 }
 run() {
-  if [[ "${LIVE_DEVICE:-}" != "" || "${ACL_DEVICE_ID:-}" != "" ]]; then
+  if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
     python3 "${HERE}/benchmark.py" | tee "${OUT}/results.txt"
   else
     python3 "${HERE}/report.py" | tee "${OUT}/results.txt"

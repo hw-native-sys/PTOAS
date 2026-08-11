@@ -9,7 +9,7 @@ and converts it to FP8.  Both sides are complete GM-to-UB-to-GM kernels:
   values in vector registers through E2B expansion and packed conversion.
 
 Run `bash check.sh compile` to compile both sides and inspect the emitted VPTO.
-`LIVE_DEVICE=1 ACL_DEVICE_ID=1 bash check.sh benchmark` builds, launches, and
+`ACL_DEVICE_ID=1 bash check.sh benchmark` builds, launches, and
 checks the VMI fixture through `torch_npu`; without a device selection the
 command prints the historical table below. Generated files go under `outputs/`.
 
