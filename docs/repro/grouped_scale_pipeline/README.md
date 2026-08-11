@@ -11,7 +11,7 @@ and converts it to FP8.  Both sides are complete GM-to-UB-to-GM kernels:
 Run `bash check.sh compile` to compile both sides and inspect the emitted VPTO.
 `ACL_DEVICE_ID=0 bash check.sh benchmark` builds, launches, checks, and times
 both libraries through `torch_npu` and ctypes. Generated files go under
-`outputs/`. The live control uses one 256-value work item and one device launch per side; events are synchronized before collection. A Python tile loop is intentionally excluded.
+`outputs/`. The live control enqueues 64 identical launches between each event pair and reports synchronized per-launch medians; the batch is identical on both sides.
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|

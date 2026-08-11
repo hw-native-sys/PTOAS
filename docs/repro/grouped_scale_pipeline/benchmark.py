@@ -17,7 +17,7 @@ DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
  # One 256-value work item per launch on both paths; this avoids measuring
  # 28k host-side VMI launches instead of device execution.
 ROWS, WIDTH, GROUPS = 1, 256, 8
-GRID, DYN_UB, WARMUP, SAMPLES = 1, 204800, 20, 30
+GRID, DYN_UB, WARMUP, SAMPLES, BATCH = 1, 204800, 20, 30, 64
 
 
 def command(argv: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -81,13 +81,16 @@ def stream_ptr() -> int:
 
 
 def median_us(fn) -> float:
-    for _ in range(WARMUP): fn()
+    for _ in range(WARMUP):
+        for _ in range(BATCH): fn()
     torch.npu.synchronize(); values = []
     for _ in range(SAMPLES):
         start, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
-        start.record(); fn(); end.record(); values.append((start, end))
+        start.record()
+        for _ in range(BATCH): fn()
+        end.record(); values.append((start, end))
     torch.npu.synchronize()
-    values = [start.elapsed_time(end) * 1000.0 for start, end in values]
+    values = [start.elapsed_time(end) * 1000.0 / BATCH for start, end in values]
     return sorted(values)[len(values) // 2]
 
 
@@ -121,7 +124,7 @@ def main() -> None:
     if not bool(torch.isfinite(cce_s.cpu()).all()) or not bool(torch.all(vmi_s.cpu() == 1)):
         raise RuntimeError("non-finite CCE scale or unexpected VMI scale")
     cce_us, vmi_us = median_us(cce_run), median_us(vmi_run)
-    print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} dynamic_ub={DYN_UB} samples={SAMPLES} warmup={WARMUP}")
+    print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} batch={BATCH} samples={SAMPLES} warmup={WARMUP}")
     print("correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal")
     print(f"CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
 
