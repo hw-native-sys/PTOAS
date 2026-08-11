@@ -1499,7 +1499,6 @@ void VMICompressStoreOp::getEffects(
 
 LogicalResult VMIReduceAddIOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto initType = cast<VMIVRegType>(getInit().getType());
   auto maskType = cast<VMIMaskType>(getMask().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
   if (!isVMIIntegerLikeType(sourceType.getElementType()))
@@ -1507,22 +1506,15 @@ LogicalResult VMIReduceAddIOp::verify() {
   auto sourceIntegerType = dyn_cast<IntegerType>(sourceType.getElementType());
   if (!sourceIntegerType || sourceIntegerType.getWidth() != 32)
     return emitOpError("requires 32-bit integer source element type");
-  if (sourceType.getElementType() != initType.getElementType() ||
-      sourceType.getElementType() != resultType.getElementType())
-    return emitOpError(
-        "requires source, init, and result element types to match");
-  if (initType.getElementCount() != 1 || resultType.getElementCount() != 1)
-    return emitOpError("requires init and result to be 1-lane VMI vectors");
-  if (failed(verifyAllSameVRegShapeAndLayout(getOperation(),
-                                             {initType, resultType},
-                                             /*requireSameElement=*/true)))
-    return failure();
+  if (sourceType.getElementType() != resultType.getElementType())
+    return emitOpError("requires source and result element types to match");
+  if (resultType.getElementCount() != 1)
+    return emitOpError("requires result to be a 1-lane VMI vector");
   return verifyMaskMatchesData(getOperation(), maskType, sourceType);
 }
 
 LogicalResult VMIReduceAddFOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto initType = cast<VMIVRegType>(getInit().getType());
   auto maskType = cast<VMIMaskType>(getMask().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
   if (!getOperation()->hasAttr("reassoc"))
@@ -1533,22 +1525,15 @@ LogicalResult VMIReduceAddFOp::verify() {
     return emitOpError("requires floating-point-like VMI source element type");
   if (!isVMIF16OrF32Type(sourceType.getElementType()))
     return emitOpError("requires f16 or f32 source element type");
-  if (sourceType.getElementType() != initType.getElementType() ||
-      sourceType.getElementType() != resultType.getElementType())
-    return emitOpError(
-        "requires source, init, and result element types to match");
-  if (initType.getElementCount() != 1 || resultType.getElementCount() != 1)
-    return emitOpError("requires init and result to be 1-lane VMI vectors");
-  if (failed(verifyAllSameVRegShapeAndLayout(getOperation(),
-                                             {initType, resultType},
-                                             /*requireSameElement=*/true)))
-    return failure();
+  if (sourceType.getElementType() != resultType.getElementType())
+    return emitOpError("requires source and result element types to match");
+  if (resultType.getElementCount() != 1)
+    return emitOpError("requires result to be a 1-lane VMI vector");
   return verifyMaskMatchesData(getOperation(), maskType, sourceType);
 }
 
 template <typename OpTy> LogicalResult verifyReduceMinMaxFOp(OpTy op) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  auto initType = cast<VMIVRegType>(op.getInit().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   if (!isVMIFloatLikeType(sourceType.getElementType()))
@@ -1556,16 +1541,10 @@ template <typename OpTy> LogicalResult verifyReduceMinMaxFOp(OpTy op) {
         "requires floating-point-like VMI source element type");
   if (!isVMIF16OrF32Type(sourceType.getElementType()))
     return op.emitOpError("requires f16 or f32 source element type");
-  if (sourceType.getElementType() != initType.getElementType() ||
-      sourceType.getElementType() != resultType.getElementType())
-    return op.emitOpError(
-        "requires source, init, and result element types to match");
-  if (initType.getElementCount() != 1 || resultType.getElementCount() != 1)
-    return op.emitOpError("requires init and result to be 1-lane VMI vectors");
-  if (failed(verifyAllSameVRegShapeAndLayout(op.getOperation(),
-                                             {initType, resultType},
-                                             /*requireSameElement=*/true)))
-    return failure();
+  if (sourceType.getElementType() != resultType.getElementType())
+    return op.emitOpError("requires source and result element types to match");
+  if (resultType.getElementCount() != 1)
+    return op.emitOpError("requires result to be a 1-lane VMI vector");
   return verifyMaskMatchesData(op.getOperation(), maskType, sourceType);
 }
 
@@ -1575,7 +1554,6 @@ LogicalResult VMIReduceMinFOp::verify() { return verifyReduceMinMaxFOp(*this); }
 
 template <typename OpTy> LogicalResult verifyReduceMinMaxIOp(OpTy op) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  auto initType = cast<VMIVRegType>(op.getInit().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   auto sourceIntegerType = dyn_cast<IntegerType>(sourceType.getElementType());
@@ -1583,16 +1561,10 @@ template <typename OpTy> LogicalResult verifyReduceMinMaxIOp(OpTy op) {
       !isVMIAnyI8I16I32Type(sourceType.getElementType()))
     return op.emitOpError(
         "requires 8-bit, 16-bit, or 32-bit integer source element type");
-  if (sourceType.getElementType() != initType.getElementType() ||
-      sourceType.getElementType() != resultType.getElementType())
-    return op.emitOpError(
-        "requires source, init, and result element types to match");
-  if (initType.getElementCount() != 1 || resultType.getElementCount() != 1)
-    return op.emitOpError("requires init and result to be 1-lane VMI vectors");
-  if (failed(verifyAllSameVRegShapeAndLayout(op.getOperation(),
-                                             {initType, resultType},
-                                             /*requireSameElement=*/true)))
-    return failure();
+  if (sourceType.getElementType() != resultType.getElementType())
+    return op.emitOpError("requires source and result element types to match");
+  if (resultType.getElementCount() != 1)
+    return op.emitOpError("requires result to be a 1-lane VMI vector");
   return verifyMaskMatchesData(op.getOperation(), maskType, sourceType);
 }
 

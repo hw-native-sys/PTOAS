@@ -25,9 +25,8 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_reduce_addi(
-// CHECK: %[[FIRST:.*]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // CHECK: %[[REDUCED:.*]] = pto.vcadd %arg0, %arg1 : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
-// CHECK: pto.vadd %[[REDUCED]], {{.*}}, %[[FIRST]] : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+// CHECK: return %[[REDUCED]] : !pto.vreg<64xi32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

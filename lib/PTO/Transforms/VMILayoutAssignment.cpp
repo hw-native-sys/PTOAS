@@ -878,8 +878,6 @@ struct LayoutSolver {
       if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(reduce.getInitMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(reduce.getMaskMutable(),
                                   getContiguousLayout(), op)))
           return WalkResult::interrupt();
@@ -890,8 +888,6 @@ struct LayoutSolver {
       }
       if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(reduce.getInitMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(reduce.getMaskMutable(),
                                   getContiguousLayout(), op)))
@@ -904,8 +900,6 @@ struct LayoutSolver {
       if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(reduce.getInitMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(reduce.getMaskMutable(),
                                   getContiguousLayout(), op)))
           return WalkResult::interrupt();
@@ -916,8 +910,6 @@ struct LayoutSolver {
       }
       if (auto reduce = dyn_cast<VMIReduceMinFOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(reduce.getInitMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(reduce.getMaskMutable(),
                                   getContiguousLayout(), op)))
@@ -930,8 +922,6 @@ struct LayoutSolver {
       if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(reduce.getInitMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(reduce.getMaskMutable(),
                                   getContiguousLayout(), op)))
           return WalkResult::interrupt();
@@ -942,8 +932,6 @@ struct LayoutSolver {
       }
       if (auto reduce = dyn_cast<VMIReduceMinIOp>(op)) {
         requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(reduce.getInitMutable(), getContiguousLayout(),
                        /*late=*/false, DataLayoutSeedPhase::Reduce);
         if (failed(requestMaskUse(reduce.getMaskMutable(),
                                   getContiguousLayout(), op)))

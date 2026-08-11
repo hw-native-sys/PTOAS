@@ -38,7 +38,8 @@ module {
   }
 }
 
-// CHECK: error: 'pto.vmi.reduce_addf' op requires all layout-assigned VMI data values to have the same layout
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.reduce_addf lowers through pto.vcadd only
+// CHECK-SAME: requires contiguous source, mask, and result layouts
 
 // -----
 
@@ -72,4 +73,5 @@ module {
   }
 }
 
-// CHECK: error: 'pto.vmi.reduce_maxf' op requires all layout-assigned VMI data values to have the same layout
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.reduce_maxf lowers through pto.vcmax only
+// CHECK-SAME: requires contiguous source, mask, and result layouts
