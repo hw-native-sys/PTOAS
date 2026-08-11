@@ -9,9 +9,9 @@ and converts it to FP8.  Both sides are complete GM-to-UB-to-GM kernels:
   values in vector registers through E2B expansion and packed conversion.
 
 Run `bash check.sh compile` to compile both sides and inspect the emitted VPTO.
-Run `bash check.sh benchmark` to print the pinned A5 event medians that selected
-this reduction, or `bash check.sh` for both.  Generated files go under
-`outputs/`.
+`LIVE_DEVICE=1 ACL_DEVICE_ID=1 bash check.sh benchmark` builds, launches, and
+checks the VMI fixture through `torch_npu`; without a device selection the
+command prints the historical table below. Generated files go under `outputs/`.
 
 | Representative case | ASC us | VMI us | ASC/VMI |
 |---|---:|---:|---:|
@@ -19,11 +19,10 @@ this reduction, or `bash check.sh` for both.  Generated files go under
 | ragged BF16, groups of 32 | 34.6239 | 67.5086 | 0.5129 |
 | large BF16, groups of 32 | 507.5570 | 1810.7665 | 0.2803 |
 
-The numbers are medians from the pinned A5 environment and are data rather
-than synthetic estimates. Device load can move absolute time; parity is defined
-as `ASC_us / VMI_us >= 0.98`. The reduced 256-lane fixture is intentionally
-small enough for compiler review while retaining the same reduction,
-broadcast, and conversion chain.
+The table is historical A5 evidence, not output from the live smoke runner.
+Device load can move absolute time; parity is defined as `ASC_us / VMI_us >=
+0.98`. The reduced 256-lane fixture is intentionally small enough for compiler
+review while retaining the same reduction, broadcast, and conversion chain.
 
 Requested behavior: retain group results and predicates across broadcast and
 conversion, avoid layout materialization and UB spill/reload, and reach at
