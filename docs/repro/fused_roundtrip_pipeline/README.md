@@ -6,7 +6,7 @@ group reduction, scale expansion, FP8 conversion, reverse scaling, and output
 DMA. `fixtures/reference_cce.cpp` is the complete direct CCE control.
 
 Use `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
-Set `LIVE_DEVICE` and `ACL_DEVICE_ID` to run the live PTO/VMI launch and exact
+Set `ACL_DEVICE_ID` to run the live PTO/VMI launch and exact
 one-value round-trip check through `torch_npu`.
 
 | Representative case | ASC us | VMI us | ASC/VMI |

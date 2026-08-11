@@ -4,7 +4,7 @@ import ctypes, os, subprocess
 from pathlib import Path
 import torch, torch_npu  # noqa: F401
 
-HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('LIVE_DEVICE',os.environ.get('ACL_DEVICE_ID','0'))}"
+HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"
 def sp():
  p=torch.npu.current_stream()._as_parameter_; return p.value if hasattr(p,'value') else int(p)
 def main():
