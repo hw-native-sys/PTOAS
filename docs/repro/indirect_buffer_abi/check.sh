@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-PYTHONPATH="${ROOT}/ptodsl:${PYTHONPATH:-}" "${PYTHON_BIN}" \
-  "${ROOT}/docs/repro/indirect_buffer_abi/fixtures/fixed_arguments.py" --emit-mlir \
-  | grep -q '!pto.ptr<f32, gm>'
-grep -q 'DESIRED API' "${ROOT}/docs/repro/indirect_buffer_abi/fixtures/desired_pointer_table.py"
-echo "PASS: fixed-pointer control compiles; desired indirect ABI is documented"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; MODE="${1:-all}"; OUT="${HERE}/outputs"; mkdir -p "${OUT}"
+set +u; source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh; set -u
+compile() {
+  PYTHONPATH="${HERE}/fixtures" conda run -n cann91_dev python "${HERE}/fixtures/fixed_arguments.py" --emit-mlir > "${OUT}/fixed.mlir"
+  grep -q '!pto.ptr<f32, gm>' "${OUT}/fixed.mlir"
+  grep -q 'pto.mte_gm_ub' "${OUT}/fixed.mlir"
+  grep -q 'DESIRED API' "${HERE}/fixtures/desired_pointer_table.py"
+  conda run -n cann91_dev python "${HERE}/fixtures/indirect_api_negative.py" | tee "${OUT}/negative_api.txt"
+  "${ASCEND_HOME_PATH}/tools/bisheng_compiler/bin/bisheng" -xcce -O2 -fPIC -std=c++17 \
+    --cce-aicore-arch=dav-c310-vec --cce-aicore-only -c "${HERE}/fixtures/reference_cce.cpp" \
+    -o "${OUT}/reference_device.o" -I"${ASCEND_HOME_PATH}/include" \
+    -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw" -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl" \
+    -I"${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface"
+  echo "PASS: fixed ABI compiles; typed pointer-table form is rejected by current PTODSL"
+}
+run() { python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; }
+case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
