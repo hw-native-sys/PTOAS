@@ -22,6 +22,12 @@ module {
     %r = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi16>
     return %r : !pto.vmi.vreg<64xsi16>
   }
+  // Rounding must be preserved when vcvt lowers to the legacy fptosi op.
+  func.func @f32_to_s32_round_z(%s: !pto.vmi.vreg<64xf32>) -> !pto.vmi.vreg<64xsi32> {
+    %r = pto.vmi.vcvt %s {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi32>
+    return %r : !pto.vmi.vreg<64xsi32>
+  }
   // f16->s8: NOSAT on vcvt -> NOSAT on fptosi
   func.func @f16_to_s8(%s: !pto.vmi.vreg<64xf16>) -> !pto.vmi.vreg<64xsi8> {
     %r = pto.vmi.vcvt %s {saturate = "NOSAT"} : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xsi8>
@@ -35,6 +41,9 @@ module {
 
 // CHECK-LABEL: func.func @f32_to_s16
 // CHECK: pto.vmi.fptosi %{{.*}} {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi16>
+
+// CHECK-LABEL: func.func @f32_to_s32_round_z
+// CHECK: pto.vmi.fptosi %{{.*}} {rounding = "Z", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi32>
 
 // CHECK-LABEL: func.func @f16_to_s8
 // CHECK: pto.vmi.fptosi %{{.*}} {saturate = "NOSAT"} : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xsi8>
