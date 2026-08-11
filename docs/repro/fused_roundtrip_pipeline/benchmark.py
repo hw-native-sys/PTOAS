@@ -14,8 +14,11 @@ import torch_npu  # noqa: F401
 HERE = Path(__file__).parent
 OUT = HERE / "outputs"
 DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
-ROWS, WIDTH = 128, 256
-GRID, DYN_UB = 72, 102912
+ # Keep one 256-value work item on each side.  The VMI fixture intentionally
+ # models the low-level operation, so timing a Python loop over rows would
+ # include host launch overhead and is not a fair kernel comparison.
+ROWS, WIDTH = 1, 256
+GRID, DYN_UB = 1, 102912
 WARMUP, SAMPLES = 20, 30
 
 
@@ -84,8 +87,9 @@ def median_us(fn) -> float:
     samples = []
     for _ in range(SAMPLES):
         begin, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
-        begin.record(); fn(); end.record(); end.synchronize()
-        samples.append(begin.elapsed_time(end) * 1000.0)
+        begin.record(); fn(); end.record(); samples.append((begin, end))
+    torch.npu.synchronize()
+    samples = [begin.elapsed_time(end) * 1000.0 for begin, end in samples]
     return sorted(samples)[len(samples) // 2]
 
 
@@ -109,16 +113,10 @@ def main() -> None:
     def cce_run() -> None:
         cce_fn(ctypes.c_void_p(stream_ptr()), ctypes.c_void_p(x.data_ptr()), ROWS)
 
-    # The current minimal VMI body has one fixed 256-value work item.  Launch
-    # it for every row so the timed work and output extent match the CCE case.
     def vmi_run() -> None:
-        row_bytes = WIDTH * x.element_size()
-        sf_bytes = 8 * vmi_scale.element_size()
         stream = ctypes.c_void_p(stream_ptr())
-        for row in range(ROWS):
-            vmi_fn(stream, ctypes.c_void_p(vmi_x.data_ptr() + row * row_bytes),
-                   ctypes.c_void_p(vmi_y.data_ptr() + row * row_bytes),
-                   ctypes.c_void_p(vmi_scale.data_ptr() + row * sf_bytes))
+        vmi_fn(stream, ctypes.c_void_p(vmi_x.data_ptr()),
+               ctypes.c_void_p(vmi_y.data_ptr()), ctypes.c_void_p(vmi_scale.data_ptr()))
 
     cce_run(); vmi_run(); torch.npu.synchronize()
     expected = torch.ones((ROWS, WIDTH), dtype=torch.bfloat16)

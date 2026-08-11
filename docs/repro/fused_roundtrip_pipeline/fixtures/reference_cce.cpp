@@ -5,6 +5,6 @@ extern "C" __global__ [aicore] void roundtrip_reference(
 
 extern "C" void launch_roundtrip_reference(void *stream, void *data,
                                             int rows) {
-  roundtrip_reference<<<72, 102912, stream>>>(
+  roundtrip_reference<<<1, 102912, stream>>>(
       (__gm__ uint16_t *)data, rows);
 }

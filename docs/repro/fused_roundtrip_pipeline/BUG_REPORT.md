@@ -1,5 +1,3 @@
 # Performance issue
 
-The fused A5 VMI quantize/dequantize sequence compiles, but representative
-ratios are 0.81–0.95 against direct CCE. Expected parity is at least 0.98. See
-`README.md` for the complete fixtures and measurements.
+The corrected one-launch control measures CCE 32.661 us versus VMI 32.875 us (ratio 0.9935) on device 0. Earlier multi-row values timed 128 host-side VMI launches against one CCE launch. See `README.md`.
