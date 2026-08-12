@@ -1,12 +1,13 @@
 [
   {
     "case": "full_bf16_8192x2048_72core_persistent",
-    "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
-    "cce_us": 21.555,
-    "vmi_us": 26.99,
-    "cce_over_vmi": 0.7986,
-    "event_cold_l2_cce_us": 30.913,
-    "event_cold_l2_vmi_us": 31.98,
-    "event_cold_l2_cce_over_vmi": 0.9666
+    "timing_authority": "standalone_device_0_ffts_30_repetitions",
+    "dtype": "bf16",
+    "intermediate": "e4m3",
+    "group_size": 32,
+    "round_sf": false,
+    "cce_us": 22.743,
+    "vmi_us": 34.796,
+    "cce_over_vmi": 0.6536
   }
 ]

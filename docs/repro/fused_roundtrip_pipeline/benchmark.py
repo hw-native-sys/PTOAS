@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build, validate, and time the full 8192x2048 persistent VMI/CCE case.
 
-Both paths launch one 72-core kernel.  The VMI body is the standalone PTO
-program in ``fixtures/full_roundtrip_vmi.py``; the CCE body is its separately
-written low-level counterpart.  Neither timed loop contains a Python loop
-over tensor rows or tiles.
+The CCE path is one 72-core persistent kernel.  The no-round VMI path is the
+equivalent two-kernel operation (quantize, then dequantize), because the
+current VMI surface cannot fuse floating-point scales.  Both timed callables
+use preallocated device buffers and contain no Python loop over rows or tiles.
 """
 from __future__ import annotations
 
@@ -25,10 +25,12 @@ HERE = Path(__file__).parent
 OUT = HERE / "outputs"
 DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
 ROWS, WIDTH, GRID = 8192, 2048, 72
-# CCE is the retained 9-row x 8-column production schedule (three rotating
-# buffers); the original generated host launcher requests this exact dynamic
-# UB size.  Do not shrink it: doing so silently changed the workload.
-CCE_DYN_UB, VMI_DYN_UB = 231552, 126208
+# CCE is a 9-row x 2048-element, three-slot persistent schedule. VMI retains
+# the production-shaped 32x1024 quantize and 64x256 dequantize tiles.  These
+# dynamic-UB sizes are the allocator-selected launch contracts for exactly
+# these two VMI bodies; using the hardware maximum changes the launch ABI and
+# does not represent the production schedule.
+CCE_DYN_UB, VMI_QUANT_UB, VMI_DEQUANT_UB = 231552, 221184, 204800
 WARMUP, SAMPLES = 8, 40
 # Keep this aligned with the device-profiler cache policy.  The flush happens
 # before the start event, so it evicts cache state without contributing to the
@@ -61,6 +63,16 @@ def link(device: Path, host: Path, library: Path) -> Path:
     return library
 
 
+def link_vmi(objects: list[Path], host: Path, library: Path) -> Path:
+    """Link separately lowered VMI stages into one ctypes-loadable library."""
+    root = os.environ["ASCEND_HOME_PATH"]
+    run([bisheng(), "--cce-fatobj-link", "-shared", "-fPIC", str(host),
+         *map(str, objects), "-L" + root + "/aarch64-linux/lib64",
+         "-Wl,-rpath," + root + "/aarch64-linux/lib64", "-Wl,--no-as-needed",
+         "-lruntime", "-o", str(library)])
+    return library
+
+
 def make_host(path: Path, text: str, obj: Path) -> None:
     path.write_text(text)
     run([bisheng(), "-xcce", "-Xhost-start", "-Xhost-end", "-fPIC", "-O2", "-std=c++17",
@@ -85,8 +97,8 @@ def load_vmi_module():
     return module
 
 
-def build_vmi() -> Path:
-    """Lower the checked-in PTO program and use a stream-first dynamic-UB ABI."""
+def build_vmi() -> tuple[Path, Path]:
+    """Lower the checked-in PTO program and build its dynamic-UB launch ABI."""
     # Keep the reproducer self-contained: the pinned PTODSL source shipped in
     # this repository provides the native-build helpers.  A site-installed
     # ``ptodsl`` may be an older namespace package without ``_runtime``.
@@ -116,23 +128,43 @@ def build_vmi() -> Path:
 
     OUT.mkdir(exist_ok=True)
     module = load_vmi_module()
-    compiled = module.full_roundtrip_vmi.compile()
-    mlir, obj, host, host_obj = OUT / "full_vmi.mlir", OUT / "full_vmi.o", OUT / "full_vmi_host.cpp", OUT / "full_vmi_host.o"
-    mlir.write_text(compiled.mlir_text())
-    _run_ptoas(mlir, obj, target_arch="a5", backend="vpto", pto_level="level3")
-    host.write_text(f'''#include <stdint.h>
+    quant, dequant = module.float_scale_quantize.compile(), module.float_scale_dequantize.compile()
+    # PTOAS accepts one top-level module per invocation.  Keep the two
+    # production stages as independent objects, then link them into one
+    # convenience library.  Concatenating their modules happens to compile but
+    # changes the entry/module ABI and can leave the first launch unusable.
+    quant_mlir, dequant_mlir = OUT / "quantize.mlir", OUT / "dequantize.mlir"
+    quant_obj, dequant_obj = OUT / "quantize.o", OUT / "dequantize.o"
+    quant_mlir.write_text(quant.mlir_text())
+    dequant_mlir.write_text(dequant.mlir_text())
+    _run_ptoas(quant_mlir, quant_obj, target_arch="a5", backend="vpto", pto_level="level3")
+    _run_ptoas(dequant_mlir, dequant_obj, target_arch="a5", backend="vpto", pto_level="level3")
+    quant_host, dequant_host = OUT / "quantize_host.cpp", OUT / "dequantize_host.cpp"
+    quant_host_obj, dequant_host_obj = OUT / "quantize_host.o", OUT / "dequantize_host.o"
+    quant_host.write_text(f'''#include <stdint.h>
 #ifndef AICORE
 #define AICORE [aicore]
 #endif
-extern "C" __global__ AICORE void full_roundtrip_vmi(__gm__ uint16_t *x);
-extern "C" void launch_full_vmi(void *stream, void *x) {{
-  full_roundtrip_vmi<<<{GRID}, {VMI_DYN_UB}, stream>>>((__gm__ uint16_t *)x);
+extern "C" __global__ AICORE void float_scale_quantize(__gm__ uint16_t *, __gm__ uint8_t *, __gm__ float *);
+extern "C" void launch_quantize_vmi(void *x, void *q, void *sf, void *stream) {{
+  float_scale_quantize<<<{GRID}, {VMI_QUANT_UB}, stream>>>((__gm__ uint16_t *)x, (__gm__ uint8_t *)q, (__gm__ float *)sf);
 }}
 ''')
-    _compile_launch_cpp(host, host_obj, kernel_kind="vector", target_arch="a5", export_macro="FULL_VMI_EXPORTS")
-    library = OUT / "libfull_vmi.so"
-    _link_shared_library(host_obj, obj, library, kernel_kind="vector")
-    return library
+    dequant_host.write_text(f'''#include <stdint.h>
+#ifndef AICORE
+#define AICORE [aicore]
+#endif
+extern "C" __global__ AICORE void float_scale_dequantize(__gm__ uint16_t *, __gm__ uint8_t *, __gm__ float *);
+extern "C" void launch_dequantize_vmi(void *x, void *q, void *sf, void *stream) {{
+  float_scale_dequantize<<<{GRID}, {VMI_DEQUANT_UB}, stream>>>((__gm__ uint16_t *)x, (__gm__ uint8_t *)q, (__gm__ float *)sf);
+}}
+''')
+    _compile_launch_cpp(quant_host, quant_host_obj, kernel_kind="vector", target_arch="a5", export_macro="QUANT_VMI_EXPORTS")
+    _compile_launch_cpp(dequant_host, dequant_host_obj, kernel_kind="vector", target_arch="a5", export_macro="DEQUANT_VMI_EXPORTS")
+    quant_library, dequant_library = OUT / "libquantize_vmi.so", OUT / "libdequantize_vmi.so"
+    link_vmi([quant_obj], quant_host_obj, quant_library)
+    link_vmi([dequant_obj], dequant_host_obj, dequant_library)
+    return quant_library, dequant_library
 
 
 def stream_ptr() -> int:
@@ -160,13 +192,14 @@ def median_us(fn) -> float:
     return values[len(values) // 2]
 
 
-def msprof_us(fn, symbol: str) -> float:
+def msprof_us(fn, symbols: tuple[str, ...]) -> float:
     """Return profiler-recorded device duration, excluding host launch time.
 
     FFTS records use the AIC timestamp when one exists and otherwise the AIV
     timestamp.  This is the same rule used for mixed vector kernel records.
-    ``symbol`` deliberately filters the one full-workload kernel, so tensor
-    allocation and host-side work cannot enter the number.
+    ``symbols`` filter the workload kernels, so tensor allocation and host-side
+    work cannot enter the number. The VMI operation has two required kernels;
+    their records are summed per repetition before computing the mean.
     """
     import torch_npu.profiler
 
@@ -202,7 +235,7 @@ def msprof_us(fn, symbol: str) -> float:
             for offset in range(0, len(data) - 127, 128):
                 values = struct.unpack_from("<16q", data, offset)
                 seq = (values[0] >> 32) & 0xFFFF
-                if symbol not in names.get(seq, "") or not values[1]:
+                if not any(symbol in names.get(seq, "") for symbol in symbols) or not values[1]:
                     continue
                 (aiv if values[2] >= (1 << 31) else aic).append(float(values[15] - values[14]))
         durations = aic or aiv
@@ -210,8 +243,9 @@ def msprof_us(fn, symbol: str) -> float:
         # kernel and divides by the number of repetitions.  This report has
         # one vector kernel per launch, so this is its mean device duration;
         # using the maximum sample inflated CCE and erased the real gap.
-        if len(durations) != MSPROF_REPS:
-            raise RuntimeError(f"expected {MSPROF_REPS} records for {symbol}, got {len(durations)}")
+        expected = MSPROF_REPS * len(symbols)
+        if len(durations) != expected:
+            raise RuntimeError(f"expected {expected} records for {symbols}, got {len(durations)}")
         return sum(durations) / MSPROF_REPS / 1000.0
 
     old = os.environ.get("ASCEND_WORK_PATH")
@@ -241,37 +275,92 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--profile", action="store_true", help="also dump raw profiler records (diagnostic)")
+    parser.add_argument("--cce-only", action="store_true")
+    parser.add_argument("--vmi-only", action="store_true")
+    parser.add_argument("--quantize-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--dequantize-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.quantize_only and args.dequantize_only:
+        parser.error("choose at most one VMI stage diagnostic")
     if args.compile_only:
         build_cce(); build_vmi()
         print("PASS: full 72-core CCE and VMI libraries built")
         return
     torch.npu.set_device(DEVICE)
-    cce, vmi = ctypes.CDLL(str(build_cce())), ctypes.CDLL(str(build_vmi()))
-    cce_fn, vmi_fn = cce.public_launch, vmi.launch_full_vmi
-    cce_fn.argtypes, vmi_fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int], [ctypes.c_void_p, ctypes.c_void_p]
+    cce_fn = None
+    if not args.vmi_only:
+        cce = ctypes.CDLL(str(build_cce()))
+        cce_fn = cce.public_launch
+        cce_fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+    if not args.cce_only:
+        quant_library, dequant_library = build_vmi()
+        quant_vmi = ctypes.CDLL(str(quant_library))
+        dequant_vmi = ctypes.CDLL(str(dequant_library))
+        quantize_fn, dequantize_fn = quant_vmi.launch_quantize_vmi, dequant_vmi.launch_dequantize_vmi
+        quantize_fn.argtypes = dequantize_fn.argtypes = [ctypes.c_void_p] * 4
     x0 = (torch.randn((ROWS, WIDTH), dtype=torch.float32, device=DEVICE) * 0.25).to(torch.bfloat16)
     cce_x, vmi_x = x0.clone(), x0.clone()
+    vmi_q = vmi_sf = None
+    if not args.cce_only:
+        vmi_q = torch.empty((ROWS, WIDTH), dtype=torch.float8_e4m3fn, device=DEVICE)
+        vmi_sf = torch.empty((ROWS, WIDTH // 32), dtype=torch.float32, device=DEVICE)
 
     def cce_run() -> None:
+        assert cce_fn is not None
         cce_fn(ctypes.c_void_p(stream_ptr()), ctypes.c_void_p(cce_x.data_ptr()), ROWS)
 
     def vmi_run() -> None:
-        vmi_fn(ctypes.c_void_p(stream_ptr()), ctypes.c_void_p(vmi_x.data_ptr()))
+        quantize_run()
+        dequantize_run()
 
-    cce_run(); vmi_run(); torch.npu.synchronize()
+    def quantize_run() -> None:
+        assert not args.cce_only and vmi_q is not None and vmi_sf is not None
+        quantize_fn(ctypes.c_void_p(vmi_x.data_ptr()), ctypes.c_void_p(vmi_q.data_ptr()),
+                    ctypes.c_void_p(vmi_sf.data_ptr()), ctypes.c_void_p(stream_ptr()))
+
+    def dequantize_run() -> None:
+        assert not args.cce_only and vmi_q is not None and vmi_sf is not None
+        dequantize_fn(ctypes.c_void_p(vmi_x.data_ptr()), ctypes.c_void_p(vmi_q.data_ptr()),
+                      ctypes.c_void_p(vmi_sf.data_ptr()), ctypes.c_void_p(stream_ptr()))
+
+    if args.quantize_only:
+        quantize_run(); torch.npu.synchronize()
+        print("PASS: VMI quantize launch completed")
+        return
+    if args.dequantize_only:
+        dequantize_run(); torch.npu.synchronize()
+        print("PASS: VMI dequantize launch completed")
+        return
+
+    if not args.vmi_only:
+        cce_run(); torch.npu.synchronize()
+    if not args.cce_only:
+        vmi_run(); torch.npu.synchronize()
+    if args.cce_only:
+        print("PASS: CCE launch completed")
+        return
+    if args.vmi_only:
+        print("PASS: VMI launches completed")
+        return
     if not torch.isfinite(cce_x.float()).all() or not torch.isfinite(vmi_x.float()).all():
         raise AssertionError("round-trip produced a non-finite result")
     # The two low-level lowering paths differ only at FP8 tie boundaries.
     # BF16 output agreement remains bounded by one FP8 quantization step.
     torch.testing.assert_close(cce_x.float().cpu(), vmi_x.float().cpu(), rtol=1.5e-1, atol=1.25e-1)
     cce_event, vmi_event = median_us(cce_run), median_us(vmi_run)
-    print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} cce_dyn_ub={CCE_DYN_UB} vmi_dyn_ub={VMI_DYN_UB}")
+    print(
+        f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} cce_dyn_ub={CCE_DYN_UB} "
+        f"vmi_quant_ub={VMI_QUANT_UB} vmi_dequant_ub={VMI_DEQUANT_UB}"
+    )
     print("correctness=PASS cce_vmi_peer=PASS")
     print(f"event_l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} CCE_us={cce_event:.3f} VMI_us={vmi_event:.3f} CCE_over_VMI={cce_event / vmi_event:.4f}")
     if args.profile:
-        cce_us, vmi_us = msprof_us(cce_run, "full_roundtrip_cce"), msprof_us(vmi_run, "full_roundtrip_vmi")
+        cce_us = msprof_us(cce_run, ("full_roundtrip_cce_kernel",))
+        vmi_us = msprof_us(vmi_run, ("float_scale_quantize", "float_scale_dequantize"))
+        quant_us = msprof_us(vmi_run, ("float_scale_quantize",))
+        dequant_us = msprof_us(vmi_run, ("float_scale_dequantize",))
         print(f"msprof_device_reps={MSPROF_REPS} CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
+        print(f"msprof_vmi_components quantize_us={quant_us:.3f} dequantize_us={dequant_us:.3f}")
 
 
 if __name__ == "__main__":
