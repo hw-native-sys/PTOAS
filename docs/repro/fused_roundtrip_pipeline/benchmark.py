@@ -29,7 +29,7 @@ ROWS, WIDTH, GRID = 8192, 2048, 72
 # UB size.  Do not shrink it: doing so silently changed the workload.
 CCE_DYN_UB, VMI_DYN_UB = 231552, 126208
 WARMUP, SAMPLES = 8, 40
-# Keep this aligned with TileLang's ``do_bench`` policy.  The flush happens
+# Keep this aligned with the device-profiler cache policy.  The flush happens
 # before the start event, so it evicts cache state without contributing to the
 # reported kernel duration.  A batch of launches would make the second and
 # subsequent launches artificially L2-hot for this bandwidth-sensitive case.
@@ -139,7 +139,7 @@ def median_us(fn) -> float:
     for _ in range(SAMPLES):
         # ``zero_`` is queued before ``begin``.  Stream ordering makes the
         # eviction complete before the kernel while the event interval remains
-        # device-kernel-only, exactly as tilelang.profiler.bench.do_bench.
+        # device-kernel-only with the same stream ordering as the profiler.
         cache.zero_()
         begin, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
         begin.record()
@@ -197,13 +197,13 @@ def msprof_us(fn, symbol: str) -> float:
                     continue
                 (aiv if values[2] >= (1 << 31) else aic).append(float(values[15] - values[14]))
         durations = aic or aiv
-        # A kernel can emit one record per active core.  Until the profiler
-        # record layout is pinned for this CANN release, expose the raw record
-        # count and critical-path maximum instead of silently averaging a
-        # subset (which produced physically impossible 4.9 us values).
+        # The production msprof benchmark sums all records for the named
+        # kernel and divides by the number of repetitions.  This report has
+        # one vector kernel per launch, so this is its mean device duration;
+        # using the maximum sample inflated CCE and erased the real gap.
         if len(durations) != MSPROF_REPS:
             raise RuntimeError(f"expected {MSPROF_REPS} records for {symbol}, got {len(durations)}")
-        return max(durations) / 1000.0
+        return sum(durations) / MSPROF_REPS / 1000.0
 
     old = os.environ.get("ASCEND_WORK_PATH")
     with tempfile.TemporaryDirectory(prefix="vmi_cce_profile_", dir=OUT) as work:
@@ -262,7 +262,7 @@ def main() -> None:
     print(f"event_l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} CCE_us={cce_event:.3f} VMI_us={vmi_event:.3f} CCE_over_VMI={cce_event / vmi_event:.4f}")
     if args.profile:
         cce_us, vmi_us = msprof_us(cce_run, "full_roundtrip_cce"), msprof_us(vmi_run, "full_roundtrip_vmi")
-        print(f"msprof_diagnostic_reps={MSPROF_REPS} CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f}")
+        print(f"msprof_device_reps={MSPROF_REPS} CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
 
 
 if __name__ == "__main__":

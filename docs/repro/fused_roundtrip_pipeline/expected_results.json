@@ -1,9 +1,12 @@
 [
   {
     "case": "full_bf16_8192x2048_72core_persistent",
-    "timing_authority": "pending_full_timeline_validation",
-    "cce_us": null,
-    "vmi_us": null,
-    "cce_over_vmi": null
+    "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
+    "cce_us": 21.786,
+    "vmi_us": 27.296,
+    "cce_over_vmi": 0.7981,
+    "event_cold_l2_cce_us": 31.034,
+    "event_cold_l2_vmi_us": 31.795,
+    "event_cold_l2_cce_over_vmi": 0.9761
   }
 ]

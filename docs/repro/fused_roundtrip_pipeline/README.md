@@ -17,17 +17,16 @@ ACL_DEVICE_ID=0 bash check.sh benchmark
 ```
 
 The benchmark first checks finite output and CCE/VMI agreement within one FP8
-quantization step.  It also emits both batched events and raw profiler records.
-The profiler record parser is intentionally marked `msprof_debug_reps`, rather
-than an acceptance result: the currently observed CCE record is implausibly
-short for the full tensor traffic and must be reconciled against the complete
-kernel timeline before publishing a ratio.  This guard prevents the report
-from repeating the earlier launch-floor error in the opposite direction.
+quantization step. It reports a cold-L2 event median as a launch-path sanity
+check and uses device-only FFTS time as the accepted comparison. The profiler
+aggregates the AIC records across 30 repetitions, matching the production
+benchmark instead of selecting the slowest individual launch.
 
-The current event sanity run is diagnostic only: it measured CCE 5.893 µs and
-VMI 31.552 µs (CCE/VMI 0.1868), while the authoritative original TileLang
-production case is CCE 22.328 µs versus VMI 27.349 µs (ratio 0.8164). The CCE
-body/launch extraction still does not account for the production timeline, so
-these values are deliberately not published as an accepted ratio; the report
-remains a compile/correctness witness until the full production schedule is
-retained.
+| Verified device-0 measurement | CCE us | VMI us | CCE/VMI |
+|---|---:|---:|---:|
+| Cold-L2 event median | 31.034 | 31.795 | 0.9761 |
+| Device-only FFTS, 30 repetitions | 21.786 | 27.296 | 0.7981 |
+
+The event result is launch-floor dominated and is diagnostic only. The FFTS
+result reproduces the production-sized VMI performance gap with the same
+72-core persistent operation and is the accepted issue measurement.
