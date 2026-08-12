@@ -3512,6 +3512,122 @@ FailureOr<Value> bitcastVReg(Location loc, Value value, Type resultType,
   return rewriter.create<VbitcastOp>(loc, outputType, value).getResult();
 }
 
+// A compact group-slot carrier keeps the values for a slot block in adjacent
+// lanes.  Widening partitions those lanes by their low factor bits, so rebuild
+// the compact order with an interleave tree before exposing the result carrier.
+FailureOr<SmallVector<Value>> materializePackedGroupSlotWidening(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+    PatternRewriter &rewriter) {
+  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+
+  VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+  if (!sourceLayout || !resultLayout || !sourceLayout.isGroupSlots() ||
+      !resultLayout.isGroupSlots())
+    return fail("packed group-slot widening requires group-slot layouts");
+  if (sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
+      sourceLayout.getSlots() != resultLayout.getSlots() ||
+      sourceLayout.getSlots() <= 1 ||
+      sourceLayout.getLaneStride() != 1 || resultLayout.getLaneStride() != 1)
+    return fail("packed group-slot widening requires matching compact layouts");
+  if (sourceParts.empty() || sourceParts.size() != resultTypes.size())
+    return fail("packed group-slot widening requires matching non-empty "
+                "physical arity");
+
+  unsigned sourceBits =
+      pto::getPTOStorageElemBitWidth(sourceVMIType.getElementType());
+  unsigned resultBits =
+      pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
+  if (sourceBits == 0 || resultBits % sourceBits != 0)
+    return fail("packed group-slot widening requires integral storage widths");
+  unsigned widenFactor = resultBits / sourceBits;
+  if (widenFactor != 2 && widenFactor != 4)
+    return fail("packed group-slot widening requires a 2x or 4x width ratio");
+
+  FailureOr<int64_t> sourceLanes =
+      getDataLanesPerPart(sourceVMIType.getElementType());
+  FailureOr<int64_t> resultLanes =
+      getDataLanesPerPart(resultVMIType.getElementType());
+  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceVMIType);
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultVMIType);
+  if (failed(sourceLanes) || failed(resultLanes) || failed(sourceArity) ||
+      failed(resultArity) || *sourceArity != *resultArity ||
+      static_cast<int64_t>(sourceParts.size()) != *sourceArity)
+    return fail("packed group-slot widening requires matching physical "
+                "carrier arity");
+
+  VRegType expectedSourceType = VRegType::get(
+      rewriter.getContext(), *sourceLanes, sourceVMIType.getElementType());
+  VRegType expectedResultType = VRegType::get(
+      rewriter.getContext(), *resultLanes, resultVMIType.getElementType());
+  FailureOr<MaskType> sourceMaskType =
+      getMaskTypeForVReg(expectedSourceType, rewriter.getContext());
+  if (failed(sourceMaskType))
+    return fail("failed to derive packed group-slot widening mask type");
+
+  static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+  static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+  ArrayRef<StringRef> conversionParts =
+      widenFactor == 2 ? ArrayRef<StringRef>(kEvenOddParts)
+                       : ArrayRef<StringRef>(kPacked4Parts);
+
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (auto [partIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+    auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+    auto resultType = dyn_cast<VRegType>(resultTypes[partIndex]);
+    if (sourceType != expectedSourceType || resultType != expectedResultType)
+      return fail("packed group-slot widening requires full physical carriers");
+
+    int64_t groupBegin = partIndex * sourceLayout.getSlots();
+    int64_t activeSlots = std::min<int64_t>(
+        sourceLayout.getSlots(), sourceLayout.getNumGroups() - groupBegin);
+    if (activeSlots <= 0 || activeSlots > *sourceLanes ||
+        activeSlots > *resultLanes)
+      return fail("packed group-slot widening has invalid active slot count");
+    FailureOr<Value> sourceMask = createPrefixMaskForActiveLanes(
+        op->getLoc(), *sourceMaskType, activeSlots, rewriter);
+    if (failed(sourceMask))
+      return fail("failed to build packed group-slot widening mask");
+
+    SmallVector<Value> currentLevel;
+    currentLevel.reserve(widenFactor);
+    for (StringRef conversionPart : conversionParts) {
+      currentLevel.push_back(
+          rewriter
+              .create<VcvtOp>(op->getLoc(), expectedResultType, sourcePart,
+                              *sourceMask, /*rnd=*/nullptr, /*sat=*/nullptr,
+                              rewriter.getStringAttr(conversionPart))
+              .getResult());
+    }
+
+    // Part P0/P1/P2/P3 is indexed by the low two source-lane bits.  Merge
+    // the high bit first, then the low bit, to restore lane order.
+    for (unsigned stride = widenFactor / 2; stride != 0; stride /= 2) {
+      SmallVector<Value> nextLevel;
+      nextLevel.reserve(currentLevel.size() / 2);
+      for (size_t base = 0; base < currentLevel.size(); base += 2 * stride) {
+        for (size_t offset = 0; offset < stride; ++offset) {
+          auto interleave = rewriter.create<VintlvOp>(
+              op->getLoc(), expectedResultType, expectedResultType,
+              currentLevel[base + offset],
+              currentLevel[base + offset + stride]);
+          nextLevel.push_back(interleave.getLow());
+        }
+      }
+      currentLevel = std::move(nextLevel);
+    }
+    if (currentLevel.size() != 1)
+      return fail("failed to rebuild packed group-slot lane order");
+    results.push_back(currentLevel.front());
+  }
+  return results;
+}
+
 FailureOr<VRegType> getVcaddResultType(VRegType inputType) {
   auto inputIntegerType = dyn_cast<IntegerType>(inputType.getElementType());
   if (!inputIntegerType || inputIntegerType.getWidth() == 32)
@@ -10390,6 +10506,18 @@ struct OneToNVMIExtFOpPattern : OpConversionPattern<VMIExtFOp> {
         pto::getPTOStorageElemBitWidth(sourceType.getElementType());
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
+        resultLayout.isGroupSlots() && sourceLayout.getSlots() > 1 &&
+        resultLayout.getSlots() > 1 && sourceLayout.getLaneStride() == 1 &&
+        resultLayout.getLaneStride() == 1) {
+      FailureOr<SmallVector<Value>> results = materializePackedGroupSlotWidening(
+          op, sourceParts, resultTypes, sourceVMIType, resultVMIType, rewriter);
+      if (failed(results))
+        return failure();
+      replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                       *this->getTypeConverter());
+      return success();
+    }
     if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
         resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
         ((sourceBits == 16 && sourceLayout.getLaneStride() == 2) ||
@@ -10738,6 +10866,18 @@ struct OneToNVMIExtIOpPattern : OpConversionPattern<OpT> {
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
+        resultLayout.isGroupSlots() && sourceLayout.getSlots() > 1 &&
+        resultLayout.getSlots() > 1 && sourceLayout.getLaneStride() == 1 &&
+        resultLayout.getLaneStride() == 1) {
+      FailureOr<SmallVector<Value>> results = materializePackedGroupSlotWidening(
+          op, sourceParts, resultTypes, sourceVMIType, resultVMIType, rewriter);
+      if (failed(results))
+        return failure();
+      replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                       *this->getTypeConverter());
+      return success();
+    }
     if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
         resultLayout.isGroupSlots()) {
       unsigned sourceBits =

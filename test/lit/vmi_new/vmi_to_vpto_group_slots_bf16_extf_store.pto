@@ -1,0 +1,83 @@
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @group_slots_bf16_extf_store(
+      %src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %bits = pto.vmi.vinterpret_cast %input
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xui16>
+    %max_bits = pto.vmi.vcmax %bits, %mask {group = 8}
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xui16>
+    %max = pto.vmi.vinterpret_cast %max_bits
+        : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xbf16>
+    %wide = pto.vmi.vcvt %max
+        : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %wide, %dst[%c0], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @group_slots_bf16_extf_store_tail(
+      %src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c384 = arith.constant 384 : index
+    %mask = pto.vmi.create_mask %c384 : index -> !pto.vmi.mask<384xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<384xbf16>
+    %bits = pto.vmi.vinterpret_cast %input
+        : !pto.vmi.vreg<384xbf16> -> !pto.vmi.vreg<384xui16>
+    %max_bits = pto.vmi.vcmax %bits, %mask {group = 12}
+        : !pto.vmi.vreg<384xui16>, !pto.vmi.mask<384xpred>
+        -> !pto.vmi.vreg<12xui16>
+    %max = pto.vmi.vinterpret_cast %max_bits
+        : !pto.vmi.vreg<12xui16> -> !pto.vmi.vreg<12xbf16>
+    %wide = pto.vmi.vcvt %max
+        : !pto.vmi.vreg<12xbf16> -> !pto.vmi.vreg<12xf32>
+    pto.vmi.vstore %wide, %dst[%c0], %c1 {group = 12}
+        : !pto.vmi.vreg<12xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @group_slots_bf16_extf_store
+// ASSIGN: %[[MAX:.*]] = pto.vmi.group_reduce_maxi
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN: %[[BF16:.*]] = pto.vmi.bitcast %[[MAX]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN: %[[WIDE:.*]] = pto.vmi.extf %[[BF16]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN: pto.vmi.group_store %[[WIDE]]
+
+// ASSIGN-LABEL: func.func @group_slots_bf16_extf_store_tail
+// ASSIGN: %[[MAX_TAIL:.*]] = pto.vmi.group_reduce_maxi
+// ASSIGN-SAME: -> !pto.vmi.vreg<12xui16, #pto.vmi.layout<num_groups = 12, slots = 8>>
+// ASSIGN: %[[BF16_TAIL:.*]] = pto.vmi.bitcast %[[MAX_TAIL]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<12xbf16, #pto.vmi.layout<num_groups = 12, slots = 8>>
+// ASSIGN: %[[WIDE_TAIL:.*]] = pto.vmi.extf %[[BF16_TAIL]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<12xf32, #pto.vmi.layout<num_groups = 12, slots = 8>>
+// ASSIGN: pto.vmi.group_store %[[WIDE_TAIL]]
+
+// LOWER-LABEL: func.func @group_slots_bf16_extf_store
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vcvt {{.*}} {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: %[[LOW:.*]], %{{.*}} = pto.vintlv {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER: %[[STORE8:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+// LOWER: pto.vsts %[[LOW]], {{.*}}, %[[STORE8]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+
+// LOWER-LABEL: func.func @group_slots_bf16_extf_store_tail
+// LOWER: pto.pset_b16 "PAT_VL8"
+// LOWER: %[[LOW0:.*]], %{{.*}} = pto.vintlv {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER: pto.pset_b16 "PAT_VL4"
+// LOWER: %[[LOW1:.*]], %{{.*}} = pto.vintlv {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER: %[[STORE8_TAIL:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+// LOWER: pto.vsts %[[LOW0]], {{.*}}, %[[STORE8_TAIL]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER: %[[STORE4:.*]] = pto.pset_b32 "PAT_VL4" : !pto.mask<b32>
+// LOWER: pto.vsts %[[LOW1]], {{.*}}, %[[STORE4]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>

@@ -521,10 +521,13 @@ static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
     // inherited from the anchor layout at query time.  Packed narrowing records
     // the selected sub-lane stride on the result; widening is the inverse.
     {bits<8>(), bits<16>(), gs(1), gs(1)},
+    {bits<8>(), bits<16>(), gs(8), gs(8)},
     {bits<8>(), bits<16>(), gs(8, 2), gs(8)},
     {bits<16>(), bits<32>(), gs(1), gs(1)},
+    {bits<16>(), bits<32>(), gs(8), gs(8)},
     {bits<16>(), bits<32>(), gs(8, 2), gs(8)},
     {bits<8>(), bits<32>(), gs(1), gs(1)},
+    {bits<8>(), bits<32>(), gs(8), gs(8)},
     {bits<8>(), bits<32>(), gs(8, 4), gs(8)},
     {bits<16>(), bits<8>(), gs(1), gs(1)},
     {bits<16>(), bits<8>(), gs(8), gs(8, 2)},

@@ -1,0 +1,51 @@
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @group_slots_ui8_to_ui16(
+      %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<256xui8>
+    %max = pto.vmi.vcmax %input, %mask {group = 8}
+        : !pto.vmi.vreg<256xui8>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xui8>
+    %wide = pto.vmi.vcvt %max
+        : !pto.vmi.vreg<8xui8> -> !pto.vmi.vreg<8xui16>
+    pto.vmi.vstore %wide, %dst[%c0], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    return
+  }
+
+  func.func @group_slots_ui8_to_ui32(
+      %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<256xui8>
+    %max = pto.vmi.vcmax %input, %mask {group = 8}
+        : !pto.vmi.vreg<256xui8>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xui8>
+    %wide = pto.vmi.vcvt %max
+        : !pto.vmi.vreg<8xui8> -> !pto.vmi.vreg<8xui32>
+    pto.vmi.vstore %wide, %dst[%c0], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @group_slots_ui8_to_ui16
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+// CHECK: pto.vcvt {{.*}} {part = "ODD"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+// CHECK: pto.vintlv {{.*}} : !pto.vreg<128xui16>, !pto.vreg<128xui16> -> !pto.vreg<128xui16>, !pto.vreg<128xui16>
+
+// CHECK-LABEL: func.func @group_slots_ui8_to_ui32
+// CHECK: pto.vcvt {{.*}} {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vcvt {{.*}} {part = "P1"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vcvt {{.*}} {part = "P2"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vcvt {{.*}} {part = "P3"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK-COUNT-3: pto.vintlv {{.*}} : !pto.vreg<64xui32>, !pto.vreg<64xui32> -> !pto.vreg<64xui32>, !pto.vreg<64xui32>
