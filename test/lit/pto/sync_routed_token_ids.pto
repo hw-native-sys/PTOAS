@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//===----------------------------------------------------------------------===//
+// A ROUTED BUFFER'S TWO ENDS MUST CARRY THE SAME TOKEN ID.
+//
+// A buffer-id token orders a producer before a consumer only if BOTH acquire the same id.
+// The unified allocator decides which buffers to route by logical id, and a later stage
+// that rewrote logical ids would break that correspondence in one of two ways: a bracket
+// dropped, so nothing enforces the ordering; or the two ends left holding different ids,
+// so the token orders nothing while the event ops it displaced are already gone.
+//
+// That is the shape `BufidSyncAnalysis::optimizeSamePipeMerge` produces -- it rewrites
+// BufSyncOperation::logicId to a survivor id. The unified pass no longer calls it, because
+// the hazard-driven rework replaced insertSyncOperations() and the merge together, so a
+// routed set captured earlier can no longer go stale behind a rewrite.
+//
+// WHAT THIS TEST DOES AND DOES NOT PROVE. It pins the invariant: both ends of every routed
+// hazard hold the same token id, and the routed direction retains no event ops. The
+// existing overflow fixtures pin the emission COUNTS only, so a change that preserved
+// counts while permuting ids would have passed all of them and this catches that.
+//
+// It is NOT a proven guard against reintroducing the merge. Adding that call back on this
+// kernel was measured to change nothing -- get, rls and physical_ids all identical -- so
+// this input does not distinguish the two. A guard against that specific regression would
+// need an input the merge actually rewrites, and none is known.
+//===----------------------------------------------------------------------===//
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync %S/Inputs/routed_token_ids.pto 2>/dev/null | FileCheck %s --check-prefix=TOKENS
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync %S/Inputs/routed_token_ids.pto 2>/dev/null | FileCheck %s --check-prefix=NOEVENT
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %S/Inputs/routed_token_ids.pto 2>&1 >/dev/null | FileCheck %s --check-prefix=COUNTS
+
+// The producing end brackets the load, and the id is captured rather than written down:
+// what matters is that the SAME id comes back on the consuming end, not which one it is.
+// TOKENS:      get_buf(PIPE_MTE2, [[ID:[0-9]+]], 0);
+// TOKENS-NEXT: TLOAD(
+// TOKENS-NEXT: rls_buf(PIPE_MTE2, [[ID]], 0);
+
+// The consuming end, further down the function after the other eleven loads, must hold
+// that same id. If a rewrite renumbered one side, this is the line that fails.
+// TOKENS:      get_buf(PIPE_V, [[ID]], 0);
+// TOKENS-NEXT: TCVT(
+// TOKENS-NEXT: rls_buf(PIPE_V, [[ID]], 0);
+
+// The other half of all-or-nothing: the routed direction keeps NO event ops. The kernel
+// still has MTE3<->V pairs for the accumulator, which does not route, so this asserts
+// absence for the routed direction specifically rather than for events in general.
+// NOEVENT-NOT: set_flag(PIPE_MTE2, PIPE_V
+// NOEVENT-NOT: wait_flag(PIPE_MTE2, PIPE_V
+
+// Twelve routed buffers, both ends of all twenty-four hazards bracketed, nothing leaked.
+// COUNTS: routed_buffers=12 routed_hazards=24 anchor_ops=24 get=24 rls=24 physical_ids=13 nesting=OK emit=OK bracketed_hazards=24 unbracketed_hazards=0 suppressed_event_ops=72 leaked_event_ops=0 ALL-OR-NOTHING-OK
