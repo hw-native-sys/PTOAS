@@ -1,13 +1,13 @@
 [
   {
     "case": "fp8_rescale_8064x7168_eight_unpack_plus_requant",
-    "cce_us": 45.3,
-    "vmi_us": 126.602,
-    "cce_over_vmi": 0.3578,
+    "cce_us": 45.255,
+    "vmi_us": 141.459,
+    "cce_over_vmi": 0.3199,
     "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
-    "event_cold_l2_cce_us": 46.808,
-    "event_cold_l2_vmi_us": 176.554,
-    "event_cold_l2_cce_over_vmi": 0.2651,
+    "event_cold_l2_cce_us": 46.933,
+    "event_cold_l2_vmi_us": 176.122,
+    "event_cold_l2_cce_over_vmi": 0.2665,
     "correctness": "vmi_padded_tail_mismatch"
   }
 ]

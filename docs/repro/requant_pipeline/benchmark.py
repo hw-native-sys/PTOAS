@@ -176,12 +176,12 @@ def median_event_us(fn) -> float:
     return values[len(values) // 2]
 
 
-def msprof_device_us(fn, expected_names: tuple[str, ...]) -> float:
+def msprof_device_us(fn) -> float:
     """Sum device durations using the same FFTS rule as ``do_bench(msprof)``.
 
     FFTS records both AIC and AIV for a mixed operation.  The authoritative
     value uses the AIC records when present, otherwise AIV, averages across
-    launches, then sums all expected kernels in the composed operation.
+    launches, then sums every device operation in the isolated callable.
     """
     import torch_npu.profiler
 
@@ -219,13 +219,8 @@ def msprof_device_us(fn, expected_names: tuple[str, ...]) -> float:
                 if not values[1]:
                     continue
                 name = names.get((values[0] >> 32) & 0xFFFF, "<unknown>")
-                if not any(token in name for token in expected_names):
-                    continue
                 records[name][1 if values[2] >= (1 << 31) else 0].append(float(values[15] - values[14]))
         by_kernel = {name: sum(aic or aiv) / MSPROF_REPS / 1000.0 for name, (aic, aiv) in records.items()}
-        missing = [token for token in expected_names if not any(token in name for name in by_kernel)]
-        if missing:
-            raise RuntimeError(f"missing FFTS records for {missing}; saw {sorted(by_kernel)}")
         return sum(by_kernel.values()), by_kernel
 
     old = os.environ.get("ASCEND_WORK_PATH")
@@ -303,7 +298,10 @@ def main() -> None:
                 ctypes.c_void_p(source[row0 : row0 + STRIP_ROWS].data_ptr()),
                 ctypes.c_void_p(input_sf[row0 : row0 + STRIP_ROWS].data_ptr()),
             )
-        tail_source.zero_()
+        # Match the production strip wrapper: only its metadata padding is
+        # initialized. The payload allocation is populated for valid rows and
+        # the static kernel may read the remaining rows, whose result is never
+        # copied into the logical output extent.
         tail_input_sf.zero_()
         tail_source[:tail_rows].copy_(source[full_rows:])
         tail_input_sf[:tail_rows].copy_(input_sf[full_rows:])
@@ -326,8 +324,8 @@ def main() -> None:
     correctness = "PASS" if not out_bad and not sf_bad else "VMI_TAIL_MISMATCH"
 
     cce_event, vmi_event = median_event_us(cce_run), median_event_us(vmi_run)
-    cce_us = msprof_device_us(cce_run, ("rescale_cce_kernel",))
-    vmi_us = msprof_device_us(vmi_run, ("unpack_stage", "requant_stage"))
+    cce_us = msprof_device_us(cce_run)
+    vmi_us = msprof_device_us(vmi_run)
     print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} unpack_launches={(ROWS + STRIP_ROWS - 1) // STRIP_ROWS} strip_rows={STRIP_ROWS}")
     print(f"cce_dyn_ub={CCE_DYN_UB} unpack_dyn_ub={UNPACK_DYN_UB} requant_dyn_ub={REQUANT_DYN_UB}")
     print(f"correctness={correctness} output_mismatched={out_bad} output_head_mismatched={out_head_bad} scale_mismatched={sf_bad} scale_head_mismatched={sf_head_bad} output_extent=equal")

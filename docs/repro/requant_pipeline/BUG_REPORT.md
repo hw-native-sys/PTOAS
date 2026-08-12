@@ -11,7 +11,7 @@ tail rows.  The harness reports the mismatch count and continues with a full
 device-time measurement, so the report preserves both the correctness blocker
 and the gap between the one-pass CCE schedule and the composed VMI lowering.
 
-Verified device-0 timings are CCE `46.808 us` versus VMI `176.554 us` for the
-cold-L2 event median (`0.2651` CCE/VMI), and CCE `45.300 us` versus VMI
-`126.602 us` for device-only FFTS (`0.3578`). The matching head/tail split is
+Verified device-0 timings are CCE `46.933 us` versus VMI `176.122 us` for the
+cold-L2 event median (`0.2665` CCE/VMI), and CCE `45.255 us` versus VMI
+`141.459 us` for device-only FFTS (`0.3199`). The matching head/tail split is
 `0` mismatches through row `7167`, then VMI-only mismatches in the padded tail.

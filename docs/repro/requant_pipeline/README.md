@@ -29,10 +29,10 @@ both VMI stages, so Python/ctypes launch time is not mistaken for kernel time.
 
 | Verified device-0 measurement | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| Cold-L2 event median, full operation | 46.808 | 176.554 | 0.2651 |
-| Device-only FFTS, full operation | 45.300 | 126.602 | 0.3578 |
+| Cold-L2 event median, full operation | 46.933 | 176.122 | 0.2665 |
+| Device-only FFTS, full operation | 45.255 | 141.459 | 0.3199 |
 
 The FFTS result is the report's primary ratio: it excludes Python/ctypes launch
-time and is in the same range as the independently measured full workload.
-The event result intentionally includes the VMI composition's pad/copy device
-operations, which are part of its observed end-to-end penalty.
+time and sums every device operation in the isolated CCE or VMI callable. This
+includes the VMI composition's pad/copy device operations, which are part of
+its observed end-to-end penalty.
