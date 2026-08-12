@@ -1,7 +1,3 @@
-# Performance issue
+# Issue summary
 
-The cold-L2 event interval is launch-floor dominated for this one-kernel
-operation and therefore does not expose the device gap. The standalone FFTS
-measurement instead records CCE `21.555 us` versus VMI `26.990 us` on device 0
-over 30 repetitions, CCE/VMI `0.7986`. Both paths use one 72-core persistent
-kernel and produce matching output.
+See [README.md](README.md) for the complete reproducer and requested PTOAS work. The validated `8192 x 2048` persistent kernel measures `21.555 us` for CCE and `26.990 us` for VMI by device-only FFTS (`CCE/VMI = 0.7986`).
