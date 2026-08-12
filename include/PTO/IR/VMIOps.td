@@ -1192,8 +1192,8 @@ def VMIVcmpOp : VMI_Op<"vcmp", [Pure]> {
     lane is zero (pmode="zeroing", default), and where seed[i]=1 the comparison
     result is written. Floating-point comparisons support eq/ne/lt/le/gt/ge
     and ordered forms oeq/one/olt/ole/ogt/oge. Integer comparisons use
-    eq/ne/lt/le/gt/ge; signedness is selected by the integer element type
-    (signed/signless versus unsigned).
+    eq/ne/lt/le/gt/ge; signedness is selected by the integer element type.
+    Signless integers use unsigned semantics (signless/unsigned versus signed).
 
     Example:
     ```
@@ -1383,8 +1383,8 @@ def VMICvtOp : VMI_Op<"vcvt", [Pure]> {
 
     - fp → fp, |dst| > |src|:  floating-point widening   (replaces extf)
     - fp → fp, |dst| < |src|:  floating-point narrowing   (replaces truncf)
-    - fp → int:                 float to signed integer    (replaces fptosi)
-    - int → fp:                 signed integer to float    (replaces sitofp)
+    - fp → int:                 signedness follows the result type
+    - int → fp:                 currently requires an explicitly signed source
     - int → int, |dst| > |src|: integer extension          (replaces extsi/extui)
     - int → int, |dst| < |src|: integer truncation         (replaces trunci)
 
@@ -1396,8 +1396,9 @@ def VMICvtOp : VMI_Op<"vcvt", [Pure]> {
       narrowing, and fp-to-int conversion.
     - `pmode`: predication mode ("merge" | "zero").
 
-    For int→int widening, the source element type must carry signedness
-    (e.g. si8/ui8/si16/ui16); signless integers are rejected.
+    Signless integer element types use unsigned semantics. Thus fp→signless
+    follows the unsigned conversion path, and signless int→int widening uses
+    zero extension. Signed conversion semantics require explicit `siN` types.
 
     Example:
     ```mlir

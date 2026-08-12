@@ -163,8 +163,9 @@ static std::string mapCmpPredicate(StringRef cmp, Type elemType,
   if (cmp == "eq" || cmp == "ne")
     return cmp.str();
   auto intType = dyn_cast<IntegerType>(elemType);
-  if (intType && intType.isUnsigned())
+  if (intType && !intType.isSigned()) {
     return ("u" + cmp).str(); // e.g. "lt" -> "ult"
+  }
   return ("s" + cmp).str();   // e.g. "lt" -> "slt"
 }
 
@@ -201,11 +202,16 @@ static StringRef classifyCvtDirection(Type srcElem, Type dstElem) {
     return dstBits > srcBits ? "widen_fp" : "narrow_fp";
   if (srcFp && !dstFp) {
     if (auto intTy = dyn_cast<IntegerType>(dstElem))
-      return intTy.isUnsigned() ? "fptoui" : "fptosi";
+      return intTy.isSigned() ? "fptosi" : "fptoui";
     return "fptosi";
   }
-  if (!srcFp && dstFp)
+  if (!srcFp && dstFp) {
+    auto intTy = dyn_cast<IntegerType>(srcElem);
+    if (!intTy || !intTy.isSigned()) {
+      return "unsupported";
+    }
     return "sitofp";
+  }
   // int → int
   return dstBits > srcBits ? "widen_int" : "narrow_int";
 }

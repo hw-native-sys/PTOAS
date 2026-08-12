@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-//===-- VMINormalizeSignlessIntToUnsigned.cpp - Signless→unsigned whitelist --===//
+//===-- VMINormalizeSignlessIntToUnsigned.cpp - Signless→unsigned boundary --===//
 //
 // Normalizes signless integer element types on whitelisted VMI ops to their
 // unsigned equivalent at the op boundary, using pto.vmi.bitcast to preserve
@@ -42,7 +42,14 @@ namespace {
 
 static bool isWhitelisted(Operation *op) {
   return llvm::TypeSwitch<Operation *, bool>(op)
-      .Case<pto::VMIVdhistOp, pto::VMIVchistOp>([](auto) { return true; })
+      .Case<pto::VMIVminOp, pto::VMIVmaxOp, pto::VMIVshrOp,
+            pto::VMIvcmaxOp, pto::VMIvcminOp, pto::VMIMaxSOp,
+            pto::VMIMinSOp, pto::VMIShrSOp, pto::VMICvtOp,
+            pto::VMIMinIOp, pto::VMIMaxIOp, pto::VMIShRUIOp,
+            pto::VMIReduceMaxIOp, pto::VMIReduceMinIOp,
+            pto::VMIGroupReduceMaxIOp, pto::VMIGroupReduceMinIOp,
+            pto::VMIFPToUIOp, pto::VMIExtUIOp,
+            pto::VMIVdhistOp, pto::VMIVchistOp>([](auto) { return true; })
       .Default([](auto) { return false; });
 }
 

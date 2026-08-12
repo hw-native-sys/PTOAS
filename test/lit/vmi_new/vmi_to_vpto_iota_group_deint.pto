@@ -20,9 +20,9 @@ module {
       %base: i32, %dst: !pto.ptr<f32, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base {group = 2 : i64}
-        : i32 -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+        : i32 -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
     %fp = pto.vmi.vcvt %idx
-        : !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+        : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
     pto.vmi.vstore %fp, %dst[%c0]
         : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
@@ -33,7 +33,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_deint_vcvt(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xsi32>
 // CHECK-NOT: pto.vci
 // CHECK: %[[E:.*]], %[[O:.*]] = pto.vdintlv %[[IDX]], %[[IDX]]
 // CHECK: %[[FE:.*]] = pto.vcvt %[[E]]

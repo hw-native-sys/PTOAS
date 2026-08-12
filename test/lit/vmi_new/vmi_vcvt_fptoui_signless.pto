@@ -6,10 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s
+// RUN: pto-test-opt %s -pto-vmi-normalize-signless-int-to-unsigned -vmi-lower-unified-to-legacy | FileCheck %s
 
-// Signless integers default to signed semantics: f16->i8 (signless, not ui8)
-// must route to FpToSi (fptosi), not FpToUi (fptoui).
+// Signless integers use unsigned semantics, so f16->i8 routes through
+// fptoui with an unsigned carrier and bitcasts back to the public i8 type.
 
 module {
   func.func @f16_to_signless_i8(%source: !pto.vmi.vreg<128xf16>)
@@ -21,6 +21,9 @@ module {
 }
 
 // CHECK-LABEL: func.func @f16_to_signless_i8(
-// CHECK: pto.vmi.fptosi
-// CHECK-NOT: pto.vmi.fptoui
-// CHECK-SAME: saturate = "SAT"
+// CHECK: %[[UI:.*]] = pto.vmi.fptoui {{.*}} {saturate = "SAT"}
+// CHECK-SAME: -> !pto.vmi.vreg<128xui8>
+// CHECK: %[[OUT:.*]] = pto.vmi.bitcast %[[UI]]
+// CHECK-SAME: !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xi8>
+// CHECK: return %[[OUT]]
+// CHECK-NOT: pto.vmi.fptosi

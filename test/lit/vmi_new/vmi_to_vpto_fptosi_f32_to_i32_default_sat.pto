@@ -15,25 +15,25 @@
 module {
   func.func @vmi_to_vpto_fptosi_f32_to_i32_default_sat(
       %input: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>)
-      -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>,
-          !pto.vreg<64xi32>, !pto.vreg<64xi32>) {
+      -> (!pto.vreg<64xsi32>, !pto.vreg<64xsi32>,
+          !pto.vreg<64xsi32>, !pto.vreg<64xsi32>) {
     %wide = pto.vmi.vcvt %input {saturate = "SAT"}
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-        -> !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>
     %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%wide)
-        : (!pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>>)
-        -> (!pto.vreg<64xi32>, !pto.vreg<64xi32>,
-            !pto.vreg<64xi32>, !pto.vreg<64xi32>)
+        : (!pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>)
+        -> (!pto.vreg<64xsi32>, !pto.vreg<64xsi32>,
+            !pto.vreg<64xsi32>, !pto.vreg<64xsi32>)
     return %p0, %p1, %p2, %p3
-        : !pto.vreg<64xi32>, !pto.vreg<64xi32>,
-          !pto.vreg<64xi32>, !pto.vreg<64xi32>
+        : !pto.vreg<64xsi32>, !pto.vreg<64xsi32>,
+          !pto.vreg<64xsi32>, !pto.vreg<64xsi32>
   }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_fptosi_f32_to_i32_default_sat(
-// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xi32>
-// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xi32>
-// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xi32>
-// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// CHECK: pto.vcvt {{.*}} {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
 // CHECK-NOT: pto.vmi.
-// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: !pto.vmi.

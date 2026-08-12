@@ -14,23 +14,23 @@ module {
   func.func @vmi_extsi_i8_to_i32_group_reduce(
       %source: !pto.vmi.vreg<256xsi8>,
       %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>)
-      -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+      -> !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>> {
     %wide = pto.vmi.vcvt %source
         : !pto.vmi.vreg<256xsi8>
-        -> !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>
     %sum = pto.vmi.vcadd %wide, %mask {group = 8}
-        : !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>>,
+        : !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>,
           !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
-        -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
-    return %sum : !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %sum : !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
   }
 }
 
 // CHECK-LABEL: func.func @vmi_extsi_i8_to_i32_group_reduce(
-// CHECK: %[[P0:.*]] = pto.vcvt %arg0, {{.*}} {part = "P0"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xi32>
-// CHECK: %[[P1:.*]] = pto.vcvt %arg0, {{.*}} {part = "P1"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xi32>
-// CHECK: %[[P2:.*]] = pto.vcvt %arg0, {{.*}} {part = "P2"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xi32>
-// CHECK: %[[P3:.*]] = pto.vcvt %arg0, {{.*}} {part = "P3"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xi32>
+// CHECK: %[[P0:.*]] = pto.vcvt %arg0, {{.*}} {part = "P0"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xsi32>
+// CHECK: %[[P1:.*]] = pto.vcvt %arg0, {{.*}} {part = "P1"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xsi32>
+// CHECK: %[[P2:.*]] = pto.vcvt %arg0, {{.*}} {part = "P2"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xsi32>
+// CHECK: %[[P3:.*]] = pto.vcvt %arg0, {{.*}} {part = "P3"} : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<64xsi32>
 // CHECK: %[[S0:.*]] = pto.vcgadd %[[P0]]
 // CHECK: %[[S1:.*]] = pto.vcgadd %[[P1]]
 // CHECK: %[[S2:.*]] = pto.vcgadd %[[P2]]

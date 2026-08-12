@@ -440,13 +440,13 @@ scalar type must match the vector element type.
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `cmp` | `eq`, `ne`, `lt`, `le`, `gt`, `ge` | *(required)* | Comparison mode (fp unordered / integer; integer signedness comes from the element type: `iN` vs `uiN`) |
+  | `cmp` | `eq`, `ne`, `lt`, `le`, `gt`, `ge` | *(required)* | Comparison mode (fp unordered / integer; integer signedness comes from the element type: `siN` vs `iN`/`uiN`) |
   | | `oeq`, `one`, `olt`, `ole`, `ogt`, `oge` | | FP ordered forms |
   | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior |
 
 - **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`, `f32`.
   Integer signedness is taken from the element type; signless `iN` is treated
-  as signed (equivalent to `siN`).
+  as unsigned (equivalent to `uiN`).
 - **lowering to `pto.mi`:**
   ```
   K × pto.vcmp {cmp_mode}
@@ -463,7 +463,7 @@ scalar type must match the vector element type.
       -> !pto.vmi.mask<128×b32>
   // → pto.as: 2 × pto.vcmp "lt" (EVEN/ODD), each with per-reg seed mask
 
-  // i32 signed greater-than-or-equal (signedness carried by the `i32` element type)
+  // i32 unsigned greater-than-or-equal (signless integers use unsigned semantics)
   %ge = pto.vmi.vcmp %a, %b, %seed {cmp = "ge"}
       : !pto.vmi.vreg<128×i32>, !pto.vmi.vreg<128×i32>, !pto.vmi.mask<128×b32>
       -> !pto.vmi.mask<128×b32>
@@ -511,7 +511,7 @@ scalar type must match the vector element type.
 - **attributes:** Same `cmp` / `pmode` as `vcmp`.
 - **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`, `f32`.
   Integer signedness is taken from the element type; signless `iN` is treated
-  as signed (equivalent to `siN`). The scalar operand's element type must
+  as unsigned (equivalent to `uiN`). The scalar operand's element type must
   match the vector's, so signedness is consistent on both operands.
 - **lowering to `pto.mi`:**
   ```

@@ -3115,8 +3115,8 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
 }
 
 static void appendVMISemanticPipeline(OpPassManager &pm) {
-  // Normalize signless integer element types on whitelisted ops to unsigned
-  // before any verifier, layout, or lowering pass sees them.
+  // Materialize unsigned carriers for sign-sensitive VMI ops before any
+  // verifier, layout, or lowering pass sees signless integer element types.
   pm.addNestedPass<func::FuncOp>(
       pto::createVMINormalizeSignlessIntToUnsignedPass());
   // Expand unified VMI ops before layout assignment so grouped vci becomes

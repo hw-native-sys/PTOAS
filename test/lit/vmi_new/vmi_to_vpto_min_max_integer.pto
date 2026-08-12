@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=LEGACY
-// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+// RUN: pto-test-opt %s -pto-vmi-normalize-signless-int-to-unsigned -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=LEGACY
+// RUN: pto-test-opt %s -pto-vmi-normalize-signless-int-to-unsigned -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 module {
   func.func @vmi_to_vpto_min_max_integer(
@@ -25,16 +25,14 @@ module {
 }
 
 // LEGACY-LABEL: func.func @vmi_to_vpto_min_max_integer(
-// LEGACY: %[[MIN:.*]] = pto.vmi.mini
-// LEGACY: %[[MAX:.*]] = pto.vmi.maxi
-// LEGACY: return %[[MIN]], %[[MAX]]
+// LEGACY: %[[MIN:.*]] = pto.vmi.mini {{.*}} -> !pto.vmi.vreg<64xui32>
+// LEGACY: %[[MAX:.*]] = pto.vmi.maxi {{.*}} -> !pto.vmi.vreg<64xui32>
 // LEGACY-NOT: pto.vmi.vmin
 // LEGACY-NOT: pto.vmi.vmax
 
 // LOWER-LABEL: func.func @vmi_to_vpto_min_max_integer(
-// LOWER: %[[MIN:.*]] = pto.vmin
-// LOWER: %[[MAX:.*]] = pto.vmax
-// LOWER: return %[[MIN]], %[[MAX]]
+// LOWER: %[[MIN:.*]] = pto.vmin {{.*}} -> !pto.vreg<64xui32>
+// LOWER: %[[MAX:.*]] = pto.vmax {{.*}} -> !pto.vreg<64xui32>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

@@ -123,23 +123,23 @@ static bool isVMII8I16I32OrF16F32Type(Type type) {
   return isVMIAnyI8I16I32Type(type) || isVMIF16OrF32Type(type);
 }
 
-static bool isVMISignedOrSignlessI8I16I32Type(Type type) {
+static bool isVMISignedI8I16I32Type(Type type) {
   auto integerType = dyn_cast<IntegerType>(type);
-  if (!integerType || integerType.isUnsigned()) {
+  if (!integerType || !integerType.isSigned()) {
     return false;
   }
   return integerType.getWidth() == 8 || integerType.getWidth() == 16 ||
          integerType.getWidth() == 32;
 }
 
-static bool isVMISignedOrSignlessIntegerType(Type type) {
+static bool isVMISignedIntegerType(Type type) {
   auto integerType = dyn_cast<IntegerType>(type);
-  return integerType && !integerType.isUnsigned();
+  return integerType && integerType.isSigned();
 }
 
-static bool isVMIUnsignedIntegerType(Type type) {
+static bool isVMIUnsignedOrSignlessIntegerType(Type type) {
   auto integerType = dyn_cast<IntegerType>(type);
-  return integerType && integerType.isUnsigned();
+  return integerType && (integerType.isUnsigned() || integerType.isSignless());
 }
 
 // ---------------------------------------------------------------------------
@@ -172,15 +172,6 @@ static bool matchesVMIIntSemantics(IntegerType intType,
     return true;
   }
   llvm_unreachable("bad VMIIntSignSemantics");
-}
-
-static bool isVMISignedI8I16I32Type(Type type) {
-  auto intType = dyn_cast<IntegerType>(type);
-  if (!intType ||
-      !matchesVMIIntSemantics(intType, VMIIntSignSemantics::Signed))
-    return false;
-  return intType.getWidth() == 8 || intType.getWidth() == 16 ||
-         intType.getWidth() == 32;
 }
 
 static bool isVMIIotaElementType(Type type) {
@@ -694,12 +685,12 @@ static int64_t getDenseLogicalLanesInPart(int64_t elementCount, int64_t factor,
 namespace mlir::pto {
 std::optional<VMIFpToSiContract>
 lookupVMIFpToSiContract(Type srcElem, Type dstElem) {
-  // Must be float → signed/signless integer.
+  // Must be float → explicitly signed integer.
   if (!isVMIFloatLikeType(srcElem)) {
     return std::nullopt;
   }
   auto dstInt = dyn_cast<IntegerType>(dstElem);
-  if (!dstInt || dstInt.isUnsigned()) {
+  if (!dstInt || !dstInt.isSigned()) {
     return std::nullopt;
   }
 
@@ -736,12 +727,13 @@ lookupVMIFpToSiContract(Type srcElem, Type dstElem) {
 
 std::optional<VMIFpToUiContract>
 lookupVMIFpToUIContract(Type srcElem, Type dstElem) {
-  // Must be float → unsigned integer.
+  // Must be float → unsigned integer. VMI signless integers carry
+  // unsigned semantics.
   if (!isVMIFloatLikeType(srcElem)) {
     return std::nullopt;
   }
   auto dstInt = dyn_cast<IntegerType>(dstElem);
-  if (!dstInt || !dstInt.isUnsigned()) {
+  if (!dstInt || dstInt.isSigned()) {
     return std::nullopt;
   }
 
@@ -1588,9 +1580,10 @@ LogicalResult VMIShRSIOp::verify() {
   auto lhsType = cast<VMIVRegType>(getLhs().getType());
   auto rhsType = cast<VMIVRegType>(getRhs().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMISignedOrSignlessI8I16I32Type(lhsType.getElementType()))
+  if (!isVMISignedI8I16I32Type(lhsType.getElementType())) {
     return emitOpError(
-        "requires signless or signed i8, i16, or i32 VMI element type");
+        "requires signed i8, i16, or i32 VMI element type");
+  }
   return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
 }
 
@@ -2002,13 +1995,17 @@ LogicalResult VMIExtFOp::verify() {
   auto resultType = cast<VMIVRegType>(getResult().getType());
   Type sourceElementType = sourceType.getElementType();
   Type resultElementType = resultType.getElementType();
-  if (sourceType.getElementCount() != resultType.getElementCount())
+  bool hasMatchingLaneCount =
+      sourceType.getElementCount() == resultType.getElementCount();
+  if (!hasMatchingLaneCount) {
     return emitOpError(
         "requires source and result logical lane counts to match");
+  }
   if (!isVMIFloatLikeType(sourceElementType) ||
-      !isVMIFloatLikeType(resultElementType))
+      !isVMIFloatLikeType(resultElementType)) {
     return emitOpError(
         "requires floating-point-like source and result element types");
+  }
   if (involvesBF16x2(sourceElementType, resultElementType) &&
       !lookupVMIFpToFpContract(sourceElementType, resultElementType))
     return emitOpError(
@@ -2099,9 +2096,9 @@ LogicalResult VMIFPToSIOp::verify() {
   if (!isVMIFloatLikeType(sourceType.getElementType())) {
     return emitOpError("requires floating-point-like source element type");
   }
-  if (!isVMISignedOrSignlessIntegerType(resultType.getElementType()))
-    return emitOpError("requires signed or signless integer result element "
-                       "type");
+  if (!isVMISignedIntegerType(resultType.getElementType())) {
+    return emitOpError("requires signed integer result element type");
+  }
   auto contract =
       lookupVMIFpToSiContract(sourceType.getElementType(),
                               resultType.getElementType());
@@ -2134,8 +2131,9 @@ LogicalResult VMIFPToUIOp::verify() {
   if (!isVMIFloatLikeType(sourceType.getElementType())) {
     return emitOpError("requires floating-point-like source element type");
   }
-  if (!isVMIUnsignedIntegerType(resultType.getElementType())) {
-    return emitOpError("requires unsigned integer result element type");
+  if (!isVMIUnsignedOrSignlessIntegerType(resultType.getElementType())) {
+    return emitOpError(
+        "requires unsigned or signless integer result element type");
   }
   auto contract =
       lookupVMIFpToUIContract(sourceType.getElementType(),
@@ -2166,9 +2164,9 @@ LogicalResult VMISIToFPOp::verify() {
   if (sourceType.getElementCount() != resultType.getElementCount())
     return emitOpError(
         "requires source and result logical lane counts to match");
-  if (!isVMISignedOrSignlessIntegerType(sourceType.getElementType()))
-    return emitOpError(
-        "requires signed or signless integer source element type");
+  if (!isVMISignedIntegerType(sourceType.getElementType())) {
+    return emitOpError("requires signed integer source element type");
+  }
   if (!isVMIFloatLikeType(resultType.getElementType())) {
     return emitOpError("requires floating-point-like result element type");
   }
@@ -2184,34 +2182,49 @@ LogicalResult VMISIToFPOp::verify() {
 LogicalResult VMIExtSIOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount())
+  bool hasMatchingLaneCount =
+      sourceType.getElementCount() == resultType.getElementCount();
+  if (!hasMatchingLaneCount) {
     return emitOpError(
         "requires source and result logical lane counts to match");
-  if (!isVMISignedOrSignlessIntegerType(sourceType.getElementType()) ||
-      !isVMISignedOrSignlessIntegerType(resultType.getElementType()))
+  }
+  bool hasSignedTypes =
+      isVMISignedIntegerType(sourceType.getElementType()) &&
+      isVMISignedIntegerType(resultType.getElementType());
+  if (!hasSignedTypes) {
     return emitOpError(
-        "requires signed or signless integer source and result element types");
+        "requires signed integer source and result element types");
+  }
   if (getVMIElementBitWidth(sourceType.getElementType()) >=
-      getVMIElementBitWidth(resultType.getElementType()))
+      getVMIElementBitWidth(resultType.getElementType())) {
     return emitOpError(
         "requires result element type to be wider than source element type");
+  }
   return success();
 }
 
 LogicalResult VMIExtUIOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount())
+  bool hasMatchingLaneCount =
+      sourceType.getElementCount() == resultType.getElementCount();
+  if (!hasMatchingLaneCount) {
     return emitOpError(
         "requires source and result logical lane counts to match");
-  if (!isVMIUnsignedIntegerType(sourceType.getElementType()) ||
-      !isVMIUnsignedIntegerType(resultType.getElementType()))
+  }
+  bool hasUnsignedTypes =
+      isVMIUnsignedOrSignlessIntegerType(sourceType.getElementType()) &&
+      isVMIUnsignedOrSignlessIntegerType(resultType.getElementType());
+  if (!hasUnsignedTypes) {
     return emitOpError(
-        "requires unsigned integer source and result element types");
+        "requires unsigned or signless integer source and result element "
+        "types");
+  }
   if (getVMIElementBitWidth(sourceType.getElementType()) >=
-      getVMIElementBitWidth(resultType.getElementType()))
+      getVMIElementBitWidth(resultType.getElementType())) {
     return emitOpError(
         "requires result element type to be wider than source element type");
+  }
   return success();
 }
 
@@ -2907,6 +2920,10 @@ verifyVMIVectorScalarShiftOp(Operation *op, VMIVRegType srcType,
 
 LogicalResult VMIAddSOp::verify() {
   auto srcType = cast<VMIVRegType>(getSrc().getType());
+  if (failed(verifyBF16x2ComputeElementType(
+          getOperation(), srcType.getElementType()))) {
+    return failure();
+  }
   if (!isVMII8I16I32OrF16BF16F32Type(srcType.getElementType())) {
     return emitOpError(
         "requires i8, i16, i32, f16, bf16, or f32 VMI element type");
@@ -3321,6 +3338,10 @@ LogicalResult VMIVsqrtOp::verify() {
 LogicalResult VMIVexpOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
+  if (failed(verifyBF16x2ComputeElementType(
+          getOperation(), sourceType.getElementType()))) {
+    return failure();
+  }
   if (!isVMIF16OrF32Type(sourceType.getElementType())) {
     return emitOpError("requires f16 or f32 VMI element type");
   }
@@ -4111,10 +4132,6 @@ LogicalResult VMICvtOp::verify() {
   bool dstFp = isVMIFloatLikeType(dstElem);
   bool srcInt = isVMIIntegerLikeType(srcElem);
   bool dstInt = isVMIIntegerLikeType(dstElem);
-  bool srcSignlessInt =
-      srcInt && isa<IntegerType>(srcElem) &&
-      !cast<IntegerType>(srcElem).isUnsigned() &&
-      !cast<IntegerType>(srcElem).isSigned();
   auto fpContract =
       srcFp && dstFp ? lookupVMIFpToFpContract(srcElem, dstElem)
                      : std::nullopt;
@@ -4146,17 +4163,18 @@ LogicalResult VMICvtOp::verify() {
       dir = CvtDirection::FpNarrow;
     }
   } else if (srcFp && dstInt) {
-    if (isVMIUnsignedIntegerType(dstElem)) {
+    if (isVMIUnsignedOrSignlessIntegerType(dstElem)) {
       dir = CvtDirection::FpToUi;
     }
     else {
       dir = CvtDirection::FpToSi;
     }
   } else if (srcInt && dstFp) {
-    if (!isVMISignedOrSignlessIntegerType(srcElem))
+    if (!isVMISignedIntegerType(srcElem)) {
       return emitOpError(
-          "int-to-fp conversion requires signed or signless integer source "
+          "int-to-fp conversion requires explicitly signed integer source "
           "element type");
+    }
     dir = CvtDirection::SiToFp;
   } else if (srcInt && dstInt) {
     if (dstBits > srcBits) {
@@ -4274,16 +4292,6 @@ LogicalResult VMICvtOp::verify() {
                          "int-narrow conversions");
     }
   }
-
-  // --- sign ---
-  // Int-widening requires a signed/unsigned source element type to
-  // determine sign-extension vs zero-extension. Signless integers are
-  // rejected.
-  if (dir == CvtDirection::IntWiden && srcSignlessInt)
-    return emitOpError("int-widening conversions require a signed or "
-                       "unsigned integer source element type "
-                       "(e.g. si8/ui8/si16/ui16); "
-                       "signless integer is not allowed");
 
   // --- pmode ---
   if (auto pmodeAttr = (*this)->getAttrOfType<StringAttr>("pmode")) {
