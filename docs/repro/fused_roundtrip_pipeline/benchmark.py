@@ -92,7 +92,12 @@ def build_vmi() -> Path:
     # ``ptodsl`` may be an older namespace package without ``_runtime``.
     import sys
     if "PTOAS_BIN" not in os.environ:
-        candidate = shutil.which("ptoas")
+        candidates = [Path(sys.executable).parent / "ptoas"]
+        if os.environ.get("CONDA_PREFIX"):
+            candidates.append(Path(os.environ["CONDA_PREFIX"]) / "bin/ptoas")
+        candidate = next((str(path) for path in candidates if path.is_file()), None)
+        if candidate is None:
+            candidate = shutil.which("ptoas")
         if candidate is None:
             raise RuntimeError("ptoas is not on PATH; set PTOAS_BIN to the pinned PTOAS executable")
         os.environ["PTOAS_BIN"] = candidate
