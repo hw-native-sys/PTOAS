@@ -10,8 +10,7 @@ pipeline in [`full_roundtrip_vmi.py`](fixtures/full_roundtrip_vmi.py).
 Run on CANN 9.1 with one device variable:
 
 ```bash
-conda activate cann91_dev
-source /home/jzhuang/cann_installed/9.1.0-beta.3/cann/set_env.sh
+source /path/to/cann-9.1.0-beta.3/set_env.sh
 ACL_DEVICE_ID=0 bash check.sh compile
 ACL_DEVICE_ID=0 bash check.sh benchmark
 ```
@@ -24,8 +23,8 @@ benchmark instead of selecting the slowest individual launch.
 
 | Verified device-0 measurement | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| Cold-L2 event median | 31.034 | 31.795 | 0.9761 |
-| Device-only FFTS, 30 repetitions | 21.786 | 27.296 | 0.7981 |
+| Cold-L2 event median | 30.913 | 31.980 | 0.9666 |
+| Device-only FFTS, 30 repetitions | 21.555 | 26.990 | 0.7986 |
 
 The event result is launch-floor dominated and is diagnostic only. The FFTS
 result reproduces the production-sized VMI performance gap with the same

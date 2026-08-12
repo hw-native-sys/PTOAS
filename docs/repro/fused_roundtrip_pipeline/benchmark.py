@@ -15,6 +15,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import shutil
 from pathlib import Path
 
 import torch
@@ -90,7 +91,11 @@ def build_vmi() -> Path:
     # this repository provides the native-build helpers.  A site-installed
     # ``ptodsl`` may be an older namespace package without ``_runtime``.
     import sys
-    os.environ.setdefault("PTOAS_BIN", "/home/jzhuang/.conda/envs/cann91_dev/bin/ptoas")
+    if "PTOAS_BIN" not in os.environ:
+        candidate = shutil.which("ptoas")
+        if candidate is None:
+            raise RuntimeError("ptoas is not on PATH; set PTOAS_BIN to the pinned PTOAS executable")
+        os.environ["PTOAS_BIN"] = candidate
     root = HERE.parent.parent.parent
     sys.path.insert(0, str(root / "ptodsl"))
     # The installed extension supplies the MLIR Python bindings; the checked
@@ -126,8 +131,7 @@ extern "C" void launch_full_vmi(void *stream, void *x) {{
 
 
 def stream_ptr() -> int:
-    value = torch.npu.current_stream()._as_parameter_  # noqa: SLF001
-    return value.value if hasattr(value, "value") else int(value)
+    return int(torch_npu._C._npu_getCurrentRawStream(torch.npu.current_device()))
 
 
 def median_us(fn) -> float:

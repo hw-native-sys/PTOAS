@@ -2,11 +2,11 @@
   {
     "case": "full_bf16_8192x2048_72core_persistent",
     "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
-    "cce_us": 21.786,
-    "vmi_us": 27.296,
-    "cce_over_vmi": 0.7981,
-    "event_cold_l2_cce_us": 31.034,
-    "event_cold_l2_vmi_us": 31.795,
-    "event_cold_l2_cce_over_vmi": 0.9761
+    "cce_us": 21.555,
+    "vmi_us": 26.99,
+    "cce_over_vmi": 0.7986,
+    "event_cold_l2_cce_us": 30.913,
+    "event_cold_l2_vmi_us": 31.98,
+    "event_cold_l2_cce_over_vmi": 0.9666
   }
 ]
