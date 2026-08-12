@@ -1,4 +1,9 @@
 [
- {"case":"hidden2560_layers10","asc_us":925.5155,"vmi_us":3887.6199,"copied_bytes":2481848320},
- {"case":"hidden4096_layers10","asc_us":1348.9992,"vmi_us":4203.7893,"copied_bytes":3966631936}
+  {
+    "case": "typed_gm_pointer_table_layers10",
+    "status": "blocked_before_vmi_lowering",
+    "negative_test": "TypeError: pto.ptr(...) does not support element type !pto.ptr<f32, gm>",
+    "cce_reference": "direct device pointer-table DMA compiles and launches",
+    "vmi_control": "fixed arguments only; not performance-equivalent"
+  }
 ]
