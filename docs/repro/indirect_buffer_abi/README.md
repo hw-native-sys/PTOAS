@@ -2,7 +2,7 @@
 
 PTO DSL cannot express a typed GM pointer table. Its correct stacked-buffer VMI workaround is **3.15x slower** than direct CCE for this full recurrence. The requested outcome is direct pointer-table support and a VMI implementation no slower than the CCE baseline (`CCE/VMI >= 0.98`).
 
-The complete workload is a 72-core, `8192 x 4096`, 10-layer four-lane recurrence. `reference_device.asc` loads runtime addresses from GM tables and uses direct DMA. `stacked_pipeline_vmi.py` must instead receive dense layer-major buffers and the wrapper stack/unstack copies. The natural DSL form is retained in `indirect_api_negative.py`; it fails before lowering with `pto.ptr(...) does not support element type !pto.ptr<f32, gm>`.
+The complete workload is a 72-core, `8192 x 4096`, 10-layer four-lane recurrence. `reference_device.asc` loads runtime addresses from GM tables and uses direct DMA. `stacked_pipeline_vmi.py` must instead receive dense layer-major buffers and the wrapper stack/unstack copies. `desired_pointer_table.py` records the intended fast VMI lowering in detail: one persistent launch, typed table lookup, double-buffered coefficient/activation DMA, and the same 64-element vector recurrence. The natural DSL form is retained in `indirect_api_negative.py`; it fails before lowering with `pto.ptr(...) does not support element type !pto.ptr<f32, gm>`.
 
 ## Reproduce
 
