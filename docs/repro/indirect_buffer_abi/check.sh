@@ -15,6 +15,8 @@ if [[ "${CONDA_DEFAULT_ENV:-}" != "${CONDA_ENV}" ]] && command -v conda >/dev/nu
   conda activate "${CONDA_ENV}"
 fi
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
+CANN_SET_ENV="${CANN_ENV:-${ASCEND_HOME_PATH}/set_env.sh}"
+task_run() { task-submit --device "$ACL_DEVICE_ID" --run "source '$CANN_SET_ENV'; ACL_DEVICE_ID=$ACL_DEVICE_ID '$PYTHON_BIN' '$HERE/benchmark.py'"; }
 compile() {
   PYTHONPATH="${HERE}/fixtures" "${PYTHON_BIN}" "${HERE}/fixtures/fixed_arguments.py" --emit-mlir > "${OUT}/fixed.mlir"
   grep -q '!pto.ptr<f32, gm>' "${OUT}/fixed.mlir"
@@ -24,5 +26,5 @@ compile() {
   ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" "${PYTHON_BIN}" "${HERE}/benchmark.py" --compile-only
   echo "PASS: stream-launchable direct-pointer CCE and stacked-buffer VMI libraries built; typed pointer-table form is rejected"
 }
-run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then task-submit --device "${ACL_DEVICE_ID}" --run "ACL_DEVICE_ID=${ACL_DEVICE_ID} '${PYTHON_BIN}' '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"; else "${PYTHON_BIN}" "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
+run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then task_run | tee "${OUT}/results.txt"; else "${PYTHON_BIN}" "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac

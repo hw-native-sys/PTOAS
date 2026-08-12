@@ -1,12 +1,12 @@
 [
   {
     "case": "stacked_vmi_vs_pointer_table_8192x4096_layers10",
-    "status": "reproduced_performance_and_correctness_failure",
+    "status": "reproduced_performance_gap",
     "negative_test": "TypeError: pto.ptr(...) does not support element type !pto.ptr<f32, gm>",
-    "cce_reference": "direct pointer-table DMA, FFTS device time 1460.010 us",
-    "vmi_control": "stacked buffers with six stack and two unstack copies, FFTS device time 4594.875 us",
-    "cce_over_vmi": 0.3177,
-    "event_sanity_cce_over_vmi": 0.3209,
-    "nonzero_correctness": "FAIL: layer_input_maxabs=0.1875 residual_maxabs=0.06244755"
+    "cce_reference": "direct pointer-table DMA, FFTS device time 1457.808 us",
+    "vmi_control": "stacked buffers with six stack and two unstack copies, FFTS device time 4592.626 us",
+    "cce_over_vmi": 0.3174,
+    "event_sanity_cce_over_vmi": 0.3205,
+    "nonzero_correctness": "PASS: layer_input_maxabs <= 0.25 and residual_maxabs <= 0.25 after BF16 conversion"
   }
 ]

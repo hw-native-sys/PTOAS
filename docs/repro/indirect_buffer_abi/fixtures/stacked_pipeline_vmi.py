@@ -27,8 +27,9 @@ def dense_recurrence_stage(
     ub_bf16 = pto.castptr(ub_u8, pto.ptr(pto.bf16, "ub"))
     ub_f32 = pto.castptr(ub_u8, pto.ptr(pto.f32, "ub"))
     # UB: residual [0, 32768), activation [32768, 40960), input [40960,
-    # 45056) in BF16 elements; 24 float coefficients begin at byte 90112.
-    coeff = 22528
+    # 45056) in BF16 elements; 24 float coefficients begin at byte 98304.
+    # Keep this offset identical to the compact CCE layout.
+    coeff = 24576
     for wave in range(114):
         tile = wave * CORES + pto.get_block_idx()
         if tile < TOKENS:
@@ -69,12 +70,19 @@ def dense_recurrence_stage(
                                pto.addptr(ub_bf16, 40960 + offset), 0, mask)
                 activation = pto.vmi.vcvt(
                     pto.vmi.vload(pto.addptr(ub_bf16, 32768 + offset), 0, size=64), to_dtype=pto.f32)
+                # Keep the old residual tile intact until every output lane
+                # has consumed it. Storing each lane as it is computed would
+                # overwrite a later lane's input in this in-place UB buffer.
+                result = [pto.vmi.vmul(activation, post[output_lane], mask)
+                          for output_lane in pto.static_range(LANES)]
+                for input_lane in pto.static_range(LANES):
+                    for output_lane in pto.static_range(LANES):
+                        result[output_lane] = pto.vmi.vmula(
+                            result[output_lane], residual[input_lane],
+                            mix[input_lane * LANES + output_lane], mask,
+                        )
                 for output_lane in pto.static_range(LANES):
-                    result = pto.vmi.vmul(activation, post[output_lane], mask)
-                    for input_lane in pto.static_range(LANES):
-                        result = pto.vmi.vmula(result, residual[input_lane],
-                                               mix[input_lane * LANES + output_lane], mask)
-                    pto.vmi.vstore(pto.vmi.vcvt(result, to_dtype=pto.bf16),
+                    pto.vmi.vstore(pto.vmi.vcvt(result[output_lane], to_dtype=pto.bf16),
                                    pto.addptr(ub_bf16, output_lane * HIDDEN + offset), 0, mask)
         pto.pipe_barrier(pto.Pipe.ALL)
         if tile < TOKENS:
