@@ -1,10 +1,10 @@
 # VPTO Soft Post-Update 优化 Pass 设计文档
 
-> 地址递推前置规范化、signed/unsigned i16 no-wrap 证明证书、可逆 witness 和共享候选描述见 [VPTO 地址递推 i16 前置规范化设计](vpto-address-recurrence-normalization-design-zh.md)。CLI pipeline 在本 pass 之前固定运行 `VPTONormalizeAddressRecurrences`；producer 和 consumer 都以 `pto.vecscope` 为所有权边界，scope 外保持原样，scope 内产生的 witness 由本 pass 在最终输出中全部消费并删除。
+> 地址递推前置规范化、signed/unsigned i16 no-wrap 证明证书、可逆 witness 和共享候选描述见 [VPTO 地址递推 i16 前置规范化设计](vpto-address-recurrence-normalization-design-zh.md)。启用 VPTO soft-postupdate 时，CLI pipeline 在本 pass 之前固定运行 `VPTONormalizeAddressRecurrences`；producer 和 consumer 都以 `pto.vecscope` 为所有权边界，scope 外保持原样，scope 内产生的 witness 由本 pass 在最终输出中全部消费并删除。
 
 ## 1. 概述
 
-本文档设计 PTOAS 的 `VPTOSoftPostUpdate` pass，在 **MLIR 层**（LLVM lowering 之前）将非 Post-Update 形式的 VPTO 访存操作转换为 Post-Update 形式。候选集合由 `VPTOPostUpdateUtils` 的共享表统一定义，包含第 2 节列出的 Mechanism A 与已接入的 stateful op，而不是 pass 内硬编码少数指令。pass 覆盖两种场景：`scf.for` 循环间的固定步长访存模式（循环路径），以及同一 block 单次执行中的 `SequentialRun`（顺序路径）。`SequentialRun` 指同一候选桶中按程序序连续、相邻候选的有效地址差均为同一个非零 `step` 的候选序列。
+本文档设计 PTOAS 的 `VPTOSoftPostUpdate` pass，在 **MLIR 层**（LLVM lowering 之前）将非 Post-Update 形式的 VPTO 访存操作转换为 Post-Update 形式。候选集合由 `VPTOPostUpdateUtils` 的共享表统一定义，包含第 2 节列出的 Mechanism A 与已接入的 stateful op，而不是 pass 内硬编码少数指令。pass 覆盖两种场景：`scf.for` 循环中能够符号化求出逐轮地址推进量的访存模式（循环路径，推进量可以是每轮可用的动态值），以及同一 block 单次执行中的 `SequentialRun`（顺序路径）。`SequentialRun` 指同一候选桶中按程序序连续、相邻候选的有效地址差均为同一个非零 `step` 的候选序列。
 
 循环路径示例：
 
@@ -24,7 +24,7 @@ scf.for %iv = %c0 to %N step %c64 iter_args(..., %ptr = %base) {
 
 ## 2. Post-Update 指令全景
 
-下表列出 bisheng `hiipu-vf-soft-postupdate` 支持的所有指令与 PTOAS 现状的交叉对比。
+下表首先列出当前 `getPostUpdateOpTable()` 注册的完整 PTOAS 候选集合；这 14 个 op 是 normalizer 和 soft-postupdate 实际共同处理的范围。Bisheng 的 Auto/Soft 分支只作为算法来源背景，不作为 PTOAS 候选集合的事实源。
 
 bisheng 内部将候选指令分为两个处理分支：
 
@@ -52,15 +52,18 @@ bisheng 内部将候选指令分为两个处理分支：
 
 LLVM lowering 时根据 op 是否有 `updated_base` 结果来选择生成 post 或非 post intrinsic。
 
-### 2.3 Stateful Post-Update 指令（Mechanism B：align 状态穿针）
+### 2.2 Stateful Post-Update 指令（Mechanism B：align 状态穿针）
 
-这些指令通过显式的 align 寄存器跟踪状态，**始终返回**更新后的 align，没有非 Post 形式。
+这些指令始终返回更新后的 align 状态，同时通过可选的 pointer 结果区分普通形式和 Post-Update 形式。普通形式没有 pointer 结果；Post-Update 形式追加 `updated_base`/`base_out`，并选择对应的 post intrinsic。
 
-| 分支 | PTOAS Op | Intrinsic | 输出状态 | 备注 |
-|------|----------|-----------|---------|------|
-| Soft | `pto.vldus` | `llvm.hivm.vldus.v{N}{ty}` | `updated_align`（+ hidden base ptr） | intrinsic 返回 3 个值，PTOAS 丢弃第 3 个 |
+| 分支 | PTOAS Op | 普通 intrinsic | Post intrinsic | 始终输出的状态 | Post-Update 增量 |
+|------|----------|----------------|----------------|------------------|-----------------|
+| Soft | `pto.vldus` | `llvm.hivm.vldus.v{N}{ty}` | `llvm.hivm.vldus.post.v{N}{ty}` | `updated_align` | 普通形式无显式 increment；Post 形式追加 index increment 和 `updated_base`。普通 intrinsic 的隐藏 base ptr 不映射为普通 VPTO 结果 |
+| Auto/stateful | `pto.vstus` | `llvm.hivm.vstus.v{N}{ty}` | `llvm.hivm.vstus.post.v{N}{ty}` | `align_out` | 现有 i32 offset 保持为状态推进量且不参与当前访问地址；Post 形式追加 `base_out` |
 
-### 2.4 bisheng 支持但 PTOAS 尚无 Op 定义的指令
+### 2.3 Bisheng 调研中存在、但当前 PTOAS 未注册的指令
+
+下列指令不在 `getPostUpdateOpTable()` 中，当前两个 PTOAS pass 都不会处理：
 
 | 分支 | 指令 | 说明 |
 |------|------|------|
@@ -96,7 +99,7 @@ bisheng 的 pass 工作在 LLVM IR 上，此时高级循环结构和 PTO 类型�
 | 模式 | bisheng | PTOAS（本方案） |
 |------|---------|----------------|
 | 简单 `scf.for` + IV 偏移 | ✓（通过 SCEV） | ✓（直接模式匹配） |
-| 嵌套 `scf.for` 循环 | 部分支持（脆弱的 PHI 嵌套） | ✓（递归 `iter_args` 穿针） |
+| 嵌套 `scf.for` 循环 | 部分支持（脆弱的 PHI 嵌套） | ✓（内层到外层处理，各层独立建立 `iter_args`） |
 | 带 mask 的 `pto.vsts` | ✓ | ✓ |
 | `pto.vsstb` 块步长存储 | 部分支持（独立开关） | ✓（统一框架） |
 | AIV 软件循环 | ✗（排除，因为 AIV 软件循环不被 `LoopInfo` 识别为真实硬件循环，SCEV 无法分析） | ✓（`scf.for` 统一表示，无此限制） |
@@ -114,10 +117,10 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
 阶段一 · 循环路径：候选 op 直接位于某个 scf.for 的循环体内，并且在每次迭代中更新。
     以 ForOp 为单位批量处理（同循环内多 op 合并 iter_arg）：
       · 纯符号分析：地址 witness 读取 canonical 一侧；先做累加器分析，未命中再做 delta 分析。
-      · 最终判定与 plan 准备：合并 base/stride delta，完成单位、类型、最终 stride 与收益检查，仅为成功候选准备 stride 和 init_ptr。
+      · 最终判定与 plan 准备：合并 base/stride delta，完成单位、类型和最终 stride 检查；通用 combine 路径同时拒绝零 stride，vstus 则检查 base advancement 与原 offset 等价。为可改写候选准备 stride 和 init_ptr。
       · 统一恢复：所有普通 op 的 witness result 替换回 original 一侧。
       · 选择提交：只用成功 plan 建立 pointer chain；失败候选保留原地址，并删除死亡 shadow recurrence。
-        若成功改写产生新的 iter_arg，则向外层循环传播。
+        每个 scf.for 独立建立和清理自己的 pointer iter_arg；不把内层 updated_base 自动传播为外层 iter_arg。
 
 阶段二 · 顺序路径：循环路径完成后，重新收集 vecscope 内的全部 block，
     包括 scf.for body、vecscope 体和 scf.if 分支体。只扫描仍为非 Post-Update
@@ -133,7 +136,7 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
 
 各类内存指令的分析和改写通过统一的地址描述符抽象，共享同一套分析流程。
 
-无论走哪条路径，分析都只产出**符号表达式**，不触碰 IR；确认候选可行后才在单一插入点物化（见 4.2.2）。
+无论走哪条路径，递推分解、delta、单位缩放、类型和最终 stride 检查都先只产出**符号表达式**。候选通过这些检查后才物化 stride 和初始指针；若后续初始指针物化仍失败，vecscope 级 dead-pure-op 清理会删除已产生但无用户的常量、cast、clone 或 `pto.addptr`（见 4.2.2）。
 
 #### 4.2.1 地址描述符
 
@@ -141,6 +144,7 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
 
 ```
 enum class PostUpdateAddressUnit { Element, Block, Alignment, Byte };
+enum class PostUpdateAddressDomain { Signed, Unsigned };
 enum class PostUpdateStrideConstraint { Dynamic, Constant, SignedI8 };
 struct PostUpdateOpInfo {
   unsigned baseOperandIdx;
@@ -153,6 +157,8 @@ struct PostUpdateOpInfo {
 };
 ```
 
+当前共享表中只有 `pldi`、`psti` 要求最终 stride 为编译期常量，`sprsti` 要求最终常量落在 signed i8 范围；其余候选使用 `Dynamic`，允许满足目标 operand 类型的动态 stride。
+
 Element、Byte、Alignment 类 stride 使用 signed 域；Block 类 `vsldb/vsstb` stride 在地址计算中按 unsigned i16 位模式解释。base 的 `pto.addptr` offset 始终使用 signed index 域。
 
 `delta(base)` 与 `strideOperand` 的单位不同，合并前必须先统一到字节。引入两个字节量：
@@ -163,14 +169,14 @@ Element、Byte、Alignment 类 stride 使用 signed 域；Block 类 `vsldb/vsstb
 | 指令 | base | strideOperand | strideUnit | unitBytes | 有效地址 |
 |------|------|---------------|-----------|-----------|---------|
 | vlds/vsts | source/destination | offset (Index) | Element | elemBytes | base + offset |
-| vldsx2（Step 4） | source | offset (Index) | Element | elemBytes | base + offset |
+| vldsx2 | source | offset (Index) | Element | elemBytes | base + offset |
 | vsstb/vsldb | destination/source | repeat_stride (I16) | Block | 32 | dest + (32/elemBytes)·repeat_stride |
-| plds/psts（Step 4） | source/destination | offset (Index) | Byte | 1 | base + offset/elemBytes |
-| pldi（Step 4） | source | offset (Index) | Alignment | NORM: VL/8；US: VL/16；DS: min(32, VL/4) | base + (unitBytes/elemBytes)·offset |
-| psti（Step 4） | destination | offset (Index) | Alignment | NORM: VL/8；PK: VL/16 | base + (unitBytes/elemBytes)·offset |
-| sprsts（Step 4） | destination | offset (I32) | Byte | 1 | dest + offset/elemBytes |
-| sprsti（Step 4） | destination | offset (I32) | Alignment | AR: 4 | dest + (4/elemBytes)·offset |
-| vstas（Step 4） | destination | offset (I32) | Element | elemBytes | dest + offset |
+| plds/psts | source/destination | offset (Index) | Byte | 1 | base + offset/elemBytes |
+| pldi | source | offset (Index) | Alignment | NORM: VL/8；US: VL/16；DS: min(32, VL/4) | base + (unitBytes/elemBytes)·offset |
+| psti | destination | offset (Index) | Alignment | NORM: VL/8；PK: VL/16 | base + (unitBytes/elemBytes)·offset |
+| sprsts | destination | offset (I32) | Byte | 1 | dest + offset/elemBytes |
+| sprsti | destination | offset (I32) | Alignment | AR: 4 | dest + (4/elemBytes)·offset |
+| vstas | destination | offset (I32) | Element | elemBytes | dest + offset |
 | vldus | source | 无 | Element | elemBytes | base；increment 由 base advancement 得出 |
 | vstus | base | offset (I32) | Element | elemBytes | base（offset 只推进返回 base，不参与本次访问） |
 
@@ -191,15 +197,17 @@ init_ptr   = pto.addptr(base_0,  (unitBytes/elemBytes)·strideOperand_0)   // �
 
 约束（由 4.2.5 检查 3 统一裁定）：`(elemBytes/unitBytes)·delta(base)` 须为精确的整数缩放。`unitBytes % elemBytes == 0` 时，将 `delta(base)` 规范化为“常量 + Σ(系数 × SSA 叶子)”，要求常量和每个系数都能被 `unitBytes/elemBytes` 整除；`elemBytes % unitBytes == 0` 时乘 `elemBytes/unitBytes` 恒精确；互不整除则放弃。`init_ptr` 的 `(unitBytes/elemBytes)·strideOperand_0` 对称：Block 类恒精确（elemBytes 整除 32），Byte 类要求 `elemBytes | strideOperand_0`。
 
+Element 类 index offset 在构造 `init_ptr` 时还会显式复现原访存 lowering 的 index→i32 截断，再 signed-cast 回 index 后交给 `pto.addptr`。这保证 post-update 首地址与普通形式的既有 ABI 行为一致，而不是无意中把首地址计算扩大为 64-bit index 语义。
+
 #### 4.2.2 分析与物化分离
 
-循环路径分两个阶段。**分析阶段**不产生任何 IR：`decomposeLinear`、`getIterArgIncrement`、`computeDelta` 均为纯函数，返回符号表达式 `StrideExpr`。**物化阶段**在候选通过全部合法性检查之后，由 `materialize` 在唯一插入点一次性发射 IR。
+循环路径先进行符号分析，再进行物化。`decomposeLinear`、`getIterArgIncrement`、`computeDelta` 及 stride 的单位、类型和约束检查均为纯分析，返回符号表达式 `StrideExpr`。候选通过这些检查后，由 `materialize` 发射 stride，再由 `computeInitialPtr` 物化首轮地址。初始指针计算仍可能因定义链无法移到 loop entry 或单位换算无法精确表达而失败；这种晚期失败留下的无用户 pure 定义会在循环阶段结束后的 `eraseDeadPureOps(vecscope)` 中删除。
 
 ```
 StrideExpr := Const(int64)                  // 类型在物化时按上下文决定
             | Leaf(Value)                   // IR 中已存在的叶子值
             | Add(e, e) | Sub(e, e) | Mul(e, e)
-            | Cast(op, e)                   // index_cast/index_castui，op 为克隆模板
+            | Cast(op, e)                   // index_cast/index_castui/extsi/extui，op 为克隆模板
 ```
 
 `StrideExpr` 在构造时即做常量折叠（`foldConst`），因此 `delta(base)` 缩放是否精确、`stride_new` 是否恒为零，全部在符号层判定，判定不依赖任何已生成的 IR。
@@ -212,7 +220,7 @@ StrideExpr := Const(int64)                  // 类型在物化时按上下文决
 
 2. **递归可 memoize。** 纯函数的结果只取决于入参，`decomposeLinear` 与 `computeDelta` 按 `Value` 缓存，共享子表达式只分解一次，分解代价与定义链 DAG 的规模成线性关系。
 
-3. **被拒候选不留残留。** 合法性检查全部先于物化完成，放弃某个候选时 IR 尚未被触碰。`elemBytes/unitBytes` 缩放这类中间运算也只存在于符号层，不会以 op 的形式落地。
+3. **被拒候选不在 pass 输出中留残留。** 大部分拒绝发生在纯分析期；初始指针计算造成的晚期拒绝可能暂时留下 pure IR，但 vecscope 级清理会在顺序路径重新收集 block 之前删除这些无用户定义。`elemBytes/unitBytes` 的 stride 缩放仍只存在于符号层，不会为已拒候选单独落地。
 
 #### 4.2.3 累加器分析（优先）
 
@@ -249,7 +257,7 @@ getIterArgIncrement(Value v, ForOp forOp) -> {status, StrideExpr}:
 - Signed canonical recurrence 是 i16 iter_arg、signed extension（`arith.index_cast`/`arith.extsi`）和 `arith.addi/subi ... overflow<nsw>` 的组合；unsigned canonical recurrence 使用 `arith.index_castui`/`arith.extui` 和 `overflow<nuw>`。Block 类 stride 期望 unsigned，其余共享描述中的窄地址 stride 期望 signed。
 - normalizer 用 `pto.address_recurrence_witness original, canonical` 把通过证明的 canonical 地址与原 operand 配对。consumer 的 accumulator、delta、初始指针与分组分析沿 canonical 一侧读取值，但 witness 本身不参与步长计算。
 - consumer 只检查 canonical 结构并读取常量 backedge step，不再计算 trip count、初值、递推端点或最终 backedge 范围；这些事实已经由 overflow flag 作为 IR 语义承诺。它仍负责合并 base 与 stride delta、单位换算以及 `Dynamic`、`Constant`、`SignedI8` 等最终约束。
-- 原始 i16/i32 iter_arg、signed/unsigned 域不匹配的 cast、没有相应 overflow flag 的 backedge、动态步长和复杂窄整数递推均返回 `Failed`。normalizer 不永久替换原地址 operand；soft-postupdate 在最终判定后统一恢复 original 一侧，再选择性提交成功 rewrite。
+- 原生 i16 iter_arg 若本身具有域匹配的 `nsw`/`nuw` constant-step backedge，也满足同一个 canonical 结构，soft-postupdate 单独运行时可以直接接受；paired pipeline 仍会由 normalizer 为原 i16 创建独立 shadow 和 witness，以支持失败回滚。raw i32 iter_arg、signed/unsigned 域不匹配的 cast、没有相应 overflow flag 的 i16 backedge、动态步长和复杂窄整数递推均返回 `Failed`。normalizer 不永久替换原地址 operand；soft-postupdate 在最终判定后统一恢复 original 一侧，再选择性提交成功 rewrite。
 
 上述规则覆盖 `arith.index_cast`、`arith.index_castui`、`arith.extsi` 和 `arith.extui`；`arith.trunci` 等其他整数转换不属于 canonical 语法，遇到时保守放弃。
 
@@ -281,7 +289,7 @@ scf.for %iv = %c0 to %c16 step %c1
 
 #### 4.2.4 delta 分析（累加器未命中时）
 
-当 base 和 strideOperand 都不是 iter_arg 时，回退到 delta 分析。
+对 base 或 strideOperand 中任一个未追溯到 iter_arg、即 accumulator 分析返回 `NotIterArg` 的操作数，独立回退到 delta 分析。因此同一候选可以是 base 使用 accumulator、strideOperand 使用 delta，也可以反过来；只有返回 `Failed` 的操作数会使整个候选停止。
 
 定义 `delta(v)` 为值 `v` 在 `scf.for` 每次迭代间的变化量：
 
@@ -307,9 +315,9 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 
 #### 4.2.5 合法性检查
 
-无论由累加器分析还是 delta 分析产出 stride，都须满足以下条件。全部检查在 post-update 物化之前完成，任一不满足即放弃该候选。normalizer 已创建的 witness 和 shadow 属于可回滚的输入状态；本 pass 在候选判定后恢复原 operand 并清理它们，因此最终不留下失败候选的附加 IR。
+无论由累加器分析还是 delta 分析产出 stride，都须满足以下条件。这些 stride 合法性检查在 post-update op 改写之前完成，任一不满足即放弃该候选。normalizer 已创建的 witness 和 shadow 属于可回滚的输入状态；本 pass 在候选判定后恢复原 operand 并清理它们。候选通过 stride 检查后，初始指针计算仍可能晚期失败，此时由 vecscope 级 dead-pure-op 清理保证最终不留下失败候选的附加 IR。
 
-1. **op 尚未处于 Post-Update 形式。** 检查 `op.getUpdatedBase()` 为空。
+1. **op 尚未处于 Post-Update 形式。** 通过共享描述中的 `minResultsForPost` 判断当前结果数是否已经包含 optional pointer 结果。
 
 2. **op 直接位于 `scf.for` 循环体内**（不嵌套在循环内的 `scf.if` 或其他控制流中），避免部分迭代问题。
 
@@ -317,7 +325,7 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 
    关键在于**只有 `delta(base)` 参与缩放**：`delta(strideOperand)` 恒等透传、不要求整除也不要求是常量，因此循环变化的 strideOperand 增量对各类指令都受支持（如 vsstb 的 `repeat_stride` 为非常量 iter_arg 累加）。仿射规范化使 `8*k` 这类非常量 base delta 也能证明可被 8 精确缩放。
 
-4. **stride_new 为零时跳过。** 地址不前进，post-update 无收益。常量折叠使各项相消、合成结果恒为零的情形（如 base 每轮 +8、strideOperand 每轮 −8）同样能被识别。
+4. **通用 combine 路径的 stride_new 为零时跳过。** 对 stride 参与当前地址的候选以及无显式 stride 的 `vldus`，地址不前进时 post-update 无收益。常量折叠使各项相消、合成结果恒为零的情形（如 base 每轮 +8、strideOperand 每轮 −8）同样能被识别。`vstus` 不经过 `combineStride` 的零值检查，而是要求缩放后的 base delta 与保留的显式 advancement offset 仿射等价。
 
 5. **类型一致性与目标类型精确性。** stride 表达式各子项须归结为同一类型，否则放弃，以免构造出 `arith.addi(index, i32)` 这类非法 op。非常量表达式的结果类型还必须与 op 的 strideOperand 类型一致；不能通过消除 cast 或改用窄类型算术来强行匹配。`Const` 项不参与子项类型约束，其类型在物化时直接采用 strideOperand 类型。
 
@@ -327,18 +335,16 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 
 #### 4.2.6 恢复与改写
 
-循环内全部候选完成纯符号分析与最终合法性判断后，改写步骤对所有指令统一：
+循环内候选逐个完成符号分析并准备可行 plan；全部候选收集完成后，统一恢复 witness 并执行循环改写：
 
-1. **准备成功 plan。** 叶子全部循环不变时将 stride 发射到循环外，否则发射到候选 op 之前，并计算 init_ptr，但尚不替换普通访存 op。常量按 `(值, 类型)` 在同一循环内复用同一个 SSA 值——4.2.7 的分组按 stride 的 **Value 同一性** 判定，重复创建等值常量会把本可共享 `iter_arg` 的 op 拆成多组。
+1. **准备成功 plan。** 叶子全部循环不变时将 stride 发射到循环外，否则发射到候选 op 之前。对 stride 参与当前地址的候选，计算 `init_ptr = pto.addptr(base_0, (unitBytes/elemBytes)·strideOperand_0)`；若无显式 stride、stride 不参与当前地址或初始偏移为零，则直接使用 `base_0`。传给 `pto.addptr` 前将最终偏移规范为 index；Block 单位保持无符号扩展，其他单位使用有符号扩展，Element 类 index offset 还执行 4.2.1 所述的 i32 截断。常量按 `(值, 类型)` 在同一循环内复用同一个 SSA 值——4.2.7 的分组按 stride 的 **Value 同一性** 判定，重复创建等值常量会把本可共享 `iter_arg` 的 op 拆成多组。
 2. **恢复普通地址。** 将该循环内每个 `pto.address_recurrence_witness` result 的用途替换为 original operand。此时成功与失败候选都先回到普通形式，成功 plan 保留已经验证和物化的 stride/init_ptr。
+3. 新增指针类型的 `iter_arg`，初始值为 plan 中的 `init_ptr`。
+4. 创建 Post-Update op：base 替换为 iter_arg 的 block argument。对于 `strideParticipatesInCurrentAddress = true` 的候选，将 `strideOperand` 替换为 `stride_new`；`vldus` 原本没有显式 stride，创建 Post 形式时追加 increment；`vstus` 则保留原 i32 offset，只追加 `base_out`。其余操作数（block_stride、mask、dist 等）不变。
+5. 将 `updated_base` 通过 `scf.yield` 传出。
+6. 对改写后的循环做 loop-aware liveness，删除已经被 Post-Update 指针链完全取代的旧 accumulator，以及 witness、canonical shadow、cast 和 backedge。若没有候选成功，仍执行同一 liveness 重建来删除整个试探性 shadow recurrence。
 
-3. 计算初始指针 `init_ptr = pto.addptr(base_0, (unitBytes/elemBytes)·strideOperand_0)`（见 4.2.1；若偏移为零则直接用 `base_0`）。传给 `pto.addptr` 前将最终偏移规范为 `index`；Block 单位保持无符号扩展，其他单位使用有符号扩展，避免丢失 `sprsti` 负立即数的语义。
-4. 新增指针类型的 `iter_arg`，初始值为 `init_ptr`。
-5. 创建 Post-Update op：将 `strideOperand` 替换为 `stride_new`，base 替换为 iter_arg 的 block argument。其余操作数（block_stride、mask、dist 等）不变。
-6. 将 `updated_base` 通过 `scf.yield` 传出。
-7. 对改写后的循环做 loop-aware liveness，删除已经被 Post-Update 指针链完全取代的旧 accumulator，以及 witness、canonical shadow、cast 和 backedge。若没有候选成功，仍执行同一 liveness 重建来删除整个试探性 shadow recurrence。
-
-第 7 步不能只依赖普通 DCE。旧 accumulator 即使没有真实用户，仍会形成
+最后一步不能只依赖普通 DCE。旧 accumulator 即使没有真实用户，仍会形成
 `block argument → pure update → scf.yield → block argument` 的循环使用链，局部
 DCE 无法从这个环中找到 `use_empty()` 的起点。改写因此从以下根节点反向计算
 liveness：
@@ -364,7 +370,7 @@ Post-Update 模式下 `repeat_stride` 从地址偏移变为指针前进量，因
 
 两个 op 能共享同一个 `iter_arg`，当且仅当它们走**同一条地址序列**——起点 `init_ptr`（由 `base_0`、`strideOperand_0` 和 `unitBytes` 决定，见 4.2.1）相同，且以字节计的步长相同。
 
-理想的分组键是 `(init_ptr, byte_stride)`。但 `init_ptr` 不适合直接入键：分组按 **Value 同一性** 比较，而 `computeInitialPtr` 可能为每个候选各自物化一个 `pto.addptr`，起点数值相同也未必是同一个 SSA 值。因此改用决定地址序列的原始量：分组键取 `(base, strideOperand, stride_new, unitBytes)`。加入 `unitBytes` 可防止 f32 上数值相同的 Element 与 Byte stride 被误合并；该键可能把本可合并的组拆开，但不会合并字节递推不同的组。
+理想的分组键是 `(init_ptr, byte_stride)`。但 `init_ptr` 不适合直接入键：分组按 **Value 同一性** 比较，而 `computeInitialPtr` 可能为每个候选各自物化一个 `pto.addptr`，起点数值相同也未必是同一个 SSA 值。因此改用决定地址序列的 SSA 量：分组键实际取 `(base, canonical(strideOperand), stride_new, unitBytes)`，其中 `canonical` 解开可能存在的 recurrence witness。加入 `unitBytes` 可防止 f32 上数值相同的 Element 与 Byte stride 被误合并；该键可能把本可合并的组拆开，但不会合并字节递推不同的组。
 
 同组的 op 共享一个 `iter_arg`，所有 op 使用同一个 pre-update 指针（block argument），不链式传递 `updated_base`。原因：同一迭代内同组 op 访问相同地址，链式传递会使后续 op 的地址偏移一个 stride。每组只需 yield 一个 `updated_base`。
 
@@ -372,7 +378,7 @@ Post-Update 模式下 `repeat_stride` 从地址偏移变为指针前进量，因
 
 #### 4.2.8 嵌套循环
 
-对于嵌套 `scf.for`，在每一层循环添加 `iter_arg` 携带指针，内层的 init 值接外层的当前值。`scf.for` 的 `iter_args` 天然保证 init/yield 的对应关系。
+嵌套 `scf.for` 按内层到外层处理，这是因为重建外层循环会使预先收集的内层 op handle 失效。每一层只分析直接位于自身 body 的候选，并为该层成功候选独立添加 pointer `iter_arg`；内层首地址可以引用外层当前迭代中可用的值，但实现不把内层 `updated_base` 自动向外层传播。
 
 ### 4.3 顺序路径
 
@@ -479,6 +485,7 @@ pto.vsts %x, %other[%c0], %mask : ...
 1. **op 尚未处于 Post-Update 形式。** 循环路径已经改写的 op 自动排除。
 2. **地址可归一到同一 rootBase。** 只穿过 `pto.addptr`；其他指针变换不猜测别名关系。
 3. **step 可精确换算、可按目标类型精确物化且非零。** 复用 4.2.5 的单位与常量折叠规则；常量必须能由目标类型表示，动态表达式必须在保留全部 cast 后与 strideOperand 类型一致。结果类型更宽且没有值域证明时放弃，禁止通过消除 cast 把外层算术降到窄类型。
+   对 `vstus` 这类 stride 不参与当前地址的 stateful op，run 的地址 step 只来自 base；此外要求除尾 op 外每个候选原有的 offset 都与该 step 的规范化仿射形式完全相同，因为 post 形式会保留这些 offset 作为实际状态推进量。
 4. **step 在 `SequentialRun` 头部可用。** 复用 4.2.5 的叶子可用性检查；定义在 `SequentialRun` 头部之后的 pure 定义链（包括产生 opaque leaf 的非仿射运算）可克隆到头部之前，含副作用、不可安全提前或无法支配的定义使该 `SequentialRun` 放弃。
 5. **整条 `SequentialRun` 先分析、后物化。** 所有候选通过检查后才创建常量、`pto.addptr` 或新 op，拒绝 `SequentialRun` 不留下残余 IR。
 
@@ -486,7 +493,7 @@ pto.vsts %x, %other[%c0], %mask : ...
 
 #### 4.3.4 收益性检查
 
-长度至少为 3 只是合法性门槛。合法的 `SequentialRun` 还必须命中下列两类结构信号之一；`pto.vlds`、`pto.vsts` 和 `pto.vsstb` 使用相同规则，不按 op 类型建立白名单。
+长度至少为 3 只是合法性门槛。合法的 `SequentialRun` 还必须命中下列两类结构信号之一。共享表注册的全部候选都使用相同规则，不按 op 类型建立收益性白名单；`pto.vlds`、`pto.vsts` 和 `pto.vsstb` 只是对应测试中的典型例子。
 
 **动态多层 base chain。** 当规范化后的 `step` 是编译期常量时，从第二个候选开始统计改写后确定死亡的动态 `pto.addptr`。某层 addptr 的 offset 经 4.3.1 的仿射规范化后包含 SSA 项，才视为动态；纯常量 addptr 不计收益。addptr result 必须只有下一层待删除 addptr 或当前候选这一个用户，第一条候选的 base chain 因仍用于构造 `init_ptr` 而不计收益。使用 `DenseSet` 对共享定义去重，并按下式接受：
 
@@ -494,7 +501,7 @@ pto.vsts %x, %other[%c0], %mask : ...
 deadDynamicAddPtrs > pointerEdges + initPtrCost
 
 pointerEdges = runLength - 1
-initPtrCost  = first.strideOperand 为常量零 ? 0 : 1
+initPtrCost  = stride 参与当前地址、存在 strideOperand 且其不为常量零 ? 1 : 0
 ```
 
 即使尾指令使用 normal 形式，它仍消费倒数第二条返回的指针，因此长度为 `N` 的 run 仍有 `N-1` 条 pointer edge。
@@ -508,11 +515,14 @@ initPtrCost  = first.strideOperand 为常量零 ? 0 : 1
 对每个 `SequentialRun`，`stride_new` 就是 4.3.1 得到的规范化 `step`。初始指针直接从 `SequentialRun` 首条 op 的实际操作数计算：
 
 ```
-init_ptr = pto.addptr(first.base,
-                      (unitBytes/elemBytes)·first.strideOperand)
+if strideParticipatesInCurrentAddress:
+  init_ptr = pto.addptr(first.base,
+                        (unitBytes/elemBytes)·first.strideOperand)
+else:
+  init_ptr = first.base
 ```
 
-这里复用循环路径的精确单位换算；不需要从 `rootBase` 重新构造绝对地址。对长度为 `N` 的 `SequentialRun`，前 `N-1` 条替换为 post-update 形式，前一条的 `updated_base` 作为后一条的 base，strideOperand 替换为 `stride_new`。最后一条只需访问当前指针，不再产生后续用户，因此保留 normal 形式，以前一条的 `updated_base` 为 base，并把 strideOperand 替换为同类型零值：
+这里复用循环路径的精确单位换算；不需要从 `rootBase` 重新构造绝对地址。对长度为 `N` 的 `SequentialRun`，前 `N-1` 条替换为 post-update 形式，前一条的 `updated_base` 作为后一条的 base。stride 参与当前地址时把 strideOperand 替换为 `stride_new`；`vldus` 追加该 increment；`vstus` 保留已经验证为等于 run step 的原 offset。最后一条只需访问当前指针，不再产生后续用户，因此保留 normal 形式：
 
 ```mlir
 // vlds 变换后
@@ -521,26 +531,30 @@ init_ptr = pto.addptr(first.base,
 %v2        = pto.vlds %ptr2[%c0] : ... -> ...
 ```
 
-最后一条 normal op 保留原 operands、attributes 和原始 result types，不追加 `updated_base`；`vsts` 与 `vsstb` 同理。所有 `SequentialRun` 在只读分析阶段确定后，先物化各自的 `stride_new`、同类型零值和 `init_ptr`，再按原程序序替换候选 op，避免 erase op 使其他 `SequentialRun` 保存的表达式失效。不同桶各自维护独立指针链，即使其 op 在原 block 中交错也互不影响。
+最后一条 normal op 保留 attributes 和原始 result types，不追加 `updated_base`。对于 stride 参与当前地址的候选，base 改为当前 pointer、strideOperand 改为同类型零值；`vlds`、`vsts` 与 `vsstb` 都属于这种情况。`vldus` 的普通尾 op 不带 increment；`vstus` 的 offset 不参与当前地址，因此普通尾 op 保留原 offset。所有 `SequentialRun` 在只读分析阶段确定后，先物化各自的 `stride_new`、同类型零值和 `init_ptr`，再按原程序序替换候选 op，避免 erase op 使其他 `SequentialRun` 保存的表达式失效。不同桶各自维护独立指针链，即使其 op 在原 block 中交错也互不影响。
 
 ## 5. Pass 集成
 
 ### 5.1 在 Pipeline 中的位置
 
-配对的 normalization 与 soft-postupdate pass 应连续运行在 VPTO 后端 pipeline 中，位于 `PTOInferVPTOVecScope` 之后、`PrepareVPTOLLVMLoweringPass` 之前：
+配对的 normalization 与 soft-postupdate pass 连续运行在 VPTO 后端 pipeline 中，位于 `PTOInferVPTOVecScope` 之后、loop invariant code motion 之前；完成 VPTO emission IR 校验后，LLVM emitter 才运行 `PrepareVPTOLLVMLoweringPass` 和 `LowerVPTOOpsPass`：
 
 ```
 VPTOExpandWrapperOps
-CSE
 PTOInferVPTOVecScope
 → VPTONormalizeAddressRecurrences
 → VPTOSoftPostUpdate
+LoopInvariantCodeMotion
+PTONarrowVPTOLoopCounters
+Canonicalizer
+CSE
+PTOValidateVPTOEmissionIR
 ...
 PrepareVPTOLLVMLoweringPass
 LowerVPTOOpsPass
 ```
 
-PTOAS 的 VPTO 后端默认启用这组 MLIR pass，可以通过 `--enable-vpto-soft-postupdate=false` 显式关闭。由于同一优化不应在 MLIR 与 LLVM 层重复执行，PTOAS 调用 Bisheng 编译 VPTO device LLVM IR 时默认显式传入 `-mllvm -hiipu-vf-soft-postupdate=false`；只有诊断或对照场景显式指定 `--enable-bisheng-soft-postupdate` 时才重新开启 Bisheng 实现。
+PTOAS 的 VPTO 后端默认启用这组 MLIR pass，可以通过 `--enable-vpto-soft-postupdate=false` 显式关闭。由于同一优化不应在 MLIR 与 LLVM 层重复执行，PTOAS 调用 Bisheng 编译 VPTO device LLVM IR 时默认显式关闭 Bisheng 公开 LLVM 选项 `-mllvm --cce-vf-enable-auto-postupdate=false` 与 `-mllvm --cce-vf-enable-blockldst-auto-postupdate=false`。只有诊断或对照场景显式指定 `--enable-bisheng-soft-postupdate` 时，PTOAS 才会把上述两个公开选项改为 `true`，重新开启 Bisheng 的普通 vector load/store 与 block load/store 自动 post-update 路径。
 
 默认开启由两层测试约束：lit 直接对 runtime case 的 `kernel.pto` 检查 post form、拒绝形态和 witness 清理，`test/vpto` 再通过 simulator 或 NPU 对完整输出做 `COMPARE_STRICT=1` 比较。重点场景包括源类型/i16 域回绕拒绝、i16/i32 正例、同循环混合提交与回滚、负向递推、嵌套循环、共享 chain 以及不同地址单位隔离。
 
@@ -558,11 +572,17 @@ PTOAS 的 VPTO 后端默认启用这组 MLIR pass，可以通过 `--enable-vpto-
 def VPTONormalizeAddressRecurrences
     : Pass<"vpto-normalize-address-recurrences", "ModuleOp"> {
   let summary = "Normalize proven VPTO address recurrences to i16";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
 }
 
 def VPTOSoftPostUpdate : Pass<"vpto-soft-postupdate", "ModuleOp"> {
   let summary = "Convert fixed-stride VPTO memory ops to post-update form";
-  let dependentDialects = ["pto::PTODialect", "scf::SCFDialect",
-                           "arith::ArithDialect"];
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
 }
 ```

@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -52,9 +53,10 @@ static llvm::cl::opt<bool> enableBishengVecMISched(
 
 static llvm::cl::opt<bool> enableBishengSoftPostUpdate(
     "enable-bisheng-soft-postupdate",
-    llvm::cl::desc("Enable Bisheng's LLVM-level hiipu-vf-soft-postupdate pass "
-                   "for VPTO device compilation; disabled by default because "
-                   "PTOAS performs the optimization before LLVM lowering"),
+    llvm::cl::desc("Enable Bisheng's LLVM-level vector auto post-update "
+                   "passes for VPTO device compilation; disabled by default "
+                   "because PTOAS performs the optimization before LLVM "
+                   "lowering"),
     llvm::cl::init(false));
 
 static llvm::cl::opt<bool> enableSimtFastMath(
@@ -101,6 +103,170 @@ static bool writeTextFile(StringRef path, StringRef content,
     return false;
   }
   return true;
+}
+
+static bool removePrecreatedOutputFile(llvm::StringRef path,
+                                       llvm::raw_ostream &diagOS,
+                                       llvm::StringRef what) {
+  std::error_code ec = llvm::sys::fs::remove(path);
+  if (ec && ec != std::errc::no_such_file_or_directory) {
+    diagOS << "Error: failed to remove pre-created " << what << " output '"
+           << path << "': " << ec.message() << "\n";
+    return false;
+  }
+  return true;
+}
+
+static void printCommandDiagnostics(llvm::ArrayRef<std::string> args,
+                                    llvm::StringRef stderrPath,
+                                    llvm::raw_ostream &diagOS) {
+  diagOS << "Command:";
+  for (llvm::StringRef arg : args) {
+    diagOS << " " << arg;
+  }
+  diagOS << "\n";
+  if (auto buffer = llvm::MemoryBuffer::getFile(stderrPath)) {
+    diagOS << buffer.get()->getBuffer() << "\n";
+  }
+}
+
+static bool verifyNonEmptyOutputFile(llvm::StringRef path,
+                                     llvm::ArrayRef<std::string> args,
+                                     llvm::StringRef stderrPath,
+                                     llvm::raw_ostream &diagOS,
+                                     llvm::StringRef what) {
+  uint64_t size = 0;
+  std::error_code ec = llvm::sys::fs::file_size(path, size);
+  if (!ec && size != 0) {
+    return true;
+  }
+
+  diagOS << "Error: " << what << " did not produce a non-empty output file '"
+         << path << "'";
+  if (ec) {
+    diagOS << ": " << ec.message();
+  }
+  diagOS << "\n";
+  printCommandDiagnostics(args, stderrPath, diagOS);
+  return false;
+}
+
+static bool hasNonEmptyExecutableSection(const llvm::object::ObjectFile &object) {
+  for (const llvm::object::SectionRef &section : object.sections()) {
+    if (!section.isText()) {
+      continue;
+    }
+    if (section.getSize() != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool verifyDeviceObjectFile(llvm::StringRef path,
+                                   llvm::ArrayRef<std::string> args,
+                                   llvm::StringRef stderrPath,
+                                   llvm::raw_ostream &diagOS,
+                                   llvm::StringRef what) {
+  if (!verifyNonEmptyOutputFile(path, args, stderrPath, diagOS, what)) {
+    return false;
+  }
+
+  llvm::Expected<llvm::object::OwningBinary<llvm::object::ObjectFile>>
+      objectOrError = llvm::object::ObjectFile::createObjectFile(path);
+  if (!objectOrError) {
+    diagOS << "Error: " << what << " produced an invalid object file '"
+           << path << "': " << llvm::toString(objectOrError.takeError())
+           << "\n";
+    printCommandDiagnostics(args, stderrPath, diagOS);
+    return false;
+  }
+
+  if (hasNonEmptyExecutableSection(*objectOrError->getBinary())) {
+    return true;
+  }
+
+  diagOS << "Error: " << what << " produced an object file without a "
+         << "non-empty executable section '" << path << "'\n";
+  printCommandDiagnostics(args, stderrPath, diagOS);
+  return false;
+}
+
+static bool verifyFatobjEmbeddedDeviceObject(llvm::StringRef path,
+                                             llvm::ArrayRef<std::string> args,
+                                             llvm::StringRef stderrPath,
+                                             llvm::raw_ostream &diagOS,
+                                             llvm::StringRef what) {
+  if (!verifyNonEmptyOutputFile(path, args, stderrPath, diagOS, what)) {
+    return false;
+  }
+
+  llvm::Expected<llvm::object::OwningBinary<llvm::object::ObjectFile>>
+      hostObjectOrError = llvm::object::ObjectFile::createObjectFile(path);
+  if (!hostObjectOrError) {
+    diagOS << "Error: " << what << " produced an invalid host object file '"
+           << path << "': " << llvm::toString(hostObjectOrError.takeError())
+           << "\n";
+    printCommandDiagnostics(args, stderrPath, diagOS);
+    return false;
+  }
+
+  for (const llvm::object::SectionRef &section :
+       hostObjectOrError->getBinary()->sections()) {
+    llvm::Expected<llvm::StringRef> nameOrError = section.getName();
+    if (!nameOrError) {
+      diagOS << "Error: " << what << " failed to read a section name in '"
+             << path << "': " << llvm::toString(nameOrError.takeError())
+             << "\n";
+      printCommandDiagnostics(args, stderrPath, diagOS);
+      return false;
+    }
+    if (*nameOrError != "__aicore_rel_binary") {
+      continue;
+    }
+
+    llvm::Expected<llvm::StringRef> contentsOrError = section.getContents();
+    if (!contentsOrError) {
+      diagOS << "Error: " << what << " failed to read __aicore_rel_binary in '"
+             << path << "': " << llvm::toString(contentsOrError.takeError())
+             << "\n";
+      printCommandDiagnostics(args, stderrPath, diagOS);
+      return false;
+    }
+    if (contentsOrError->empty()) {
+      diagOS << "Error: " << what << " embedded an empty __aicore_rel_binary "
+             << "section in '" << path << "'\n";
+      printCommandDiagnostics(args, stderrPath, diagOS);
+      return false;
+    }
+
+    llvm::MemoryBufferRef embeddedBuffer(*contentsOrError,
+                                         "__aicore_rel_binary");
+    llvm::Expected<std::unique_ptr<llvm::object::ObjectFile>>
+        deviceObjectOrError =
+            llvm::object::ObjectFile::createObjectFile(embeddedBuffer);
+    if (!deviceObjectOrError) {
+      diagOS << "Error: " << what
+             << " embedded an invalid device object in '" << path
+             << "': " << llvm::toString(deviceObjectOrError.takeError())
+             << "\n";
+      printCommandDiagnostics(args, stderrPath, diagOS);
+      return false;
+    }
+    if (hasNonEmptyExecutableSection(**deviceObjectOrError)) {
+      return true;
+    }
+
+    diagOS << "Error: " << what << " embedded a device object without a "
+           << "non-empty executable section in '" << path << "'\n";
+    printCommandDiagnostics(args, stderrPath, diagOS);
+    return false;
+  }
+
+  diagOS << "Error: " << what << " did not produce __aicore_rel_binary in '"
+         << path << "'\n";
+  printCommandDiagnostics(args, stderrPath, diagOS);
+  return false;
 }
 
 static void stripUnsupportedBishengAttrs(llvm::Module &module) {
@@ -569,7 +735,10 @@ static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
     args.push_back("--cce-aicore-vec-misched=0");
   }
   args.push_back("-mllvm");
-  args.push_back(std::string("-hiipu-vf-soft-postupdate=") +
+  args.push_back(std::string("--cce-vf-enable-auto-postupdate=") +
+                 (enableBishengSoftPostUpdate ? "true" : "false"));
+  args.push_back("-mllvm");
+  args.push_back(std::string("--cce-vf-enable-blockldst-auto-postupdate=") +
                  (enableBishengSoftPostUpdate ? "true" : "false"));
   args.push_back("-mllvm");
   args.push_back(std::string("--cce-simt-fpmath-combine=") +
@@ -580,8 +749,16 @@ static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
   args.push_back("-");
   args.push_back("-o");
   args.push_back(outObjPath.str());
-  return runCommandWithStderr(bishengPath, args, stderrPath, diagOS,
-                              "device LLVM compilation", llPath);
+  if (!removePrecreatedOutputFile(outObjPath, diagOS,
+                                  "device LLVM compilation")) {
+    return false;
+  }
+  if (!runCommandWithStderr(bishengPath, args, stderrPath, diagOS,
+                            "device LLVM compilation", llPath)) {
+    return false;
+  }
+  return verifyDeviceObjectFile(outObjPath, args, stderrPath, diagOS,
+                                "device LLVM compilation");
 }
 
 static bool compileCppDeviceSourceToObject(
@@ -780,8 +957,21 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "cce",
       stubPath.str(),
   };
-  return runCommandWithStderr(toolchain.bishengCc1Path, args, stderrPath, diagOS,
-                              "host stub compilation");
+  if (!removePrecreatedOutputFile(outObjPath, diagOS,
+                                  "host stub compilation")) {
+    return false;
+  }
+  if (!runCommandWithStderr(toolchain.bishengCc1Path, args, stderrPath, diagOS,
+                            "host stub compilation")) {
+    return false;
+  }
+  if (!deviceObjPath.empty()) {
+    return verifyFatobjEmbeddedDeviceObject(outObjPath, args, stderrPath,
+                                            diagOS,
+                                            "host stub compilation");
+  }
+  return verifyNonEmptyOutputFile(outObjPath, args, stderrPath, diagOS,
+                                  "host stub compilation");
 }
 
 static bool mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
@@ -807,8 +997,15 @@ static bool mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
   args.push_back(outObjPath.str());
   args.push_back("-r");
   args.push_back("--allow-multiple-definition");
-  return runCommandWithStderr(ldLldPath, args, stderrPath, diagOS,
-                              "device object merge");
+  if (!removePrecreatedOutputFile(outObjPath, diagOS, "device object merge")) {
+    return false;
+  }
+  if (!runCommandWithStderr(ldLldPath, args, stderrPath, diagOS,
+                            "device object merge")) {
+    return false;
+  }
+  return verifyDeviceObjectFile(outObjPath, args, stderrPath, diagOS,
+                                "device object merge");
 }
 
 static bool linkFatobjFiles(llvm::ArrayRef<std::string> fatobjPaths,

@@ -21,7 +21,7 @@
 // DISABLED: pto.vlds {{.*}} -> !pto.vreg<256xui8>
 // DISABLED-NOT: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // HELP: --enable-bisheng-soft-postupdate
-// HELP-SAME: Enable Bisheng's LLVM-level hiipu-vf-soft-postupdate pass for VPTO device compilation; disabled by default because PTOAS performs the optimization before LLVM lowering
+// HELP-SAME: Enable Bisheng's LLVM-level vector auto post-update passes for VPTO device compilation; disabled by default because PTOAS performs the optimization before LLVM lowering
 // HELP: --enable-vpto-soft-postupdate
 // HELP-SAME: Enable VPTO soft post-update optimization (enabled by default; pass --enable-vpto-soft-postupdate=false to disable)
 

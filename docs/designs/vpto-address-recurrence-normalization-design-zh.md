@@ -62,7 +62,7 @@ normalizer 因此只能规范化自身能够完整证明的固定步长 leaf，�
 
 ### 1.5 为什么输出必须可回滚
 
-normalizer 只能证明单个 leaf 的 i16 递推等价，不能据此保证整个访存 op 最终能够 post-update。例如 base delta 和 offset delta 合并后可能超出 `SignedI8`，Block 单位换算可能不整除，`vstus` 的 advancement 可能与 `delta(base)` 不相等，或者 soft-postupdate 的可用性、分组与收益检查可能失败。
+normalizer 只能证明单个 leaf 的 i16 递推等价，不能据此保证整个访存 op 最终能够 post-update。例如 base delta 和 offset delta 合并后可能超出 `SignedI8`，Block 单位换算可能不整除，`vstus` 的 advancement 可能与 `delta(base)` 不相等，或者 soft-postupdate 的类型与可用性检查可能失败。循环路径中通过通用 `combineStride` 合并地址 delta 的候选还会在最终 stride 为零时拒绝；`vstus` 走独立的 advancement 等价检查。结构性收益检查只用于后续顺序路径。
 
 如果 normalizer 直接把普通访存 operand 永久替换为 canonical shadow，即使 soft-postupdate 最终失败，程序通常仍因前置证明而保持语义正确，但循环会无收益地多出 i16 iter_arg、backedge 算术和扩展，增加寄存器压力与代码体积，并可能妨碍后续循环和地址优化。这正是需要回滚的性能问题。
 
@@ -76,9 +76,9 @@ normalizer 只能证明单个 leaf 的 i16 递推等价，不能据此保证整�
 ... -> vpto-normalize-address-recurrences -> vpto-soft-postupdate -> LICM ...
 ```
 
-VPTO 后端默认启用 `--enable-vpto-soft-postupdate`，两个 pass 总是按上述顺序运行；需要诊断或对照时可以显式传入 `--enable-vpto-soft-postupdate=false` 关闭。测试工具可以单独使用 `-vpto-normalize-address-recurrences` 检查 witness 和 canonical shadow，但这种中间 IR 不是可进入 lowering 的稳定形式。
+VPTO 后端默认启用 `--enable-vpto-soft-postupdate`；启用时两个 pass 总是按上述顺序运行，显式传入 `--enable-vpto-soft-postupdate=false` 时则同时跳过两者。测试工具可以单独使用 `-vpto-normalize-address-recurrences` 检查 witness 和 canonical shadow，但这种中间 IR 不是可进入 lowering 的稳定形式。
 
-normalizer 的职责是识别并证明简单地址递推、创建 canonical shadow 和可逆 witness。soft-postupdate 的职责是消费 witness、完成 op 级 accumulator/delta、地址单位、最终 stride 与收益分析，然后恢复普通 operand 并提交成功项。normalizer 证明失败时完全不改写候选；normalizer 成功而 soft-postupdate 失败时由 soft 回滚。
+normalizer 的职责是识别并证明简单地址递推、创建 canonical shadow 和可逆 witness。soft-postupdate 的职责是消费 witness、完成 op 级 accumulator/delta、地址单位、最终 stride 与合法性分析，并对顺序路径执行结构性收益检查，然后恢复普通 operand 并提交成功项。normalizer 证明失败时完全不改写候选；normalizer 成功而 soft-postupdate 失败时由 soft 回滚。
 
 两个 pass 共享同一个 `pto.vecscope` 所有权边界。normalizer 只处理 `pto.vecscope` 内的 `scf.for`，因为 soft-postupdate 也只在该边界内进行循环与顺序分析；`pto.vecscope` 外的候选 op 即使递推形状可证明，也保持原样，不创建 canonical shadow 或 witness。这样 paired pipeline 中每个 witness 都必然进入 consumer 的提交或回滚流程，避免 producer 在 consumer 不会访问的区域留下临时 IR 并导致最终 witness 完整性检查失败。
 
@@ -94,7 +94,7 @@ normalizer 的职责是识别并证明简单地址递推、创建 canonical shad
 - 普通/post 形式的结果数边界；
 - post stride 的 `Dynamic`、`Constant` 或 `SignedI8` 最终约束。
 
-两者共享整张描述表，但消费不同字段。normalizer 用候选、base/stride 位置和地址数值域定位需要证明的 recurrence leaf；soft-postupdate 使用全部字段计算有效地址、单位换算和最终约束。描述信息共享不等于两个 pass 重复进行完整 stride 分析。
+两者共享整张描述表，但消费不同字段。normalizer 用候选、base/stride 位置和 stride 地址数值域定位需要证明的 recurrence leaf；`pto.addptr` base offset 固定按 signed 域处理。soft-postupdate 使用全部字段计算有效地址、单位换算和最终约束。描述信息共享不等于两个 pass 重复进行完整 stride 分析。
 
 普通 Auto 类 op 使用 `current_address = base + stride`；`vldus` 没有普通形式的显式 stride，normalizer 从 loop-varying base 的 `pto.addptr` offset 或 pointer advancement 找到 leaf；`vstus` 的 stride 不参与本次访问地址，只推进 unaligned-store 状态和返回 base，因此最终仍由 soft-postupdate 检查 `delta(base) == advancement` 并保留原 stride operand。
 
@@ -107,7 +107,7 @@ pass 只接受直接位于候选 op 所在 `scf.for` 的两种整数递推：
 
 这个覆盖面故意小于 soft-postupdate 的完整 accumulator/delta 表达式分析。normalizer 只需要把可能跨越窄整数类型域的 leaf 变成可证明的 canonical 输入；base 与 offset 的组合、多项仿射表达式以及 pointer accumulator 仍由 soft-postupdate 处理。纯 index 域内且没有窄整数来源的 sequential 和 loop recurrence 也继续直接由 soft-postupdate 分析。
 
-支持的原 operand 类型为 `index`、`i32` 和 `i16`。Signed 域的 shadow 通过 `arith.index_cast` 或 `arith.extsi` 恢复为 index/i32，unsigned 域通过 `arith.index_castui` 或 `arith.extui` 恢复；目标 operand 为 i16 时直接使用 shadow。原 operand 已是 i16 也创建独立 shadow，避免 soft-postupdate 仅凭类型把未证明递推误认为 canonical 输入。
+支持的原 operand 类型为 `index`、`i32` 和 `i16`。Signed 域的 shadow 通过 `arith.index_cast` 或 `arith.extsi` 恢复为 index/i32，unsigned 域通过 `arith.index_castui` 或 `arith.extui` 恢复；目标 operand 为 i16 时直接使用 shadow。paired pipeline 中，原 operand 已是 i16 时 normalizer 也创建独立 shadow 和 witness，使失败候选仍能恢复到完全相同的原递推。soft-postupdate 单独运行时并不要求 canonical i16 必须来自 shadow；它按结构和 overflow flag 识别证明证书。
 
 地址相关 use 包括：
 
@@ -129,14 +129,14 @@ pass 只接受直接位于候选 op 所在 `scf.for` 的两种整数递推：
 R(k) = I + k * D
 ```
 
-由于 `D` 固定，序列单调，只需用 128-bit 中间计算检查两个端点。Signed 域必须同时满足：
+由于 `D` 固定，序列单调，只需用 128-bit 中间计算检查两个端点。实现把 `index` 按 64-bit 地址整数域建模。Signed 域必须同时满足：
 
 ```text
 signed_min(source_type) <= R(k) <= signed_max(source_type)
 -32768                  <= R(k) <= 32767
 ```
 
-第二组约束保证 i16 shadow 不回绕；第一组约束保证规范化没有把依赖 index/i32 源类型回绕的序列误解释成数学整数递推。增量本身也必须能以 i16 常量表达。
+第二组约束保证 i16 shadow 不回绕；第一组约束保证规范化没有把依赖 index/i32/i16 源类型回绕的序列误解释成数学整数递推。signed 增量必须能以 i16 常量表达。
 
 Unsigned 域使用对应边界：
 
@@ -145,7 +145,7 @@ unsigned_min(source_type) <= R(k) <= unsigned_max(source_type)
 0                         <= R(k) <= 65535
 ```
 
-Block 类 `vsldb/vsstb` 的 i16 stride 按 unsigned 域处理，因此位模式 40000 不会仅因超过 signed i16 上界而被拒绝；但完整递推超过 65535 时仍保持原 IR。
+Block 类 `vsldb/vsstb` 的 i16 stride 按 unsigned 域处理，因此位模式 40000 不会仅因超过 signed i16 上界而被拒绝；但完整递推超过 65535 时仍保持原 IR。unsigned 增长使用可表示的 i16 位模式常量，unsigned 下降只接受 `%arg - constant` 并把正的 decrement 物化为 `arith.subi`。
 
 trip count、初值和增量必须全为常量。动态边界、零或负 loop step、非线性和多层 backedge 表达式均不推断。
 
@@ -186,13 +186,14 @@ normalizer 成功后，soft-postupdate 仍可能因以下 op 级条件拒绝候�
 - Element、Block、Byte 或 Alignment 换算不精确，或目标 alignment 未知；
 - `vstus` 的 base delta 与 advancement stride 不相等；
 - 合并后的 post stride 不满足 `Constant`、`SignedI8`、目标类型或可用性约束；
-- 多 op 分组、支配性、收益或其他完整 post-update 合法性检查失败。
+- 支配性、类型、零 stride 或其他完整 post-update 合法性检查失败；
+- 顺序路径未满足长度和结构性收益条件。
 
 normalizer 按候选和关联 leaf 先整体分析，再重建 `scf.for`，不会留下“只有部分 leaf 有 witness”的候选。soft-postupdate 则按循环形成 rewrite plan，恢复该循环的全部 witness 后只提交成功 plan；即使同一循环同时存在成功和失败候选，失败普通 op 仍使用原地址，成功项共享或建立自己的 pointer chain。
 
 ## 7. soft-postupdate 输入契约
 
-soft-postupdate 接受 witness canonical 一侧的以下 loop-varying form：
+soft-postupdate 接受以下 loop-varying canonical form。paired pipeline 中这些值位于 witness canonical 一侧；单独运行 consumer 时也可以直接来自输入 IR：
 
 ```mlir
 // Signed domain.
@@ -206,7 +207,7 @@ soft-postupdate 接受 witness canonical 一侧的以下 loop-varying form：
 %unext = arith.addi %uaddr16, %ustep16 overflow<nuw> : i16
 ```
 
-consumer 根据共享 op 描述选择预期域，解开 witness 后匹配对应 extension 与 overflow flag，并读取常量 backedge step。raw loop-varying i16/i32 iter_arg、域不匹配的 cast、没有对应 overflow flag 的递推和动态或复杂 backedge 均拒绝。纯 index 域内且没有窄整数来源的地址表达式继续使用 soft-postupdate 原有 accumulator/delta 与 sequential 分析，不要求先变成 i16 shadow。
+consumer 根据共享 op 描述选择预期域；存在 witness 时先解开 canonical 一侧，再匹配对应 extension 与 overflow flag，并读取常量 backedge step。原生 loop-varying i16 iter_arg 只有本身符合相同 canonical 结构、带域匹配的 `nsw`/`nuw` constant-step backedge 时才接受；raw i32 iter_arg、域不匹配的 cast、没有对应 overflow flag 的 i16 递推和动态或复杂窄整数 backedge 均拒绝。纯 index 域内且没有窄整数来源的地址表达式继续使用 soft-postupdate 原有 accumulator/delta 与 sequential 分析，不要求先变成 i16 shadow。
 
 顺序路径不需要另一套 normalization 输出。循环路径完成最终判定并恢复 witness 后，soft-postupdate 才重新收集 block；因此非循环 `SequentialRun` 和循环内未被循环路径消费的普通 op 都看到 original 地址表达式，继续使用原有 sequential 分析。
 
