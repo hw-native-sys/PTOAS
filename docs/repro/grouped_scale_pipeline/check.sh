@@ -18,8 +18,8 @@ if [[ "${CONDA_DEFAULT_ENV:-}" != "${CONDA_ENV}" ]] && command -v conda >/dev/nu
   conda activate "${CONDA_ENV}"
 fi
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
-PTOAS_BIN="${PTOAS_BIN:-$(command -v ptoas)}"
-export PTOAS_BIN
+CANN_SET_ENV="${CANN_ENV:-${ASCEND_HOME_PATH}/set_env.sh}"
+task_run() { task-submit --device "$ACL_DEVICE_ID" --run "source '$CANN_SET_ENV'; ACL_DEVICE_ID=$ACL_DEVICE_ID '$PYTHON_BIN' '$HERE/benchmark.py'"; }
 compile() {
   # ``production_group_vmi.py`` is executable PTODSL, not textual MLIR.
   # benchmark.py lowers it with the pinned PTODSL compiler, then invokes PTOAS
@@ -32,7 +32,7 @@ compile() {
 }
 run() {
   if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
-    task-submit --device "${ACL_DEVICE_ID}" --run "ACL_DEVICE_ID=${ACL_DEVICE_ID} '${PYTHON_BIN}' '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"
+    task_run | tee "${OUT}/results.txt"
   else
     python3 "${HERE}/report.py" | tee "${OUT}/results.txt"
   fi
