@@ -1,3 +1,7 @@
 # Performance issue
 
-The corrected one-launch harness measures CCE 32.922 us and VMI 32.680 us (ratio 1.0074) on device 0. The former 17.6 ms number was an invalid 3,584-launch host loop. See `README.md`.
+The retained production-shaped ragged conversion executes correctly on device
+0 but VMI remains much slower. Device-only FFTS measures CCE `134.580 us` and
+VMI `491.501 us`, CCE/VMI `0.2738`. The VMI path includes its required padded
+input, output, and scale copies; the CCE control processes the requested
+`8001 x 16384` extent directly.

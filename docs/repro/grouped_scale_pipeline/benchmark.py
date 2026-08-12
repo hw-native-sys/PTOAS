@@ -169,7 +169,7 @@ def msprof_us(fn, symbol: str, reps: int = 30) -> float:
             for off in range(0, len(data) - 63, 64):
                 vals = struct.unpack_from("<8q", data, off)
                 names[(vals[3] >> 32) & 0xFFFF] = hashes.get(vals[5], "")
-        # Match TileLang's profiler parser: use AIC when a launch emits both
+        # Use AIC when a launch emits both
         # AIC and AIV records.  Group records by task sequence so an adapter's
         # multiple launch operations are all retained without double-counting
         # the two pipes of one operation.
@@ -242,7 +242,7 @@ def main() -> None:
     torch.testing.assert_close(cce_q.cpu(), vmi_q.cpu(), rtol=0, atol=8)
     # Event timings are retained as a sanity check, but the report's primary
     # values are device-only FFTS timings.  This avoids launch/cache-clear
-    # artifacts and matches the private production benchmark.
+    # artifacts and matches the production profiler policy.
     cce_event, vmi_event = median_us(cce_run), median_us(vmi_run)
     cce_us = msprof_us(cce_run, "packed_group_convert")
     vmi_us = msprof_us(vmi_run, "packed_group_convert_vmi")
