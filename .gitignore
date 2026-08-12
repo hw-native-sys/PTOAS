@@ -2,6 +2,10 @@
 build/
 build_plain/
 build_plan/
+# Any out-of-tree build directory, however named. `build/` alone let a second
+# configuration (build-assert/) be added by `git add -A`.
+build*/
+build-assert/
 install/
 
 # TileLang ST standalone build outputs (see temp_docs/standalone_st.md)
