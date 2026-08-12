@@ -87,7 +87,7 @@ def build_vmi() -> Path:
             ptoas.__path__.append(bindings)
     from ptodsl._runtime.native_build import _compile_launch_cpp, _link_shared_library, _run_ptoas
     obj, host, library = OUT / "grouped_vmi.o", OUT / "grouped_vmi_host.o", OUT / "libgrouped_vmi.so"
-    source = HERE / "fixtures/production_group_vmi.pto"
+    source = HERE / "fixtures/production_group_vmi.py"
     loader = SourceFileLoader("production_group_vmi", str(source))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec); loader.exec_module(module)

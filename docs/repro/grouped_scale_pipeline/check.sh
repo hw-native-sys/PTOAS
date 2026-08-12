@@ -21,7 +21,7 @@ PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
 PTOAS_BIN="${PTOAS_BIN:-$(command -v ptoas)}"
 export PTOAS_BIN
 compile() {
-  # ``production_group_vmi.pto`` is executable PTODSL, not textual MLIR.
+  # ``production_group_vmi.py`` is executable PTODSL, not textual MLIR.
   # benchmark.py lowers it with the pinned PTODSL compiler, then invokes PTOAS
   # on the emitted MLIR.  Calling PTOAS on the Python source made this check
   # fail with ``custom op 'from' is unknown``.
