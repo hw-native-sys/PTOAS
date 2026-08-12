@@ -12,7 +12,7 @@
 #ifndef MLIR_DIALECT_PTO_IR_PTOSYNCUTILS_H_
 #define MLIR_DIALECT_PTO_IR_PTOSYNCUTILS_H_
 
-#include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOCommon.h"
 #include "mlir/Support/LLVM.h"
 
 namespace mlir {

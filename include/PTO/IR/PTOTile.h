@@ -6,16 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+//===- PTOTile.h - PTO tile operation declarations -----------*- C++ -*-===//
 
-#ifndef MLIR_DIALECT_PTO_IR_PTODIALECT_H
-#define MLIR_DIALECT_PTO_IR_PTODIALECT_H
+#ifndef MLIR_DIALECT_PTO_IR_PTOTILE_H_
+#define MLIR_DIALECT_PTO_IR_PTOTILE_H_
 
-#include "mlir/IR/Dialect.h"
+#include "PTO/IR/PTOCommon.h"
 
-#include "PTO/IR/PTODialect.h.inc"
+#define GET_OP_CLASSES
+#include "PTO/IR/PTOTileOps.h.inc"
 
-#endif // MLIR_DIALECT_PTO_IR_PTODIALECT_H
+#endif // MLIR_DIALECT_PTO_IR_PTOTILE_H_

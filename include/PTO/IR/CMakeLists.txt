@@ -7,17 +7,37 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 # ============================================================
-# 1. 设置默认输入为 PTOOps.td (用于 Dialect, Ops, Types, Attrs, Enums)
+# 1. Generate dialect-wide declarations and family operation declarations.
 # ============================================================
-set(LLVM_TARGET_DEFINITIONS PTOOps.td)
+set(LLVM_TARGET_DEFINITIONS PTOOpCommon.td)
 
 # 生成 Dialect 定义
 mlir_tablegen(PTODialect.h.inc -gen-dialect-decls -dialect=pto)
 mlir_tablegen(PTODialect.cpp.inc -gen-dialect-defs -dialect=pto)
 
-# 生成 Operations 定义
+# Generate public operation declarations per semantic family. Keep the
+# aggregate definition output until registration and implementations move in a
+# later refactoring step.
+set(LLVM_TARGET_DEFINITIONS PTOBaseOps.td)
+mlir_tablegen(PTOBaseOps.h.inc -gen-op-decls)
+
+set(LLVM_TARGET_DEFINITIONS PTOTileOps.td)
+mlir_tablegen(PTOTileOps.h.inc -gen-op-decls)
+
+set(LLVM_TARGET_DEFINITIONS VMIOps.td)
+mlir_tablegen(VMIOps.h.inc -gen-op-decls)
+
+set(LLVM_TARGET_DEFINITIONS VPTOOps.td)
+mlir_tablegen(VPTOOps.h.inc -gen-op-decls)
+
+set(LLVM_TARGET_DEFINITIONS VPTOUbOps.td)
+mlir_tablegen(VPTOUbOps.h.inc -gen-op-decls)
+
+set(LLVM_TARGET_DEFINITIONS PTOOps.td)
 mlir_tablegen(PTOOps.h.inc -gen-op-decls)
 mlir_tablegen(PTOOps.cpp.inc -gen-op-defs)
+
+set(LLVM_TARGET_DEFINITIONS PTOOpCommon.td)
 
 # 生成 Types 定义
 mlir_tablegen(PTOTypeDefs.h.inc -gen-typedef-decls -typedefs-dialect=pto)

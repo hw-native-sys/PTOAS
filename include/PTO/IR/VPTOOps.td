@@ -17,6 +17,8 @@
 #ifndef MLIR_DIALECT_PTO_IR_VPTOOPS
 #define MLIR_DIALECT_PTO_IR_VPTOOPS
 
+include "PTO/IR/PTOOpCommon.td"
+
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "PTO/IR/VPTOInterfaces.td"
@@ -37,9 +39,6 @@ def PTO_B32MaskTypeConstraint : Type<
 def PTO_AlignTypeConstraint : Type<CPred<"::llvm::isa<::mlir::pto::AlignType>($_self)">,
                                     "PTO low-level align type">;
 
-def PTO_BufferType : Type<
-  CPred<"::llvm::isa<::mlir::pto::PtrType>($_self)">,
-  "pointer-like buffer type">;
 def PTO_ScalingPtrType : Type<
   CPred<"::llvm::isa<::mlir::pto::PtrType>($_self) && "
         "::llvm::cast<::mlir::pto::PtrType>($_self).getMemorySpace().getAddressSpace() == ::mlir::pto::AddressSpace::SCALING">,

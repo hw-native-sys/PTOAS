@@ -11,6 +11,8 @@
 #ifndef MLIR_DIALECT_PTO_IR_VPTOUBOPS
 #define MLIR_DIALECT_PTO_IR_VPTOUBOPS
 
+include "PTO/IR/PTOOpCommon.td"
+
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "PTO/IR/VPTOInterfaces.td"
