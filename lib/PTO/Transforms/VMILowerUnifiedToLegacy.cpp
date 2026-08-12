@@ -396,15 +396,11 @@ static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
             .getResult();
   } else if (direction == "fptosi") {
     result =
-        builder
-            .create<VMIFPToSIOp>(loc, resultType, source,
-                                 op.getRoundingAttr(), saturateAttr)
+        builder.create<VMIFPToSIOp>(loc, resultType, source, saturateAttr)
             .getResult();
   } else if (direction == "fptoui") {
     result =
-        builder
-            .create<VMIFPToUIOp>(loc, resultType, source,
-                                 op.getRoundingAttr(), saturateAttr)
+        builder.create<VMIFPToUIOp>(loc, resultType, source, saturateAttr)
             .getResult();
   } else if (direction == "sitofp") {
     result =

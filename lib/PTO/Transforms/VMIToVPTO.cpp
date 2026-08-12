@@ -12017,9 +12017,7 @@ struct OneToNVMIFPToSIOpPattern : OpConversionPattern<VMIFPToSIOp> {
       resultVRegTypes.push_back(resultType);
     }
 
-    StringAttr rnd = op->getAttrOfType<StringAttr>("rounding");
-    if (!rnd)
-      rnd = rewriter.getStringAttr("R");
+    StringAttr rnd = rewriter.getStringAttr("R");
     StringAttr sat =
         contract->requiresSat
             ? op->getAttrOfType<StringAttr>("saturate")
@@ -12232,9 +12230,7 @@ struct OneToNVMIFPToUIOpPattern : OpConversionPattern<VMIFPToUIOp> {
       resultVRegTypes.push_back(resultType);
     }
 
-    StringAttr rnd = op->getAttrOfType<StringAttr>("rounding");
-    if (!rnd)
-      rnd = rewriter.getStringAttr("R");
+    StringAttr rnd = rewriter.getStringAttr("R");
     StringAttr sat = contract->requiresSat
                          ? op->getAttrOfType<StringAttr>("saturate")
                          : nullptr;

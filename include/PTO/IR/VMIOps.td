@@ -579,7 +579,6 @@ def VMITruncFOp : VMI_Op<"truncf", [Pure]> {
 def VMIFPToSIOp : VMI_Op<"fptosi", [Pure]> {
   let summary = "VMI floating-point to signed integer elementwise conversion";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
-                   OptionalAttr<StrAttr>:$rounding,
                    OptionalAttr<StrAttr>:$saturate);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
@@ -589,7 +588,6 @@ def VMIFPToSIOp : VMI_Op<"fptosi", [Pure]> {
 def VMIFPToUIOp : VMI_Op<"fptoui", [Pure]> {
   let summary = "VMI floating-point to unsigned integer elementwise conversion";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
-                   OptionalAttr<StrAttr>:$rounding,
                    OptionalAttr<StrAttr>:$saturate);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
@@ -1383,10 +1381,9 @@ def VMICvtOp : VMI_Op<"vcvt", [Pure]> {
     - int → int, |dst| < |src|: integer truncation         (replaces trunci)
 
     Attributes:
-    - `rounding`: rounding mode for fp narrowing and fp-to-integer
-      conversions. Narrowing accepts R=nearest-even, A=away-from-zero,
-      H=half-up, Z=toward-zero; fp-to-integer accepts the hardware modes
-      R/A/F/C/Z.
+    - `rounding`: rounding mode for fp narrowing (R=nearest-even,
+      A=away-from-zero, H=half-up, Z=toward-zero). Valid only when dst
+      bit-width < src bit-width for fp types.
     - `saturate`: "SAT" or "NOSAT"; required for fp narrowing, integer
       narrowing, and fp-to-int conversion.
     - `pmode`: predication mode ("merge" | "zero").
