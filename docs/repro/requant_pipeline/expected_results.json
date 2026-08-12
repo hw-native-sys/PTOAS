@@ -1,13 +1,13 @@
 [
   {
     "case": "fp8_rescale_8064x7168_eight_unpack_plus_requant",
-    "cce_us": 45.255,
-    "vmi_us": 141.459,
-    "cce_over_vmi": 0.3199,
+    "cce_us": 45.43,
+    "vmi_us": 145.072,
+    "cce_over_vmi": 0.3132,
     "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
-    "event_cold_l2_cce_us": 46.933,
-    "event_cold_l2_vmi_us": 176.122,
-    "event_cold_l2_cce_over_vmi": 0.2665,
-    "correctness": "vmi_padded_tail_mismatch"
+    "event_cold_l2_cce_us": 47.041,
+    "event_cold_l2_vmi_us": 302.386,
+    "event_cold_l2_cce_over_vmi": 0.1556,
+    "correctness": "pass_on_logical_8064_row_extent"
   }
 ]

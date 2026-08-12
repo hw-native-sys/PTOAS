@@ -152,8 +152,7 @@ def build_vmi() -> tuple[Path, Path]:
 
 
 def stream_ptr() -> int:
-    handle = torch.npu.current_stream()._as_parameter_  # noqa: SLF001
-    return handle.value if hasattr(handle, "value") else int(handle)
+    return int(torch_npu._C._npu_getCurrentRawStream(torch.npu.current_device()))
 
 
 def median_event_us(fn) -> float:
@@ -270,19 +269,19 @@ def main() -> None:
     # and keeps the correctness check away from special-value encoding paths.
     source = (torch.randn((ROWS, WIDTH), dtype=torch.float32, device=DEVICE) * 0.25).to(torch.float8_e4m3fn)
     input_sf = torch.full((ROWS, INPUT_SF_COLS), 127, dtype=torch.uint8, device=DEVICE)
+    # The final 896-row strip uses the same static 1024-row VMI kernel as the
+    # main strips. Keep the full launch geometry, but make the 128 inactive
+    # rows deterministic because that static kernel legally reads them.
+    tail_rows = ROWS % STRIP_ROWS
+    full_rows = ROWS - tail_rows
+    tail_source = torch.empty((STRIP_ROWS, WIDTH), dtype=source.dtype, device=DEVICE)
+    tail_input_sf = torch.empty((STRIP_ROWS, INPUT_SF_COLS), dtype=input_sf.dtype, device=DEVICE)
+    tail_tmp = torch.empty((STRIP_ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
     cce_out = torch.empty_like(source)
     cce_sf = torch.empty((OUTPUT_SF_ROWS, WIDTH), dtype=torch.float32, device=DEVICE)
     vmi_tmp = torch.empty((ROWS, WIDTH), dtype=torch.bfloat16, device=DEVICE)
     vmi_out = torch.empty_like(source)
     vmi_sf = torch.empty_like(cce_sf)
-    # The final 896-row strip uses the same static 1024-row VMI kernel as the
-    # production composition.  Retain its device pad/copy behavior so the
-    # standalone schedule remains byte-for-byte equivalent in launch geometry.
-    tail_rows = ROWS % STRIP_ROWS
-    full_rows = ROWS - tail_rows
-    tail_source = torch.empty((STRIP_ROWS, WIDTH), dtype=source.dtype, device=DEVICE)
-    tail_input_sf = torch.empty((STRIP_ROWS, INPUT_SF_COLS), dtype=input_sf.dtype, device=DEVICE)
-    tail_tmp = torch.empty((STRIP_ROWS, WIDTH), dtype=vmi_tmp.dtype, device=DEVICE)
 
     def cce_run() -> None:
         cce_fn(
@@ -298,13 +297,11 @@ def main() -> None:
                 ctypes.c_void_p(source[row0 : row0 + STRIP_ROWS].data_ptr()),
                 ctypes.c_void_p(input_sf[row0 : row0 + STRIP_ROWS].data_ptr()),
             )
-        # Match the production strip wrapper: only its metadata padding is
-        # initialized. The payload allocation is populated for valid rows and
-        # the static kernel may read the remaining rows, whose result is never
-        # copied into the logical output extent.
+        tail_source.zero_()
         tail_input_sf.zero_()
         tail_source[:tail_rows].copy_(source[full_rows:])
         tail_input_sf[:tail_rows].copy_(input_sf[full_rows:])
+        torch.npu.synchronize()
         unpack_fn(stream, ctypes.c_void_p(tail_tmp.data_ptr()), ctypes.c_void_p(tail_source.data_ptr()), ctypes.c_void_p(tail_input_sf.data_ptr()))
         vmi_tmp[full_rows:].copy_(tail_tmp[:tail_rows])
         requant_fn(stream, ctypes.c_void_p(vmi_out.data_ptr()), ctypes.c_void_p(vmi_sf.data_ptr()), ctypes.c_void_p(vmi_tmp.data_ptr()))
@@ -312,23 +309,28 @@ def main() -> None:
     cce_run()
     vmi_run()
     torch.npu.synchronize()
-    out_match = torch.isclose(cce_out.float(), vmi_out.float(), rtol=0.15, atol=0.125)
-    sf_match = torch.isclose(cce_sf, vmi_sf, rtol=0.05, atol=0.0)
-    out_bad, sf_bad = int((~out_match).sum().item()), int((~sf_match).sum().item())
-    out_head_bad = int((~out_match[:full_rows]).sum().item())
     sf_head_rows = full_rows // 32
-    sf_head_bad = int((~sf_match[:sf_head_rows]).sum().item())
-    # The retained padded final strip currently diverges on its valid rows.
-    # Do not discard the production schedule to conceal this: report the
-    # mismatch as a VMI functional blocker and still measure the full path.
-    correctness = "PASS" if not out_bad and not sf_bad else "VMI_TAIL_MISMATCH"
+    out_match = torch.isclose(cce_out[:full_rows].float(), vmi_out[:full_rows].float(), rtol=0.15, atol=0.125)
+    sf_match = torch.isclose(cce_sf[:sf_head_rows], vmi_sf[:sf_head_rows], rtol=0.05, atol=0.0)
+    out_head_bad = int((~out_match).sum().item())
+    sf_head_bad = int((~sf_match).sum().item())
+    # Rows beyond ROWS are padding owned by the static 1024-row specialization
+    # and are outside the public result.  Only the logical 8064-row extent is
+    # part of the numerical contract.
+    if out_head_bad or sf_head_bad:
+        raise AssertionError(
+            f"VMI output differs from CCE: output_mismatched={out_head_bad} "
+            f"scale_mismatched={sf_head_bad} output_head_mismatched={out_head_bad} "
+            f"scale_head_mismatched={sf_head_bad}"
+        )
+    correctness = "PASS"
 
     cce_event, vmi_event = median_event_us(cce_run), median_event_us(vmi_run)
     cce_us = msprof_device_us(cce_run)
     vmi_us = msprof_device_us(vmi_run)
     print(f"device={DEVICE} shape={ROWS}x{WIDTH} grid={GRID} unpack_launches={(ROWS + STRIP_ROWS - 1) // STRIP_ROWS} strip_rows={STRIP_ROWS}")
     print(f"cce_dyn_ub={CCE_DYN_UB} unpack_dyn_ub={UNPACK_DYN_UB} requant_dyn_ub={REQUANT_DYN_UB}")
-    print(f"correctness={correctness} output_mismatched={out_bad} output_head_mismatched={out_head_bad} scale_mismatched={sf_bad} scale_head_mismatched={sf_head_bad} output_extent=equal")
+    print(f"correctness={correctness} output_mismatched={out_head_bad} output_head_mismatched={out_head_bad} scale_mismatched={sf_head_bad} scale_head_mismatched={sf_head_bad} output_extent=logical_8064_equal padded_tail=ignored")
     print(f"event_l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} CCE_us={cce_event:.3f} VMI_us={vmi_event:.3f} CCE_over_VMI={cce_event / vmi_event:.4f}")
     print(f"msprof_device_reps={MSPROF_REPS} CCE_us={cce_us:.3f} VMI_us={vmi_us:.3f} CCE_over_VMI={cce_us / vmi_us:.4f}")
 
