@@ -1,6 +1,6 @@
 # VPTO Soft Post-Update 优化 Pass 设计文档
 
-> 地址递推前置规范化、signed/unsigned i16 no-wrap 证明证书、可逆 witness 和共享候选描述见 [VPTO 地址递推 i16 前置规范化设计](vpto-address-recurrence-normalization-design-zh.md)。CLI pipeline 在本 pass 之前固定运行 `VPTONormalizeAddressRecurrences`，本 pass 保证在最终输出中消费并删除全部 witness。
+> 地址递推前置规范化、signed/unsigned i16 no-wrap 证明证书、可逆 witness 和共享候选描述见 [VPTO 地址递推 i16 前置规范化设计](vpto-address-recurrence-normalization-design-zh.md)。CLI pipeline 在本 pass 之前固定运行 `VPTONormalizeAddressRecurrences`；producer 和 consumer 都以 `pto.vecscope` 为所有权边界，scope 外保持原样，scope 内产生的 witness 由本 pass 在最终输出中全部消费并删除。
 
 ## 1. 概述
 

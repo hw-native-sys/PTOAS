@@ -80,6 +80,8 @@ normalizer 只能证明单个 leaf 的 i16 递推等价，不能据此保证整�
 
 normalizer 的职责是识别并证明简单地址递推、创建 canonical shadow 和可逆 witness。soft-postupdate 的职责是消费 witness、完成 op 级 accumulator/delta、地址单位、最终 stride 与收益分析，然后恢复普通 operand 并提交成功项。normalizer 证明失败时完全不改写候选；normalizer 成功而 soft-postupdate 失败时由 soft 回滚。
 
+两个 pass 共享同一个 `pto.vecscope` 所有权边界。normalizer 只处理 `pto.vecscope` 内的 `scf.for`，因为 soft-postupdate 也只在该边界内进行循环与顺序分析；`pto.vecscope` 外的候选 op 即使递推形状可证明，也保持原样，不创建 canonical shadow 或 witness。这样 paired pipeline 中每个 witness 都必然进入 consumer 的提交或回滚流程，避免 producer 在 consumer 不会访问的区域留下临时 IR 并导致最终 witness 完整性检查失败。
+
 ## 3. 共享 op 描述
 
 候选集合和地址语义集中在 `VPTOPostUpdateUtils`，normalization 与 soft-postupdate 不各自维护指令白名单。每个 `PostUpdateOpInfo` 包含：
@@ -219,5 +221,6 @@ lit 回归覆盖：
 - signed/unsigned source wrap、i16 shadow wrap、最终 backedge 和缺失或错误 overflow flag 拒绝；
 - `Constant` 与 `SignedI8` 最终约束失败时回滚；
 - 同一循环中一个候选成功提交、另一个候选失败回滚；
+- `pto.vecscope` 外的候选循环保持原样，不产生无法消费的 witness；
 - paired pipeline 结束后不存在 `pto.address_recurrence_witness`、无收益 i16 shadow 或 overflow backedge；
 - CLI pipeline 中 normalization 固定先于 soft-postupdate，并在成功时形成 post base chain。

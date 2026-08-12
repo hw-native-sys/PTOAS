@@ -8,6 +8,10 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
+// This pass only creates reversible address-recurrence witnesses for loops
+// nested under pto.vecscope, matching the ownership boundary consumed by
+// VPTOSoftPostUpdate. Loops outside that boundary must remain untouched.
+
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VPTOPostUpdateUtils.h"
@@ -540,7 +544,10 @@ struct VPTONormalizeAddressRecurrencesPass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SmallVector<scf::ForOp> loops;
-    module.walk([&](scf::ForOp forOp) { loops.push_back(forOp); });
+    module.walk([&](scf::ForOp forOp) {
+      if (forOp->getParentOfType<pto::VecScopeOp>())
+        loops.push_back(forOp);
+    });
 
     OpBuilder builder(&getContext());
     for (scf::ForOp forOp : loops) {

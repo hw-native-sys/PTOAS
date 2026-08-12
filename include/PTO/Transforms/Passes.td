@@ -1200,8 +1200,11 @@ def VPTONormalizeAddressRecurrences
     : Pass<"vpto-normalize-address-recurrences", "ModuleOp"> {
   let summary = "Normalize proven VPTO address recurrences to i16";
   let description = [{
-    Finds loop-varying address values used by every operation registered for
-    VPTO soft post-update. Direct induction variables and fixed-step scf.for
+    Finds loop-varying address values under `pto.vecscope` that are used by
+    every operation registered for VPTO soft post-update. Restricting the pass
+    to the consumer's vecscope ownership boundary ensures every reversible
+    witness is either committed or rolled back by the immediately following
+    soft-postupdate pass. Direct induction variables and fixed-step scf.for
     iter_args are mirrored in an i16 recurrence only after proving the loop
     trip count, initial value, increment, every recurrence value, and the final
     backedge cannot wrap either the source type or the operation's signed or
