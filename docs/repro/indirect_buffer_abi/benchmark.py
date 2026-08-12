@@ -7,6 +7,7 @@ import ctypes
 import os
 import struct
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -60,27 +61,30 @@ def build_vmi() -> Path:
     OUT.mkdir(exist_ok=True)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(HERE / "fixtures")
-    ptoas = os.environ.get("PTOAS_BIN") or subprocess.check_output(
-        ["conda", "run", "-n", "cann91_dev", "which", "ptoas"], text=True
-    ).strip().splitlines()[-1]
+    ptoas = os.environ.get("PTOAS_BIN")
+    if ptoas is None:
+        from shutil import which
+        ptoas = which("ptoas")
+    if ptoas is None:
+        raise RuntimeError("ptoas is not on PATH; set PTOAS_BIN to the pinned PTOAS executable")
     source = HERE / "fixtures/stacked_pipeline_vmi.py"
     mlir = subprocess.check_output(
-        ["conda", "run", "-n", "cann91_dev", "python", str(source), "--emit-mlir"], text=True, env=env
+        [sys.executable, str(source), "--emit-mlir"], text=True, env=env
     )
     (OUT / "stacked.mlir").write_text(mlir)
     body, host = OUT / "stacked.o", OUT / "stacked_host.o"
     command([ptoas, "--pto-arch=a5", "--pto-backend=vpto", "--pto-level=level3", str(OUT / "stacked.mlir"), "-o", str(body)])
     src = OUT / "stacked_host.cpp"
     src.write_text("""#include <stdint.h>
-extern \"C\" __global__ [aicore] void stacked_pipeline(
-    __gm__ float*, __gm__ uint16_t*, __gm__ uint16_t*, __gm__ uint16_t*,
-    __gm__ float*, __gm__ float*, __gm__ uint16_t*);
-extern \"C\" void launch_stacked_vmi(void* stream, void* comb, void* initial,
-    void* inputs, void* outputs, void* post, void* pre, void* residual) {
-  stacked_pipeline<<<72, 295680, stream>>>(
-      (__gm__ float*)comb, (__gm__ uint16_t*)initial, (__gm__ uint16_t*)inputs,
-      (__gm__ uint16_t*)outputs, (__gm__ float*)post, (__gm__ float*)pre,
-      (__gm__ uint16_t*)residual);
+extern \"C\" __global__ [aicore] void dense_recurrence_stage(
+    __gm__ uint16_t*, __gm__ float*, __gm__ uint16_t*, __gm__ float*,
+    __gm__ float*, __gm__ uint16_t*, __gm__ uint16_t*);
+extern \"C\" void launch_stacked_vmi(void* stream, void* residual_in, void* pre,
+    void* layer_output, void* post, void* comb, void* layer_input, void* residual_out) {
+  dense_recurrence_stage<<<72, 295680, stream>>>(
+      (__gm__ uint16_t*)residual_in, (__gm__ float*)pre, (__gm__ uint16_t*)layer_output,
+      (__gm__ float*)post, (__gm__ float*)comb, (__gm__ uint16_t*)layer_input,
+      (__gm__ uint16_t*)residual_out);
 }
 """)
     command([bisheng(), "-xcce", "-Xhost-start", "-Xhost-end", "-fPIC", "-O2", "-std=c++17",
@@ -89,8 +93,7 @@ extern \"C\" void launch_stacked_vmi(void* stream, void* comb, void* initial,
 
 
 def stream_ptr() -> int:
-    value = torch.npu.current_stream()._as_parameter_  # noqa: SLF001
-    return value.value if hasattr(value, "value") else int(value)
+    return int(torch_npu._C._npu_getCurrentRawStream(torch.npu.current_device()))
 
 
 def median_us(fn) -> float:
@@ -215,7 +218,22 @@ def main() -> None:
                           (stacked[4], post), (stacked[5], pre), (stacked[6], residual_seed)):
             for index, src in enumerate(srcs):
                 dst[index].copy_(src)
-        vmi_fn(ctypes.c_void_p(stream_ptr()), *[ctypes.c_void_p(x.data_ptr()) for x in stacked])
+        # The fixed-form VMI ABI has no typed GM pointer table. Execute the
+        # same ten layer recurrence as ordered stage launches, carrying the
+        # residual through dense workspace between stages.
+        residual_in = stacked[1]
+        for layer in range(LAYERS):
+            vmi_fn(
+                ctypes.c_void_p(stream_ptr()),
+                ctypes.c_void_p(residual_in.data_ptr()),
+                ctypes.c_void_p(stacked[5][layer].data_ptr()),
+                ctypes.c_void_p(stacked[3][layer].data_ptr()),
+                ctypes.c_void_p(stacked[4][layer].data_ptr()),
+                ctypes.c_void_p(stacked[0][layer].data_ptr()),
+                ctypes.c_void_p(stacked[2][layer].data_ptr()),
+                ctypes.c_void_p(stacked[6][layer].data_ptr()),
+            )
+            residual_in = stacked[6][layer]
         if copy_back:
             for index, dst in enumerate(vmi_inputs):
                 dst.copy_(stacked[2][index])
@@ -238,6 +256,11 @@ def main() -> None:
     input_delta = (torch.stack(vmi_inputs).float() - torch.stack(expected_inputs).float()).abs().max().item()
     residual_delta = (torch.stack(vmi_residuals).float() - torch.stack(expected_residuals).float()).abs().max().item()
     correctness = input_delta == 0 and residual_delta == 0
+    if not correctness:
+        raise AssertionError(
+            f"VMI result differs from direct CCE: layer_input_maxabs={input_delta} "
+            f"residual_maxabs={residual_delta}"
+        )
     cce_event, vmi_event = median_us(direct_run), median_us(stacked_run)
     cce_us, vmi_us = msprof_us(direct_run), msprof_us(stacked_run)
     print(f"device={DEVICE} shape={TOKENS}x{HIDDEN} lanes={LANES} layers={LAYERS} grid={GRID}")

@@ -15,7 +15,17 @@ This package makes both facts executable:
   `reference_launch.cpp` supplies only its stream-first host ABI.
 - `desired_pointer_table.py` states the requested surface.
 
-Run `bash check.sh compile`, `bash check.sh benchmark`, or `bash check.sh`.
+Requirements are CANN `9.1.0-beta.3`, the pinned PTODSL/PTOAS installation,
+and PyTorch with NPU support. Source that CANN release first, or set
+`CANN_ENV` to its `set_env.sh`; set `CONDA_ENV` when the active environment is
+not the default `cann91_dev`.
+
+```bash
+source /path/to/cann-9.1.0-beta.3/set_env.sh
+ACL_DEVICE_ID=0 bash check.sh compile
+ACL_DEVICE_ID=0 bash check.sh benchmark
+```
+
 With `ACL_DEVICE_ID`, benchmark mode compiles and launches the direct CCE
 pointer-table kernel and the production-shaped stacked-buffer VMI kernel
 through `torch_npu`, checking both paths on the same stream. It also retains
@@ -30,10 +40,9 @@ The live harness allocates each layer at the generated block stride and stores
 the six table entries as device addresses, so the CCE side is an actual
 pointer-table launch. The VMI side materializes the same layer-major buffers
 and includes all six stack copies plus the two result unstack copies in the
-timed call. Its nonzero-data comparison currently also reports a mismatch
-(`layer_input_maxabs=0.1875`, `residual_maxabs=0.06244755`), so this is both
-an ABI/performance reproducer and a correctness failure of the current VMI
-body. Requested ABI
+timed call. Its nonzero-data comparison fails fast
+(`layer_input_maxabs=0.1875`, `residual_maxabs=0.06244755`), so it cannot be
+used as a valid throughput comparison until the VMI body is repaired. Requested ABI
 behavior remains a bounds-checkable load from
 `ptr<ptr<T, gm>, gm>` yielding `ptr<T, gm>`, correct memory effects, and host
 launcher support for an address-table tensor; the current production-shaped

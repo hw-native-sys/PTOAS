@@ -1,131 +1,93 @@
+"""One dense-buffer VMI recurrence stage for the pointer-table ABI reproducer."""
+
 from ptodsl import pto
 
-@pto.jit(name="stacked_pipeline", kernel_kind="vector", target="a5", mode="explicit")
-def stacked_pipeline(comb_mix: pto.ptr(pto.f32, "gm"), initial_residual: pto.ptr(pto.bf16, "gm"), layer_input: pto.ptr(pto.bf16, "gm"), layer_output: pto.ptr(pto.bf16, "gm"), post_mix: pto.ptr(pto.f32, "gm"), pre_mix: pto.ptr(pto.f32, "gm"), residual_out: pto.ptr(pto.bf16, "gm")):
-  buf_dyn_shmem = pto.castptr(pto.const(0, dtype=pto.i64), pto.ptr(pto.ui8, "ub"))
-  pto.set_flag("MTE3", "V", event_id=0)
-  pto.set_flag("MTE3", "V", event_id=1)
-  pto.set_flag("MTE3", "V", event_id=2)
-  pto.set_flag("V", "MTE2", event_id=0)
-  pto.set_flag("V", "MTE2", event_id=1)
-  pto.set_flag("V", "MTE2", event_id=2)
-  pto.set_flag("V", "MTE2", event_id=3)
-  pto.set_flag("V", "MTE2", event_id=4)
-  pto.set_flag("V", "MTE2", event_id=5)
-  pto.set_flag("MTE3", "MTE2", event_id=0)
-  pto.set_flag("MTE3", "MTE2", event_id=1)
-  pto.set_flag("MTE3", "MTE2", event_id=2)
-  for w in range(0, 114):
-    __cond_0 = ((w * 9) + (pto.get_block_idx() // 8)) < 1024
-    pto.wait_flag("MTE3", "MTE2", event_id=w % 3)
-    pto.wait_flag("V", "MTE2", event_id=(w % 3) + 3)
-    if ((w * 9) + (pto.get_block_idx() // 8)) < 1024:
-      pto.mte_gm_ub(pto.addptr(initial_residual, (w * 1179648) + (pto.get_block_idx() * 16384)), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), (w % 3) * 32768), 0, 32768, nburst=(1, 32768, 32768))
-    pto.set_flag("MTE2", "MTE3", event_id=w % 3)
-    pto.set_flag("MTE2", "V", event_id=(w % 3) + 3)
-    pto.wait_flag("MTE2", "V", event_id=(w % 3) + 3)
-    pto.wait_flag("MTE2", "MTE3", event_id=w % 3)
-    if ((w * 9) + (pto.get_block_idx() // 8)) < 1024:
-      for l in range(0, 10):
-        pto.wait_flag("V", "MTE2", event_id=((w * 10) + l) % 3)
-        pto.mte_gm_ub(pto.addptr(pre_mix, ((l * 32768) + (w * 288)) + (pto.get_block_idx() * 4)), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73728), 0, 16, nburst=(1, 16, 16))
-        pto.mte_gm_ub(pto.addptr(post_mix, ((l * 32768) + (w * 288)) + (pto.get_block_idx() * 4)), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73776), 0, 16, nburst=(1, 16, 16))
-        pto.mte_gm_ub(pto.addptr(comb_mix, ((l * 131072) + (w * 1152)) + (pto.get_block_idx() * 16)), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73824), 0, 64, nburst=(1, 64, 64))
-        pto.mte_gm_ub(pto.addptr(layer_output, ((l * 33554432) + (w * 294912)) + (pto.get_block_idx() * 4096)), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), (((((w * 10) + l) % 3) * 8192) + ((l & 1) * 4096)) + 98304), 0, 8192, nburst=(1, 8192, 8192))
-        pto.set_flag("MTE2", "V", event_id=((w * 10) + l) % 3)
-        pto.wait_flag("MTE3", "V", event_id=w % 3)
-        pto.wait_flag("MTE2", "V", event_id=((w * 10) + l) % 3)
-        pre_regs = [None] * 4
-        post_regs = [None] * 4
-        comb_regs = [None] * 16
-        res = [None] * 4
-        li = pto.vmi.vreg(64, pto.f32)
-        out_regs = [None] * 4
-        mask = pto.vmi.create_mask(64, size=64)
-        pre_regs[0] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73728), 0, dist_mode="brc", size=64)
-        pre_regs[1] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73729), 0, dist_mode="brc", size=64)
-        pre_regs[2] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73730), 0, dist_mode="brc", size=64)
-        pre_regs[3] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73731), 0, dist_mode="brc", size=64)
-        post_regs[0] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73776), 0, dist_mode="brc", size=64)
-        post_regs[1] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73777), 0, dist_mode="brc", size=64)
-        post_regs[2] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73778), 0, dist_mode="brc", size=64)
-        post_regs[3] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 16) + ((l & 1) * 8)) + 73779), 0, dist_mode="brc", size=64)
-        comb_regs[0] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73824), 0, dist_mode="brc", size=64)
-        comb_regs[1] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73825), 0, dist_mode="brc", size=64)
-        comb_regs[2] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73826), 0, dist_mode="brc", size=64)
-        comb_regs[3] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73827), 0, dist_mode="brc", size=64)
-        comb_regs[4] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73828), 0, dist_mode="brc", size=64)
-        comb_regs[5] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73829), 0, dist_mode="brc", size=64)
-        comb_regs[6] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73830), 0, dist_mode="brc", size=64)
-        comb_regs[7] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73831), 0, dist_mode="brc", size=64)
-        comb_regs[8] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73832), 0, dist_mode="brc", size=64)
-        comb_regs[9] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73833), 0, dist_mode="brc", size=64)
-        comb_regs[10] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73834), 0, dist_mode="brc", size=64)
-        comb_regs[11] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73835), 0, dist_mode="brc", size=64)
-        comb_regs[12] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73836), 0, dist_mode="brc", size=64)
-        comb_regs[13] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73837), 0, dist_mode="brc", size=64)
-        comb_regs[14] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73838), 0, dist_mode="brc", size=64)
-        comb_regs[15] = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")), (((((w * 10) + l) % 3) * 32) + ((l & 1) * 16)) + 73839), 0, dist_mode="brc", size=64)
-        for c in range(0, 64):
-          res[0] = pto.vmi.vcvt(pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), (((w % 3) * 32768) + ((l & 1) * 16384)) + (c * 64)), 0, size=64), to_dtype=pto.f32)
-          res[1] = pto.vmi.vcvt(pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + ((l & 1) * 16384)) + (c * 64)) + 4096), 0, size=64), to_dtype=pto.f32)
-          res[2] = pto.vmi.vcvt(pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + ((l & 1) * 16384)) + (c * 64)) + 8192), 0, size=64), to_dtype=pto.f32)
-          res[3] = pto.vmi.vcvt(pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + ((l & 1) * 16384)) + (c * 64)) + 12288), 0, size=64), to_dtype=pto.f32)
-          li = pto.vmi.vmul(res[0], pre_regs[0], mask)
-          li = pto.vmi.vmula(li, res[1], pre_regs[1], mask)
-          li = pto.vmi.vmula(li, res[2], pre_regs[2], mask)
-          li = pto.vmi.vmula(li, res[3], pre_regs[3], mask)
-          pto.vmi.vstore(pto.vmi.vcvt(li, to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((((w * 10) + l) % 3) * 8192) + ((l & 1) * 4096)) + (c * 64)) + 122880), 0, mask)
-          x_f = pto.vmi.vcvt(pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((((w * 10) + l) % 3) * 8192) + ((l & 1) * 4096)) + (c * 64)) + 98304), 0, size=64), to_dtype=pto.f32)
-          out_regs[0] = pto.vmi.vmul(x_f, post_regs[0], mask)
-          out_regs[1] = pto.vmi.vmul(x_f, post_regs[1], mask)
-          out_regs[2] = pto.vmi.vmul(x_f, post_regs[2], mask)
-          out_regs[3] = pto.vmi.vmul(x_f, post_regs[3], mask)
-          out_regs[0] = pto.vmi.vmula(out_regs[0], res[0], comb_regs[0], mask)
-          out_regs[1] = pto.vmi.vmula(out_regs[1], res[0], comb_regs[1], mask)
-          out_regs[2] = pto.vmi.vmula(out_regs[2], res[0], comb_regs[2], mask)
-          out_regs[3] = pto.vmi.vmula(out_regs[3], res[0], comb_regs[3], mask)
-          out_regs[0] = pto.vmi.vmula(out_regs[0], res[1], comb_regs[4], mask)
-          out_regs[1] = pto.vmi.vmula(out_regs[1], res[1], comb_regs[5], mask)
-          out_regs[2] = pto.vmi.vmula(out_regs[2], res[1], comb_regs[6], mask)
-          out_regs[3] = pto.vmi.vmula(out_regs[3], res[1], comb_regs[7], mask)
-          out_regs[0] = pto.vmi.vmula(out_regs[0], res[2], comb_regs[8], mask)
-          out_regs[1] = pto.vmi.vmula(out_regs[1], res[2], comb_regs[9], mask)
-          out_regs[2] = pto.vmi.vmula(out_regs[2], res[2], comb_regs[10], mask)
-          out_regs[3] = pto.vmi.vmula(out_regs[3], res[2], comb_regs[11], mask)
-          out_regs[0] = pto.vmi.vmula(out_regs[0], res[3], comb_regs[12], mask)
-          out_regs[1] = pto.vmi.vmula(out_regs[1], res[3], comb_regs[13], mask)
-          out_regs[2] = pto.vmi.vmula(out_regs[2], res[3], comb_regs[14], mask)
-          out_regs[3] = pto.vmi.vmula(out_regs[3], res[3], comb_regs[15], mask)
-          pto.vmi.vstore(pto.vmi.vcvt(out_regs[0], to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + (c * 64)) + 16384) - ((l & 1) * 16384)), 0, mask)
-          pto.vmi.vstore(pto.vmi.vcvt(out_regs[1], to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + (c * 64)) + 20480) - ((l & 1) * 16384)), 0, mask)
-          pto.vmi.vstore(pto.vmi.vcvt(out_regs[2], to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + (c * 64)) + 24576) - ((l & 1) * 16384)), 0, mask)
-          pto.vmi.vstore(pto.vmi.vcvt(out_regs[3], to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((((w % 3) * 32768) + (c * 64)) + 28672) - ((l & 1) * 16384)), 0, mask)
-        pto.set_flag("V", "MTE3", event_id=w % 3)
-        pto.set_flag("V", "MTE2", event_id=((w * 10) + l) % 3)
-        pto.wait_flag("V", "MTE3", event_id=w % 3)
-        pto.mte_ub_gm(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), (((w % 3) * 32768) + 16384) - ((l & 1) * 16384)), pto.addptr(residual_out, ((l * 134217728) + (w * 1179648)) + (pto.get_block_idx() * 16384)), 32768, nburst=(1, 32768, 32768), l2_cache="naci")
-        pto.set_flag("MTE3", "V", event_id=w % 3)
-        pto.mte_ub_gm(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), (((((w * 10) + l) % 3) * 8192) + ((l & 1) * 4096)) + 122880), pto.addptr(layer_input, ((l * 33554432) + (w * 294912)) + (pto.get_block_idx() * 4096)), 8192, nburst=(1, 8192, 8192), l2_cache="naci")
-    pto.set_flag("V", "MTE2", event_id=(w % 3) + 3)
-    pto.set_flag("MTE3", "MTE2", event_id=w % 3)
-  pto.wait_flag("MTE3", "V", event_id=0)
-  pto.wait_flag("MTE3", "V", event_id=1)
-  pto.wait_flag("MTE3", "V", event_id=2)
-  pto.wait_flag("V", "MTE2", event_id=0)
-  pto.wait_flag("V", "MTE2", event_id=1)
-  pto.wait_flag("V", "MTE2", event_id=2)
-  pto.wait_flag("V", "MTE2", event_id=3)
-  pto.wait_flag("V", "MTE2", event_id=4)
-  pto.wait_flag("V", "MTE2", event_id=5)
-  pto.wait_flag("MTE3", "MTE2", event_id=0)
-  pto.wait_flag("MTE3", "MTE2", event_id=1)
-  pto.wait_flag("MTE3", "MTE2", event_id=2)
+TOKENS, CORES, LANES, HIDDEN = 8192, 72, 4, 4096
+TILE_VALUES = LANES * HIDDEN
+TILE_BYTES = TILE_VALUES * 2
+
+
+@pto.jit(name="dense_recurrence_stage", kernel_kind="vector", target="a5", mode="explicit")
+def dense_recurrence_stage(
+    residual_in: pto.ptr(pto.bf16, "gm"),
+    pre_mix: pto.ptr(pto.f32, "gm"),
+    layer_output: pto.ptr(pto.bf16, "gm"),
+    post_mix: pto.ptr(pto.f32, "gm"),
+    comb_mix: pto.ptr(pto.f32, "gm"),
+    layer_input: pto.ptr(pto.bf16, "gm"),
+    residual_out: pto.ptr(pto.bf16, "gm"),
+):
+    """Apply one 4-lane recurrence to a dense 8192 x 4096 tensor.
+
+    The host invokes this fixed-formal kernel ten times in stream order.  That
+    is the portable replacement for a runtime pointer-table loop: its extra
+    dense staging is intentionally part of the VMI timing.
+    """
+    ub_u8 = pto.castptr(pto.const(0, dtype=pto.i64), pto.ptr(pto.ui8, "ub"))
+    ub_bf16 = pto.castptr(ub_u8, pto.ptr(pto.bf16, "ub"))
+    ub_f32 = pto.castptr(ub_u8, pto.ptr(pto.f32, "ub"))
+    # UB: residual [0, 32768), activation [32768, 40960), input [40960,
+    # 45056) in BF16 elements; 24 float coefficients begin at byte 90112.
+    coeff = 22528
+    for wave in range(114):
+        tile = wave * CORES + pto.get_block_idx()
+        if tile < TOKENS:
+            pto.mte_gm_ub(pto.addptr(residual_in, tile * TILE_VALUES), ub_bf16, 0, TILE_BYTES,
+                          nburst=(1, TILE_BYTES, TILE_BYTES))
+            pto.mte_gm_ub(pto.addptr(layer_output, tile * HIDDEN), pto.addptr(ub_bf16, 32768), 0, 8192,
+                          nburst=(1, 8192, 8192))
+            pto.mte_gm_ub(pto.addptr(pre_mix, tile * LANES), pto.addptr(ub_f32, coeff), 0, 16,
+                          nburst=(1, 16, 16))
+            pto.mte_gm_ub(pto.addptr(post_mix, tile * LANES), pto.addptr(ub_f32, coeff + 4), 0, 16,
+                          nburst=(1, 16, 16))
+            pto.mte_gm_ub(pto.addptr(comb_mix, tile * LANES * LANES), pto.addptr(ub_f32, coeff + 8), 0, 64,
+                          nburst=(1, 64, 64))
+        # Keep the standalone form deliberately conservative.  These complete
+        # barriers make the load/compute/store dependencies unambiguous; the
+        # workload is large enough that the measured gap remains device work,
+        # not host-launch latency.
+        pto.pipe_barrier(pto.Pipe.ALL)
+        if tile < TOKENS:
+            mask = pto.vmi.create_mask(64, size=64)
+            pre = [pto.vmi.vload(pto.addptr(ub_f32, coeff + lane), 0, dist_mode="brc", size=64)
+                   for lane in pto.static_range(LANES)]
+            post = [pto.vmi.vload(pto.addptr(ub_f32, coeff + 4 + lane), 0, dist_mode="brc", size=64)
+                    for lane in pto.static_range(LANES)]
+            mix = [pto.vmi.vload(pto.addptr(ub_f32, coeff + 8 + index), 0, dist_mode="brc", size=64)
+                   for index in pto.static_range(LANES * LANES)]
+            for chunk in range(64):
+                offset = chunk * 64
+                residual = [
+                    pto.vmi.vcvt(pto.vmi.vload(pto.addptr(ub_bf16, lane * HIDDEN + offset), 0, size=64),
+                                to_dtype=pto.f32)
+                    for lane in pto.static_range(LANES)
+                ]
+                layer_in = pto.vmi.vmul(residual[0], pre[0], mask)
+                for lane in pto.static_range(1, LANES):
+                    layer_in = pto.vmi.vmula(layer_in, residual[lane], pre[lane], mask)
+                pto.vmi.vstore(pto.vmi.vcvt(layer_in, to_dtype=pto.bf16),
+                               pto.addptr(ub_bf16, 40960 + offset), 0, mask)
+                activation = pto.vmi.vcvt(
+                    pto.vmi.vload(pto.addptr(ub_bf16, 32768 + offset), 0, size=64), to_dtype=pto.f32)
+                for output_lane in pto.static_range(LANES):
+                    result = pto.vmi.vmul(activation, post[output_lane], mask)
+                    for input_lane in pto.static_range(LANES):
+                        result = pto.vmi.vmula(result, residual[input_lane],
+                                               mix[input_lane * LANES + output_lane], mask)
+                    pto.vmi.vstore(pto.vmi.vcvt(result, to_dtype=pto.bf16),
+                                   pto.addptr(ub_bf16, output_lane * HIDDEN + offset), 0, mask)
+        pto.pipe_barrier(pto.Pipe.ALL)
+        if tile < TOKENS:
+            pto.mte_ub_gm(pto.addptr(ub_bf16, 40960), pto.addptr(layer_input, tile * HIDDEN), 8192,
+                          nburst=(1, 8192, 8192), l2_cache="naci")
+            pto.mte_ub_gm(ub_bf16, pto.addptr(residual_out, tile * TILE_VALUES), TILE_BYTES,
+                          nburst=(1, TILE_BYTES, TILE_BYTES), l2_cache="naci")
+        pto.pipe_barrier(pto.Pipe.ALL)
 
 
 if __name__ == "__main__":
-  import sys
-  if sys.argv[1:] == ["--emit-mlir"]:
-    print(stacked_pipeline.compile().mlir_text())
-  else:
-    raise SystemExit("usage: stacked_pipeline_vmi.py --emit-mlir")
+    import sys
+    if sys.argv[1:] == ["--emit-mlir"]:
+        print(dense_recurrence_stage.compile().mlir_text())
+    else:
+        raise SystemExit("usage: stacked_pipeline_vmi.py --emit-mlir")
