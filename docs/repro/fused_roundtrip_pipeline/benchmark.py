@@ -24,7 +24,10 @@ HERE = Path(__file__).parent
 OUT = HERE / "outputs"
 DEVICE = f"npu:{os.environ.get('ACL_DEVICE_ID', '0')}"
 ROWS, WIDTH, GRID = 8192, 2048, 72
-CCE_DYN_UB, VMI_DYN_UB = 27136, 126208
+# CCE is the retained 9-row x 8-column production schedule (three rotating
+# buffers); the original generated host launcher requests this exact dynamic
+# UB size.  Do not shrink it: doing so silently changed the workload.
+CCE_DYN_UB, VMI_DYN_UB = 231552, 126208
 WARMUP, SAMPLES = 8, 40
 # Keep this aligned with TileLang's ``do_bench`` policy.  The flush happens
 # before the start event, so it evicts cache state without contributing to the
