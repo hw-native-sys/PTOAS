@@ -13,8 +13,8 @@
 // CHECK-TILE-SCALAR: %[[BR:.+]] = pto.vbr
 // CHECK-TILE-SCALAR: scf.for
 // CHECK-TILE-SCALAR: %[[MASK:.+]], %[[SCALAR_OUT:.+]] = pto.plt_b32
-// CHECK-TILE-SCALAR: %[[LD:.+]] = pto.vlds
-// CHECK-TILE-SCALAR: %[[DIV:.+]] = pto.vdiv %[[LD]], %[[BR]], %[[MASK]]
+// CHECK-TILE-SCALAR: [[LD:%[a-zA-Z0-9_]+]]{{.*}} = pto.vlds
+// CHECK-TILE-SCALAR: %[[DIV:.+]] = pto.vdiv [[LD]], %[[BR]], %[[MASK]]
 // CHECK-TILE-SCALAR: pto.vsts %[[DIV]]
 
 // scalar / tile form:
@@ -25,8 +25,8 @@
 // CHECK-SCALAR-TILE: %[[BR:.+]] = pto.vbr
 // CHECK-SCALAR-TILE: scf.for
 // CHECK-SCALAR-TILE: %[[MASK:.+]], %[[SCALAR_OUT:.+]] = pto.plt_b32
-// CHECK-SCALAR-TILE: %[[LD:.+]] = pto.vlds
-// CHECK-SCALAR-TILE: %[[DIV:.+]] = pto.vdiv %[[BR]], %[[LD]], %[[MASK]]
+// CHECK-SCALAR-TILE: [[LD:%[a-zA-Z0-9_]+]]{{.*}} = pto.vlds
+// CHECK-SCALAR-TILE: %[[DIV:.+]] = pto.vdiv %[[BR]], [[LD]], %[[MASK]]
 // CHECK-SCALAR-TILE: pto.vsts %[[DIV]]
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

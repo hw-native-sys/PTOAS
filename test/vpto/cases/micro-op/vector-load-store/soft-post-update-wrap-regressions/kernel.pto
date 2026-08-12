@@ -1,0 +1,111 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// case: micro-op/vector-load-store/soft-post-update-wrap-regressions
+// target_pass: vpto-normalize-address-recurrences, vpto-soft-postupdate
+// scenarios: i8-unsigned-source-wrap, i16-signed-source-wrap, i16-shadow-wrap
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @soft_post_update_wrap_regressions_kernel(
+      %input: !pto.ptr<ui8, gm>, %output: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c256 = arith.constant 256 : index
+    %c512 = arith.constant 512 : index
+    %c768 = arith.constant 768 : index
+    %c1024 = arith.constant 1024 : index
+    %c1280 = arith.constant 1280 : index
+    %cm32_i8 = arith.constant -32 : i8
+    %c32_i8 = arith.constant 32 : i8
+    %c32736_i16 = arith.constant 32736 : i16
+    %c32_i16 = arith.constant 32 : i16
+    %c32736_i32 = arith.constant 32736 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c0_i64 = arith.constant 0 : i64
+    %c2_i64 = arith.constant 2 : i64
+    %c4_i64 = arith.constant 4 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c32736_i64 = arith.constant 32736 : i64
+    %c32768_i64 = arith.constant 32768 : i64
+    %c65504_i64 = arith.constant 65504 : i64
+    %c131072_i64 = arith.constant 131072 : i64
+
+    %ub_zero = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_512 = pto.castptr %c32768_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_i32_target = pto.castptr %c32736_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_high = pto.castptr %c65504_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_output = pto.castptr %c131072_i64 : i64 -> !pto.ptr<ui8, ub>
+    %input_768 = pto.addptr %input, %c768 : !pto.ptr<ui8, gm> -> !pto.ptr<ui8, gm>
+    %input_1280 = pto.addptr %input, %c1280 : !pto.ptr<ui8, gm> -> !pto.ptr<ui8, gm>
+
+    pto.mte_gm_ub %input, %ub_zero, %c0_i64, %c128_i64
+      nburst(%c32_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %input_768, %ub_i32_target, %c0_i64, %c128_i64
+      nburst(%c2_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %input_1280, %ub_high, %c0_i64, %c128_i64
+      nburst(%c2_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %output, %ub_output, %c0_i64, %c128_i64
+      nburst(%c32_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%offset = %cm32_i8) -> i8 {
+        %offset_index = arith.index_castui %offset : i8 to index
+        %value = pto.vlds %ub_zero[%offset_index]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %dst = arith.muli %iv, %c256 : index
+        pto.vsts %value, %ub_output[%dst], %mask
+            : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+        %next = arith.addi %offset, %c32_i8 : i8
+        scf.yield %next : i8
+      }
+
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%offset = %c32736_i16) -> i16 {
+        %offset_index = arith.index_cast %offset : i16 to index
+        %value = pto.vlds %ub_512[%offset_index]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %dst_offset = arith.muli %iv, %c256 : index
+        %dst = arith.addi %dst_offset, %c512 : index
+        pto.vsts %value, %ub_output[%dst], %mask
+            : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+        %next = arith.addi %offset, %c32_i16 : i16
+        scf.yield %next : i16
+      }
+
+      scf.for %iv = %c0 to %c1 step %c1
+          iter_args(%offset = %c32736_i32) -> i32 {
+        %offset_index = arith.index_cast %offset : i32 to index
+        %value = pto.vlds %ub_zero[%offset_index]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        pto.vsts %value, %ub_output[%c1024], %mask
+            : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+        %next = arith.addi %offset, %c32_i32 : i32
+        scf.yield %next : i32
+      }
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_output, %output, %c128_i64
+      nburst(%c32_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

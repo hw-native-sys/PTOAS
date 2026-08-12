@@ -6,13 +6,24 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate=false --emit-vpto %s -o - | FileCheck %s --check-prefix=DISABLED
+// RUN: ptoas --help | FileCheck %s --check-prefix=HELP
+// RUN: ptoas --enable-bisheng-soft-postupdate --help > /dev/null
+// RUN: ptoas --enable-bisheng-soft-postupdate=false --help > /dev/null
 
 // The CLI pipeline must normalize the index IV before soft-postupdate. Without
 // that ordering the latter cannot consume the non-i16 address recurrence.
 // CHECK-LABEL: func.func @cli_pipeline_order
 // CHECK: scf.for {{.*}} iter_args({{%.*}} = %arg0)
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+// DISABLED-LABEL: func.func @cli_pipeline_order
+// DISABLED: pto.vlds {{.*}} -> !pto.vreg<256xui8>
+// DISABLED-NOT: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+// HELP: --enable-bisheng-soft-postupdate
+// HELP-SAME: Enable Bisheng's LLVM-level hiipu-vf-soft-postupdate pass for VPTO device compilation; disabled by default because PTOAS performs the optimization before LLVM lowering
+// HELP: --enable-vpto-soft-postupdate
+// HELP-SAME: Enable VPTO soft post-update optimization (enabled by default; pass --enable-vpto-soft-postupdate=false to disable)
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @cli_pipeline_order(

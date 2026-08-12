@@ -50,6 +50,13 @@ static llvm::cl::opt<bool> enableBishengVecMISched(
                    "the scheduler"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> enableBishengSoftPostUpdate(
+    "enable-bisheng-soft-postupdate",
+    llvm::cl::desc("Enable Bisheng's LLVM-level hiipu-vf-soft-postupdate pass "
+                   "for VPTO device compilation; disabled by default because "
+                   "PTOAS performs the optimization before LLVM lowering"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> enableSimtFastMath(
     "simt-fastmath",
     llvm::cl::desc("Enable Bisheng SIMT floating-point contraction and fast "
@@ -561,6 +568,9 @@ static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
     args.push_back("-mllvm");
     args.push_back("--cce-aicore-vec-misched=0");
   }
+  args.push_back("-mllvm");
+  args.push_back(std::string("-hiipu-vf-soft-postupdate=") +
+                 (enableBishengSoftPostUpdate ? "true" : "false"));
   args.push_back("-mllvm");
   args.push_back(std::string("--cce-simt-fpmath-combine=") +
                  (enableSimtFastMath ? "true" : "false"));

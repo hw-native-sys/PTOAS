@@ -476,8 +476,10 @@ static llvm::cl::opt<bool> disableInferLayout(
 
 static llvm::cl::opt<bool> enableSoftPostUpdate(
     "enable-vpto-soft-postupdate",
-    llvm::cl::desc("Enable VPTO soft post-update optimization"),
-    llvm::cl::init(false));
+    llvm::cl::desc("Enable VPTO soft post-update optimization (enabled by "
+                   "default; pass --enable-vpto-soft-postupdate=false to "
+                   "disable)"),
+    llvm::cl::init(true));
 
 static llvm::cl::opt<bool> emitAddPtrTrace(
     "emit-addptr-trace",

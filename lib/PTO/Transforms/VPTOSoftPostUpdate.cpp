@@ -627,7 +627,7 @@ getIterArgIncrement(Value v, scf::ForOp forOp,
       if (!castPreservesLoopDelta(defOp, forOp))
         return {StrideStatus::Failed, nullptr};
       casts.push_back(defOp);
-      current = defOp->getOperand(0);
+      current = getCanonicalAddressValue(defOp->getOperand(0));
       continue;
     }
 

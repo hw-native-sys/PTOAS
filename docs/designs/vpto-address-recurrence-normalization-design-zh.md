@@ -76,7 +76,7 @@ normalizer 只能证明单个 leaf 的 i16 递推等价，不能据此保证整�
 ... -> vpto-normalize-address-recurrences -> vpto-soft-postupdate -> LICM ...
 ```
 
-命令行启用 `--enable-vpto-soft-postupdate` 时，两个 pass 总是按上述顺序运行。测试工具可以单独使用 `-vpto-normalize-address-recurrences` 检查 witness 和 canonical shadow，但这种中间 IR 不是可进入 lowering 的稳定形式。
+VPTO 后端默认启用 `--enable-vpto-soft-postupdate`，两个 pass 总是按上述顺序运行；需要诊断或对照时可以显式传入 `--enable-vpto-soft-postupdate=false` 关闭。测试工具可以单独使用 `-vpto-normalize-address-recurrences` 检查 witness 和 canonical shadow，但这种中间 IR 不是可进入 lowering 的稳定形式。
 
 normalizer 的职责是识别并证明简单地址递推、创建 canonical shadow 和可逆 witness。soft-postupdate 的职责是消费 witness、完成 op 级 accumulator/delta、地址单位、最终 stride 与收益分析，然后恢复普通 operand 并提交成功项。normalizer 证明失败时完全不改写候选；normalizer 成功而 soft-postupdate 失败时由 soft 回滚。
 
@@ -224,3 +224,13 @@ lit 回归覆盖：
 - `pto.vecscope` 外的候选循环保持原样，不产生无法消费的 witness；
 - paired pipeline 结束后不存在 `pto.address_recurrence_witness`、无收益 i16 shadow 或 overflow backedge；
 - CLI pipeline 中 normalization 固定先于 soft-postupdate，并在成功时形成 post base chain。
+
+SIM/runtime 回归使用同一份 `kernel.pto` 同时接受 lit 形态检查和 `test/vpto` 严格输出比较，避免“普通形式执行正确但优化其实未触发”的假阳性：
+
+- `soft-post-update-wrap-regressions` 覆盖 i8 unsigned 源回绕、signed i16 源回绕和仅 i16 shadow 回绕，三者均保持普通 load；
+- `soft-post-update-normalized-recurrence-types` 覆盖 signed i16、signed i32、unsigned i16 递推，以及 `vsstb`、`vstas` 自动改写；
+- `soft-post-update-mixed-commit-rollback` 覆盖同循环中 `vlds` 成功提交而 `sprsti` 因 SignedI8 约束回滚；
+- `soft-post-update-descending-recurrence` 覆盖非零高地址上的 signed 负向 stride；
+- `soft-post-update-nested-shared-chain` 覆盖 load/store 共享 pointer chain、Element/Byte 单位隔离和内外层循环各自递推。
+
+所有 runtime compare 都按完整 4096-byte 输出执行严格逐字节比较；paired pipeline 的 lit 检查同时要求最终不存在 witness。
