@@ -1,3 +1,13 @@
 [
- {"case":"production_8064x7168_composed_tiles","asc_us":null,"vmi_us":null,"ratio_asc_over_vmi":null,"timing_authority":"pending_device_recovery"}
+  {
+    "case": "fp8_rescale_8064x7168_eight_unpack_plus_requant",
+    "cce_us": 45.3,
+    "vmi_us": 126.602,
+    "cce_over_vmi": 0.3578,
+    "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
+    "event_cold_l2_cce_us": 46.808,
+    "event_cold_l2_vmi_us": 176.554,
+    "event_cold_l2_cce_over_vmi": 0.2651,
+    "correctness": "vmi_padded_tail_mismatch"
+  }
 ]
