@@ -1,6 +1,6 @@
 #pragma once
 
-// Only the typed vector forms exercised by reference_device.asc.
+// Only the typed vector forms exercised by the direct CCE control.
 #include "a5_runtime.hpp"
 namespace a5 {
 template <typename T> struct vec;

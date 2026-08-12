@@ -122,7 +122,7 @@ def median_us(fn) -> float:
     return sorted(values)[len(values) // 2]
 
 
-def msprof_us(fn, symbol: str, reps: int = 30) -> float:
+def msprof_us(fn, reps: int = 30) -> float:
     """Return device time using the same FFTS records as do_bench(msprof).
 
     FFTS records every device operation launched by ``fn``.  The ragged VMI
@@ -149,30 +149,9 @@ def msprof_us(fn, symbol: str, reps: int = 30) -> float:
             torch.npu.synchronize(); prof.step()
         root = Path(prof.prof_if.prof_path)
 
-        hashes = {}
-        for path in root.rglob("*hash_dic.slice_*"):
-            if path.name.endswith(".done"):
-                continue
-            for line in path.read_bytes().decode("utf-8", "replace").splitlines():
-                key, sep, value = line.partition(":")
-                if sep:
-                    try:
-                        key = int(key); key -= 1 << 64 if key >= 1 << 63 else 0
-                        hashes[key] = value
-                    except ValueError:
-                        pass
-        names = {}
-        for path in root.rglob("*task_track.slice_*"):
-            if path.name.endswith(".done"):
-                continue
-            data = path.read_bytes()
-            for off in range(0, len(data) - 63, 64):
-                vals = struct.unpack_from("<8q", data, off)
-                names[(vals[3] >> 32) & 0xFFFF] = hashes.get(vals[5], "")
-        # Use AIC when a launch emits both
-        # AIC and AIV records.  Group records by task sequence so an adapter's
-        # multiple launch operations are all retained without double-counting
-        # the two pipes of one operation.
+        # Use AIC when a launch emits both AIC and AIV records. Group records
+        # by task sequence so an adapter's multiple device operations are all
+        # retained without double-counting two pipes of one operation.
         by_seq: dict[int, tuple[list[float], list[float]]] = {}
         for path in root.rglob("ffts_profile*"):
             if path.name.endswith(".done") or not path.stat().st_size:
@@ -181,6 +160,9 @@ def msprof_us(fn, symbol: str, reps: int = 30) -> float:
             for off in range(0, len(data) - 127, 128):
                 vals = struct.unpack_from("<16q", data, off)
                 seq = (vals[0] >> 32) & 0xFFFF
+                # The VMI path includes device-side ragged-tile adapters.  They
+                # are part of the launched workload, so account for every FFTS
+                # kernel record in this isolated profiling run.
                 if vals[1]:
                     rec = by_seq.setdefault(seq, ([], []))
                     rec[1 if vals[2] >= (1 << 31) else 0].append(float(vals[15] - vals[14]))
@@ -190,7 +172,7 @@ def msprof_us(fn, symbol: str, reps: int = 30) -> float:
             os.environ["ASCEND_WORK_PATH"] = old
     durations = [sum(aic) if aic else sum(aiv) for aic, aiv in by_seq.values()]
     if not durations:
-        raise RuntimeError(f"no FFTS records matched {symbol!r}")
+        raise RuntimeError("no FFTS device records were produced")
     return sum(durations) / reps / 1000.0
 
 
@@ -201,10 +183,7 @@ def main() -> None:
         build_cce(); build_vmi(); print("PASS: stream-launchable CCE and VMI libraries built"); return
     torch.npu.set_device(DEVICE)
     cce = ctypes.CDLL(str(build_cce()))
-    try:
-        vmi = ctypes.CDLL(str(build_vmi()))
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError("full production VMI lowering is currently rejected by PTOAS device LLVM; compile-only remains the reproducibility check") from exc
+    vmi = ctypes.CDLL(str(build_vmi()))
     cce_fn = cce.launch_grouped_reference
     if 'vmi' not in locals():
         raise RuntimeError('VMI library unavailable')
@@ -244,8 +223,8 @@ def main() -> None:
     # values are device-only FFTS timings.  This avoids launch/cache-clear
     # artifacts and matches the production profiler policy.
     cce_event, vmi_event = median_us(cce_run), median_us(vmi_run)
-    cce_us = msprof_us(cce_run, "packed_group_convert")
-    vmi_us = msprof_us(vmi_run, "packed_group_convert_vmi")
+    cce_us = msprof_us(cce_run)
+    vmi_us = msprof_us(vmi_run)
     print(f"device={DEVICE} shape={ROWS}x{WIDTH} vmi_padded_rows={PAD_ROWS} grid={GRID} l2_flush_mb={L2_FLUSH_MB} samples={SAMPLES} warmup={WARMUP}")
     print("correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal")
     print(f"event_sanity_CCE_us={cce_event:.3f} event_sanity_VMI_us={vmi_event:.3f}")
