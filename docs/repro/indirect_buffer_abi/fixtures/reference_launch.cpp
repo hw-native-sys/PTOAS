@@ -8,5 +8,5 @@ extern "C" void launch_indirect_reference(void *stream, void *comb, void *initia
       (__gm__ int64_t *)comb, (__gm__ uint16_t *)initial,
       (__gm__ int64_t *)layer_in, (__gm__ int64_t *)layer_out,
       (__gm__ int64_t *)post, (__gm__ int64_t *)pre,
-      (__gm__ int64_t *)residual, 10);
+      (__gm__ int64_t *)residual, 8192);
 }

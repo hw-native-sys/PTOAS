@@ -10,7 +10,7 @@ compile() {
   grep -q 'DESIRED API' "${HERE}/fixtures/desired_pointer_table.py"
   conda run -n cann91_dev python "${HERE}/fixtures/indirect_api_negative.py" | tee "${OUT}/negative_api.txt"
   ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" python3 "${HERE}/benchmark.py" --compile-only
-  echo "PASS: stream-launchable CCE and fixed-argument VMI libraries built; typed pointer-table form is rejected"
+  echo "PASS: stream-launchable direct-pointer CCE and stacked-buffer VMI libraries built; typed pointer-table form is rejected"
 }
 run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then task-submit --device "${ACL_DEVICE_ID}" --run "source '${CANN_ENV}'; source /home/jzhuang/miniconda/bin/activate cann91_dev; PATH=\$CONDA_PREFIX/bin:\$PATH python '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"; else python3 "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
