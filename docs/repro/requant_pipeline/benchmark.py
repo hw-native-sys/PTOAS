@@ -5,7 +5,11 @@ import argparse, ctypes, os, subprocess
 from pathlib import Path
 import torch, torch_npu  # noqa: F401
 HERE=Path(__file__).parent; OUT=HERE/'outputs'; DEV=f"npu:{os.environ.get('ACL_DEVICE_ID','0')}"
-ROWS, WIDTH, WARMUP, SAMPLES, BATCH = 128, 7168, 8, 30, 1
+# Match the production FP8-rescale extent.  The checked-in VMI program is one
+# tile; the host repeats that tile over the complete tensor inside each timed
+# interval, preserving the same operation count on both paths.
+ROWS, WIDTH, TILE_ROWS, WARMUP, SAMPLES, BATCH = 8064, 7168, 128, 8, 30, 1
+CCE_GRID, VMI_GRID = 72, 1
 L2_FLUSH_MB = 256
 def cmd(a, **kw): subprocess.run(a, check=True, **kw)
 def bisheng(): return os.environ.get('BISHENG', f"{os.environ['ASCEND_HOME_PATH']}/bin/bisheng")
@@ -17,7 +21,7 @@ def build_cce():
  cmd([bisheng(),'-xcce','-Xhost-start','-Xhost-end','-fPIC','-O2','-std=c++17','--cce-aicore-arch=dav-c310','-c',str(HERE/'fixtures/reference_launch.cpp'),'-o',str(h)]); link([d,h],so); return so
 def build_vmi():
  OUT.mkdir(exist_ok=True); env=os.environ.copy(); env.pop('PYTHONPATH',None); root=os.environ['ASCEND_HOME_PATH']; ptoas=os.environ.get('PTOAS_BIN') or subprocess.check_output(['conda','run','-n','cann91_dev','which','ptoas'],text=True).strip().splitlines()[-1]; o,h,so=OUT/'vmi.o',OUT/'vmi_host.o',OUT/'libvmi.so'
- cmd([ptoas,'--pto-arch=a5','--pto-backend=vpto','--pto-level=level3',str(HERE/'fixtures/requant_vmi.pto'),'-o',str(o)],env=env); s=OUT/'vmi_host.cpp'; s.write_text('#include <stdint.h>\nextern "C" __global__ [aicore] void requant_body(__gm__ uint8_t*,__gm__ float*,__gm__ uint8_t*,__gm__ float*);\nextern "C" void launch_requant_vmi(void*st,void*a,void*b,void*c,void*d){requant_body<<<72,nullptr,st>>>((__gm__ uint8_t*)a,(__gm__ float*)b,(__gm__ uint8_t*)c,(__gm__ float*)d);}\n'); cmd([bisheng(),'-xcce','-Xhost-start','-Xhost-end','-fPIC','-O2','-std=c++17','--cce-aicore-arch=dav-c310','-c',str(s),'-o',str(h)]); link([o,h],so); return so
+ cmd([ptoas,'--pto-arch=a5','--pto-backend=vpto','--pto-level=level3',str(HERE/'fixtures/requant_vmi.pto'),'-o',str(o)],env=env); s=OUT/'vmi_host.cpp'; s.write_text('#include <stdint.h>\nextern "C" __global__ [aicore] void requant_body(__gm__ uint8_t*,__gm__ float*,__gm__ uint8_t*,__gm__ float*);\nextern "C" void launch_requant_vmi(void*st,void*a,void*b,void*c,void*d){requant_body<<<1,nullptr,st>>>((__gm__ uint8_t*)a,(__gm__ float*)b,(__gm__ uint8_t*)c,(__gm__ float*)d);}\n'); cmd([bisheng(),'-xcce','-Xhost-start','-Xhost-end','-fPIC','-O2','-std=c++17','--cce-aicore-arch=dav-c310','-c',str(s),'-o',str(h)]); link([o,h],so); return so
 def stream():
  p=torch.npu.current_stream()._as_parameter_; return p.value if hasattr(p,'value') else int(p)
 def median(fn):
@@ -40,6 +44,10 @@ def main():
  if a.cce_only: print(f'device={DEV} shape={ROWS}x{WIDTH} CCE_us={cu:.3f} correctness=PASS cce_host_golden=PASS'); return
  v=ctypes.CDLL(str(build_vmi())); vf=v.launch_requant_vmi; vf.argtypes=[ctypes.c_void_p]*5
  def vr():
-  vf(st(),ctypes.c_void_p(src.data_ptr()),ctypes.c_void_p(ins.data_ptr()),ctypes.c_void_p(vd.data_ptr()),ctypes.c_void_p(vs.data_ptr()))
- vr(); torch.npu.synchronize(); vu=median(vr); print(f'device={DEV} shape={ROWS}x{WIDTH} batch={BATCH} samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal'); print(f'CCE_us={cu:.3f} VMI_us={vu:.3f} CCE_over_VMI={cu/vu:.4f}')
+  for row in range(0, ROWS, TILE_ROWS):
+   vf(st(),ctypes.c_void_p(src[row:row+TILE_ROWS].data_ptr()),
+      ctypes.c_void_p(ins[row:row+TILE_ROWS].data_ptr()),
+      ctypes.c_void_p(vd[row:row+TILE_ROWS].data_ptr()),
+      ctypes.c_void_p(vs[row:row+TILE_ROWS].data_ptr()))
+ vr(); torch.npu.synchronize(); vu=median(vr); print(f'device={DEV} shape={ROWS}x{WIDTH} tile_rows={TILE_ROWS} tiles={ROWS//TILE_ROWS} cce_grid={CCE_GRID} vmi_grid={VMI_GRID} batch={BATCH} samples={SAMPLES} warmup={WARMUP}'); print('correctness=PASS cce_host_golden=PASS vmi_host_golden=PASS output_extent=equal'); print(f'CCE_us={cu:.3f} VMI_us={vu:.3f} CCE_over_VMI={cu/vu:.4f}')
 if __name__=='__main__': main()

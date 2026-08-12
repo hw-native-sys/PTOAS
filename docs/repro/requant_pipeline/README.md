@@ -1,7 +1,8 @@
 # Dequantize/reduce/requantize needs a fused lowering
 
-> **Scope:** this package retains the production-shaped `128x7168` schedule,
-> 72-core launch grid, and double-buffered CCE/VMI device bodies.
+> **Scope:** this package retains the production-shaped `8064x7168` extent and
+> 72-core CCE schedule.  The checked-in VMI body is one 128-row low-level tile;
+> the standalone host launcher composes 63 such tiles over the same extent.
 
 This standalone A5 package contains complete GM-to-UB-to-GM kernels for an FP8
 requantization chain: load FP8 and grouped input scales, widen and dequantize,
@@ -17,11 +18,11 @@ flush and synchronization policy.
 
 | Verified device-0 event median | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| production-shaped FP8 requant (`128x7168`, 72 cores) | 4.974 | 8.251 | 0.6028 |
+| production-shaped FP8 requant (`8064x7168`, CCE 72 cores; VMI 63 tiles) | pending device recovery | pending device recovery | pending |
 
-The measured ratio is in the same range as the private production regression;
-the CCE body is the reachable fast control, while the equivalent VMI body is
-slower under the same device-only timing method.
+The ratio is intentionally left pending until the large composed launch is
+captured on-device.  The CCE body is the reachable fast control; the VMI value
+must include all 63 tile launches before it can be compared fairly.
 
 The requested lowering must first compile this f8-to-f32 broadcast/reduce/f8
 sequence, then keep input-scale broadcast and output amax reduction in
