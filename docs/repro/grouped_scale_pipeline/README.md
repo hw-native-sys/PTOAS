@@ -21,8 +21,8 @@ FFTS timing; the latter is the primary comparison.
 
 | Verified device-0 measurement | CCE us | VMI us | CCE/VMI |
 |---|---:|---:|---:|
-| Cold-L2 event median | 184.489 | 495.097 | 0.3726 |
-| Device-only FFTS | 134.871 | 492.160 | 0.2740 |
+| Cold-L2 event median | 183.656 | 494.581 | 0.3713 |
+| Device-only FFTS | 134.517 | 492.079 | 0.2734 |
 
 Absolute values depend on device load; the live harness is the source of truth.
 The full VMI body retains reduction, broadcast, conversion, persistent tiling,

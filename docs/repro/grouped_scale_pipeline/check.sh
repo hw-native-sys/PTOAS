@@ -1,28 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="/home/jzhuang/.conda/envs/cann91_dev/bin/python"
-ROOT="$(cd "${HERE}/../../.." && pwd)"
 MODE="${1:-all}"
 OUT="${HERE}/outputs"
 mkdir -p "${OUT}"
-CANN_ENV="${CANN_ENV:-/home/jzhuang/cann_installed/9.1.0-beta.3/cann-9.1.0-beta.3/set_env.sh}"
-set +u; source "${CANN_ENV}"; set -u
-PTOAS_BIN="${PTOAS_BIN:-$(conda run -n cann91_dev which ptoas | tail -1)}"
+CONDA_ENV="${CONDA_ENV:-cann91_dev}"
+if [[ -n "${CANN_ENV:-}" ]]; then
+  set +u
+  source "${CANN_ENV}"
+  set -u
+elif [[ -z "${ASCEND_HOME_PATH:-}" ]]; then
+  echo "set CANN_ENV to the CANN 9.1.0-beta.3 set_env.sh (or source it first)" >&2
+  exit 2
+fi
+if [[ "${CONDA_DEFAULT_ENV:-}" != "${CONDA_ENV}" ]] && command -v conda >/dev/null 2>&1; then
+  eval "$(conda shell.bash hook)"
+  conda activate "${CONDA_ENV}"
+fi
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
+PTOAS_BIN="${PTOAS_BIN:-$(command -v ptoas)}"
+export PTOAS_BIN
 compile() {
   # ``production_group_vmi.pto`` is executable PTODSL, not textual MLIR.
   # benchmark.py lowers it with the pinned PTODSL compiler, then invokes PTOAS
   # on the emitted MLIR.  Calling PTOAS on the Python source made this check
   # fail with ``custom op 'from' is unknown``.
   env -u PYTHONPATH ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" \
-    PATH="${CONDA_PREFIX:-/home/jzhuang/.conda/envs/cann91_dev}/bin:$PATH" \
     "${PYTHON_BIN}" "${HERE}/benchmark.py" --compile-only
   grep -q 'pto.vcmax' "${OUT}/grouped_vmi.mlir"
   echo "PASS: stock PTODSL/PTOAS and stream-launchable direct CCE kernels compile"
 }
 run() {
   if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then
-    task-submit --device "${ACL_DEVICE_ID}" --run "source '${CANN_ENV}'; source /home/jzhuang/miniconda/bin/activate cann91_dev; PATH=\$CONDA_PREFIX/bin:\$PATH python '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"
+    task-submit --device "${ACL_DEVICE_ID}" --run "ACL_DEVICE_ID=${ACL_DEVICE_ID} '${PYTHON_BIN}' '${HERE}/benchmark.py'" | tee "${OUT}/results.txt"
   else
     python3 "${HERE}/report.py" | tee "${OUT}/results.txt"
   fi

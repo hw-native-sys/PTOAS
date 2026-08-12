@@ -1,12 +1,12 @@
 [
   {
     "case": "packed_bf16_8001x16384_l2_flushed",
-    "cce_us": 134.871,
-    "vmi_us": 492.16,
-    "cce_over_vmi": 0.274,
+    "cce_us": 134.517,
+    "vmi_us": 492.079,
+    "cce_over_vmi": 0.2734,
     "timing_authority": "device_0_ffts_aic_preferred_30_repetitions",
-    "event_cold_l2_cce_us": 184.489,
-    "event_cold_l2_vmi_us": 495.097,
-    "event_cold_l2_cce_over_vmi": 0.3726
+    "event_cold_l2_cce_us": 183.656,
+    "event_cold_l2_vmi_us": 494.581,
+    "event_cold_l2_cce_over_vmi": 0.3713
   }
 ]

@@ -7,6 +7,7 @@ import ctypes
 import importlib.util
 import struct
 import tempfile
+import shutil
 from importlib.machinery import SourceFileLoader
 import os
 import subprocess
@@ -70,7 +71,11 @@ def build_vmi() -> Path:
     OUT.mkdir(exist_ok=True)
     env = os.environ.copy(); env.pop("PYTHONPATH", None)
     import sys
-    os.environ.setdefault("PTOAS_BIN", "/home/jzhuang/.conda/envs/cann91_dev/bin/ptoas")
+    if "PTOAS_BIN" not in os.environ:
+        candidate = shutil.which("ptoas")
+        if candidate is None:
+            raise RuntimeError("ptoas is not on PATH; set PTOAS_BIN to the pinned PTOAS executable")
+        os.environ["PTOAS_BIN"] = candidate
     root = HERE.parent.parent.parent
     sys.path.insert(0, str(root / "ptodsl"))
     import importlib
@@ -102,8 +107,7 @@ extern "C" void launch_grouped_vmi(void *stream, void *x, void *y, void *s) {
 
 
 def stream_ptr() -> int:
-    handle = torch.npu.current_stream()._as_parameter_  # noqa: SLF001
-    return handle.value if hasattr(handle, "value") else int(handle)
+    return int(torch_npu._C._npu_getCurrentRawStream(torch.npu.current_device()))
 
 
 def median_us(fn) -> float:
