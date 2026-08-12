@@ -3,21 +3,15 @@
 // pto.vsstb whose repeat_stride is an i16 iter_arg with a NON-constant
 // increment (%v = index_castui %iv, different every iteration).
 //
-// stride_new = (E/W)*delta(base) + delta(repeat_stride).  delta(base) is 0 and
-// delta(repeat_stride) is never rescaled, so the increment stays symbolic and
-// the rewrite is legal even though nothing here is a compile-time constant.
-// The increment is defined *after* the vsstb, so its def-chain is cloned ahead
-// of the op.
-//
-// Address check -- iv_n = 64n, rs_0 = 0, rs_{n+1} = rs_n + iv_n:
-//   original  32*rs_n  : 0, 0, 2048, 6144, ...
-//   post-update ptr_n  : 0, 0+32*0, 0+32*64, 2048+32*128, ...  (identical)
+// The repeat_stride increment changes every iteration, so address
+// normalization cannot emit the fixed-step i16 recurrence contract. Soft
+// post-update must not bypass that rejection by re-analyzing the raw i16
+// accumulator. The independent index-domain vlds remains eligible.
 
 // CHECK-LABEL: func.func @accum_vsstb_nonconstant_rs
 // CHECK: scf.for
-// The cloned increment precedes the vsstb and feeds its repeat_stride slot.
-// CHECK:   %[[INC:.*]] = arith.index_castui %{{.*}} : index to i16
-// CHECK:   pto.vsstb {{.*}}, %c2_i16, %[[INC]], {{.*}} -> !pto.ptr<f32,
+// CHECK:   pto.vlds {{.*}} -> !pto.vreg<64xf32>, !pto.ptr<f32,
+// CHECK:   pto.vsstb {{.*}} : {{.*}}!pto.mask<b32>{{ *$}}
 // CHECK:   scf.yield
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {

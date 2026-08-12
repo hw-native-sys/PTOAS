@@ -36,6 +36,8 @@ def PTO_B32MaskTypeConstraint : Type<
   "PTO low-level b32 mask type">;
 def PTO_AlignTypeConstraint : Type<CPred<"::llvm::isa<::mlir::pto::AlignType>($_self)">,
                                     "PTO low-level align type">;
+def PTO_AddressRecurrenceValueType : AnyTypeOf<[Index, I16, I32],
+                                                  "index, i16, or i32">;
 
 def PTO_BufferType : Type<
   CPred<"::llvm::isa<::mlir::pto::PtrType>($_self)">,
@@ -367,6 +369,30 @@ def TileBufAddrOp : PTO_Op<"tile_buf_addr", [Pure]> {
 
   let assemblyFormat = [{
     $src attr-dict `:` qualified(type($src)) `->` type($dst)
+  }];
+}
+
+def AddressRecurrenceWitnessOp : PTO_Op<"address_recurrence_witness", [
+    Pure,
+    SameOperandsAndResultType
+  ]> {
+  let summary = "Carry a reversible canonical address recurrence witness";
+  let description = [{
+    Internal pass-to-pass marker pairing an original loop-varying address
+    value with a proven-equivalent canonical value. The soft post-update pass
+    consumes the canonical operand while analyzing a candidate, then restores
+    the original operand before committing successful post-update rewrites.
+    This operation must not survive that pass.
+  }];
+
+  let arguments = (ins
+    PTO_AddressRecurrenceValueType:$original,
+    PTO_AddressRecurrenceValueType:$canonical
+  );
+  let results = (outs PTO_AddressRecurrenceValueType:$result);
+
+  let assemblyFormat = [{
+    $original `,` $canonical attr-dict `:` type($result)
   }];
 }
 

@@ -9,8 +9,15 @@
 // RUN: pto-test-opt %s -vpto-soft-postupdate | FileCheck %s
 
 // A loop-varying integer-to-index address is accepted only when its source is
-// the canonical i16 address width and its complete recurrence cannot wrap.
+// a canonical i16 recurrence whose nsw/nuw flag certifies the address domain.
 // CHECK-LABEL: func.func @canonical_i16_no_wrap
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+
+// The consumer does not repeat trip-count analysis. A dynamic-trip recurrence
+// carrying the same nsw IR contract is accepted when soft-postupdate is run on
+// already-canonical input.
+// CHECK-LABEL: func.func @canonical_dynamic_trip_certificate
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 
@@ -51,10 +58,29 @@ module {
     pto.vecscope {
       scf.for %iv = %c0 to %c2 step %c1
           iter_args(%addr16 = %c0_i16) -> i16 {
-        %offset = arith.index_castui %addr16 : i16 to index
+        %offset = arith.index_cast %addr16 : i16 to index
         %value = pto.vlds %base[%offset]
           : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
-        %next = arith.addi %addr16, %c32_i16 : i16
+        %next = arith.addi %addr16, %c32_i16 overflow<nsw> : i16
+        scf.yield %next : i16
+      }
+    }
+    return
+  }
+
+  func.func @canonical_dynamic_trip_certificate(
+      %base: !pto.ptr<ui8, ub>, %upper: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    pto.vecscope {
+      scf.for %iv = %c0 to %upper step %c1
+          iter_args(%addr16 = %c0_i16) -> i16 {
+        %offset = arith.index_cast %addr16 : i16 to index
+        %value = pto.vlds %base[%offset]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %next = arith.addi %addr16, %c1_i16 overflow<nsw> : i16
         scf.yield %next : i16
       }
     }

@@ -1,0 +1,201 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-normalize-address-recurrences | FileCheck %s
+// RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s --check-prefix=ROLLBACK
+
+// CHECK-LABEL: func.func @i16_final_backedge_wrap
+// CHECK-NOT: arith.extsi
+// CHECK: pto.sprsts "AR", {{%.*}}[{{%.*}}]
+
+// CHECK-LABEL: func.func @source_i32_wrap
+// CHECK-NOT: arith.extsi
+// CHECK: pto.sprsts "AR", {{%.*}}[{{%.*}}]
+
+// CHECK-LABEL: func.func @complex_backedge
+// CHECK-NOT: arith.extsi
+// CHECK: pto.sprsts "AR", {{%.*}}[{{%.*}}]
+
+// CHECK-LABEL: func.func @other_user
+// CHECK-NOT: arith.index_cast %{{.*}} : i16 to index
+// CHECK: pto.vlds {{%.*}}[{{%.*}}]
+
+// CHECK-LABEL: func.func @signed_i8_constraint
+// CHECK: arith.index_cast %{{.*}} : i16 to index
+// CHECK: pto.address_recurrence_witness
+// CHECK: pto.sprsti "AR", {{%.*}}[%c0_i32]
+// CHECK: overflow<nsw>
+// ROLLBACK-LABEL: func.func @signed_i8_constraint
+// ROLLBACK-NOT: pto.address_recurrence_witness
+// ROLLBACK-NOT: overflow<nsw>
+// ROLLBACK-NOT: i16
+// ROLLBACK: scf.for %{{.*}} = %c0 to %c256 step %c128 {
+// ROLLBACK: pto.addptr %{{.*}}, %{{.*}}
+// ROLLBACK: pto.sprsti "AR", %{{.*}}[%c0_i32]
+
+// CHECK-LABEL: func.func @constant_constraint_dynamic_advance
+// CHECK: arith.index_cast %{{.*}} : i16 to index
+// CHECK: pto.pldi {{%.*}}[%c0], "NORM"
+// CHECK: pto.address_recurrence_witness
+// CHECK: overflow<nsw>
+// ROLLBACK-LABEL: func.func @constant_constraint_dynamic_advance
+// ROLLBACK-NOT: pto.address_recurrence_witness
+// ROLLBACK-NOT: overflow<nsw>
+// ROLLBACK-NOT: i16
+// ROLLBACK: scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %c1)
+// ROLLBACK: pto.pldi %{{.*}}[%c0], "NORM"
+// ROLLBACK: pto.addptr %{{.*}}, %{{.*}}
+
+// One loop may commit a dynamic vlds candidate and roll back a SignedI8
+// sprsti candidate that shares the same proven IV. The failed op must use the
+// original IV, and no witness or shadow recurrence may survive.
+// CHECK-LABEL: func.func @mixed_commit_and_rollback
+// CHECK: pto.address_recurrence_witness
+// CHECK: pto.vlds
+// CHECK: pto.sprsti
+// CHECK: overflow<nsw>
+// ROLLBACK-LABEL: func.func @mixed_commit_and_rollback
+// ROLLBACK-NOT: pto.address_recurrence_witness
+// ROLLBACK-NOT: overflow<nsw>
+// ROLLBACK-NOT: i16
+// ROLLBACK: pto.vlds {{.*}} -> !pto.vreg<64xui32>, !pto.ptr<ui32, ub>
+// ROLLBACK: pto.addptr %{{.*}}, %{{.*}}
+// ROLLBACK: pto.sprsti "AR", %{{.*}}[%c0_i32]
+
+// CHECK-LABEL: func.func @dynamic_trip_count
+// CHECK-NOT: arith.index_cast %{{.*}} : i16 to index
+// CHECK: pto.vlds {{%.*}}[{{%.*}}]
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @i16_final_backedge_wrap(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c32760_i32 = arith.constant 32760 : i32
+    %c4_i32 = arith.constant 4 : i32
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%offset = %c32760_i32) -> i32 {
+        pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+        %next = arith.addi %offset, %c4_i32 : i32
+        scf.yield %next : i32
+      }
+    }
+    return
+  }
+
+  func.func @source_i32_wrap(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %cmax_i32 = arith.constant 2147483647 : i32
+    %c1_i32 = arith.constant 1 : i32
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%offset = %cmax_i32) -> i32 {
+        pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+        %next = arith.addi %offset, %c1_i32 : i32
+        scf.yield %next : i32
+      }
+    }
+    return
+  }
+
+  func.func @complex_backedge(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c2_i32 = arith.constant 2 : i32
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%offset = %c0_i32) -> i32 {
+        pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+        %next = arith.muli %offset, %c2_i32 : i32
+        scf.yield %next : i32
+      }
+    }
+    return
+  }
+
+  func.func @other_user(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1 {
+        %value = pto.vlds %base[%iv]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %other = arith.cmpi eq, %iv, %c0 : index
+      }
+    }
+    return
+  }
+
+  func.func @signed_i8_constraint(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0_i32 = arith.constant 0 : i32
+    pto.vecscope {
+      scf.for %iv = %c0 to %c256 step %c128 {
+        %at = pto.addptr %base, %iv
+            : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+        pto.sprsti "AR", %at[%c0_i32] : !pto.ptr<ui32, ub>, i32
+      }
+    }
+    return
+  }
+
+  func.func @constant_constraint_dynamic_advance(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c3 = arith.constant 3 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c3 step %c1
+          iter_args(%ptr = %base, %advance = %c1) -> (!pto.ptr<ui8, ub>, index) {
+        %mask = pto.pldi %ptr[%c0], "NORM"
+            : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
+        %next_ptr = pto.addptr %ptr, %advance
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %next_advance = arith.addi %advance, %c1 : index
+        scf.yield %next_ptr, %next_advance : !pto.ptr<ui8, ub>, index
+      }
+    }
+    return
+  }
+
+  func.func @mixed_commit_and_rollback(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0_i32 = arith.constant 0 : i32
+    pto.vecscope {
+      scf.for %iv = %c0 to %c256 step %c128 {
+        %value = pto.vlds %base[%iv]
+            : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+        %at = pto.addptr %base, %iv
+            : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+        pto.sprsti "AR", %at[%c0_i32] : !pto.ptr<ui32, ub>, i32
+      }
+    }
+    return
+  }
+
+  func.func @dynamic_trip_count(%base: !pto.ptr<ui8, ub>, %upper: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %upper step %c1 {
+        %value = pto.vlds %base[%iv]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      }
+    }
+    return
+  }
+}
