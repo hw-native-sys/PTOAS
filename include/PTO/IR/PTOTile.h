@@ -12,8 +12,19 @@
 #define MLIR_DIALECT_PTO_IR_PTOTILE_H_
 
 #include "PTO/IR/PTOCommon.h"
+#include "PTO/IR/PTOTileMemory.h"
+#include "PTO/IR/PTOTileCube.h"
+#include "PTO/IR/PTOTilePipeline.h"
+#include "PTO/IR/PTOTileVectorData.h"
+#include "PTO/IR/PTOTileVectorElementwise.h"
+#include "PTO/IR/PTOTileVectorReduction.h"
 
 #define GET_OP_CLASSES
-#include "PTO/IR/PTOTileOps.h.inc"
+#include "PTO/IR/PTOTileMemoryOps.h.inc"
+#include "PTO/IR/PTOTileCubeOps.h.inc"
+#include "PTO/IR/PTOTilePipelineOps.h.inc"
+#include "PTO/IR/PTOTileVectorDataOps.h.inc"
+#include "PTO/IR/PTOTileVectorElementwiseOps.h.inc"
+#include "PTO/IR/PTOTileVectorReductionOps.h.inc"
 
 #endif // MLIR_DIALECT_PTO_IR_PTOTILE_H_

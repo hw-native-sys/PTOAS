@@ -12,9 +12,18 @@
 #define MLIR_DIALECT_PTO_IR_VPTO_H_
 
 #include "PTO/IR/PTOCommon.h"
+#include "PTO/IR/VPTOControl.h"
+#include "PTO/IR/VPTOSimt.h"
+#include "PTO/IR/VPTOMte.h"
+#include "PTO/IR/VPTOCube.h"
+#include "PTO/IR/VPTOVector.h"
 
 #define GET_OP_CLASSES
-#include "PTO/IR/VPTOOps.h.inc"
+#include "PTO/IR/VPTOControlOps.h.inc"
+#include "PTO/IR/VPTOSimtOps.h.inc"
+#include "PTO/IR/VPTOMteOps.h.inc"
+#include "PTO/IR/VPTOCubeOps.h.inc"
+#include "PTO/IR/VPTOVectorOps.h.inc"
 
 #define GET_OP_CLASSES
 #include "PTO/IR/VPTOUbOps.h.inc"

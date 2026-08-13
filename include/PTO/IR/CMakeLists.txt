@@ -24,11 +24,23 @@ mlir_tablegen(PTOBaseOps.h.inc -gen-op-decls)
 set(LLVM_TARGET_DEFINITIONS PTOTileOps.td)
 mlir_tablegen(PTOTileOps.h.inc -gen-op-decls)
 
+foreach(tile_family
+    PTOTileMemoryOps PTOTileCubeOps PTOTilePipelineOps
+    PTOTileVectorDataOps PTOTileVectorElementwiseOps PTOTileVectorReductionOps)
+  set(LLVM_TARGET_DEFINITIONS ${tile_family}.td)
+  mlir_tablegen(${tile_family}.h.inc -gen-op-decls)
+endforeach()
+
 set(LLVM_TARGET_DEFINITIONS VMIOps.td)
 mlir_tablegen(VMIOps.h.inc -gen-op-decls)
 
 set(LLVM_TARGET_DEFINITIONS VPTOOps.td)
 mlir_tablegen(VPTOOps.h.inc -gen-op-decls)
+
+foreach(vpto_family VPTOControlOps VPTOSimtOps VPTOMteOps VPTOCubeOps VPTOVectorOps)
+  set(LLVM_TARGET_DEFINITIONS ${vpto_family}.td)
+  mlir_tablegen(${vpto_family}.h.inc -gen-op-decls)
+endforeach()
 
 set(LLVM_TARGET_DEFINITIONS VPTOUbOps.td)
 mlir_tablegen(VPTOUbOps.h.inc -gen-op-decls)

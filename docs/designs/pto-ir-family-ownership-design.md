@@ -13,10 +13,13 @@
 This document defines the intended ownership boundaries for PTO IR, generated
 operation declarations and definitions, handwritten semantics, transforms, and
 backends. The first implementation step is now implemented: family ODS files
-and generated public declarations exist for PTO Base, PTO Tile, VMI, and VPTO,
-while `PTO.h` remains the compatibility aggregate. `PTOCommon.h` owns
-declarations shared by those families. Later family migrations follow this
-contract without changing IR syntax or operation semantics.
+and generated public declarations exist for PTO Base, all PTO Tile semantic
+families, VMI, and all VPTO semantic families, while `PTO.h` remains the
+compatibility aggregate. `PTOCommon.h` and `VPTOOpCommon.td` own declarations
+shared by those families. Generated definitions, registration, and handwritten
+semantics remain historical aggregates for the following steps. Later family
+migrations follow this contract without changing IR syntax or operation
+semantics.
 
 The primary goal is to give each declaration and implementation one natural
 owner. Compile-time and memory measurements may validate that the boundaries
@@ -241,9 +244,10 @@ with artificial interfaces.
 
 Follow-up changes should proceed in dependency order:
 
-1. split family ODS and generated public declarations; **implemented by this
-   PR**. Generated definitions, registration, and handwritten semantics remain
-   in their historical aggregate owners for the following steps.
+1. split family ODS and generated public declarations for every semantic
+   family; **implemented by this PR**. Generated definitions, registration,
+   and handwritten semantics remain in their historical aggregate owners for
+   the following steps.
 2. align generated definitions and registration with those families;
 3. move handwritten type, attribute, and operation semantics to their owners;
 4. separate VMI public and internal IR ownership;
