@@ -55,9 +55,10 @@ static std::optional<int64_t> addPtrUnitBytes(Value base) {
   return pto::getPostUpdateBaseUnitBytes(base);
 }
 
-static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
-                                              int64_t elemBytes) {
-  return pto::getPostUpdateAddressUnitBytes(op, unit, elemBytes);
+static std::optional<int64_t>
+strideUnitBytes(Operation *op, const PostUpdateOpInfo &info,
+                int64_t elemBytes) {
+  return pto::getPostUpdateAddressUnitBytes(op, info, elemBytes);
 }
 
 // Extract base and stride operand from a candidate op using table info.
@@ -2013,7 +2014,7 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     auto elemBytes = addPtrUnitBytes(base);
     if (!elemBytes)
       continue;
-    auto unitBytes = strideUnitBytes(&op, info->addressUnit, *elemBytes);
+    auto unitBytes = strideUnitBytes(&op, *info, *elemBytes);
     if (!unitBytes)
       continue;
     NormalizedBase normalized =
@@ -2197,7 +2198,7 @@ private:
       std::optional<int64_t> elemBytes = addPtrUnitBytes(base);
       if (!elemBytes)
         continue;
-      auto unitBytes = strideUnitBytes(&op, info->addressUnit, *elemBytes);
+      auto unitBytes = strideUnitBytes(&op, *info, *elemBytes);
       if (!unitBytes)
         continue;
 
@@ -2224,7 +2225,10 @@ private:
         // original base recurrence; the operand itself must be preserved.
         StrideExprRef baseAdvance =
             scaleBaseDelta(deltaBase, *elemBytes, *unitBytes);
-        StrideExprRef explicitAdvance = makeLeaf(strideOperand);
+        auto explicitConstant = getConstantIntValue(strideOperand);
+        StrideExprRef explicitAdvance =
+            explicitConstant ? makeConst(*explicitConstant)
+                             : makeLeaf(strideOperand);
         if (!baseAdvance ||
             !equalAddressAdvanceExprs(baseAdvance, explicitAdvance))
           continue;
@@ -2283,7 +2287,6 @@ private:
           info->addressUnit, *elemBytes, *unitBytes, forOp, builder);
       if (!initPtr)
         continue;
-
       rewrites.push_back(
           {&op, base, strideOperand, strideNew, initPtr, *unitBytes});
     }

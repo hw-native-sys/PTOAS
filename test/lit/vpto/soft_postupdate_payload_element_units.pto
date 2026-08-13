@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-soft-postupdate | FileCheck %s
+
+// Element address units must match the element type used by LLVM lowering,
+// even when that type differs from the base pointer element type. A 128xi16
+// base advance is a 256-byte advance, hence 256 payload elements for ui8.
+
+// CHECK-LABEL: func.func @vlds_result_element_unit
+// CHECK: [[C256:%[a-zA-Z0-9_]+]] = arith.constant 256 : index
+// CHECK: pto.vlds {{.*}}[[[C256]]] {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui16, ub>
+
+// CHECK-LABEL: func.func @vldsx2_result_element_unit
+// CHECK: [[C256:%[a-zA-Z0-9_]+]] = arith.constant 256 : index
+// CHECK: pto.vldsx2 {{.*}}[[[C256]]], "DINTLV_B8" {{.*}} -> !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.ptr<ui16, ub>
+
+// CHECK-LABEL: func.func @vldus_result_element_unit
+// CHECK: [[C256:%[a-zA-Z0-9_]+]] = arith.constant 256 : index
+// CHECK: pto.vldus {{.*}}, {{.*}}, [[C256]] {{.*}} -> !pto.vreg<256xui8>, !pto.align, !pto.ptr<ui16, ub>
+
+// CHECK-LABEL: func.func @vstus_value_element_unit
+// CHECK: pto.vstus {{.*}}, %c256_i32, {{.*}} -> !pto.align, !pto.ptr<ui16, ub>
+
+// An inner-loop chain is initialized from the outer iteration's current row;
+// that dependency is valid because inner init args are re-evaluated per row.
+// CHECK-LABEL: func.func @nested_outer_dependent_base
+// CHECK: scf.for
+// CHECK:   scf.for
+// CHECK:     pto.vldsx2 {{.*}} -> !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.ptr<ui16, ub>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vlds_result_element_unit(%base: !pto.ptr<ui16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c384 = arith.constant 384 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c384 step %c128 {
+        %ptr = pto.addptr %base, %iv
+            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+        %value = pto.vlds %ptr[%c0]
+            : !pto.ptr<ui16, ub> -> !pto.vreg<256xui8>
+      }
+    }
+    return
+  }
+
+  func.func @vldsx2_result_element_unit(%base: !pto.ptr<ui16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c384 = arith.constant 384 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c384 step %c128 {
+        %ptr = pto.addptr %base, %iv
+            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+        %low, %high = pto.vldsx2 %ptr[%c0], "DINTLV_B8"
+            : !pto.ptr<ui16, ub>, index
+                -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
+      }
+    }
+    return
+  }
+
+  func.func @vldus_result_element_unit(%base: !pto.ptr<ui16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c384 = arith.constant 384 : index
+    pto.vecscope {
+      %align = pto.vldas %base : !pto.ptr<ui16, ub> -> !pto.align
+      scf.for %iv = %c0 to %c384 step %c128
+          iter_args(%state = %align) -> !pto.align {
+        %ptr = pto.addptr %base, %iv
+            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+        %value, %next_align = pto.vldus %ptr, %state
+            : !pto.ptr<ui16, ub>, !pto.align
+                -> !pto.vreg<256xui8>, !pto.align
+        scf.yield %next_align : !pto.align
+      }
+    }
+    return
+  }
+
+  func.func @vstus_value_element_unit(
+      %base: !pto.ptr<ui16, ub>, %value: !pto.vreg<256xui8>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c384 = arith.constant 384 : index
+    %c256_i32 = arith.constant 256 : i32
+    pto.vecscope {
+      %align = pto.init_align : !pto.align
+      scf.for %iv = %c0 to %c384 step %c128
+          iter_args(%ptr = %base, %state = %align)
+          -> (!pto.ptr<ui16, ub>, !pto.align) {
+        %next_align = pto.vstus %state, %c256_i32, %value, %ptr
+            : !pto.align, i32, !pto.vreg<256xui8>, !pto.ptr<ui16, ub>
+                -> !pto.align
+        %next_ptr = pto.addptr %ptr, %c128
+            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+        scf.yield %next_ptr, %next_align
+            : !pto.ptr<ui16, ub>, !pto.align
+      }
+    }
+    return
+  }
+
+  func.func @nested_outer_dependent_base(%base: !pto.ptr<ui16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    pto.vecscope {
+      scf.for %outer = %c0 to %c256 step %c128 {
+        %row = pto.addptr %base, %outer
+            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+        scf.for %inner = %c0 to %c256 step %c128 {
+          %ptr = pto.addptr %row, %inner
+              : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+          %low, %high = pto.vldsx2 %ptr[%c0], "DINTLV_B8"
+              : !pto.ptr<ui16, ub>, index
+                  -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
+        }
+      }
+    }
+    return
+  }
+
+}

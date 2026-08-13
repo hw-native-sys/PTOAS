@@ -8,6 +8,7 @@
 
 #include "PTO/Transforms/VPTOPostUpdateUtils.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
@@ -25,8 +26,24 @@ const PostUpdateOpTable &getPostUpdateOpTable() {
   static const PostUpdateOpTable table = [] {
     PostUpdateOpTable t;
     //                         base stride current-address unit/domain results
-    t["pto.vlds"] = {0, 1, true, PostUpdateAddressUnit::Element, 1};
-    t["pto.vldsx2"] = {0, 1, true, PostUpdateAddressUnit::Element, 2};
+    t["pto.vlds"] = {0,
+                      1,
+                      true,
+                      PostUpdateAddressUnit::Element,
+                      1,
+                      PostUpdateAddressDomain::Signed,
+                      PostUpdateStrideConstraint::Dynamic,
+                      PostUpdateElementTypeSource::Result,
+                      0};
+    t["pto.vldsx2"] = {0,
+                        1,
+                        true,
+                        PostUpdateAddressUnit::Element,
+                        2,
+                        PostUpdateAddressDomain::Signed,
+                        PostUpdateStrideConstraint::Dynamic,
+                        PostUpdateElementTypeSource::Result,
+                        0};
     t["pto.plds"] = {0, 1, true, PostUpdateAddressUnit::Byte, 1};
     t["pto.pldi"] = {0,
                      1,
@@ -59,9 +76,24 @@ const PostUpdateOpTable &getPostUpdateOpTable() {
     t["pto.vsstb"] = {1,    3,
                       true, PostUpdateAddressUnit::Block,
                       0,    PostUpdateAddressDomain::Unsigned};
-    t["pto.vldus"] = {0, std::nullopt, false, PostUpdateAddressUnit::Element,
-                      2};
-    t["pto.vstus"] = {3, 1, false, PostUpdateAddressUnit::Element, 1};
+    t["pto.vldus"] = {0,
+                       std::nullopt,
+                       false,
+                       PostUpdateAddressUnit::Element,
+                       2,
+                       PostUpdateAddressDomain::Signed,
+                       PostUpdateStrideConstraint::Dynamic,
+                       PostUpdateElementTypeSource::Result,
+                       0};
+    t["pto.vstus"] = {3,
+                       1,
+                       false,
+                       PostUpdateAddressUnit::Element,
+                       1,
+                       PostUpdateAddressDomain::Signed,
+                       PostUpdateStrideConstraint::Dynamic,
+                       PostUpdateElementTypeSource::Operand,
+                       2};
     return t;
   }();
   return table;
@@ -261,27 +293,51 @@ scf::ForOp pruneDeadLoopCarriedValues(scf::ForOp forOp,
 
 std::optional<int64_t> getPostUpdateBaseUnitBytes(Value base) {
   Type elementType;
-  if (auto ptrType = dyn_cast<PtrType>(base.getType()))
+  if (auto ptrType = dyn_cast<PtrType>(base.getType())) {
     elementType = ptrType.getElementType();
-  else if (auto memrefType = dyn_cast<MemRefType>(base.getType()))
+  } else if (auto memrefType = dyn_cast<MemRefType>(base.getType())) {
     elementType = memrefType.getElementType();
-  else
+  } else {
     return std::nullopt;
+  }
 
-  if (!elementType || !elementType.isIntOrFloat())
-    return std::nullopt;
-  unsigned bits = elementType.getIntOrFloatBitWidth();
-  if (bits == 0 || bits % 8 != 0)
-    return std::nullopt;
-  return static_cast<int64_t>(bits / 8);
+  unsigned bytes = getPTOStorageElemByteSize(elementType);
+  return bytes == 0 ? std::nullopt
+                    : std::optional<int64_t>(static_cast<int64_t>(bytes));
 }
 
-std::optional<int64_t> getPostUpdateAddressUnitBytes(Operation *op,
-                                                     PostUpdateAddressUnit unit,
-                                                     int64_t elementBytes) {
-  switch (unit) {
+static std::optional<int64_t> getVectorElementBytes(Type type) {
+  auto vectorType = dyn_cast<VRegType>(type);
+  if (!vectorType) {
+    return std::nullopt;
+  }
+  unsigned bytes = getPTOStorageElemByteSize(vectorType.getElementType());
+  return bytes == 0 ? std::nullopt
+                    : std::optional<int64_t>(static_cast<int64_t>(bytes));
+}
+
+std::optional<int64_t>
+getPostUpdateAddressUnitBytes(Operation *op, const PostUpdateOpInfo &info,
+                              int64_t baseElementBytes) {
+  switch (info.addressUnit) {
   case PostUpdateAddressUnit::Element:
-    return elementBytes;
+    switch (info.elementTypeSource) {
+    case PostUpdateElementTypeSource::Base:
+      return baseElementBytes;
+    case PostUpdateElementTypeSource::Operand:
+      if (info.elementTypeIndex >= op->getNumOperands()) {
+        return std::nullopt;
+      }
+      return getVectorElementBytes(
+          op->getOperand(info.elementTypeIndex).getType());
+    case PostUpdateElementTypeSource::Result:
+      if (info.elementTypeIndex >= op->getNumResults()) {
+        return std::nullopt;
+      }
+      return getVectorElementBytes(
+          op->getResult(info.elementTypeIndex).getType());
+    }
+    llvm_unreachable("unhandled post-update element type source");
   case PostUpdateAddressUnit::Block:
     return kBlockSizeBytes;
   case PostUpdateAddressUnit::Alignment:

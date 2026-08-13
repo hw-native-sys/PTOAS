@@ -145,6 +145,7 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
 enum class PostUpdateAddressUnit { Element, Block, Alignment, Byte };
 enum class PostUpdateAddressDomain { Signed, Unsigned };
 enum class PostUpdateStrideConstraint { Dynamic, Constant, SignedI8 };
+enum class PostUpdateElementTypeSource { Base, Operand, Result };
 struct PostUpdateOpInfo {
   unsigned baseOperandIdx;
   optional<unsigned> strideOperandIdx;
@@ -153,6 +154,8 @@ struct PostUpdateOpInfo {
   unsigned minResultsForPost;
   PostUpdateAddressDomain strideDomain;
   PostUpdateStrideConstraint strideConstraint;
+  PostUpdateElementTypeSource elementTypeSource;
+  unsigned elementTypeIndex;
 };
 ```
 
@@ -162,13 +165,14 @@ Element、Byte、Alignment 类 stride 使用 signed 域；Block 类 `vsldb/vsstb
 
 `delta(base)` 与 `strideOperand` 的单位不同，合并前必须先统一到字节。引入两个字节量：
 
-- **`elemBytes`** = base 指针一个 `pto.addptr` 单位的字节数（由 `addPtrUnitBytes(base)` 求得，即 lowering 规约后的 GEP 元素类型宽度；非字节对齐的低精度打包类型无法确定，直接放弃候选）。
-- **`unitBytes`** = strideOperand 一个单位的字节数（由 `strideUnitBytes(unit, elemBytes)` 求得）。单位取值来自该 op 的 lowering：
+- **`elemBytes`** = base 指针一个 `pto.addptr` 单位的字节数（由 `addPtrUnitBytes(base)` 按 PTO storage element byte size 求得，与 lowering 规约后的 GEP 元素宽度一致；无法映射为整字节存储单位的类型直接放弃候选）。
+- **`unitBytes`** = strideOperand 一个单位的字节数。对于 Element 单位，地址描述符还明确指定元素类型来自 base、某个 operand 或某个 result；其余单位直接由 Block、Byte 或 Alignment 规则决定。该信息必须与 op lowering 缩放 offset 时采用的类型一致：
 
 | 指令 | base | strideOperand | strideUnit | unitBytes | 有效地址 |
 |------|------|---------------|-----------|-----------|---------|
-| vlds/vsts | source/destination | offset (Index) | Element | elemBytes | base + offset |
-| vldsx2 | source | offset (Index) | Element | elemBytes | base + offset |
+| vlds | source | offset (Index) | Element | result 元素字节数 | base + offset |
+| vldsx2 | source | offset (Index) | Element | low/high result 元素字节数 | base + offset |
+| vsts | destination | offset (Index) | Element | destination 元素字节数 | base + offset |
 | vsstb/vsldb | destination/source | repeat_stride (I16) | Block | 32 | dest + (32/elemBytes)·repeat_stride |
 | plds/psts | source/destination | offset (Index) | Byte | 1 | base + offset/elemBytes |
 | pldi | source | offset (Index) | Alignment | NORM: VL/8；US: VL/16；DS: min(32, VL/4) | base + (unitBytes/elemBytes)·offset |
@@ -176,8 +180,8 @@ Element、Byte、Alignment 类 stride 使用 signed 域；Block 类 `vsldb/vsstb
 | sprsts | destination | offset (I32) | Byte | 1 | dest + offset/elemBytes |
 | sprsti | destination | offset (I32) | Alignment | AR: 4 | dest + (4/elemBytes)·offset |
 | vstas | destination | offset (I32) | Element | elemBytes | dest + offset |
-| vldus | source | 无 | Element | elemBytes | base；increment 由 base advancement 得出 |
-| vstus | base | offset (I32) | Element | elemBytes | base（offset 只推进返回 base，不参与本次访问） |
+| vldus | source | 无 | Element | result 元素字节数 | base；increment 由 base advancement 得出 |
+| vstus | base | offset (I32) | Element | value 元素字节数 | base（offset 只推进返回 base，不参与本次访问） |
 
 > intrinsic 参数原样透传不能单独证明硬件地址单位；Step 4 的 immediate/scalar 差异以 CANN 9.1 SIM 的实际更新地址为准。
 > 上表中的 VL 以字节计；A5 的 VL 为 256 bytes，因此 pldi 的 NORM/US/DS 分别为 32/16/32 bytes，psti 的 NORM/PK 分别为 32/16 bytes。其他目标必须提供自己的查询结果，否则该候选不改写。

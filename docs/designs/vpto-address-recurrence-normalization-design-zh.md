@@ -86,6 +86,7 @@ normalizer 不再以 `pto.vecscope` 作为 producer/consumer 所有权边界。�
 - 可选 stride operand 下标；
 - stride 是否参与本次访问地址；
 - Element、Block、Byte 或 Alignment 地址单位；
+- Element 单位对应的元素类型来自 base、某个 operand 或某个 result；
 - Signed 或 Unsigned 地址数值域；
 - 普通/post 形式的结果数边界；
 - Dynamic、Constant 或 SignedI8 最终 post stride 约束。

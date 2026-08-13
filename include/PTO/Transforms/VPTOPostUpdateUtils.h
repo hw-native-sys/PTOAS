@@ -39,6 +39,15 @@ enum class PostUpdateAddressDomain {
   Unsigned,
 };
 
+// Selects the type whose element width defines an Element address unit. Most
+// stores address in base-pointer elements, while load distributions and
+// unaligned streams may address in payload elements instead.
+enum class PostUpdateElementTypeSource {
+  Base,
+  Operand,
+  Result,
+};
+
 // Shared semantic description for every operation considered by VPTO soft
 // post-update. `strideParticipatesInCurrentAddress` distinguishes ordinary
 // base+offset operations from stateful operations such as vstus, whose offset
@@ -52,6 +61,9 @@ struct PostUpdateOpInfo {
   PostUpdateAddressDomain strideDomain = PostUpdateAddressDomain::Signed;
   PostUpdateStrideConstraint strideConstraint =
       PostUpdateStrideConstraint::Dynamic;
+  PostUpdateElementTypeSource elementTypeSource =
+      PostUpdateElementTypeSource::Base;
+  unsigned elementTypeIndex = 0;
 };
 
 using PostUpdateOpTable = llvm::StringMap<PostUpdateOpInfo>;
@@ -74,8 +86,8 @@ scf::ForOp pruneDeadLoopCarriedValues(scf::ForOp forOp, OpBuilder &builder);
 
 std::optional<int64_t> getPostUpdateBaseUnitBytes(Value base);
 std::optional<int64_t> getPostUpdateAddressUnitBytes(Operation *op,
-                                                     PostUpdateAddressUnit unit,
-                                                     int64_t elementBytes);
+                                                     const PostUpdateOpInfo &info,
+                                                     int64_t baseElementBytes);
 
 bool satisfiesPostUpdateStrideConstraint(PostUpdateStrideConstraint constraint,
                                          std::optional<int64_t> constantStride);
