@@ -19,6 +19,10 @@ WORK_SPACE="${WORK_SPACE:-}"
 ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-}"
 PTOAS_BIN="${PTOAS_BIN:-${ROOT_DIR}/install/bin/ptoas}"
 PTOAS_FLAGS="${PTOAS_FLAGS:---pto-arch a5 --pto-backend=vpto}"
+# pto-isa include dir for VPTO pipe bridge cases (vpto_bridge.cpp).
+# Default resolves to a pto-isa checkout in the parent of the PTOAS
+# workspace.
+PTO_ISA_INCLUDE_DIR="${PTO_ISA_INCLUDE_DIR:-${SCRIPT_DIR}/../../../../../pto-isa/include}"
 # set he HOST_RUNNER to "ssh root@localhost" if must change user to root to access the device 
 HOST_RUNNER="${HOST_RUNNER:-}"
 CASE_NAME="${CASE_NAME:-}"
@@ -246,6 +250,21 @@ build_launch_object() {
     -o "${out_obj}"
 }
 
+# Compiles the PTO-ISA template bridge (vpto_bridge.cpp) to per-target
+# bitcode. ObjectEmission merges it with the VPTO device LLVM IR before
+# Bisheng compiles the device object, so Cube and Vector must be compiled
+# separately for their own dav-c310 target.
+build_vpto_bridge_object() {
+  local case_dir="$1"
+  local target="$2"
+  local out_obj="$3"
+  [[ -d "${PTO_ISA_INCLUDE_DIR}" ]] ||
+    die "PTO_ISA_INCLUDE_DIR is not a directory: ${PTO_ISA_INCLUDE_DIR}"
+  "${BISHENG_BIN}" -O2 -std=c++17 -c -emit-llvm -xcce --cce-aicore-only \
+    --cce-aicore-arch="dav-c310-${target}" -DREGISTER_BASE \
+    -I "${PTO_ISA_INCLUDE_DIR}" "${case_dir}/vpto_bridge.cpp" -o "${out_obj}"
+}
+
 link_kernel_so() {
   local case_name="$1"
   local kernel_fatobj="$2"
@@ -362,9 +381,21 @@ build_one_impl() {
     read -r -a ptoas_args <<< "${PTOAS_FLAGS}"
   fi
 
+  local bridge_cube_bc=""
+  local bridge_vector_bc=""
+  if [[ -f "${case_dir}/vpto_bridge.cpp" ]]; then
+    bridge_cube_bc="${out_dir}/vpto_bridge_cube.bc"
+    bridge_vector_bc="${out_dir}/vpto_bridge_vector.bc"
+    log "[$case_name] step 0/4: build VPTO cube/vector bridge bitcode"
+    build_vpto_bridge_object "${case_dir}" cube "${bridge_cube_bc}"
+    build_vpto_bridge_object "${case_dir}" vec "${bridge_vector_bc}"
+  fi
+
   log "[$case_name] step 1/4: emit kernel fatobj"
-  "${PTOAS_BIN}" "${ptoas_args[@]}" \
-    "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
+  PTOAS_VPTO_CUBE_BRIDGE_BITCODE="${bridge_cube_bc}" \
+  PTOAS_VPTO_VECTOR_BRIDGE_BITCODE="${bridge_vector_bc}" \
+    "${PTOAS_BIN}" "${ptoas_args[@]}" \
+      "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
 
   log "[$case_name] step 2/4: build launch object"
   build_launch_object "${case_dir}" "${launch_obj}"
