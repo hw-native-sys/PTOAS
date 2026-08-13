@@ -14,6 +14,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace mlir {
 namespace pto {
@@ -37,6 +38,22 @@ static bool hasKernelKindChildModule(ModuleOp module) {
 }
 
 static bool hasCVSections(ModuleOp module);
+
+static std::optional<FunctionKernelKind>
+getFunctionKernelKind(func::FuncOp funcOp) {
+  auto attr = funcOp->getAttrOfType<FunctionKernelKindAttr>(
+      FunctionKernelKindAttr::name);
+  if (!attr)
+    return std::nullopt;
+  return attr.getKernelKind();
+}
+
+static bool hasFunctionKernelKind(ModuleOp module, FunctionKernelKind kind) {
+  return llvm::any_of(module.getOps<func::FuncOp>(), [&](func::FuncOp funcOp) {
+    auto functionKind = getFunctionKernelKind(funcOp);
+    return functionKind && *functionKind == kind;
+  });
+}
 
 static bool isVPTOBackendModule(ModuleOp module) {
   auto backend = module->getAttrOfType<StringAttr>("pto.backend");
@@ -302,12 +319,42 @@ static void rewriteSectionsForKind(ModuleOp module, FunctionKernelKind kind) {
   }
 }
 
+static void pruneFunctionsForKind(ModuleOp module, FunctionKernelKind kind) {
+  llvm::StringSet<> removedSymbols;
+  SmallVector<func::FuncOp> eraseFuncs;
+  for (func::FuncOp funcOp : module.getOps<func::FuncOp>()) {
+    auto functionKind = getFunctionKernelKind(funcOp);
+    if (functionKind && *functionKind != kind) {
+      removedSymbols.insert(funcOp.getSymName());
+      eraseFuncs.push_back(funcOp);
+    }
+  }
+
+  SmallVector<func::CallOp> eraseCalls;
+  module.walk([&](func::CallOp callOp) {
+    if (removedSymbols.contains(callOp.getCallee()))
+      eraseCalls.push_back(callOp);
+  });
+  for (func::CallOp callOp : eraseCalls)
+    callOp.erase();
+  for (func::FuncOp funcOp : eraseFuncs)
+    funcOp.erase();
+}
+
 static ModuleOp cloneModuleForKind(ModuleOp source, FunctionKernelKind kind,
-                                   OpBuilder &builder) {
+                                   OpBuilder &builder,
+                                   bool functionKindInput = false) {
   auto cloned = cast<ModuleOp>(source->clone());
   cloned->setAttr(FunctionKernelKindAttr::name,
                   FunctionKernelKindAttr::get(cloned.getContext(), kind));
-  eraseSectionSplitCandidatesWithoutSectionKind(cloned, kind);
+  pruneFunctionsForKind(cloned, kind);
+  cloned.walk([&](func::FuncOp funcOp) {
+    if (!funcOp.isDeclaration())
+      funcOp->setAttr(FunctionKernelKindAttr::name,
+                      FunctionKernelKindAttr::get(funcOp.getContext(), kind));
+  });
+  if (!functionKindInput)
+    eraseSectionSplitCandidatesWithoutSectionKind(cloned, kind);
   rewriteSectionsForKind(cloned, kind);
   builder.insert(cloned);
   return cloned;
@@ -341,6 +388,32 @@ static LogicalResult splitCVModule(ModuleOp module) {
         return failure();
       }
     }
+    return success();
+  }
+  bool hasVectorFunctions =
+      hasFunctionKernelKind(module, FunctionKernelKind::Vector);
+  bool hasCubeFunctions =
+      hasFunctionKernelKind(module, FunctionKernelKind::Cube);
+  if (hasVectorFunctions || hasCubeFunctions) {
+    SmallVector<NamedAttribute> outerAttrs;
+    for (NamedAttribute attr : module->getAttrs()) {
+      if (attr.getName() != SymbolTable::getSymbolAttrName()) {
+        outerAttrs.push_back(attr);
+      }
+    }
+    auto outer = ModuleOp::create(module.getLoc());
+    outer->setAttrs(DictionaryAttr::get(module.getContext(), outerAttrs));
+    OpBuilder builder(outer.getBody(), outer.getBody()->end());
+    if (hasVectorFunctions) {
+      cloneModuleForKind(module, FunctionKernelKind::Vector, builder,
+                         /*functionKindInput=*/true);
+    }
+    if (hasCubeFunctions) {
+      cloneModuleForKind(module, FunctionKernelKind::Cube, builder,
+                         /*functionKindInput=*/true);
+    }
+    module.getBodyRegion().takeBody(outer.getBodyRegion());
+    module->setAttrs(outer->getAttrs());
     return success();
   }
   if (!hasCVSections(module)) {

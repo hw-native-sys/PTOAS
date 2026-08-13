@@ -281,6 +281,24 @@ discoverCppIncludeDirs(llvm::StringRef ascendHome,
   return includeDirs;
 }
 
+// Merges externally compiled bridge bitcode (e.g. PTO-ISA template
+// instantiation wrappers) into the VPTO device LLVM IR before Bisheng
+// compiles the device object. Both inputs are bitcode/IR of the same LLVM
+// version, linked with the llvm-link shipped with the Bisheng toolchain.
+static bool linkDeviceLLVMBitcode(llvm::StringRef llPath,
+                                  llvm::StringRef bridgePath,
+                                  llvm::StringRef linkedPath,
+                                  const mlir::pto::CANNToolchain &toolchain,
+                                  llvm::StringRef stderrPath,
+                                  llvm::raw_ostream &diagOS) {
+  std::string llvmLinkPath =
+      joinPath(toolchain.bishengCompilerBinDirPath, "llvm-link");
+  llvm::SmallVector<std::string, 8> args = {
+      llvmLinkPath, llPath.str(), bridgePath.str(), "-o", linkedPath.str()};
+  return runCommandWithStderr(llvmLinkPath, args, stderrPath, diagOS,
+                              "device LLVM bridge link");
+}
+
 static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
                                       llvm::StringRef outObjPath,
                                       llvm::StringRef targetCPU,
@@ -1085,10 +1103,18 @@ mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
   if (failed(writeLLVMModule(module, llPath, diagOS))) {
     return failure();
   }
-  return compileDeviceLLVMToObject(llPath, outObjPath,
-                                   resolveTargetCPU(module,
-                                                    ObjectEmissionDeviceTarget::Vector),
-                                   toolchain.bishengPath, stderrPath, diagOS)
+  std::string compileInput = llPath.str();
+  if (const char *bridge = std::getenv("PTOAS_VPTO_VECTOR_BRIDGE_BITCODE");
+      bridge && bridge[0] != 0) {
+    compileInput = (outObjPath + ".linked.bc").str();
+    if (!linkDeviceLLVMBitcode(llPath, bridge, compileInput, toolchain,
+                               stderrPath, diagOS))
+      return failure();
+  }
+  return compileDeviceLLVMToObject(
+             compileInput, outObjPath,
+             resolveTargetCPU(module, ObjectEmissionDeviceTarget::Vector),
+             toolchain.bishengPath, stderrPath, diagOS)
              ? success()
              : failure();
 }
@@ -1106,10 +1132,18 @@ mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
   if (failed(writeLLVMModule(module, llPath, diagOS))) {
     return failure();
   }
-  return compileDeviceLLVMToObject(llPath, outObjPath,
-                                   resolveTargetCPU(module,
-                                                    ObjectEmissionDeviceTarget::Cube),
-                                   toolchain.bishengPath, stderrPath, diagOS)
+  std::string compileInput = llPath.str();
+  if (const char *bridge = std::getenv("PTOAS_VPTO_CUBE_BRIDGE_BITCODE");
+      bridge && bridge[0] != 0) {
+    compileInput = (outObjPath + ".linked.bc").str();
+    if (!linkDeviceLLVMBitcode(llPath, bridge, compileInput, toolchain,
+                               stderrPath, diagOS))
+      return failure();
+  }
+  return compileDeviceLLVMToObject(
+             compileInput, outObjPath,
+             resolveTargetCPU(module, ObjectEmissionDeviceTarget::Cube),
+             toolchain.bishengPath, stderrPath, diagOS)
              ? success()
              : failure();
 }

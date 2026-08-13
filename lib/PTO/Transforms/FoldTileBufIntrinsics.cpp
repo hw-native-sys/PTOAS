@@ -257,6 +257,21 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
                           alloc.getValidCol(), tileTy.getConfigAttr()};
   }
 
+  if (auto decl = tileBuf.getDefiningOp<pto::DeclareTileOp>()) {
+    bool reboundByPop = llvm::any_of(decl.getResult().getUsers(),
+                                     [](Operation *user) {
+                                       return isa<pto::TPopOp>(user);
+                                     });
+    if (!reboundByPop) {
+      user->emitError("FoldTileBufIntrinsics: pto.declare_tile address requires "
+                      "a matching pto.tpop rebinding");
+      return std::nullopt;
+    }
+    auto tileTy = cast<pto::TileBufType>(decl.getResult().getType());
+    return TileHandleInfo{decl.getResult(), Value{}, Value{},
+                          tileTy.getConfigAttr()};
+  }
+
   if (auto reshape = tileBuf.getDefiningOp<pto::TReshapeOp>()) {
     auto sourceInfo = resolveTileHandle(reshape.getSrc(), user);
     if (!sourceInfo) {
@@ -279,7 +294,8 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
 
   user->emitError("FoldTileBufIntrinsics: expected tile_buf to be defined by "
                   "the active materialized tile-handle bridge "
-                  "(pto.alloc_tile or pto.treshape, "
+                  "(pto.alloc_tile, pto.declare_tile rebound by pto.tpop, or "
+                  "pto.treshape, "
                   "or a pto.fusion_region result that yields one of them)");
   return std::nullopt;
 }
@@ -810,6 +826,16 @@ struct FoldTileBufIntrinsicsPass
         if (isSCFTileCarrier(addrOp.getSrc())) {
           continue;
         }
+
+        // A declare_tile rebound by TPOP gets its address at runtime from the
+        // FIFO slot; folding it to the placeholder value here would break the
+        // VPTO pipe bridge address propagation.
+        if (auto decl = addrOp.getSrc().getDefiningOp<pto::DeclareTileOp>();
+            decl && llvm::any_of(decl.getResult().getUsers(),
+                                 [](Operation *user) {
+                                   return isa<pto::TPopOp>(user);
+                                 }))
+          continue;
 
         auto handleInfo = resolveTileHandle(addrOp.getSrc(), addrOp);
         if (!handleInfo) {

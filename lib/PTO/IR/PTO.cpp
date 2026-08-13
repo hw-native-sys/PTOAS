@@ -18147,8 +18147,11 @@ getEnclosingFunctionKernelKind(Operation *op) {
 }
 
 static bool isInsideSectionOrAttributedKernel(Operation *op) {
-  return isInsideSectionCube(op) || isInsideSectionVector(op) ||
-         isInsideTileOpHelper(op) || getEnclosingFunctionKernelKind(op).has_value();
+  if (isInsideSectionCube(op) || isInsideSectionVector(op) ||
+      isInsideTileOpHelper(op) || getEnclosingFunctionKernelKind(op).has_value())
+    return true;
+  auto module = op->getParentOfType<ModuleOp>();
+  return module && module->hasAttr(FunctionKernelKindAttr::name);
 }
 
 static LogicalResult verifySplitAttr(Operation *op, int64_t split) {
