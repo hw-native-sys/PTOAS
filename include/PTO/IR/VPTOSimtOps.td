@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms of
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 //===- VPTOSimtOps - semantic operation family -*- tablegen -*-===//
 //===----------------------------------------------------------------------===//
@@ -113,6 +116,53 @@ def PTOStgOp : PTO_SimtOp<"stg", [
   let assemblyFormat = [{
     $value `,` $ptr `[` $offset `]` custom<L1Cache>($l1cache)
     custom<StL2Cache>($l2cache) attr-dict `:` type($ptr) `,` type($value)
+  }];
+}
+
+def PTOLdDevOp : PTO_MicroOp<"ld_dev", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Load one scalar GM element while bypassing the local L1 data cache.";
+  let description = [{
+    Load one integer scalar element from GM through the AICore device-memory
+    path while bypassing the local L1 data cache. The offset operand is an
+    element offset, not a byte offset. The operation does not provide
+    atomicity, synchronization, memory-ordering, or L2 cache-policy semantics.
+  }];
+
+  let arguments = (ins PTO_BufferType:$ptr, Index:$offset);
+  let results = (outs PTO_DevScalarValueType:$value);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
+}
+
+def PTOStDevOp : PTO_MicroOp<"st_dev", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Store one scalar GM element while bypassing the local L1 data cache.";
+  let description = [{
+    Store one integer scalar element to GM through the AICore device-memory
+    path while bypassing the local L1 data cache. The offset operand is an
+    element offset, not a byte offset. The operation does not provide
+    atomicity, synchronization, memory-ordering, or L2 cache-policy semantics.
+  }];
+
+  let arguments = (ins PTO_DevScalarValueType:$value, PTO_BufferType:$ptr,
+                       Index:$offset);
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
 }
 

@@ -19,12 +19,4 @@
 #include "PTO/IR/PTOTileVectorElementwise.h"
 #include "PTO/IR/PTOTileVectorReduction.h"
 
-#define GET_OP_CLASSES
-#include "PTO/IR/PTOTileMemoryOps.h.inc"
-#include "PTO/IR/PTOTileCubeOps.h.inc"
-#include "PTO/IR/PTOTilePipelineOps.h.inc"
-#include "PTO/IR/PTOTileVectorDataOps.h.inc"
-#include "PTO/IR/PTOTileVectorElementwiseOps.h.inc"
-#include "PTO/IR/PTOTileVectorReductionOps.h.inc"
-
 #endif // MLIR_DIALECT_PTO_IR_PTOTILE_H_

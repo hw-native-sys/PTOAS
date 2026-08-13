@@ -6,9 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#ifndef MLIR_DIALECT_PTO_IR_PTOTILEVECTORELEMENTWISE_H_
-#define MLIR_DIALECT_PTO_IR_PTOTILEVECTORELEMENTWISE_H_
+#ifndef MLIR_DIALECT_PTO_IR_VPTOUB_H_
+#define MLIR_DIALECT_PTO_IR_VPTOUB_H_
 #include "PTO/IR/PTOCommon.h"
 #define GET_OP_CLASSES
-#include "PTO/IR/PTOTileVectorElementwiseOps.h.inc"
+#include "PTO/IR/VPTOUbOps.h.inc"
 #endif

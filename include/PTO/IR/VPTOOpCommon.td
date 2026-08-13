@@ -136,6 +136,8 @@ def PTO_SimtConvertValueType : AnyTypeOf<[I32, I64, F16, BF16, F32,
                                          "standard scalar, low-precision scalar payload, or supported vector<2xT> conversion type">;
 def PTO_AtomicValueType : AnyTypeOf<[I32, I64, F16, BF16, F32, PTO_V2F16Type, PTO_V2BF16Type],
                                     "i32, i64, f16, bf16, f32, vector<2xf16> or vector<2xbf16>">;
+def PTO_DevScalarValueType : AnyTypeOf<[I8, I16, I32, I64],
+                                       "i8, i16, i32, or i64 device scalar">;
 
 class PTO_MicroOp<string mnemonic, list<Trait> traits = []>
     : PTO_Op<mnemonic, !listconcat(traits, [MicroOpInterface])>;
