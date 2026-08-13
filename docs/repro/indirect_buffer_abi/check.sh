@@ -21,10 +21,12 @@ compile() {
   PYTHONPATH="${HERE}/fixtures" "${PYTHON_BIN}" "${HERE}/fixtures/fixed_arguments.py" --emit-mlir > "${OUT}/fixed.mlir"
   grep -q '!pto.ptr<f32, gm>' "${OUT}/fixed.mlir"
   grep -q 'pto.mte_gm_ub' "${OUT}/fixed.mlir"
-  grep -q 'DESIRED API' "${HERE}/fixtures/desired_pointer_table.py"
-  "${PYTHON_BIN}" "${HERE}/fixtures/indirect_api_negative.py" | tee "${OUT}/negative_api.txt"
+  PYTHONPATH="${HERE}/fixtures" "${PYTHON_BIN}" "${HERE}/fixtures/pointer_table_abi.py" --emit-mlir > "${OUT}/pointer_table.mlir"
+  grep -q 'pto.ld_dev' "${OUT}/pointer_table.mlir"
+  grep -q 'pto.castptr' "${OUT}/pointer_table.mlir"
+  grep -q 'pto.mte_gm_ub' "${OUT}/pointer_table.mlir"
   ACL_DEVICE_ID="${ACL_DEVICE_ID:-}" "${PYTHON_BIN}" "${HERE}/benchmark.py" --compile-only
-  echo "PASS: stream-launchable direct-pointer CCE and stacked-buffer VMI libraries built; typed pointer-table form is rejected"
+  echo "PASS: stream-launchable direct-pointer CCE and stacked-buffer VMI libraries built; GM i64 address-table ABI compiles"
 }
 run() { if [[ "${ACL_DEVICE_ID:-}" != "" ]]; then task_run | tee "${OUT}/results.txt"; else "${PYTHON_BIN}" "${HERE}/report.py" | tee "${OUT}/results.txt"; fi; }
 case "$MODE" in compile) compile;; correctness|benchmark) run;; all) compile; run;; *) echo "usage: $0 [all|compile|correctness|benchmark]" >&2; exit 2;; esac
