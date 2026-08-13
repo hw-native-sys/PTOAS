@@ -477,18 +477,14 @@ public:
       rewriter.create<func::CallOp>(loc, "pto_vpto_pipe_init", TypeRange{},
                                     ValueRange{storage, operands[0]});
       addDecl("pto_vpto_pipe_init", {ptrTy, rewriter.getI32Type()}, {});
-      addDecl("pto_vpto_pipe_finish", {ptrTy}, {});
-      // TPipe destruction is part of the protocol (it performs the final
-      // producer/consumer handshake), so finish must run before every exit.
-      auto parent = op->getParentOfType<func::FuncOp>();
-      SmallVector<func::ReturnOp> returns;
-      parent.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
-      for (func::ReturnOp ret : returns) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(ret);
-        rewriter.create<func::CallOp>(ret.getLoc(), "pto_vpto_pipe_finish",
-                                      TypeRange{}, ValueRange{storage});
-      }
+      // No pto_vpto_pipe_finish: the TPipe destructor performs the final
+      // producer/consumer handshake, but a simulator experiment (no-op
+      // finish) confirmed single-launch FIFO data correctness does not depend
+      // on it -- freed flags are pre-set by the consumer-side TPipe
+      // constructor, so the handshake never blocks in the supported
+      // configuration. Multi-round push / cross-launch FIFO reuse is out of
+      // scope for the fixed specialization; reintroduce finish if such cases
+      // appear.
       rewriter.replaceOp(op, storage);
       return success();
     }

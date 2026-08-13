@@ -30,9 +30,9 @@ extern "C" [aicore] void pto_vpto_pipe_init(
   new (storage) Pipe(nullptr, c2vConsumerBuffer, 0);
 }
 
-extern "C" [aicore] void pto_vpto_pipe_finish(void *storage) {
-  reinterpret_cast<Pipe *>(storage)->~Pipe();
-}
+// No pto_vpto_pipe_finish: the TPipe destructor handshake is not required for
+// single-launch FIFO data correctness (verified by a no-op-finish simulator
+// experiment); multi-round push / cross-launch reuse is out of scope.
 
 // TPipe layout is only known after template instantiation, so the emitter
 // asks the bridge for the storage size instead of hardcoding a conservative
@@ -54,14 +54,6 @@ extern "C" [aicore] void pto_vpto_pipe_push(void *storage, uint64_t accAddress) 
 extern "C" [aicore] uint64_t pto_vpto_pipe_pop(void *storage) {
   auto &pipe = *reinterpret_cast<Pipe *>(storage);
   VecTile tile;
-  // Keep the C2V ready dependency visible at the bridge boundary. TPOP also
-  // performs this wait internally, but the explicit intrinsic prevents the
-  // standalone wrapper bitcode from being scheduled ahead of the producer's
-  // fixpipe completion after llvm-link.
-#ifdef __DAV_VEC__
-  wait_intra_block(PIPE_V, 0);
-  pipe.cons.setWaitStatus(false);
-#endif
   pto::TPOP<Pipe, VecTile, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
   pipe_barrier(PIPE_ALL);
   return reinterpret_cast<uint64_t>(tile.data());
