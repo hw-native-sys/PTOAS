@@ -1,18 +1,5 @@
-<!--
-Copyright (c) 2026 Huawei Technologies Co., Ltd.
-This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-CANN Open Software License Agreement Version 2.0 (the "License").
-Please refer to the License for details. You may not use this file except in compliance with the License.
-THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-See LICENSE in the root of the software repository for the full text of the License.
--->
-
 # VPTO TPush/TPop 桥接实现说明
 
-> 分支：`feature/vpto-tpush-tpop-bridge`（基于 `main` 的 3 个提交：`c7cba6da6`、`8e0865322`、`9efdcc087`）
-> 本文介绍每个文件的改动内容、改动目的、改动之间的联系，以及 VPTO 后端 TPush/TPop 功能的最终实现方式。
-> 方案背景、PoC 过程与后续计划见 `docs/designs/vpto-cce-template-tpush-tpop-bridge-research.md`。
 
 ## 1. 背景与问题
 
@@ -27,8 +14,9 @@ PTO-ISA 的 `TPush` / `TPop` / `TFree` 不是普通函数，而是 **C++ 模板*
 
 ```text
 kernel.pto（公开 PTO IR，测试用例书写）
-  ↓ ① 前端 pipe lowering【已有能力，本分支复用】
-internal ops：initialize_l2l_pipe / tpush / tpop / tfree
+  ↓ ① 输入即 internal pipe IR【main 已有能力，本分支复用】
+initialize_l2l_pipe / tpush / tpop / tfree（用例直接书写 internal 形式；
+main 自带的 PTOLowerFrontendPipeOpsPass 也可把公开 pipe op 降到这里）
   ↓ ② VPTOSplitCVModule【本分支改动】
 按 pto.kernel_kind 拆成 Cube 子模块 + Vector 子模块
   ↓ ③ FoldTileBufIntrinsics【本分支改动】
@@ -125,7 +113,7 @@ internal ops → 固定 wrapper ABI 调用（pto_vpto_pipe_*）
 
 | 文件 | 内容 |
 |---|---|
-| `kernel.pto` | 公开 PTO IR 风格：entry 调 cube/vector 两个函数（各带 `pto.kernel_kind` 属性）。Cube：`import_reserved_buffer` + `initialize_l2l_pipe` + `alloc_tile` + `mte_*` 搬数 + `mad` 算 16x16 矩阵乘 + `tpush`（split=1）。Vector：`reserve_buffer`（C2V 8192 字节）+ `initialize_l2l_pipe` + `declare_tile` + `tpop` + `tile_buf_addr` + `scf.if`（仅 subblock 0）+ `mte_ub_gm` 写回 + `tfree` + `barrier` |
+| `kernel.pto` | 直接书写 internal pipe IR：entry 调 cube/vector 两个函数（各带 `pto.kernel_kind` 属性）。Cube：`import_reserved_buffer` + `initialize_l2l_pipe`（显式给出 dir_mask/slot_size/slot_num/flag_base/nosplit）+ `alloc_tile` + `mte_*` 搬数 + `mad` 算 16x16 矩阵乘 + `tpush`（split=1）。Vector：`reserve_buffer`（C2V 8192 字节）+ `initialize_l2l_pipe` + `declare_tile` + `tpop` + `tile_buf_addr` + `scf.if`（仅 subblock 0）+ `mte_ub_gm` 写回 + `tfree` + `barrier` |
 | `vpto_bridge.cpp` | 固定实例化 `TPipe<0, DIR_C2V, 1024, 8, 2, false>`；`pto_vpto_pipe_init` 用 placement new 在 VPTO 给的 storage 上构造 TPipe；`push` 用 `TASSIGN_IMPL` 绑地址后调 `TPUSH<TILE_UP_DOWN>`；`pop` 调 `TPOP` 后把 `tile.data()` 作为 i64 返回；`free`/`finish` 对应释放与析构。用 `__DAV_CUBE__` / `__DAV_VEC__` 宏裁剪：Cube 只编 push，Vector 只编 pop/free |
 | `launch.cpp` | 提供 `Launch<...>` kernel 启动 stub 的实现 |
 | `main.cpp` | host 侧：ACL 分配/搬运 `A=I(16x16)`、`B=arange(16x16)`，单次 launch |
@@ -175,8 +163,8 @@ PTO.cpp ────────────────┤
 
 以 `fifo-tile-data-consume` 用例的一次完整编译运行为例：
 
-**第 1 步：前端 lowering（复用，本分支未改）**
-`kernel.pto` 里的公开 op（`pto.aic_initialize_pipe` 等语义对应的 internal 形式）经前端统一降为 internal pipe IR。此时 pipe 的配置属性（dir_mask、slot_size、slot_num、flag_base、nosplit）、`reserve_buffer`/`import_reserved_buffer` 的 peer 配对都已确定，emitter 不需要自己猜任何默认值。
+**第 1 步：输入即 internal pipe IR（main 已有能力，本分支未改）**
+`fifo-tile-data-consume` 的 `kernel.pto` **直接书写 internal pipe op**（`pto.initialize_l2l_pipe` / `pto.tpush` / `pto.tpop` / `pto.tfree`），配置在 op 属性里显式给出（`dir_mask=1`、`slot_size=1024`、`slot_num=8`、`flag_base=0`、`nosplit=false`）。这些 op、`reserve_buffer` / `import_reserved_buffer` 的 peer 配对解析和内存规划都是 main 上已有的能力：main 自带的 `PTOLowerFrontendPipeOpsPass` 还能把公开 pipe op（`pto.tpush_to_aiv` 等）降成同一套 internal IR——本用例直接写了 internal 形式，因此没有经过这一步。emitter 从 op 属性读配置，不需要自己猜任何默认值。
 
 **第 2 步：模块拆分（§3.2）**
 `VPTOSplitCVModule` 看到两个函数分别带 `pto.kernel_kind = cube` / `vector`，克隆出两个子模块，各自剪掉对方的函数和调用，并打上 module 级 kind 属性（§3.3 保证后续 verifier 认可）。
