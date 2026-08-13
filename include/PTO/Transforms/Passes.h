@@ -106,6 +106,7 @@ std::unique_ptr<Pass>
 createPTOLowLevelLoopFusionPass(const PTOLowLevelLoopFusionOptions &options = {});
 std::unique_ptr<Pass> createPTOFusionPredicateElisionPass();
 std::unique_ptr<Pass> createPTOFusionLoadStoreElisionPass();
+std::unique_ptr<Pass> createPTOVexpdifFusionPass();
 std::unique_ptr<Pass> createPTOUnrollAfterLoopFusionPass();
 std::unique_ptr<Pass> createPTOFlattenFusionRegionPass();
 std::unique_ptr<Pass> createVPTOPtrNormalizePass();

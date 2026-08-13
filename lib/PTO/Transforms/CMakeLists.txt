@@ -35,6 +35,7 @@ add_mlir_dialect_library(PTOTransforms
   TileFusion/PTOLowLevelLoopFusion.cpp
   TileFusion/PTOFusionPredicateElision.cpp
   TileFusion/PTOFusionLoadStoreElision.cpp
+  TileFusion/PTOVexpdifFusion.cpp
   TileFusion/PTOUnrollAfterLoopFusion.cpp
   TileFusion/PTOFlattenFusionRegion.cpp
   VPTOLLVMEmitter.cpp

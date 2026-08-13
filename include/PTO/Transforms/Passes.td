@@ -1339,6 +1339,18 @@ def PTOFusionLoadStoreElision
                            "mlir::scf::SCFDialect"];
 }
 
+def PTOVexpdifFusion : Pass<"pto-vexpdif-fusion", "func::FuncOp"> {
+  let summary = "Fuse VPTO vsub and vexp into vexpdif";
+  let description = [{
+    Performs fusion after TileOp expansion and fusion-local load/store
+    elimination. The pass rewrites an f32 `vsub` followed by an f32 `vexp`
+    with the same mask into `vexpdif`.
+  }];
+  let constructor = "mlir::pto::createPTOVexpdifFusionPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect"];
+}
+
 def PTOUnrollAfterLoopFusion
     : Pass<"pto-unroll-after-loop-fusion", "func::FuncOp"> {
   let summary = "Partial-unroll the innermost scf.for inside pto.fusion_region "

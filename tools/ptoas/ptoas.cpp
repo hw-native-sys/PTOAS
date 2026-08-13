@@ -552,6 +552,11 @@ static llvm::cl::opt<bool> enableTileOpExpand(
         "--pto-backend=vpto."),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> enableVexpdifFusion(
+    "enable-vexpdif-fusion",
+    llvm::cl::desc("Enable vsub + vexp fusion into vexpdif"),
+    llvm::cl::init(true));
+
 static llvm::cl::opt<llvm::cl::boolOrDefault> enableOpFusion(
     "enable-op-fusion",
     llvm::cl::desc("Control A5 tile fusion on level2/level3. Disabled by "
@@ -3146,6 +3151,10 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
         pto::createPTOFusionPredicateElisionPass());
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOFusionLoadStoreElisionPass());
+    if (enableVexpdifFusion) {
+      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+          pto::createPTOVexpdifFusionPass());
+    }
     if (enableUnrollAfterLoopFusion) {
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOUnrollAfterLoopFusionPass());
@@ -3153,6 +3162,10 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
       kernelModulePM.addPass(mlir::createCSEPass());
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOFusionLoadStoreElisionPass());
+      if (enableVexpdifFusion) {
+        kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+            pto::createPTOVexpdifFusionPass());
+      }
     }
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOFlattenFusionRegionPass());
