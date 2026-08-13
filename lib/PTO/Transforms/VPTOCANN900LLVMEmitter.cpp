@@ -464,13 +464,16 @@ public:
         return op.emitError(
             "VPTO pipe bridge expects an i32 local buffer address");
       }
-      // TPipe contains FIFO, producer, and consumer state. Keep the bridge
-      // storage larger than the current PTO-ISA A5 layout until
-      // specialization-specific sizeof/align metadata is threaded here.
-      Value size =
-          rewriter.create<arith::ConstantOp>(loc, rewriter.getI64IntegerAttr(256));
+      // TPipe contains FIFO, producer, and consumer state whose layout is
+      // only known to the instantiated bridge wrapper. Ask the wrapper for
+      // the exact storage size instead of hardcoding a conservative
+      // constant. Alignment stays static (LLVM alloca requires a constant
+      // alignment); alignof(TPipe) <= 8 for the A5 layout.
+      auto sizeCall = rewriter.create<func::CallOp>(
+          loc, "pto_vpto_pipe_size", rewriter.getI64Type());
+      addDecl("pto_vpto_pipe_size", {}, {rewriter.getI64Type()});
       Value storage = rewriter.create<LLVM::AllocaOp>(
-          loc, ptrTy, rewriter.getI8Type(), size, 8);
+          loc, ptrTy, rewriter.getI8Type(), sizeCall.getResult(0), 8);
       rewriter.create<func::CallOp>(loc, "pto_vpto_pipe_init", TypeRange{},
                                     ValueRange{storage, operands[0]});
       addDecl("pto_vpto_pipe_init", {ptrTy, rewriter.getI32Type()}, {});

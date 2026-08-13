@@ -34,6 +34,12 @@ extern "C" [aicore] void pto_vpto_pipe_finish(void *storage) {
   reinterpret_cast<Pipe *>(storage)->~Pipe();
 }
 
+// TPipe layout is only known after template instantiation, so the emitter
+// asks the bridge for the storage size instead of hardcoding a conservative
+// constant. Alignment stays static on the alloca (LLVM requires a static
+// alignment); alignof(Pipe) is <= 8 for the A5 layout.
+extern "C" [aicore] size_t pto_vpto_pipe_size() { return sizeof(Pipe); }
+
 #ifdef __DAV_CUBE__
 extern "C" [aicore] void pto_vpto_pipe_push(void *storage, uint64_t accAddress) {
   auto &pipe = *reinterpret_cast<Pipe *>(storage);

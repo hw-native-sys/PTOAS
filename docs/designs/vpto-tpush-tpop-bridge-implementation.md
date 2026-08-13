@@ -51,7 +51,7 @@ internal ops → 固定 wrapper ABI 调用（pto_vpto_pipe_*）
 
 | internal op | 降成什么 |
 |---|---|
-| `InitializeL2LPipeOp` | 校验固定配置（`dir_mask=1`、`slot_size=1024`、`slot_num=8`、`flag_base=0`、`nosplit=false`、无 `acc_push_epilogue`，不满足报明确诊断）；`alloca` 256 字节 storage（align 8）→ 调 `pto_vpto_pipe_init(storage, consumerBuf)` → **在每个 `func.return` 前插入 `pto_vpto_pipe_finish(storage)`**；op 的 SSA 结果替换为 storage 指针 |
+| `InitializeL2LPipeOp` | 校验固定配置（`dir_mask=1`、`slot_size=1024`、`slot_num=8`、`flag_base=0`、`nosplit=false`、无 `acc_push_epilogue`，不满足报明确诊断）；`alloca` storage，大小运行时取自 wrapper 导出的 `pto_vpto_pipe_size()`（align 静态 8）→ 调 `pto_vpto_pipe_init(storage, consumerBuf)` → **在每个 `func.return` 前插入 `pto_vpto_pipe_finish(storage)`**；op 的 SSA 结果替换为 storage 指针 |
 | `TPushOp` | 要求 `split=1`、tile 来自带规划地址的 `alloc_tile`；调 `pto_vpto_pipe_push(storage, tileAddr)` |
 | `TPopOp` | 要求 `split=1`；调 `pto_vpto_pipe_pop(storage)` 得到 **i64 的 FIFO slot 地址**；写入 `popTileAddresses[op.getTile()]` 并 `replaceAllUsesWith`，使后续 `tile_buf_addr` 拿到真实地址 |
 | `TFreeOp` | 调 `pto_vpto_pipe_free(storage)` |
@@ -114,7 +114,7 @@ internal ops → 固定 wrapper ABI 调用（pto_vpto_pipe_*）
 | 文件 | 内容 |
 |---|---|
 | `kernel.pto` | 直接书写 internal pipe IR：entry 调 cube/vector 两个函数（各带 `pto.kernel_kind` 属性）。Cube：`import_reserved_buffer` + `initialize_l2l_pipe`（显式给出 dir_mask/slot_size/slot_num/flag_base/nosplit）+ `alloc_tile` + `mte_*` 搬数 + `mad` 算 16x16 矩阵乘 + `tpush`（split=1）。Vector：`reserve_buffer`（C2V 8192 字节）+ `initialize_l2l_pipe` + `declare_tile` + `tpop` + `tile_buf_addr` + `scf.if`（仅 subblock 0）+ `mte_ub_gm` 写回 + `tfree` + `barrier` |
-| `vpto_bridge.cpp` | 固定实例化 `TPipe<0, DIR_C2V, 1024, 8, 2, false>`；`pto_vpto_pipe_init` 用 placement new 在 VPTO 给的 storage 上构造 TPipe；`push` 用 `TASSIGN_IMPL` 绑地址后调 `TPUSH<TILE_UP_DOWN>`；`pop` 调 `TPOP` 后把 `tile.data()` 作为 i64 返回；`free`/`finish` 对应释放与析构。用 `__DAV_CUBE__` / `__DAV_VEC__` 宏裁剪：Cube 只编 push，Vector 只编 pop/free |
+| `vpto_bridge.cpp` | 固定实例化 `TPipe<0, DIR_C2V, 1024, 8, 2, false>`；`pto_vpto_pipe_init` 用 placement new 在 VPTO 给的 storage 上构造 TPipe；`pto_vpto_pipe_size` 导出 `sizeof(Pipe)` 供 emitter 决定 storage 大小；`push` 用 `TASSIGN_IMPL` 绑地址后调 `TPUSH<TILE_UP_DOWN>`；`pop` 调 `TPOP` 后把 `tile.data()` 作为 i64 返回；`free`/`finish` 对应释放与析构。用 `__DAV_CUBE__` / `__DAV_VEC__` 宏裁剪：Cube 只编 push，Vector 只编 pop/free |
 | `launch.cpp` | 提供 `Launch<...>` kernel 启动 stub 的实现 |
 | `main.cpp` | host 侧：ACL 分配/搬运 `A=I(16x16)`、`B=arange(16x16)`，单次 launch |
 | `golden.py` | 生成 `A@B` 的前 8 行（AIV0 拿到的 8x16 结果）作为 golden |
@@ -175,7 +175,7 @@ PTO.cpp ────────────────┤
 **第 4 步：emitter 降级（§3.1，核心）**
 Cube 子模块里：
 - `alloc_tile` → 规划地址（i64）；
-- `initialize_l2l_pipe` → `alloca 256B` + `pto_vpto_pipe_init(storage, fifo_addr)`，函数 return 前插 `pto_vpto_pipe_finish(storage)`；
+- `initialize_l2l_pipe` → `alloca`（大小取 `pto_vpto_pipe_size()` 返回值）+ `pto_vpto_pipe_init(storage, fifo_addr)`，函数 return 前插 `pto_vpto_pipe_finish(storage)`；
 - `tpush` → `pto_vpto_pipe_push(storage, acc地址)`。
 
 Vector 子模块里：
@@ -201,7 +201,4 @@ host 侧 launch，CA 模拟器上 Cube 执行 `mad`（16x16 矩阵乘）后 `TPU
 - 只支持固定 specialization：A5 C2V、`f32`、`16x16 → 8x16`、`split=1`、`TPipe<0, C2V, 1024, 8, 2, false>`；其他配置报明确诊断；
 - TPOP 地址传播已验证直线控制流；loop / branch / block argument / alias 链未覆盖；
 - bridge bitcode 由测试脚本编译、环境变量传入，尚未在 ObjectEmission 内自动收集配置并生成 wrapper；
-- context storage 使用保守的 256 字节，未按 specialization 精确取值；
-- 仅在 CA 模拟器验证，未上真机。
 
-详细限制、风险与下一步计划见研究文档 `docs/designs/vpto-cce-template-tpush-tpop-bridge-research.md`。
