@@ -9,7 +9,9 @@
 //===- PTO.h - PTO Dialect --------------------------------------*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 //
-// This file defines the dialect for the PTO Dialect.
+// This compatibility header aggregates the common PTO IR declarations and all
+// PTO operation classes. Internal components should include their narrow owner
+// header when they do not require the complete operation surface.
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,123 +32,16 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
-//===----------------------------------------------------------------------===//
-// PTO Dialect
-//===----------------------------------------------------------------------===//
-
-#include "PTO/IR/PTODialect.h"
-#include "PTO/IR/VPTOScheduling.h"
-
-//===----------------------------------------------------------------------===//
-// PTO Enums
-//===----------------------------------------------------------------------===//
-
-#include "PTO/IR/PTOEnums.h.inc"
-
-//===----------------------------------------------------------------------===//
-// PTO Interfaces
-//===----------------------------------------------------------------------===//
- 
-#include "PTO/IR/PTOInterfaces.h.inc"
-#include "PTO/IR/VPTOInterfaces.h.inc"
-
-//===----------------------------------------------------------------------===//
-// PTO Attributes
-//===----------------------------------------------------------------------===//
-
-#define GET_ATTRDEF_CLASSES
-#include "PTO/IR/PTOAttrs.h.inc"
-
-//===----------------------------------------------------------------------===//
-// PTO Types
-//===----------------------------------------------------------------------===//
-
-#define GET_TYPEDEF_CLASSES
-#include "PTO/IR/PTOTypeDefs.h.inc"
-
-//===----------------------------------------------------------------------===//
-// PTO Dialect Operations
-//===----------------------------------------------------------------------===//
-
-namespace mlir {
-namespace pto {
-
-//===----------------------------------------------------------------------===//
-// S Fractal Size Constants
-//===----------------------------------------------------------------------===//
-
-/// Fractal size for mxBox layout (16x2 inner block, 32 bytes total).
-inline constexpr int32_t kFractalMxSize = 32;
-
-/// Fractal size for AB matrices in matmul (16xN inner block, 512 bytes).
-inline constexpr int32_t kFractalABSize = 512;
-
-/// Fractal size for C matrix in matmul (16x16 inner block, 1024 bytes).
-inline constexpr int32_t kFractalCSize = 1024;
-
-struct DmaLoopConfig {
-  Value count;
-  Value srcStride;
-  Value dstStride;
-};
-
-struct DmaPadConfig {
-  Value value;
-  Value leftCount;
-  Value rightCount;
-};
-
-struct AccStoreModeConfig {
-  AccStoreMode mode;
-  std::optional<Value> split;
-  std::optional<Value> loop0SrcStride;
-};
-
-struct CubeLoadFracShapeConfig {
-  Value nValue;
-  Value dValue;
-};
-
-struct CubeLoadFracSrcLayoutConfig {
-  Value srcInnerStride;
-  std::optional<Value> srcOuterStride;
-};
-
-struct CubeLoadFracDstGroupConfig {
-  Value groupCount;
-  Value dstLoop2Stride;
-  Value dstLoop3Stride;
-  Value dstLoop4Stride;
-};
-
-struct CubeLoadFracCtrlConfig {
-  Value l2CacheCtrl;
-  Value smallc0En;
-};
-
-} // namespace pto
-} // namespace mlir
-
-#define GET_OP_CLASSES
-#include "PTO/IR/PTOOps.h.inc"
+#include "PTO/IR/PTOBase.h"
+#include "PTO/IR/PTOTile.h"
+#include "PTO/IR/VMI.h"
+#include "PTO/IR/VPTO.h"
 
 namespace mlir {
 class MLIRContext;
 class TypeConverter;
 
 namespace pto {
-
-inline constexpr char kPTOTargetArchAttrName[] = "pto.target_arch";
-
-/// Get PTO Address Space Attr from input type.
-AddressSpaceAttr getPTOAddressSpaceAttr(Type type);
-
-/// Return true if type is a ptr/memref in GM address space (or default).
-
-enum class PTOArch {
-  A3,
-  A5,
-};
 
 /// The semantic form selected by the optional third tile of pto.tmov.  The
 /// public operand remains named `fp` for API compatibility; address space is
@@ -167,46 +62,10 @@ bool isTargetArchA5(ModuleOp module);
 bool isTargetArchA3(Operation *op);
 bool isTargetArchA5(Operation *op);
 
-enum class PTOParserTargetArch {
-  Unspecified,
-  A3,
-  A5,
-};
-
-void setPTOParserTargetArch(MLIRContext *context, PTOParserTargetArch arch);
-PTOParserTargetArch getPTOParserTargetArch(MLIRContext *context);
-
-class ScopedPTOParserTargetArch {
-public:
-  explicit ScopedPTOParserTargetArch(MLIRContext *context,
-                                     PTOParserTargetArch arch);
-  ~ScopedPTOParserTargetArch();
-
-private:
-  MLIRContext *context;
-  PTOParserTargetArch previousArch;
-};
-
 /// Return the target-specific alignment size in bytes for a supported
 /// load/store vector op. Unsupported operations, modes, and targets return
 /// std::nullopt.
 std::optional<int64_t> getLoadStoreVecAlignmentSize(Operation *op);
-
-/// Function attributes that mark an explicit PTO kernel entry.
-inline constexpr llvm::StringLiteral kPTOEntryAttrName = "pto.entry";
-inline constexpr llvm::StringLiteral kLegacyHACCEntryAttrName = "hacc.entry";
-inline constexpr llvm::StringLiteral kPTOKernelAttrName = "pto.kernel";
-inline constexpr llvm::StringLiteral kLegacyPTOAICoreAttrName = "pto.aicore";
-inline constexpr llvm::StringLiteral kPTOSimtEntryAttrName = "pto.simt_entry";
-inline constexpr llvm::StringLiteral kPTOSimtMaxThreadsAttrName =
-    "pto.simt_max_threads";
-inline constexpr llvm::StringLiteral kPTOSimtMaxRegistersAttrName =
-    "pto.simt_max_regs";
-inline constexpr llvm::StringLiteral kPTOVisibilityAttrName = "pto.visibility";
-inline constexpr llvm::StringLiteral kPTOVisibilityInternalValue = "internal";
-inline constexpr llvm::StringLiteral kPTOVisibilityExternalValue = "external";
-inline constexpr llvm::StringLiteral kPTODSLLogicalNameAttrName =
-    "pto.ptodsl.logical_name";
 
 /// Return the PTODSL logical function name when present, otherwise fall back to
 /// the current symbol name. PTODSL uses this to mark ABI-specialized helper and

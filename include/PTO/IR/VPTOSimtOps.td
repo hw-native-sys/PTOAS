@@ -492,8 +492,20 @@ class PTO_UnaryF16F32ScalarOp<string mnemonic>
   }];
 }
 
+class PTO_UnaryF32ScalarOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+  let arguments = (ins F32:$value);
+  let results = (outs F32:$result);
+
+  let assemblyFormat = [{
+    $value attr-dict `:` type($value) `->` type($result)
+  }];
+}
+
 def PTO_ExpOp : PTO_UnaryF16F32ScalarOp<"exp">;
 def PTO_LogOp : PTO_UnaryF16F32ScalarOp<"log">;
+def PTO_SinOp : PTO_UnaryF32ScalarOp<"sin">;
+def PTO_CosOp : PTO_UnaryF32ScalarOp<"cos">;
 def PTO_CeilOp : PTO_UnaryFloatScalarOp<"ceil">;
 def PTO_FloorOp : PTO_UnaryFloatScalarOp<"floor">;
 def PTO_RintOp : PTO_UnaryFloatScalarOp<"rint">;

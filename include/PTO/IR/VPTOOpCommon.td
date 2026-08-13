@@ -140,7 +140,8 @@ def PTO_DevScalarValueType : AnyTypeOf<[I8, I16, I32, I64],
                                        "i8, i16, i32, or i64 device scalar">;
 
 class PTO_MicroOp<string mnemonic, list<Trait> traits = []>
-    : PTO_Op<mnemonic, !listconcat(traits, [MicroOpInterface])>;
+    : PTO_Op<mnemonic, !listconcat(traits, [MicroOpInterface,
+                                               VPTOSchedulingOpInterface])>;
 
 class PTO_VectorMicroOp<string mnemonic, list<Trait> traits = []>
     : PTO_MicroOp<mnemonic,

@@ -1173,7 +1173,9 @@ def TQuantMxOp : PTO_TOp<"tquant.mx", [
     Optional<PTODpsType>:$exp_zz,
     PTO_QuantTypeAttr:$quant_type,
     DefaultValuedAttr<PTO_QuantScaleAlgAttr, "::mlir::pto::QuantScaleAlg::OCP">:$quantScaleAlg,
-    OptionalAttr<PTO_VecStoreModeAttr>:$storeMode
+    OptionalAttr<PTO_VecStoreModeAttr>:$storeMode,
+    DefaultValuedAttr<PTO_MxGroupAxisAttr, "::mlir::pto::MxGroupAxis::Axis1">:$grpAxis,
+    DefaultValuedAttr<BoolAttr, "false">:$interleave
   );
 
   let results = (outs);

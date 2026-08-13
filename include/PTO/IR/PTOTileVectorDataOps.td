@@ -62,7 +62,8 @@ def TMovOp  : PTO_TOp<"tmov", [
     Optional<PTODpsType>:$fp,
     Optional<I64>:$preQuantScalar,
     OptionalAttr<PTO_AccToVecModeAttr>:$accToVecMode,
-    DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode
+    DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode,
+    OptionalAttr<PTO_MxGroupAxisAttr>:$grpAxis
   );
 
   let results = (outs

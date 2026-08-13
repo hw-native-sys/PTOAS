@@ -34,6 +34,7 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
 #include "PTO/IR/PTODialect.h"
+#include "PTO/IR/VPTOScheduling.h"
 #include "PTO/IR/PTOEnums.h.inc"
 #include "PTO/IR/PTOInterfaces.h.inc"
 #include "PTO/IR/VPTOInterfaces.h.inc"
