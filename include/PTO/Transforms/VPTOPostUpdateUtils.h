@@ -59,14 +59,18 @@ using PostUpdateOpTable = llvm::StringMap<PostUpdateOpInfo>;
 const PostUpdateOpTable &getPostUpdateOpTable();
 const PostUpdateOpInfo *getPostUpdateOpInfo(Operation *op);
 
-// Match the canonical pass-to-pass recurrence contract. The value must be an
+// Match the canonical VPTO address recurrence. The value must be an
 // i16 scf.for iter_arg whose backedge is a constant-step arith.addi/subi with
-// the no-wrap flag corresponding to `domain`. The overflow flag is the proof
-// certificate consumed by soft post-update; consumers must not infer the same
-// fact again from the recurrence shape alone.
+// the no-wrap flag corresponding to `domain`. The overflow flag records the
+// proof established by address normalization; consumers must not infer the
+// same fact again from the recurrence shape alone.
 std::optional<int64_t>
 getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
                                   PostUpdateAddressDomain domain);
+
+// Remove loop-carried values and pure def chains that are no longer reachable
+// from side-effecting operations or externally used loop results.
+scf::ForOp pruneDeadLoopCarriedValues(scf::ForOp forOp, OpBuilder &builder);
 
 std::optional<int64_t> getPostUpdateBaseUnitBytes(Value base);
 std::optional<int64_t> getPostUpdateAddressUnitBytes(Operation *op,

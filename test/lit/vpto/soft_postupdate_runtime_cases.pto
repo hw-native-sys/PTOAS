@@ -12,26 +12,21 @@
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %S/../../vpto/cases/micro-op/vector-load-store/soft-post-update-descending-recurrence/kernel.pto -o - | FileCheck %s --check-prefix=DESC
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %S/../../vpto/cases/micro-op/vector-load-store/soft-post-update-nested-shared-chain/kernel.pto -o - | FileCheck %s --check-prefix=NESTED
 
-// WRAP-NOT: pto.address_recurrence_witness
 // WRAP-NOT: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // WRAP-COUNT-3: pto.vlds {{.*}} -> !pto.vreg<256xui8>
 
-// TYPES-NOT: pto.address_recurrence_witness
 // TYPES: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // TYPES: pto.sprsts {{.*}} -> !pto.ptr<ui32, ub>
 // TYPES: pto.vstas {{.*}} -> !pto.ptr<ui8, ub>
 // TYPES: pto.vsldb {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // TYPES: pto.vsstb {{.*}} -> !pto.ptr<ui8, ub>
 
-// MIXED-NOT: pto.address_recurrence_witness
 // MIXED: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // MIXED: pto.sprsti "AR", {{.*}} : !pto.ptr<ui32, ub>, i32
 // MIXED-NOT: pto.sprsti {{.*}} -> !pto.ptr<ui32, ub>
 
-// DESC-NOT: pto.address_recurrence_witness
 // DESC: pto.vlds {{.*}}[%c-32] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 
-// NESTED-NOT: pto.address_recurrence_witness
 // NESTED: scf.for {{.*}} iter_args([[VECTOR_PTR:%[a-zA-Z0-9_]+]] = {{.*}}, [[BYTE_PTR:%[a-zA-Z0-9_]+]] = {{.*}})
 // NESTED: pto.vlds [[VECTOR_PTR]]{{.*}} -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
 // NESTED: pto.vsts {{.*}}, [[VECTOR_PTR]]{{.*}} -> !pto.ptr<f32, ub>

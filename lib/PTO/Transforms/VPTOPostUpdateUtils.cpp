@@ -9,7 +9,10 @@
 #include "PTO/Transforms/VPTOPostUpdateUtils.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/DenseSet.h"
 #include <limits>
 
 using namespace mlir;
@@ -119,6 +122,141 @@ getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
   }
 
   return std::nullopt;
+}
+
+scf::ForOp pruneDeadLoopCarriedValues(scf::ForOp forOp,
+                                      OpBuilder &builder) {
+  unsigned numIterArgs = forOp.getInitArgs().size();
+  if (numIterArgs == 0) {
+    return forOp;
+  }
+
+  auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+  DenseSet<Value> liveValues;
+  SmallVector<Value> worklist;
+  SmallVector<bool> keepIterArg(numIterArgs, false);
+
+  auto markLive = [&](Value value) {
+    if (value && liveValues.insert(value).second) {
+      worklist.push_back(value);
+    }
+  };
+
+  for (auto [idx, result] : llvm::enumerate(forOp.getResults())) {
+    if (result.use_empty()) {
+      continue;
+    }
+    keepIterArg[idx] = true;
+    markLive(yieldOp.getOperand(idx));
+  }
+
+  for (Operation &op : forOp.getBody()->without_terminator()) {
+    if (!isPure(&op)) {
+      for (Value operand : op.getOperands()) {
+        markLive(operand);
+      }
+    }
+    bool hasRegions = op.getNumRegions() != 0;
+    if (hasRegions) {
+      op.walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          markLive(operand);
+        }
+      });
+    }
+  }
+
+  while (!worklist.empty()) {
+    Value value = worklist.pop_back_val();
+    if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+      bool belongsToAnotherRegion = blockArg.getOwner() != forOp.getBody();
+      bool isInductionVariable = blockArg.getArgNumber() == 0;
+      if (belongsToAnotherRegion || isInductionVariable) {
+        continue;
+      }
+      unsigned idx = blockArg.getArgNumber() - 1;
+      if (!keepIterArg[idx]) {
+        keepIterArg[idx] = true;
+        markLive(yieldOp.getOperand(idx));
+      }
+      continue;
+    }
+
+    Operation *defOp = value.getDefiningOp();
+    if (!defOp || !forOp->isAncestor(defOp)) {
+      continue;
+    }
+    for (Value operand : defOp->getOperands()) {
+      markLive(operand);
+    }
+  }
+
+  if (llvm::all_of(keepIterArg, [](bool keep) { return keep; })) {
+    return forOp;
+  }
+
+  SmallVector<Value> newInitArgs;
+  newInitArgs.reserve(numIterArgs);
+  for (auto [idx, init] : llvm::enumerate(forOp.getInitArgs())) {
+    if (keepIterArg[idx]) {
+      newInitArgs.push_back(init);
+    }
+  }
+
+  builder.setInsertionPoint(forOp);
+  auto newForOp = builder.create<scf::ForOp>(
+      forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
+      forOp.getStep(), newInitArgs);
+  newForOp->setAttrs(forOp->getAttrs());
+  bool hasPlaceholderYield = !newForOp.getBody()->empty() &&
+                             isa<scf::YieldOp>(newForOp.getBody()->back());
+  if (hasPlaceholderYield) {
+    newForOp.getBody()->back().erase();
+  }
+
+  IRMapping mapping;
+  mapping.map(forOp.getInductionVar(), newForOp.getInductionVar());
+  unsigned newArgIdx = 0;
+  for (auto [idx, oldArg] : llvm::enumerate(forOp.getRegionIterArgs())) {
+    if (keepIterArg[idx]) {
+      mapping.map(oldArg, newForOp.getRegionIterArgs()[newArgIdx++]);
+    }
+  }
+
+  builder.setInsertionPointToStart(newForOp.getBody());
+  for (Operation &op : forOp.getBody()->without_terminator()) {
+    bool hasLiveResult = llvm::any_of(op.getResults(), [&](Value result) {
+      return liveValues.contains(result);
+    });
+    bool mustClone = !isPure(&op) || op.getNumRegions() != 0 || hasLiveResult;
+    if (mustClone) {
+      builder.clone(op, mapping);
+    }
+  }
+
+  SmallVector<Value> newYields;
+  newYields.reserve(newInitArgs.size());
+  for (auto [idx, yielded] : llvm::enumerate(yieldOp.getOperands())) {
+    if (keepIterArg[idx]) {
+      newYields.push_back(mapping.lookupOrDefault(yielded));
+    }
+  }
+  builder.setInsertionPointToEnd(newForOp.getBody());
+  builder.create<scf::YieldOp>(yieldOp.getLoc(), newYields);
+
+  unsigned newResultIdx = 0;
+  for (auto [idx, oldResult] : llvm::enumerate(forOp.getResults())) {
+    if (keepIterArg[idx]) {
+      oldResult.replaceAllUsesWith(newForOp.getResult(newResultIdx++));
+      continue;
+    }
+    if (!oldResult.use_empty()) {
+      llvm_unreachable("cannot drop a used scf.for result");
+    }
+  }
+
+  forOp.erase();
+  return newForOp;
 }
 
 std::optional<int64_t> getPostUpdateBaseUnitBytes(Value base) {

@@ -1,6 +1,6 @@
 # VPTO Soft Post-Update 优化 Pass 设计文档
 
-> 地址递推前置规范化、signed/unsigned i16 no-wrap 证明证书、可逆 witness 和共享候选描述见 [VPTO 地址递推 i16 前置规范化设计](vpto-address-recurrence-normalization-design-zh.md)。启用 VPTO soft-postupdate 时，CLI pipeline 在本 pass 之前固定运行 `VPTONormalizeAddressRecurrences`；producer 和 consumer 都以 `pto.vecscope` 为所有权边界，scope 外保持原样，scope 内产生的 witness 由本 pass 在最终输出中全部消费并删除。
+> 独立的地址递推规范化、signed/unsigned i16 no-wrap 证明证书和共享候选描述见 [VPTO 地址递推 i16 规范化设计](vpto-address-recurrence-normalization-design-zh.md)。CLI pipeline 始终在本 pass 之前运行 `VPTONormalizeAddressRecurrences`，但两者没有 commit/rollback 合同：normalizer 的 canonical i16 recurrence 是永久 IR，即使本 pass 被关闭或拒绝某个候选也会保留。
 
 ## 1. 概述
 
@@ -116,10 +116,9 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
 ```
 阶段一 · 循环路径：候选 op 直接位于某个 scf.for 的循环体内，并且在每次迭代中更新。
     以 ForOp 为单位批量处理（同循环内多 op 合并 iter_arg）：
-      · 纯符号分析：地址 witness 读取 canonical 一侧；先做累加器分析，未命中再做 delta 分析。
+      · 纯符号分析：直接读取 normalizer 已永久接入 operand 的 canonical recurrence；先做累加器分析，未命中再做 delta 分析。
       · 最终判定与 plan 准备：合并 base/stride delta，完成单位、类型和最终 stride 检查；通用 combine 路径同时拒绝零 stride，vstus 则检查 base advancement 与原 offset 等价。为可改写候选准备 stride 和 init_ptr。
-      · 统一恢复：所有普通 op 的 witness result 替换回 original 一侧。
-      · 选择提交：只用成功 plan 建立 pointer chain；失败候选保留原地址，并删除死亡 shadow recurrence。
+      · 选择提交：只用成功 plan 建立 pointer chain；失败候选保持普通 op，但继续使用 canonical i16 recurrence。
         每个 scf.for 独立建立和清理自己的 pointer iter_arg；不把内层 updated_base 自动传播为外层 iter_arg。
 
 阶段二 · 顺序路径：循环路径完成后，重新收集 vecscope 内的全部 block，
@@ -128,7 +127,7 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
     最大 `SequentialRun`，并链式改写。
 ```
 
-循环路径按内层到外层处理全部 `scf.for`。由于循环改写会 erase 并重建 ForOp，顺序路径必须在全部循环改写结束后重新收集 block 和候选 op，不能跨阶段保存 `Block *` 或 `Operation *`。每个循环在重新收集之前已经恢复全部 witness 并清理死亡的 canonical shadow，因此循环路径已改写的 op 会因已有 `updated_base` 被自然跳过；循环路径未命中、最终约束失败以及原本位于 `scf.if` 等嵌套区域中的普通 op，都以原地址表达式在单次 block 执行范围内参与顺序路径。
+循环路径按内层到外层处理全部 `scf.for`。由于循环改写会 erase 并重建 ForOp，顺序路径必须在全部循环改写结束后重新收集 block 和候选 op，不能跨阶段保存 `Block *` 或 `Operation *`。循环路径已改写的 op 会因已有 `updated_base` 被自然跳过；循环路径未命中、最终约束失败以及原本位于 `scf.if` 等嵌套区域中的普通 op，都以当前 canonical 地址表达式在单次 block 执行范围内参与顺序路径。
 
 ### 4.2 循环路径
 
@@ -252,12 +251,12 @@ getIterArgIncrement(Value v, ForOp forOp) -> {status, StrideExpr}:
 
 三态返回是必要的：`NotIterArg` 表示该操作数与累加器无关，应回退 delta 路径；`Failed` 表示确实是 iter_arg 但增量无法分解，此时必须整体放弃——把未知增量当作 0 会静默算错地址。
 
-累加器路径和 delta 路径对 cast 使用同一条正确性条件：必须能够证明 `delta(cast(x)) == cast(delta(x))`。循环不变量的 cast 的 delta 恒为零，可以直接保留；纯 index 域内且没有窄整数来源的递推继续使用本 pass 原有分析。loop-varying 窄整数和跨域 cast 只通过前置 pass 的显式可逆 canonical contract 接入：
+累加器路径和 delta 路径对 cast 使用同一条正确性条件：必须能够证明 `delta(cast(x)) == cast(delta(x))`。循环不变量的 cast 的 delta 恒为零，可以直接保留；纯 index 域内且没有窄整数来源的递推继续使用本 pass 原有分析。loop-varying 窄整数和跨域 cast 只通过独立 normalizer 产生的永久 canonical contract 接入：
 
 - Signed canonical recurrence 是 i16 iter_arg、signed extension（`arith.index_cast`/`arith.extsi`）和 `arith.addi/subi ... overflow<nsw>` 的组合；unsigned canonical recurrence 使用 `arith.index_castui`/`arith.extui` 和 `overflow<nuw>`。Block 类 stride 期望 unsigned，其余共享描述中的窄地址 stride 期望 signed。
-- normalizer 用 `pto.address_recurrence_witness original, canonical` 把通过证明的 canonical 地址与原 operand 配对。consumer 的 accumulator、delta、初始指针与分组分析沿 canonical 一侧读取值，但 witness 本身不参与步长计算。
-- consumer 只检查 canonical 结构并读取常量 backedge step，不再计算 trip count、初值、递推端点或最终 backedge 范围；这些事实已经由 overflow flag 作为 IR 语义承诺。它仍负责合并 base 与 stride delta、单位换算以及 `Dynamic`、`Constant`、`SignedI8` 等最终约束。
-- 原生 i16 iter_arg 若本身具有域匹配的 `nsw`/`nuw` constant-step backedge，也满足同一个 canonical 结构，soft-postupdate 单独运行时可以直接接受；paired pipeline 仍会由 normalizer 为原 i16 创建独立 shadow 和 witness，以支持失败回滚。raw i32 iter_arg、signed/unsigned 域不匹配的 cast、没有相应 overflow flag 的 i16 backedge、动态步长和复杂窄整数递推均返回 `Failed`。normalizer 不永久替换原地址 operand；soft-postupdate 在最终判定后统一恢复 original 一侧，再选择性提交成功 rewrite。
+- normalizer 直接把通过证明的 canonical 地址接到访存或 `pto.addptr` operand，并用 loop-aware liveness 删除不再需要的宽递推。soft-postupdate 不解包任何 marker。
+- soft-postupdate 只检查 canonical 结构并读取常量 backedge step，不再计算 trip count、初值、递推端点或最终 backedge 范围；这些事实已经由 overflow flag 作为 IR 语义承诺。它仍负责合并 base 与 stride delta、单位换算以及 `Dynamic`、`Constant`、`SignedI8` 等最终约束。
+- 原生 i16 iter_arg 若本身具有域匹配的 `nsw`/`nuw` constant-step backedge，也满足同一个 canonical 结构。raw i32 iter_arg、signed/unsigned 域不匹配的 cast、没有相应 overflow flag 的 i16 backedge、动态步长和复杂窄整数递推均返回 `Failed`。候选失败时不撤销 normalizer 的改写。
 
 上述规则覆盖 `arith.index_cast`、`arith.index_castui`、`arith.extsi` 和 `arith.extui`；`arith.trunci` 等其他整数转换不属于 canonical 语法，遇到时保守放弃。
 
@@ -315,7 +314,7 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 
 #### 4.2.5 合法性检查
 
-无论由累加器分析还是 delta 分析产出 stride，都须满足以下条件。这些 stride 合法性检查在 post-update op 改写之前完成，任一不满足即放弃该候选。normalizer 已创建的 witness 和 shadow 属于可回滚的输入状态；本 pass 在候选判定后恢复原 operand 并清理它们。候选通过 stride 检查后，初始指针计算仍可能晚期失败，此时由 vecscope 级 dead-pure-op 清理保证最终不留下失败候选的附加 IR。
+无论由累加器分析还是 delta 分析产出 stride，都须满足以下条件。这些 stride 合法性检查在 post-update op 改写之前完成，任一不满足即放弃该候选。放弃只表示保留普通访存形式，不会撤销 normalizer 已经完成的 i16 canonicalization。候选通过 stride 检查后，初始指针计算仍可能晚期失败，此时由 vecscope 级 dead-pure-op 清理保证最终不留下本 pass 自己物化的无用 IR。
 
 1. **op 尚未处于 Post-Update 形式。** 通过共享描述中的 `minResultsForPost` 判断当前结果数是否已经包含 optional pointer 结果。
 
@@ -333,16 +332,15 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 
 6. **操作数可用性（支配性）。** stride 表达式的每个叶子须在候选 op 处可用：循环不变量、block argument、或定义点早于候选 op。若叶子定义在候选 op **之后**，仅当其定义链全部为 pure op 时克隆到候选 op 之前（克隆保留原结果序号，多结果 op 亦正确）；否则放弃。该检查以只读方式先行完成，克隆发生在物化阶段。
 
-#### 4.2.6 恢复与改写
+#### 4.2.6 改写
 
-循环内候选逐个完成符号分析并准备可行 plan；全部候选收集完成后，统一恢复 witness 并执行循环改写：
+循环内候选逐个完成符号分析并准备可行 plan；全部候选收集完成后执行循环改写：
 
 1. **准备成功 plan。** 叶子全部循环不变时将 stride 发射到循环外，否则发射到候选 op 之前。对 stride 参与当前地址的候选，计算 `init_ptr = pto.addptr(base_0, (unitBytes/elemBytes)·strideOperand_0)`；若无显式 stride、stride 不参与当前地址或初始偏移为零，则直接使用 `base_0`。传给 `pto.addptr` 前将最终偏移规范为 index；Block 单位保持无符号扩展，其他单位使用有符号扩展，Element 类 index offset 还执行 4.2.1 所述的 i32 截断。常量按 `(值, 类型)` 在同一循环内复用同一个 SSA 值——4.2.7 的分组按 stride 的 **Value 同一性** 判定，重复创建等值常量会把本可共享 `iter_arg` 的 op 拆成多组。
-2. **恢复普通地址。** 将该循环内每个 `pto.address_recurrence_witness` result 的用途替换为 original operand。此时成功与失败候选都先回到普通形式，成功 plan 保留已经验证和物化的 stride/init_ptr。
-3. 新增指针类型的 `iter_arg`，初始值为 plan 中的 `init_ptr`。
-4. 创建 Post-Update op：base 替换为 iter_arg 的 block argument。对于 `strideParticipatesInCurrentAddress = true` 的候选，将 `strideOperand` 替换为 `stride_new`；`vldus` 原本没有显式 stride，创建 Post 形式时追加 increment；`vstus` 则保留原 i32 offset，只追加 `base_out`。其余操作数（block_stride、mask、dist 等）不变。
-5. 将 `updated_base` 通过 `scf.yield` 传出。
-6. 对改写后的循环做 loop-aware liveness，删除已经被 Post-Update 指针链完全取代的旧 accumulator，以及 witness、canonical shadow、cast 和 backedge。若没有候选成功，仍执行同一 liveness 重建来删除整个试探性 shadow recurrence。
+2. 新增指针类型的 `iter_arg`，初始值为 plan 中的 `init_ptr`。
+3. 创建 Post-Update op：base 替换为 iter_arg 的 block argument。对于 `strideParticipatesInCurrentAddress = true` 的候选，将 `strideOperand` 替换为 `stride_new`；`vldus` 原本没有显式 stride，创建 Post 形式时追加 increment；`vstus` 则保留原 i32 offset，只追加 `base_out`。其余操作数（block_stride、mask、dist 等）不变。
+4. 将 `updated_base` 通过 `scf.yield` 传出。
+5. 对改写后的循环做 loop-aware liveness，删除已经被 Post-Update 指针链完全取代的地址 accumulator，包括不再使用的 canonical i16 recurrence、cast 和 backedge。没有候选成功时不重建循环，normalizer 的 canonical recurrence 保留。
 
 最后一步不能只依赖普通 DCE。旧 accumulator 即使没有真实用户，仍会形成
 `block argument → pure update → scf.yield → block argument` 的循环使用链，局部
@@ -370,7 +368,7 @@ Post-Update 模式下 `repeat_stride` 从地址偏移变为指针前进量，因
 
 两个 op 能共享同一个 `iter_arg`，当且仅当它们走**同一条地址序列**——起点 `init_ptr`（由 `base_0`、`strideOperand_0` 和 `unitBytes` 决定，见 4.2.1）相同，且以字节计的步长相同。
 
-理想的分组键是 `(init_ptr, byte_stride)`。但 `init_ptr` 不适合直接入键：分组按 **Value 同一性** 比较，而 `computeInitialPtr` 可能为每个候选各自物化一个 `pto.addptr`，起点数值相同也未必是同一个 SSA 值。因此改用决定地址序列的 SSA 量：分组键实际取 `(base, canonical(strideOperand), stride_new, unitBytes)`，其中 `canonical` 解开可能存在的 recurrence witness。加入 `unitBytes` 可防止 f32 上数值相同的 Element 与 Byte stride 被误合并；该键可能把本可合并的组拆开，但不会合并字节递推不同的组。
+理想的分组键是 `(init_ptr, byte_stride)`。但 `init_ptr` 不适合直接入键：分组按 **Value 同一性** 比较，而 `computeInitialPtr` 可能为每个候选各自物化一个 `pto.addptr`，起点数值相同也未必是同一个 SSA 值。因此改用决定地址序列的 SSA 量：分组键实际取 `(base, strideOperand, stride_new, unitBytes)`。normalizer 已经把 operand 直接规范到 canonical SSA 值，不再需要解开 marker。加入 `unitBytes` 可防止 f32 上数值相同的 Element 与 Byte stride 被误合并；该键可能把本可合并的组拆开，但不会合并字节递推不同的组。
 
 同组的 op 共享一个 `iter_arg`，所有 op 使用同一个 pre-update 指针（block argument），不链式传递 `updated_base`。原因：同一迭代内同组 op 访问相同地址，链式传递会使后续 op 的地址偏移一个 stride。每组只需 yield 一个 `updated_base`。
 
@@ -537,7 +535,7 @@ else:
 
 ### 5.1 在 Pipeline 中的位置
 
-配对的 normalization 与 soft-postupdate pass 连续运行在 VPTO 后端 pipeline 中，位于 `PTOInferVPTOVecScope` 之后、loop invariant code motion 之前；完成 VPTO emission IR 校验后，LLVM emitter 才运行 `PrepareVPTOLLVMLoweringPass` 和 `LowerVPTOOpsPass`：
+独立 normalization 固定运行，optional soft-postupdate 紧随其后；两者位于 `PTOInferVPTOVecScope` 之后、loop invariant code motion 之前。完成 VPTO emission IR 校验后，LLVM emitter 才运行 `PrepareVPTOLLVMLoweringPass` 和 `LowerVPTOOpsPass`：
 
 ```
 VPTOExpandWrapperOps
@@ -554,9 +552,9 @@ PrepareVPTOLLVMLoweringPass
 LowerVPTOOpsPass
 ```
 
-PTOAS 的 VPTO 后端默认启用这组 MLIR pass，可以通过 `--enable-vpto-soft-postupdate=false` 显式关闭。由于同一优化不应在 MLIR 与 LLVM 层重复执行，PTOAS 调用 Bisheng 编译 VPTO device LLVM IR 时默认显式关闭 Bisheng 公开 LLVM 选项 `-mllvm --cce-vf-enable-auto-postupdate=false` 与 `-mllvm --cce-vf-enable-blockldst-auto-postupdate=false`。只有诊断或对照场景显式指定 `--enable-bisheng-soft-postupdate` 时，PTOAS 才会把上述两个公开选项改为 `true`，重新开启 Bisheng 的普通 vector load/store 与 block load/store 自动 post-update 路径。
+PTOAS 的 VPTO 后端始终运行 normalization，且不提供单独 CLI 开关。`--enable-vpto-soft-postupdate=false` 只关闭 soft-postupdate。由于同一 post-update 优化不应在 MLIR 与 LLVM 层重复执行，PTOAS 调用 Bisheng 编译 VPTO device LLVM IR 时默认显式关闭 Bisheng 公开 LLVM 选项 `-mllvm --cce-vf-enable-auto-postupdate=false` 与 `-mllvm --cce-vf-enable-blockldst-auto-postupdate=false`。只有诊断或对照场景显式指定 `--enable-bisheng-soft-postupdate` 时，PTOAS 才会把上述两个公开选项改为 `true`，重新开启 Bisheng 的普通 vector load/store 与 block load/store 自动 post-update 路径。
 
-默认开启由两层测试约束：lit 直接对 runtime case 的 `kernel.pto` 检查 post form、拒绝形态和 witness 清理，`test/vpto` 再通过 simulator 或 NPU 对完整输出做 `COMPARE_STRICT=1` 比较。重点场景包括源类型/i16 域回绕拒绝、i16/i32 正例、同循环混合提交与回滚、负向递推、嵌套循环、共享 chain 以及不同地址单位隔离。
+默认行为由两层测试约束：lit 直接对 runtime case 的 `kernel.pto` 分别检查 permanent normalization、post form 和拒绝形态，`test/vpto` 再通过 simulator 或 NPU 对完整输出做 `COMPARE_STRICT=1` 比较。重点场景包括源类型/i16 域回绕拒绝、i16/i32 正例、同循环中 post-update 成功与失败候选并存、负向递推、嵌套循环、共享 chain 以及不同地址单位隔离。
 
 该位置确保：
 - Wrapper op 已展开（IR 干净）

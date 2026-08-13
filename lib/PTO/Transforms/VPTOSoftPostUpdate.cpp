@@ -38,39 +38,14 @@ using namespace mlir;
 
 namespace {
 
-// Narrow loop-varying integer addresses cross the pass boundary through a
-// certified recurrence of this width. Pure index-domain analysis remains local
-// to soft post-update.
+// Narrow loop-varying integer addresses use a certified recurrence of this
+// width. Pure index-domain analysis remains local to soft post-update.
 static constexpr unsigned kCanonicalAddressWidth = 16;
 
 using StrideUnit = pto::PostUpdateAddressUnit;
 using StrideConstraint = pto::PostUpdateStrideConstraint;
 using AddressDomain = pto::PostUpdateAddressDomain;
 using PostUpdateOpInfo = pto::PostUpdateOpInfo;
-
-// Address normalization rewrites each proven address use through a reversible
-// witness. Analysis always follows the canonical side; immediately before the
-// loop rewrite is committed, every witness use is restored to the original
-// value. Successful candidates are then replaced by post-update ops, while
-// failed candidates and the subsequent sequential path see exactly the
-// original address expression.
-static Value getCanonicalAddressValue(Value value) {
-  if (!value)
-    return value;
-  while (auto witness = value.getDefiningOp<pto::AddressRecurrenceWitnessOp>())
-    value = witness.getCanonical();
-  return value;
-}
-
-static bool restoreAddressRecurrenceWitnesses(scf::ForOp forOp) {
-  SmallVector<pto::AddressRecurrenceWitnessOp> witnesses;
-  for (Operation &op : forOp.getBody()->without_terminator())
-    if (auto witness = dyn_cast<pto::AddressRecurrenceWitnessOp>(&op))
-      witnesses.push_back(witness);
-  for (pto::AddressRecurrenceWitnessOp witness : witnesses)
-    witness.getResult().replaceAllUsesWith(witness.getOriginal());
-  return !witnesses.empty();
-}
 
 static const PostUpdateOpInfo *getPostUpdateInfo(Operation *op) {
   return pto::getPostUpdateOpInfo(op);
@@ -352,11 +327,10 @@ static bool equalAffineForms(const AffineForm &a, const AffineForm &b) {
 }
 
 static Value stripSignedAddressCasts(Value value) {
-  value = getCanonicalAddressValue(value);
   while (Operation *defOp = value.getDefiningOp()) {
     if (!isa<arith::IndexCastOp, arith::ExtSIOp>(defOp))
       break;
-    value = getCanonicalAddressValue(defOp->getOperand(0));
+    value = defOp->getOperand(0);
   }
   return value;
 }
@@ -471,7 +445,6 @@ static std::optional<LinearDecomp> decomposeLinear(Value v,
                                                    BlockArgument blockArg,
                                                    scf::ForOp forOp,
                                                    DecompCache &cache) {
-  v = getCanonicalAddressValue(v);
   // v == blockArg → {1, 0}
   if (v == blockArg)
     return LinearDecomp{1, makeConst(0)};
@@ -551,8 +524,7 @@ static std::optional<LinearDecomp> decomposeLinear(Value v,
     if (dp->coeff == 0)
       return record(LinearDecomp{0, makeLeaf(v)});
     return record(LinearDecomp{
-        dp->coeff, makeAdd(dp->increment, makeLeaf(getCanonicalAddressValue(
-                                              addPtrOp.getOffset())))});
+        dp->coeff, makeAdd(dp->increment, makeLeaf(addPtrOp.getOffset()))});
   }
 
   // Unrecognized op → unknown
@@ -580,7 +552,7 @@ static StrideResult
 getIterArgIncrement(Value v, scf::ForOp forOp,
                     std::optional<AddressDomain> expectedDomain) {
   SmallVector<Operation *> casts;
-  Value current = getCanonicalAddressValue(v);
+  Value current = v;
 
   while (true) {
     if (auto blockArg = dyn_cast<BlockArgument>(current)) {
@@ -625,7 +597,7 @@ getIterArgIncrement(Value v, scf::ForOp forOp,
       if (!castPreservesLoopDelta(defOp, forOp))
         return {StrideStatus::Failed, nullptr};
       casts.push_back(defOp);
-      current = getCanonicalAddressValue(defOp->getOperand(0));
+      current = defOp->getOperand(0);
       continue;
     }
 
@@ -671,7 +643,7 @@ using DeltaCache = DenseMap<Value, StrideExprRef>;
 // flag on that recurrence is the proof certificate; soft post-update does not
 // repeat trip-count and endpoint analysis.
 static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp) {
-  Value input = getCanonicalAddressValue(castOp->getOperand(0));
+  Value input = castOp->getOperand(0);
   if (forOp.isDefinedOutsideOfLoop(input))
     return true; // Both the cast value and its delta (zero) are invariant.
 
@@ -707,7 +679,6 @@ static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp) {
 // Returns a loop-invariant symbolic delta, or null if unknown.  Pure.
 static StrideExprRef computeDelta(Value v, scf::ForOp forOp,
                                   DeltaCache &cache) {
-  v = getCanonicalAddressValue(v);
   // IV: delta = step
   if (v == forOp.getInductionVar())
     return makeLeaf(forOp.getStep());
@@ -820,12 +791,10 @@ getStride(Value v, scf::ForOp forOp, DeltaCache &cache,
   return computeDelta(v, forOp, cache);
 }
 
-// The normalization/consumer boundary is explicit for narrow values: they must
-// trace through canonical signed/unsigned widening casts to an i16 iter_arg
-// carrying the corresponding nsw/nuw backedge certificate. Pure index-domain
-// IVs and recurrences retain the existing soft analysis.
+// Narrow values must trace through canonical signed/unsigned widening casts to
+// an i16 iter_arg carrying the corresponding nsw/nuw backedge certificate.
+// Pure index-domain IVs and recurrences retain the existing soft analysis.
 static bool isCanonicalLoopInteger(Value value, scf::ForOp forOp) {
-  value = getCanonicalAddressValue(value);
   if (forOp.isDefinedOutsideOfLoop(value))
     return true;
 
@@ -856,10 +825,9 @@ static bool isCanonicalLoopInteger(Value value, scf::ForOp forOp) {
 }
 
 // Pure index-domain recurrences retain the existing soft analysis. The
-// explicit pass boundary applies when a loop-varying value is narrow, or when
-// an index value was obtained by widening a narrow integer.
+// canonical recurrence requirement applies when a loop-varying value is
+// narrow, or when an index value was obtained by widening a narrow integer.
 static bool isSafeLoopInteger(Value value, scf::ForOp forOp) {
-  value = getCanonicalAddressValue(value);
   if (forOp.isDefinedOutsideOfLoop(value))
     return true;
   if (!value.getType().isIndex())
@@ -908,7 +876,6 @@ static bool isCanonicalLoopBase(Value base, scf::ForOp forOp) {
 // if `v` cannot be materialized outside the loop.
 static Value materializeAtLoopEntry(Value v, scf::ForOp forOp,
                                     OpBuilder &builder) {
-  v = getCanonicalAddressValue(v);
   // IV → lower bound
   if (v == forOp.getInductionVar())
     return forOp.getLowerBound();
@@ -955,7 +922,6 @@ static Value materializeAtLoopEntry(Value v, scf::ForOp forOp,
 // types; finer byte units require a suitably aligned compile-time constant.
 static bool canScaleInitialOffset(Value strideOperand, int64_t elemBytes,
                                   int64_t unitBytes) {
-  strideOperand = getCanonicalAddressValue(strideOperand);
   if (!strideOperand || unitBytes == elemBytes || unitBytes % elemBytes == 0)
     return true;
   if (elemBytes % unitBytes != 0)
@@ -1013,7 +979,6 @@ static Value createInitialPtr(Value base, Value strideOperand,
   if (!strideParticipatesInCurrentAddress || !strideOperand)
     return base;
   Value constantSource = strideOperand;
-  constantSource = getCanonicalAddressValue(constantSource);
   while (Operation *defOp = constantSource.getDefiningOp()) {
     if (!isa<arith::IndexCastOp, arith::ExtSIOp>(defOp))
       break;
@@ -1495,8 +1460,7 @@ struct PostUpdateRewrite {
 using IterArgGroupKey = std::tuple<Value, Value, Value, int64_t>;
 
 static IterArgGroupKey getGroupKey(const PostUpdateRewrite &rw) {
-  return {rw.base, getCanonicalAddressValue(rw.strideOperand), rw.stride,
-          rw.unitBytes};
+  return {rw.base, rw.strideOperand, rw.stride, rw.unitBytes};
 }
 
 // Build the post-update form of an op while preserving every operand,
@@ -1542,142 +1506,9 @@ static Operation *createNormalOp(Operation *op, const PostUpdateOpInfo &info,
   return builder.create(state);
 }
 
-// Remove loop-carried recurrences that became dead after post-update rewrites.
-//
-// Ordinary DCE cannot break a recurrence such as
-//
-//   %next = arith.addi %iter_arg, %step
-//   scf.yield %next
-//
-// even when neither the iter_arg nor the loop result has a real user: the
-// block argument, update, and yield form a use cycle. Compute liveness from
-// side-effecting operations and externally used loop results, close it across
-// the loop backedge, then rebuild the loop with only live iter_args and pure
-// operations that feed live values.
-static scf::ForOp pruneDeadLoopCarriedValues(scf::ForOp forOp,
-                                             OpBuilder &builder) {
-  unsigned numIterArgs = forOp.getInitArgs().size();
-  if (numIterArgs == 0)
-    return forOp;
-
-  auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-  DenseSet<Value> liveValues;
-  SmallVector<Value> worklist;
-  SmallVector<bool> keepIterArg(numIterArgs, false);
-
-  auto markLive = [&](Value value) {
-    if (value && liveValues.insert(value).second)
-      worklist.push_back(value);
-  };
-
-  // A loop result used outside the loop keeps its corresponding backedge live.
-  for (auto [idx, result] : llvm::enumerate(forOp.getResults())) {
-    if (result.use_empty())
-      continue;
-    keepIterArg[idx] = true;
-    markLive(yieldOp.getOperand(idx));
-  }
-
-  // Side-effecting operations are liveness roots. Region-bearing operations
-  // are handled conservatively: keep their own operands and every value
-  // captured by a nested region, even when the nested computation is pure,
-  // rather than attempting a second control-flow-sensitive liveness analysis
-  // here.
-  for (Operation &op : forOp.getBody()->without_terminator()) {
-    if (!isPure(&op))
-      for (Value operand : op.getOperands())
-        markLive(operand);
-    if (op.getNumRegions() != 0) {
-      op.walk([&](Operation *nested) {
-        for (Value operand : nested->getOperands())
-          markLive(operand);
-      });
-    }
-  }
-
-  // Propagate liveness through pure def chains and across loop backedges.
-  while (!worklist.empty()) {
-    Value value = worklist.pop_back_val();
-    if (auto blockArg = dyn_cast<BlockArgument>(value)) {
-      if (blockArg.getOwner() != forOp.getBody() ||
-          blockArg.getArgNumber() == 0)
-        continue;
-      unsigned idx = blockArg.getArgNumber() - 1;
-      if (!keepIterArg[idx]) {
-        keepIterArg[idx] = true;
-        markLive(yieldOp.getOperand(idx));
-      }
-      continue;
-    }
-
-    Operation *defOp = value.getDefiningOp();
-    if (!defOp || !forOp->isAncestor(defOp))
-      continue;
-    for (Value operand : defOp->getOperands())
-      markLive(operand);
-  }
-
-  if (llvm::all_of(keepIterArg, [](bool keep) { return keep; }))
-    return forOp;
-
-  SmallVector<Value> newInitArgs;
-  newInitArgs.reserve(numIterArgs);
-  for (auto [idx, init] : llvm::enumerate(forOp.getInitArgs()))
-    if (keepIterArg[idx])
-      newInitArgs.push_back(init);
-
-  builder.setInsertionPoint(forOp);
-  auto newForOp = builder.create<scf::ForOp>(
-      forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
-      forOp.getStep(), newInitArgs);
-  newForOp->setAttrs(forOp->getAttrs());
-  // scf.for creates its zero-operand yield eagerly when there are no iter_args.
-  // The body is rebuilt below, so remove that placeholder before cloning live
-  // operations and creating the final yield.
-  if (!newForOp.getBody()->empty() &&
-      isa<scf::YieldOp>(newForOp.getBody()->back()))
-    newForOp.getBody()->back().erase();
-
-  IRMapping mapping;
-  mapping.map(forOp.getInductionVar(), newForOp.getInductionVar());
-  unsigned newArgIdx = 0;
-  for (auto [idx, oldArg] : llvm::enumerate(forOp.getRegionIterArgs()))
-    if (keepIterArg[idx])
-      mapping.map(oldArg, newForOp.getRegionIterArgs()[newArgIdx++]);
-
-  builder.setInsertionPointToStart(newForOp.getBody());
-  for (Operation &op : forOp.getBody()->without_terminator()) {
-    bool hasLiveResult = llvm::any_of(op.getResults(), [&](Value result) {
-      return liveValues.contains(result);
-    });
-    if (!isPure(&op) || op.getNumRegions() != 0 || hasLiveResult)
-      builder.clone(op, mapping);
-  }
-
-  SmallVector<Value> newYields;
-  newYields.reserve(newInitArgs.size());
-  for (auto [idx, yielded] : llvm::enumerate(yieldOp.getOperands()))
-    if (keepIterArg[idx])
-      newYields.push_back(mapping.lookupOrDefault(yielded));
-  builder.setInsertionPointToEnd(newForOp.getBody());
-  builder.create<scf::YieldOp>(yieldOp.getLoc(), newYields);
-
-  unsigned newResultIdx = 0;
-  for (auto [idx, oldResult] : llvm::enumerate(forOp.getResults())) {
-    if (keepIterArg[idx]) {
-      oldResult.replaceAllUsesWith(newForOp.getResult(newResultIdx++));
-      continue;
-    }
-    assert(oldResult.use_empty() && "cannot drop a used scf.for result");
-  }
-
-  forOp.erase();
-  return newForOp;
-}
-
-// Loop rollback and initial-address planning can leave pure constants/casts
-// outside the rebuilt loop. Remove those def chains before the sequential path
-// observes the block. Region-bearing operations are deliberately excluded.
+// Initial-address planning can leave pure constants/casts outside the rebuilt
+// loop. Remove those def chains before the sequential path observes the block.
+// Region-bearing operations are deliberately excluded.
 static void eraseDeadPureOps(Operation *root) {
   bool changed;
   do {
@@ -1809,7 +1640,7 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
     forOp.getResult(i).replaceAllUsesWith(newForOp.getResult(i));
 
   forOp.erase();
-  return pruneDeadLoopCarriedValues(newForOp, builder);
+  return pto::pruneDeadLoopCarriedValues(newForOp, builder);
 }
 
 //===----------------------------------------------------------------------===//
@@ -2306,15 +2137,6 @@ struct VPTOSoftPostUpdatePass
 
     module.walk(
         [&](pto::VecScopeOp vecscope) { processVecScope(vecscope, builder); });
-
-    bool hasWitness = false;
-    module.walk([&](pto::AddressRecurrenceWitnessOp witness) {
-      witness.emitError(
-          "address recurrence witness was not consumed by soft post-update");
-      hasWitness = true;
-    });
-    if (hasWitness)
-      signalPassFailure();
   }
 
 private:
@@ -2402,8 +2224,7 @@ private:
         // original base recurrence; the operand itself must be preserved.
         StrideExprRef baseAdvance =
             scaleBaseDelta(deltaBase, *elemBytes, *unitBytes);
-        StrideExprRef explicitAdvance =
-            makeLeaf(getCanonicalAddressValue(strideOperand));
+        StrideExprRef explicitAdvance = makeLeaf(strideOperand);
         if (!baseAdvance ||
             !equalAddressAdvanceExprs(baseAdvance, explicitAdvance))
           continue;
@@ -2467,16 +2288,8 @@ private:
           {&op, base, strideOperand, strideNew, initPtr, *unitBytes});
     }
 
-    // The normalizer's canonical values are speculative until this point.
-    // Restore every ordinary op to its original address expression before
-    // committing successful rewrites. Failed candidates therefore retain
-    // their original address operands, and the dead shadow recurrences can be
-    // pruned uniformly before the sequential phase examines the block.
-    bool hadWitnesses = restoreAddressRecurrenceWitnesses(forOp);
     if (!rewrites.empty()) {
       applyPostUpdateRewrites(forOp, rewrites, builder);
-    } else if (hadWitnesses) {
-      pruneDeadLoopCarriedValues(forOp, builder);
     }
   }
 };

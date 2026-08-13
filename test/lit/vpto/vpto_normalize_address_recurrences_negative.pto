@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vpto-normalize-address-recurrences | FileCheck %s
-// RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s --check-prefix=ROLLBACK
+// RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s --check-prefix=POST
 
 // CHECK-LABEL: func.func @i16_final_backedge_wrap
 // CHECK-NOT: arith.extsi
@@ -27,45 +27,53 @@
 
 // CHECK-LABEL: func.func @signed_i8_constraint
 // CHECK: arith.index_cast %{{.*}} : i16 to index
-// CHECK: pto.address_recurrence_witness
 // CHECK: pto.sprsti "AR", {{%.*}}[%c0_i32]
 // CHECK: overflow<nsw>
-// ROLLBACK-LABEL: func.func @signed_i8_constraint
-// ROLLBACK-NOT: pto.address_recurrence_witness
-// ROLLBACK-NOT: overflow<nsw>
-// ROLLBACK-NOT: i16
-// ROLLBACK: scf.for %{{.*}} = %c0 to %c256 step %c128 {
-// ROLLBACK: pto.addptr %{{.*}}, %{{.*}}
-// ROLLBACK: pto.sprsti "AR", %{{.*}}[%c0_i32]
+// POST-LABEL: func.func @signed_i8_constraint
+// POST: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// POST: arith.index_cast %{{.*}} : i16 to index
+// POST: pto.sprsti "AR", %{{.*}}[%c0_i32]
+// POST: overflow<nsw>
 
 // CHECK-LABEL: func.func @constant_constraint_dynamic_advance
 // CHECK: arith.index_cast %{{.*}} : i16 to index
 // CHECK: pto.pldi {{%.*}}[%c0], "NORM"
-// CHECK: pto.address_recurrence_witness
 // CHECK: overflow<nsw>
-// ROLLBACK-LABEL: func.func @constant_constraint_dynamic_advance
-// ROLLBACK-NOT: pto.address_recurrence_witness
-// ROLLBACK-NOT: overflow<nsw>
-// ROLLBACK-NOT: i16
-// ROLLBACK: scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %c1)
-// ROLLBACK: pto.pldi %{{.*}}[%c0], "NORM"
-// ROLLBACK: pto.addptr %{{.*}}, %{{.*}}
+// POST-LABEL: func.func @constant_constraint_dynamic_advance
+// POST: scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %c1_i16)
+// POST: arith.index_cast %{{.*}} : i16 to index
+// POST: pto.pldi %{{.*}}[%c0], "NORM"
+// POST: pto.addptr %{{.*}}, %{{.*}}
+// POST: overflow<nsw>
 
-// One loop may commit a dynamic vlds candidate and roll back a SignedI8
-// sprsti candidate that shares the same proven IV. The failed op must use the
-// original IV, and no witness or shadow recurrence may survive.
-// CHECK-LABEL: func.func @mixed_commit_and_rollback
-// CHECK: pto.address_recurrence_witness
+// One loop may convert a dynamic vlds candidate while a SignedI8 sprsti
+// candidate remains ordinary. Both permanently use the proven i16 recurrence.
+// CHECK-LABEL: func.func @mixed_postupdate_result
 // CHECK: pto.vlds
 // CHECK: pto.sprsti
 // CHECK: overflow<nsw>
-// ROLLBACK-LABEL: func.func @mixed_commit_and_rollback
-// ROLLBACK-NOT: pto.address_recurrence_witness
-// ROLLBACK-NOT: overflow<nsw>
-// ROLLBACK-NOT: i16
-// ROLLBACK: pto.vlds {{.*}} -> !pto.vreg<64xui32>, !pto.ptr<ui32, ub>
-// ROLLBACK: pto.addptr %{{.*}}, %{{.*}}
-// ROLLBACK: pto.sprsti "AR", %{{.*}}[%c0_i32]
+// POST-LABEL: func.func @mixed_postupdate_result
+// POST: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16, %{{.*}} = %{{.*}})
+// POST: arith.index_cast %{{.*}} : i16 to index
+// POST: pto.vlds {{.*}} -> !pto.vreg<64xui32>, !pto.ptr<ui32, ub>
+// POST: pto.addptr %{{.*}}, %{{.*}}
+// POST: pto.sprsti "AR", %{{.*}}[%c0_i32]
+// POST: overflow<nsw>
+
+// A safe base offset is normalized even when the same op's explicit offset has
+// a complex recurrence that cannot be normalized or consumed by post-update.
+// CHECK-LABEL: func.func @best_effort_independent_leaves
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %c1, %{{.*}} = %c0_i16)
+// CHECK: arith.index_cast %{{.*}} : i16 to index
+// CHECK: pto.addptr %{{.*}}, %{{.*}}
+// CHECK: pto.vlds %{{.*}}[{{%.*}}]
+// CHECK: overflow<nsw>
+// POST-LABEL: func.func @best_effort_independent_leaves
+// POST: scf.for {{.*}} iter_args(%{{.*}} = %c1, %{{.*}} = %c0_i16)
+// POST: arith.index_cast %{{.*}} : i16 to index
+// POST: pto.addptr %{{.*}}, %{{.*}}
+// POST: pto.vlds %{{.*}}[{{%.*}}] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+// POST: overflow<nsw>
 
 // CHECK-LABEL: func.func @dynamic_trip_count
 // CHECK-NOT: arith.index_cast %{{.*}} : i16 to index
@@ -170,7 +178,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @mixed_commit_and_rollback(%base: !pto.ptr<ui32, ub>) {
+  func.func @mixed_postupdate_result(%base: !pto.ptr<ui32, ub>) {
     %c0 = arith.constant 0 : index
     %c128 = arith.constant 128 : index
     %c256 = arith.constant 256 : index
@@ -182,6 +190,25 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %at = pto.addptr %base, %iv
             : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
         pto.sprsti "AR", %at[%c0_i32] : !pto.ptr<ui32, ub>, i32
+      }
+    }
+    return
+  }
+
+  func.func @best_effort_independent_leaves(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c2 = arith.constant 2 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c4 step %c1
+          iter_args(%offset = %c1) -> index {
+        %at = pto.addptr %base, %iv
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %value = pto.vlds %at[%offset]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %next = arith.muli %offset, %c2 : index
+        scf.yield %next : index
       }
     }
     return

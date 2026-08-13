@@ -6,9 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// This pass only creates reversible address-recurrence witnesses for loops
-// nested under pto.vecscope, matching the ownership boundary consumed by
-// VPTOSoftPostUpdate. Loops outside that boundary must remain untouched.
+// This independent canonicalization pass permanently rewrites proven VPTO
+// address recurrences to i16. It does not depend on soft post-update accepting
+// or consuming the resulting form.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
@@ -53,17 +53,11 @@ struct RewriteTarget {
   unsigned operandNumber;
   Operation *sourceUseOwner;
   unsigned sourceUseOperandNumber;
-  unsigned candidate;
 };
 
 struct RecurrencePlan {
   ProvenRecurrence recurrence;
   SmallVector<RewriteTarget> targets;
-  bool rejected = false;
-};
-
-struct CandidatePlan {
-  SmallVector<unsigned> recurrences;
   bool rejected = false;
 };
 
@@ -230,22 +224,16 @@ public:
 
   bool empty() const {
     return llvm::none_of(recurrences, [&](const RecurrencePlan &plan) {
-      return !plan.rejected &&
-             llvm::any_of(plan.targets, [&](const RewriteTarget &target) {
-               return !candidates[target.candidate].rejected;
-             });
+      return !plan.rejected && !plan.targets.empty();
     });
   }
 
   void rewrite(OpBuilder &builder) {
     SmallVector<unsigned> active;
     for (auto [index, plan] : llvm::enumerate(recurrences)) {
-      if (plan.rejected)
-        continue;
-      if (llvm::any_of(plan.targets, [&](const RewriteTarget &target) {
-            return !candidates[target.candidate].rejected;
-          }))
+      if (!plan.rejected && !plan.targets.empty()) {
         active.push_back(index);
+      }
     }
     if (active.empty())
       return;
@@ -285,8 +273,6 @@ public:
     for (unsigned recurrenceIndex : active) {
       AddressDomain domain = recurrences[recurrenceIndex].recurrence.domain;
       for (const RewriteTarget &target : recurrences[recurrenceIndex].targets) {
-        if (candidates[target.candidate].rejected)
-          continue;
         Type wantedType =
             target.owner->getOperand(target.operandNumber).getType();
         auto key = std::make_pair(recurrenceIndex, wantedType);
@@ -322,20 +308,14 @@ public:
     for (unsigned recurrenceIndex : active) {
       RecurrencePlan &plan = recurrences[recurrenceIndex];
       for (const RewriteTarget &target : plan.targets) {
-        if (candidates[target.candidate].rejected)
-          continue;
         auto cloned = clonedOps.find(target.owner);
         if (cloned == clonedOps.end())
           continue;
         Type wantedType =
             target.owner->getOperand(target.operandNumber).getType();
         Operation *clonedOwner = cloned->second;
-        Value original = clonedOwner->getOperand(target.operandNumber);
         Value canonical = normalizedValues[{recurrenceIndex, wantedType}];
-        builder.setInsertionPoint(clonedOwner);
-        Value witness = builder.create<pto::AddressRecurrenceWitnessOp>(
-            clonedOwner->getLoc(), wantedType, original, canonical);
-        clonedOwner->setOperand(target.operandNumber, witness);
+        clonedOwner->setOperand(target.operandNumber, canonical);
       }
     }
 
@@ -374,13 +354,14 @@ public:
                    newFor.getResults().take_front(forOp.getNumResults())))
       oldResult.replaceAllUsesWith(newResult);
     forOp.erase();
+    pto::pruneDeadLoopCarriedValues(newFor, builder);
   }
 
 private:
   std::optional<unsigned>
   requestRecurrence(Value value, Operation *owner, unsigned operandNumber,
                     Operation *sourceUseOwner, unsigned sourceUseOperandNumber,
-                    unsigned candidate, AddressDomain domain) {
+                    AddressDomain domain) {
     auto proven = matchProvenRecurrence(value, forOp, tripCount, domain);
     if (!proven)
       return std::nullopt;
@@ -393,16 +374,15 @@ private:
     auto &targets = recurrences[index].targets;
     if (llvm::none_of(targets, [&](const RewriteTarget &target) {
           return target.owner == owner &&
-                 target.operandNumber == operandNumber &&
-                 target.candidate == candidate;
+                 target.operandNumber == operandNumber;
         }))
       targets.push_back({owner, operandNumber, sourceUseOwner,
-                         sourceUseOperandNumber, candidate});
+                         sourceUseOperandNumber});
     return index;
   }
 
   bool analyzeIntegerValue(Value value, Operation *owner,
-                           unsigned operandNumber, unsigned candidate,
+                           unsigned operandNumber,
                            AddressDomain domain) {
     if (forOp.isDefinedOutsideOfLoop(value))
       return true;
@@ -413,7 +393,7 @@ private:
     unsigned sourceUseOperand = operandNumber;
     // Pointer advancement is index-typed even when the stateful op exposes an
     // i32 stride. Look through a signed, value-preserving cast so both uses
-    // share one i16 shadow recurrence.
+    // share one canonical i16 recurrence.
     if (auto cast = value.getDefiningOp<arith::IndexCastOp>()) {
       recurrenceValue = cast.getIn();
       rewriteOwner = cast;
@@ -436,21 +416,18 @@ private:
       return false;
     auto plan =
         requestRecurrence(recurrenceValue, rewriteOwner, rewriteOperand,
-                          sourceUseOwner, sourceUseOperand, candidate, domain);
-    if (!plan)
-      return false;
-    candidates[candidate].recurrences.push_back(*plan);
-    return true;
+                          sourceUseOwner, sourceUseOperand, domain);
+    return plan.has_value();
   }
 
-  bool analyzeBase(Value base, unsigned candidate) {
+  bool analyzeBase(Value base) {
     if (forOp.isDefinedOutsideOfLoop(base))
       return true;
 
     if (auto addPtr = base.getDefiningOp<pto::AddPtrOp>()) {
       if (!forOp.isDefinedOutsideOfLoop(addPtr.getPtr()))
         return false;
-      return analyzeIntegerValue(addPtr.getOffset(), addPtr, 1, candidate,
+      return analyzeIntegerValue(addPtr.getOffset(), addPtr, 1,
                                  AddressDomain::Signed);
     }
 
@@ -465,27 +442,18 @@ private:
     auto addPtr = yieldOp.getOperand(index).getDefiningOp<pto::AddPtrOp>();
     if (!addPtr || addPtr.getPtr() != base || !addPtr->hasOneUse())
       return false;
-    return analyzeIntegerValue(addPtr.getOffset(), addPtr, 1, candidate,
+    return analyzeIntegerValue(addPtr.getOffset(), addPtr, 1,
                                AddressDomain::Signed);
   }
 
   void analyzeCandidate(Operation *op, const pto::PostUpdateOpInfo &info) {
-    unsigned candidate = candidates.size();
-    candidates.emplace_back();
-
     Value base = op->getOperand(info.baseOperandIdx);
-    if (!analyzeBase(base, candidate)) {
-      candidates[candidate].rejected = true;
-      return;
-    }
+    (void)analyzeBase(base);
 
     if (info.strideOperandIdx) {
       Value stride = op->getOperand(*info.strideOperandIdx);
-      if (!analyzeIntegerValue(stride, op, *info.strideOperandIdx, candidate,
-                               info.strideDomain)) {
-        candidates[candidate].rejected = true;
-        return;
-      }
+      (void)analyzeIntegerValue(stride, op, *info.strideOperandIdx,
+                                info.strideDomain);
     }
   }
 
@@ -509,27 +477,10 @@ private:
       }
     }
 
-    bool changed;
-    do {
-      changed = false;
-      for (auto [candidateIndex, candidate] : llvm::enumerate(candidates)) {
-        if (candidate.rejected)
-          continue;
-        if (llvm::any_of(candidate.recurrences, [&](unsigned recurrence) {
-              return recurrences[recurrence].rejected;
-            })) {
-          candidate.rejected = true;
-          changed = true;
-          for (unsigned recurrence : candidate.recurrences)
-            recurrences[recurrence].rejected = true;
-        }
-      }
-    } while (changed);
   }
 
   scf::ForOp forOp;
   uint64_t tripCount;
-  SmallVector<CandidatePlan> candidates;
   SmallVector<RecurrencePlan> recurrences;
   DenseMap<std::pair<Value, AddressDomain>, unsigned> recurrenceIndices;
 };
@@ -542,10 +493,7 @@ struct VPTONormalizeAddressRecurrencesPass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SmallVector<scf::ForOp> loops;
-    module.walk([&](scf::ForOp forOp) {
-      if (forOp->getParentOfType<pto::VecScopeOp>())
-        loops.push_back(forOp);
-    });
+    module.walk([&](scf::ForOp forOp) { loops.push_back(forOp); });
 
     OpBuilder builder(&getContext());
     for (scf::ForOp forOp : loops) {

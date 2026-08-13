@@ -1200,23 +1200,21 @@ def VPTONormalizeAddressRecurrences
     : Pass<"vpto-normalize-address-recurrences", "ModuleOp"> {
   let summary = "Normalize proven VPTO address recurrences to i16";
   let description = [{
-    Finds loop-varying address values under `pto.vecscope` that are used by
-    every operation registered for VPTO soft post-update. Restricting the pass
-    to the consumer's vecscope ownership boundary ensures every reversible
-    witness is either committed or rolled back by the immediately following
-    soft-postupdate pass. Direct induction variables and fixed-step scf.for
-    iter_args are mirrored in an i16 recurrence only after proving the loop
+    Finds loop-varying address values used by every operation registered in the
+    shared VPTO post-update operation table. Direct induction variables and
+    fixed-step scf.for iter_args are rewritten to an i16 recurrence only after
+    proving the loop
     trip count, initial value, increment, every recurrence value, and the final
     backedge cannot wrap either the source type or the operation's signed or
-    unsigned i16 address domain. Every accepted source, including an original
-    i16 operand, receives a distinct shadow recurrence whose backedge carries
-    the corresponding arith nsw/nuw overflow flag as an explicit proof
-    certificate. The value is extended back to index or i32 with matching
-    signedness when required, then paired with the original value by an
-    internal reversible address-recurrence witness. Complex, wrapping, or
+    unsigned i16 address domain. The canonical recurrence backedge carries the
+    corresponding arith nsw/nuw overflow flag as an explicit proof certificate.
+    The value is extended back to index or i32 with matching signedness when
+    required. This is a permanent architecture-level canonicalization: it is
+    retained whether or not soft post-update later consumes it. Each safe
+    address recurrence is handled independently, while complex, wrapping, or
     externally observed recurrences remain unchanged. Complete base/offset
     combination, unit conversion, final stride constraints, and profitability
-    remain the responsibility of soft post-update.
+    remain the responsibility of soft post-update when that pass is enabled.
   }];
   let constructor =
       "mlir::pto::createVPTONormalizeAddressRecurrencesPass()";
@@ -1238,18 +1236,15 @@ def VPTOSoftPostUpdate
     run, all but the last operation form an updated_base pointer chain, while
     the last operation uses the current pointer in normal zero-offset form.
     Narrow loop-varying integer addresses are consumed only from canonical
-    signed or unsigned i16 shadow recurrences whose arith backedges carry the
-    matching nsw/nuw proof certificate emitted by address normalization. The
-    consumer follows the canonical side of a reversible witness, validates the
-    structure, and reads its constant step without repeating trip-count and
-    endpoint analysis. It then performs the complete operation-level address,
-    unit, final stride, and profitability analysis. Before committing any loop
-    rewrite, all ordinary operands are restored to the witness's original
-    side. Successful candidates are replaced with post-update operations;
-    failed candidates retain their original address recurrence, and dead
-    canonical shadows are removed before sequential analysis. Pure index-domain
-    address recurrences retain the existing affine analysis. Unproven narrow
-    recurrences remain unchanged.
+    signed or unsigned i16 recurrences whose arith backedges carry the matching
+    nsw/nuw proof certificate emitted by address normalization. The consumer
+    validates that permanent canonical form and reads its constant step without
+    repeating trip-count and endpoint analysis. It then performs the complete
+    operation-level address, unit, final stride, and profitability analysis.
+    Successful candidates are replaced with post-update operations; failed
+    candidates remain in ordinary form while continuing to use the canonical
+    i16 address recurrence. Pure index-domain address recurrences retain the
+    existing affine analysis. Unproven narrow recurrences remain unchanged.
     Loop-aware liveness removes software accumulator recurrences made obsolete
     by new pointer chains while retaining accumulators with observable uses.
   }];

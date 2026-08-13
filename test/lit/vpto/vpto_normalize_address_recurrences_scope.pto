@@ -10,22 +10,21 @@
 // RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s --check-prefix=POST
 
 // NORM-LABEL: func.func @inside_vecscope
-// NORM: pto.address_recurrence_witness
+// NORM: arith.index_cast %{{.*}} : i16 to index
+// NORM: pto.vlds %{{.*}}[{{%.*}}]
 // POST-LABEL: func.func @inside_vecscope
-// POST-NOT: pto.address_recurrence_witness
 // POST: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 
-// The producer and consumer share the same vecscope ownership boundary. A
-// candidate outside that boundary remains ordinary in both pipelines.
+// The independent normalizer also processes candidates outside vecscope. Soft
+// post-update keeps its own vecscope boundary, so this op remains ordinary but
+// permanently uses the canonical i16 recurrence.
 // NORM-LABEL: func.func @outside_vecscope
-// NORM-NOT: pto.address_recurrence_witness
-// NORM-NOT: i16
-// NORM: scf.for %{{.*}} = %c0 to %c4 step %c1 {
+// NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// NORM: arith.index_cast %{{.*}} : i16 to index
 // NORM: pto.vlds %{{.*}}[{{%.*}}] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
 // POST-LABEL: func.func @outside_vecscope
-// POST-NOT: pto.address_recurrence_witness
-// POST-NOT: i16
-// POST: scf.for %{{.*}} = %c0 to %c4 step %c1 {
+// POST: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// POST: arith.index_cast %{{.*}} : i16 to index
 // POST: pto.vlds %{{.*}}[{{%.*}}] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {

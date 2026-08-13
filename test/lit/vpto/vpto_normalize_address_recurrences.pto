@@ -9,18 +9,15 @@
 // RUN: pto-test-opt %s -vpto-normalize-address-recurrences | FileCheck %s --check-prefix=NORM
 // RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s --check-prefix=POST
 
-// Element and Byte candidates share the same proven index IV shadow while
+// Element and Byte candidates share the same proven canonical index IV while
 // retaining their distinct address-unit semantics.
 // NORM-LABEL: func.func @index_units
 // NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
 // NORM: [[INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i16 to index
-// NORM: [[INDEX_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[INDEX]] : index
-// NORM: pto.vlds %{{.*}}[[[INDEX_WITNESS]]]
-// NORM: [[PRED_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[INDEX]] : index
-// NORM: pto.plds %{{.*}}[[[PRED_WITNESS]]]
+// NORM: pto.vlds %{{.*}}[[[INDEX]]]
+// NORM: pto.plds %{{.*}}[[[INDEX]]]
 // NORM: arith.addi %{{.*}}, %{{.*}} overflow<nsw> : i16
 // POST-LABEL: func.func @index_units
-// POST-NOT: pto.address_recurrence_witness
 // POST: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // POST: pto.plds {{.*}} -> !pto.mask<b8>, !pto.ptr<ui8, ub>
 
@@ -28,12 +25,9 @@
 // and vsts with the same index canonical form.
 // NORM-LABEL: func.func @remaining_index_candidates
 // NORM: [[PAIR_INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i16 to index
-// NORM: [[PAIR_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[PAIR_INDEX]] : index
-// NORM: pto.vldsx2 %{{.*}}[[[PAIR_WITNESS]]]
-// NORM: [[STORE_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[PAIR_INDEX]] : index
-// NORM: pto.vsts %{{.*}}, %{{.*}}[[[STORE_WITNESS]]]
+// NORM: pto.vldsx2 %{{.*}}[[[PAIR_INDEX]]]
+// NORM: pto.vsts %{{.*}}, %{{.*}}[[[PAIR_INDEX]]]
 // POST-LABEL: func.func @remaining_index_candidates
-// POST-NOT: pto.address_recurrence_witness
 // POST: pto.vldsx2 {{.*}} -> !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
 // POST: pto.vsts {{.*}} -> !pto.ptr<f32, ub>
 
@@ -41,38 +35,32 @@
 // hard-coded as bytes or elements. A 32-byte NORM base step becomes stride 1.
 // NORM-LABEL: func.func @alignment_unit
 // NORM: [[ALIGN_INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i16 to index
-// NORM: [[ALIGN_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[ALIGN_INDEX]] : index
-// NORM: pto.addptr %{{.*}}, {{%.*}}
+// NORM: pto.addptr %{{.*}}, [[ALIGN_INDEX]]
 // NORM: pto.pldi %{{.*}}[%c0], "NORM"
 // NORM: pto.psti %{{.*}}, %{{.*}}[%c0], "NORM"
 
 // i32 address operands are restored with a signed extension from i16. Dynamic,
 // SignedI8, and Element candidates all consume the same canonical recurrence.
 // NORM-LABEL: func.func @i32_units
-// NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i32, %{{.*}} = %c0_i16)
+// NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
 // NORM: [[I32:%[a-zA-Z0-9_]+]] = arith.extsi %{{.*}} : i16 to i32
-// NORM: [[I32_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[I32]] : i32
-// NORM: pto.sprsts "AR", %{{.*}}[[[I32_WITNESS]]]
+// NORM: pto.sprsts "AR", %{{.*}}[[[I32]]]
 // NORM: [[I32_INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i32 to index
 // NORM: pto.addptr %{{.*}}, [[I32_INDEX]]
 // NORM: pto.sprsti "AR", %{{.*}}[%c0_i32]
 // NORM: pto.vstas {{.*}}, %{{.*}}, {{%.*}}
 // POST-LABEL: func.func @i32_units
-// POST-NOT: pto.address_recurrence_witness
 // POST: pto.sprsts {{.*}} -> !pto.ptr<ui32, ub>
 // POST: pto.vstas {{.*}} -> !pto.ptr<ui32, ub>
 
-// An original i16 Block recurrence also gets a distinct unsigned shadow, so
-// soft-postupdate never mistakes an unproven raw i16 recurrence for canonical
-// input.
+// An original i16 Block recurrence is rebuilt with an unsigned no-wrap
+// backedge and wired directly to the address operands.
 // NORM-LABEL: func.func @i16_block_units
 // NORM-NOT: arith.extsi
-// NORM: [[BLOCK_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, %{{.*}} : i16
-// NORM: pto.vsldb %{{.*}}, %c1_i16, [[BLOCK_WITNESS]]
+// NORM: pto.vsldb %{{.*}}, %c1_i16, %{{.*}}
 // NORM: pto.vsstb {{.*}}, %c1_i16, {{%.*}}
 // NORM: arith.addi %{{.*}}, %{{.*}} overflow<nuw> : i16
 // POST-LABEL: func.func @i16_block_units
-// POST-NOT: pto.address_recurrence_witness
 // POST: pto.vsldb {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // POST: pto.vsstb {{.*}} -> !pto.ptr<ui8, ub>
 
@@ -80,22 +68,18 @@
 // normalized pointer-iter_arg advancement.
 // NORM-LABEL: func.func @vldus_no_explicit_stride
 // NORM: [[ADV_INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i16 to index
-// NORM: [[ADV_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[ADV_INDEX]] : index
-// NORM: pto.addptr {{%.*}}, [[ADV_WITNESS]]
+// NORM: pto.addptr {{%.*}}, [[ADV_INDEX]]
 // POST-LABEL: func.func @vldus_no_explicit_stride
-// POST-NOT: pto.address_recurrence_witness
 // POST: %{{.*}}, %{{.*}}, %{{.*}} = pto.vldus %{{.*}}, %{{.*}}, %{{.*}}
 
 // vstus keeps offset as the stream advancement; it is not folded into the
 // initial access address. The i32 and index uses share one i16 recurrence.
 // NORM-LABEL: func.func @vstus_stride_not_current_address
 // NORM: [[ADV_I32:%[a-zA-Z0-9_]+]] = arith.extsi %{{.*}} : i16 to i32
-// NORM: [[VSTUS_WITNESS:%[a-zA-Z0-9_]+]] = pto.address_recurrence_witness %{{.*}}, [[ADV_I32]] : i32
-// NORM: pto.vstus %{{.*}}, [[VSTUS_WITNESS]], %{{.*}}, {{%.*}}
+// NORM: pto.vstus %{{.*}}, [[ADV_I32]], %{{.*}}, {{%.*}}
 // NORM: [[ADV_IDX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i32 to index
 // NORM: pto.addptr {{%.*}}, [[ADV_IDX]]
 // POST-LABEL: func.func @vstus_stride_not_current_address
-// POST-NOT: pto.address_recurrence_witness
 // POST: %{{.*}}, %{{.*}} = pto.vstus %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {

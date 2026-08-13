@@ -2964,8 +2964,8 @@ static void prepareVPTOForEmission(PassManager &pm) {
       createVPTOExpandWrapperOpsPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTOInferVPTOVecScopePass());
+  kernelModulePM.addPass(pto::createVPTONormalizeAddressRecurrencesPass());
   if (enableSoftPostUpdate) {
-    kernelModulePM.addPass(pto::createVPTONormalizeAddressRecurrencesPass());
     kernelModulePM.addPass(pto::createVPTOSoftPostUpdatePass());
   }
   kernelModulePM.addPass(createLoopInvariantCodeMotionPass());
