@@ -1,0 +1,4 @@
+interface:
+  display_name: "PTOAS Development"
+  short_description: "Probe, build, test, and debug PTOAS workspaces"
+  default_prompt: "Use $ptoas-development to prepare this PTOAS workspace and build the requested target."

@@ -12,9 +12,11 @@ shared-root/
 
 The workspace metadata file contains absolute paths and the branch name. It is
 an operational file and is not intended to be committed to PTOAS. The generated
-`env.sh` exports `LLVM_BUILD_DIR`, `PTO_BUILD_DIR`, `PTO_SOURCE_DIR`,
-`PYTHON_BIN`, and the LLVM library path; it exports `CCACHE_DIR` when supplied
-and sources CANN only if the creator provided a script path.
+`env.sh` exports `LLVM_BUILD_DIR`, `PTO_BUILD_DIR`, `PTO_SOURCE_DIR`, and
+`PYTHON_BIN`; it exports `CCACHE_DIR` when supplied and sources CANN only if
+the creator provided a script path. The editable PTOAS installation records its
+external LLVM runtime path, so ordinary CLI and Python use does not require an
+`LD_LIBRARY_PATH` export.
 
 Compatibility rules:
 

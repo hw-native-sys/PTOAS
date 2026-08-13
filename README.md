@@ -192,14 +192,13 @@ from ptoas.mlir.dialects import pto as mlir_pto
 ## 4. 运行环境配置 (Runtime Environment)
 
 每次打开新 shell 时，先恢复 3.0 中配置的路径变量并重新激活安装 PTOAS 的
-Python 环境。源码或 editable 安装会使用 LLVM 构建目录中的动态库，因此还需要
-将该目录加入动态库搜索路径：
+Python 环境。editable 安装会将选定 LLVM 构建目录记录为 native extension 的
+运行时搜索路径，不需要手工设置 `LD_LIBRARY_PATH`：
 
 ```bash
 # 先重新导出 WORKSPACE_DIR、LLVM_BUILD_DIR 等 3.0 中的路径变量
 source "$WORKSPACE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
-export LD_LIBRARY_PATH="$LLVM_BUILD_DIR/lib:${LD_LIBRARY_PATH:-}"
 
 command -v ptoas
 ptoas --version
@@ -211,8 +210,8 @@ ptoas --version
 ninja -C "$PTO_SOURCE_DIR/build" check-pto
 ```
 
-发布 wheel 自带运行时依赖，不使用外部 LLVM build tree 时无需设置上述
-`LD_LIBRARY_PATH`。无论哪种安装方式，都不需要手工拼接 `PYTHONPATH`。
+发布 wheel 自带运行时依赖。无论哪种安装方式，都不需要手工拼接
+`PYTHONPATH` 或 `LD_LIBRARY_PATH`。
 
 ### Daily wheel
 
@@ -248,12 +247,11 @@ source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
 ```
 
 如果没有使用虚拟环境，并且 pip 将软件包安装到了用户目录，请在运行 `ptoas`
-之前先配置 `PATH`，然后同样设置上述 `LD_LIBRARY_PATH`：
+之前先配置 `PATH`：
 
 ```bash
 export PATH="$(python3 -m site --user-base)/bin:$PATH"
 hash -r
-export LD_LIBRARY_PATH="$LLVM_BUILD_DIR/lib:${LD_LIBRARY_PATH:-}"
 command -v ptoas
 ptoas --version
 ```
