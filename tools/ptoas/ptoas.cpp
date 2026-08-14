@@ -3576,6 +3576,7 @@ int mlir::pto::compilePTOASModule(
   //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
+  pm.addPass(pto::createPTOIndirectPtrNormalizePass());
   if (!disableInferLayout) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   }

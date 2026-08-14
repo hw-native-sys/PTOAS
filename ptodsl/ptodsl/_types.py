@@ -95,7 +95,10 @@ class _PtrDescriptor(_DType):
         self._space = space
 
     def resolve(self) -> Type:
-        elem = _ensure_tensor_storage_dtype(self._elem, context="pto.ptr(...)")
+        if isinstance(self._elem, _PtrDescriptor):
+            elem = self._elem.resolve()
+        else:
+            elem = _ensure_tensor_storage_dtype(self._elem, context="pto.ptr(...)")
         space_enum = _normalize_address_space(self._space)
         if space_enum is None:
             raise ValueError(

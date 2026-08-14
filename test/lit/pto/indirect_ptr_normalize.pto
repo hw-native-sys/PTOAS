@@ -1,0 +1,15 @@
+// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-indirect-ptr-normalize %s -o /dev/null 2>&1 | FileCheck %s
+
+module {
+  func.func @load_ptr_table(%table: !pto.ptr<!pto.ptr<f32, gm>, gm>) {
+    %c0 = arith.constant 0 : index
+    %p = pto.load_scalar %table[%c0]
+      : !pto.ptr<!pto.ptr<f32, gm>, gm> -> !pto.ptr<f32, gm>
+    return
+  }
+}
+
+// CHECK: IR Dump After PTOIndirectPtrNormalize
+// CHECK-LABEL: func.func @load_ptr_table(%[[TABLE:.*]]: !pto.ptr<ui64, gm>)
+// CHECK: %[[RAW:.*]] = pto.load_scalar %[[TABLE]][%{{.*}}] : !pto.ptr<ui64, gm> -> ui64
+// CHECK: %[[PTR:.*]] = pto.inttoptr %[[RAW]] : ui64 -> !pto.ptr<f32, gm>

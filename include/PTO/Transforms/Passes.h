@@ -109,6 +109,7 @@ std::unique_ptr<Pass> createPTOFusionLoadStoreElisionPass();
 std::unique_ptr<Pass> createPTOUnrollAfterLoopFusionPass();
 std::unique_ptr<Pass> createPTOFlattenFusionRegionPass();
 std::unique_ptr<Pass> createVPTOPtrNormalizePass();
+std::unique_ptr<Pass> createPTOIndirectPtrNormalizePass();
 std::unique_ptr<Pass> createVPTOPtrCastCleanupPass();
 std::unique_ptr<Pass> createVPTOCombineReductionsPass();
 std::unique_ptr<Pass> createVPTOOptimizeVcvtPass();

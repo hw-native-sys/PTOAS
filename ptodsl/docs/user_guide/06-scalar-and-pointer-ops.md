@@ -368,6 +368,12 @@ These are the scalar-path counterparts of the vector math operations covered in 
 
 Typed pointers (Section 4.4) carry both an element type and a memory space. This section covers the operations that create and manipulate them.
 
+Pointer-table types may use one level of indirection, for example
+`pto.ptr(pto.ptr(pto.f32, "gm"), "gm")`. The PTO frontend preserves this
+typed form while tracing. Before backend lowering, PTOAS canonicalizes a
+pointer-table load to a `ui64` address load followed by `pto.inttoptr`; the
+runtime ABI therefore stores device addresses as 64-bit values.
+
 ### Obtaining pointers: as_ptr()
 
 Tiles and tensor views expose their base address via `as_ptr()`:

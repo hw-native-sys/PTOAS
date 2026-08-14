@@ -1379,6 +1379,20 @@ def VPTOPtrNormalize
                            "mlir::arith::ArithDialect"];
 }
 
+def PTOIndirectPtrNormalize : Pass<"pto-indirect-ptr-normalize", "ModuleOp"> {
+  let summary = "Normalize pointer-table loads to ui64 loads and inttoptr";
+  let description = [{
+    Converts function arguments of type !pto.ptr<!pto.ptr<T>, space> into
+    !pto.ptr<ui64, space> address tables. Loads from those tables become a
+    ui64 load followed by pto.inttoptr to !pto.ptr<T>. This keeps the typed
+    pointer semantics in frontend PTO IR while making the ABI explicit before
+    later PTO transforms and EmitC lowering.
+  }];
+  let constructor = "mlir::pto::createPTOIndirectPtrNormalizePass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect"];
+}
+
 def VPTOPtrCastCleanup
     : Pass<"vpto-ptr-cast-cleanup", "ModuleOp"> {
   let summary = "Collapse transient ptr-memref-ptr bridge casts after VPTO ptr normalization";

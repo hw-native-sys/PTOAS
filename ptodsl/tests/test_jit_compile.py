@@ -4572,6 +4572,11 @@ def main() -> None:
             "f8e8m0 pointers should be valid for L1 scale storage",
         )
         expect(
+            "!pto.ptr<!pto.ptr<f32, gm>, gm>"
+            == str(pto.ptr(pto.ptr(pto.f32, "gm"), "gm").resolve()),
+            "pointer-table types should support one level of indirection",
+        )
+        expect(
             str(pto.vreg_type(256, pto.f8e4m3).resolve()) == "!pto.vreg<256xf8E4M3FN>",
             "low-precision vreg types should be valid for vector micro-ops",
         )
