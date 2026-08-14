@@ -18,8 +18,8 @@
 // CHECK: scf.for {{.*}} iter_args({{%.*}} = %arg0)
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // DISABLED-LABEL: func.func @cli_pipeline_order
-// DISABLED: scf.for {{.*}} iter_args({{%.*}} = %{{.*}})
-// DISABLED: arith.index_cast %{{.*}} : i16 to index
+// DISABLED: scf.for %[[IV:.*]] = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
+// DISABLED-NEXT: arith.index_cast %[[IV]] : i16 to index
 // DISABLED: pto.vlds {{.*}} -> !pto.vreg<256xui8>
 // DISABLED-NOT: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // HELP: --enable-bisheng-soft-postupdate

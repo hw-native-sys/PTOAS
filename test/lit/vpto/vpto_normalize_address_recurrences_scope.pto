@@ -17,13 +17,13 @@
 
 // The independent normalizer also processes candidates outside vecscope. Soft
 // post-update keeps its own vecscope boundary, so this op remains ordinary but
-// permanently uses the canonical i16 recurrence.
+// permanently uses the narrowed i16 IV without adding an iter_arg.
 // NORM-LABEL: func.func @outside_vecscope
-// NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// NORM: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
 // NORM: arith.index_cast %{{.*}} : i16 to index
 // NORM: pto.vlds %{{.*}}[{{%.*}}] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
 // POST-LABEL: func.func @outside_vecscope
-// POST: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// POST: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
 // POST: arith.index_cast %{{.*}} : i16 to index
 // POST: pto.vlds %{{.*}}[{{%.*}}] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
 

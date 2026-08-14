@@ -9,14 +9,16 @@
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
 
 // The loop result exposes the final software accumulator to a later access.
-// Post-update may rewrite the in-loop load, but it must retain the original
-// offset iter_arg and its update because they remain semantically observable.
+// Address normalization narrows the original offset slot/result to i16 and
+// restores index only after the loop. Post-update may rewrite the in-loop load,
+// but it must retain that same accumulator slot because it remains observable.
 
 // CHECK-LABEL: func.func @accum_live_result
-// CHECK: [[LOOP:%[0-9]+]]:3 = scf.for
-// CHECK:   [[NEXT:%[0-9]+]] = arith.addi
+// CHECK: [[LOOP:%[0-9]+]]:3 = scf.for {{.*}} iter_args(%{{.*}} = %c0_i16, {{.*}}) -> (i16, {{.*}}) : i16 {
+// CHECK:   [[NEXT:%[0-9]+]] = arith.addi {{.*}} overflow<nsw> : i16
 // CHECK:   scf.yield [[NEXT]],
-// CHECK: pto.vlds {{.*}}[[[LOOP]]#0]
+// CHECK: [[FINAL_OFF:%[0-9]+]] = arith.index_cast [[LOOP]]#0 : i16 to index
+// CHECK: pto.vlds {{.*}}[[[FINAL_OFF]]]
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @accum_live_result(%base: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {

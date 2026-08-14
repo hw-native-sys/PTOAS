@@ -22,6 +22,43 @@ namespace mlir::pto {
 
 static constexpr int64_t kBlockSizeBytes = 32;
 
+static bool fitsSignedI16(__int128 value) {
+  return value >= std::numeric_limits<int16_t>::min() &&
+         value <= std::numeric_limits<int16_t>::max();
+}
+
+static std::optional<int64_t> getSignedConstant(Value value) {
+  APInt bits;
+  if (!matchPattern(value, m_ConstantInt(&bits)) || bits.getBitWidth() > 64)
+    return std::nullopt;
+  return bits.getSExtValue();
+}
+
+static bool loopCounterFitsSignedI16(scf::ForOp forOp) {
+  auto lower = getSignedConstant(forOp.getLowerBound());
+  auto upper = getSignedConstant(forOp.getUpperBound());
+  auto step = getSignedConstant(forOp.getStep());
+  if (!lower || !upper || !step || *step <= 0 || !fitsSignedI16(*lower) ||
+      !fitsSignedI16(*upper) || !fitsSignedI16(*step))
+    return false;
+  if (*lower >= *upper)
+    return true;
+
+  __int128 distance = static_cast<__int128>(*upper) - *lower;
+  __int128 iterationCount = (distance + *step - 1) / *step;
+  __int128 exitValue =
+      static_cast<__int128>(*lower) + iterationCount * *step;
+  return fitsSignedI16(exitValue);
+}
+
+bool canNarrowLoopCounterToI16(scf::ForOp forOp) {
+  Type type = forOp.getInductionVar().getType();
+  auto integerType = dyn_cast<IntegerType>(type);
+  bool hasWiderType = type.isIndex() ||
+                      (integerType && integerType.getWidth() > 16);
+  return hasWiderType && loopCounterFitsSignedI16(forOp);
+}
+
 const PostUpdateOpTable &getPostUpdateOpTable() {
   static const PostUpdateOpTable table = [] {
     PostUpdateOpTable t;
@@ -108,9 +145,24 @@ std::optional<int64_t>
 getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
                                   PostUpdateAddressDomain domain) {
   auto type = dyn_cast<IntegerType>(value.getType());
+  if (!type || type.getWidth() != 16)
+    return std::nullopt;
+
+  if (value == forOp.getInductionVar()) {
+    if (!loopCounterFitsSignedI16(forOp))
+      return std::nullopt;
+    auto lower = getSignedConstant(forOp.getLowerBound());
+    auto step = getSignedConstant(forOp.getStep());
+    if (!lower || !step)
+      return std::nullopt;
+    if (domain == PostUpdateAddressDomain::Unsigned && *lower < 0)
+      return std::nullopt;
+    return *step;
+  }
+
   auto iterArg = dyn_cast<BlockArgument>(value);
-  if (!type || type.getWidth() != 16 || !iterArg ||
-      iterArg.getOwner() != forOp.getBody() || iterArg.getArgNumber() == 0)
+  if (!iterArg || iterArg.getOwner() != forOp.getBody() ||
+      iterArg.getArgNumber() == 0)
     return std::nullopt;
 
   unsigned index = iterArg.getArgNumber() - 1;

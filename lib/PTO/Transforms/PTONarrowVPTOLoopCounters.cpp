@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VPTOPostUpdateUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -24,10 +25,6 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/SmallVector.h"
-
-#include <cstdint>
-#include <limits>
-#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -43,34 +40,6 @@ namespace {
 static bool isNestedInVecScope(Operation *op) {
   return op->getParentOfType<pto::VecScopeOp>() ||
          op->getParentOfType<pto::StrictVecScopeOp>();
-}
-
-static bool isNarrowableCounterType(Type type) {
-  if (isa<IndexType>(type))
-    return true;
-  auto integerType = dyn_cast<IntegerType>(type);
-  return integerType && integerType.getWidth() > 16;
-}
-
-static bool fitsSignedI16(int64_t value) {
-  return value >= std::numeric_limits<int16_t>::min() &&
-         value <= std::numeric_limits<int16_t>::max();
-}
-
-static std::optional<int64_t> getSignedI16Constant(Value value) {
-  std::optional<int64_t> constant = getConstantIntValue(value);
-  if (!constant || !fitsSignedI16(*constant))
-    return std::nullopt;
-  return constant;
-}
-
-static bool exitValueFitsSignedI16(int64_t lower, int64_t upper, int64_t step) {
-  if (lower >= upper)
-    return true;
-
-  int64_t distance = upper - lower;
-  int64_t iterationCount = (distance + step - 1) / step;
-  return fitsSignedI16(lower + iterationCount * step);
 }
 
 static Value createI16Constant(PatternRewriter &rewriter, Location loc,
@@ -97,20 +66,17 @@ struct NarrowVecScopeLoopCounterPattern : public OpRewritePattern<scf::ForOp> {
       return failure();
 
     Type originalCounterType = forOp.getInductionVar().getType();
-    if (!isNarrowableCounterType(originalCounterType))
+    if (!pto::canNarrowLoopCounterToI16(forOp))
       return failure();
 
-    std::optional<int64_t> lower = getSignedI16Constant(forOp.getLowerBound());
-    std::optional<int64_t> upper = getSignedI16Constant(forOp.getUpperBound());
-    std::optional<int64_t> step = getSignedI16Constant(forOp.getStep());
-    if (!lower || !upper || !step || *step <= 0 ||
-        !exitValueFitsSignedI16(*lower, *upper, *step))
-      return failure();
+    int64_t lower = *getConstantIntValue(forOp.getLowerBound());
+    int64_t upper = *getConstantIntValue(forOp.getUpperBound());
+    int64_t step = *getConstantIntValue(forOp.getStep());
 
     Location loc = forOp.getLoc();
-    Value newLower = createI16Constant(rewriter, loc, *lower);
-    Value newUpper = createI16Constant(rewriter, loc, *upper);
-    Value newStep = createI16Constant(rewriter, loc, *step);
+    Value newLower = createI16Constant(rewriter, loc, lower);
+    Value newUpper = createI16Constant(rewriter, loc, upper);
+    Value newStep = createI16Constant(rewriter, loc, step);
 
     auto newFor = rewriter.create<scf::ForOp>(loc, newLower, newUpper, newStep,
                                               forOp.getInitArgs());

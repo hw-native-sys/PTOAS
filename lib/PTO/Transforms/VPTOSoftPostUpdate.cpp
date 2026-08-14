@@ -650,9 +650,9 @@ getIterArgIncrement(Value v, scf::ForOp forOp,
 // from the map means "not computed yet".
 using DeltaCache = DenseMap<Value, StrideExprRef>;
 
-// Return the constant loop delta preserved by a canonical address cast. The
-// nsw/nuw flag on the i16 recurrence is the proof certificate; reading the
-// certified step directly also handles constants materialized inside the loop.
+// Return the constant loop delta preserved by a normalized address cast. For
+// an iter_arg, nsw/nuw is the proof certificate. For an induction variable,
+// the normalized i16 loop bounds and exit update provide the same guarantee.
 static std::optional<int64_t> getCanonicalCastLoopDelta(Operation *castOp,
                                                         scf::ForOp forOp) {
   Value input = castOp->getOperand(0);
@@ -815,9 +815,9 @@ getStride(Value v, scf::ForOp forOp, DeltaCache &cache,
   return computeDelta(v, forOp, cache);
 }
 
-// Narrow values must trace through canonical signed/unsigned widening casts to
-// an i16 iter_arg carrying the corresponding nsw/nuw backedge certificate.
-// Pure index-domain IVs and recurrences retain the existing soft analysis.
+// Narrow values must trace through normalized signed/unsigned widening casts
+// to either a range-proven i16 induction variable or an i16 iter_arg carrying
+// the corresponding nsw/nuw backedge certificate.
 static bool isCanonicalLoopInteger(Value value, scf::ForOp forOp) {
   if (isLoopInvariantForAnalysis(value, forOp)) {
     return true;
@@ -850,7 +850,7 @@ static bool isCanonicalLoopInteger(Value value, scf::ForOp forOp) {
 }
 
 // Pure index-domain recurrences retain the existing soft analysis. The
-// canonical recurrence requirement applies when a loop-varying value is
+// normalized recurrence requirement applies when a loop-varying value is
 // narrow, or when an index value was obtained by widening a narrow integer.
 static bool isSafeLoopInteger(Value value, scf::ForOp forOp) {
   if (isLoopInvariantForAnalysis(value, forOp)) {

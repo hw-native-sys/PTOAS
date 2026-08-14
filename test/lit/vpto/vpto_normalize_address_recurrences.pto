@@ -9,14 +9,15 @@
 // RUN: pto-test-opt %s -vpto-normalize-address-recurrences | FileCheck %s --check-prefix=NORM
 // RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s --check-prefix=POST
 
-// Element and Byte candidates share the same proven canonical index IV while
-// retaining their distinct address-unit semantics.
+// Element and Byte candidates share the same narrowed IV while retaining
+// their distinct address-unit semantics. Narrowing must not turn the IV into
+// an additional loop-carried accumulator.
 // NORM-LABEL: func.func @index_units
-// NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
-// NORM: [[INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i16 to index
+// NORM: scf.for %[[IV:.*]] = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
+// NORM-NEXT: [[INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %[[IV]] : i16 to index
 // NORM: pto.vlds %{{.*}}[[[INDEX]]]
 // NORM: pto.plds %{{.*}}[[[INDEX]]]
-// NORM: arith.addi %{{.*}}, %{{.*}} overflow<nsw> : i16
+// NORM-NOT: iter_args
 // POST-LABEL: func.func @index_units
 // POST: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 // POST: pto.plds {{.*}} -> !pto.mask<b8>, !pto.ptr<ui8, ub>
@@ -39,8 +40,9 @@
 // NORM: pto.pldi %{{.*}}[%c0], "NORM"
 // NORM: pto.psti %{{.*}}, %{{.*}}[%c0], "NORM"
 
-// i32 address operands are restored with a signed extension from i16. Dynamic,
-// SignedI8, and Element candidates all consume the same canonical recurrence.
+// The original i32 iter_arg stays in the same single slot, with only its type
+// and backedge update narrowed to i16. Address operands are restored with a
+// signed extension. Dynamic, SignedI8, and Element candidates consume it.
 // NORM-LABEL: func.func @i32_units
 // NORM: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
 // NORM: [[I32:%[a-zA-Z0-9_]+]] = arith.extsi %{{.*}} : i16 to i32
@@ -53,9 +55,47 @@
 // POST: pto.sprsts {{.*}} -> !pto.ptr<ui32, ub>
 // POST: pto.vstas {{.*}} -> !pto.ptr<ui32, ub>
 
-// An original i16 Block recurrence is rebuilt with an unsigned no-wrap
-// backedge and wired directly to the address operands.
+// A live loop result does not force a second wide recurrence. The existing
+// iter_arg/result slot is narrowed and only the observable result is widened
+// after the loop.
+// NORM-LABEL: func.func @live_iterarg_result
+// NORM: %[[NARROW_RESULT:.*]] = scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// NORM: overflow<nsw> : i16
+// NORM: %[[WIDE_RESULT:.*]] = arith.extsi %[[NARROW_RESULT]] : i16 to i32
+// NORM: func.call @sink_i32(%[[WIDE_RESULT]]) : (i32) -> ()
+
+// Signed i16 can represent -32768 directly. Keep that update as addi because
+// negating it cannot be represented as a positive signed i16 subtraction.
+// NORM-LABEL: func.func @signed_minimum_increment
+// NORM: %[[MIN_RESULT:.*]] = scf.for {{.*}} iter_args(%[[MIN_ARG:.*]] = %c0_i16) -> (i16)
+// NORM: %c-32768_i16 = arith.constant -32768 : i16
+// NORM: %[[MIN_NEXT:.*]] = arith.addi %[[MIN_ARG]], %c-32768_i16 overflow<nsw> : i16
+// NORM-NOT: arith.subi
+// NORM: scf.yield %[[MIN_NEXT]] : i16
+// NORM: arith.extsi %[[MIN_RESULT]] : i16 to i32
+
+// Narrowing the integer advancement is independent of pointer liveness,
+// pointer recurrence shape, additional addptr users, and a loop-varying
+// addptr parent.
+// NORM-LABEL: func.func @independent_pointer_advancement
+// NORM: %[[PTR_RESULTS:.*]]:2 = scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}, %[[ADV:.*]] = %c1_i16)
+// NORM-SAME: -> (!pto.ptr<ui8, ub>, i16)
+// NORM: %[[ADV_INDEX:.*]] = arith.index_cast %[[ADV]] : i16 to index
+// NORM: pto.addptr %{{.*}}, %[[ADV_INDEX]]
+// NORM: arith.addi %[[ADV]], %{{.*}} overflow<nsw> : i16
+// NORM: pto.vlds %[[PTR_RESULTS]]#0[%c0]
+
+// An op that already has its post-update pointer result still participates in
+// independent address-recurrence normalization.
+// NORM-LABEL: func.func @already_postupdate
+// NORM: scf.for {{.*}} iter_args(%[[POST_OFFSET:.*]] = %c0_i16) -> (i16)
+// NORM: %[[POST_WIDE:.*]] = arith.extsi %[[POST_OFFSET]] : i16 to i32
+// NORM: pto.sprsts "AR", %{{.*}}[%[[POST_WIDE]]] : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>
+
+// An original i16 Block recurrence keeps its single iter_arg and gains an
+// unsigned no-wrap backedge certificate.
 // NORM-LABEL: func.func @i16_block_units
+// NORM: scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}) -> (i16)
 // NORM-NOT: arith.extsi
 // NORM: pto.vsldb %{{.*}}, %c1_i16, %{{.*}}
 // NORM: pto.vsstb {{.*}}, %c1_i16, {{%.*}}
@@ -65,8 +105,11 @@
 // POST: pto.vsstb {{.*}} -> !pto.ptr<ui8, ub>
 
 // vldus has no ordinary-form stride. Its post increment comes from the
-// normalized pointer-iter_arg advancement.
+// normalized advancement iter_arg. The original ptr/align/advance slots stay
+// three slots; normalization does not append a shadow recurrence.
 // NORM-LABEL: func.func @vldus_no_explicit_stride
+// NORM: scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %{{.*}}, %{{.*}} = %c1_i16)
+// NORM-SAME: -> (!pto.ptr<ui8, ub>, !pto.align, i16)
 // NORM: [[ADV_INDEX:%[a-zA-Z0-9_]+]] = arith.index_cast %{{.*}} : i16 to index
 // NORM: pto.addptr {{%.*}}, [[ADV_INDEX]]
 // POST-LABEL: func.func @vldus_no_explicit_stride
@@ -83,6 +126,8 @@
 // POST: %{{.*}}, %{{.*}} = pto.vstus %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func private @sink_i32(i32)
+
   func.func @index_units(%base: !pto.ptr<ui8, ub>, %mask: !pto.mask<b8>) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -151,6 +196,87 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %align = pto.init_align : !pto.align
         pto.vstas %align, %base, %offset
             : !pto.align, !pto.ptr<ui32, ub>, i32
+        %next = arith.addi %offset, %c1_i32 : i32
+        scf.yield %next : i32
+      }
+    }
+    return
+  }
+
+  func.func @live_iterarg_result(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    pto.vecscope {
+      %final = scf.for %iv = %c0 to %c4 step %c1
+          iter_args(%offset = %c0_i32) -> i32 {
+        pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+        %next = arith.addi %offset, %c1_i32 : i32
+        scf.yield %next : i32
+      }
+      func.call @sink_i32(%final) : (i32) -> ()
+    }
+    return
+  }
+
+  func.func @signed_minimum_increment(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0_i32 = arith.constant 0 : i32
+    %cmin_i32 = arith.constant -32768 : i32
+    pto.vecscope {
+      %final = scf.for %iv = %c0 to %c1 step %c1
+          iter_args(%offset = %c0_i32) -> i32 {
+        pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+        %next = arith.addi %offset, %cmin_i32 : i32
+        scf.yield %next : i32
+      }
+      func.call @sink_i32(%final) : (i32) -> ()
+    }
+    return
+  }
+
+  func.func @independent_pointer_advancement(
+      %base: !pto.ptr<ui8, ub>, %root: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    pto.vecscope {
+      %final_ptr, %final_advance = scf.for %iv = %c0 to %c4 step %c1
+          iter_args(%ptr = %base, %advance = %c1)
+          -> (!pto.ptr<ui8, ub>, index) {
+        %direct = pto.vlds %ptr[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %at = pto.addptr %ptr, %advance
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %offset = pto.vlds %at[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %next_ptr = pto.addptr %root, %advance
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %observed = pto.addptr %next_ptr, %c0
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %next_advance = arith.addi %advance, %c1 : index
+        scf.yield %next_ptr, %next_advance : !pto.ptr<ui8, ub>, index
+      }
+      %last = pto.vlds %final_ptr[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+    }
+    return
+  }
+
+  func.func @already_postupdate(%base: !pto.ptr<ui32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    pto.vecscope {
+      scf.for %iv = %c0 to %c4 step %c1
+          iter_args(%offset = %c0_i32) -> i32 {
+        %updated = pto.sprsts "AR", %base[%offset]
+            : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>
         %next = arith.addi %offset, %c1_i32 : i32
         scf.yield %next : i32
       }

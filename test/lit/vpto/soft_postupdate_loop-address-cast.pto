@@ -8,8 +8,19 @@
 
 // RUN: pto-test-opt %s -vpto-soft-postupdate | FileCheck %s
 
-// A loop-varying integer-to-index address is accepted only when its source is
-// a canonical i16 recurrence whose nsw/nuw flag certifies the address domain.
+// A descending normalized recurrence widened into an addptr base must retain
+// its certified -1 delta through the cast.
+// CHECK-LABEL: func.func @canonical_i16_descending_base
+// CHECK: pto.vlds {{.*}}[%c-1] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+
+// A range-proven i16 induction variable remains an IV and can drive
+// post-update through its widening cast.
+// CHECK-LABEL: func.func @canonical_i16_iv
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (!pto.ptr<ui8, ub>) : i16 {
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+
+// A loop-varying integer-to-index address is accepted when its source is an
+// i16 iter_arg whose nsw/nuw flag certifies the address domain.
 // CHECK-LABEL: func.func @canonical_i16_no_wrap
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
@@ -48,7 +59,48 @@
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
 
+// An i16 IV with a dynamic bound has no range proof. Its widening cast is not
+// enough to justify replacing the original address sequence.
+// CHECK-LABEL: func.func @uncertified_dynamic_i16_iv
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+
 module {
+  func.func @canonical_i16_descending_base(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4_i16 = arith.constant 4 : i16
+    %c1_i16 = arith.constant 1 : i16
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%offset16 = %c4_i16) -> i16 {
+        %offset = arith.index_cast %offset16 : i16 to index
+        %at = pto.addptr %base, %offset
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %value = pto.vlds %at[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %next = arith.subi %offset16, %c1_i16 overflow<nsw> : i16
+        scf.yield %next : i16
+      }
+    }
+    return
+  }
+
+  func.func @canonical_i16_iv(%base: !pto.ptr<ui8, ub>) {
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c4_i16 = arith.constant 4 : i16
+    pto.vecscope {
+      scf.for %iv = %c0_i16 to %c4_i16 step %c1_i16 : i16 {
+        %offset = arith.index_cast %iv : i16 to index
+        %value = pto.vlds %base[%offset]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      }
+    }
+    return
+  }
+
   func.func @canonical_i16_no_wrap(%base: !pto.ptr<ui8, ub>) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -158,6 +210,20 @@ module {
           : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
         %next = arith.subi %addr16, %c1_i16 : i16
         scf.yield %next : i16
+      }
+    }
+    return
+  }
+
+  func.func @uncertified_dynamic_i16_iv(
+      %base: !pto.ptr<ui8, ub>, %upper: i16) {
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    pto.vecscope {
+      scf.for %iv = %c0_i16 to %upper step %c1_i16 : i16 {
+        %offset = arith.index_cast %iv : i16 to index
+        %value = pto.vlds %base[%offset]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
       }
     }
     return

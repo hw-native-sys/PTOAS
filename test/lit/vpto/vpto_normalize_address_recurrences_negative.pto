@@ -22,18 +22,19 @@
 // CHECK: pto.sprsts "AR", {{%.*}}[{{%.*}}]
 
 // CHECK-LABEL: func.func @other_user
-// CHECK-NOT: arith.index_cast %{{.*}} : i16 to index
-// CHECK: pto.vlds {{%.*}}[{{%.*}}]
+// CHECK: scf.for %[[IV:.*]] = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
+// CHECK-NEXT: %[[RESTORED:.*]] = arith.index_cast %[[IV]] : i16 to index
+// CHECK: pto.vlds {{%.*}}[%[[RESTORED]]]
+// CHECK: arith.cmpi eq, %[[RESTORED]], %c0 : index
 
 // CHECK-LABEL: func.func @signed_i8_constraint
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
 // CHECK: arith.index_cast %{{.*}} : i16 to index
 // CHECK: pto.sprsti "AR", {{%.*}}[%c0_i32]
-// CHECK: overflow<nsw>
 // POST-LABEL: func.func @signed_i8_constraint
-// POST: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16) -> (i16)
+// POST: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
 // POST: arith.index_cast %{{.*}} : i16 to index
 // POST: pto.sprsti "AR", %{{.*}}[%c0_i32]
-// POST: overflow<nsw>
 
 // CHECK-LABEL: func.func @constant_constraint_dynamic_advance
 // CHECK: arith.index_cast %{{.*}} : i16 to index
@@ -47,33 +48,30 @@
 // POST: overflow<nsw>
 
 // One loop may convert a dynamic vlds candidate while a SignedI8 sprsti
-// candidate remains ordinary. Both permanently use the proven i16 recurrence.
+// candidate remains ordinary. Both continue to use the same narrowed IV.
 // CHECK-LABEL: func.func @mixed_postupdate_result
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i16 {
 // CHECK: pto.vlds
 // CHECK: pto.sprsti
-// CHECK: overflow<nsw>
 // POST-LABEL: func.func @mixed_postupdate_result
-// POST: scf.for {{.*}} iter_args(%{{.*}} = %c0_i16, %{{.*}} = %{{.*}})
+// POST: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (!pto.ptr<ui32, ub>) : i16 {
 // POST: arith.index_cast %{{.*}} : i16 to index
 // POST: pto.vlds {{.*}} -> !pto.vreg<64xui32>, !pto.ptr<ui32, ub>
 // POST: pto.addptr %{{.*}}, %{{.*}}
 // POST: pto.sprsti "AR", %{{.*}}[%c0_i32]
-// POST: overflow<nsw>
 
 // A safe base offset is normalized even when the same op's explicit offset has
 // a complex recurrence that cannot be normalized or consumed by post-update.
 // CHECK-LABEL: func.func @best_effort_independent_leaves
-// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %c1, %{{.*}} = %c0_i16)
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %c1) -> (index) : i16 {
 // CHECK: arith.index_cast %{{.*}} : i16 to index
 // CHECK: pto.addptr %{{.*}}, %{{.*}}
 // CHECK: pto.vlds %{{.*}}[{{%.*}}]
-// CHECK: overflow<nsw>
 // POST-LABEL: func.func @best_effort_independent_leaves
-// POST: scf.for {{.*}} iter_args(%{{.*}} = %c1, %{{.*}} = %c0_i16)
+// POST: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %c1) -> (index) : i16 {
 // POST: arith.index_cast %{{.*}} : i16 to index
 // POST: pto.addptr %{{.*}}, %{{.*}}
 // POST: pto.vlds %{{.*}}[{{%.*}}] : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
-// POST: overflow<nsw>
 
 // CHECK-LABEL: func.func @dynamic_trip_count
 // CHECK-NOT: arith.index_cast %{{.*}} : i16 to index

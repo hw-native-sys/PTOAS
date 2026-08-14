@@ -71,11 +71,13 @@ using PostUpdateOpTable = llvm::StringMap<PostUpdateOpInfo>;
 const PostUpdateOpTable &getPostUpdateOpTable();
 const PostUpdateOpInfo *getPostUpdateOpInfo(Operation *op);
 
-// Match the canonical VPTO address recurrence. The value must be an
-// i16 scf.for iter_arg whose backedge is a constant-step arith.addi/subi with
-// the no-wrap flag corresponding to `domain`. The overflow flag records the
-// proof established by address normalization; consumers must not infer the
-// same fact again from the recurrence shape alone.
+// Return true when changing only the control values of `forOp` to signed i16
+// preserves its iteration sequence, including the final exit update.
+bool canNarrowLoopCounterToI16(scf::ForOp forOp);
+
+// Match a normalized VPTO address recurrence. The value must be either a
+// range-proven i16 scf.for induction variable or an i16 iter_arg whose
+// constant-step backedge carries the no-wrap flag corresponding to `domain`.
 std::optional<int64_t>
 getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
                                   PostUpdateAddressDomain domain);

@@ -1,64 +1,172 @@
-# VPTO 地址递推 i16 规范化设计
+# VPTO 地址递推 i16 类型收窄设计
 
-## 1. 要处理的问题
+## 1. 目标
 
-### 1.1 VPTO 中存在多种地址递推表示
+A5 VPTO 地址生成偏好 i16。`VPTONormalizeAddressRecurrences` 因此独立于
+soft-postupdate 运行：只要能够证明完整地址递推在 i16 中不回绕，就永久把递推
+的存储类型收窄为 i16。
 
-VPTO 访存 op 的 loop-varying 地址可能来自直接 `index` induction variable、`index`/`i32`/`i16` 固定步长 `scf.for iter_arg`、`pto.addptr` 的 offset，或者 pointer iter_arg backedge 的 advancement。不同 op 又使用 Element、Block、Byte、Alignment 四种地址单位，并且有些 op 没有显式 stride，例如 `vldus`；有些 op 的 stride 只表示状态推进而不参与当前访问地址，例如 `vstus`。
+该 pass 的核心约束是：**只改变类型，不改变递推结构**。
 
-这些地址写法在数学上可能表示同一个固定步长递推，但在 IR 中分散在不同整数类型、cast 和 pointer 表达式中。A5 VPTO 地址生成更偏好窄 i16 递推，因此需要一个独立的 architecture-level canonicalization pass：只要能够证明语义等价，就把地址相关的固定步长递推永久规范到 i16 域，再按原 operand 类型直接使用 i16，或扩展回 i32/index。
+- 原来是 `scf.for` induction variable（IV）的地址仍由同一个 IV 驱动；
+- 原来是 `scf.for iter_arg` 的地址仍使用原来的 iter_arg 槽位；
+- 不为地址创建额外的影子 iter_arg，不把 delta 形式改成 accumulator 形式；
+- pointer、align 及其他无关 iter_arg 的数量、顺序和数据流保持不变；
+- 原 operand 需要 index 或 i32 时，在循环体入口或地址 use 前从 i16 扩展回原类型。
 
-例如：
+soft-postupdate 可以消费收窄后的 IR，但不是该 IR 的所有者。即使关闭或拒绝
+soft-postupdate，安全的 i16 类型收窄仍然保留。
+
+## 2. 两种结构保持改写
+
+### 2.1 IV 递推
+
+改写前：
 
 ```mlir
-// before
+%c0 = arith.constant 0 : index
+%c4 = arith.constant 4 : index
+%c1 = arith.constant 1 : index
 scf.for %iv = %c0 to %c4 step %c1 {
   %value = pto.vlds %base[%iv]
       : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
 }
+```
 
-// after normalization
-scf.for %iv = %c0 to %c4 step %c1
-    iter_args(%addr16 = %c0_i16) -> i16 {
-  %offset = arith.index_cast %addr16 : i16 to index
-  %value = pto.vlds %base[%offset]
+改写后仍是 IV/delta 形式，只收窄 loop control：
+
+```mlir
+%c0_i16 = arith.constant 0 : i16
+%c4_i16 = arith.constant 4 : i16
+%c1_i16 = arith.constant 1 : i16
+scf.for %iv16 = %c0_i16 to %c4_i16 step %c1_i16 : i16 {
+  %iv = arith.index_cast %iv16 : i16 to index
+  %value = pto.vlds %base[%iv]
       : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
-  %next16 = arith.addi %addr16, %c1_i16 overflow<nsw> : i16
+}
+```
+
+这里不会创建 `%addr16` iter_arg，也不会显式合成 `%addr16 + step` 的回边。
+循环控制仍由 `scf.for` 自身表达，后续 delta 分析仍从 IV 读取 loop step。
+
+### 2.2 iter_arg 递推
+
+改写前：
+
+```mlir
+scf.for %iv = %lb to %ub step %step
+    iter_args(%offset = %c0_i32) -> i32 {
+  pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+  %next = arith.addi %offset, %c1_i32 : i32
+  scf.yield %next : i32
+}
+```
+
+改写后仍是同一个 iter_arg 槽位：
+
+```mlir
+scf.for %iv = %lb to %ub step %step
+    iter_args(%offset16 = %c0_i16) -> i16 {
+  %offset = arith.extsi %offset16 : i16 to i32
+  pto.sprsts "AR", %base[%offset] : !pto.ptr<ui32, ub>, i32
+  %next16 = arith.addi %offset16, %c1_i16 overflow<nsw> : i16
   scf.yield %next16 : i16
 }
 ```
 
-该输出本身就是稳定 canonical form，不以 soft-postupdate 最终成功为前提。
+pass 替换原槽位的 init、block argument、backedge 和无外部用户的 loop result
+类型，不追加新槽位。Signed/Unsigned 域分别使用 `nsw`/`nuw` 记录已经完成的
+no-wrap 证明；同一递推同时满足两个域时可以同时携带两种 flag。
 
-### 1.2 不能直接截断宽递推
+## 3. 安全证明
 
-[PR #1018 的 review](https://github.com/hw-native-sys/PTOAS/pull/1018#discussion_r3683903350) 给出了源整数类型回绕导致错误 post-update 的例子。循环以 i8 iter_arg 保存 offset，初值位模式为 224，每轮执行 `addi 32`，再通过 `arith.index_castui` 扩展到 index。原程序实际 offset 序列是 `224, 0`；如果忽略 i8 回绕，把它当作普通数学递推，则会错误得到 `224, 256`。
+设固定步长递推为：
 
-因此，widening cast 本身不能证明 `delta(cast(value)) == cast(delta(value))`。规范化必须证明源类型中的完整递推不回绕，同时证明同一递推在目标 i16 地址域中也不回绕。
+```text
+R(k) = I + k * D
+```
 
-[同一 PR 的另一条 review](https://github.com/hw-native-sys/PTOAS/pull/1018#discussion_r3670760383) 还说明不能为了得到窄 stride 而把完整宽地址算术下沉到 i16。normalizer 只规范化能够单独证明的 recurrence leaf，不合并 `delta(base)` 与 `delta(offset)`，不执行地址单位换算，也不计算最终 post stride。
+常量 trip count 为 `T`。循环体访问 `R(0)..R(T-1)`，最后一次迭代仍会计算
+IV 的退出更新或 iter_arg 的最终 backedge `R(T)`，因此证明覆盖闭区间
+`k ∈ [0, T]`。
 
-### 1.3 完整证明必须包含最终 backedge
+实现用 128-bit 中间值检查两个端点。因为 `D` 固定，序列单调，端点足以覆盖
+整个区间。
 
-设 `R(k) = I + k * D`，trip count 为 `T`。循环体访存使用 `R(0) .. R(T-1)`，但最后一次循环体仍会实际计算并 yield `R(T)`。即使 `R(T)` 不再用于下一次访存，它仍是原 `scf.for` 的最终 SSA 状态，因此规范化必须保证 `k ∈ [0, T]` 的完整递推在源类型和 i16 目标域中都不回绕。
+- Signed 地址域要求源类型和 i16 中均满足 `-32768 <= R(k) <= 32767`；
+- Unsigned 地址域要求源类型和 i16 中均满足 `0 <= R(k) <= 65535`；
+- increment 必须能由 i16 加/减准确表达；
+- trip count、初值和步长必须为常量，loop step 必须为正；
+- 动态边界、非线性 backedge、源类型回绕或 i16 回绕均保持原 IR。
 
-## 2. 独立 pass 合同
+IV 的收窄还必须保持 `scf.for` 自身的有符号循环控制语义。因此 lower、upper、
+step 和最终 exit value 都必须落在 signed i16 范围内。地址递推虽然可能满足
+unsigned i16，但只要循环控制不能安全收窄，就不会以新增 iter_arg 的方式绕过
+该限制。
 
-`VPTONormalizeAddressRecurrences` 是独立、永久的 VPTO canonicalization pass，而不是 `VPTOSoftPostUpdate` 的试探性 producer。
+这也防止了经典的窄整数回绕误判。例如 i8 地址位模式序列 `224, 0` 不能被当作
+数学序列 `224, 256`；widening cast 本身不是 no-wrap 证明。
 
-它遵循以下合同：
+## 4. 可接受输入和 best-effort 策略
 
-- 假设目标架构偏好 i16 地址递推；只要能够证明安全，就永久改写，不以 soft-postupdate 是否启用或是否成功为条件。
-- 不创建 original/canonical 双轨值，不创建 witness，也不存在 commit、rollback 或 consumer 完整性检查。
-- 同一 op 的 base、显式 stride 和 pointer advancement 分别尽力规范化；其中一个 leaf 无法证明不会阻止另一个安全 leaf 的改写。
-- 如果被替代的宽 iter_arg 及其 update 没有其他语义用户，loop-aware liveness 会把它们从 `scf.for` 中删除，只保留 canonical i16 recurrence。
-- 复杂递推、动态 trip count、源类型或 i16 回绕、域不匹配以及存在难以保持的其他用户时保持原 IR。
+pass 只匹配候选所在 `scf.for` 的两种直接整数递推：
 
-soft-postupdate 是该 canonical form 的一个可能 consumer，但不是它的所有者。soft-postupdate 失败时，访存 op 保持普通形式并继续使用已经规范化的 i16 地址递推。
+1. 直接 IV；
+2. 常量初值、回边为 `%arg + constant`、`constant + %arg` 或
+   `%arg - constant` 的 iter_arg。
 
-## 3. Pipeline 与控制方式
+支持 `index`、i32 和 i16 地址 leaf。地址相关 use 包括：
 
-VPTO emission pipeline 固定按以下顺序运行：
+- 候选 op 的显式 offset/stride；
+- 已经是 post-update 形式的候选 op 仍按相同 operand 位置处理；
+- loop-varying `pto.addptr` 的整数 offset；
+- pointer iter_arg 回边 `pto.addptr` 的 advancement，包括 `vldus`；
+- `vstus` 中只负责状态推进、不参与当前访问地址的 stride。
+
+Signed 域用 `arith.index_cast`/`arith.extsi` 恢复原 operand 类型，Unsigned 域用
+`arith.index_castui`/`arith.extui`。目标 operand 已是 i16 时直接使用原 IV 或
+原 iter_arg 槽位。
+
+每个 recurrence leaf 独立决策。一个 op 的 base offset 能安全收窄、显式 stride
+过于复杂时，只收窄 base leaf。源值的其他循环体用户通过一次 widening cast
+继续观察原类型；iter_arg result 有循环外用户时，也在循环后扩展回原 result
+类型。pointer result 的外部用户、`pto.addptr` 的额外用户和 pointer 自身的数据流
+只影响 post-update 是否成立，不影响其整数 offset/advancement leaf 的独立收窄。
+因此额外用户不会迫使 pass 建立宽窄双份回边，也不会阻止安全收窄。
+
+## 5. 与通用 loop-counter 收窄的关系
+
+`PTONarrowVPTOLoopCounters` 负责 vecscope 中一般常量边界循环的 IV 收窄；地址
+normalizer 使用同一个 `canNarrowLoopCounterToI16` 安全判定。两者对 IV 的结构
+语义一致：重建同一 `scf.for` 的 i16 control values，并在循环体中恢复原 IV
+类型，不增加 iter_arg。
+
+地址 normalizer 仍独立遍历 module 中的候选循环，因此 vecscope 外的安全地址
+IV 也可被收窄；通用 pass 自身仍保持 vecscope 范围。
+
+## 6. soft-postupdate 消费合同
+
+soft-postupdate 接受两类收窄后的地址 leaf：
+
+- i16 IV：重新检查常量 bounds、正 step 和最终 exit update 均满足 signed i16；
+- i16 iter_arg：检查固定步长回边以及与地址域匹配的 `nsw`/`nuw` flag。
+
+必要的 widening cast 必须与地址域 signedness 一致。动态边界 i16 IV、无 no-wrap
+flag 的 i16 iter_arg、i8/i32 loop-varying cast 或 signedness 不匹配都保守拒绝。
+
+分析分支保持原有分类：
+
+- IV 派生地址继续走 delta 分析；
+- iter_arg 派生地址继续走 accumulator 分析；
+- normalizer 不为了方便 consumer 而在两类结构之间转换。
+
+soft-postupdate 成功时可按自身合同新增 pointer iter_arg，并用 post-update op 的
+`updated_base` 形成指针回边。这个结构变化属于 post-update 优化，不属于类型
+收窄。若 soft-postupdate 失败，普通访存继续使用已经收窄的原 IV/iter_arg。
+
+## 7. Pipeline
+
+VPTO emission 的相关顺序为：
 
 ```text
 VPTOExpandWrapperOps
@@ -72,123 +180,26 @@ CSE
 PTOValidateVPTOEmissionIR
 ```
 
-`VPTONormalizeAddressRecurrences` 无 CLI 开关，在 VPTO emission pipeline 中始终运行。不是每个 pass 都需要独立开关；这里的 canonicalization 被定义为目标架构的默认 IR 规范。
+normalizer 无独立 CLI 开关并始终运行。`--enable-vpto-soft-postupdate=false` 只跳过
+soft-postupdate，不回退 i16 类型收窄。
 
-`--enable-vpto-soft-postupdate` 只控制 `VPTOSoftPostUpdate`。显式传入 `--enable-vpto-soft-postupdate=false` 时，normalizer 仍运行并保留 i16 canonical recurrence，只跳过普通访存到 post-update 形式的转换。
-
-normalizer 不再以 `pto.vecscope` 作为 producer/consumer 所有权边界。独立运行时，它遍历 module 中全部 `scf.for`，并处理共享候选表所描述的地址 operand；`pto.vecscope` 外的安全候选同样可以规范化。soft-postupdate 仍以 `pto.vecscope` 作为自己的循环和顺序分析边界。
-
-## 4. 共享 op 描述与职责边界
-
-候选集合和地址语义集中在 `VPTOPostUpdateUtils` 的 `PostUpdateOpInfo` 表中，normalizer 不维护少数指令的硬编码白名单。该表描述：
-
-- base operand 下标；
-- 可选 stride operand 下标；
-- stride 是否参与本次访问地址；
-- Element、Block、Byte 或 Alignment 地址单位；
-- Element 单位对应的元素类型来自 base、某个 operand 或某个 result；
-- Signed 或 Unsigned 地址数值域；
-- 普通/post 形式的结果数边界；
-- Dynamic、Constant 或 SignedI8 最终 post stride 约束。
-
-normalizer 只使用候选集合、base/stride 位置和地址数值域寻找 recurrence leaf。`pto.addptr` offset 按 signed 域处理。它不检查单位和最终 stride 约束，因为 canonicalization 是否有价值不再由 post-update 成功决定。
-
-soft-postupdate 使用完整描述计算有效地址变化：合并 base 与 stride delta、完成单位换算、验证 `vstus` advancement，并检查最终 stride 类型和 Constant/SignedI8 等约束。两个 pass 共享描述和 canonical recurrence 结构，但不会重复完整的 op 级 stride 分析。
-
-共享表覆盖当前 soft-postupdate 的全部候选，包括无显式 stride 的 `vldus` 和 stride 不参与当前地址的 `vstus`。
-
-## 5. 可接受递推与 best-effort 策略
-
-pass 只接受候选 op 所在 `scf.for` 的两种直接整数递推：
-
-1. 直接 induction variable；
-2. 初值为常量、backedge 为 `%arg + constant`、`constant + %arg` 或 `%arg - constant` 的 iter_arg。
-
-支持的地址 operand 类型为 `index`、`i32` 和 `i16`。Signed 域通过 `arith.index_cast` 或 `arith.extsi` 从 i16 恢复原 operand 类型；Unsigned 域通过 `arith.index_castui` 或 `arith.extui` 恢复；目标 operand 本身是 i16 时直接使用 canonical iter_arg。
-
-地址相关 use 包括：
-
-- 候选 op 的显式 offset/stride；
-- loop-varying base 中 `pto.addptr` 的 offset；
-- pointer iter_arg backedge `pto.addptr` 的 advancement offset，包括无显式 stride 的 `vldus`。
-
-同一原递推在相同 signed/unsigned 域中被多个地址 use 复用时共享 canonical recurrence；同一源值被不同地址域消费时分别建立对应域的 recurrence。
-
-normalizer 按 recurrence leaf 独立决策，而不是按最终 post-update candidate 整体决策。例如一个 op 的 base offset 可以安全规范化，而显式 stride 递推过于复杂时，只改写 base offset。最终 op 是否能够 post-update 由后续 pass 独立决定。
-
-为了避免为非地址用户改变数据流或同时保留宽窄双份递推，当前实现要求被规范化的源递推除已识别地址 use 和自身固定步长 update 外没有其他用户，并要求 iter_arg loop result 没有循环外用户。无法满足时保持原 IR。
-
-## 6. 完整安全证明
-
-设常量 trip count 为 `T`，初值为 `I`，每次 backedge 增量为 `D`。实现以 128-bit 中间值检查闭区间 `k ∈ [0, T]` 上的：
-
-```text
-R(k) = I + k * D
-```
-
-因为 `D` 固定，序列单调，只需检查初值和最终 backedge 两个端点。
-
-Signed 域必须同时满足源类型范围和：
-
-```text
--32768 <= R(k) <= 32767
-```
-
-Unsigned 域必须同时满足源类型范围和：
-
-```text
-0 <= R(k) <= 65535
-```
-
-Block 类 `vsldb/vsstb` 的 i16 stride 按 unsigned 域处理，因此位模式 40000 不会仅因超过 signed i16 上界而被拒绝；完整递推超过 65535 时仍保持原 IR。
-
-trip count、初值和增量必须为常量。动态边界、零或负 loop step、非线性 backedge、多层递推和无法证明的 cast 均不推断。证明还检查 increment 能否以目标 i16 算术准确表达。
-
-canonical recurrence 使用标准 overflow flag 保存证明结论：
-
-```mlir
-// Signed growth.
-%next = arith.addi %addr16, %step16 overflow<nsw> : i16
-
-// Unsigned growth.
-%unext = arith.addi %uaddr16, %ustep16 overflow<nuw> : i16
-
-// Unsigned descent.
-%udec = arith.subi %uaddr16, %decrement16 overflow<nuw> : i16
-```
-
-这些 flag 是 canonical IR 自身的 no-wrap 语义，不是传给某个特定 consumer 的临时 witness。任何后续分析都可以据此识别固定步长 i16 recurrence。
-
-## 7. 永久输出与 soft-postupdate 输入
-
-normalizer 直接把候选地址 operand 接到 canonical value：
-
-```mlir
-%offset = arith.index_cast %addr16 : i16 to index
-%value = pto.vlds %base[%offset] : ...
-```
-
-旧设计中用于同时保存 original/canonical 的可逆 marker 已删除，最终 IR 只保留直接接入 operand 的 canonical value。
-
-soft-postupdate 对 loop-varying 窄整数只接受以下 canonical 结构：i16 `scf.for iter_arg`、常量步长 backedge、匹配地址域的 `nsw`/`nuw`，以及必要时匹配 signedness 的 widening cast。它读取常量 step，不重复 trip count、初值和端点证明。
-
-如果 soft-postupdate 的完整分析成功，它可以用 pointer recurrence 替代普通访存地址，并通过共享 liveness 删除不再需要的 i16 recurrence。如果完整分析因单位、最终 stride、支配性、零 stride、Constant/SignedI8 或其他条件失败，普通访存 op 和 canonical i16 recurrence 都保留。
-
-非循环 sequential 分析不依赖 normalizer 输出，继续直接分析同一 block 中相邻访存的有效地址差。循环中未形成 post-update 的普通 op 可能已经使用 canonical i16 recurrence，这是独立 normalization 的预期稳定形态。
+候选 op、base/stride 位置、地址单位、Signed/Unsigned 域和最终 stride 约束由
+`VPTOPostUpdateUtils` 的共享 `PostUpdateOpInfo` 表描述。normalizer 只使用其中的
+候选位置和数值域证明 leaf；地址单位换算、base/stride delta 合并以及
+Constant/SignedI8 等最终约束仍由 soft-postupdate 完成。
 
 ## 8. 测试覆盖
 
-lit 回归覆盖：
+lit 回归应明确验证：
 
-- index、i32、i16 三类 operand；
-- Element、Block、Byte、Alignment 四类地址单位；
-- 无显式 stride 的 `vldus`；
-- stride 不参与当前地址的 `vstus`；
-- signed/unsigned source wrap、i16 域 wrap 和最终 backedge wrap 拒绝；
-- Constant 或 SignedI8 最终 post stride 拒绝时，普通访存仍保留 canonical i16 recurrence；
-- 同一循环中 post-update 成功和失败候选混合时，失败候选不回退；
-- `pto.vecscope` 外候选也可由独立 normalizer 规范化；
-- `--enable-vpto-soft-postupdate=false` 只关闭 soft-postupdate，不关闭 normalization；
-- 最终 IR 不包含 witness，且被完全替代的宽递推由 loop-aware liveness 删除。
+- index/i32/i16，以及 Element/Block/Byte/Alignment 地址单位；
+- direct IV 收窄后仍是 IV，normalizer 不新增 iter_arg；
+- i32/index iter_arg 收窄后仍占原槽位，其他 iter_arg 数量和顺序不变；
+- signed/unsigned source wrap、i16 域 wrap 和最终 backedge wrap 均拒绝；
+- 动态 trip count IV 不因类型恰好为 i16 就被 soft-postupdate 信任；
+- `vldus`、`vstus`、混合成功/失败候选和 vecscope 外候选；
+- soft-postupdate 同时消费收窄后的 IV/delta 和 iter_arg/accumulator；
+- `--enable-vpto-soft-postupdate=false` 时仍保留结构不变的 i16 收窄。
 
-SIM/runtime 回归继续验证 source wrap、normalized recurrence 类型、混合成功/失败、下降递推和嵌套共享 chain。由于 normalizer 的 canonical form 现在独立保留，runtime 形态检查应分别验证普通访存地址递推和实际 post-update 是否符合各自合同。
+SIM/runtime 回归继续负责验证 source wrap、下降递推、地址单位、payload 元素宽度
+和实际 post-update 指针序列；lit 负责锁定本设计最关键的 IR 结构合同。

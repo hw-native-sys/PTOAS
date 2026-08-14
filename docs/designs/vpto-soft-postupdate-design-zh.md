@@ -1,6 +1,6 @@
 # VPTO Soft Post-Update 优化 Pass 设计文档
 
-> 独立的地址递推规范化、signed/unsigned i16 no-wrap 证明证书和共享候选描述见 [VPTO 地址递推 i16 规范化设计](vpto-address-recurrence-normalization-design-zh.md)。CLI pipeline 始终在本 pass 之前运行 `VPTONormalizeAddressRecurrences`，但两者没有 commit/rollback 合同：normalizer 的 canonical i16 recurrence 是永久 IR，即使本 pass 被关闭或拒绝某个候选也会保留。
+> 独立的地址递推类型收窄、signed/unsigned i16 no-wrap 证明和共享候选描述见 [VPTO 地址递推 i16 类型收窄设计](vpto-address-recurrence-normalization-design-zh.md)。CLI pipeline 始终在本 pass 之前运行 `VPTONormalizeAddressRecurrences`，但两者没有 commit/rollback 合同：normalizer 的 i16 recurrence 是永久 IR，即使本 pass 被关闭或拒绝某个候选也会保留；normalizer 不会把 IV/delta 改造成 iter_arg/accumulator。
 
 ## 1. 概述
 
@@ -116,9 +116,9 @@ pass 的驱动分为两个阶段。两个阶段都通过 `VPTOPostUpdateUtils` �
 ```
 阶段一 · 循环路径：候选 op 直接位于某个 scf.for 的循环体内，并且在每次迭代中更新。
     以 ForOp 为单位批量处理（同循环内多 op 合并 iter_arg）：
-      · 纯符号分析：直接读取 normalizer 已永久接入 operand 的 canonical recurrence；先做累加器分析，未命中再做 delta 分析。
+      · 纯符号分析：直接读取 normalizer 已永久接入 operand 的收窄 recurrence；原 iter_arg 先做累加器分析，原 IV 仍由 delta 分析处理。
       · 最终判定与 plan 准备：合并 base/stride delta，完成单位、类型和最终 stride 检查；通用 combine 路径同时拒绝零 stride，vstus 则检查 base advancement 与原 offset 等价。为可改写候选准备 stride 和 init_ptr。
-      · 选择提交：只用成功 plan 建立 pointer chain；失败候选保持普通 op，但继续使用 canonical i16 recurrence。
+      · 选择提交：只用成功 plan 建立 pointer chain；失败候选保持普通 op，但继续使用收窄后的 i16 recurrence。
         每个 scf.for 独立建立和清理自己的 pointer iter_arg；不把内层 updated_base 自动传播为外层 iter_arg。
 
 阶段二 · 顺序路径：循环路径完成后，重新收集 vecscope 内的全部 block，
@@ -255,12 +255,12 @@ getIterArgIncrement(Value v, ForOp forOp) -> {status, StrideExpr}:
 
 三态返回是必要的：`NotIterArg` 表示该操作数与累加器无关，应回退 delta 路径；`Failed` 表示确实是 iter_arg 但增量无法分解，此时必须整体放弃——把未知增量当作 0 会静默算错地址。
 
-累加器路径和 delta 路径对 cast 使用同一条正确性条件：必须能够证明 `delta(cast(x)) == cast(delta(x))`。循环不变量的 cast 的 delta 恒为零，可以直接保留；纯 index 域内且没有窄整数来源的递推继续使用本 pass 原有分析。loop-varying 窄整数和跨域 cast 只通过独立 normalizer 产生的永久 canonical contract 接入：
+累加器路径和 delta 路径对 cast 使用同一条正确性条件：必须能够证明 `delta(cast(x)) == cast(delta(x))`。循环不变量的 cast 的 delta 恒为零，可以直接保留；纯 index 域内且没有窄整数来源的递推继续使用本 pass 原有分析。loop-varying 窄整数和跨域 cast 只通过独立 normalizer 产生的永久收窄合同接入：
 
-- Signed canonical recurrence 是 i16 iter_arg、signed extension（`arith.index_cast`/`arith.extsi`）和 `arith.addi/subi ... overflow<nsw>` 的组合；unsigned canonical recurrence 使用 `arith.index_castui`/`arith.extui` 和 `overflow<nuw>`。Block 类 stride 期望 unsigned，其余共享描述中的窄地址 stride 期望 signed。
-- normalizer 直接把通过证明的 canonical 地址接到访存或 `pto.addptr` operand，并用 loop-aware liveness 删除不再需要的宽递推。soft-postupdate 不解包任何 marker。
-- soft-postupdate 只检查 canonical 结构并读取常量 backedge step，不再计算 trip count、初值、递推端点或最终 backedge 范围；这些事实已经由 overflow flag 作为 IR 语义承诺。它仍负责合并 base 与 stride delta、单位换算以及 `Dynamic`、`Constant`、`SignedI8` 等最终约束。
-- 原生 i16 iter_arg 若本身具有域匹配的 `nsw`/`nuw` constant-step backedge，也满足同一个 canonical 结构。raw i32 iter_arg、signed/unsigned 域不匹配的 cast、没有相应 overflow flag 的 i16 backedge、动态步长和复杂窄整数递推均返回 `Failed`。候选失败时不撤销 normalizer 的改写。
+- IV 来源保持 delta 形式：normalizer 只把 `scf.for` 的常量 lower/upper/step 和 IV 类型改为 i16。soft-postupdate 对 widening cast 求 delta 时重新检查 bounds、正 step 和最终 exit update 的 signed-i16 范围证明；动态边界 i16 IV 不被信任。
+- iter_arg 来源保持 accumulator 形式：Signed recurrence 是原 i16 iter_arg 槽位、signed extension（`arith.index_cast`/`arith.extsi`）和 `arith.addi/subi ... overflow<nsw>` 的组合；unsigned recurrence 使用 `arith.index_castui`/`arith.extui` 和 `overflow<nuw>`。Block 类 stride 期望 unsigned，其余共享描述中的窄地址 stride 期望 signed。
+- normalizer 把通过证明的收窄地址接到访存或 `pto.addptr` operand，不新增影子 iter_arg，也不解包任何 marker。
+- raw i32 iter_arg、signed/unsigned 域不匹配的 cast、没有相应 overflow flag 的 i16 iter_arg backedge、动态步长和复杂窄整数递推均返回 `Failed`。候选失败时不撤销 normalizer 的改写。
 
 上述规则覆盖 `arith.index_cast`、`arith.index_castui`、`arith.extsi` 和 `arith.extui`；`arith.trunci` 等其他整数转换不属于 canonical 语法，遇到时保守放弃。
 
@@ -303,7 +303,7 @@ scf.for %iv = %c0 to %c16 step %c1
 | `v = arith.addi(a, b)` | `delta(a) + delta(b)` |
 | `v = arith.subi(a, b)` | `delta(a) - delta(b)` |
 | `v = arith.muli(a, b)`，其中一个循环不变 | `invariant * delta(other)` |
-| `v = arith.index_castui(a)`、`arith.index_cast(a)`、`arith.extui(a)` 或 `arith.extsi(a)` | 循环不变量为零；loop-varying 扩展仅在来源为域匹配且带 `nuw/nsw` backedge 证书的 canonical i16 recurrence 时为 `cast(delta(a))`；loop-varying narrowing 以及其他来源为 `unknown` |
+| `v = arith.index_castui(a)`、`arith.index_cast(a)`、`arith.extui(a)` 或 `arith.extsi(a)` | 循环不变量为零；loop-varying 扩展仅在来源为范围已证明的 i16 IV，或域匹配且带 `nuw/nsw` backedge 证书的 i16 iter_arg 时为 `cast(delta(a))`；loop-varying narrowing 以及其他来源为 `unknown` |
 | 其他 | `unknown`（放弃） |
 
 ```
@@ -312,7 +312,7 @@ stride_new = (elemBytes/unitBytes)·delta(base) + delta(strideOperand)   // 见 
 
 `stride_new` 须为循环不变量，`(elemBytes/unitBytes)·delta(base)` 须为精确整数缩放（见 4.2.1 约束）。
 
-**正确性：** delta 表中的操作构成仿射函数的封闭运算集合。定义链仅由这些操作构成时，delta 计算不会遗漏。遇到表外操作时保守放弃。窄整数 cast 必须满足 4.2.3 的 canonical contract。
+**正确性：** delta 表中的操作构成仿射函数的封闭运算集合。定义链仅由这些操作构成时，delta 计算不会遗漏。遇到表外操作时保守放弃。窄整数 cast 必须满足 4.2.3 的收窄合同。
 
 delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果按 `Value` 缓存。
 
@@ -344,7 +344,7 @@ delta 分析同样是纯符号的：表中每一行返回 `StrideExpr`，结果�
 2. 新增指针类型的 `iter_arg`，初始值为 plan 中的 `init_ptr`。
 3. 创建 Post-Update op：base 替换为 iter_arg 的 block argument。对于 `strideParticipatesInCurrentAddress = true` 的候选，将 `strideOperand` 替换为 `stride_new`；`vldus` 原本没有显式 stride，创建 Post 形式时追加 increment；`vstus` 则保留原 i32 offset，只追加 `base_out`。其余操作数（block_stride、mask、dist 等）不变。
 4. 将 `updated_base` 通过 `scf.yield` 传出。
-5. 对改写后的循环做 loop-aware liveness，删除已经被 Post-Update 指针链完全取代的地址 accumulator，包括不再使用的 canonical i16 recurrence、cast 和 backedge。没有候选成功时不重建循环，normalizer 的 canonical recurrence 保留。
+5. 对改写后的循环做 loop-aware liveness，删除已经被 Post-Update 指针链完全取代的地址 accumulator，包括不再使用的 i16 iter_arg、cast 和 backedge。没有候选成功时不重建循环，normalizer 的收窄 recurrence 保留。
 
 最后一步不能只依赖普通 DCE。旧 accumulator 即使没有真实用户，仍会形成
 `block argument → pure update → scf.yield → block argument` 的循环使用链，局部
