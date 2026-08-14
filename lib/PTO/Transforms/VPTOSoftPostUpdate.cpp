@@ -439,6 +439,17 @@ using DecompCache = DenseMap<Value, std::optional<LinearDecomp>>;
 
 static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp);
 
+// Constant-like values have zero loop delta regardless of where their SSA
+// definition is nested. Keep this analysis predicate separate from dominance:
+// a loop-local constant may still need to be cloned before its use.
+static bool isLoopInvariantForAnalysis(Value value, scf::ForOp forOp) {
+  if (forOp.isDefinedOutsideOfLoop(value)) {
+    return true;
+  }
+  Operation *defOp = value.getDefiningOp();
+  return defOp && defOp->hasTrait<OpTrait::ConstantLike>();
+}
+
 // Decompose `v` into blockArg * coeff + increment by recursing through
 // addi/subi/muli/index_cast/addptr chains.  Pure: builds only StrideExprs.
 // `cache` is scoped to one decomposition (a single `blockArg`).
@@ -464,9 +475,9 @@ static std::optional<LinearDecomp> decomposeLinear(Value v,
     return record(LinearDecomp{0, makeLeaf(v)});
 
   // v is loop-invariant or constant → {0, v}
-  if (forOp.isDefinedOutsideOfLoop(v) ||
-      defOp->hasTrait<OpTrait::ConstantLike>())
+  if (isLoopInvariantForAnalysis(v, forOp)) {
     return record(LinearDecomp{0, makeLeaf(v)});
+  }
 
   // v = addi(a, b) → {ca + cb, ia + ib}
   // v = subi(a, b) → {ca - cb, ia - ib}
@@ -589,9 +600,9 @@ getIterArgIncrement(Value v, scf::ForOp forOp,
     }
 
     Operation *defOp = current.getDefiningOp();
-    if (!defOp || forOp.isDefinedOutsideOfLoop(current) ||
-        defOp->hasTrait<OpTrait::ConstantLike>())
+    if (!defOp || isLoopInvariantForAnalysis(current, forOp)) {
       return {StrideStatus::NotIterArg, nullptr};
+    }
 
     if (isa<arith::IndexCastUIOp, arith::IndexCastOp, arith::ExtSIOp,
             arith::ExtUIOp>(defOp)) {
@@ -603,25 +614,25 @@ getIterArgIncrement(Value v, scf::ForOp forOp,
     }
 
     if (isa<arith::AddIOp>(defOp)) {
-      if (forOp.isDefinedOutsideOfLoop(defOp->getOperand(1))) {
+      if (isLoopInvariantForAnalysis(defOp->getOperand(1), forOp)) {
         current = defOp->getOperand(0);
         continue;
       }
-      if (forOp.isDefinedOutsideOfLoop(defOp->getOperand(0))) {
+      if (isLoopInvariantForAnalysis(defOp->getOperand(0), forOp)) {
         current = defOp->getOperand(1);
         continue;
       }
     }
 
     if (isa<arith::SubIOp>(defOp)) {
-      if (forOp.isDefinedOutsideOfLoop(defOp->getOperand(1))) {
+      if (isLoopInvariantForAnalysis(defOp->getOperand(1), forOp)) {
         current = defOp->getOperand(0);
         continue;
       }
     }
 
     if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(defOp)) {
-      if (forOp.isDefinedOutsideOfLoop(addPtrOp.getOffset())) {
+      if (isLoopInvariantForAnalysis(addPtrOp.getOffset(), forOp)) {
         current = addPtrOp.getPtr();
         continue;
       }
@@ -645,7 +656,7 @@ using DeltaCache = DenseMap<Value, StrideExprRef>;
 static std::optional<int64_t> getCanonicalCastLoopDelta(Operation *castOp,
                                                         scf::ForOp forOp) {
   Value input = castOp->getOperand(0);
-  if (forOp.isDefinedOutsideOfLoop(input)) {
+  if (isLoopInvariantForAnalysis(input, forOp)) {
     return 0; // Both the cast value and its delta (zero) are invariant.
   }
 
@@ -694,8 +705,9 @@ static StrideExprRef computeDelta(Value v, scf::ForOp forOp,
     return makeLeaf(forOp.getStep());
 
   // Constant or loop-invariant: delta = 0
-  if (forOp.isDefinedOutsideOfLoop(v))
+  if (isLoopInvariantForAnalysis(v, forOp)) {
     return makeConst(0);
+  }
 
   auto it = cache.find(v);
   if (it != cache.end())
@@ -717,8 +729,9 @@ static StrideExprRef computeDelta(Value v, scf::ForOp forOp,
           other = addOp.getRhs();
         else if (addOp.getRhs() == blockArg)
           other = addOp.getLhs();
-        if (other && forOp.isDefinedOutsideOfLoop(other))
+        if (other && isLoopInvariantForAnalysis(other, forOp)) {
           return record(makeLeaf(other));
+        }
       }
       return record(nullptr);
     }
@@ -752,7 +765,7 @@ static StrideExprRef computeDelta(Value v, scf::ForOp forOp,
     Value lhs = mulOp.getLhs(), rhs = mulOp.getRhs();
     for (auto [invariant, variant] :
          {std::pair{rhs, lhs}, std::pair{lhs, rhs}}) {
-      if (forOp.isDefinedOutsideOfLoop(invariant)) {
+      if (isLoopInvariantForAnalysis(invariant, forOp)) {
         auto dv = computeDelta(variant, forOp, cache);
         if (!dv)
           continue;
@@ -806,8 +819,9 @@ getStride(Value v, scf::ForOp forOp, DeltaCache &cache,
 // an i16 iter_arg carrying the corresponding nsw/nuw backedge certificate.
 // Pure index-domain IVs and recurrences retain the existing soft analysis.
 static bool isCanonicalLoopInteger(Value value, scf::ForOp forOp) {
-  if (forOp.isDefinedOutsideOfLoop(value))
+  if (isLoopInvariantForAnalysis(value, forOp)) {
     return true;
+  }
 
   std::optional<AddressDomain> domain;
   while (Operation *defOp = value.getDefiningOp()) {
@@ -839,8 +853,9 @@ static bool isCanonicalLoopInteger(Value value, scf::ForOp forOp) {
 // canonical recurrence requirement applies when a loop-varying value is
 // narrow, or when an index value was obtained by widening a narrow integer.
 static bool isSafeLoopInteger(Value value, scf::ForOp forOp) {
-  if (forOp.isDefinedOutsideOfLoop(value))
+  if (isLoopInvariantForAnalysis(value, forOp)) {
     return true;
+  }
   if (!value.getType().isIndex())
     return isCanonicalLoopInteger(value, forOp);
   Operation *defOp = value.getDefiningOp();
