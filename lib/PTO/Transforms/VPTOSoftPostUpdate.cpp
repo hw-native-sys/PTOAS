@@ -639,41 +639,50 @@ getIterArgIncrement(Value v, scf::ForOp forOp,
 // from the map means "not computed yet".
 using DeltaCache = DenseMap<Value, StrideExprRef>;
 
-// Loop-varying casts commute with delta only when they consume the explicit
-// canonical recurrence contract emitted by address normalization. The nsw/nuw
-// flag on that recurrence is the proof certificate; soft post-update does not
-// repeat trip-count and endpoint analysis.
-static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp) {
+// Return the constant loop delta preserved by a canonical address cast. The
+// nsw/nuw flag on the i16 recurrence is the proof certificate; reading the
+// certified step directly also handles constants materialized inside the loop.
+static std::optional<int64_t> getCanonicalCastLoopDelta(Operation *castOp,
+                                                        scf::ForOp forOp) {
   Value input = castOp->getOperand(0);
-  if (forOp.isDefinedOutsideOfLoop(input))
-    return true; // Both the cast value and its delta (zero) are invariant.
+  if (forOp.isDefinedOutsideOfLoop(input)) {
+    return 0; // Both the cast value and its delta (zero) are invariant.
+  }
 
   auto inputInteger = dyn_cast<IntegerType>(input.getType());
-  if (!inputInteger)
-    return false;
+  if (!inputInteger) {
+    return std::nullopt;
+  }
 
   AddressDomain domain;
-  if (isa<arith::IndexCastOp, arith::ExtSIOp>(castOp))
+  if (isa<arith::IndexCastOp, arith::ExtSIOp>(castOp)) {
     domain = AddressDomain::Signed;
-  else if (isa<arith::IndexCastUIOp, arith::ExtUIOp>(castOp))
+  } else if (isa<arith::IndexCastUIOp, arith::ExtUIOp>(castOp)) {
     domain = AddressDomain::Unsigned;
-  else
-    return false;
+  } else {
+    return std::nullopt;
+  }
 
-  if (inputInteger.getWidth() == kCanonicalAddressWidth)
-    return pto::getCanonicalAddressRecurrenceStep(input, forOp, domain)
-        .has_value();
+  unsigned inputWidth = inputInteger.getWidth();
+  if (inputWidth == kCanonicalAddressWidth) {
+    return pto::getCanonicalAddressRecurrenceStep(input, forOp, domain);
+  }
 
   Operation *extension = input.getDefiningOp();
   if (domain == AddressDomain::Signed &&
-      !isa_and_nonnull<arith::ExtSIOp>(extension))
-    return false;
+      !isa_and_nonnull<arith::ExtSIOp>(extension)) {
+    return std::nullopt;
+  }
   if (domain == AddressDomain::Unsigned &&
-      !isa_and_nonnull<arith::ExtUIOp>(extension))
-    return false;
+      !isa_and_nonnull<arith::ExtUIOp>(extension)) {
+    return std::nullopt;
+  }
   Value canonicalInput = extension->getOperand(0);
-  return pto::getCanonicalAddressRecurrenceStep(canonicalInput, forOp, domain)
-      .has_value();
+  return pto::getCanonicalAddressRecurrenceStep(canonicalInput, forOp, domain);
+}
+
+static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp) {
+  return getCanonicalCastLoopDelta(castOp, forOp).has_value();
 }
 
 // Compute the per-iteration delta of value `v` within `forOp`.
@@ -764,14 +773,15 @@ static StrideExprRef computeDelta(Value v, scf::ForOp forOp,
     return record(makeAdd(pointerDelta, offsetDelta));
   }
 
-  // Preserve value-preserving casts in the symbolic delta. Narrowing casts are
-  // accepted only when castPreservesLoopDelta proves they cannot truncate.
+  // Canonical address casts expose the constant delta certified by the i16
+  // recurrence. Other loop-varying casts remain unsupported.
   if (isa<arith::IndexCastUIOp, arith::IndexCastOp, arith::ExtSIOp,
           arith::ExtUIOp>(defOp)) {
-    if (!castPreservesLoopDelta(defOp, forOp))
+    auto castDelta = getCanonicalCastLoopDelta(defOp, forOp);
+    if (!castDelta) {
       return record(nullptr);
-    StrideExprRef inputDelta = computeDelta(defOp->getOperand(0), forOp, cache);
-    return record(inputDelta ? makeCast(defOp, inputDelta) : nullptr);
+    }
+    return record(makeConst(*castDelta));
   }
 
   return record(nullptr);

@@ -6,7 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vpto-soft-postupdate | FileCheck %s
+// RUN: pto-test-opt %s -vpto-normalize-address-recurrences -vpto-soft-postupdate | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
 
 // Element address units must match the element type used by LLVM lowering,
 // even when that type differs from the base pointer element type. A 128xi16
@@ -19,6 +21,8 @@
 // CHECK-LABEL: func.func @vldsx2_result_element_unit
 // CHECK: [[C256:%[a-zA-Z0-9_]+]] = arith.constant 256 : index
 // CHECK: pto.vldsx2 {{.*}}[[[C256]]], "DINTLV_B8" {{.*}} -> !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.ptr<ui16, ub>
+// LLVM-LABEL: define void @vldsx2_result_element_unit
+// LLVM: call { <256 x i8>, <256 x i8>, ptr addrspace(6) } @llvm.hivm.vldsx2.post.v256i8({{.*}}, i32 256, {{.*}}, i32 1)
 
 // CHECK-LABEL: func.func @vldus_result_element_unit
 // CHECK: [[C256:%[a-zA-Z0-9_]+]] = arith.constant 256 : index
@@ -50,7 +54,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @vldsx2_result_element_unit(%base: !pto.ptr<ui16, ub>) {
+  func.func @vldsx2_result_element_unit(
+      %base: !pto.ptr<ui16, ub>,
+      %sink: !pto.ptr<ui8, ub>,
+      %mask: !pto.mask<b8>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c128 = arith.constant 128 : index
     %c384 = arith.constant 384 : index
@@ -61,6 +68,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %low, %high = pto.vldsx2 %ptr[%c0], "DINTLV_B8"
             : !pto.ptr<ui16, ub>, index
                 -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
+        pto.vsts %low, %sink[%c0], %mask
+            : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+        pto.vsts %high, %sink[%c0], %mask
+            : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
       }
     }
     return
