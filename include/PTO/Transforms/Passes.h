@@ -189,7 +189,8 @@ std::unique_ptr<Pass> createPTODumpSyncExtractPass();
 std::unique_ptr<Pass>
 createPTOUnifiedSyncPass(unsigned bufidCapacity = 0, bool debugEnabled = false,
                          llvm::StringRef forceMechanism = "",
-                         bool checkAddrReuse = false);
+                         bool checkAddrReuse = false,
+                         bool routeCrossArm = false);
 
 #undef GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION

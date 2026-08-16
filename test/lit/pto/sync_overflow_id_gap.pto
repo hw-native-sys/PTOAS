@@ -29,7 +29,7 @@
 // with only the 2 hazards on the un-routed output tile -- `overflow=0`, so the
 // spill never fires here.
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=ROUTED
-// ROUTED: [unified-sync routing] func=overflow_id_gap buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) not_expressible=0 split=0 OK
+// ROUTED: [unified-sync routing] func=overflow_id_gap buffer routing: considered=13 routed=12 hazards_covered=24 skipped(no_overflow=1 not_written_back=0 K=0:0) not_expressible=0 crossarm(routed=0 skipped_loop_hoist=0 divergence=0) split=0 OK
 // ROUTED: [unified-sync coloring] interval coloring: assigned=2 overflow=0 spilled_to_barrier=0 hidden_reserved=0 reused=0
 
 // The emission actually happened, and every acquire has its release.

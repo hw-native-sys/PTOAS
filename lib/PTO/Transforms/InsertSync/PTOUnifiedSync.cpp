@@ -167,6 +167,10 @@ struct PTOUnifiedSyncPass
   std::string forceMechanism;
   /// List the hazards whose endpoints are two allocations sharing an address.
   bool checkAddrReuse = false;
+  /// Admit the cross-arm two-cycle shape as a buffer-id routing reason. OFF by
+  /// default; no corpus kernel presents the shape, so on/off must be byte-identical
+  /// across the corpus and that is checkable rather than assumed.
+  bool routeCrossArm = false;
   /// Print the allocator's model/routing/colouring reports. Off by default: the
   /// reports are verbose enough to bury a caller's own output. Gate violations are
   /// reported either way.
@@ -291,6 +295,7 @@ struct PTOUnifiedSyncPass
 
     unified::SyncModel model = unified::buildSyncModel(
         syncOpsStorage, bufidCapacity, memInfoToClusters, syncIR);
+    model.resources.routeCrossArm = routeCrossArm;
 
     if (checkAddrReuse)
       reportAddressReuseHazards(func, model);
@@ -452,7 +457,13 @@ struct PTOUnifiedSyncPass
            << " not_written_back=" << route.skippedNotWrittenBack
            << " K=0:" << route.skippedNoCapacity << ")"
            << " not_expressible=" << route.skippedNotExpressible
+           << " crossarm(routed=" << route.routedCrossArm
+           << " skipped_loop_hoist=" << route.skippedCrossArmLoopHoist
+           << " divergence=" << route.crossArmHoistDivergence << ")"
            << " split=" << route.splitHazards
+           << (route.crossArmHoistDivergence == 0
+                   ? ""
+                   : " !! MOVEFORSYNC-HELPER-DRIFT")
            << (route.splitHazards == 0 ? " OK" : " !! SPLIT-MECHANISM") << "\n";
         for (const unified::Buffer &b : model.buffers)
           if (b.routedToBufid)
@@ -808,6 +819,54 @@ struct PTOUnifiedSyncPass
                << (leaked == 0 ? " ALL-OR-NOTHING-OK" : " !! SPLIT-MECHANISM")
                << "\n";
           });
+
+        // --- G1-self, run because THIS pass narrowed a carrier -----------------
+        //
+        // An event is POSITION+PIPE keyed and WIDE: one `set_flag(V->MTE3)` orders
+        // everything on V before everything on MTE3, whatever buffer it touched. A
+        // buffer-id token is BUFFER keyed and NARROW: it covers only its aliasing
+        // clique. `RemoveRedundantSync` is deliberately buffer-agnostic -- see
+        // RemoveRedundantSync.cpp:229-231, "a complete inner pair on the same pipe
+        // pair can cover an outer pair even when the memory dependency roots differ"
+        // -- so a surviving pair may be carrying orderings that were pruned into it.
+        // Routing that pair to a token drops every one of them, silently, on whatever
+        // path the token does not bracket.
+        //
+        // NOTHING ELSE CATCHES THIS. The gates above ask about ids, op counts and
+        // mechanism splits; all of them pass while an ordering is missing. The bug
+        // that motivated this reported `ALL-OR-NOTHING-OK splitHazards=0` and emitted
+        // an else arm containing no synchronisation at all.
+        //
+        // It is the same asymmetry the codebase already fixed once for a different
+        // narrow mechanism: a slot-keyed pair "may therefore BE covered by a
+        // whole-pipe pair -- which is strictly stronger -- but it may never PROVIDE
+        // coverage for another pair" (RemoveRedundantSync.cpp:233-239, issue #1118).
+        // There the narrowing is known at pruning time and can be refused there;
+        // buffer-id routing is decided afterwards, so the check has to live here.
+        //
+        // CONDITIONAL ON ROUTING, deliberately. The absolute check is not clean on
+        // this corpus: 5 of 113 a5 kernels carry pre-existing uncovered dependencies
+        // (12 in total, including two cross-pipe carried WARs on `rope_kv_cache` that
+        // `printSelfCoverage`'s own doc comment records as long-known). Failing on the
+        // absolute count would turn those into build errors for reasons this pass did
+        // not cause. Gating on "this pass actually narrowed something" keeps the check
+        // precise: it fires only where routing could have introduced the loss, and it
+        // fails safe -- a kernel that both routes and carries a pre-existing violation
+        // is refused rather than shipped, which costs an optimisation, not correctness.
+        auto coverage = oracle::computeSelfCoverage(func);
+        if (!coverage.violations.empty()) {
+          oracle::emitReport([&](llvm::raw_ostream &os) {
+            oracle::printSelfCoverage(os, func.getSymName(), coverage,
+                                      /*cap=*/0);
+          });
+          func.emitError()
+              << "unified allocator: buffer-id routing left "
+              << coverage.violations.size()
+              << " dependency ordering(s) with no emitted sync -- a routed token is "
+                 "buffer-keyed and cannot carry orderings that were merged into the "
+                 "event pair it replaced";
+          return signalPassFailure();
+        }
       }
     }
   }
@@ -818,11 +877,12 @@ struct PTOUnifiedSyncPass
 std::unique_ptr<Pass>
 mlir::pto::createPTOUnifiedSyncPass(unsigned bufidCapacity, bool debugEnabled,
                                     llvm::StringRef forceMechanism,
-                                    bool checkAddrReuse) {
+                                    bool checkAddrReuse, bool routeCrossArm) {
   auto pass = std::make_unique<PTOUnifiedSyncPass>();
   pass->bufidCapacity = bufidCapacity;
   pass->debugEnabled = debugEnabled;
   pass->forceMechanism = forceMechanism.str();
   pass->checkAddrReuse = checkAddrReuse;
+  pass->routeCrossArm = routeCrossArm;
   return pass;
 }

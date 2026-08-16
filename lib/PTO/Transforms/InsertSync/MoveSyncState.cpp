@@ -197,8 +197,10 @@ void MoveSyncState::PlanMoveOutWaitSync(
 
   // Loop-carried wait must stay in the loop body; hoisting it to loop-head
   // can break the per-iteration handshake when later passes rewrite IDs.
-  if (s->GetForEndIndex().has_value() &&
-      static_cast<unsigned>(s->GetForEndIndex().value()) == pair.second) {
+  // Clause (1) of the rule -- see moveForSyncWaitPinnedByCarry in SyncCommon.h.
+  // It must short circuit BEFORE the paired set is looked up, because a pinned
+  // wait is returned without ever touching `syncOperations_`.
+  if (moveForSyncWaitPinnedByCarry(s, pair.second)) {
     newPipeBefore.push_back(s);
     return;
   }
@@ -210,8 +212,8 @@ void MoveSyncState::PlanMoveOutWaitSync(
   // 如果 Set 操作在 Loop 外部 (index > loop_end 或 index < loop_begin)
   // 说明依赖不来自循环内部（非 Loop-Carried Dependency）
   // 可以将 Wait 提至 Loop Begin 之前
-  if ((setSync->GetSyncIRIndex() > pair.second) ||
-      (setSync->GetSyncIRIndex() < pair.first)) {
+  // Clause (2) -- see moveForSyncSetOutsideLoop in SyncCommon.h.
+  if (moveForSyncSetOutsideLoop(setSync, pair.first, pair.second)) {
     // [Optimization]: Hoist Wait out of Loop
     checkSyncIRIndex(syncIR_, pair.first);
     // pair.first 是 LoopBegin 节点

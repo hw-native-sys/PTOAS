@@ -236,6 +236,59 @@ public:
   /// low and routes a forward-only hazard onto it.
   bool hasReverseWar = false;
 
+  //-- The cross-arm two-cycle shape -------------------------------------------
+
+  /// Where this hazard's wait sits after `MoveSyncState`, which is what the motion
+  /// did to it. A wait is normally attached to the consuming COMPOUND; finding it on
+  /// a region delimiter means it was hoisted there.
+  ///
+  ///   - `OutOfArm`  -- on a branch's IF_BEGIN. `MoveOutBranchSync` moved it out of an
+  ///     arm, so the ordering is now paid on every path while being needed on one. A
+  ///     token brackets the access inside the arm and makes that cost conditional
+  ///     again. This is the case routing looks for.
+  ///   - `OutOfLoop` -- on a LOOP_BEGIN. `MoveForSync` moved it out of the loop, so the
+  ///     event pays once where a token would pay per iteration. Routing must refuse.
+  ///
+  /// The two are mutually exclusive by construction and the precedence is automatic:
+  /// `MoveForSync` walks every element in a loop body INCLUDING branch delimiters
+  /// (`MoveSyncState.cpp:161-163`), so a wait parked on an IF_BEGIN inside a loop is
+  /// re-examined and can be hoisted onward to LOOP_BEGIN. The final position therefore
+  /// already encodes "loop-refusal beats branch-win", which is the correct ranking:
+  /// losing N-fold amortisation outweighs saving one not-taken path.
+  ///
+  /// Measured over the 260-emission corpus dump: 1440 waits on a COMPOUND, 142 on an
+  /// IF_BEGIN, 90 on a LOOP_BEGIN. The 90 independently matches the hoist count derived
+  /// by diffing the mover's own before/after dumps.
+  enum class WaitHoist {
+    None,      ///< still on its consuming compound
+    OutOfArm,  ///< hoisted to IF_BEGIN by MoveOutBranchSync
+    OutOfLoop, ///< hoisted to LOOP_BEGIN by MoveForSync
+  };
+  WaitHoist waitHoist = WaitHoist::None;
+
+  /// This hazard presents the cross-arm two-cycle shape, so a buffer-id token is a
+  /// candidate for it. Corpus population of the shape is one kernel, and that one is
+  /// the redundancy-merge case the coverage gate rejects, so nothing routes today.
+  ///
+  /// LOOP-CARRIEDNESS IS STRUCTURAL, NOT A PER-HAZARD FLAG. The saving is that
+  /// iteration N's conditional consumer is ordered against iteration N+1's
+  /// unconditional producer, and that holds once the unconditional cycle sits inside a
+  /// loop -- a property of the BUFFER's accesses, not of any one hazard's
+  /// `GetForEndIndex()`. Testing that flag per hazard selects nothing in either
+  /// direction: on the probe that validated the shape the branch-hoisted hazards are
+  /// not back-edge hazards, and the one back-edge hazard is not branch-hoisted.
+  ///
+  /// What IS unsound is a single cycle held ACROSS a branch (get in the arm, release
+  /// outside). Two independently balanced cycles sharing one id are sound, because the
+  /// token balance rule is per-pipeline -- measured: no deadlock on either path, and
+  /// bit-identical to the event form on both.
+  bool crossArmTokenFavoured = false;
+
+  /// The observed hoist position and `moveForSyncHoistsWait`'s prediction disagreed
+  /// for this hazard, so it was refused rather than routed. Non-zero anywhere means
+  /// the shared helper no longer describes what `MoveSyncState` does -- which is the
+  /// exact drift the helper was factored out to make visible.
+  bool crossArmHoistDivergence = false;
 
   /// Can this hazard be realised as a buffer-id token AT ALL? Routing must refuse a
   /// buffer carrying any hazard for which this is false: suppressing the event ops
@@ -316,6 +369,12 @@ struct ResourceModel {
   /// schedule.
   static constexpr bool barrierIsUnbounded = true;
 
+  /// Admit `Hazard::crossArmTokenFavoured` as a routing reason alongside pool
+  /// overflow. OFF by default: the shape's natural population in the current corpus
+  /// is zero, so enabling it can only change output on a kernel deliberately written
+  /// to present it, and off-by-default keeps that provable rather than asserted.
+  /// `--unified-sync-route-cross-arm` turns it on.
+  bool routeCrossArm = false;
 };
 
 //===----------------------------------------------------------------------===//
@@ -589,6 +648,20 @@ struct BufferRouteResult {
   /// Buffers refused because a hazard on them is not `tokenExpressible`. Refusing
   /// is the whole point: routing such a buffer suppresses events no token replaces.
   unsigned skippedNotExpressible = 0;
+  /// Buffers routed for the CROSS-ARM reason rather than because their direction
+  /// overflows its pool. Zero unless a kernel actually presents the shape, which no
+  /// corpus kernel currently does.
+  unsigned routedCrossArm = 0;
+  /// Buffers that presented the cross-arm shape but were refused because some hazard
+  /// on them had its wait hoisted out of a LOOP. Counted rather than silently
+  /// dropped: this is the loss-making direction of the same asymmetry, and a silent
+  /// refusal here would look identical to "the shape was never there".
+  unsigned skippedCrossArmLoopHoist = 0;
+  /// Cross-arm candidates refused because the observed hoist position and the
+  /// `moveForSyncHoistsWait` prediction disagreed. MUST BE 0: a non-zero count means
+  /// `MoveSyncState` and the shared helper have drifted apart, and the routing
+  /// predicate is no longer reasoning about the motion that actually happened.
+  unsigned crossArmHoistDivergence = 0;
   /// ALL-OR-NOTHING violations: a hazard that touches BOTH a routed and an
   /// unrouted buffer, so it cannot be wholly on one mechanism. Must be 0.
   unsigned splitHazards = 0;

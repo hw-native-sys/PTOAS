@@ -425,6 +425,14 @@ static llvm::cl::opt<std::string> unifiedSyncForceMechanism(
                    "router would otherwise leave alone"),
     llvm::cl::init(""), llvm::cl::Hidden);
 
+static llvm::cl::opt<bool> unifiedSyncRouteCrossArm(
+    "unified-sync-route-cross-arm",
+    llvm::cl::desc("Admit the cross-arm two-cycle shape as a buffer-id routing reason "
+                   "alongside event-pool overflow. OFF by default: no corpus kernel "
+                   "presents the shape, so enabling it must leave the corpus "
+                   "byte-identical"),
+    llvm::cl::init(false), llvm::cl::Hidden);
+
 static llvm::cl::opt<bool> checkAddrReuseWar(
     "check-addr-reuse-war",
     llvm::cl::desc("List the synchronization orderings whose two endpoints are "
@@ -3604,7 +3612,8 @@ int mlir::pto::compilePTOASModule(
         pto::createPTOUnifiedSyncPass(arch == "a5" ? 32u : 0u,
                                       enableUnifiedSyncDebug,
                                       unifiedSyncForceMechanism,
-                                      checkAddrReuseWar));
+                                      checkAddrReuseWar,
+                                      unifiedSyncRouteCrossArm));
   else if (enableInsertSync) {
     if (emitMlirIR)
       pm.addPass(std::make_unique<SerialAutoSyncPass>(

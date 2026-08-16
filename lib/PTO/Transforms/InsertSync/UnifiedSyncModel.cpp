@@ -291,6 +291,253 @@ SyncModel mlir::pto::unified::buildSyncModel(
     }
   }
 
+  // --- 4d. The cross-arm two-cycle shape -----------------------------------
+  //
+  // Two refinements over the reference detector this rule was ported from, neither of
+  // which it could make because it worked on emitted C++:
+  //
+  //   * ARMS ARE MATCHED BY BUFFER CLUSTER, not by pipe. "Some op on the consuming
+  //     pipe appears in this arm" is a much weaker claim than "this arm accesses the
+  //     buffer the token would cover", and the weaker test admits arms that merely
+  //     contain unrelated traffic on that pipe.
+  //   * HOISTING IS OBSERVED, not re-derived. `MoveSyncState` has already run, so the
+  //     wait's own position is the motion's answer -- see `Hazard::WaitHoist`.
+  //
+  // Detection runs HERE, before `synthesizeLoopCompensation`, so no head/tail pair
+  // exists yet and only the original set/wait are ever examined. That ordering is
+  // what keeps the compensation trap out of reach: a synthesised head-set can sit
+  // BEFORE its loop while the tail-wait sits AT the loop end carrying the same
+  // forEndIndex, which makes both clauses of `moveForSyncHoistsWait` true at once.
+  // The strict containment guard below is the defence if this ever moves later.
+  {
+    const unsigned n = static_cast<unsigned>(syncIR.size());
+
+    // A frame is recorded only where the region STRICTLY contains the index, so a
+    // delimiter is outside its own region. That is precisely why a wait hoisted to
+    // IF_BEGIN reads as "in neither arm" -- which is the cost the token removes.
+    struct ArmFrame {
+      unsigned group; ///< the IF_BEGIN index; then and else arms share it
+      unsigned arm;   ///< 0 = then, 1 = else
+    };
+    llvm::SmallVector<llvm::SmallVector<ArmFrame, 2>> armChain(n);
+    llvm::SmallVector<char> inAnyLoop(n, 0);
+    for (const auto &el : syncIR) {
+      if (const auto *br = dyn_cast<BranchInstanceElement>(el.get())) {
+        if (br->getBranchKind() != KindOfBranch::IF_BEGIN)
+          continue; // ELSE_BEGIN/IF_END repeat the same span
+        for (unsigned i = br->beginId + 1; i < br->endId && i < n; ++i)
+          // An `if` with no else has branchId == endId, so every contained index is
+          // on the then side and the group simply never shows a second arm.
+          armChain[i].push_back({br->beginId, i < br->branchId ? 0u : 1u});
+      } else if (const auto *lp = dyn_cast<LoopInstanceElement>(el.get())) {
+        if (lp->getLoopKind() != KindOfLoop::LOOP_BEGIN)
+          continue;
+        for (unsigned i = lp->beginId + 1; i < lp->endId && i < n; ++i)
+          inAnyLoop[i] = 1;
+      }
+    }
+
+    // (i) OBSERVED hoist state, for every hazard. Recorded even when the shape does
+    // not apply, because the report reads it.
+    for (Hazard &h : model.hazards) {
+      if (h.isBarrier() || !h.waitOp())
+        continue;
+      const unsigned wi = h.waitOp()->GetSyncIRIndex();
+      if (wi >= n)
+        continue;
+      const InstanceElement *at = syncIR[wi].get();
+      if (const auto *lp = dyn_cast<LoopInstanceElement>(at)) {
+        if (lp->getLoopKind() == KindOfLoop::LOOP_BEGIN)
+          h.waitHoist = Hazard::WaitHoist::OutOfLoop;
+      } else if (const auto *br = dyn_cast<BranchInstanceElement>(at)) {
+        if (br->getBranchKind() == KindOfBranch::IF_BEGIN)
+          h.waitHoist = Hazard::WaitHoist::OutOfArm;
+      }
+    }
+
+    // Every cluster a compound touches, by the same map the hazards were joined
+    // through, so "this arm accesses the buffer" means the same thing in both places.
+    auto clustersOfCompound = [&](const CompoundInstanceElement *cp) {
+      llvm::SmallVector<int, 2> out;
+      auto add = [&](const BaseMemInfo *mi) {
+        if (!mi)
+          return;
+        auto it = memInfoToClusters.find(mi);
+        if (it == memInfoToClusters.end())
+          return;
+        for (int c : it->second)
+          if (!llvm::is_contained(out, c))
+            out.push_back(c);
+      };
+      for (const BaseMemInfo *mi : cp->defVec)
+        add(mi);
+      for (const BaseMemInfo *mi : cp->useVec)
+        add(mi);
+      return out;
+    };
+
+    // (ii) Per cluster: does the buffer itself present the two-cycle shape?
+    //
+    //   * an UNCONDITIONAL access inside a loop and in no arm -- the producer cycle,
+    //     which runs every iteration; and
+    //   * a CONDITIONAL access on the same cluster, in an arm, such that some branch
+    //     group is touched on ONE side only -- the consumer cycle; and
+    //   * a CROSS-PIPE ordering to be saved.
+    //
+    // Grouping is by BRANCH GROUP over the FULL chain of enclosing arms, not by the
+    // innermost block. An access nested deeper on one side still covers that side; a
+    // detector keyed on the innermost block called `Sync/matmul` id 3 single-path when
+    // a then-side consumption sat one level down, and that is a false positive that
+    // routes a buffer whose ordering is needed on both paths.
+    std::map<int, bool> clusterEligible;
+    {
+      struct CondAccess {
+        PipelineType pipe;
+        llvm::SmallVector<ArmFrame, 2> chain;
+      };
+      std::map<int, std::set<int>> uncondPipes;      // cluster -> pipes
+      std::map<int, std::vector<CondAccess>> inArm;  // cluster -> conditional accesses
+      std::map<int, std::map<unsigned, std::set<unsigned>>> armsSeen; // cluster -> group -> arms
+
+      for (unsigned i = 0; i < n; ++i) {
+        const auto *cp = dyn_cast<CompoundInstanceElement>(syncIR[i].get());
+        if (!cp)
+          continue;
+        for (int c : clustersOfCompound(cp)) {
+          if (armChain[i].empty()) {
+            if (inAnyLoop[i])
+              uncondPipes[c].insert(static_cast<int>(cp->kPipeValue));
+            continue;
+          }
+          inArm[c].push_back({cp->kPipeValue, armChain[i]});
+          for (const ArmFrame &f : armChain[i])
+            armsSeen[c][f.group].insert(f.arm);
+        }
+      }
+
+      for (const auto &entry : inArm) {
+        const int c = entry.first;
+        auto up = uncondPipes.find(c);
+        if (up == uncondPipes.end() || up->second.empty())
+          continue; // no producer cycle: nothing to be ordered against
+
+        std::set<unsigned> singlePath;
+        for (const auto &g : armsSeen[c])
+          if (g.second.size() == 1)
+            singlePath.insert(g.first);
+        if (singlePath.empty())
+          continue; // every group touched on both sides -- the duplicated case
+
+        // A single-path cycle only saves anything if it orders against a DIFFERENT
+        // pipe. Ask "does SOME unconditional access differ in pipe", NOT "is this
+        // pipe absent from the unconditional set": the latter refuses the known-good
+        // S1/S2 case, whose entire benefit is the M <-> MTE1 ordering even though
+        // MTE1 also appears unconditionally.
+        bool crossPipe = false;
+        for (const CondAccess &a : entry.second) {
+          bool onSinglePath = false;
+          for (const ArmFrame &f : a.chain)
+            if (singlePath.count(f.group))
+              onSinglePath = true;
+          if (!onSinglePath)
+            continue;
+          for (int p : up->second)
+            if (p != static_cast<int>(a.pipe))
+              crossPipe = true;
+        }
+        if (crossPipe)
+          clusterEligible[c] = true;
+      }
+    }
+
+    // (iv) IS THE COST ACTUALLY BEING PAID? The shape only saves something if the
+    // event form really does pay the ordering on both paths, and that is true exactly
+    // when some hazard on the buffer had its wait hoisted OUT OF AN ARM. A conditional
+    // access whose wait was never hoisted already pays only on the taken path, and a
+    // token would replace one conditional cost with another while adding the token's
+    // own reverse edge.
+    //
+    // `eligible.py` could not test this: it read `--enable-bufid_sync` output, where
+    // the event baseline it would have to compare against does not exist. This is the
+    // one condition the port ADDS rather than translates, and it is the mechanism of
+    // the win rather than a heuristic.
+    std::set<int> clusterArmHoist;
+    for (const Hazard &h : model.hazards) {
+      if (h.isBarrier() || h.waitHoist != Hazard::WaitHoist::OutOfArm)
+        continue;
+      for (int c : h.bufferClusters)
+        clusterArmHoist.insert(c);
+    }
+
+    // (iii) Per hazard: the conditions that are the hazard's own.
+    for (Hazard &h : model.hazards) {
+      if (h.isBarrier() || !h.waitOp() || h.bufferClusters.empty())
+        continue;
+
+      // #2 cross-pipe, and #7 a token can express it at all. Both already decided.
+      if (!h.tokenExpressible)
+        continue;
+
+      // #3 LOOP-CARRIED IS STRUCTURAL, AND IS NOT A PER-HAZARD FLAG. The ordering
+      // saved is between iteration N's conditional consumer and iteration N+1's
+      // unconditional producer, and it is carried *by construction* once the
+      // unconditional cycle sits inside a loop -- which is a property of the BUFFER's
+      // accesses, tested in (ii) via `inAnyLoop`, not of any one hazard's
+      // `GetForEndIndex()`.
+      //
+      // Testing `GetForEndIndex()` here instead is wrong in KIND, not just in sign.
+      // That flag marks a hazard InsertSyncAnalysis built to model a loop BACK EDGE,
+      // which is a different question. Measured on the probe that validated the shape:
+      // the branch-hoisted hazards (h#6, h#8) are not back-edge hazards, and the one
+      // back-edge hazard (h#9) is not branch-hoisted, so a per-hazard carried test
+      // -- required OR excluded -- selects nothing. An earlier attempt excluded it and
+      // found nothing for exactly this reason.
+
+      // #4 REFUSE THE LOSS-MAKING DIRECTION. A wait hoisted out of a LOOP makes the
+      // event pay once where a token pays N times. This is the only hoist state that
+      // must be refused; `None` is simply neutral for this hazard, because the win is
+      // established per buffer in (ii) and (iv), not by this hazard alone.
+      if (h.waitHoist == Hazard::WaitHoist::OutOfLoop)
+        continue;
+
+      // #4b The same question asked of the mover's own rule, as a DIVERGENCE CHECK
+      // rather than as the decision. For every loop that strictly contains the wait,
+      // `moveForSyncHoistsWait` must agree the wait stays -- if it says "hoist", the
+      // wait would not still be sitting inside that loop, so the helper and
+      // `MoveSyncState` have drifted and this hazard's routing is no longer sound.
+      //
+      // STRICT CONTAINMENT is the guard: it enumerates only loops the wait is really
+      // inside, which both keeps the compensation shape (tail-wait AT loopEnd) out of
+      // the helper's reach and asks clause 1 about the RIGHT loop. A wait carrying a
+      // forEndIndex for a DIFFERENT enclosing loop is not pinned by this one, and 12
+      // of the corpus's 90 real hoists are exactly that.
+      const unsigned wi = h.waitOp()->GetSyncIRIndex();
+      bool diverged = false;
+      for (const auto &el : syncIR) {
+        const auto *lp = dyn_cast<LoopInstanceElement>(el.get());
+        if (!lp || lp->getLoopKind() != KindOfLoop::LOOP_BEGIN)
+          continue;
+        if (!(lp->beginId < wi && wi < lp->endId))
+          continue; // not strictly inside: the helper must not be asked
+        if (moveForSyncHoistsWait(h.waitOp(), h.setOp(), lp->beginId, lp->endId))
+          diverged = true;
+      }
+      if (diverged) {
+        h.crossArmHoistDivergence = true;
+        continue; // fail safe: refuse rather than route on a stale rule
+      }
+
+      // #3, #5 and #6 from (ii); the cost-is-paid check from (iv).
+      for (int c : h.bufferClusters) {
+        auto it = clusterEligible.find(c);
+        if (it != clusterEligible.end() && it->second && clusterArmHoist.count(c)) {
+          h.crossArmTokenFavoured = true;
+          break;
+        }
+      }
+    }
+  }
+
   // --- 5. Buffers -- the unit routing decides on --------------------------
   //
   // Built AFTER hazards, because a buffer's facts derive from the hazards touching
@@ -642,19 +889,62 @@ BufferRouteResult mlir::pto::unified::routeBuffers(SyncModel &model) {
       continue;
     }
 
-    // Second routing reason, off unless asked for: this buffer carries a hazard whose
-    // consuming pipe lives in only one arm of a branch its wait was hoisted out of.
+    // Second routing reason, off unless asked for: this buffer carries a hazard
+    // presenting the validated cross-arm two-cycle shape (`Hazard::WaitHoist`).
     //
     // THE UNIT IS STILL THE BUFFER, NOT THE HAZARD, and that is forced rather than
     // chosen: the token protocol is a counter cycle, so a buffer with some hazards on
     // events and some on get/rls deadlocks. One qualifying hazard therefore carries
     // its whole buffer across, including that buffer's other hazards.
+    //
+    // Which is why the REFUSALS are also per buffer. All-or-nothing means one hazard
+    // whose wait was hoisted out of a LOOP would be dragged onto a token that pays
+    // per iteration what the event paid once, and that loss can exceed the cross-arm
+    // saving. The overflow reason is not subject to this: it routes because there is
+    // no event id to be had, so the comparison is against a barrier, not an event.
+    bool crossArm = false;
+    if (model.resources.routeCrossArm) {
+      bool qualifies = false, loopHoisted = false, diverged = false;
+      for (const Hazard &h : model.hazards) {
+        if (h.isBarrier() || !llvm::is_contained(h.bufferClusters, b.logicId))
+          continue;
+        if (h.crossArmTokenFavoured)
+          qualifies = true;
+        if (h.waitHoist == Hazard::WaitHoist::OutOfLoop)
+          loopHoisted = true;
+        if (h.crossArmHoistDivergence)
+          diverged = true;
+      }
+      if (qualifies && diverged)
+        ++result.crossArmHoistDivergence;
+      else if (qualifies && loopHoisted)
+        ++result.skippedCrossArmLoopHoist;
+      else if (qualifies)
+        crossArm = true;
+    }
+
     // STRICT: omega == pool fits exactly, so routing it would be pure waste.
-    if (!(worstPeak > tightestPool)) {
+    const bool overflows = worstPeak > tightestPool;
+    if (!overflows && !crossArm) {
       ++result.skippedNoOverflow;
       continue;
     }
-    if (!b.isWrittenBack) {
+    // GUARDS THE OVERFLOW REASON ONLY. A token's counters are bidirectional, so on a
+    // forward-only buffer it adds a reverse edge nobody asked for -- measured as a
+    // 15.4% regression on A5 rmsnorm, fewer ops and still slower. That penalty is
+    // priced against an event the overflow reason could have used instead.
+    //
+    // The cross-arm reason is exempt because its saving is a different quantity: not
+    // bidirectional reuse, but an acquisition that stops being paid on the not-taken
+    // path. Requiring write-back here refused 5 of the 7 probes the shape was
+    // VALIDATED on, which is evidence about the gate, not about the shape.
+    //
+    // CAVEAT, and it belongs to emission rather than detection: the 0-68.3% (median
+    // 32.05%) range was measured with whole-kernel `--enable-bufid_sync`, not with one
+    // buffer selectively routed. Selective routing pays the token's shared-counter
+    // serialisation without the whole-kernel benefit, so the per-buffer win is not yet
+    // measured. That is what the emission step has to establish.
+    if (!b.isWrittenBack && !crossArm) {
       ++result.skippedNotWrittenBack;
       continue;
     }
@@ -678,6 +968,10 @@ BufferRouteResult mlir::pto::unified::routeBuffers(SyncModel &model) {
     }
     b.routedToBufid = true;
     ++result.routed;
+    // Attributed to cross-arm only when overflow would NOT have routed it anyway, so
+    // the counter measures what the new reason actually added.
+    if (crossArm && !overflows)
+      ++result.routedCrossArm;
   }
 
   // ALL-OR-NOTHING. A hazard touching both a routed and an unrouted buffer cannot be
@@ -906,6 +1200,14 @@ void mlir::pto::unified::printSyncModel(llvm::raw_ostream &os,
     }
     os << "]"
        << " revwar=" << (h.hasReverseWar ? "yes" : "no")
+       << " tokexpr=" << (h.tokenExpressible ? "yes" : "no")
+       << " carried=" << (h.setOp()->GetForEndIndex().has_value() ? "yes" : "no")
+       << " hoist="
+       << (h.waitHoist == Hazard::WaitHoist::OutOfArm
+               ? "arm"
+               : h.waitHoist == Hazard::WaitHoist::OutOfLoop ? "loop" : "none")
+       << " xarm=" << (h.crossArmTokenFavoured ? "yes" : "no")
+       << (h.crossArmHoistDivergence ? " XARM-DIVERGED" : "")
        << " share="
        << (h.addressSharing == Hazard::AddressSharing::Reuse
                ? "reuse"

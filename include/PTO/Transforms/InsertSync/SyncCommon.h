@@ -315,6 +315,44 @@ canonicalizeSyncDepRoots(const SmallVector<Value> &roots);
 
 bool hasSameSyncDepRoots(const SyncOperation *lhs, const SyncOperation *rhs);
 
+/// The two clauses of `MoveForSync`'s wait rule, factored out so there is ONE
+/// source of truth for "would the loop motion hoist this wait out of the loop".
+///
+/// `MoveSyncState::PlanMoveOutWaitSync` produces that decision; the unified
+/// allocator consumes it when deciding whether a hazard may take a buffer-id
+/// token, because a wait hoisted out of a loop runs once where a token pays per
+/// iteration.
+///
+/// Duplicating the rule in the allocator would let the two drift apart
+/// silently: a change to the loop motion would stop being reflected in the
+/// routing predicate, and the allocator would start routing hazards whose
+/// event form was strictly cheaper. Both callers therefore go through these.
+///
+/// Clause (1): a wait carried by THIS loop is pinned to the body.
+inline bool moveForSyncWaitPinnedByCarry(const SyncOperation *wait,
+                                         unsigned loopEnd) {
+  return wait->GetForEndIndex().has_value() &&
+         static_cast<unsigned>(wait->GetForEndIndex().value()) == loopEnd;
+}
+
+/// Clause (2): the paired set lies outside the loop, so the dependency does not
+/// come from within it and the wait may be lifted to the loop head.
+inline bool moveForSyncSetOutsideLoop(const SyncOperation *pairedSet,
+                                      unsigned loopBegin, unsigned loopEnd) {
+  return pairedSet->GetSyncIRIndex() > loopEnd ||
+         pairedSet->GetSyncIRIndex() < loopBegin;
+}
+
+/// The full decision. Only for callers that already hold both ops; the mover
+/// itself evaluates the clauses separately because clause (1) must short
+/// circuit before it looks the paired set up.
+inline bool moveForSyncHoistsWait(const SyncOperation *wait,
+                                  const SyncOperation *pairedSet,
+                                  unsigned loopBegin, unsigned loopEnd) {
+  return !moveForSyncWaitPinnedByCarry(wait, loopEnd) &&
+         moveForSyncSetOutsideLoop(pairedSet, loopBegin, loopEnd);
+}
+
 /// True when `sync` lowers to `pto.set_flag_dyn` / `pto.wait_flag_dyn`, i.e.
 /// its rendezvous is keyed on the runtime slot index rather than on a fixed
 /// event id.
