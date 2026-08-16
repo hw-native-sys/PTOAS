@@ -525,8 +525,50 @@ void BufidSyncAnalysis::insertSyncOperations() {
 }
 
 void BufidSyncAnalysis::optimizeSamePipeMerge() {
+  // DETERMINISTIC ITERATION ORDER, and it is load-bearing rather than tidiness.
+  //
+  // `op2BufSync_` is a `DenseMap<Operation *, ...>`, so its iteration order
+  // follows the POINTER VALUES of the ops, which differ between runs of the same
+  // binary on the same input. The survivor below is
+  // `*std::min_element(ids)` over whichever ids the first-visited op happens to
+  // group, and it is recorded first-writer-wins, so a different visit order picks
+  // a different survivor and emits different code.
+  //
+  // MEASURED before this fix: `Qwen3DecodeA5/rope_kv_cache` compiled six times,
+  // each run pinned with `taskset -c 0`, emitted 24/24/24/23/23/23 `get_buf`.
+  // `mergeMap` size was stable at 4 every run while the TARGETS drifted
+  // (9->2/6/8, 10->3/2/6); only 3->0 and 8->3 were stable. Pinning rules out a
+  // thread race -- it is bucket order. This violates the determinism
+  // `docs/bufid_sync_a5_design.md:300` requires, breaks reproducible builds, and
+  // silently adds run-to-run variance to any A/B measurement taken through this
+  // pass.
+  //
+  // Ordering by the op's earliest bracket position (then by its smallest logic id
+  // as a tie-break) is stable across runs because both come from the SyncIR, not
+  // from the heap. The unified allocator never calls this pass, so it was already
+  // deterministic and is unaffected either way.
+  llvm::SmallVector<Operation *> orderedOps;
+  orderedOps.reserve(op2BufSync_.size());
+  for (auto &entry : op2BufSync_)
+    orderedOps.push_back(entry.first);
+  auto sortKeyOf = [&](Operation *op) {
+    const BufSyncPipeBuild &b = op2BufSync_[op];
+    int idx = std::numeric_limits<int>::max();
+    int lid = std::numeric_limits<int>::max();
+    for (const auto &list : {b.pipeBefore, b.pipeAfter})
+      for (const auto &s : list) {
+        idx = std::min(idx, static_cast<int>(s.syncIRIndex));
+        lid = std::min(lid, s.logicId);
+      }
+    return std::make_pair(idx, lid);
+  };
+  llvm::sort(orderedOps, [&](Operation *a, Operation *b) {
+    return sortKeyOf(a) < sortKeyOf(b);
+  });
+
   DenseMap<int, DenseSet<int>> logicIdToPipeInts;
-  for (auto &[op, build] : op2BufSync_) {
+  for (Operation *op : orderedOps) {
+    auto &build = op2BufSync_[op];
     DenseSet<std::pair<int, int>> seen;
     for (auto &s : build.pipeBefore) {
       auto key = std::make_pair(static_cast<int>(s.pipe), s.logicId);
@@ -544,7 +586,8 @@ void BufidSyncAnalysis::optimizeSamePipeMerge() {
 
   DenseMap<int, int> mergeMap;
 
-  for (auto &[op, build] : op2BufSync_) {
+  for (Operation *op : orderedOps) {
+    auto &build = op2BufSync_[op];
     DenseMap<int, SmallVector<int>> pipeIntToLogicIds;
     DenseSet<std::pair<int, int>> seen;
     for (auto &s : build.pipeBefore) {
