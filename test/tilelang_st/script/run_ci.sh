@@ -13,4 +13,5 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 export PYTHONUNBUFFERED=1
 
-exec python3 "${SCRIPT_DIR}/run_all_st.py" "$@"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+exec "${PYTHON_BIN}" "${SCRIPT_DIR}/run_all_st.py" "$@"
