@@ -8225,8 +8225,17 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
 
     if (succeeded(directFact) &&
         directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC) {
+      if (numGroups <= 0 ||
+          static_cast<int64_t>(resultTypes.size()) % numGroups != 0)
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast_load BRC result arity is not divisible by "
+                "num_groups");
+      // BRC duplicates the scalar independently into every physical result
+      // chunk. Derive the chunk count from the assigned result arity so
+      // deinterleaved scalar-broadcast layouts (d2/d4) remain valid even
+      // when their logical group size is only one full part.
       int64_t chunksPerGroup =
-          directFact->layout.groupSize / directFact->layout.lanesPerPart;
+          static_cast<int64_t>(resultTypes.size()) / numGroups;
       std::optional<StringRef> brcDist = getBRCDist();
       if (!brcDist)
         return rewriter.notifyMatchFailure(

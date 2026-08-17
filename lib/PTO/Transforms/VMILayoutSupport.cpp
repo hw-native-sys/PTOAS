@@ -746,6 +746,7 @@ struct GroupBroadcastLoadLayoutPattern {
   ElementBitsPattern elementBits;
   GroupMemoryPattern memory = memContiguous();
   LayoutPattern resultLayout;
+  ElementCountPattern numGroups = anyG();
 };
 
 static constexpr GroupBroadcastLoadLayoutPattern
@@ -758,6 +759,10 @@ static constexpr GroupBroadcastLoadLayoutPattern
         {gb(4), bits<8, 16, 32>(), memContiguous(), c()},
         {gb(4), bits<8, 16, 32>(), memContiguous(), d(4)},
         {gbFull(), bits<8, 16, 32>(), memAny(), c()},
+        // A single-group BRC is a scalar broadcast. Its equal-valued result
+        // may use a deinterleaved physical layout without data rearrangement.
+        {gbFull(), bits<8, 16, 32>(), memAny(), d(2), G<1>()},
+        {gbFull(), bits<8, 16, 32>(), memAny(), d(4), G<1>()},
 };
 
 struct GroupBroadcastLoadDirectPattern {
@@ -779,6 +784,12 @@ static constexpr GroupBroadcastLoadDirectPattern
          memContiguous(), d(4)},
         {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gbFull(),
          bits<8, 16, 32>(), memAny(), c()},
+        // Scalar BRC can be emitted once per physical result chunk, so its
+        // equal-valued result is also directly available as d2/d4.
+        {VMIGroupBroadcastLoadDirectKind::BRC, G<1>(), gbFull(),
+         bits<8, 16, 32>(), memAny(), d(2)},
+        {VMIGroupBroadcastLoadDirectKind::BRC, G<1>(), gbFull(),
+         bits<8, 16, 32>(), memAny(), d(4)},
 };
 
 struct GroupBroadcastLayoutPattern {
@@ -1563,6 +1574,8 @@ VMILayoutSupport::getGroupBroadcastLoadLayoutFact(VMIVRegType resultType,
     if (!matchesGroupBlockPattern(pattern.block, *key)) {
       continue;
     }
+    if (!matchesElementCountPattern(pattern.numGroups, numGroups))
+      continue;
     if (!matchesElementBitsPattern(pattern.elementBits, elementBits)) {
       continue;
     }

@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @scalar_brc_vexpdif_group_store(
+      %scores: !pto.ptr<f32, ub>, %row_max: !pto.ptr<f32, ub>,
+      %dst: !pto.ptr<bf16, ub>, %off: index) {
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %x = pto.vmi.vload %scores[%off] {dist_mode = "continuous"}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %max = pto.vmi.vload %row_max[%off] {dist_mode = "brc"}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %mask = pto.vmi.create_mask %c128
+        : index -> !pto.vmi.mask<128xpred>
+    %exp = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>,
+          !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    %narrow = pto.vmi.truncf %exp {saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
+    pto.vmi.vstore %narrow, %dst[%off], %c1024 {group = 8}
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @scalar_brc_vexpdif_group_store
+// ASSIGN: %[[X:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[MAX:.*]] = pto.vmi.group_broadcast_load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[EXP:.*]] = pto.vmi.vexpdif %[[X]], %[[MAX]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[NARROW:.*]] = pto.vmi.truncf %[[EXP]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout
+// ASSIGN: pto.vmi.group_store %[[NARROW]]
+
+// LOWER-LABEL: func.func @scalar_brc_vexpdif_group_store
+// LOWER: %[[X0:.*]], %[[X1:.*]] = pto.vldsx2 {{.*}}, "DINTLV_B32"
+// LOWER: %[[MAX0:.*]] = pto.vlds {{.*}} {dist = "BRC_B32"}
+// LOWER: %[[MAX1:.*]] = pto.vlds {{.*}} {dist = "BRC_B32"}
+// LOWER: pto.vexpdif %[[X0]], %[[MAX0]]
+// LOWER: pto.vexpdif %[[X1]], %[[MAX1]]
+// LOWER-NOT: pto.vpack
+// LOWER: pto.vsstb
+// LOWER-NOT: pto.vmi.

@@ -414,13 +414,6 @@ struct LayoutSolver {
     return fact->layout.resultLayout;
   }
 
-  bool hasDirectGroupBroadcastLoadCandidate(VMIGroupBroadcastLoadOp op) {
-    VMILayoutSupport supports;
-    return succeeded(supports.getGroupBroadcastLoadDirectFact(
-        cast<VMIVRegType>(op.getResult().getType()), op.getSource().getType(),
-        op.getSourceGroupStride(), op.getNumGroupsAttr().getInt()));
-  }
-
   VMILayoutAttr getPreferredGroupBroadcastSourceLayout(Value value,
                                                        int64_t numGroups) {
     auto type = dyn_cast<VMIVRegType>(value.getType());
@@ -1514,8 +1507,18 @@ struct LayoutSolver {
         return WalkResult::advance();
       }
       if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
+        FailureOr<VMIGroupBroadcastLoadDirectFact> directFact =
+            VMILayoutSupport().getGroupBroadcastLoadDirectFact(load);
+        // A no-group BRC load is a scalar broadcast. Let downstream users
+        // choose its physical layout; unresolved values fall back to dense.
+        bool scalarBroadcast =
+            succeeded(directFact) &&
+            directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+            load.getNumGroupsAttr().getInt() == 1;
+        if (scalarBroadcast)
+          return WalkResult::advance();
         DataLayoutSeedPhase phase =
-            hasDirectGroupBroadcastLoadCandidate(load)
+            succeeded(directFact)
                 ? DataLayoutSeedPhase::GroupBroadcastLoad
                 : DataLayoutSeedPhase::Other;
         if (failed(setNaturalLayout(load.getResult(),
