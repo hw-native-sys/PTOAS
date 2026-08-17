@@ -186,11 +186,13 @@ static BLayout resolveTileBufBLayout(MLIRContext *context,
   case PTOParserTargetArch::A3:
     return BLayout::RowMajor;
   case PTOParserTargetArch::A5:
+  case PTOParserTargetArch::A6:
     return BLayout::ColMajor;
   case PTOParserTargetArch::Unspecified:
     return parsedLayout;
   }
   return parsedLayout;
+}
 }
 
 TileBufConfigAttr TileBufType::getConfigAttr() const {

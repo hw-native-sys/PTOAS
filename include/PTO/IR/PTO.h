@@ -145,6 +145,7 @@ AddressSpaceAttr getPTOAddressSpaceAttr(Type type);
 enum class PTOArch {
   A3,
   A5,
+  A6,
 };
 
 /// The semantic form selected by the optional third tile of pto.tmov.  The
@@ -163,13 +164,16 @@ PTOArch getTargetArch(ModuleOp module);
 PTOArch getTargetArch(Operation *op);
 bool isTargetArchA3(ModuleOp module);
 bool isTargetArchA5(ModuleOp module);
+bool isTargetArchA6(ModuleOp module);
 bool isTargetArchA3(Operation *op);
 bool isTargetArchA5(Operation *op);
+bool isTargetArchA6(Operation *op);
 
 enum class PTOParserTargetArch {
   Unspecified,
   A3,
   A5,
+  A6,
 };
 
 void setPTOParserTargetArch(MLIRContext *context, PTOParserTargetArch arch);

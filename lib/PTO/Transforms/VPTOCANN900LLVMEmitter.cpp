@@ -9145,7 +9145,7 @@ public:
   matchAndRewrite(pto::BarrierOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    if (isTargetArchA5(op.getOperation()) &&
+    if ((isTargetArchA5(op.getOperation()) || isTargetArchA6(op.getOperation())) &&
         op.getPipe().getPipe() == PIPE::PIPE_V) {
       op.emitError("internal error: A5 PIPE_V barrier should be erased before "
                    "VPTO LLVM lowering");
@@ -11428,6 +11428,19 @@ static VPTOEmissionOptions
 makeDeviceEmissionOptions(const VPTOEmissionOptions &baseOptions,
                           FunctionKernelKind kind) {
   VPTOEmissionOptions options = baseOptions;
+
+  // A6 (dav-920r1) target features — same as A5 but with dav-920r1-vec arch.
+  // A6 reuses A5 vector compute instructions (npu_arch_9201 includes npu_arch_3510).
+  // Only DMA functions differ (extra pre_allocation/non_eod_ctrl params),
+  // which are resolved by bisheng + CANN headers at CCE compile time.
+  constexpr llvm::StringLiteral kA6VecTargetFeatures =
+      "+ATOMIC,+ArchV130,+AregRedefinable,+ArithmeticBf16,+AtomicForB8 ,"
+      "+F8e4m3,+F8e5m2,+F8e8m0,+FFTSBlk,+Fp4e1m2x2,+Fp4e2m1x2,+LDExtRefine,"
+      "+MOVX8,+SPR7bits,+SyncV,+dav-920r1-vec";
+  constexpr llvm::StringLiteral kA6CubeTargetFeatures =
+      "+ATOMIC,+ArchV130,+AregRedefinable,+ArithmeticBf16,+AtomicForB8 ,"
+      "+F8e4m3,+F8e5m2,+F8e8m0,+FFTSBlk,+Fp4e1m2x2,+Fp4e2m1x2,+LDExtRefine,"
+      "+MOVX8,+SPR7bits,+SyncV,+dav-920r1-cube";
   constexpr llvm::StringLiteral kVecTargetFeatures =
       "+ATOMIC,+ArchV130,+AregRedefinable,+ArithmeticBf16,+AtomicForB8 ,"
       "+F8e4m3,+F8e5m2,+F8e8m0,+FFTSBlk,+Fp4e1m2x2,+Fp4e2m1x2,+LDExtRefine,"
@@ -11436,16 +11449,44 @@ makeDeviceEmissionOptions(const VPTOEmissionOptions &baseOptions,
       "+ATOMIC,+ArchV130,+AregRedefinable,+ArithmeticBf16,+AtomicForB8 ,"
       "+F8e4m3,+F8e5m2,+F8e8m0,+FFTSBlk,+Fp4e1m2x2,+Fp4e2m1x2,+LDExtRefine,"
       "+MOVX8,+SPR7bits,+SyncV,+dav-c310-cube";
+
+  // Determine if this is an A6 target
+  bool isA6 = false;
+  if (auto module = baseOptions.march.find("dav-920") != std::string::npos ||
+      !baseOptions.aicoreArch.empty()) {
+    // Check the aicoreArch or march for A6 indicators
+  }
+  // Check via the module's target arch attribute
+  // The march is set by buildVPTOEmissionOptions based on the target arch string
+
   if (kind == FunctionKernelKind::Vector) {
-    options.march = "dav-c310-vec";
-    options.aicoreArch = "dav-c310-vec";
-    options.defaultTargetCPU = "dav-c310-vec";
-    options.defaultTargetFeatures = kVecTargetFeatures.str();
+    // A6 uses dav-920r1-vec, A5 uses dav-c310-vec
+    // The arch is determined by the options.aicoreArch passed in from
+    // buildVPTOEmissionOptions, which checks the target arch string.
+    // For A6 (target="a6"), the caller should set options.march to "dav-920r1-vec".
+    if (options.march == "dav-920r1-vec" || options.aicoreArch == "dav-920r1-vec") {
+      options.march = "dav-920r1-vec";
+      options.aicoreArch = "dav-920r1-vec";
+      options.defaultTargetCPU = "dav-920r1-vec";
+      options.defaultTargetFeatures = kA6VecTargetFeatures.str();
+    } else {
+      options.march = "dav-c310-vec";
+      options.aicoreArch = "dav-c310-vec";
+      options.defaultTargetCPU = "dav-c310-vec";
+      options.defaultTargetFeatures = kVecTargetFeatures.str();
+    }
   } else if (kind == FunctionKernelKind::Cube) {
-    options.march = "dav-c310-cube";
-    options.aicoreArch = "dav-c310-cube";
-    options.defaultTargetCPU = "dav-c310-cube";
-    options.defaultTargetFeatures = kCubeTargetFeatures.str();
+    if (options.march == "dav-920r1-vec" || options.aicoreArch == "dav-920r1-vec") {
+      options.march = "dav-920r1-cube";
+      options.aicoreArch = "dav-920r1-cube";
+      options.defaultTargetCPU = "dav-920r1-cube";
+      options.defaultTargetFeatures = kA6CubeTargetFeatures.str();
+    } else {
+      options.march = "dav-c310-cube";
+      options.aicoreArch = "dav-c310-cube";
+      options.defaultTargetCPU = "dav-c310-cube";
+      options.defaultTargetFeatures = kCubeTargetFeatures.str();
+    }
   }
   return options;
 }

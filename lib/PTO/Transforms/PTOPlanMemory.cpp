@@ -2514,8 +2514,9 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
 
   // --pto-arch options:
   // a3 -> default memory spec
-  // a5 -> override memory spec
-  if (isTargetArchA5(getTopLevelModuleOp(funcOp))) {
+  // a5/a6 -> override memory spec (A6 shares A5 memory hierarchy)
+  if (isTargetArchA5(getTopLevelModuleOp(funcOp)) ||
+      isTargetArchA6(getTopLevelModuleOp(funcOp))) {
     applySpec(kA5);
   }
   return success();

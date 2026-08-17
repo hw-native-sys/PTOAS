@@ -137,7 +137,7 @@ static bool isA2A3Arch(llvm::StringRef arch) {
 
 static bool isSupportedPTOASTargetArch(llvm::StringRef arch) {
   std::string normalized = normalizeArch(arch);
-  return normalized == "a2" || normalized == "a3" || normalized == "a5";
+  return normalized == "a2" || normalized == "a3" || normalized == "a5" || normalized == "a6";
 }
 
 static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module) {
@@ -491,8 +491,8 @@ llvm::cl::opt<bool> mlir::pto::emitMlirIR(
 
 llvm::cl::opt<std::string> mlir::pto::ptoTargetArch(
     "pto-arch",
-    llvm::cl::desc("Target Ascend architecture for codegen: a2, a3, or a5 (default: a3)"),
-    llvm::cl::value_desc("a2|a3|a5"),
+    llvm::cl::desc("Target Ascend architecture for codegen: a2, a3, a5, or a6 (default: a3)"),
+    llvm::cl::value_desc("a2|a3|a5|a6"),
     llvm::cl::init("a3"));
 
 static llvm::cl::opt<std::string> ptoBuildLevel(
@@ -3031,6 +3031,12 @@ buildVPTOEmissionOptions(const pto::CANNVersion &cannVersion,
   std::string arch = normalizeArch(targetArch);
   if (isA2A3Arch(arch)) {
     options.march = "dav-c220-vec";
+  } else if (arch == "a6") {
+    // A6 uses dav-920r1-vec arch. The makeDeviceEmissionOptions function
+    // in VPTOCANN900LLVMEmitter.cpp checks options.march to determine
+    // whether to use A5 (dav-c310-vec) or A6 (dav-920r1-vec) target features.
+    options.march = "dav-920r1-vec";
+    options.aicoreArch = "dav-920r1-vec";
   }
   return options;
 }

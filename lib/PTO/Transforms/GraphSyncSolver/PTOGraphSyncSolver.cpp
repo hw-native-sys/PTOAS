@@ -71,7 +71,7 @@ struct PTOGraphSyncSolverPass
     // A2/A3 stay memory-based; A5 is register-based and lets
     // handleBarrierConflict() drop the PIPE_V barrier that A5 hardware
     // does not support.
-    const bool isA5 = pto::isTargetArchA5(func.getOperation());
+    const bool isA5 = pto::isTargetArchA5(func.getOperation()) || pto::isTargetArchA6(func.getOperation());
     SyncSolverOptions opts(SyncMode::INTRA_CORE_SYNC,
                            /*isMemBasedArch=*/!isA5,
                            /*isRegBasedArch=*/isA5);
