@@ -68,10 +68,14 @@ static LogicalResult normalizeFunction(func::FuncOp func) {
 
   MLIRContext *ctx = func.getContext();
   auto ui64 = IntegerType::get(ctx, 64, IntegerType::Unsigned);
+  SmallVector<Type> inputs(func.getFunctionType().getInputs());
   for (auto [arg, oldTy] : tables) {
     auto addressTableTy = pto::PtrType::get(ctx, ui64, oldTy.getMemorySpace());
+    inputs[arg.getArgNumber()] = addressTableTy;
     arg.setType(addressTableTy);
   }
+  func.setFunctionType(FunctionType::get(
+      ctx, inputs, func.getFunctionType().getResults()));
 
   for (IndirectLoad candidate : loads) {
     auto op = candidate.op;
