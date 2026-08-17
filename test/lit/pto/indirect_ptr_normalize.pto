@@ -10,6 +10,7 @@ module {
 }
 
 // CHECK: IR Dump After PTOIndirectPtrNormalize
-// CHECK-LABEL: func.func @load_ptr_table(%[[TABLE:.*]]: !pto.ptr<ui64, gm>)
+// CHECK-LABEL: func.func @load_ptr_table(
+// CHECK-SAME: %[[TABLE:.*]]: !pto.ptr<ui64, gm>)
 // CHECK: %[[RAW:.*]] = pto.load_scalar %[[TABLE]][%{{.*}}] : !pto.ptr<ui64, gm> -> ui64
 // CHECK: %[[PTR:.*]] = pto.inttoptr %[[RAW]] : ui64 -> !pto.ptr<f32, gm>

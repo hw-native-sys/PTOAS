@@ -1,11 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software; you can redistribute it and/or modify it under the terms of
-// the CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may obtain a copy of the License at
-// https://www.hiascend.com/document/detail/en/CANNCommunityEdition/82RC1alpha001/license
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See the License in the root of the software repository for the full text of the License.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
@@ -38,18 +37,22 @@ static LogicalResult normalizeFunction(func::FuncOp func) {
 
   for (BlockArgument arg : func.getArguments()) {
     auto tableTy = dyn_cast<pto::PtrType>(arg.getType());
-    if (!tableTy)
+    if (!tableTy) {
       continue;
+    }
     auto pointee = dyn_cast<pto::PtrType>(tableTy.getElementType());
-    if (!pointee)
+    if (!pointee) {
       continue;
-    if (isa<pto::PtrType>(pointee.getElementType()))
+    }
+    if (isa<pto::PtrType>(pointee.getElementType())) {
       return func.emitError()
              << "pointer tables support one level of indirection only";
+    }
 
     for (OpOperand &use : arg.getUses()) {
       auto load = dyn_cast<pto::LoadScalarOp>(use.getOwner());
-      if (!load || use.getOperandNumber() != 0) {
+      bool isPointerOperand = use.getOperandNumber() == 0;
+      if (!load || !isPointerOperand) {
         return func.emitError()
                << "indirect pointer-table argument must only be used as the "
                   "pointer operand of pto.load_scalar";
@@ -59,8 +62,9 @@ static LogicalResult normalizeFunction(func::FuncOp func) {
     tables.push_back({arg, tableTy});
   }
 
-  if (tables.empty())
+  if (tables.empty()) {
     return success();
+  }
 
   MLIRContext *ctx = func.getContext();
   auto ui64 = IntegerType::get(ctx, 64, IntegerType::Unsigned);
@@ -71,14 +75,17 @@ static LogicalResult normalizeFunction(func::FuncOp func) {
 
   for (IndirectLoad candidate : loads) {
     auto op = candidate.op;
-    if (op.getPtr() != candidate.table)
-      return op.emitError("indirect pointer-table load must use the table argument directly");
+    bool isDirectTableLoad = op.getPtr() == candidate.table;
+    if (!isDirectTableLoad) {
+      return op.emitError(
+          "indirect pointer-table load must use the table argument directly");
+    }
 
     OpBuilder builder(op);
     auto raw = builder.create<pto::LoadScalarOp>(
         op.getLoc(), ui64, candidate.table, op.getOffset());
-    auto ptr = builder.create<pto::IntToPtrOp>(
-        op.getLoc(), candidate.pointee, raw.getValue());
+    auto ptr = builder.create<pto::IntToPtrOp>(op.getLoc(), candidate.pointee,
+                                               raw.getValue());
     op.getValue().replaceAllUsesWith(ptr.getResult());
     op.erase();
   }
