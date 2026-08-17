@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
 #include "PTO/Transforms/TileFusion/FusionOpSemantics.h"
 
@@ -108,8 +109,9 @@ static bool hasHardBoundaryBetween(const pto::FusionComputeNode &a,
   Operation *cursor = earlier.op->getNextNode();
   while (cursor && cursor != later.op) {
     if (cursor->hasTrait<OpTrait::IsTerminator>() ||
-        !cursor->getRegions().empty() || isa<CallOpInterface>(cursor))
+        !cursor->getRegions().empty() || isa<CallOpInterface>(cursor)) {
       return true;
+    }
     cursor = cursor->getNextNode();
   }
   return false;
@@ -118,9 +120,11 @@ static bool hasHardBoundaryBetween(const pto::FusionComputeNode &a,
 static bool hasHardBoundaryToGroup(
     ArrayRef<const pto::FusionComputeNode *> group,
     const pto::FusionComputeNode &candidate) {
-  for (const pto::FusionComputeNode *member : group)
-    if (hasHardBoundaryBetween(*member, candidate))
+  for (const pto::FusionComputeNode *member : group) {
+    if (hasHardBoundaryBetween(*member, candidate)) {
       return true;
+    }
+  }
   return false;
 }
 
@@ -137,9 +141,11 @@ static bool dependsOnPreviousNode(
     }
   }
 
-  for (Value output : previous.semantics.tileOutputs)
-    if (llvm::is_contained(current.semantics.tileInputs, output))
+  for (Value output : previous.semantics.tileOutputs) {
+    if (llvm::is_contained(current.semantics.tileInputs, output)) {
       return true;
+    }
+  }
 
   return false;
 }
@@ -183,10 +189,10 @@ static void assignStableGroupMetadata(ArrayRef<PlannedFusionGroup> groups,
         buildStableInGroupOrder(group->members);
     for (auto [order, node] : llvm::enumerate(stableOrder)) {
       node->op->setAttr(kFusionGroupIdAttr,
-                        IntegerAttr::get(IntegerType::get(ctx, 64), groupId));
+                        IntegerAttr::get(IntegerType::get(ctx, mlir::pto::kValue64), groupId));
       node->op->setAttr(
           kFusionOrderAttr,
-          IntegerAttr::get(IntegerType::get(ctx, 64),
+          IntegerAttr::get(IntegerType::get(ctx, mlir::pto::kValue64),
                            static_cast<int64_t>(order)));
     }
   }
@@ -202,8 +208,9 @@ countEdgesFromGroup(const pto::FusionBlockAnalysis &blockAnalysis,
                     ArrayRef<const pto::FusionComputeNode *> group,
                     const pto::FusionComputeNode &candidate) {
   DenseSet<unsigned> producerIds;
-  for (const pto::FusionComputeNode *member : group)
+  for (const pto::FusionComputeNode *member : group) {
     producerIds.insert(member->id);
+  }
 
   unsigned count = 0;
   for (unsigned edgeId : candidate.incomingEdges) {
@@ -243,13 +250,17 @@ static bool nodesHaveDirectDataFlowConnection(
     }
   }
 
-  for (Value output : lhs.semantics.tileOutputs)
-    if (llvm::is_contained(rhs.semantics.tileInputs, output))
+  for (Value output : lhs.semantics.tileOutputs) {
+    if (llvm::is_contained(rhs.semantics.tileInputs, output)) {
       return true;
+    }
+  }
 
-  for (Value output : rhs.semantics.tileOutputs)
-    if (llvm::is_contained(lhs.semantics.tileInputs, output))
+  for (Value output : rhs.semantics.tileOutputs) {
+    if (llvm::is_contained(lhs.semantics.tileInputs, output)) {
       return true;
+    }
+  }
 
   return false;
 }
@@ -259,9 +270,11 @@ countConnectionsToGroup(const pto::FusionBlockAnalysis &blockAnalysis,
                         ArrayRef<const pto::FusionComputeNode *> group,
                         const pto::FusionComputeNode &candidate) {
   unsigned connections = 0;
-  for (const pto::FusionComputeNode *member : group)
-    if (nodesHaveDirectDataFlowConnection(blockAnalysis, *member, candidate))
+  for (const pto::FusionComputeNode *member : group) {
+    if (nodesHaveDirectDataFlowConnection(blockAnalysis, *member, candidate)) {
       ++connections;
+    }
+  }
   return connections;
 }
 
@@ -358,13 +371,13 @@ public:
     GroupFootprint footprint = computeGroupFootprint(proposedGroup);
 
     decision.cost.dependencyBenefit =
-        4 * static_cast<int64_t>(
+        mlir::pto::kValue4 * static_cast<int64_t>(
                 countEdgesFromGroup(ctx.blockAnalysis, currentGroup, candidate));
-    decision.cost.loopMergeBenefit = 2;
+    decision.cost.loopMergeBenefit = mlir::pto::kValue2;
     decision.cost.liveTilePenalty =
-        std::max<int64_t>(0, static_cast<int64_t>(footprint.liveTileCount) - 4);
+        std::max<int64_t>(0, static_cast<int64_t>(footprint.liveTileCount) - mlir::pto::kValue4);
     decision.cost.vfParameterPenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.vfParameterCount) - 6);
+        0, static_cast<int64_t>(footprint.vfParameterCount) - mlir::pto::kValue6);
     decision.accept = decision.cost.total() > 0;
     return decision;
   }
@@ -405,8 +418,9 @@ public:
     }
 
     if (currentGroup.front()->iterationDomainClass !=
-        candidate.iterationDomainClass)
+        candidate.iterationDomainClass) {
       return decision;
+    }
 
     if (hasHardBoundaryToGroup(currentGroup, candidate)) {
       return decision;
@@ -418,17 +432,17 @@ public:
       return decision;
     }
 
-    SmallVector<const pto::FusionComputeNode *, 8> proposedGroup(
+    SmallVector<const pto::FusionComputeNode *, mlir::pto::kValue8> proposedGroup(
         currentGroup.begin(), currentGroup.end());
     proposedGroup.push_back(&candidate);
     GroupFootprint footprint = computeGroupFootprint(proposedGroup);
 
-    decision.cost.dependencyBenefit = 4 * static_cast<int64_t>(connectionCount);
-    decision.cost.loopMergeBenefit = 4;
+    decision.cost.dependencyBenefit = mlir::pto::kValue4 * static_cast<int64_t>(connectionCount);
+    decision.cost.loopMergeBenefit = mlir::pto::kValue4;
     decision.cost.liveTilePenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.liveTileCount) - 10);
+        0, static_cast<int64_t>(footprint.liveTileCount) - mlir::pto::kValue10);
     decision.cost.vfParameterPenalty = std::max<int64_t>(
-        0, static_cast<int64_t>(footprint.vfParameterCount) - 12);
+        0, static_cast<int64_t>(footprint.vfParameterCount) - mlir::pto::kValue12);
     decision.accept = decision.cost.total() > 0;
     return decision;
   }
@@ -438,19 +452,19 @@ class StrategyEngine {
 public:
   virtual ~StrategyEngine() = default;
 
-  virtual SmallVector<PlannedFusionGroup, 8>
+  virtual SmallVector<PlannedFusionGroup, mlir::pto::kValue8>
   planBlock(const PlanningContext &ctx, const CostModel &costModel) const = 0;
 };
 
 class ConservativeGreedyStrategyEngine final : public StrategyEngine {
 public:
-  SmallVector<PlannedFusionGroup, 8>
+  SmallVector<PlannedFusionGroup, mlir::pto::kValue8>
   planBlock(const PlanningContext &ctx,
             const CostModel &costModel) const override {
-    SmallVector<PlannedFusionGroup, 8> groups;
+    SmallVector<PlannedFusionGroup, mlir::pto::kValue8> groups;
     SmallVector<const pto::FusionComputeNode *, 8> chain;
 
-    auto flushChain = [&]() {
+    auto flushChain = [&chain, &groups]() {
       if (chain.size() < 2) {
         chain.clear();
         return;
@@ -492,10 +506,10 @@ public:
 
 class ConservativeDAGGreedyStrategyEngine final : public StrategyEngine {
 public:
-  SmallVector<PlannedFusionGroup, 8>
+  SmallVector<PlannedFusionGroup, mlir::pto::kValue8>
   planBlock(const PlanningContext &ctx,
             const CostModel &costModel) const override {
-    SmallVector<PlannedFusionGroup, 8> groups;
+    SmallVector<PlannedFusionGroup, mlir::pto::kValue8> groups;
     DenseSet<unsigned> assignedNodes;
 
     for (const pto::FusionComputeNode &seed : ctx.blockAnalysis.computeNodes) {
@@ -519,8 +533,9 @@ public:
         for (const pto::FusionComputeNode &candidate :
              ctx.blockAnalysis.computeNodes) {
           if (assignedNodes.contains(candidate.id) ||
-              groupNodeIds.contains(candidate.id))
+              groupNodeIds.contains(candidate.id)) {
             continue;
+          }
 
           PlanningDecision appendDecision =
               costModel.evaluateAppend(ctx, groupMembers, candidate);
@@ -534,7 +549,7 @@ public:
         }
       }
 
-      if (groupMembers.size() < 2) {
+      if (groupMembers.size() < mlir::pto::kValue2) {
         continue;
       }
 
@@ -611,7 +626,7 @@ struct FusionPlanPass : public pto::impl::FusionPlanBase<FusionPlanPass> {
 
     for (const pto::FusionBlockAnalysis &blockAnalysis : analysis.blocks) {
       PlanningContext planningCtx{blockAnalysis};
-      SmallVector<PlannedFusionGroup, 8> groups =
+      SmallVector<PlannedFusionGroup, mlir::pto::kValue8> groups =
           strategyEngine.planBlock(planningCtx, costModel);
       assignStableGroupMetadata(groups, ctx, nextGroupId);
     }

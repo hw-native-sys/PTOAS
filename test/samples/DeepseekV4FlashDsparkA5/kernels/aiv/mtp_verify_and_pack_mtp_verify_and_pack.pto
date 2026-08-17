@@ -1,0 +1,69 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @mtp_verify_and_pack_mtp_verify_and_pack(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i64>, %arg2: !pto.ptr<i32>, %arg3: !pto.ptr<i64>, %arg4: !pto.ptr<i32>, %arg5: !pto.ptr<i32>, %arg6: !pto.ptr<i32>, %arg7: !pto.ptr<i64>, %arg8: !pto.ptr<i32>, %__pypto_spmd_block_idx: i32, %__pypto_spmd_block_num: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c16_index = arith.constant 16 : index
+  %c1_index = arith.constant 1 : index
+  %c32_index = arith.constant 32 : index
+  %c128_index = arith.constant 128 : index
+  %c8_index = arith.constant 8 : index
+  %c2_index = arith.constant 2 : index
+  %c0_index = arith.constant 0 : index
+  %tail_slot_ids__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c16_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %main_input_ids__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c32_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %main_sampled_ids__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c128_index, %c8_index], strides = [%c8_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %tail_token_ids__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c16_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %tail_positions__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%c16_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %main_position_ids__ssa_v0_view = pto.make_tensor_view %arg5, shape = [%c32_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %accepted_counts__ssa_v0_view = pto.make_tensor_view %arg6, shape = [%c16_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %mtp_input_ids__ssa_v0_view = pto.make_tensor_view %arg7, shape = [%c32_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %mtp_position_ids__ssa_v0_view = pto.make_tensor_view %arg8, shape = [%c32_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %verify_core_inline12__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
+  scf.for %request_inline10__idx_v0 = %verify_core_inline12__ssa_v0 to %c16_index step %c1_index {
+    %0 = arith.muli %request_inline10__idx_v0, %c2_index : index
+    %1 = arith.addi %0, %c1_index : index
+    %slot_inline6__tile = pto.load_scalar %arg0[%request_inline10__idx_v0] : !pto.ptr<i32> -> i32
+    %2 = arith.index_cast %slot_inline6__tile : i32 to index
+    %3 = arith.cmpi sle, %c0_index, %2 : index
+    scf.if %3 {
+      %draft_inline7__tile = pto.load_scalar %arg1[%1] : !pto.ptr<i64> -> i64
+      %flat_offset_mul = arith.muli %0, %c8_index : index
+      %flat_offset = arith.addi %flat_offset_mul, %c0_index : index
+      %t__tile = pto.load_scalar %arg2[%flat_offset] : !pto.ptr<i32> -> i32
+      %4 = arith.extsi %t__tile : i32 to i64
+      %6 = arith.muli %1, %c8_index : index
+      %7 = arith.addi %6, %c0_index : index
+      %5 = pto.load_scalar %arg2[%7] : !pto.ptr<i32> -> i32
+      %8 = arith.extsi %5 : i32 to i64
+      %9 = arith.index_cast %c1_index : index to i32
+      %committed0_inline11__tile = pto.load_scalar %arg3[%request_inline10__idx_v0] : !pto.ptr<i64> -> i64
+      %position0_inline0__tile = pto.load_scalar %arg4[%request_inline10__idx_v0] : !pto.ptr<i32> -> i32
+      %position1_inline1__tile = pto.load_scalar %arg5[%0] : !pto.ptr<i32> -> i32
+      %10 = arith.cmpi eq, %draft_inline7__tile, %4 : i64
+      %accepted_inline3__phi_v2, %committed0_inline11__phi_v2, %committed1_inline2__phi_v2, %position0_inline0__phi_v2, %position1_inline1__phi_v2 = scf.if %10 -> (i32, i64, i64, i32, i32) {
+        %11 = arith.index_cast %c2_index : index to i32
+        %12 = pto.load_scalar %arg5[%0] : !pto.ptr<i32> -> i32
+        %13 = pto.load_scalar %arg5[%1] : !pto.ptr<i32> -> i32
+        scf.yield %11, %4, %8, %12, %13 : i32, i64, i64, i32, i32
+      } else {
+        scf.yield %9, %committed0_inline11__tile, %4, %position0_inline0__tile, %position1_inline1__tile : i32, i64, i64, i32, i32
+      }
+      pto.store_scalar %accepted_inline3__phi_v2, %arg6[%request_inline10__idx_v0] : !pto.ptr<i32>, i32
+      pto.store_scalar %committed0_inline11__phi_v2, %arg7[%0] : !pto.ptr<i64>, i64
+      pto.store_scalar %committed1_inline2__phi_v2, %arg7[%1] : !pto.ptr<i64>, i64
+      pto.store_scalar %position0_inline0__phi_v2, %arg8[%0] : !pto.ptr<i32>, i32
+      pto.store_scalar %position1_inline1__phi_v2, %arg8[%1] : !pto.ptr<i32>, i32
+    } else {
+      %14 = arith.index_cast %c1_index : index to i32
+      pto.store_scalar %14, %arg6[%request_inline10__idx_v0] : !pto.ptr<i32>, i32
+      %15 = pto.load_scalar %arg1[%0] : !pto.ptr<i64> -> i64
+      pto.store_scalar %15, %arg7[%0] : !pto.ptr<i64>, i64
+      %16 = pto.load_scalar %arg1[%1] : !pto.ptr<i64> -> i64
+      pto.store_scalar %16, %arg7[%1] : !pto.ptr<i64>, i64
+      %17 = pto.load_scalar %arg5[%0] : !pto.ptr<i32> -> i32
+      pto.store_scalar %17, %arg8[%0] : !pto.ptr<i32>, i32
+      %18 = pto.load_scalar %arg5[%1] : !pto.ptr<i32> -> i32
+      pto.store_scalar %18, %arg8[%1] : !pto.ptr<i32>, i32
+    }
+  }
+  return
+  }
+}

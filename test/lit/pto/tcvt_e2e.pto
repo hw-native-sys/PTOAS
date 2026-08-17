@@ -75,25 +75,25 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
 }
 
 // A3-LABEL: AICORE void tcvt_f32_to_f16_run(
-// A3:       RoundMode::CAST_RINT
 // A3:       TLOAD(
+// A3:       RoundMode::CAST_RINT
 // A3:       TCVT(
 // A3:       TSTORE(
 
 // A3-LABEL: AICORE void tcvt_f32_to_bf16_run(
-// A3:       RoundMode::CAST_ROUND
 // A3:       TLOAD(
+// A3:       RoundMode::CAST_ROUND
 // A3:       TCVT(
 // A3:       TSTORE(
 
 // A5-LABEL: AICORE void tcvt_f32_to_f16_run(
-// A5:       RoundMode::CAST_RINT
 // A5:       TLOAD(
+// A5:       RoundMode::CAST_RINT
 // A5:       TCVT(
 // A5:       TSTORE(
 
 // A5-LABEL: AICORE void tcvt_f32_to_bf16_run(
-// A5:       RoundMode::CAST_ROUND
 // A5:       TLOAD(
+// A5:       RoundMode::CAST_ROUND
 // A5:       TCVT(
 // A5:       TSTORE(

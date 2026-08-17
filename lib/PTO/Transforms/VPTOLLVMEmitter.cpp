@@ -93,16 +93,30 @@ static Type getLowPrecisionLLVMType(Type type, MLIRContext *context) {
   return {};
 }
 
+static bool isLLVMExtensionVectorElementType(Type type) {
+  return isa<LLVM::LLVMHiFloat8Type, LLVM::LLVMFloat8E4M3Type,
+             LLVM::LLVMFloat8E5M2Type, LLVM::LLVMFloat4E1M2x2Type,
+             LLVM::LLVMFloat4E2M1x2Type>(type);
+}
+
 static Type getLLVMCompatibleVectorType(ArrayRef<int64_t> shape,
                                         Type elementType,
                                         ArrayRef<bool> scalableDims = {}) {
+  if (shape.size() == 1 && isLLVMExtensionVectorElementType(elementType))
+    return LLVM::LLVMFixedVectorType::get(elementType, shape.front());
   return VectorType::get(shape, elementType, scalableDims);
 }
 
 static Type normalizePayloadTypeForLLVMLowering(Type type, Builder &builder) {
-  if (pto::isPTOHiFloat8x2Type(type))
+  if (pto::isPTOHiFloat8x2Type(type)) {
     return getLLVMCompatibleVectorType(
         {2}, LLVM::LLVMHiFloat8Type::get(builder.getContext()));
+}
+  // bf16x2 is a 4-byte packed pair; lower it as an opaque i32 so vregs whose
+  // element type is bf16x2 get a valid LLVM type.
+  if (pto::isPTOBF16x2Type(type)) {
+    return builder.getI32Type();
+}
   if (Type lowpType = getLowPrecisionLLVMType(type, builder.getContext()))
   {
     return lowpType;
@@ -136,14 +150,19 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
   {
     return builder.getI16Type();
   }
+  // bf16x2 is 4 bytes, not an 8-bit low-precision type.
+  if (pto::isPTOBF16x2Type(type)) {
+    return builder.getI32Type();
+  }
   if (pto::isPTOLowPrecisionType(type))
   {
     return builder.getI8Type();
   }
   if (isa<LLVM::LLVMHiFloat8Type, LLVM::LLVMFloat8E4M3Type,
           LLVM::LLVMFloat8E5M2Type, LLVM::LLVMFloat4E1M2x2Type,
-          LLVM::LLVMFloat4E2M1x2Type>(type))
+          LLVM::LLVMFloat4E2M1x2Type>(type)) {
     return builder.getI8Type();
+  }
 
   if (auto vecType = dyn_cast<VectorType>(type)) {
     Type normalizedElement =
@@ -157,6 +176,16 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
                                        vecType.getScalableDims());
   }
 
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
+    Type normalizedElement =
+        normalizeGEPElementTypeForLLVMLowering(vecType.getElementType(),
+                                               builder);
+    if (normalizedElement == vecType.getElementType())
+      return normalizePayloadTypeForLLVMLowering(type, builder);
+    return getLLVMCompatibleVectorType({vecType.getNumElements()},
+                                       normalizedElement);
+  }
+
   return normalizePayloadTypeForLLVMLowering(type, builder);
 }
 
@@ -167,10 +196,12 @@ static Type convertVPTOType(Type type, Builder &builder) {
     return getLLVMCompatibleVectorType({vecType.getElementCount()},
                                        elementType);
   }
-  if (isa<pto::MaskType>(type))
+  if (isa<pto::MaskType>(type)) {
     return VectorType::get({256}, builder.getI1Type());
-  if (isa<pto::AlignType>(type))
+  }
+  if (isa<pto::AlignType>(type)) {
     return VectorType::get({32}, builder.getI8Type());
+  }
   if (isa<pto::StructType>(type))
   {
     return LLVM::LLVMPointerType::get(builder.getContext());
@@ -197,6 +228,12 @@ static unsigned getNaturalByteAlignment(Type type) {
     }
     return elemAlign * static_cast<unsigned>(elems);
   }
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
+    unsigned elemAlign = getNaturalByteAlignment(vecType.getElementType());
+    if (!elemAlign)
+      return 0;
+    return elemAlign * vecType.getNumElements();
+  }
   if (auto intType = dyn_cast<IntegerType>(type))
   {
     return llvm::divideCeil(unsigned(intType.getWidth()), 8u);
@@ -204,6 +241,9 @@ static unsigned getNaturalByteAlignment(Type type) {
   if (pto::isPTOHiFloat8x2Type(type))
   {
     return 2;
+  }
+  if (pto::isPTOBF16x2Type(type)) {
+    return 4;
   }
   if (pto::isPTOLowPrecisionType(type))
   {
@@ -231,8 +271,9 @@ static bool hasVPTOConvertibleType(Type type) {
   }
   if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType,
           pto::StructType>(type) ||
-      pto::isPTOLowPrecisionType(type))
+      pto::isPTOLowPrecisionType(type)) {
     return true;
+  }
   if (auto vecType = dyn_cast<VectorType>(type))
   {
     return hasVPTOConvertibleType(vecType.getElementType());
@@ -246,8 +287,9 @@ static bool hasVPTOConvertibleType(TypeRange types) {
 
 static Value materializeVPTOCast(OpBuilder &builder, Type resultType,
                                  ValueRange inputs, Location loc) {
-  if (inputs.size() != 1)
+  if (inputs.size() != 1) {
     return {};
+  }
   return builder
       .create<UnrealizedConversionCastOp>(loc, TypeRange{resultType}, inputs)
       .getResult(0);
@@ -288,8 +330,9 @@ static LLVM::LLVMStructType getVPTOStructStorageType(pto::StructType structType,
     if (!frame.materialize) {
       worklist.push_back({frame.type, true});
       for (Type fieldType : frame.type.getFieldTypes()) {
-        if (auto nestedStruct = dyn_cast<pto::StructType>(fieldType))
+        if (auto nestedStruct = dyn_cast<pto::StructType>(fieldType)) {
           worklist.push_back({nestedStruct, false});
+        }
       }
       continue;
     }
@@ -581,23 +624,29 @@ static FailureOr<StringRef> buildMadTypedCalleeName(MLIRContext *context,
     return StringAttr::get(context, "llvm.hivm.MAD.f322f32.c310").getValue();
   }
   if (isSignedOrSignlessInteger(dyn_cast<IntegerType>(lhsElem), 8) &&
-      rhs == "s8" && dst == "s32")
+      rhs == "s8" && dst == "s32") {
     return StringAttr::get(context, "llvm.hivm.MAD.s8.c310").getValue();
+  }
   if (isMadE4M3ElementType(lhsElem) && isMadE4M3ElementType(rhsElem) &&
-      dst == "f32")
+      dst == "f32") {
     return StringAttr::get(context, "llvm.hivm.MAD.e4m3e4m3.c310").getValue();
+  }
   if (isMadE4M3ElementType(lhsElem) && isMadE5M2ElementType(rhsElem) &&
-      dst == "f32")
+      dst == "f32") {
     return StringAttr::get(context, "llvm.hivm.MAD.e4m3e5m2.c310").getValue();
+  }
   if (isMadE5M2ElementType(lhsElem) && isMadE4M3ElementType(rhsElem) &&
-      dst == "f32")
+      dst == "f32") {
     return StringAttr::get(context, "llvm.hivm.MAD.e5m2e4m3.c310").getValue();
+  }
   if (isMadE5M2ElementType(lhsElem) && isMadE5M2ElementType(rhsElem) &&
-      dst == "f32")
+      dst == "f32") {
     return StringAttr::get(context, "llvm.hivm.MAD.e5m2e5m2.c310").getValue();
+  }
   if (pto::isPTOHiFloat8Type(lhsElem) && pto::isPTOHiFloat8Type(rhsElem) &&
-      dst == "f32")
+      dst == "f32") {
     return StringAttr::get(context, "llvm.hivm.MAD.e4m3e4m3.c310").getValue();
+  }
   if (lhsElem.isF16() && rhs == "s4")
   {
     return StringAttr::get(context, "llvm.hivm.MAD.f16s4.c310").getValue();
@@ -689,6 +738,9 @@ static std::string getLowPrecisionElementFragment(Type type) {
   if (isa<pto::F4E2M1x2Type>(type))
   {
     return "f4e2m1x2";
+  }
+  if (pto::isPTOBF16x2Type(type)) {
+    return "bf16x2";
   }
   if (pto::isPTOFloat8E4M3LikeType(type))
   {
@@ -782,11 +834,13 @@ static Type getLowpPayloadCarrierType(Type vectorLikeType,
   Type elementType = getElementTypeFromVectorLike(vectorLikeType);
   std::optional<LowpPayloadABI> abi =
       getLowpPayloadABI(elementType, context);
-  if (!abi)
+  if (!abi) {
     return {};
+  }
   auto lanes = getElementCountFromVectorLike(vectorLikeType);
-  if (!lanes)
+  if (!lanes) {
     return {};
+  }
   return VectorType::get({*lanes}, abi->llvmElementType);
 }
 
@@ -826,8 +880,9 @@ static Value castFromPayloadABI(
 static std::string getAtomicElementTypeFragment(Type type,
                                                 Attribute signednessAttr) {
   if (auto vecType = dyn_cast<VectorType>(type)) {
-    if (vecType.getRank() != 1 || vecType.getDimSize(0) != 2)
+    if (vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
       return {};
+    }
     if (vecType.getElementType().isF16())
     {
       return "f16x2";
@@ -851,10 +906,12 @@ static std::string getAtomicElementTypeFragment(Type type,
     return "fp32";
   }
   auto intType = dyn_cast<IntegerType>(type);
-  if (!intType)
+  if (!intType) {
     return {};
-  if (intType.getWidth() != 32 && intType.getWidth() != 64)
+  }
+  if (intType.getWidth() != 32 && intType.getWidth() != 64) {
     return {};
+  }
   if (signednessAttr) {
     auto signedness = cast<pto::SignednessAttr>(signednessAttr).getValue();
     return std::string(signedness == pto::Signedness::Unsigned ? "u" : "s") +
@@ -881,8 +938,9 @@ static std::string getL0LoadElementFragment(Type type) {
       StringRef(lower).contains("e8m0") ||
       StringRef(lower).contains("hif8") ||
       StringRef(lower).contains("e1m2x2") ||
-      StringRef(lower).contains("e2m1x2"))
+      StringRef(lower).contains("e2m1x2")) {
     return "s8";
+  }
   return {};
 }
 
@@ -927,8 +985,9 @@ static std::string getShuffleIntrinsicTypeFragment(Type type) {
   }
   if (auto vecType = dyn_cast<VectorType>(type)) {
     if (vecType.getRank() == 1 && vecType.getDimSize(0) == 2 &&
-        vecType.getElementType().isF16())
+        vecType.getElementType().isF16()) {
       return "v2f16";
+    }
   }
   return {};
 }
@@ -936,8 +995,9 @@ static std::string getShuffleIntrinsicTypeFragment(Type type) {
 static std::string getReduxIntrinsicTypeFragment(Type type,
                                                  Attribute signednessAttr) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() != 32)
+    if (intType.getWidth() != 32) {
       return {};
+    }
     bool isUnsigned = false;
     if (signednessAttr) {
       isUnsigned = cast<pto::SignednessAttr>(signednessAttr).getValue() ==
@@ -965,6 +1025,8 @@ static Type getElementTypeFromVectorLike(Type type) {
   {
     return vecType.getElementType();
   }
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type))
+    return vecType.getElementType();
   return {};
 }
 
@@ -980,6 +1042,8 @@ static std::optional<int64_t> getElementCountFromVectorLike(Type type) {
     }
     return vecType.getShape().front();
   }
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type))
+    return vecType.getNumElements();
   return std::nullopt;
 }
 
@@ -1111,8 +1175,9 @@ static bool isCompatibleScalarForSemanticType(Type semanticType,
 }
 
 static std::string getCopyElementFragment(Type elementType) {
-  if (!elementType)
+  if (!elementType) {
     return {};
+  }
   if (elementType.isF16())
   {
     return "f16";
@@ -1167,16 +1232,18 @@ static std::string getCopyElementFragment(Type elementType) {
 }
 
 static std::string getNd2NzCopyElementFragment(Type elementType) {
-  if (!elementType)
+  if (!elementType) {
     return {};
+  }
   std::string typeText;
   llvm::raw_string_ostream os(typeText);
   elementType.print(os);
   os.flush();
   std::string lower = StringRef(typeText).lower();
   if (StringRef(lower).contains("e4m3") || StringRef(lower).contains("e5m2") ||
-      StringRef(lower).contains("e8m0") || StringRef(lower).contains("hif8"))
+      StringRef(lower).contains("e8m0") || StringRef(lower).contains("hif8")) {
     return "U8";
+  }
   if (StringRef(lower).contains("e1m2x2") || StringRef(lower).contains("e2m1x2"))
   {
     return "U8";
@@ -1339,11 +1406,13 @@ static std::optional<uint64_t> parsePartImmediate(StringRef part) {
 
 static std::optional<uint64_t> parseVcvtPartImmediate(StringRef part) {
   if (part == "EVEN" || part == "PART_EVEN" || part == "P0" ||
-      part == "PART_P0")
+      part == "PART_P0") {
     return 0;
+  }
   if (part == "ODD" || part == "PART_ODD" || part == "P1" ||
-      part == "PART_P1")
+      part == "PART_P1") {
     return 1;
+  }
   if (part == "P2" || part == "PART_P2")
   {
     return 2;
@@ -1492,6 +1561,10 @@ static std::optional<unsigned> getDistElementWidth(Type type) {
   if (type.isF64())
   {
     return 64;
+  }
+  // bf16x2 is a 32-bit packed pair; its dist width is 32 (i32/align4 ABI).
+  if (pto::isPTOBF16x2Type(type)) {
+    return 32;
   }
   return std::nullopt;
 }
@@ -1977,8 +2050,9 @@ static Value packBlockRepeatStride(Operation *anchor, Value blockStride,
   Value blockI32 = castIntegerLikeTo(anchor, blockStride, builder.getI32Type());
   Value repeatI32 =
       castIntegerLikeTo(anchor, repeatStride, builder.getI32Type());
-  if (!blockI32 || !repeatI32)
+  if (!blockI32 || !repeatI32) {
     return {};
+  }
 
   auto c16 = builder.create<arith::ConstantIntOp>(anchor->getLoc(), 16, 32);
   auto blockShifted =
@@ -2059,8 +2133,9 @@ packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
   Value dataSelect = castIntegerLikeTo(anchor, operands[7], builder.getI64Type());
   Value cacheCtl = getI64Operand(8);
   if (!sid || !nBurst || !lenBurst || !leftPadding || !rightPadding ||
-      !dataSelect || !cacheCtl)
+      !dataSelect || !cacheCtl) {
     return failure();
+  }
 
   auto shl = [&](Value value, uint64_t amount) -> Value {
     return builder.create<arith::ShLIOp>(loc, value,
@@ -2500,8 +2575,9 @@ static FailureOr<Value> packCopyCbufToBtConfig(Operation *anchor,
   Value sourceGapI64 = castIntegerLikeTo(anchor, sourceGap, builder.getI64Type());
   Value dstGapI64 = castIntegerLikeTo(anchor, dstGap, builder.getI64Type());
   if (!convControlI64 || !nBurstI64 || !lenBurstI64 || !sourceGapI64 ||
-      !dstGapI64)
+      !dstGapI64) {
     return failure();
+  }
 
   auto shl = [&](Value value, uint64_t amount) -> Value {
     return builder.create<arith::ShLIOp>(loc, value,
@@ -2758,10 +2834,13 @@ static FailureOr<Value> convertElementOffsetToBytes(Operation *anchor, Value off
   {
     bitWidth = intType.getWidth();
   }
-  else if (isLowpPayloadElementType(elementType))
+  else if (isLowpPayloadElementType(elementType)) {
     bitWidth = 8;
-  else if (auto floatType = dyn_cast<FloatType>(elementType))
+  } else if (auto floatType = dyn_cast<FloatType>(elementType)) {
     bitWidth = floatType.getWidth();
+  } else if (pto::isPTOBF16x2Type(elementType)) {
+    bitWidth = 32;
+}
   if (bitWidth == 0 || bitWidth % 8 != 0)
   {
     return failure();
@@ -2797,11 +2876,11 @@ materializeDynamicPltMask(ConversionPatternRewriter &rewriter,
     if (intType.getWidth() == 32)
     {
       calleeName = StringRef("llvm.hivm.plt.b32.v300");
-    }
-    else if (intType.getWidth() == 16)
+    } else if (intType.getWidth() == 16) {
       calleeName = StringRef("llvm.hivm.plt.b16.v300");
-    else if (intType.getWidth() == 8)
+    } else if (intType.getWidth() == 8) {
       calleeName = StringRef("llvm.hivm.plt.b8.v300");
+    }
   }
   if (calleeName.empty())
   {
@@ -2979,11 +3058,13 @@ static FailureOr<StringRef> buildVselrCallee(MLIRContext *context,
 
   std::string vec = getElementTypeFragment(elemType);
   if (auto floatType = dyn_cast<FloatType>(elemType);
-      floatType && floatType.isF32())
+      floatType && floatType.isF32()) {
     vec = "u32";
+  }
   if (std::optional<LowpPayloadABI> abi =
-          getLowpPayloadABI(elemType, context))
+          getLowpPayloadABI(elemType, context)) {
     vec = abi->intrinsicElementFragment.str();
+  }
   if (vec.empty())
   {
     return failure();
@@ -3469,13 +3550,13 @@ static FailureOr<StringRef> buildL1CacheLoadCallee(MLIRContext *context,
     if (intType.getWidth() == 8)
     {
       elem = "s8";
-    }
-    else if (intType.getWidth() == 16)
+    } else if (intType.getWidth() == 16) {
       elem = "s16";
-    else if (intType.getWidth() == 32)
+    } else if (intType.getWidth() == 32) {
       elem = "s32";
-    else if (intType.getWidth() == 64)
+    } else if (intType.getWidth() == 64) {
       elem = "s64";
+    }
   } else if (resultType.isF16() || resultType.isBF16()) {
     elem = "s16";
   } else if (resultType.isF32()) {
@@ -3490,11 +3571,11 @@ static FailureOr<StringRef> buildL1CacheLoadCallee(MLIRContext *context,
     if (totalBits == 16)
     {
       elem = "s16";
-    }
-    else if (totalBits == 32)
+    } else if (totalBits == 32) {
       elem = "s32";
-    else if (totalBits == 64)
+    } else if (totalBits == 64) {
       elem = "s64";
+    }
   }
   if (elem.empty())
   {
@@ -3515,13 +3596,13 @@ static FailureOr<StringRef> buildL1CacheStoreCallee(MLIRContext *context,
     if (intType.getWidth() == 8)
     {
       elem = "b8";
-    }
-    else if (intType.getWidth() == 16)
+    } else if (intType.getWidth() == 16) {
       elem = "b16";
-    else if (intType.getWidth() == 32)
+    } else if (intType.getWidth() == 32) {
       elem = "b32";
-    else if (intType.getWidth() == 64)
+    } else if (intType.getWidth() == 64) {
       elem = "b64";
+    }
   } else if (valueType.isF16() || valueType.isBF16()) {
     elem = "b16";
   } else if (valueType.isF32()) {
@@ -3536,11 +3617,11 @@ static FailureOr<StringRef> buildL1CacheStoreCallee(MLIRContext *context,
     if (totalBits == 16)
     {
       elem = "b16";
-    }
-    else if (totalBits == 32)
+    } else if (totalBits == 32) {
       elem = "b32";
-    else if (totalBits == 64)
+    } else if (totalBits == 64) {
       elem = "b64";
+    }
   }
   if (elem.empty())
   {
@@ -3611,8 +3692,9 @@ static std::string getLLVMFloatBuiltinFragment(Type type) {
   }
 
   auto vecType = dyn_cast<VectorType>(type);
-  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2)
+  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
     return {};
+  }
   Type elementType = vecType.getElementType();
   if (elementType.isF16())
   {
@@ -3633,8 +3715,9 @@ static std::string getHIVMFloatBuiltinFragment(Type type) {
   }
 
   auto vecType = dyn_cast<VectorType>(type);
-  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2)
+  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
     return {};
+  }
   Type elementType = vecType.getElementType();
   if (elementType.isF16())
   {
@@ -3761,8 +3844,9 @@ FailureOr<StringRef> buildBinaryScalarMathCallee<pto::FMinOp>(MLIRContext *conte
                                                               Type valueType) {
   std::string elem = getLLVMFloatBuiltinFragment(valueType);
   if (elem != "f16" && elem != "f32" && elem != "bf16" &&
-      elem != "v2f16" && elem != "v2bf16")
+      elem != "v2f16" && elem != "v2bf16") {
     return failure();
+  }
   return StringAttr::get(context, "llvm.minnum." + elem).getValue();
 }
 
@@ -3771,8 +3855,9 @@ FailureOr<StringRef> buildBinaryScalarMathCallee<pto::FMaxOp>(MLIRContext *conte
                                                               Type valueType) {
   std::string elem = getLLVMFloatBuiltinFragment(valueType);
   if (elem != "f16" && elem != "f32" && elem != "bf16" &&
-      elem != "v2f16" && elem != "v2bf16")
+      elem != "v2f16" && elem != "v2bf16") {
     return failure();
+  }
   return StringAttr::get(context, "llvm.maxnum." + elem).getValue();
 }
 
@@ -3799,12 +3884,14 @@ static FailureOr<StringRef> buildFmaCallee(MLIRContext *context, Type valueType)
 static std::string getConvertScalarFragment(Type type,
                                             Attribute signednessAttr) {
   if (auto vecType = dyn_cast<VectorType>(type)) {
-    if (vecType.getRank() != 1 || vecType.getDimSize(0) != 2)
+    if (vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
       return {};
+    }
     Type elementType = vecType.getElementType();
     if (std::string elem = getLowPrecisionElementFragment(elementType);
-        !elem.empty() && !pto::isPTOFloat4PackedType(elementType))
+        !elem.empty() && !pto::isPTOFloat4PackedType(elementType)) {
       return elem + "x2";
+    }
     if (elementType.isF32())
     {
       return "f32x2";
@@ -3837,8 +3924,9 @@ static std::string getConvertScalarFragment(Type type,
   }
   auto intType = dyn_cast<IntegerType>(type);
   if (!intType || (intType.getWidth() != 32 && intType.getWidth() != 64) ||
-      !signednessAttr)
+      !signednessAttr) {
     return {};
+  }
   auto signedness = cast<pto::SignednessAttr>(signednessAttr).getValue();
   return std::string(signedness == pto::Signedness::Unsigned ? "u" : "s") +
          std::to_string(intType.getWidth());
@@ -4045,8 +4133,9 @@ static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
   auto getElementSuffix = [&]() -> std::string {
     if ((isa<IntegerType>(elementType) &&
          cast<IntegerType>(elementType).getWidth() == 64) ||
-        elementType.isF64())
+        elementType.isF64()) {
       return "s32";
+    }
     return getCopyElementFragment(elementType);
   };
 
@@ -4076,9 +4165,10 @@ static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
 
 static StringRef buildCopyUbToGmCallee(MLIRContext *context,
                                        const std::string &march) {
-  if (march == "dav-c220-vec")
+  if (march == "dav-c220-vec") {
     return StringAttr::get(context, "llvm.hivm.MOV.UB.TO.OUT.v220.1")
         .getValue();
+  }
   return StringAttr::get(context, "llvm.hivm.MOV.UB.TO.OUT.ALIGN.V2.DV")
       .getValue();
 }
@@ -4162,8 +4252,9 @@ buildCopyGmToCbufMultiNd2NzCallee(MLIRContext *context, Type sourceType) {
 
 static std::string getDn2NzCopyElementFragment(Type type) {
   auto ptrType = dyn_cast<pto::PtrType>(type);
-  if (!ptrType)
+  if (!ptrType) {
     return {};
+  }
 
   Type elementType = ptrType.getElementType();
   std::string typeText;
@@ -4172,8 +4263,9 @@ static std::string getDn2NzCopyElementFragment(Type type) {
   os.flush();
   std::string lower = StringRef(typeText).lower();
   if (StringRef(lower).contains("e4m3") || StringRef(lower).contains("e5m2") ||
-      StringRef(lower).contains("e8m0") || StringRef(lower).contains("hif8"))
+      StringRef(lower).contains("e8m0") || StringRef(lower).contains("hif8")) {
     return "u8";
+  }
 
   if (elementType.isF16() || elementType.isBF16())
   {
@@ -4309,12 +4401,14 @@ static FailureOr<StringRef> buildCopyMatrixCcToUbCallee(MLIRContext *context,
     return failure();
   }
   Type dstElem = ptrType.getElementType();
-  if (dstElem.isF16())
+  if (dstElem.isF16()) {
     return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f322f16.EXT")
         .getValue();
-  if (dstElem.isF32())
+  }
+  if (dstElem.isF32()) {
     return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f32.EXT")
         .getValue();
+  }
   return failure();
 }
 
@@ -4325,15 +4419,18 @@ static FailureOr<StringRef> buildCopyCbufToBtCallee(pto::CopyCbufToBtOp op) {
     return failure();
   }
   Type srcElem = ptrType.getElementType();
-  if (srcElem.isF16())
+  if (srcElem.isF16()) {
     return StringAttr::get(op.getContext(), "llvm.hivm.MOV.L1.TO.BT.f16")
         .getValue();
-  if (srcElem.isBF16())
+  }
+  if (srcElem.isBF16()) {
     return StringAttr::get(op.getContext(), "llvm.hivm.MOV.L1.TO.BT.bf16")
         .getValue();
-  if (srcElem.isF32())
+  }
+  if (srcElem.isF32()) {
     return StringAttr::get(op.getContext(), "llvm.hivm.MOV.L1.TO.BT.f32")
         .getValue();
+  }
   if (auto intType = dyn_cast<IntegerType>(srcElem);
       intType && intType.getWidth() == 32) {
     return StringAttr::get(op.getContext(), "llvm.hivm.MOV.L1.TO.BT.s32")
@@ -4438,6 +4535,17 @@ StringRef buildPredicatePairReorderCallee<pto::PintlvB32Op>(MLIRContext *context
 static FailureOr<StringRef> buildInterleaveCallee(MLIRContext *context,
                                                   Type resultType,
                                                   StringRef stem) {
+  // bf16x2 has no dedicated vintlv/vdintlv intrinsic: it is a 32-bit packed
+  // pair lowered to i32 at the LLVM ABI, and (de)interleave is a bit-level
+  // lane shuffle, so the <N x i32> intrinsic serves the <N x bf16x2> type.
+  if (pto::isPTOBF16x2Type(getElementTypeFromVectorLike(resultType))) {
+    auto lanes = getElementCountFromVectorLike(resultType);
+    if (lanes) {
+      return StringAttr::get(context, "llvm.hivm." + stem.str() + ".v" +
+                                          std::to_string(*lanes) + "i32")
+          .getValue();
+}
+  }
   return buildLaneTypedCallee(context, resultType, stem, "");
 }
 
@@ -4681,11 +4789,9 @@ buildBlockStridedMemoryCallee(MLIRContext *context, Type vectorType,
   if (auto intType = dyn_cast<IntegerType>(elementType))
   {
     element = "i" + std::to_string(intType.getWidth());
-  }
-  else if (isLowpPayloadElementType(elementType))
+  } else if (isLowpPayloadElementType(elementType)) {
     element = "i8";
-  else
-  {
+  } else {
     element = getMemoryElementTypeFragment(elementType);
   }
   if (element.empty())
@@ -4869,8 +4975,9 @@ static FailureOr<StringRef> buildVmulscvtCallee(MLIRContext *context,
     return failure();
   }
   if (!inputElemType.isF32() || !resultElemType.isF16() || *inputLanes != 64 ||
-      *resultLanes != 128)
+      *resultLanes != 128) {
     return failure();
+  }
   return StringAttr::get(context, "llvm.hivm.vmulscvt.v128f16").getValue();
 }
 
@@ -4882,10 +4989,11 @@ static FailureOr<StringRef> buildVciCallee(MLIRContext *context, Type resultType
   {
     return failure();
   }
-  if (vec == "f16" || vec == "f32")
+  if (vec == "f16" || vec == "f32") {
     return StringAttr::get(context, "llvm.hivm.vci.v" + std::to_string(*lanes) +
                                         vec + "." + vec)
         .getValue();
+  }
   return StringAttr::get(context,
                          "llvm.hivm.vci.v" + std::to_string(*lanes) + vec)
       .getValue();
@@ -4959,11 +5067,9 @@ static FailureOr<Value> packVmrgsort4SourceAddr(Operation *anchor, Value source0
   if (elemType.isF16())
   {
     addrShift = 3;
-  }
-  else if (elemType.isF32())
+  } else if (elemType.isF32()) {
     addrShift = 3;
-  else
-  {
+  } else {
     return failure();
   }
 
@@ -5393,9 +5499,10 @@ public:
 
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert unary result type");
+    }
 
     Value input = adaptor.getOperands()[0];
     Value mask = adaptor.getOperands()[1];
@@ -5626,9 +5733,10 @@ public:
     StringRef stem = getBinaryMaskedStem<BinaryOp>();
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert binary result type");
+    }
 
     Value lhs = adaptor.getOperands()[0];
     Value rhs = adaptor.getOperands()[1];
@@ -5657,9 +5765,10 @@ public:
         if (failed(calleeName)) {
           Type carrierType = getLowpPayloadCarrierType(
               op.getResult().getType(), rewriter.getContext());
-          if (!carrierType)
+          if (!carrierType) {
             return rewriter.notifyMatchFailure(
                 op, "unsupported low-precision binary payload ABI");
+          }
           callResultType = carrierType;
           callLhs = castToPayloadABI(op.getLoc(), lhs,
                                      op.getResult().getType(), rewriter);
@@ -5706,17 +5815,19 @@ public:
     StringRef stem = getTernaryMaskedStem<TernaryOp>();
     FailureOr<StringRef> calleeName =
         buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".m");
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported ternary VPTO signature");
+    }
 
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
     Type expectedMaskType =
         this->getTypeConverter()->convertType(op.getMask().getType());
-    if (!resultType || !expectedMaskType)
+    if (!resultType || !expectedMaskType) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert ternary VPTO types");
+    }
 
     Value acc = adaptor.getAcc();
     Value lhs = adaptor.getLhs();
@@ -5764,21 +5875,24 @@ public:
         this->getTypeConverter()->convertType(op.getResult().getType());
     Type carryType =
         this->getTypeConverter()->convertType(op->getResult(1).getType());
-    if (!resultType || !carryType)
+    if (!resultType || !carryType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert carry result types");
+    }
 
     SmallVector<Value> callArgs;
     callArgs.append(adaptor.getOperands().begin(), adaptor.getOperands().end());
     const size_t expectedArgCount = hasCarryInput<CarryOp>() ? 4 : 3;
     if (callArgs.size() != expectedArgCount || callArgs[0].getType() != resultType ||
-        callArgs[1].getType() != resultType || callArgs.back().getType() != carryType)
+        callArgs[1].getType() != resultType || callArgs.back().getType() != carryType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted carry operand types");
+    }
     if constexpr (hasCarryInput<CarryOp>()) {
-      if (callArgs[2].getType() != carryType)
+      if (callArgs[2].getType() != carryType) {
         return rewriter.notifyMatchFailure(
             op, "unexpected converted carry input operand type");
+      }
     }
 
     auto call = rewriter.create<func::CallOp>(
@@ -5813,11 +5927,10 @@ public:
     }
 
     FailureOr<StringRef> calleeName = failure();
-    if constexpr (isGmUb)
+    if constexpr (isGmUb) {
       calleeName = buildCopyGmToUbCallee(op.getContext(), op.getSource().getType(),
                                          march, hasPadding);
-    else
-    {
+    } else {
       calleeName = buildCopyUbToGmCallee(op.getContext(), march);
     }
     if (failed(calleeName))
@@ -5844,10 +5957,9 @@ public:
     if (useA3NonPadded)
     {
       config0 = packCopyGmToUbCfgV220(op, adaptor.getOperands());
-    }
-    else if (useA3UbGm)
+    } else if (useA3UbGm) {
       config0 = packCopyUbToGmCfgV220(op, adaptor.getOperands());
-    else if constexpr (isGmUb) {
+    } else if constexpr (isGmUb) {
       config0 = packCopyGmToUbConfig0(op, adaptor.getOperands());
       config1 = packCopyGmToUbConfig1(op, adaptor.getOperands());
     } else {
@@ -5895,33 +6007,32 @@ public:
     auto ptrType = mlir::cast<pto::PtrType>(op.getSrc0().getType());
     Type elemType = ptrType.getElementType();
     std::string elemFrag = getElementTypeFragment(elemType);
-    if (elemFrag.empty())
+    if (elemFrag.empty()) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for ubuf binary op");
+    }
 
     std::string calleeName;
     if constexpr (std::is_same_v<UBOp, pto::UBVaddOp>)
     {
       calleeName = "llvm.hivm.VADD." + elemFrag;
-    }
-    else if constexpr (std::is_same_v<UBOp, pto::UBVsubOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVsubOp>) {
       calleeName = "llvm.hivm.VSUB." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVmulOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVmulOp>) {
       calleeName = "llvm.hivm.VMUL." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVdivOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVdivOp>) {
       calleeName = "llvm.hivm.VDIV." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVmaxOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVmaxOp>) {
       calleeName = "llvm.hivm.VMAX." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVminOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVminOp>) {
       calleeName = "llvm.hivm.VMIN." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVandOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVandOp>) {
       calleeName = "llvm.hivm.VAND." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVorOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVorOp>) {
       calleeName = "llvm.hivm.VOR." + elemFrag;
-    else if constexpr (std::is_same_v<UBOp, pto::UBVaddReluOp>)
+    } else if constexpr (std::is_same_v<UBOp, pto::UBVaddReluOp>) {
       calleeName = "llvm.hivm.VADDRELU." + elemFrag;
-    else
-    {
+    } else {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf binary op");
     }
 
@@ -5931,9 +6042,10 @@ public:
     if (!dst || !src0 || !src1 ||
         !isa<LLVM::LLVMPointerType>(dst.getType()) ||
         !isa<LLVM::LLVMPointerType>(src0.getType()) ||
-        !isa<LLVM::LLVMPointerType>(src1.getType()))
+        !isa<LLVM::LLVMPointerType>(src1.getType())) {
       return rewriter.notifyMatchFailure(
           op, "unexpected converted ubuf binary operand types");
+    }
 
     Location loc = op.getLoc();
     auto i64Ty = rewriter.getI64Type();
@@ -5997,26 +6109,25 @@ public:
     auto ptrType = mlir::cast<pto::PtrType>(op.getSrc().getType());
     Type elemType = ptrType.getElementType();
     std::string elemFrag = getElementTypeFragment(elemType);
-    if (elemFrag.empty())
+    if (elemFrag.empty()) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for ubuf shift op");
+    }
 
     if (elemFrag == "s16")
     {
       elemFrag = "u16";
-    }
-    else if (elemFrag == "s32")
+    } else if (elemFrag == "s32") {
       elemFrag = "u32";
+    }
 
     std::string calleeName;
     if constexpr (std::is_same_v<ShiftOp, pto::UBVshlOp>)
     {
       calleeName = "llvm.hivm.VSHL." + elemFrag;
-    }
-    else if constexpr (std::is_same_v<ShiftOp, pto::UBVshrOp>)
+    } else if constexpr (std::is_same_v<ShiftOp, pto::UBVshrOp>) {
       calleeName = "llvm.hivm.VSHR." + elemFrag;
-    else
-    {
+    } else {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf shift op");
     }
 
@@ -6024,9 +6135,10 @@ public:
     Value src = adaptor.getSrc();
     if (!dst || !src ||
         !isa<LLVM::LLVMPointerType>(dst.getType()) ||
-        !isa<LLVM::LLVMPointerType>(src.getType()))
+        !isa<LLVM::LLVMPointerType>(src.getType())) {
       return rewriter.notifyMatchFailure(
           op, "unexpected converted ubuf shift operand types");
+    }
 
     Location loc = op.getLoc();
     auto i64Ty = rewriter.getI64Type();
@@ -6104,24 +6216,23 @@ public:
     auto ptrType = mlir::cast<pto::PtrType>(op.getSrc().getType());
     Type elemType = ptrType.getElementType();
     std::string elemFrag = getElementTypeFragment(elemType);
-    if (elemFrag.empty())
+    if (elemFrag.empty()) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for ubuf scalar mul op");
+    }
 
     // Scalar-tile ops keep signed intrinsic names (s16/s32).
     std::string calleeName;
     if constexpr (std::is_same_v<ScalarOp, pto::UBVmulSOp>)
     {
       calleeName = "llvm.hivm.VMULS." + elemFrag;
-    }
-    else if constexpr (std::is_same_v<ScalarOp, pto::UBVaddSOp>)
+    } else if constexpr (std::is_same_v<ScalarOp, pto::UBVaddSOp>) {
       calleeName = "llvm.hivm.VADDS." + elemFrag;
-    else if constexpr (std::is_same_v<ScalarOp, pto::UBVmaxSOp>)
+    } else if constexpr (std::is_same_v<ScalarOp, pto::UBVmaxSOp>) {
       calleeName = "llvm.hivm.VMAXS." + elemFrag;
-    else if constexpr (std::is_same_v<ScalarOp, pto::UBVminSOp>)
+    } else if constexpr (std::is_same_v<ScalarOp, pto::UBVminSOp>) {
       calleeName = "llvm.hivm.VMINS." + elemFrag;
-    else
-    {
+    } else {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf scalar binary op");
     }
 
@@ -6129,9 +6240,10 @@ public:
     Value src = adaptor.getSrc();
     if (!dst || !src ||
         !isa<LLVM::LLVMPointerType>(dst.getType()) ||
-        !isa<LLVM::LLVMPointerType>(src.getType()))
+        !isa<LLVM::LLVMPointerType>(src.getType())) {
       return rewriter.notifyMatchFailure(
           op, "unexpected converted ubuf scalar binary operand types");
+    }
 
     Location loc = op.getLoc();
     auto i64Ty = rewriter.getI64Type();
@@ -6213,11 +6325,9 @@ public:
     if (elemType.isF32() || elemType.isInteger(32))
     {
       suffix = "u32";
-    }
-    else if (elemType.isF16() || elemType.isInteger(16))
+    } else if (elemType.isF16() || elemType.isInteger(16)) {
       suffix = "u16";
-    else
-    {
+    } else {
       return rewriter.notifyMatchFailure(op, "unsupported element type for ubuf vdup");
     }
 
@@ -6283,9 +6393,10 @@ public:
     auto ptrType = mlir::cast<pto::PtrType>(op.getSrc().getType());
     Type elemType = ptrType.getElementType();
     std::string elemFrag = getElementTypeFragment(elemType);
-    if (elemFrag.empty())
+    if (elemFrag.empty()) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for ubuf unary op");
+    }
 
     if (elemFrag == "s16")
     {
@@ -6296,24 +6407,23 @@ public:
     if constexpr (std::is_same_v<UnaryOp, pto::UBVnotOp>)
     {
       calleeName = "llvm.hivm.VNOT." + elemFrag;
-    }
-    else if constexpr (std::is_same_v<UnaryOp, pto::UBVabsOp>)
+    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVabsOp>) {
       calleeName = "llvm.hivm.VABS." + elemFrag;
-    else if constexpr (std::is_same_v<UnaryOp, pto::UBVreluOp>) {
-      if (elemFrag == "u16" || elemFrag == "u32")
+    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVreluOp>) {
+      if (elemFrag == "u16" || elemFrag == "u32") {
         return rewriter.notifyMatchFailure(
             op, "VRELU not available for unsigned integer types");
+      }
       calleeName = "llvm.hivm.VRELU." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVexpOp>)
+    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVexpOp>) {
       calleeName = "llvm.hivm.VEXP." + elemFrag;
-    else if constexpr (std::is_same_v<UnaryOp, pto::UBVlnOp>)
+    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVlnOp>) {
       calleeName = "llvm.hivm.VLN." + elemFrag;
-    else if constexpr (std::is_same_v<UnaryOp, pto::UBVsqrtOp>)
+    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVsqrtOp>) {
       calleeName = "llvm.hivm.VSQRT." + elemFrag;
-    else if constexpr (std::is_same_v<UnaryOp, pto::UBVrsqrtOp>)
+    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVrsqrtOp>) {
       calleeName = "llvm.hivm.VRSQRT." + elemFrag;
-    else
-    {
+    } else {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf unary op");
     }
 
@@ -6321,9 +6431,10 @@ public:
     Value src = adaptor.getSrc();
     if (!dst || !src ||
         !isa<LLVM::LLVMPointerType>(dst.getType()) ||
-        !isa<LLVM::LLVMPointerType>(src.getType()))
+        !isa<LLVM::LLVMPointerType>(src.getType())) {
       return rewriter.notifyMatchFailure(
           op, "unexpected converted ubuf unary operand types");
+    }
 
     Location loc = op.getLoc();
     auto i64Ty = rewriter.getI64Type();
@@ -6521,8 +6632,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
@@ -6579,8 +6691,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned ubufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::VEC);
@@ -6627,8 +6740,9 @@ static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
   Value biasRaw = op.hasBiasOperand() ? convertedOperands[3] : Value();
   Value xt = convertedOperands[op.hasBiasOperand() ? 4 : 3];
   if (!lhsRaw || !rhsRaw || !dstRaw || !xt ||
-      (op.hasBiasOperand() && !biasRaw))
+      (op.hasBiasOperand() && !biasRaw)) {
     return rewriter.notifyMatchFailure(op, "expected converted mad raw operands");
+  }
 
   if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
       !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
@@ -6666,9 +6780,10 @@ static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
   FailureOr<StringRef> calleeName =
       op.isMadMxFamily() ? buildMxMadCallee(op.getContext(), op)
                          : buildOrdinaryMadCallee(op.getContext(), op);
-  if (failed(calleeName))
+  if (failed(calleeName)) {
     return rewriter.notifyMatchFailure(
         op, "unsupported mad element types for raw dispatch");
+  }
 
   Value callDst = *dst;
   if (biasRaw)
@@ -6757,16 +6872,18 @@ public:
 
     FailureOr<StringRef> calleeName =
         buildCopyGmToCbufCallee(op.getContext(), op.getSource().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported copy_gm_to_cbuf element type");
+    }
     FailureOr<Value> config0 =
         packCopyGmToCbufConfig0(op, nBurst, lenBurst);
     FailureOr<Value> config1 =
         packCopyGmToCbufConfig1(op, srcStride, dstStride);
-    if (failed(config0) || failed(config1))
+    if (failed(config0) || failed(config1)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to pack copy_gm_to_cbuf config");
+    }
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty},
@@ -6802,8 +6919,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned gmAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::GM);
@@ -6838,9 +6956,10 @@ public:
       }
       return buildCopyGmToCbufMultiDn2NzCallee(ctx, sourceType);
     }(op.getContext(), op.getSource().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported copy_gm_to_cbuf_multi element type");
+    }
 
     Type i64Ty = rewriter.getI64Type();
     auto funcType = rewriter.getFunctionType(
@@ -6876,8 +6995,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
@@ -6940,8 +7060,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
@@ -6999,8 +7120,9 @@ public:
     Value srcStride = adaptor.getSrcStride();
     Value dstStride = adaptor.getDstStride();
     if (!sourceRaw || !destinationRaw || !mStart || !kStart || !mStep ||
-        !kStep || !srcStride || !dstStride)
+        !kStep || !srcStride || !dstStride) {
       return rewriter.notifyMatchFailure(op, "expected converted operands");
+    }
 
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
         !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
@@ -7034,9 +7156,10 @@ public:
 
     FailureOr<StringRef> calleeName =
         buildLoadCbufToCaCallee(op.getContext(), op.getSource().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported load_cbuf_to_ca element type");
+    }
     auto funcType = rewriter.getFunctionType(
         TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty,
                   i64Ty},
@@ -7071,8 +7194,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
@@ -7113,9 +7237,10 @@ public:
                                         op.getSource().getType())
             : buildLoadCbufToCbS4Callee(op.getContext(),
                                         op.getSource().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported load_cbuf_to_*_s4 element type");
+    }
     Type i64Ty = rewriter.getI64Type();
     auto funcType = rewriter.getFunctionType(
         TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty,
@@ -7154,8 +7279,9 @@ public:
     Value srcStride = adaptor.getSrcStride();
     Value dstStride = adaptor.getDstStride();
     if (!sourceRaw || !destinationRaw || !mStart || !kStart || !mStep ||
-        !kStep || !srcStride || !dstStride)
+        !kStep || !srcStride || !dstStride) {
       return rewriter.notifyMatchFailure(op, "expected converted operands");
+    }
 
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
         !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
@@ -7190,9 +7316,10 @@ public:
 
     FailureOr<StringRef> calleeName =
         buildLoadCbufToCbCallee(op.getContext(), op.getSource().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported load_cbuf_to_cb element type");
+    }
     auto funcType = rewriter.getFunctionType(
         TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty,
                   i64Ty},
@@ -7226,11 +7353,13 @@ public:
     if (!srcRaw || !dstRaw || !adaptor.getXStartPosition() ||
         !adaptor.getYStartPosition() || !adaptor.getXStep() ||
         !adaptor.getYStep() || !adaptor.getSrcStride() ||
-        !adaptor.getDstStride())
+        !adaptor.getDstStride()) {
       return rewriter.notifyMatchFailure(op, "expected converted operands");
+    }
     if (!isa<LLVM::LLVMPointerType>(srcRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(dstRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(dstRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
@@ -7245,9 +7374,10 @@ public:
 
     Type sourceElemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
     unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(sourceElemType);
-    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0)
+    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported load_cbuf_to_ca_mx element type");
+    }
     FailureOr<Value> config0 =
         packLoadCbufToCaConfig0(op, adaptor.getXStartPosition(),
                                 adaptor.getYStartPosition(), adaptor.getXStep(),
@@ -7255,9 +7385,10 @@ public:
     FailureOr<Value> config1 =
         packLoadCbufToCaConfig1(op, adaptor.getSrcStride(),
                                 adaptor.getDstStride());
-    if (failed(config0) || failed(config1))
+    if (failed(config0) || failed(config1)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to pack load_cbuf_to_ca_mx config");
+    }
     auto i64Ty = rewriter.getI64Type();
     Value dstAddr = rewriter.create<LLVM::PtrToIntOp>(op.getLoc(), i64Ty, *dst);
 
@@ -7293,11 +7424,13 @@ public:
     if (!srcRaw || !dstRaw || !adaptor.getXStartPosition() ||
         !adaptor.getYStartPosition() || !adaptor.getXStep() ||
         !adaptor.getYStep() || !adaptor.getSrcStride() ||
-        !adaptor.getDstStride())
+        !adaptor.getDstStride()) {
       return rewriter.notifyMatchFailure(op, "expected converted operands");
+    }
     if (!isa<LLVM::LLVMPointerType>(srcRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(dstRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(dstRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
@@ -7312,9 +7445,10 @@ public:
 
     Type sourceElemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
     unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(sourceElemType);
-    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0)
+    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported load_cbuf_to_cb_mx element type");
+    }
     FailureOr<Value> config0 =
         packLoadCbufToCbConfig0(op, adaptor.getXStartPosition(),
                                 adaptor.getYStartPosition(), adaptor.getXStep(),
@@ -7322,9 +7456,10 @@ public:
     FailureOr<Value> config1 =
         packLoadCbufToCbConfig1(op, adaptor.getSrcStride(),
                                 adaptor.getDstStride());
-    if (failed(config0) || failed(config1))
+    if (failed(config0) || failed(config1)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to pack load_cbuf_to_cb_mx config");
+    }
     auto i64Ty = rewriter.getI64Type();
     Value dstAddr = rewriter.create<LLVM::PtrToIntOp>(op.getLoc(), i64Ty, *dst);
 
@@ -7421,8 +7556,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected converted operands");
     }
     if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType()))
+        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
+    }
 
     constexpr unsigned ccAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::ACC);
@@ -7452,9 +7588,10 @@ public:
             ? FailureOr<StringRef>(buildCopyMatrixCcToCbufCallee(op.getContext()))
             : buildCopyMatrixCcToUbCallee(op.getContext(),
                                           op.getDestination().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported copy_matrix_cc_to_{cbuf,ub} element type");
+    }
     auto funcType = rewriter.getFunctionType(
         TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty},
         TypeRange{});
@@ -7485,15 +7622,17 @@ public:
     StringRef stem = getVecScalarMaskedStem<VecScalarOp>();
     FailureOr<StringRef> calleeName =
         buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".x");
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported vec-scalar VPTO signature");
+    }
 
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert vec-scalar result type");
+    }
 
     Value input = adaptor.getOperands()[0];
     Value scalar = adaptor.getOperands()[1];
@@ -7534,9 +7673,10 @@ public:
     StringRef stem = getReductionUnaryStem<ReductionOp>();
     FailureOr<StringRef> calleeName =
         buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".x");
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported reduction VPTO signature");
+    }
 
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
@@ -7634,17 +7774,19 @@ public:
     FailureOr<StringRef> calleeName =
         buildExtremaPredicateCallee<ExtremaOp>(op.getContext(),
                                                op.getValue().getType());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported extrema-predicate VPTO signature");
+    }
 
     Type valueType =
         this->getTypeConverter()->convertType(op.getValue().getType());
     Type predicateType =
         this->getTypeConverter()->convertType(op.getPredicate().getType());
-    if (!valueType || !predicateType)
+    if (!valueType || !predicateType) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert extrema-predicate result types");
+    }
 
     Value input = adaptor.getInput();
     Value mask = adaptor.getMask();
@@ -7682,18 +7824,20 @@ public:
     FailureOr<StringRef> calleeName = buildLaneTypedCalleeFromInput(
         op.getContext(), op.getInput().getType(),
         getReductionUnaryStem<ReductionOp>(), ".x");
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported widening reduction VPTO signature");
+    }
 
     Type inputType =
         this->getTypeConverter()->convertType(op.getInput().getType());
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
     Type maskType = this->getTypeConverter()->convertType(op.getMask().getType());
-    if (!inputType || !resultType || !maskType)
+    if (!inputType || !resultType || !maskType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert widening reduction types");
+    }
 
     Value input = adaptor.getInput();
     Value mask = adaptor.getMask();
@@ -7784,9 +7928,10 @@ public:
     }
 
     Value mask = adaptor.getMask();
-    if (!mask || mask.getType() != maskType)
+    if (!mask || mask.getType() != maskType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vdup mask type");
+    }
 
     SmallVector<Value> callArgs;
     bool vectorInput = isa<VectorType, pto::VRegType>(op.getInput().getType());
@@ -7809,9 +7954,10 @@ public:
       FailureOr<Value> normalizedScalar =
           normalizeVdupScalarOperand(rewriter, op.getLoc(), adaptor.getInput(),
                                      op.getResult().getType());
-      if (failed(normalizedScalar))
+      if (failed(normalizedScalar)) {
         return rewriter.notifyMatchFailure(op,
                                            "failed to normalize scalar vdup input");
+      }
       Value scalarForCall = normalizeByteScalarOperandForHivmCall(
           rewriter, op.getLoc(), *normalizedScalar, scalarType);
       callArgs.push_back(scalarForCall);
@@ -7858,9 +8004,10 @@ public:
     Value scalar = adaptor.getValue();
     Type expectedScalarType =
         this->getTypeConverter()->convertType(op.getValue().getType());
-    if (!scalar || !expectedScalarType || scalar.getType() != expectedScalarType)
+    if (!scalar || !expectedScalarType || scalar.getType() != expectedScalarType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vbr operand type");
+    }
 
     scalar = normalizeByteScalarOperandForHivmCall(
         rewriter, op.getLoc(), scalar,
@@ -7897,14 +8044,16 @@ public:
     }
 
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vselr result type");
+    }
     auto lanes = getElementCountFromVectorLike(resultType);
     Type resultElementType = getElementTypeFromVectorLike(resultType);
-    if (!lanes || !resultElementType)
+    if (!lanes || !resultElementType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vselr result type");
+    }
 
     Type intrinsicResultType = resultType;
     if (auto floatType = dyn_cast<FloatType>(resultElementType);
@@ -7912,24 +8061,28 @@ public:
       intrinsicResultType = VectorType::get({*lanes}, rewriter.getI32Type());
     }
     if (Type carrierType = getLowpPayloadCarrierType(
-            op.getResult().getType(), rewriter.getContext()))
+            op.getResult().getType(), rewriter.getContext())) {
       intrinsicResultType = carrierType;
+    }
 
     Type indexType = this->getTypeConverter()->convertType(op.getSrc1().getType());
-    if (!indexType)
+    if (!indexType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vselr index type");
+    }
 
     Value src0 = adaptor.getSrc0();
     Value src1 = adaptor.getSrc1();
-    if (!src0 || !src1 || src1.getType() != indexType)
+    if (!src0 || !src1 || src1.getType() != indexType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vselr operand types");
+    }
 
     if (src0.getType() != intrinsicResultType) {
-      if (src0.getType() != resultType)
+      if (src0.getType() != resultType) {
         return rewriter.notifyMatchFailure(op,
                                            "unexpected converted vselr source type");
+      }
       src0 = rewriter.create<LLVM::BitcastOp>(op.getLoc(), intrinsicResultType, src0);
     }
 
@@ -7963,9 +8116,10 @@ public:
   matchAndRewrite(pto::PnotOp op, pto::PnotOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert pnot result type");
+    }
 
     Value input = adaptor.getInput();
     Value mask = adaptor.getMask();
@@ -8003,9 +8157,10 @@ public:
     StringRef stem = std::is_same_v<InterleaveOp, pto::VintlvOp> ? "vintlv" : "vdintlv";
     FailureOr<StringRef> calleeName =
         buildInterleaveCallee(op.getContext(), op.getLow().getType(), stem);
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported interleave VPTO signature");
+    }
 
     Type lowType = this->getTypeConverter()->convertType(op.getLow().getType());
     Type highType = this->getTypeConverter()->convertType(op.getHigh().getType());
@@ -8047,19 +8202,22 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-pack result type");
+    }
 
     auto part = parseHiLoPartImmediate(op.getPart());
-    if (!part)
+    if (!part) {
       return rewriter.notifyMatchFailure(
           op, "unsupported predicate-pack part immediate");
+    }
 
     Value input = adaptor.getInput();
-    if (!input || input.getType() != resultType)
+    if (!input || input.getType() != resultType) {
       return rewriter.notifyMatchFailure(
           op, "unexpected converted predicate-pack operand type");
+    }
 
     Value partValue = rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*part));
@@ -8091,16 +8249,18 @@ public:
                                                                : "vzunpack";
     FailureOr<StringRef> calleeName = buildUnpackCallee(
         op.getContext(), op.getSrc().getType(), op.getResult().getType(), stem);
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported unpack VPTO signature");
+    }
 
     Type srcType = this->getTypeConverter()->convertType(op.getSrc().getType());
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!srcType || !resultType)
+    if (!srcType || !resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert unpack types");
+    }
 
     Value src = adaptor.getSrc();
     if (!src || src.getType() != srcType) {
@@ -8193,9 +8353,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-mask result type");
+    }
 
     Value src0 = adaptor.getSrc0();
     Value src1 = adaptor.getSrc1();
@@ -8233,12 +8394,14 @@ public:
   matchAndRewrite(ReorderOp op, typename ReorderOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Type> resultTypes;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)))
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes))) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-pair-reorder result types");
-    if (resultTypes.size() != 2 || resultTypes[0] != resultTypes[1])
+    }
+    if (resultTypes.size() != 2 || resultTypes[0] != resultTypes[1]) {
       return rewriter.notifyMatchFailure(
           op, "unexpected predicate-pair-reorder converted result types");
+    }
 
     Value lhs = adaptor.getLhs();
     Value rhs = adaptor.getRhs();
@@ -8285,19 +8448,22 @@ public:
     FailureOr<StringRef> calleeName =
         buildVcmpCallee(op.getContext(), inputType, op.getCmpMode(),
                         isScalarCompare);
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported compare VPTO signature");
+    }
 
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
     Type maskType =
         this->getTypeConverter()->convertType(op.getMask().getType());
-    if (!resultType || !maskType)
+    if (!resultType || !maskType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert compare result type");
-    if (resultType != maskType)
+    }
+    if (resultType != maskType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected compare mask conversion");
+    }
 
     SmallVector<Value> callArgs;
     callArgs.append(adaptor.getOperands().begin(), adaptor.getOperands().end());
@@ -8379,15 +8545,17 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes)))
+                                                      resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert pltm result type");
+    }
 
     Value loop = adaptor.getLoop();
     Value bound = adaptor.getBound();
     if (!loop || !bound || !loop.getType().isInteger(16) ||
-        !bound.getType().isInteger(32))
+        !bound.getType().isInteger(32)) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted pltm operand types");
+    }
 
     StringRef calleeName = buildPltmCallee<PltmOp>(op.getContext());
     auto funcType = rewriter.getFunctionType(
@@ -8528,9 +8696,10 @@ public:
 
     bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     if (usePostIntrinsic) {
-      if (resultTypes.size() != 2 || resultTypes[1] != adaptor.getSource().getType())
+      if (resultTypes.size() != 2 || resultTypes[1] != adaptor.getSource().getType()) {
         return rewriter.notifyMatchFailure(op,
                                            "unsupported vlds post-update results");
+      }
     } else if (resultTypes.size() != 1) {
       return rewriter.notifyMatchFailure(op, "unsupported vlds result count");
     }
@@ -8565,10 +8734,11 @@ public:
     Value loaded = castFromPayloadABI(
         op.getLoc(), call.getResult(0), ptoResultType, resultTypes[0],
         rewriter);
-    if (usePostIntrinsic)
+    if (usePostIntrinsic) {
       rewriter.replaceOp(op, ValueRange{loaded, call.getResult(1)});
-    else
+    } else {
       rewriter.replaceOp(op, ValueRange{loaded});
+}
     return success();
   }
 
@@ -8646,10 +8816,11 @@ public:
     Value high = castFromPayloadABI(
         op.getLoc(), call.getResult(1), op.getHigh().getType(), resultTypes[1],
         rewriter);
-    if (usePostIntrinsic)
+    if (usePostIntrinsic) {
       rewriter.replaceOp(op, ValueRange{low, high, call.getResult(2)});
-    else
+    } else {
       rewriter.replaceOp(op, ValueRange{low, high});
+}
     return success();
   }
 
@@ -8678,8 +8849,9 @@ public:
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != (usePostIntrinsic ? 2u : 1u))
+        resultTypes.size() != (usePostIntrinsic ? 2u : 1u)) {
       return rewriter.notifyMatchFailure(op, "failed to convert vsldb result type");
+    }
 
     Type callResultType = getPayloadABIType(
         op.getResult().getType(), resultTypes[0], rewriter.getContext());
@@ -8710,10 +8882,11 @@ public:
     Value result = castFromPayloadABI(
         op.getLoc(), call.getResult(0), op.getResult().getType(), resultTypes[0],
         rewriter);
-    if (usePostIntrinsic)
+    if (usePostIntrinsic) {
       rewriter.replaceOp(op, ValueRange{result, call.getResult(1)});
-    else
+    } else {
       rewriter.replaceOp(op, ValueRange{result});
+}
     return success();
   }
 
@@ -8763,9 +8936,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto sourceType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!sourceType || !resultType)
+    if (!sourceType || !resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "expected converted vldas operand/result types");
+    }
 
     StringRef calleeName = buildVldasCallee(op.getContext());
     auto funcType =
@@ -8824,9 +8998,10 @@ public:
       Type elementType = getElementTypeFromVectorLike(op.getResult().getType());
       auto incrementBytes =
           convertElementOffsetToBytes(op, adaptor.getIncrement(), elementType);
-      if (failed(incrementBytes))
+      if (failed(incrementBytes)) {
         return rewriter.notifyMatchFailure(op,
                                            "failed to convert vldus increment");
+      }
       args.push_back(*incrementBytes);
     }
     SmallVector<Type> argTypes;
@@ -8901,17 +9076,19 @@ public:
     }
     auto destType =
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
-    if (!destType || !adaptor.getOffset().getType().isInteger(32))
+    if (!destType || !adaptor.getOffset().getType().isInteger(32)) {
       return rewriter.notifyMatchFailure(op,
                                          "expected converted spr store operands");
+    }
 
     bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != (usePostIntrinsic ? 1u : 0u))
+        resultTypes.size() != (usePostIntrinsic ? 1u : 0u)) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert spr store result types");
+    }
 
     StringRef calleeName =
         buildSprStoreCallee<SprStoreOp>(op.getContext(), usePostIntrinsic);
@@ -8961,9 +9138,9 @@ public:
     if (auto ptrType = dyn_cast<pto::PtrType>(op.getDestination().getType()))
     {
       offsetElementType = ptrType.getElementType();
-    }
-    else if (auto memrefType = dyn_cast<BaseMemRefType>(op.getDestination().getType()))
+    } else if (auto memrefType = dyn_cast<BaseMemRefType>(op.getDestination().getType())) {
       offsetElementType = memrefType.getElementType();
+    }
     auto offsetBytes =
         convertElementOffsetToBytes(op, adaptor.getOffset(), offsetElementType);
     auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
@@ -8985,14 +9162,16 @@ public:
 
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes)))
+                                                      resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert vsts result types");
+    }
     bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     if (usePostIntrinsic) {
       if (resultTypes.size() != 1 ||
-          resultTypes[0] != adaptor.getDestination().getType())
+          resultTypes[0] != adaptor.getDestination().getType()) {
         return rewriter.notifyMatchFailure(op,
                                            "unsupported vsts post-update result");
+      }
     } else if (!resultTypes.empty()) {
       return rewriter.notifyMatchFailure(op, "unsupported vsts result count");
     }
@@ -9058,15 +9237,17 @@ public:
 
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes)))
+                                                      resultTypes))) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vsstb result types");
+    }
     bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     if (usePostIntrinsic) {
       if (resultTypes.size() != 1 ||
-          resultTypes[0] != adaptor.getDestination().getType())
+          resultTypes[0] != adaptor.getDestination().getType()) {
         return rewriter.notifyMatchFailure(
             op, "unsupported vsstb post-update result");
+      }
     } else if (!resultTypes.empty()) {
       return rewriter.notifyMatchFailure(op, "unsupported vsstb result count");
     }
@@ -9233,9 +9414,10 @@ public:
 
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes)))
+                                                      resultTypes))) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vstus result types");
+    }
     bool usePostIntrinsic = static_cast<bool>(op.getBaseOut());
     auto baseType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getBase().getType());
     if (!baseType || resultTypes.size() != (usePostIntrinsic ? 2u : 1u) ||
@@ -9247,9 +9429,10 @@ public:
 
     FailureOr<StringRef> calleeName =
         buildVstusCallee(op.getContext(), op.getValue().getType());
-    if (usePostIntrinsic)
+    if (usePostIntrinsic) {
       calleeName =
           buildVstusPostCallee(op.getContext(), op.getValue().getType());
+    }
     if (failed(calleeName))
     {
       return rewriter.notifyMatchFailure(op, "unsupported vstus signature");
@@ -9379,9 +9562,10 @@ public:
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != (usePostIntrinsic ? 1u : 0u))
+        resultTypes.size() != (usePostIntrinsic ? 1u : 0u)) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert vstas result types");
+    }
 
     StringRef calleeName =
         buildVstasCallee(op.getContext(), usePostIntrinsic);
@@ -9424,9 +9608,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Type elemType = getElementTypeFromVectorLike(op.getResult().getType());
     auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
-    if (!elemType || !basePtr)
+    if (!elemType || !basePtr) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vgather2 operand types");
+    }
 
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
     if (!resultType)
@@ -9450,9 +9635,10 @@ public:
     {
       return rewriter.notifyMatchFailure(op, "unsupported vgather2 offsets carrier");
     }
-    if (offsets.getType() != *offsetsCarrierType)
+    if (offsets.getType() != *offsetsCarrierType) {
       offsets = rewriter.create<LLVM::BitcastOp>(op.getLoc(), *offsetsCarrierType,
                                                  offsets);
+    }
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getSource().getType(), *offsetsCarrierType,
@@ -9483,9 +9669,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!basePtr || !resultType)
+    if (!basePtr || !resultType) {
       return rewriter.notifyMatchFailure(op,
-          "unexpected converted vgather2_bc operand/result types");
+                                         "unexpected converted vgather2_bc operand/result types");
+    }
 
     FailureOr<StringRef> calleeName =
         buildVgather2BcCallee(op.getContext(), op.getResult().getType());
@@ -9523,9 +9710,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!basePtr || !resultType)
+    if (!basePtr || !resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vgatherb operand/result types");
+    }
 
     FailureOr<StringRef> calleeName =
         buildVgatherbCallee(op.getContext(), op.getResult().getType());
@@ -9564,9 +9752,10 @@ public:
     Type elemType = getElementTypeFromVectorLike(op.getValue().getType());
     auto basePtr =
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
-    if (!elemType || !basePtr)
+    if (!elemType || !basePtr) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vscatter operand types");
+    }
 
     FailureOr<StringRef> calleeName =
         buildVscatterCallee(op.getContext(), op.getValue().getType());
@@ -9660,9 +9849,10 @@ public:
     {
       return rewriter.notifyMatchFailure(op, "vmulscvt requires valid rnd attr");
     }
-    if (*roundMode != 1)
+    if (*roundMode != 1) {
       return rewriter.notifyMatchFailure(
           op, "current vmulscvt lowering only supports rnd A");
+    }
 
     auto part = parsePartImmediate(op.getPart());
     if (!part)
@@ -9672,9 +9862,10 @@ public:
 
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vmulscvt result type");
+    }
 
     FailureOr<StringRef> calleeName =
         buildVmulscvtCallee(op.getContext(), op.getInput().getType(),
@@ -9736,14 +9927,15 @@ public:
     if (auto intType = dyn_cast<IntegerType>(resultElemType)) {
       if (intType.getWidth() == 8) {
         Type loweredIndexType = rewriter.getI16Type();
-        if (intType.isUnsigned())
+        if (intType.isUnsigned()) {
           indexValue = rewriter.create<arith::ExtUIOp>(op.getLoc(),
                                                        loweredIndexType,
                                                        indexValue);
-        else
+        } else {
           indexValue = rewriter.create<arith::ExtSIOp>(op.getLoc(),
                                                        loweredIndexType,
                                                        indexValue);
+}
       }
     }
 
@@ -9828,9 +10020,10 @@ public:
     auto srcType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
     auto idxType =
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getIndices().getType());
-    if (!dstType || !srcType || !idxType)
+    if (!dstType || !srcType || !idxType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vbitsort operand types");
+    }
 
     FailureOr<Value> config = packVbitsortConfig(op, adaptor.getRepeatTimes());
     if (failed(config))
@@ -9882,18 +10075,20 @@ public:
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource2().getType());
     auto src3Type =
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource3().getType());
-    if (!dstType || !src0Type || !src1Type || !src2Type || !src3Type)
+    if (!dstType || !src0Type || !src1Type || !src2Type || !src3Type) {
       return rewriter.notifyMatchFailure(
           op, "unexpected converted vmrgsort4 operand types");
+    }
 
     Type elemType =
         cast<pto::PtrType>(op.getDestination().getType()).getElementType();
     FailureOr<Value> packedSrc = packVmrgsort4SourceAddr(
         op, adaptor.getSource0(), adaptor.getSource1(), adaptor.getSource2(),
         adaptor.getSource3(), elemType);
-    if (failed(packedSrc))
+    if (failed(packedSrc)) {
       return rewriter.notifyMatchFailure(
           op, "failed to pack vmrgsort4 source addresses");
+    }
 
     FailureOr<Value> dst = reinterpretPointerToAddrSpace(op, adaptor.getDestination(), 6);
     if (failed(dst))
@@ -10032,11 +10227,19 @@ public:
   LogicalResult
   matchAndRewrite(pto::VbitcastOp op, pto::VbitcastOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    // A vbitcast whose result has no users is a dead noop (Pure). Erase it
+    // instead of emitting an LLVM bitcast the device compiler may not lower
+    // (e.g. bf16x2 <-> bf16 physical views).
+    if (op->use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vbitcast result type");
+}
     rewriter.replaceOpWithNewOp<LLVM::BitcastOp>(op, resultType,
                                                  adaptor.getInput());
     return success();
@@ -10055,9 +10258,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert pbitcast result type");
+    }
     if (adaptor.getInput().getType() != resultType) {
       return rewriter.notifyMatchFailure(
           op, "pbitcast expects identical lowered input/result types");
@@ -10126,27 +10330,31 @@ public:
     auto llvmDestType =
         dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
     Type valueType = this->getTypeConverter()->convertType(op.getValue().getType());
-    if (!llvmDestType || !valueType)
+    if (!llvmDestType || !valueType) {
       return rewriter.notifyMatchFailure(
           op, "expected converted predicate-store operand types");
+    }
 
     auto dist = parsePredicateStoreDistImmediate(op.getDist());
-    if (!dist)
+    if (!dist) {
       return rewriter.notifyMatchFailure(
           op, "unsupported predicate-store dist immediate");
+    }
 
     Value offset = castIntegerLikeTo(op, adaptor.getOffset(), rewriter.getI32Type());
-    if (!offset)
+    if (!offset) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-store offset to i32");
+    }
 
     bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != (usePostIntrinsic ? 1u : 0u))
+        resultTypes.size() != (usePostIntrinsic ? 1u : 0u)) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-store result types");
+    }
 
     StringRef calleeName =
         getPredicateStoreCallee<StoreOp>(op.getContext(), usePostIntrinsic);
@@ -10198,22 +10406,26 @@ public:
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != (usePostIntrinsic ? 2u : 1u))
+        resultTypes.size() != (usePostIntrinsic ? 2u : 1u)) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-load result types");
-    if (!llvmSourceType)
+    }
+    if (!llvmSourceType) {
       return rewriter.notifyMatchFailure(
           op, "expected converted predicate-load operand/result types");
+    }
 
     auto dist = parsePredicateLoadDistImmediate(op.getDist());
-    if (!dist)
+    if (!dist) {
       return rewriter.notifyMatchFailure(
           op, "unsupported predicate-load dist immediate");
+    }
 
     Value offset = castIntegerLikeTo(op, adaptor.getOffset(), rewriter.getI32Type());
-    if (!offset)
+    if (!offset) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert predicate-load offset to i32");
+    }
 
     StringRef calleeName =
         getPredicateLoadCallee<LoadOp>(op.getContext(), usePostIntrinsic);
@@ -10258,9 +10470,10 @@ public:
     } else {
       packed = packLoopPair(op, adaptor.getFirst(), adaptor.getSecond());
     }
-    if (failed(packed))
+    if (failed(packed)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to pack loop configuration");
+    }
 
     StringRef calleeName = buildSetLoopCallee<LoopOp>(op.getContext());
     auto funcType =
@@ -10289,9 +10502,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     FailureOr<Value> encoded =
         encodeMovPadValue(op.getLoc(), adaptor.getValue(), rewriter);
-    if (failed(encoded))
+    if (failed(encoded)) {
       return rewriter.notifyMatchFailure(
           op, "expected 8/16/32-bit integer or float mov-pad payload");
+    }
 
     StringRef calleeName = buildUnaryConfigCallee<ConfigOp>(op.getContext());
     auto funcType =
@@ -10454,10 +10668,11 @@ static std::string buildSimtKeepResumeConstraints(
     {
       os << ",";
     }
-    if (physicalReg.registerCount == 2)
+    if (physicalReg.registerCount == 2) {
       os << "={TPERL" << physicalReg.baseRegister / 2 << "}";
-    else
+    } else {
       os << "={TPER" << physicalReg.baseRegister << "}";
+}
   }
   if (tieInputs) {
     for (size_t index = 0; index < physicalRegs.size(); ++index)
@@ -10510,17 +10725,18 @@ static Value packSimtKeepResumePayload(Location loc, Value value,
                                        ConversionPatternRewriter &rewriter) {
   Type type = value.getType();
   std::optional<unsigned> width = getSimtKeepResumeBitWidth(type);
-  if (!width)
+  if (!width) {
     return {};
+  }
 
   Type intType = rewriter.getIntegerType(*width);
   Value bits = value;
   if (!isa<IntegerType>(type))
   {
     bits = rewriter.create<LLVM::BitcastOp>(loc, intType, value);
-  }
-  else if (bits.getType() != intType)
+  } else if (bits.getType() != intType) {
     bits = rewriter.create<LLVM::BitcastOp>(loc, intType, bits);
+  }
   if (*width < 32)
   {
     return rewriter.create<LLVM::ZExtOp>(loc, rewriter.getI32Type(), bits);
@@ -10536,17 +10752,18 @@ static Value unpackSimtKeepResumePayload(Location loc, Value value,
                                          Type resultType,
                                          ConversionPatternRewriter &rewriter) {
   std::optional<unsigned> width = getSimtKeepResumeBitWidth(resultType);
-  if (!width)
+  if (!width) {
     return {};
+  }
 
   Type intType = rewriter.getIntegerType(*width);
   Value bits = value;
   if (*width < 32)
   {
     bits = rewriter.create<LLVM::TruncOp>(loc, intType, bits);
-  }
-  else if (bits.getType() != intType)
+  } else if (bits.getType() != intType) {
     bits = rewriter.create<LLVM::BitcastOp>(loc, intType, bits);
+  }
 
   if (isa<IntegerType>(resultType)) {
     if (bits.getType() == resultType)
@@ -10612,9 +10829,10 @@ public:
   matchAndRewrite(pto::KeepOp op, pto::KeepOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    if (hasPreviousSameOp(op.getOperation()))
+    if (hasPreviousSameOp(op.getOperation())) {
       return rewriter.notifyMatchFailure(
           op, "only the first keep in a contiguous group is lowered");
+    }
 
     SmallVector<pto::KeepOp, 4> keepOps = collectConsecutiveOps(op);
     SmallVector<Value, 4> payloads;
@@ -10627,35 +10845,38 @@ public:
         return rewriter.notifyMatchFailure(keep, "payload is not remapped");
       }
       payload = packSimtKeepResumePayload(keep.getLoc(), payload, rewriter);
-      if (!payload)
+      if (!payload) {
         return rewriter.notifyMatchFailure(
             keep, "expected integer scalar up to 64 bits or f16/bf16/f32");
+      }
       int64_t slot = keep.getSlot();
       unsigned registerCount =
           getSimtKeepResumeRegisterCount(payload.getType());
-      if (!isValidSimtKeepResumeSlot(slot, registerCount))
+      if (!isValidSimtKeepResumeSlot(slot, registerCount)) {
         return rewriter.notifyMatchFailure(
             keep,
             "slot must be in range [0, 122] and 64-bit slots must be even");
+      }
       logicalSlots.push_back({slot, registerCount});
       payloads.push_back(payload);
       asmResultTypes.push_back(payload.getType());
     }
     FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>> physicalRegs =
         computeSimtKeepResumePhysicalRegs(logicalSlots);
-    if (failed(physicalRegs))
+    if (failed(physicalRegs)) {
       return rewriter.notifyMatchFailure(
           op, "keep slots must map to valid non-overlapping SIMT registers");
+    }
 
     Type asmResultType = asmResultTypes.front();
-    if (asmResultTypes.size() > 1)
+    if (asmResultTypes.size() > 1) {
       asmResultType =
           LLVM::LLVMStructType::getLiteral(op.getContext(), asmResultTypes);
+    }
     rewriter.setInsertionPoint(op);
     rewriter.create<LLVM::InlineAsmOp>(
         op.getLoc(), TypeRange{asmResultType}, payloads, "",
         buildSimtKeepResumeConstraints(*physicalRegs, true), true, false,
-        LLVM::tailcallkind::TailCallKind::None,
         LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
         ArrayAttr{});
     for (pto::KeepOp keep : llvm::reverse(keepOps))
@@ -10676,33 +10897,37 @@ public:
   matchAndRewrite(pto::ResumeOp op, pto::ResumeOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    if (hasPreviousSameOp(op.getOperation()))
+    if (hasPreviousSameOp(op.getOperation())) {
       return rewriter.notifyMatchFailure(
           op, "only the first resume in a contiguous group is lowered");
+    }
 
     SmallVector<pto::ResumeOp, 4> resumeOps = collectConsecutiveOps(op);
     SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
     SmallVector<Type, 4> asmResultTypes;
     for (pto::ResumeOp resume : resumeOps) {
       Type resultType = getTypeConverter()->convertType(resume.getType());
-      if (!resultType || !getSimtKeepResumeBitWidth(resultType))
+      if (!resultType || !getSimtKeepResumeBitWidth(resultType)) {
         return rewriter.notifyMatchFailure(
             resume, "expected integer scalar up to 64 bits or f16/bf16/f32");
+      }
       int64_t slot = resume.getSlot();
       unsigned registerCount = getSimtKeepResumeRegisterCount(resultType);
-      if (!isValidSimtKeepResumeSlot(slot, registerCount))
+      if (!isValidSimtKeepResumeSlot(slot, registerCount)) {
         return rewriter.notifyMatchFailure(
             resume,
             "slot must be in range [0, 122] and 64-bit slots must be even");
+      }
       logicalSlots.push_back({slot, registerCount});
       asmResultTypes.push_back(rewriter.getIntegerType(
           *getSimtKeepResumeBitWidth(resultType) > 32 ? 64 : 32));
     }
     FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>> physicalRegs =
         computeSimtKeepResumePhysicalRegs(logicalSlots);
-    if (failed(physicalRegs))
+    if (failed(physicalRegs)) {
       return rewriter.notifyMatchFailure(
           op, "resume slots must map to valid non-overlapping SIMT registers");
+    }
 
     Type asmResultType = asmResultTypes.front();
     if (asmResultTypes.size() > 1) {
@@ -10713,7 +10938,6 @@ public:
     auto asmOp = rewriter.create<LLVM::InlineAsmOp>(
         op.getLoc(), TypeRange{asmResultType}, ValueRange{}, "",
         buildSimtKeepResumeConstraints(*physicalRegs, false), true, false,
-        LLVM::tailcallkind::TailCallKind::None,
         LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
         ArrayAttr{});
 
@@ -10907,9 +11131,10 @@ public:
       eventValue = getI64Constant(rewriter, op.getLoc(), eventIdAttr.getInt());
     } else {
       Value eventIdDyn = adaptor.getEventIdDyn();
-      if (!eventIdDyn)
+      if (!eventIdDyn) {
         return rewriter.notifyMatchFailure(
             op, "expected static or dynamic event-id operand");
+      }
 
       eventValue = castIntegerLikeTo(op, eventIdDyn, rewriter.getI64Type());
       if (!eventValue) {
@@ -11105,14 +11330,16 @@ public:
       pipe = pipeAttr.getPipe();
     } else {
       auto opTypeOr = parseSyncOpTypeLikeAttr(op.getOpTypeAttr());
-      if (failed(opTypeOr))
+      if (failed(opTypeOr)) {
         return rewriter.notifyMatchFailure(
             op, "buffer sync expects pipe/sync_op_type/pipe_event_type attr");
+      }
       pipe = mapSyncOpTypeToPipe(*opTypeOr);
     }
-    if (!isConcreteSyncPipe(pipe))
+    if (!isConcreteSyncPipe(pipe)) {
       return rewriter.notifyMatchFailure(op,
                                          "buffer sync op_type cannot map to concrete pipe");
+    }
 
     auto pipeImm = parsePipeImmediate(stringifyPIPE(pipe));
     if (!pipeImm)
@@ -11158,14 +11385,16 @@ public:
       pipe = pipeAttr.getPipe();
     } else {
       auto opTypeOr = parseSyncOpTypeLikeAttr(op.getOpTypeAttr());
-      if (failed(opTypeOr))
+      if (failed(opTypeOr)) {
         return rewriter.notifyMatchFailure(
             op, "buffer sync expects pipe/sync_op_type/pipe_event_type attr");
+      }
       pipe = mapSyncOpTypeToPipe(*opTypeOr);
     }
-    if (!isConcreteSyncPipe(pipe))
+    if (!isConcreteSyncPipe(pipe)) {
       return rewriter.notifyMatchFailure(
           op, "buffer sync op_type cannot map to concrete pipe");
+    }
 
     auto pipeImm = parsePipeImmediate(stringifyPIPE(pipe));
     if (!pipeImm)
@@ -11175,13 +11404,15 @@ public:
 
     Value pipeValue = getI64Constant(rewriter, op.getLoc(), *pipeImm);
     Value bufIdDyn = adaptor.getBufId();
-    if (!bufIdDyn)
+    if (!bufIdDyn) {
       return rewriter.notifyMatchFailure(
           op, "expected dynamic buf-id operand");
+    }
     Value bufIdValue = castIntegerLikeTo(op, bufIdDyn, rewriter.getI64Type());
-    if (!bufIdValue)
+    if (!bufIdValue) {
       return rewriter.notifyMatchFailure(
           op, "failed to cast dynamic buf-id to i64");
+    }
 
     bool isGetBuf =
         std::is_same_v<BufDynSyncOp, pto::GetBufDynOp>;
@@ -11217,9 +11448,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert runtime-query result type");
+    }
 
     StringRef calleeName = buildRuntimeQueryCallee<QueryOp>(op.getContext());
     auto funcType = rewriter.getFunctionType(TypeRange{}, TypeRange{resultType});
@@ -11249,16 +11481,18 @@ public:
     (void)adaptor;
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert block runtime-query result type");
+    }
 
     auto funcOp = op->template getParentOfType<func::FuncOp>();
     bool isSimtEntry =
         funcOp && funcOp->hasAttr(pto::kPTOSimtEntryAttrName);
-    if (isSimtEntry && !resultType.isInteger(64))
+    if (isSimtEntry && !resultType.isInteger(64)) {
       return rewriter.notifyMatchFailure(
           op, "SIMT block runtime-query expects an i64 PTO result");
+    }
 
     StringRef calleeName =
         isSimtEntry ? buildSimtBlockQueryCallee<QueryOp>(op.getContext())
@@ -11443,9 +11677,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = this->getTypeConverter()->convertType(op.getOld().getType());
     Type valueType = this->getTypeConverter()->convertType(op.getValue().getType());
-    if (!resultType || !valueType || resultType != valueType)
+    if (!resultType || !valueType || resultType != valueType) {
       return rewriter.notifyMatchFailure(op,
                                          "unexpected atomic operand/result type");
+    }
 
     Type ptrType = this->getTypeConverter()->convertType(op.getPtr().getType());
     if (!ptrType)
@@ -11498,8 +11733,9 @@ public:
         this->getTypeConverter()->convertType(op.getCompare().getType());
     Type valueType = this->getTypeConverter()->convertType(op.getValue().getType());
     if (!resultType || !compareType || !valueType || resultType != compareType ||
-        resultType != valueType)
+        resultType != valueType) {
       return rewriter.notifyMatchFailure(op, "unexpected atomic CAS type");
+    }
 
     Type ptrType = this->getTypeConverter()->convertType(op.getPtr().getType());
     if (!ptrType)
@@ -11549,13 +11785,15 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes)))
+                                                      resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert scalar result types");
+    }
 
     SmallVector<Type> operandTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getOperandTypes(),
-                                                      operandTypes)))
+                                                      operandTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert scalar operand types");
+    }
 
     StringRef calleeName = buildScalarIntrinsicCallee<ScalarOp>(op.getContext());
     auto funcType = rewriter.getFunctionType(operandTypes, resultTypes);
@@ -11584,8 +11822,9 @@ public:
     Type lhsType = getTypeConverter()->convertType(op.getLhs().getType());
     Type rhsType = getTypeConverter()->convertType(op.getRhs().getType());
     if (!resultType || !lhsType || !rhsType || lhsType != resultType ||
-        rhsType != resultType)
+        rhsType != resultType) {
       return rewriter.notifyMatchFailure(op, "unexpected mulhi type");
+    }
 
     pto::Signedness signedness = op.getSignednessAttr().getValue();
     FailureOr<StringRef> calleeName =
@@ -11602,8 +11841,9 @@ public:
     }
 
     if (!op.getResult().getType().isInteger(64) ||
-        signedness != pto::Signedness::Signed)
+        signedness != pto::Signedness::Signed) {
       return rewriter.notifyMatchFailure(op, "unsupported mulhi signature");
+    }
 
     FailureOr<StringRef> unsignedCalleeName =
         buildMulhiCallee(op.getContext(), op.getResult().getType(),
@@ -11664,9 +11904,10 @@ public:
     FailureOr<StringRef> calleeName =
         buildMulI32ToI64Callee(op.getContext(),
                                op.getSignednessAttr().getValue());
-    if (failed(calleeName))
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op,
                                          "unsupported mul_i32toi64 signature");
+    }
 
     auto funcType =
         rewriter.getFunctionType(TypeRange{lhsType, rhsType}, TypeRange{resultType});
@@ -11773,8 +12014,9 @@ public:
     Type lhsType = this->getTypeConverter()->convertType(op.getLhs().getType());
     Type rhsType = this->getTypeConverter()->convertType(op.getRhs().getType());
     if (!resultType || !lhsType || !rhsType ||
-        lhsType != rhsType || lhsType != resultType)
+        lhsType != rhsType || lhsType != resultType) {
       return rewriter.notifyMatchFailure(op, "unexpected binary scalar math type");
+    }
 
     FailureOr<StringRef> calleeName =
         buildBinaryScalarMathCallee<BinaryOp>(op.getContext(), op.getLhs().getType());
@@ -11811,8 +12053,9 @@ public:
     Type rhsType = this->getTypeConverter()->convertType(op.getRhs().getType());
     Type accType = this->getTypeConverter()->convertType(op.getAcc().getType());
     if (!resultType || !lhsType || !rhsType || !accType ||
-        lhsType != rhsType || lhsType != accType || lhsType != resultType)
+        lhsType != rhsType || lhsType != accType || lhsType != resultType) {
       return rewriter.notifyMatchFailure(op, "unexpected fma scalar math type");
+    }
 
     FailureOr<StringRef> calleeName = buildFmaCallee(op.getContext(),
                                                      op.getLhs().getType());
@@ -11846,9 +12089,10 @@ public:
   matchAndRewrite(pto::ConvertOp op, pto::ConvertOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = getTypeConverter()->convertType(op.getDst().getType());
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert result type");
+    }
 
     FailureOr<StringRef> calleeName =
         buildConvertCallee(op.getContext(), op.getSrc().getType(),
@@ -11895,9 +12139,10 @@ public:
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
-        resultTypes.size() != 4)
+        resultTypes.size() != 4) {
       return rewriter.notifyMatchFailure(
           op, "failed to convert get_vms4_sr result types");
+    }
 
     StringRef calleeName = buildRuntimeQueryCallee<pto::GetVms4SrOp>(
         op.getContext());
@@ -11913,9 +12158,10 @@ public:
     Value raw = call.getResult(0);
     for (unsigned i = 0; i < 4; ++i) {
       Value shifted = raw;
-      if (i != 0)
+      if (i != 0) {
         shifted = rewriter.create<arith::ShRUIOp>(
             op.getLoc(), raw, getI64Constant(rewriter, op.getLoc(), i * 16));
+      }
       counts.push_back(rewriter.create<arith::TruncIOp>(
           op.getLoc(), resultTypes[i], shifted));
     }
@@ -11974,8 +12220,9 @@ public:
       return rewriter.notifyMatchFailure(op, "expected single-operand single-result cast");
     }
     if (!hasVPTOConvertibleType(op->getOperandTypes()) &&
-        !hasVPTOConvertibleType(op->getResultTypes()))
+        !hasVPTOConvertibleType(op->getResultTypes())) {
       return rewriter.notifyMatchFailure(op, "no VPTO convertible types");
+    }
 
     Type convertedResultType =
         getTypeConverter()->convertType(op.getResult(0).getType());
@@ -12037,15 +12284,17 @@ public:
     (void)adaptor;
     auto resultType = dyn_cast<LLVM::LLVMPointerType>(
         getTypeConverter()->convertType(op.getS().getType()));
-    if (!resultType)
+    if (!resultType) {
       return rewriter.notifyMatchFailure(op,
                                          "expected LLVM pointer result type");
+    }
     auto structType = cast<pto::StructType>(op.getS().getType());
     Type storageType = getVPTOStructStorageType(structType, rewriter);
     auto parentFunc = op->getParentOfType<func::FuncOp>();
-    if (!parentFunc)
+    if (!parentFunc) {
       return rewriter.notifyMatchFailure(
           op, "expected struct declaration inside a function");
+    }
 
     // A non-entry alloca is a dynamic stack allocation. Keep one stack slot per
     // declaration per function invocation even when the declaration is nested
@@ -12122,12 +12371,10 @@ public:
   LogicalResult
   matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (!hasVPTOConvertibleType(op->getOperandTypes()) &&
-        !hasVPTOConvertibleType(op->getResultTypes()))
-      return failure();
-    if (!op.getCondition().getType().isInteger(1))
+    if (!op.getCondition().getType().isInteger(1)) {
       return rewriter.notifyMatchFailure(
           op, "only scalar i1 conditions supported for VPTO arith.select");
+    }
 
     Type convertedResultType =
         getTypeConverter()->convertType(op.getResult().getType());
@@ -12139,9 +12386,10 @@ public:
     Value trueValue = adaptor.getTrueValue();
     Value falseValue = adaptor.getFalseValue();
     if (trueValue.getType() != convertedResultType ||
-        falseValue.getType() != convertedResultType)
+        falseValue.getType() != convertedResultType) {
       return rewriter.notifyMatchFailure(
           op, "converted true/false values must match result type");
+    }
 
     rewriter.replaceOpWithNewOp<arith::SelectOp>(
         op, convertedResultType, adaptor.getCondition(), trueValue,
@@ -12165,9 +12413,10 @@ public:
     }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     auto gep = rewriter.create<LLVM::GEPOp>(
         op.getLoc(), llvmPtrType,
@@ -12189,9 +12438,10 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Type convertedResultType =
         getTypeConverter()->convertType(op.getResult().getType());
-    if (!convertedResultType)
+    if (!convertedResultType) {
       return rewriter.notifyMatchFailure(op,
                                          "could not convert castptr result type");
+    }
 
     Value input = adaptor.getInput();
     Type inputType = input.getType();
@@ -12215,9 +12465,10 @@ public:
         return success();
       }
       auto sourcePtrType = dyn_cast<LLVM::LLVMPointerType>(inputType);
-      if (!sourcePtrType)
+      if (!sourcePtrType) {
         return rewriter.notifyMatchFailure(op,
                                            "expected integer, memref, or LLVM pointer input");
+      }
       if (sourcePtrType.getAddressSpace() == llvmPtrType.getAddressSpace()) {
         rewriter.replaceOpWithNewOp<LLVM::BitcastOp>(op, llvmPtrType, input);
         return success();
@@ -12253,14 +12504,16 @@ public:
 
     Type convertedValueType =
         getTypeConverter()->convertType(op.getValue().getType());
-    if (!convertedValueType)
+    if (!convertedValueType) {
       return rewriter.notifyMatchFailure(op,
                                          "could not convert load_scalar result type");
+    }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     Value elemPtr = adaptor.getPtr();
     if (!matchPattern(offset, m_Zero())) {
@@ -12293,9 +12546,10 @@ public:
     }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     Value elemPtr = adaptor.getPtr();
     if (!matchPattern(offset, m_Zero())) {
@@ -12336,9 +12590,10 @@ public:
     }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     Value elemPtr = adaptor.getPtr();
     if (!matchPattern(offset, m_Zero())) {
@@ -12401,9 +12656,10 @@ static Value convertLdgCallResult(Location loc, Type valueType,
                                   ConversionPatternRewriter &rewriter) {
   if (auto intType = dyn_cast<IntegerType>(valueType)) {
     unsigned width = intType.getWidth();
-    if (width == 8 || width == 16)
+    if (width == 8 || width == 16) {
       return rewriter.create<arith::TruncIOp>(
           loc, rewriter.getIntegerType(width), callResult);
+    }
     return callResult;
   }
 
@@ -12412,9 +12668,10 @@ static Value convertLdgCallResult(Location loc, Type valueType,
         rewriter.create<arith::TruncIOp>(loc, rewriter.getI16Type(), callResult);
     return rewriter.create<LLVM::BitcastOp>(loc, convertedValueType, payload);
   }
-  if (valueType.isF32() || valueType.isF64())
+  if (valueType.isF32() || valueType.isF64()) {
     return rewriter.create<LLVM::BitcastOp>(loc, convertedValueType,
                                             callResult);
+  }
   if (pto::isPTOFloat8Type(valueType) || pto::isPTOHiFloat8Type(valueType)) {
     Value payload =
         rewriter.create<arith::TruncIOp>(loc, rewriter.getI8Type(), callResult);
@@ -12457,9 +12714,10 @@ public:
     }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     Value elemPtr = adaptor.getPtr();
     if (!matchPattern(offset, m_Zero())) {
@@ -12530,9 +12788,10 @@ public:
     }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     Value elemPtr = adaptor.getPtr();
     if (!matchPattern(offset, m_Zero())) {
@@ -12583,15 +12842,18 @@ static Value convertStgValue(Location loc, Type valueType, Value value,
   }
   if (pto::isPTOPackedLdgStgVectorType(valueType)) {
     unsigned totalBits = pto::getPTOPackedLdgStgTotalBits(valueType);
-    if (totalBits == 16)
+    if (totalBits == 16) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getF16Type(),
                                               value);
-    if (totalBits == 32)
+    }
+    if (totalBits == 32) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getI32Type(),
                                               value);
-    if (totalBits == 64)
+    }
+    if (totalBits == 64) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getI64Type(),
                                               value);
+    }
   }
   return value;
 }
@@ -12613,9 +12875,10 @@ public:
     }
 
     Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex())
+    if (offset.getType().isIndex()) {
       offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
                                                      rewriter.getI64Type(), offset);
+    }
 
     Value elemPtr = adaptor.getPtr();
     if (!matchPattern(offset, m_Zero())) {
@@ -12684,21 +12947,24 @@ public:
     if (auto allocaOp = dyn_cast<LLVM::AllocaOp>(op))
     {
       propertyType = allocaOp.getElemType();
-    }
-    else if (auto gepOp = dyn_cast<LLVM::GEPOp>(op))
+    } else if (auto gepOp = dyn_cast<LLVM::GEPOp>(op)) {
       propertyType = gepOp.getElemType();
+    }
     if (!hasVPTOConvertibleType(op->getOperandTypes()) &&
         !hasVPTOConvertibleType(op->getResultTypes()) &&
-        !hasVPTOConvertibleType(propertyType))
+        !hasVPTOConvertibleType(propertyType)) {
       return failure();
-    if (op->getNumRegions() != 0)
+    }
+    if (op->getNumRegions() != 0) {
       return rewriter.notifyMatchFailure(
           op, "region ops with VPTO types are handled structurally");
+    }
 
     SmallVector<Type> convertedResultTypes;
     if (failed(typeConverter->convertTypes(op->getResultTypes(),
-                                           convertedResultTypes)))
+                                           convertedResultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert result types");
+    }
     OperationState state(op->getLoc(), op->getName());
     state.addOperands(operands);
     state.addTypes(convertedResultTypes);
@@ -12708,9 +12974,10 @@ public:
     Operation *converted = rewriter.create(state);
     if (propertyType) {
       Type convertedPropertyType = typeConverter->convertType(propertyType);
-      if (!convertedPropertyType)
+      if (!convertedPropertyType) {
         return rewriter.notifyMatchFailure(
             op, "failed to convert LLVM element type");
+      }
       if (auto allocaOp = dyn_cast<LLVM::AllocaOp>(converted))
       {
         allocaOp.setElemType(convertedPropertyType);
@@ -13189,13 +13456,15 @@ static void foldVPTOTypeCasts(ModuleOp module, TypeConverter &typeConverter) {
       return;
     }
     if (!hasVPTOConvertibleType(castOp->getOperandTypes()) &&
-        !hasVPTOConvertibleType(castOp->getResultTypes()))
+        !hasVPTOConvertibleType(castOp->getResultTypes())) {
       return;
+    }
     Type convertedResultType =
         typeConverter.convertType(castOp.getResult(0).getType());
     if (convertedResultType &&
-        convertedResultType == castOp.getOperand(0).getType())
+        convertedResultType == castOp.getOperand(0).getType()) {
       castsToFold.push_back(castOp);
+    }
   });
   for (UnrealizedConversionCastOp castOp : castsToFold) {
     castOp.getResult(0).replaceAllUsesWith(castOp.getOperand(0));
@@ -13248,6 +13517,10 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
         return isLegalForBranchOpInterfaceTypeConversionPattern(op,
                                                                 typeConverter);
       });
+  target.addDynamicallyLegalOp<arith::SelectOp>([&](arith::SelectOp op) {
+    return typeConverter.isLegal(op->getOperandTypes()) &&
+           typeConverter.isLegal(op->getResultTypes());
+  });
   target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::LoadScalarOp,
                       pto::StoreScalarOp, pto::PTOLoadOp, pto::PTOStoreOp,
                       pto::PTOLdgOp, pto::PTOStgOp, pto::DeclareStructOp,
@@ -13334,11 +13607,11 @@ static void normalizeFuncSignaturesForOfficialLLVMLowering(ModuleOp module) {
       continue;
     }
     Block &entry = funcOp.getBody().front();
-    for (auto [arg, newType] : llvm::zip(entry.getArguments(), newInputs))
-      if (arg.getType() != newType)
-      {
+    for (auto [arg, newType] : llvm::zip(entry.getArguments(), newInputs)) {
+      if (arg.getType() != newType) {
         arg.setType(newType);
       }
+    }
   }
 }
 
@@ -13412,13 +13685,11 @@ makeDeviceEmissionOptions(const VPTOEmissionOptions &baseOptions,
     if (options.march == "dav-c220-vec")
     {
       options.defaultTargetFeatures = kC220VecTargetFeatures.str();
-    }
-    else if (options.march == "dav-c220-cube")
+    } else if (options.march == "dav-c220-cube") {
       options.defaultTargetFeatures = kC220CubeTargetFeatures.str();
-    else if (kind == FunctionKernelKind::Cube)
+    } else if (kind == FunctionKernelKind::Cube) {
       options.defaultTargetFeatures = kCubeTargetFeatures.str();
-    else
-    {
+    } else {
       options.defaultTargetFeatures = kVecTargetFeatures.str();
     }
   }
@@ -13465,11 +13736,9 @@ static void mergeDeviceModulesByKernelKind(ModuleOp module) {
     if (*kernelKind == FunctionKernelKind::Vector)
     {
       target = &vectorModule;
-    }
-    else if (*kernelKind == FunctionKernelKind::Cube)
+    } else if (*kernelKind == FunctionKernelKind::Cube) {
       target = &cubeModule;
-    else
-    {
+    } else {
       continue;
     }
 
@@ -13506,10 +13775,9 @@ static LogicalResult renameKernelFunctionsForKernelKind(ModuleOp module,
   if (*kernelKind == FunctionKernelKind::Vector)
   {
     suffix = kVectorSuffix;
-  }
-  else if (*kernelKind == FunctionKernelKind::Cube)
+  } else if (*kernelKind == FunctionKernelKind::Cube) {
     suffix = kCubeSuffix;
-  else {
+  } else {
     diagOS << "VPTO LLVM emission failed: unsupported "
            << FunctionKernelKindAttr::name << "\n";
     return failure();
@@ -13685,8 +13953,9 @@ emitDeviceLLVMModule(ModuleOp deviceModule, StringRef kernelKind,
                      const VPTOEmissionOptions &options,
                      const llvm::StringSet<llvm::BumpPtrAllocator> &simtEntryNames,
                      llvm::raw_ostream &diagOS) {
-  if (!deviceModule)
+  if (!deviceModule) {
     return EmittedLLVMModule{};
+  }
   if (failed(applyQueriedTargetAttrs(deviceModule, options, diagOS)))
   {
     return failure();
@@ -13751,7 +14020,7 @@ static LogicalResult runPipeline(ModuleOp module, const std::string &march,
   kernelModulePM.addPass(
       std::make_unique<NormalizeFuncSignaturesForLLVMLoweringPass>());
   kernelModulePM.addPass(arith::createArithExpandOpsPass());
-  kernelModulePM.addPass(createSCFToControlFlowPass());
+  kernelModulePM.addPass(createConvertSCFToCFPass());
   kernelModulePM.addPass(createArithToLLVMConversionPass());
   kernelModulePM.addPass(createConvertIndexToLLVMPass());
   kernelModulePM.addPass(createFinalizeMemRefToLLVMConversionPass());

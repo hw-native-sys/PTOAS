@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+// The f4x2 -> bf16x2 widen has no rounding or saturate semantics: rounding
+// is only valid for fp-narrowing or fp-to-int, and saturate only for
+// fp-narrow / int-narrow.
+// Reject both at the unified vcvt verifier.
+
+module {
+  func.func @widen_rounding_invalid(
+      %s: !pto.vmi.vreg<256x!pto.f4E1M2x2>) {
+    // expected-error@+1 {{'rounding' attribute is only valid for floating-point narrowing or floating-point-to-integer conversions}}
+    %r = pto.vmi.vcvt %s {rounding = "R"}
+        : !pto.vmi.vreg<256x!pto.f4E1M2x2> -> !pto.vmi.vreg<256x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @widen_saturate_invalid(
+      %s: !pto.vmi.vreg<256x!pto.f4E1M2x2>) {
+    // expected-error@+1 {{'saturate' attribute is only valid for fp-narrow / int-narrow conversions}}
+    %r = pto.vmi.vcvt %s {saturate = "SAT"}
+        : !pto.vmi.vreg<256x!pto.f4E1M2x2> -> !pto.vmi.vreg<256x!pto.bf16x2>
+    return
+  }
+}

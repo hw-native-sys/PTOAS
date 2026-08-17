@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// -----------------------------------------------------------------------------
+// case: vmi_new/quant-bf16x2-to-f4x2-tail
+// family: conversion
+// target_ops: pto.vmi.vcvt (bf16x2 -> f4E1M2x2)
+// scenarios: tail / partial-register handling. 1000 bf16 (= 500 f4x2) processed
+//            in 4 chunks of 128 pairs with a create_mask covering the remaining
+//            pairs; the last chunk (116 pairs) exercises predicated store.
+// -----------------------------------------------------------------------------
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_quant_bf16x2_to_f4x2_tail_kernel(%src_gm: !pto.ptr<bf16, gm>,
+                                                  %dst_gm: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c128 = arith.constant 128 : index
+    %c512 = arith.constant 512 : index
+    %c500 = arith.constant 500 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_dst_u8 = pto.castptr %c2048_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_dst_f4 = pto.castptr %c2048_i64 : i64 -> !pto.ptr<!pto.f4E1M2x2, ub>
+
+    // src buffer: 1024 bf16 = 2048 bytes (1000 logical); dst: 512 f4x2 = 512 bytes.
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c2048_i64
+      nburst(%c1_i64, %c2048_i64, %c2048_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %dst_gm, %ub_dst_u8, %c0_i64, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      %_:1 = scf.for %offset = %c0 to %c512 step %c128 iter_args(%rem = %c500) -> (index) {
+        %mask = pto.vmi.create_mask %rem : index -> !pto.vmi.mask<128xpred>
+        %src_off = arith.muli %offset, %c2 : index
+        %wide = pto.vmi.vload %ub_src[%src_off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+        %pair = pto.vmi.vinterpret_cast %wide
+            : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128x!pto.bf16x2>
+        %packed = pto.vmi.vcvt %pair {rounding = "R"}
+            : !pto.vmi.vreg<128x!pto.bf16x2> -> !pto.vmi.vreg<128x!pto.f4E1M2x2>
+        pto.vmi.vstore %packed, %ub_dst_f4[%offset], %mask
+            : !pto.vmi.vreg<128x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>,
+              !pto.vmi.mask<128xpred>
+        %next = arith.subi %rem, %c128 : index
+        scf.yield %next : index
+      }
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst_u8, %dst_gm, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

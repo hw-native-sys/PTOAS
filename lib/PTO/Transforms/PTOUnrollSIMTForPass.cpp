@@ -151,10 +151,10 @@ struct PTOUnrollSIMTFor : public pto::impl::PTOUnrollSIMTForBase<PTOUnrollSIMTFo
     patterns.add<UnrollSIMTForPattern>(ctx);
 
     GreedyRewriteConfig config;
-    config.setMaxIterations(10); // loops may nest
-    config.setStrictness(GreedyRewriteStrictness::ExistingOps);
+    config.maxIterations = 10; // loops may nest
+    config.strictMode = GreedyRewriteStrictness::ExistingOps;
 
-    if (failed(applyPatternsGreedily(func, std::move(patterns), config)))
+    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns), config)))
       signalPassFailure();
   }
 };

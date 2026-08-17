@@ -52,7 +52,9 @@ void Buffer::appendU32LE(uint32_t v) {
 
 uint64_t StringTable::intern(const std::string& s) {
   auto it = toId.find(s);
-  if (it != toId.end()) return it->second;
+  if (it != toId.end()) {
+    return it->second;
+  }
   uint64_t id = fromId.size();
   fromId.push_back(s);
   toId.emplace(s, id);
@@ -63,7 +65,9 @@ static std::vector<uint8_t> buildSection(uint8_t id, const std::vector<uint8_t>&
   Buffer b;
   b.appendU8(id);
   b.appendU32LE(uint32_t(data.size()));
-  if (!data.empty()) b.append(data.data(), data.size());
+  if (!data.empty()) {
+    b.append(data.data(), data.size());
+  }
   return std::move(b.bytes);
 }
 
@@ -108,7 +112,9 @@ std::vector<uint8_t> PTOBCFile::buildConstPoolSection() const {
   writeULEB128(consts.size(), b.bytes);
   for (const auto &c : consts) {
     b.appendU8(c.tag);
-    if (!c.payload.empty()) b.append(c.payload.data(), c.payload.size());
+    if (!c.payload.empty()) {
+      b.append(c.payload.data(), c.payload.size());
+    }
   }
   return b.bytes;
 }
@@ -123,7 +129,9 @@ std::vector<uint8_t> PTOBCFile::buildDebugInfoSection() const {
     b.appendU8(f.hashKind);
     if (f.hashKind != 0) {
       writeULEB128(f.hashBytes.size(), b.bytes);
-      if (!f.hashBytes.empty()) b.append(f.hashBytes.data(), f.hashBytes.size());
+      if (!f.hashBytes.empty()) {
+        b.append(f.hashBytes.data(), f.hashBytes.size());
+      }
     }
   }
 
@@ -197,14 +205,18 @@ std::vector<uint8_t> PTOBCFile::serialize() const {
 
 std::vector<uint8_t> readFile(const std::string& path) {
   std::ifstream ifs(path, std::ios::binary);
-  if (!ifs) throw std::runtime_error("Failed to open: " + path);
+  if (!ifs) {
+    throw std::runtime_error("Failed to open: " + path);
+  }
   std::vector<uint8_t> buf((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
   return buf;
 }
 
 void writeFile(const std::string& path, const std::vector<uint8_t>& data) {
   std::ofstream ofs(path, std::ios::binary);
-  if (!ofs) throw std::runtime_error("Failed to write: " + path);
+  if (!ofs) {
+    throw std::runtime_error("Failed to write: " + path);
+  }
   ofs.write(reinterpret_cast<const char*>(data.data()), data.size());
 }
 

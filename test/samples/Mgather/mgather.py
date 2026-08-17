@@ -6,6 +6,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
+import os
+
 from ptoas.mlir.ir import Attribute, Context, Location, Module, InsertionPoint, StringAttr, UnitAttr
 from ptoas.mlir.dialects import func, arith, pto
 from ptoas.mlir.ir import IndexType, IntegerType
@@ -17,7 +19,10 @@ def build():
 
         with Location.unknown(ctx):
             m = Module.create()
-            m.operation.attributes["pto.target_arch"] = StringAttr.get("a5")
+            # partition_view -> MGATHER reproduces issue #1165 on both A3 and A5.
+            # runop.sh threads the resolved arch in via PTOAS_SAMPLE_ARCH.
+            arch = os.environ.get("PTOAS_SAMPLE_ARCH", "a5")
+            m.operation.attributes["pto.target_arch"] = StringAttr.get(arch)
 
             i32 = IntegerType.get_signless(32, ctx)
             ptr_i32 = pto.PtrType.get(i32, ctx)

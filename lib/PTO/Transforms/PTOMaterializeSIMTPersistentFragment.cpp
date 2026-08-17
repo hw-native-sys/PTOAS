@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "SIMTPersistentFragmentAnalysis.h"
@@ -105,10 +106,12 @@ static LogicalResult rewireScalarAccess(Operation *access,
 
 // Return the scalar or vector value type carried by an LLVM memory access.
 static FailureOr<Type> getPersistentAccessType(Operation *access) {
-  if (auto load = dyn_cast<LLVM::LoadOp>(access))
+  if (auto load = dyn_cast<LLVM::LoadOp>(access)) {
     return load.getRes().getType();
-  if (auto store = dyn_cast<LLVM::StoreOp>(access))
+  }
+  if (auto store = dyn_cast<LLVM::StoreOp>(access)) {
     return store.getValue().getType();
+  }
   access->emitOpError(
       "expected an llvm.load or llvm.store persistent fragment access");
   return failure();
@@ -120,8 +123,9 @@ static LogicalResult validateAccessRewritePlan(
         &laneRewritesByAccess) {
   for (auto &[access, laneRewrites] : laneRewritesByAccess) {
     FailureOr<Type> accessType = getPersistentAccessType(access);
-    if (failed(accessType))
+    if (failed(accessType)) {
       return failure();
+    }
 
     llvm::sort(laneRewrites, [](const PersistentLaneRewrite &lhs,
                                 const PersistentLaneRewrite &rhs) {
@@ -129,8 +133,9 @@ static LogicalResult validateAccessRewritePlan(
     });
 
     unsigned expectedLaneCount = 1;
-    if (auto vectorType = dyn_cast<VectorType>(*accessType))
+    if (auto vectorType = dyn_cast<VectorType>(*accessType)) {
       expectedLaneCount = static_cast<unsigned>(vectorType.getNumElements());
+    }
 
     if (laneRewrites.size() != expectedLaneCount) {
       return access->emitOpError()
@@ -153,8 +158,9 @@ static LogicalResult validateAccessRewritePlan(
 static bool
 isFragmentActiveInSection(const PersistentFragmentAnalysis &fragment,
                           pto::SectionSimtOp section) {
-  if (fragment.initSection == section)
+  if (fragment.initSection == section) {
     return true;
+  }
   return llvm::any_of(fragment.carrySections, [&](pto::SectionSimtOp carry) {
     return carry == section;
   });
@@ -179,8 +185,9 @@ validateSectionWorklist(const PersistentMaterializationPlan &plan,
 
   unsigned expectedElementIndex = 0;
   for (const PersistentFragmentAnalysis &fragment : plan.fragments) {
-    if (!isFragmentActiveInSection(fragment, section))
+    if (!isFragmentActiveInSection(fragment, section)) {
       continue;
+    }
 
     for (const ResidentElementPlan &expectedElement :
          fragment.residentElements) {
@@ -262,13 +269,15 @@ buildPersistentTransformWorklist(const PersistentMaterializationPlan &plan,
                                  PersistentTransformWorklist &worklist) {
   worklist.sections.clear();
   worklist.sections.reserve(plan.sections.size());
-  for (pto::SectionSimtOp section : plan.sections)
+  for (pto::SectionSimtOp section : plan.sections) {
     worklist.sections.emplace_back(section);
+  }
 
   llvm::DenseMap<Operation *, PersistentSectionWorklist *> worklistBySection;
   for (PersistentSectionWorklist &sectionWorklist : worklist.sections) {
-    if (!sectionWorklist.section)
+    if (!sectionWorklist.section) {
       return failure();
+    }
     auto [it, inserted] = worklistBySection.try_emplace(
         sectionWorklist.section.getOperation(), &sectionWorklist);
     (void)it;
@@ -318,20 +327,22 @@ if (accessSection == section) {
       }
       return success();
     };
-
-    if (failed(addToSection(fragment.initSection)))
+    if (failed(addToSection(fragment.initSection))) {
       return failure();
+    }
     for (pto::SectionSimtOp section : fragment.carrySections) {
-      if (failed(addToSection(section)))
+      if (failed(addToSection(section))) {
         return failure();
+      }
     }
   }
 
   llvm::DenseMap<Operation *, llvm::DenseSet<unsigned>> assignedAccessLanes;
   for (PersistentSectionWorklist &sectionWorklist : worklist.sections) {
     if (failed(validateSectionWorklist(plan, sectionWorklist,
-                                       assignedAccessLanes)))
+                                       assignedAccessLanes))) {
       return failure();
+    }
   }
 
   for (const PersistentFragmentAnalysis &fragment : plan.fragments) {
@@ -362,8 +373,9 @@ static LogicalResult rewritePersistentAccess(
     Operation *access, ArrayRef<PersistentLaneRewrite> laneRewrites,
     MutableArrayRef<PersistentElementRewrite> elementRewrites) {
   FailureOr<Type> accessType = getPersistentAccessType(access);
-  if (failed(accessType))
+  if (failed(accessType)) {
     return failure();
+  }
 
   if (!isa<VectorType>(*accessType)) {
     assert(laneRewrites.size() == 1 && laneRewrites.front().laneIndex == 0 &&
@@ -432,7 +444,7 @@ materializeSection(const PersistentSectionWorklist &sectionWorklist,
   Value proxyArraySize;
   if (hasLocalAccess) {
     proxyArraySize = entryBuilder.create<arith::ConstantIntOp>(section.getLoc(),
-                                                               1, /*width=*/32);
+                                                               1, /*width=*/mlir::pto::kValue32);
   }
 
   // Emit the complete resume prologue before proxy setup so the group remains
@@ -484,8 +496,9 @@ materializeSection(const PersistentSectionWorklist &sectionWorklist,
     if (accessIt == laneRewritesByAccess.end()) {
       continue;
     }
-    if (failed(rewritePersistentAccess(&op, accessIt->second, rewrites)))
+    if (failed(rewritePersistentAccess(&op, accessIt->second, rewrites))) {
       return failure();
+    }
     ++rewrittenAccessCount;
   }
   if (rewrittenAccessCount != laneRewritesByAccess.size()) {
@@ -561,8 +574,9 @@ static LogicalResult eraseDeadPersistentGEPs(Value pointer) {
   }
 
   for (LLVM::GEPOp gep : derivedPointers) {
-    if (failed(eraseDeadPersistentGEPs(gep.getRes())))
+    if (failed(eraseDeadPersistentGEPs(gep.getRes()))) {
       return failure();
+    }
     if (!gep.getRes().use_empty()) {
       return gep.emitOpError(
           "persistent fragment derived pointer still has live uses after "
@@ -580,14 +594,16 @@ materializePersistentFragments(func::FuncOp func, DominanceInfo &dominance,
                                const PersistentTransformWorklist &worklist) {
   DataLayout dataLayout = DataLayout::closest(func);
   for (const PersistentSectionWorklist &sectionWorklist : worklist.sections) {
-    if (failed(materializeSection(sectionWorklist, dataLayout, dominance)))
+    if (failed(materializeSection(sectionWorklist, dataLayout, dominance))) {
       return failure();
+    }
   }
 
   for (const PersistentFragmentAnalysis &fragment : plan.fragments) {
     LLVM::AllocaOp allocaOp = fragment.allocaOp;
-    if (failed(eraseDeadPersistentGEPs(allocaOp.getRes())))
+    if (failed(eraseDeadPersistentGEPs(allocaOp.getRes()))) {
       return failure();
+    }
     if (!allocaOp.getRes().use_empty()) {
       return allocaOp.emitOpError(
           "persistent fragment still has live uses after materialization");
@@ -613,8 +629,9 @@ struct PTOMaterializeSIMTPersistentFragmentPass
     }
 
     const PersistentMaterializationPlan &plan = analysis.getPlan();
-    if (plan.fragments.empty())
+    if (plan.fragments.empty()) {
       return;
+    }
 
     // Convert the fragment/element-oriented analysis plan into a validated,
     // section/operation-oriented worklist before any IR mutation.

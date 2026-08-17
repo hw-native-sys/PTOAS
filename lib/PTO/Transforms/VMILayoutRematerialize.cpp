@@ -9,6 +9,7 @@
 //===- VMILayoutRematerialize.cpp - Rematerialize VMI producers ----------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
@@ -47,8 +48,9 @@ static bool hasConcreteLayout(VMIMaskType type) {
 static Value materializeDataLayout(Value value, VMIVRegType resultType,
                                    Location loc, OpBuilder &builder) {
   auto sourceType = dyn_cast<VMIVRegType>(value.getType());
-  if (!sourceType || sourceType == resultType)
+  if (!sourceType || sourceType == resultType) {
     return value;
+  }
 
   return builder.create<VMIEnsureLayoutOp>(loc, resultType, value).getResult();
 }
@@ -58,29 +60,33 @@ static std::optional<Value>
 rematerializeWidenExt(ExtOp op, VMIVRegType resultType, Location loc,
                       OpBuilder &builder) {
   auto sourceType = dyn_cast<VMIVRegType>(op.getSource().getType());
-  if (!sourceType || !hasConcreteLayout(resultType))
+  if (!sourceType || !hasConcreteLayout(resultType)) {
     return std::nullopt;
+  }
 
   VMILayoutSupport supports;
   FailureOr<VMILayoutAttr> sourceLayout =
       supports.getWidenSourceLayoutForResultLayout(sourceType, resultType,
                                                    resultType.getLayoutAttr());
-  if (failed(sourceLayout))
+  if (failed(sourceLayout)) {
     return std::nullopt;
+  }
 
   auto rematSourceType =
       VMIVRegType::get(sourceType.getContext(), sourceType.getElementCount(),
                        sourceType.getElementType(), *sourceLayout);
   if (sourceType != rematSourceType) {
-    if (failed(supports.getEnsureLayoutFact(sourceType, rematSourceType)))
+    if (failed(supports.getEnsureLayoutFact(sourceType, rematSourceType))) {
       return std::nullopt;
+    }
 
     FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
     FailureOr<int64_t> rematSourceArity =
         getVMIPhysicalArity(rematSourceType);
     if (failed(sourceArity) || failed(rematSourceArity) ||
-        *rematSourceArity > *sourceArity)
+        *rematSourceArity > *sourceArity) {
       return std::nullopt;
+    }
   }
   Value rematSource =
       materializeDataLayout(op.getSource(), rematSourceType, loc, builder);
@@ -94,8 +100,9 @@ static std::optional<Value> rematerializeBinaryDataOp(Operation *op,
   auto rebuild = [&](auto typedOp) -> std::optional<Value> {
     auto lhsType = dyn_cast<VMIVRegType>(typedOp.getLhs().getType());
     auto rhsType = dyn_cast<VMIVRegType>(typedOp.getRhs().getType());
-    if (!lhsType || !rhsType)
+    if (!lhsType || !rhsType) {
       return std::nullopt;
+    }
     auto lhsResultType =
         VMIVRegType::get(lhsType.getContext(), lhsType.getElementCount(),
                          lhsType.getElementType(), resultType.getLayoutAttr());
@@ -111,40 +118,57 @@ static std::optional<Value> rematerializeBinaryDataOp(Operation *op,
         .getResult();
   };
 
-  if (auto addf = dyn_cast<VMIAddFOp>(op))
+  if (auto addf = dyn_cast<VMIAddFOp>(op)) {
     return rebuild(addf);
-  if (auto addi = dyn_cast<VMIAddIOp>(op))
+  }
+  if (auto addi = dyn_cast<VMIAddIOp>(op)) {
     return rebuild(addi);
-  if (auto subf = dyn_cast<VMISubFOp>(op))
+  }
+  if (auto subf = dyn_cast<VMISubFOp>(op)) {
     return rebuild(subf);
-  if (auto subi = dyn_cast<VMISubIOp>(op))
+  }
+  if (auto subi = dyn_cast<VMISubIOp>(op)) {
     return rebuild(subi);
-  if (auto mulf = dyn_cast<VMIMulFOp>(op))
+  }
+  if (auto mulf = dyn_cast<VMIMulFOp>(op)) {
     return rebuild(mulf);
-  if (auto muli = dyn_cast<VMIMulIOp>(op))
+  }
+  if (auto muli = dyn_cast<VMIMulIOp>(op)) {
     return rebuild(muli);
-  if (auto divf = dyn_cast<VMIDivFOp>(op))
+  }
+  if (auto divf = dyn_cast<VMIDivFOp>(op)) {
     return rebuild(divf);
-  if (auto minf = dyn_cast<VMIMinFOp>(op))
+  }
+  if (auto minf = dyn_cast<VMIMinFOp>(op)) {
     return rebuild(minf);
-  if (auto mini = dyn_cast<VMIMinIOp>(op))
+  }
+  if (auto mini = dyn_cast<VMIMinIOp>(op)) {
     return rebuild(mini);
-  if (auto maxf = dyn_cast<VMIMaxFOp>(op))
+  }
+  if (auto maxf = dyn_cast<VMIMaxFOp>(op)) {
     return rebuild(maxf);
-  if (auto maxi = dyn_cast<VMIMaxIOp>(op))
+  }
+  if (auto maxi = dyn_cast<VMIMaxIOp>(op)) {
     return rebuild(maxi);
-  if (auto andi = dyn_cast<VMIAndIOp>(op))
+  }
+  if (auto andi = dyn_cast<VMIAndIOp>(op)) {
     return rebuild(andi);
-  if (auto ori = dyn_cast<VMIOrIOp>(op))
+  }
+  if (auto ori = dyn_cast<VMIOrIOp>(op)) {
     return rebuild(ori);
-  if (auto xori = dyn_cast<VMIXOrIOp>(op))
+  }
+  if (auto xori = dyn_cast<VMIXOrIOp>(op)) {
     return rebuild(xori);
-  if (auto shli = dyn_cast<VMIShLIOp>(op))
+  }
+  if (auto shli = dyn_cast<VMIShLIOp>(op)) {
     return rebuild(shli);
-  if (auto shrui = dyn_cast<VMIShRUIOp>(op))
+  }
+  if (auto shrui = dyn_cast<VMIShRUIOp>(op)) {
     return rebuild(shrui);
-  if (auto shrsi = dyn_cast<VMIShRSIOp>(op))
+  }
+  if (auto shrsi = dyn_cast<VMIShRSIOp>(op)) {
     return rebuild(shrsi);
+  }
   return std::nullopt;
 }
 
@@ -154,8 +178,9 @@ static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
                                                      OpBuilder &builder) {
   auto rebuild = [&](auto typedOp) -> std::optional<Value> {
     auto sourceType = dyn_cast<VMIVRegType>(typedOp.getSource().getType());
-    if (!sourceType)
+    if (!sourceType) {
       return std::nullopt;
+    }
     auto sourceResultType = VMIVRegType::get(
         sourceType.getContext(), sourceType.getElementCount(),
         sourceType.getElementType(), resultType.getLayoutAttr());
@@ -166,22 +191,32 @@ static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
         .getResult();
   };
 
-  if (auto negf = dyn_cast<VMINegFOp>(op))
+  if (auto negf = dyn_cast<VMINegFOp>(op)) {
     return rebuild(negf);
+  if (auto negi = dyn_cast<VMINegIOp>(op)) {
+    return rebuild(negi);
+  }
   if (auto absf = dyn_cast<VMIAbsFOp>(op))
     return rebuild(absf);
-  if (auto absi = dyn_cast<VMIAbsIOp>(op))
+  }
+  if (auto absi = dyn_cast<VMIAbsIOp>(op)) {
     return rebuild(absi);
-  if (auto sqrt = dyn_cast<VMISqrtOp>(op))
+  }
+  if (auto sqrt = dyn_cast<VMISqrtOp>(op)) {
     return rebuild(sqrt);
-  if (auto exp = dyn_cast<VMIExpOp>(op))
+  }
+  if (auto exp = dyn_cast<VMIExpOp>(op)) {
     return rebuild(exp);
-  if (auto ln = dyn_cast<VMILnOp>(op))
+  }
+  if (auto ln = dyn_cast<VMILnOp>(op)) {
     return rebuild(ln);
-  if (auto relu = dyn_cast<VMIReluOp>(op))
+  }
+  if (auto relu = dyn_cast<VMIReluOp>(op)) {
     return rebuild(relu);
-  if (auto notOp = dyn_cast<VMINotOp>(op))
+  }
+  if (auto notOp = dyn_cast<VMINotOp>(op)) {
     return rebuild(notOp);
+  }
   return std::nullopt;
 }
 
@@ -191,9 +226,10 @@ static std::optional<Value> rematerializeFma(VMIFmaOp fma,
   auto lhsType = dyn_cast<VMIVRegType>(fma.getLhs().getType());
   auto rhsType = dyn_cast<VMIVRegType>(fma.getRhs().getType());
   auto accType = dyn_cast<VMIVRegType>(fma.getAcc().getType());
-  if (!lhsType || !rhsType || !accType)
+  if (!lhsType || !rhsType || !accType) {
     return std::nullopt;
-  auto makeType = [&](VMIVRegType type) {
+  }
+  auto makeType = [resultType](VMIVRegType type) {
     return VMIVRegType::get(type.getContext(), type.getElementCount(),
                             type.getElementType(), resultType.getLayoutAttr());
   };
@@ -210,35 +246,44 @@ static std::optional<Value> rematerializeDataProducer(Value value,
                                                       VMIVRegType resultType,
                                                       Location loc,
                                                       OpBuilder &builder) {
-  if (!hasConcreteLayout(resultType))
+  if (!hasConcreteLayout(resultType)) {
     return std::nullopt;
+  }
 
-  if (auto extf = value.getDefiningOp<VMIExtFOp>())
+  if (auto extf = value.getDefiningOp<VMIExtFOp>()) {
     return rematerializeWidenExt(extf, resultType, loc, builder);
-  if (auto extsi = value.getDefiningOp<VMIExtSIOp>())
+  }
+  if (auto extsi = value.getDefiningOp<VMIExtSIOp>()) {
     return rematerializeWidenExt(extsi, resultType, loc, builder);
-  if (auto extui = value.getDefiningOp<VMIExtUIOp>())
+  }
+  if (auto extui = value.getDefiningOp<VMIExtUIOp>()) {
     return rematerializeWidenExt(extui, resultType, loc, builder);
+  }
 
   if (Operation *op = value.getDefiningOp()) {
-    if (auto fma = dyn_cast<VMIFmaOp>(op))
+    if (auto fma = dyn_cast<VMIFmaOp>(op)) {
       return rematerializeFma(fma, resultType, loc, builder);
-    if (auto result = rematerializeBinaryDataOp(op, resultType, loc, builder))
+    }
+    if (auto result = rematerializeBinaryDataOp(op, resultType, loc, builder)) {
       return result;
-    if (auto result = rematerializeUnaryDataOp(op, resultType, loc, builder))
+    }
+    if (auto result = rematerializeUnaryDataOp(op, resultType, loc, builder)) {
       return result;
+    }
   }
 
   if (auto constant = value.getDefiningOp<VMIConstantOp>()) {
     auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
-    if (denseAttr && denseAttr.isSplat())
+    if (denseAttr && denseAttr.isSplat()) {
       return builder.create<VMIConstantOp>(loc, resultType, constant.getValue())
           .getResult();
+    }
   }
 
-  if (auto broadcast = value.getDefiningOp<VMIBroadcastOp>())
+  if (auto broadcast = value.getDefiningOp<VMIBroadcastOp>()) {
     return builder.create<VMIBroadcastOp>(loc, resultType, broadcast.getValue())
         .getResult();
+  }
 
   if (auto iota = value.getDefiningOp<VMIIotaOp>()) {
     return builder
@@ -248,8 +293,9 @@ static std::optional<Value> rematerializeDataProducer(Value value,
 
   if (auto groupIota = value.getDefiningOp<VMIGroupIotaOp>()) {
     VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-    if (!resultLayout || !resultLayout.isContiguous())
+    if (!resultLayout || !resultLayout.isContiguous()) {
       return std::nullopt;
+    }
     return builder
         .create<VMIGroupIotaOp>(loc, resultType, groupIota.getBase(),
                                 groupIota.getOrderAttr(),
@@ -264,13 +310,15 @@ static std::optional<Value> rematerializeMaskProducer(Value value,
                                                       VMIMaskType resultType,
                                                       Location loc,
                                                       OpBuilder &builder) {
-  if (!hasConcreteLayout(resultType))
+  if (!hasConcreteLayout(resultType)) {
     return std::nullopt;
+  }
 
-  if (auto createMask = value.getDefiningOp<VMICreateMaskOp>())
+  if (auto createMask = value.getDefiningOp<VMICreateMaskOp>()) {
     return builder
         .create<VMICreateMaskOp>(loc, resultType, createMask.getActiveLanes())
         .getResult();
+  }
 
   if (auto createGroupMask = value.getDefiningOp<VMICreateGroupMaskOp>()) {
     return builder
@@ -281,24 +329,27 @@ static std::optional<Value> rematerializeMaskProducer(Value value,
         .getResult();
   }
 
-  if (auto constantMask = value.getDefiningOp<VMIConstantMaskOp>())
+  if (auto constantMask = value.getDefiningOp<VMIConstantMaskOp>()) {
     return builder
         .create<VMIConstantMaskOp>(loc, resultType, constantMask.getValueAttr())
         .getResult();
+  }
 
   return std::nullopt;
 }
 
 static bool tryReplaceDataEnsure(VMIEnsureLayoutOp ensure) {
   auto resultType = dyn_cast<VMIVRegType>(ensure.getResult().getType());
-  if (!resultType)
+  if (!resultType) {
     return false;
+  }
 
   OpBuilder builder(ensure);
   auto result = rematerializeDataProducer(ensure.getSource(), resultType,
                                           ensure->getLoc(), builder);
-  if (!result)
+  if (!result) {
     return false;
+  }
 
   ensure.getResult().replaceAllUsesWith(*result);
   ensure.erase();
@@ -307,38 +358,45 @@ static bool tryReplaceDataEnsure(VMIEnsureLayoutOp ensure) {
 
 static bool tryRematerializeTruncIThroughSourceEnsure(VMITruncIOp trunc) {
   auto resultType = dyn_cast<VMIVRegType>(trunc.getResult().getType());
-  if (!resultType || !hasConcreteLayout(resultType))
+  if (!resultType || !hasConcreteLayout(resultType)) {
     return false;
+  }
 
   auto ensure = trunc.getSource().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!ensure)
+  if (!ensure) {
     return false;
+  }
 
   auto originalSourceType = dyn_cast<VMIVRegType>(ensure.getSource().getType());
-  if (!originalSourceType || !hasConcreteLayout(originalSourceType))
+  if (!originalSourceType || !hasConcreteLayout(originalSourceType)) {
     return false;
+  }
   VMILayoutAttr originalSourceLayout = originalSourceType.getLayoutAttr();
-  if (!originalSourceLayout.isDeinterleaved())
+  if (!originalSourceLayout.isDeinterleaved()) {
     return false;
+  }
 
   VMILayoutSupport supports;
   FailureOr<VMICastLayoutFact> fact = supports.getCastLayoutFactForSourceLayout(
       originalSourceType, resultType, originalSourceLayout);
-  if (failed(fact))
+  if (failed(fact)) {
     return false;
+  }
 
   unsigned resultBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  if (resultBits == 8 &&
-      !cast<IntegerType>(resultType.getElementType()).isUnsigned())
+  if (resultBits == mlir::pto::kValue8 &&
+      !cast<IntegerType>(resultType.getElementType()).isUnsigned()) {
     return false;
+  }
 
   VMILayoutAttr rematResultLayout = fact->resultLayout;
   auto rematResultType =
       VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
                        resultType.getElementType(), rematResultLayout);
-  if (rematResultType == resultType)
+  if (rematResultType == resultType) {
     return false;
+  }
 
   OpBuilder builder(trunc);
   Value remat = builder
@@ -355,14 +413,16 @@ static bool tryRematerializeTruncIThroughSourceEnsure(VMITruncIOp trunc) {
 
 template <typename EnsureOp> static bool tryReplaceMaskEnsure(EnsureOp ensure) {
   auto resultType = dyn_cast<VMIMaskType>(ensure.getResult().getType());
-  if (!resultType)
+  if (!resultType) {
     return false;
+  }
 
   OpBuilder builder(ensure);
   auto result = rematerializeMaskProducer(ensure.getSource(), resultType,
                                           ensure->getLoc(), builder);
-  if (!result)
+  if (!result) {
     return false;
+  }
 
   ensure.getResult().replaceAllUsesWith(*result);
   ensure.erase();
@@ -382,13 +442,15 @@ struct VMILayoutRematerializePass
       SmallVector<Operation *> helpers;
       module.walk([&](Operation *op) {
         if (isa<VMIEnsureLayoutOp, VMIEnsureMaskLayoutOp,
-                VMIEnsureMaskGranularityOp, VMITruncIOp>(op))
+                VMIEnsureMaskGranularityOp, VMITruncIOp>(op)) {
           helpers.push_back(op);
+        }
       });
 
       for (Operation *op : helpers) {
-        if (op->getBlock() == nullptr)
+        if (op->getBlock() == nullptr) {
           continue;
+        }
 
         if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
           changed |= tryReplaceDataEnsure(ensure);
@@ -405,8 +467,9 @@ struct VMILayoutRematerializePass
           continue;
         }
 
-        if (auto trunc = dyn_cast<VMITruncIOp>(op))
+        if (auto trunc = dyn_cast<VMITruncIOp>(op)) {
           changed |= tryRematerializeTruncIThroughSourceEnsure(trunc);
+        }
       }
     }
   }

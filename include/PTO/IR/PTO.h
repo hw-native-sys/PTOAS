@@ -16,6 +16,8 @@
 #ifndef MLIR_DIALECT_PTO_IR_PTO_H_
 #define MLIR_DIALECT_PTO_IR_PTO_H_
 
+#include "PTO/Support/CodeConstants.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -35,6 +37,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTODialect.h"
+#include "PTO/IR/VPTOScheduling.h"
 
 //===----------------------------------------------------------------------===//
 // PTO Enums
@@ -147,6 +150,17 @@ enum class PTOArch {
   A5,
 };
 
+/// The semantic form selected by the optional third tile of pto.tmov.  The
+/// public operand remains named `fp` for API compatibility; address space is
+/// the sole discriminator between legacy FP and exponent X-to-ZZ lowering.
+enum class TMovForm {
+  NoTileAux,
+  Fp,
+  XToZz,
+};
+
+TMovForm classifyTMovForm(Value fp);
+
 /// Resolve the effective PTO target architecture from module-level IR state.
 PTOArch getTargetArch(ModuleOp module);
 PTOArch getTargetArch(Operation *op);
@@ -200,10 +214,12 @@ inline constexpr llvm::StringLiteral kPTODSLLogicalNameAttrName =
 /// the current symbol name. PTODSL uses this to mark ABI-specialized helper and
 /// kernel-module symbols without relying on symbol-name parsing.
 inline StringRef getPTODSLLogicalNameOrSymbolName(func::FuncOp func) {
-  if (!func)
+  if (!func) {
     return {};
-  if (auto attr = func->getAttrOfType<StringAttr>(kPTODSLLogicalNameAttrName))
+  }
+  if (auto attr = func->getAttrOfType<StringAttr>(kPTODSLLogicalNameAttrName)) {
     return attr.getValue();
+  }
   return func.getSymName();
 }
 

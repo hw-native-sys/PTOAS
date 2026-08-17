@@ -160,7 +160,8 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
     rewriter.replaceOpWithNewOp<pto::TMovOp>(
         copyOp, TypeRange(), src, dst, Value{}, Value{}, pto::AccToVecModeAttr{},
         pto::ReluPreModeAttr::get(rewriter.getContext(),
-                                  pto::ReluPreMode::NoRelu));
+                                  pto::ReluPreMode::NoRelu),
+        pto::MxGroupAxisAttr{});
     return success();
   }
 };
@@ -203,7 +204,7 @@ void ConvertToPTOOpPass::runOnOperation() {
   moduleOp->walk([&](func::FuncOp funcOp) {
     RewritePatternSet patterns(ctx);
     populatePTOOpRewritingRule(patterns);
-    (void)applyPatternsGreedily(funcOp, std::move(patterns));
+    (void)applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
   });
 }
 

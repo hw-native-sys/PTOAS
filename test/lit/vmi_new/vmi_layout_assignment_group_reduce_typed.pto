@@ -22,10 +22,10 @@ module {
         : !pto.vmi.vreg<256xf16>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xf16>
     %wide_i16 = pto.vmi.vcvt %i16
-        : !pto.vmi.vreg<128xsi16> -> !pto.vmi.vreg<128xi32>
+        : !pto.vmi.vreg<128xsi16> -> !pto.vmi.vreg<128xsi32>
     %sum_i16 = pto.vmi.vcadd %wide_i16, %mi16 {group = 8}
-        : !pto.vmi.vreg<128xi32>, !pto.vmi.mask<128xpred>
-        -> !pto.vmi.vreg<8xi32>
+        : !pto.vmi.vreg<128xsi32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<8xsi32>
     %sum_i32 = pto.vmi.vcadd %i32, %mi32 {group = 8}
         : !pto.vmi.vreg<128xi32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xi32>
@@ -43,11 +43,11 @@ module {
 // CHECK: pto.vmi.group_reduce_addf %[[F16_SPLIT]], %[[MF16_B16]]
 // CHECK-SAME: -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // CHECK: %[[WIDE_I16:.*]] = pto.vmi.extsi %arg2
-// CHECK-SAME: -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-SAME: -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: %[[MI16_SPLIT:.*]] = pto.vmi.ensure_mask_layout
 // CHECK-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: pto.vmi.group_reduce_addi %[[WIDE_I16]], %[[MI16_SPLIT]]
-// CHECK-SAME: -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// CHECK-SAME: -> !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // CHECK: %[[I32_SPLIT:.*]] = pto.vmi.ensure_layout
 // CHECK-SAME: -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: %[[MI32_SPLIT:.*]] = pto.vmi.ensure_mask_layout

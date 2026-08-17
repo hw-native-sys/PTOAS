@@ -28,11 +28,9 @@ module attributes {pto.target_arch = "a5"} {
 
 // CHECK: Tile<TileType::Vec, float, 16, 1, BLayout::ColMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC_ORIG:[_A-Za-z][_A-Za-z0-9]*]] = Tile
 // CHECK: Tile<TileType::Vec, float, 16, 1, BLayout::ColMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DST_ORIG:[_A-Za-z][_A-Za-z0-9]*]] = Tile
-// CHECK: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC_STORAGE:[_A-Za-z][_A-Za-z0-9]*]];
-// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC:[_A-Za-z][_A-Za-z0-9]*]] = [[SRC_STORAGE]];
+// CHECK: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC:[_A-Za-z][_A-Za-z0-9]*]];
 // CHECK-NEXT: TRESHAPE([[SRC]], [[SRC_ORIG]]);
-// CHECK: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DST_STORAGE:[_A-Za-z][_A-Za-z0-9]*]];
-// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DST:[_A-Za-z][_A-Za-z0-9]*]] = [[DST_STORAGE]];
+// CHECK: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DST:[_A-Za-z][_A-Za-z0-9]*]];
 // CHECK-NEXT: TRESHAPE([[DST]], [[DST_ORIG]]);
 // CHECK: int64_t [[SRC_ROW:[_A-Za-z][_A-Za-z0-9]*]] = [[SRC_ORIG]].GetValidRow();
 // CHECK-NEXT: int64_t [[SRC_COL:[_A-Za-z][_A-Za-z0-9]*]] = [[SRC_ORIG]].GetValidCol();

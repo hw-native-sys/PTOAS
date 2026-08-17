@@ -17,6 +17,7 @@
 // https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
 
 #include "PTO/IR/PTO.h"
@@ -202,7 +203,7 @@ static bool satisfiesAIVectorScopeLatchPostcondition(llvm::Loop *loop) {
     return false;
   }
 
-  llvm::SmallVector<llvm::BasicBlock *, 4> preds(llvm::predecessors(latch));
+  llvm::SmallVector<llvm::BasicBlock *, mlir::pto::kValue4> preds(llvm::predecessors(latch));
   if (preds.size() != 1) {
     return false;
   }
@@ -224,7 +225,7 @@ static LogicalResult ensureDummyPredForAIVectorScopeLatch(
     return failure();
   }
 
-  llvm::SmallVector<llvm::BasicBlock *, 4> preds(llvm::predecessors(latch));
+  llvm::SmallVector<llvm::BasicBlock *, mlir::pto::kValue4> preds(llvm::predecessors(latch));
   if (preds.empty()) {
     diagOS << "VPTO LLVM emission failed: aivscope latch has no predecessor\n";
     return failure();
@@ -288,8 +289,8 @@ queryDefaultTargetAttrs(const VPTOEmissionOptions &options,
   }
   const std::string &bishengPath = *bisheng;
 
-  llvm::SmallString<64> inputPath;
-  llvm::SmallString<64> outputPath;
+  llvm::SmallString<mlir::pto::kValue64> inputPath;
+  llvm::SmallString<mlir::pto::kValue64> outputPath;
   int inputFD = -1;
   int outputFD = -1;
   if (auto ec = llvm::sys::fs::createTemporaryFile("ptoas-vpto-target-query",
@@ -319,7 +320,7 @@ queryDefaultTargetAttrs(const VPTOEmissionOptions &options,
   llvm::sys::Process::SafelyCloseFileDescriptor(inputFD);
   llvm::sys::Process::SafelyCloseFileDescriptor(outputFD);
 
-  llvm::SmallString<128> stderrPath;
+  llvm::SmallString<mlir::pto::kValue128> stderrPath;
   int stderrFD = -1;
   if (auto ec = llvm::sys::fs::createTemporaryFile("ptoas-vpto-target-query",
                                                    "stderr", stderrFD,
@@ -409,7 +410,7 @@ void materializeVecScopeCarrierLoops(ModuleOp module) {
   (void)ctx->getOrLoadDialect<scf::SCFDialect>();
   ensureAIVScopeDummyDecl(module);
 
-  SmallVector<pto::VecScopeOp, 16> scopes;
+  SmallVector<pto::VecScopeOp, mlir::pto::kValue16> scopes;
   module.walk([&](pto::VecScopeOp vecScope) { scopes.push_back(vecScope); });
 
   IRRewriter rewriter(module.getContext());
@@ -437,7 +438,7 @@ void materializeVecScopeCarrierLoops(ModuleOp module) {
     rewriter.eraseOp(vecScope);
   }
 
-  SmallVector<pto::StrictVecScopeOp, 16> strictScopes;
+  SmallVector<pto::StrictVecScopeOp, mlir::pto::kValue16> strictScopes;
   module.walk([&](pto::StrictVecScopeOp strictVecScope) {
     strictScopes.push_back(strictVecScope);
   });
@@ -488,7 +489,7 @@ LogicalResult attachAIVectorScopeMetadata(llvm::Module &llvmModule,
     llvm::DominatorTree dt(function);
     llvm::LoopInfo loopInfo(dt);
 
-    llvm::SmallVector<llvm::CallInst *, 4> dummyCalls;
+    llvm::SmallVector<llvm::CallInst *, mlir::pto::kValue4> dummyCalls;
     for (llvm::BasicBlock &block : function) {
       for (llvm::Instruction &inst : block) {
         auto *call = dyn_cast<llvm::CallInst>(&inst);
@@ -565,16 +566,21 @@ LogicalResult attachAIVectorScopeMetadata(llvm::Module &llvmModule,
 }
 
 constexpr uint32_t getSimtMaxRegistersForThreads(uint32_t maxThreads) {
-  if (maxThreads > 1024) {
-    return 16;
+  constexpr uint32_t kThreadsPerRegisterTier = 256;
+  constexpr uint32_t kSmallestSimtRegisterBudget = 16;
+  constexpr uint32_t kSmallSimtRegisterBudget = 32;
+  constexpr uint32_t kMediumSimtRegisterBudget = 64;
+  constexpr uint32_t kLargestSimtRegisterBudget = 128;
+  if (maxThreads > 4 * kThreadsPerRegisterTier) {
+    return kSmallestSimtRegisterBudget;
   }
-  if (maxThreads > 512) {
-    return 32;
+  if (maxThreads > 2 * kThreadsPerRegisterTier) {
+    return kSmallSimtRegisterBudget;
   }
-  if (maxThreads > 256) {
-    return 64;
+  if (maxThreads > kThreadsPerRegisterTier) {
+    return kMediumSimtRegisterBudget;
   }
-  return 128;
+  return kLargestSimtRegisterBudget;
 }
 
 void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
@@ -583,8 +589,8 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
 
   llvm::NamedMDNode *annotations =
       llvmModule.getOrInsertNamedMetadata("hivm.annotations");
-  llvm::LLVMContext &ctx = llvmModule.getContext();
-  llvm::Type *i32Ty = llvm::Type::getInt32Ty(ctx);
+  llvm::LLVMContext *ctx = &llvmModule.getContext();
+  llvm::Type *i32Ty = llvm::Type::getInt32Ty(*ctx);
   llvm::Constant *one = llvm::ConstantInt::get(i32Ty, 1);
 
   llvm::StringMap<uint32_t> simtMaxThreadsByName;
@@ -624,28 +630,31 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
     return false;
   };
 
-  auto addAnnotation = [&](llvm::Function &function, llvm::StringRef kind) {
+  auto addAnnotation = [annotations, ctx, one](llvm::Function &function,
+                                                llvm::StringRef kind) {
     llvm::Metadata *ops[] = {
         llvm::ValueAsMetadata::get(&function),
-        llvm::MDString::get(ctx, kind),
+        llvm::MDString::get(*ctx, kind),
         llvm::ConstantAsMetadata::get(one)};
-    annotations->addOperand(llvm::MDNode::get(ctx, ops));
+    annotations->addOperand(llvm::MDNode::get(*ctx, ops));
   };
 
-  auto addHIVMModuleI32Annotation = [&](llvm::StringRef kind, uint32_t value) {
+  auto addHIVMModuleI32Annotation = [annotations, ctx, i32Ty](
+                                            llvm::StringRef kind,
+                                            uint32_t value) {
     llvm::Metadata *ops[] = {
-        nullptr, llvm::MDString::get(ctx, kind),
+        nullptr, llvm::MDString::get(*ctx, kind),
         llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32Ty, value))};
-    annotations->addOperand(llvm::MDNode::getDistinct(ctx, ops));
+    annotations->addOperand(llvm::MDNode::getDistinct(*ctx, ops));
   };
 
-  auto addLLVMFunctionI32Annotation = [&](llvm::Function &function,
-                                          llvm::StringRef kind,
-                                          uint32_t value) {
+  auto addLLVMFunctionI32Annotation = [ctx, i32Ty](llvm::Function &function,
+                                                    llvm::StringRef kind,
+                                                    uint32_t value) {
     llvm::Metadata *ops[] = {
-        llvm::MDString::get(ctx, kind),
+        llvm::MDString::get(*ctx, kind),
         llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32Ty, value))};
-    function.addMetadata("annotation", *llvm::MDNode::get(ctx, ops));
+    function.addMetadata("annotation", *llvm::MDNode::get(*ctx, ops));
   };
 
   for (llvm::Function &function : llvmModule) {

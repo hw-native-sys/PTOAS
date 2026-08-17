@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression: the nested scf.if in a while condition must not leave SCF or
+// trigger a cast assertion in the EmitC path.
+// RUN: ptoas --pto-arch=a5 %s -o - | FileCheck %s
+
+module {
+  func.func @for_while_if_cond(%out: !pto.ptr<i32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %false = arith.constant false
+    %final = scf.for %t = %c0 to %c8 step %c1
+        iter_args(%eid = %c0) -> (index) {
+      %eid2 = scf.while (%e = %eid) : (index) -> index {
+        %lt = arith.cmpi slt, %e, %c2 : index
+        %go = scf.if %lt -> (i1) {
+          %ge = arith.cmpi uge, %t, %c8 : index
+          scf.yield %ge : i1
+        } else {
+          scf.yield %false : i1
+        }
+        scf.condition(%go) %e : index
+      } do {
+      ^bb0(%e2: index):
+        %n = arith.addi %e2, %c1 : index
+        scf.yield %n : index
+      }
+      %val = scf.if %false -> (i32) {
+        scf.yield %c1_i32 : i32
+      } else {
+        scf.yield %c0_i32 : i32
+      }
+      pto.store_scalar %val, %out[%t] : !pto.ptr<i32, gm>, i32
+      scf.yield %eid2 : index
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void for_while_if_cond(
+// CHECK: goto label{{[0-9]+}};
+// CHECK: if ({{.*}}) {
+// CHECK: goto label{{[0-9]+}};
+// CHECK: goto label{{[0-9]+}};
+// CHECK: goto label{{[0-9]+}};

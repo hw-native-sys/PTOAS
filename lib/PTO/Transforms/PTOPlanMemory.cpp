@@ -9,6 +9,7 @@
 //===- PlanMemory.cpp ----Plan Buffer Memory Address ----------------------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTOPlanMemory.h"
 
 #include "PTO/IR/PTOMultiBuffer.h"
@@ -78,7 +79,7 @@ static std::optional<int64_t> getTileBufferFootprintBytes(TileBufType type) {
     return totalStaticSize.value() * static_cast<int64_t>(elemBytes);
   }
 
-  if (shape.size() != 2 || llvm::is_contained(shape, ShapedType::kDynamic)) {
+  if (shape.size() != mlir::pto::kValue2 || llvm::is_contained(shape, ShapedType::kDynamic)) {
     return std::nullopt;
   }
 
@@ -146,26 +147,28 @@ static bool isIgnoredA5TmpOperandUse(OpOperand &use) {
   }
 
   if (isNameIn(name, {"pto.trowargmax", "pto.trowargmin", "pto.trowmax",
-                     "pto.trowmin", "pto.trowsum", "pto.trowprod"}))
+                      "pto.trowmin", "pto.trowsum", "pto.trowprod"})) {
     return operandNo == 1;
+  }
 
   if (name == "pto.txors") {
-    return operandNo == 2;
+    return operandNo == mlir::pto::kValue2;
   }
 
   if (isNameIn(name, {"pto.tprelu", "pto.txor", "pto.tsels",
-                     "pto.trowexpand", "pto.tcolexpand",
-                     "pto.trowexpandadd", "pto.trowexpanddiv",
-                     "pto.trowexpandexpdif", "pto.trowexpandmax",
-                     "pto.trowexpandmin", "pto.trowexpandmul",
-                     "pto.trowexpandsub", "pto.tcolexpandadd",
-                     "pto.tcolexpanddiv", "pto.tcolexpandexpdif",
-                     "pto.tcolexpandmax", "pto.tcolexpandmin",
-                     "pto.tcolexpandmul", "pto.tcolexpandsub"}))
-    return operandNo == 2;
+                      "pto.trowexpand", "pto.tcolexpand",
+                      "pto.trowexpandadd", "pto.trowexpanddiv",
+                      "pto.trowexpandexpdif", "pto.trowexpandmax",
+                      "pto.trowexpandmin", "pto.trowexpandmul",
+                      "pto.trowexpandsub", "pto.tcolexpandadd",
+                      "pto.tcolexpanddiv", "pto.tcolexpandexpdif",
+                      "pto.tcolexpandmax", "pto.tcolexpandmin",
+                      "pto.tcolexpandmul", "pto.tcolexpandsub"})) {
+    return operandNo == mlir::pto::kValue2;
+  }
 
   if (name == "pto.tsel") {
-    return operandNo == 3;
+    return operandNo == mlir::pto::kValue3;
   }
 
   return false;
@@ -193,7 +196,7 @@ static void collectStableValueOrder(Region &region,
                                     AsmState &asmState,
                                     DenseMap<Value, std::string> &stableValueKeys,
                                     SmallVectorImpl<Value> &seenValues) {
-  auto recordValue = [&](Value value) {
+  auto recordValue = [&asmState, &seenValues, &stableValueKeys](Value value) {
     if (stableValueKeys.find(value) != stableValueKeys.end()) {
       return;
     }
@@ -543,6 +546,9 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       RecursiveForOp(forOp, live);
       return WalkResult::skip();
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+      RecursiveWhileOp(whileOp, live);
+      return WalkResult::skip();
     } else if (auto fusionRegion = dyn_cast<pto::FusionRegionOp>(op)) {
       RecursiveFusionRegionOp(fusionRegion, live);
       return WalkResult::skip();
@@ -647,6 +653,8 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
                                               stableValueOrder)) {
         RecordSemanticConflict(conflictPair.first, conflictPair.second);
       }
+      for (const auto &[lhs, rhs] : getSemanticNoAliasPairs(op))
+        RecordSemanticConflict(lhs, rhs);
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto dstStyleOp = dyn_cast<DestinationStyleOpInterface>(op)) {
       // Preserve generic destination-style aliasing for non-tile tensors.
@@ -750,6 +758,36 @@ void MemLivenessAnalysis::UpdateForOpBufferAlias(scf::ForOp forOp) {
   }
 }
 
+void MemLivenessAnalysis::UpdateWhileOpBufferAlias(scf::WhileOp whileOp) {
+  if (whileOp.getResults().size() != whileOp.getYieldedValues().size())
+    llvm::report_fatal_error("scf.while result/yield sizes are inconsistent");
+
+  // The before region receives the initial values and the after region
+  // receives the values forwarded by scf.condition.  The after-region yield
+  // is the back-edge which becomes the next before-region argument and the
+  // scf.while result on exit.
+  for (auto [i, init] : llvm::enumerate(whileOp.getInits())) {
+    if (i < whileOp.getBeforeArguments().size())
+      UpdateBufferAlias(whileOp.getBeforeArguments()[i], init);
+  }
+
+  auto conditionArgs = whileOp.getConditionOp().getArgs();
+  for (auto [i, arg] : llvm::enumerate(whileOp.getAfterArguments())) {
+    if (i < conditionArgs.size())
+      UpdateBufferAlias(arg, conditionArgs[i]);
+  }
+
+  for (auto [i, yielded] : llvm::enumerate(whileOp.getYieldedValues())) {
+    if (i < whileOp.getBeforeArguments().size())
+      UpdateBufferAlias(whileOp.getBeforeArguments()[i], yielded);
+    if (i < whileOp.getConditionOp().getArgs().size())
+      UpdateBufferAlias(whileOp.getResult(i),
+                        whileOp.getConditionOp().getArgs()[i]);
+    if (i < whileOp.getResults().size())
+      UpdateBufferAlias(whileOp.getResult(i), yielded);
+  }
+}
+
 void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
   // Model loop-carried tile handles as aliases of the yielded roots.
   auto forBeginSeq = UpdateLinearOperation(forOp.getOperation());
@@ -759,6 +797,20 @@ void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
   UpdateForOpBufferAlias(forOp);
   auto forEndSeq = UpdateLinearOperation(forOp.getOperation());
   OpKillHandle(forEndSeq, live, forOp->getBlock());
+}
+
+void MemLivenessAnalysis::RecursiveWhileOp(scf::WhileOp whileOp,
+                                           Liveness live) {
+  auto whileBeginSeq = UpdateLinearOperation(whileOp.getOperation());
+  UpdateOpGenInfo(whileBeginSeq, GetLiveBuffersInLoop(whileOp.getOperation(), live));
+
+  UpdateWhileOpBufferAlias(whileOp);
+  RecursionIR(&whileOp.getBefore(), live);
+  RecursionIR(&whileOp.getAfter(), live);
+  UpdateWhileOpBufferAlias(whileOp);
+
+  auto whileEndSeq = UpdateLinearOperation(whileOp.getOperation());
+  OpKillHandle(whileEndSeq, live, whileOp->getBlock());
 }
 
 void MemLivenessAnalysis::UpdateForOpInitArgsAlias(scf::ForOp forOp) {
@@ -834,12 +886,12 @@ void MemLivenessAnalysis::RecursiveFusionRegionOp(pto::FusionRegionOp fusionRegi
   OpKillHandle(regionEnd, live, fusionRegion->getBlock());
 }
 
-SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(scf::ForOp forOp,
+SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(Operation *loopOp,
                                                              Liveness live) {
   SmallVector<Value> allocBeforeLoopBuffers;
-  const auto *liveBlockInfo = live.getLiveness(forOp->getBlock());
+  const auto *liveBlockInfo = live.getLiveness(loopOp->getBlock());
   auto currentLiveValues =
-      liveBlockInfo->currentlyLiveValues(forOp.getOperation());
+      liveBlockInfo->currentlyLiveValues(loopOp);
   if (currentLiveValues.empty()) {
     return allocBeforeLoopBuffers;
   }
@@ -1022,7 +1074,7 @@ void MemLivenessAnalysis::RecordSemanticConflict(Value lhs, Value rhs) {
   SetVector<Value> rhsAliases = GetAliasBuffers(rhs);
   rhsAliases.insert(rhs);
 
-  auto appendUniquePair = [&](Value a, Value b) {
+  auto appendUniquePair = [this](Value a, Value b) {
     if (!a || !b || a == b) {
       return;
     }
@@ -1230,7 +1282,7 @@ bool MemPlan::HasSemanticConflict(const StorageEntry *entry,
     return false;
   }
 
-  auto containsPair = [&](Value lhs, Value rhs) {
+  auto containsPair = [this](Value lhs, Value rhs) {
     ValuePair pair = isLessValue(lhs, rhs) ? ValuePair(lhs, rhs)
                                            : ValuePair(rhs, lhs);
     return llvm::is_contained(semanticConflictPairs, pair);
@@ -2011,7 +2063,8 @@ MemPlan::GetBufferParentLoop(const SmallVector<Value> &buffers) {
   llvm::SmallSet<LoopLikeOpInterface, 1> parentLoopVec;
   for (auto buffer : buffers) {
     if (!buffer.getDefiningOp()) {
-      if (!isa<scf::ForOp>(buffer.getParentBlock()->getParentOp())) {
+      if (!isa<scf::ForOp, scf::WhileOp>(
+              buffer.getParentBlock()->getParentOp())) {
         llvm::report_fatal_error("expected loop-carried block argument");
       }
       // Init args and region iter arg are inplace, ignore Region Iter Arg
@@ -2688,8 +2741,9 @@ private:
 static FailureOr<MemPlanMode> parseLegacyMemPlanMode(func::FuncOp func,
                                                      llvm::StringRef memMode) {
   if (memMode.equals_insensitive("local") ||
-      memMode.equals_insensitive("local-mem-plan"))
+      memMode.equals_insensitive("local-mem-plan")) {
     return MemPlanMode::LOCAL_MEM_PLAN;
+  }
   if (memMode.equals_insensitive("global-work-space-plan")) {
     return MemPlanMode::GLOBAL_WORKSPACE_PLAN;
   }
@@ -2789,9 +2843,11 @@ void PlanMemoryPass::runOnOperation() {
 
     RewritePatternSet patterns(&getContext());
     populateBufferAddressToAllocOp(patterns, mode, memPlan.GetBuffer2Offsets());
-    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+    if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
       return signalPassFailure();
     }
+    if (failed(verifySemanticNoAliasRanges(funcOp)))
+      return signalPassFailure();
 
     bool hasUnplannedAllocTile = false;
     funcOp.walk([&](pto::AllocTileOp op) {

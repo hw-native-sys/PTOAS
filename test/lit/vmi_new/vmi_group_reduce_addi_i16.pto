@@ -13,11 +13,11 @@
 module {
   func.func @group_reduce_addi_i16(
       %source: !pto.vmi.vreg<128xi16>,
-      %mask: !pto.vmi.mask<128xpred>) {
+      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<8xi16> {
     %sum = pto.vmi.vcadd %source, %mask {group = 8}
         : !pto.vmi.vreg<128xi16>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xi16>
-    return
+    return %sum : !pto.vmi.vreg<8xi16>
   }
 }
 

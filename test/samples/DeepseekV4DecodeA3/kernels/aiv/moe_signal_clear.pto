@@ -1,0 +1,37 @@
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @moe_signal_clear(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i32>, %arg3: !pto.ptr<i32>, %arg4: !pto.ptr<i64>, %arg5: !pto.ptr<i64>, %arg6: !pto.ptr<i64>, %arg7: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c4_index = arith.constant 4 : index
+  %c4096_index = arith.constant 4096 : index
+  %c1_index = arith.constant 1 : index
+  %c2_index = arith.constant 2 : index
+  %c0_index = arith.constant 0 : index
+  %pre_hc_hidden_out__ssa_v0_s0 = arith.muli %c4096_index, %c4_index : index
+  %pre_hc_hidden_out__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%arg7, %c4_index, %c4096_index], strides = [%pre_hc_hidden_out__ssa_v0_s0, %c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?x?xf32>
+  %arrived__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %data_arrived__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %combine_arrived__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %_completion_anchor_inline7265__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<f32> -> f32
+  %0 = arith.index_cast %c0_index : index to i32
+  scf.for %src_inline7263__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %flat_offset_mul = arith.muli %src_inline7263__idx_v0, %c1_index : index
+    %flat_offset = arith.addi %flat_offset_mul, %c0_index : index
+    pto.store_scalar %0, %arg1[%flat_offset] : !pto.ptr<i32>, i32
+    %arrived__ssa_v0_pview = pto.partition_view %arrived__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c2_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<2x1xi32>
+    pto.cmo.cacheinvalid %arrived__ssa_v0_pview single_cache_line : !pto.partition_tensor_view<2x1xi32>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    %1 = arith.muli %src_inline7263__idx_v0, %c1_index : index
+    %2 = arith.addi %1, %c0_index : index
+    pto.store_scalar %0, %arg2[%2] : !pto.ptr<i32>, i32
+    %data_arrived__ssa_v0_pview = pto.partition_view %data_arrived__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c2_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<2x1xi32>
+    pto.cmo.cacheinvalid %data_arrived__ssa_v0_pview single_cache_line : !pto.partition_tensor_view<2x1xi32>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    %3 = arith.muli %src_inline7263__idx_v0, %c1_index : index
+    %4 = arith.addi %3, %c0_index : index
+    pto.store_scalar %0, %arg3[%4] : !pto.ptr<i32>, i32
+    %combine_arrived__ssa_v0_pview = pto.partition_view %combine_arrived__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c2_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<2x1xi32>
+    pto.cmo.cacheinvalid %combine_arrived__ssa_v0_pview single_cache_line : !pto.partition_tensor_view<2x1xi32>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+  }
+  return
+  }
+}

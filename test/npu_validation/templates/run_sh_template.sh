@@ -309,10 +309,22 @@ copy_outputs_as_golden() {
   done
 }
 
+clear_golden_outputs() {
+  rm -f "${ROOT_DIR}"/golden_*.bin
+}
+
+has_golden_outputs() {
+  compgen -G "${ROOT_DIR}/golden_*.bin" > /dev/null
+}
+
 case "${GOLDEN_MODE}" in
   sim)
+    clear_golden_outputs
+    python3 "${ROOT_DIR}/golden.py"
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@_sim"
-    copy_outputs_as_golden
+    if ! has_golden_outputs; then
+      copy_outputs_as_golden
+    fi
     if [[ "${RUN_MODE}" == "npu" ]]; then
       LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@"
     fi
@@ -323,11 +335,16 @@ case "${GOLDEN_MODE}" in
       echo "[ERROR] GOLDEN_MODE=npu requires RUN_MODE=npu" >&2
       exit 2
     fi
+    clear_golden_outputs
     python3 "${ROOT_DIR}/golden.py"
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@"
-    copy_outputs_as_golden
-    python3 "${ROOT_DIR}/golden.py"
-    LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@"
+    if ! has_golden_outputs; then
+      echo "[WARN] no independent golden; validating NPU run-to-run determinism only"
+      copy_outputs_as_golden
+      python3 "${ROOT_DIR}/golden.py"
+      LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" "${ROOT_DIR}/${BUILD_DIR}/@EXECUTABLE@"
+      echo "[INFO] DETERMINISM_ONLY: repeated NPU output will be compared"
+    fi
     COMPARE_STRICT=1 python3 "${ROOT_DIR}/compare.py"
     ;;
   skip)

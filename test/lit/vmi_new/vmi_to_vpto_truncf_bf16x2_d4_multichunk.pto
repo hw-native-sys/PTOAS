@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=unrealized_conversion_cast
+
+// Protect the part-major physical source order for a two-chunk d4 conversion.
+// Each output chunk must consume the matching chunk from P0, P1, P2, and P3.
+
+module {
+  func.func @bf16x2_d4_multichunk(
+      %src: !pto.vmi.vreg<512x!pto.bf16x2,
+                           #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.vreg<512x!pto.f4E2M1x2> {
+    %r = pto.vmi.vcvt %src {rounding = "R"}
+        : !pto.vmi.vreg<512x!pto.bf16x2,
+                        #pto.vmi.layout<deinterleaved = 4>>
+       -> !pto.vmi.vreg<512x!pto.f4E2M1x2>
+    return %r : !pto.vmi.vreg<512x!pto.f4E2M1x2>
+  }
+}
+
+// CHECK-LABEL: func.func @bf16x2_d4_multichunk(
+// CHECK-SAME: %[[P0C0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P0C1:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P1C0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P1C1:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P2C0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P2C1:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P3C0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: %[[P3C1:[^)]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: -> (!pto.vreg<256x!pto.f4E2M1x2>, !pto.vreg<256x!pto.f4E2M1x2>)
+// CHECK: %[[P0C0_BF16:.*]] = pto.vbitcast %[[P0C0]]
+// CHECK: %[[C0P0:.*]] = pto.vcvt %[[P0C0_BF16]], {{.*}} {part = "P0", rnd = "R"}
+// CHECK: %[[P1C0_BF16:.*]] = pto.vbitcast %[[P1C0]]
+// CHECK: %[[C0P1:.*]] = pto.vcvt %[[P1C0_BF16]], {{.*}} {part = "P1", rnd = "R"}
+// CHECK: %[[P2C0_BF16:.*]] = pto.vbitcast %[[P2C0]]
+// CHECK: %[[C0P2:.*]] = pto.vcvt %[[P2C0_BF16]], {{.*}} {part = "P2", rnd = "R"}
+// CHECK: %[[P3C0_BF16:.*]] = pto.vbitcast %[[P3C0]]
+// CHECK: %[[C0P3:.*]] = pto.vcvt %[[P3C0_BF16]], {{.*}} {part = "P3", rnd = "R"}
+// CHECK: %[[C0M1:.*]] = pto.vor %[[C0P0]], %[[C0P1]]
+// CHECK: %[[C0M2:.*]] = pto.vor %[[C0M1]], %[[C0P2]]
+// CHECK: %[[C0:.*]] = pto.vor %[[C0M2]], %[[C0P3]]
+// CHECK: %[[P0C1_BF16:.*]] = pto.vbitcast %[[P0C1]]
+// CHECK: %[[C1P0:.*]] = pto.vcvt %[[P0C1_BF16]], {{.*}} {part = "P0", rnd = "R"}
+// CHECK: %[[P1C1_BF16:.*]] = pto.vbitcast %[[P1C1]]
+// CHECK: %[[C1P1:.*]] = pto.vcvt %[[P1C1_BF16]], {{.*}} {part = "P1", rnd = "R"}
+// CHECK: %[[P2C1_BF16:.*]] = pto.vbitcast %[[P2C1]]
+// CHECK: %[[C1P2:.*]] = pto.vcvt %[[P2C1_BF16]], {{.*}} {part = "P2", rnd = "R"}
+// CHECK: %[[P3C1_BF16:.*]] = pto.vbitcast %[[P3C1]]
+// CHECK: %[[C1P3:.*]] = pto.vcvt %[[P3C1_BF16]], {{.*}} {part = "P3", rnd = "R"}
+// CHECK: %[[C1M1:.*]] = pto.vor %[[C1P0]], %[[C1P1]]
+// CHECK: %[[C1M2:.*]] = pto.vor %[[C1M1]], %[[C1P2]]
+// CHECK: %[[C1:.*]] = pto.vor %[[C1M2]], %[[C1P3]]
+// CHECK: return %[[C0]], %[[C1]]

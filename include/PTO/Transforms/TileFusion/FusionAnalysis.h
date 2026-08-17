@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_TILEFUSION_FUSIONANALYSIS_H
 #define PTO_TRANSFORMS_TILEFUSION_FUSIONANALYSIS_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/TileFusion/FusionOpSemantics.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -43,7 +44,7 @@ struct IterationDomainInfo {
 struct IterationDomainClass {
   unsigned id = 0;
   IterationDomainInfo info;
-  SmallVector<unsigned, 4> members;
+  SmallVector<unsigned, mlir::pto::kValue4> members;
 };
 
 struct FusionDFGEdge {
@@ -55,8 +56,8 @@ struct FusionDFGEdge {
 struct FusionValueLiveness {
   Value value;
   std::optional<unsigned> producerNode;
-  SmallVector<unsigned, 4> consumerNodes;
-  SmallVector<unsigned, 2> writeInstances;
+  SmallVector<unsigned, mlir::pto::kValue4> consumerNodes;
+  SmallVector<unsigned, mlir::pto::kValue2> writeInstances;
   std::optional<unsigned> lastLocalConsumer;
   bool hasExternalUsers = false;
   bool escapesBlock = false;
@@ -75,7 +76,7 @@ struct FusionWriteInstanceLiveness {
   Value value;
   Value storageValue;
   std::optional<unsigned> producerNode;
-  SmallVector<unsigned, 4> consumerNodes;
+  SmallVector<unsigned, mlir::pto::kValue4> consumerNodes;
   std::optional<unsigned> lastLocalConsumer;
   FusionWriteInstanceEscapeClass escapeClass =
       FusionWriteInstanceEscapeClass::Internal;
@@ -91,21 +92,21 @@ struct FusionComputeNode {
   Operation *op = nullptr;
   FusionOpSemantics semantics;
   unsigned iterationDomainClass = 0;
-  SmallVector<unsigned, 4> incomingEdges;
-  SmallVector<unsigned, 4> outgoingEdges;
+  SmallVector<unsigned, mlir::pto::kValue4> incomingEdges;
+  SmallVector<unsigned, mlir::pto::kValue4> outgoingEdges;
 };
 
 struct FusionBlockAnalysis {
   Block *block = nullptr;
-  SmallVector<FusionComputeNode, 8> computeNodes;
-  SmallVector<IterationDomainClass, 4> iterationDomainClasses;
-  SmallVector<FusionDFGEdge, 8> edges;
-  SmallVector<FusionValueLiveness, 8> liveness;
-  SmallVector<FusionWriteInstanceLiveness, 8> writeInstances;
+  SmallVector<FusionComputeNode, mlir::pto::kValue8> computeNodes;
+  SmallVector<IterationDomainClass, mlir::pto::kValue4> iterationDomainClasses;
+  SmallVector<FusionDFGEdge, mlir::pto::kValue8> edges;
+  SmallVector<FusionValueLiveness, mlir::pto::kValue8> liveness;
+  SmallVector<FusionWriteInstanceLiveness, mlir::pto::kValue8> writeInstances;
 };
 
 struct PreFusionAnalysisResult {
-  SmallVector<FusionBlockAnalysis, 8> blocks;
+  SmallVector<FusionBlockAnalysis, mlir::pto::kValue8> blocks;
 };
 
 /// Build the *shared* pre-fusion analysis: the tile dataflow graph
@@ -148,8 +149,9 @@ public:
   explicit PreFusionAnalysis(func::FuncOp func) {
     FailureOr<PreFusionAnalysisResult> resultOr =
         buildPreFusionAnalysisDFG(func);
-    if (succeeded(resultOr))
+    if (succeeded(resultOr)) {
       result = std::move(*resultOr);
+    }
   }
 
   bool isValid() const { return result.has_value(); }

@@ -22,6 +22,8 @@ Public API
 ``const_expr(value)``     – trace-time ``if`` escape hatch for AST rewrite
 """
 
+import warnings
+
 from ._diagnostics import explicit_mode_required_with_context_error
 from ._runtime_index_ops import coerce_runtime_index
 from ._scalar_adaptation import coerce_runtime_integer_to_i1
@@ -31,7 +33,7 @@ from ._tracing.active import current_session, require_active_session
 from ._surface_values import unwrap_surface_value, wrap_like_surface_value, wrap_surface_value
 from ._types import _StructDescriptor
 
-from ptoas.mlir.dialects import pto as _pto, scf
+from ptoas.mlir.dialects import arith, pto as _pto, scf
 from ptoas.mlir.ir import IndexType, InsertionPoint, IntegerType
 
 
@@ -183,6 +185,125 @@ def for_(start, stop, *, step):
     return _ForBuilder(start, stop, step)
 
 
+class _WhileStateView:
+    def __init__(self, names, values, templates):
+        self._values = {
+            name: wrap_like_surface_value(template, value)
+            for name, template, value in zip(names, templates, values)
+        }
+
+    def __getattr__(self, name):
+        try:
+            return self._values[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+class _WhileCM:
+    """Internal builder for one ``scf.while`` with named loop-carried state."""
+
+    def __init__(self, condition, state_items):
+        self._condition = condition
+        self._state_items = tuple(state_items)
+        self._state_names = tuple(name for name, _ in self._state_items)
+        self._templates = tuple(value for _, value in self._state_items)
+        self._inits = [_materialize_carry_init(value) for value in self._templates]
+        self._op = None
+        self._ip = None
+        self._yield_values = None
+        self._after_state = None
+
+    def __enter__(self):
+        result_types = [value.type for value in self._inits]
+        self._op = scf.WhileOp(result_types, self._inits)
+        before = self._op.before.blocks.append(*result_types)
+        with InsertionPoint(before):
+            state = _WhileStateView(self._state_names, before.arguments, self._templates)
+            condition = unwrap_surface_value(self._condition(state))
+            scf.ConditionOp(condition, list(before.arguments))
+        after = self._op.after.blocks.append(*result_types)
+        self._after_state = _WhileStateView(self._state_names, after.arguments, self._templates)
+        self._ip = InsertionPoint(after)
+        self._ip.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                if self._yield_values is None:
+                    self.update(**{name: getattr(self._after_state, name) for name in self._state_names})
+                scf.YieldOp(self._yield_values)
+        finally:
+            self._ip.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name):
+        if name in self._state_names:
+            return getattr(self._after_state, name)
+        raise AttributeError(name)
+
+    def update(self, **kwargs):
+        missing = [name for name in self._state_names if name not in kwargs]
+        extra = [name for name in kwargs if name not in self._state_names]
+        if missing or extra:
+            pieces = []
+            if missing:
+                pieces.append(f"missing: {', '.join(missing)}")
+            if extra:
+                pieces.append(f"unexpected: {', '.join(extra)}")
+            raise RuntimeError("while.update(...) must match carry names exactly; " + "; ".join(pieces))
+        if self._yield_values is not None:
+            raise RuntimeError("while.update(...) may only be called once per loop body")
+        self._yield_values = [unwrap_surface_value(kwargs[name]) for name in self._state_names]
+
+    def final(self, name):
+        try:
+            index = self._state_names.index(name)
+        except ValueError as exc:
+            raise RuntimeError(f"unknown while carry state {name!r}") from exc
+        return wrap_like_surface_value(self._templates[index], self._op.results[index])
+
+
+class _WhileBuilder:
+    def __init__(self, condition, state_items):
+        self._condition = condition
+        self._state_items = tuple(state_items)
+
+    def __enter__(self):
+        self._cm = _WhileCM(self._condition, self._state_items)
+        return self._cm.__enter__()
+
+    def __exit__(self, *exc):
+        return self._cm.__exit__(*exc)
+
+    def __getattr__(self, name):
+        # AST-rewritten loops use hygienic state names for hidden control
+        # flags.  They are private by convention, but still valid named
+        # carries and must be visible through the loop handle.
+        cm = self.__dict__.get("_cm")
+        if cm is None:
+            raise AttributeError(name)
+        if name.startswith("_") and name not in getattr(cm, "_state_names", ()):
+            raise AttributeError(name)
+        return getattr(cm, name)
+
+
+def _while(condition, **kwargs):
+    if not callable(condition):
+        raise TypeError("internal while builder expects condition(state)")
+    if not kwargs:
+        raise ValueError("internal while builder requires at least one named carry value")
+    return _WhileBuilder(condition, tuple(kwargs.items()))
+
+
+def while_(condition, **kwargs):
+    warnings.warn(
+        "pto.while_ is a low-level compatibility API; prefer native Python while",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _while(condition, **kwargs)
+
+
 class _CarryLoopStateView:
     def __init__(self, names, values):
         self._names = tuple(names)
@@ -320,6 +441,19 @@ class _ForBuilder:
 def _coerce_index(value):
     raw_value = unwrap_surface_value(value)
     return coerce_runtime_index(raw_value, context="pto.for_(...) loop bound")
+
+
+def _materialize_carry_init(value):
+    raw_value = unwrap_surface_value(value)
+    if isinstance(raw_value, bool):
+        raise TypeError("while loop-carried values do not accept Python bool literals")
+    if isinstance(raw_value, int):
+        from ptoas.mlir.ir import IntegerType
+
+        return arith.ConstantOp(IntegerType.get_signless(32), raw_value).result
+    if not hasattr(raw_value, "type"):
+        raise TypeError("while loop-carried values must be typed SSA values")
+    return raw_value
 
 
 # ── if_ ───────────────────────────────────────────────────────────────────────
@@ -719,5 +853,5 @@ def yield_(*vals):
 
 __all__ = [
     "section", "vecscope", "static_range", "const_expr", "LoopHandle", "BranchHandle",
-    "for_", "if_", "yield_",
+    "for_", "while_", "_while", "if_", "yield_",
 ]

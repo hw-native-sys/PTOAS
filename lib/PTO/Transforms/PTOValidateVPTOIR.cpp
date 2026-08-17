@@ -20,6 +20,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 
@@ -75,14 +76,15 @@ static bool isOpInRange(Operation *op, Operation *first, Operation *last) {
 }
 
 static constexpr int64_t kSimtKeepResumeSlotLimit = 123;
+static constexpr unsigned kWideValueRegisterCount = 2;
 
 static std::optional<unsigned> getSimtKeepResumeRegisterCount(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() <= 32) {
+    if (intType.getWidth() <= mlir::pto::kValue32) {
       return 1;
     }
-    if (intType.getWidth() == 64) {
-      return 2;
+    if (intType.getWidth() == mlir::pto::kValue64) {
+      return kWideValueRegisterCount;
     }
     return std::nullopt;
   }
@@ -113,19 +115,22 @@ static LogicalResult verifySimtKeepResumeSlotRange(OpT op) {
     return success();
   }
   int64_t slot = op.getSlot();
-  if (slot < 0 || slot >= kSimtKeepResumeSlotLimit)
+  if (slot < 0 || slot >= kSimtKeepResumeSlotLimit) {
     return op.emitOpError()
            << "requires slot in range [0, "
            << (kSimtKeepResumeSlotLimit - 1) << "]";
-  if (*registerCount == 2) {
-    if ((slot % 2) != 0)
+  }
+  if (*registerCount == mlir::pto::kValue2) {
+    if ((slot % kWideValueRegisterCount) != 0) {
       return op.emitOpError()
              << "requires an even slot for 64-bit keep/resume values";
-    if (slot + 1 >= kSimtKeepResumeSlotLimit)
+    }
+    if (slot + 1 >= kSimtKeepResumeSlotLimit) {
       return op.emitOpError()
              << "requires slot in range [0, "
-             << (kSimtKeepResumeSlotLimit - 2)
+             << (kSimtKeepResumeSlotLimit - mlir::pto::kValue2)
              << "] for 64-bit keep/resume values";
+    }
   }
   return success();
 }
@@ -152,17 +157,18 @@ static bool overlapsEarlierSimtKeepResumeSlotUse(OpT op,
 
 static LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
                                                   Operation *first) {
-  SmallVector<int64_t, 4> slots;
+  SmallVector<int64_t, mlir::pto::kValue4> slots;
   for (Operation *cur = first; cur; cur = cur->getNextNode()) {
     auto resume = dyn_cast<ResumeOp>(cur);
     if (!resume) {
       break;
     }
     if (overlapsEarlierSimtKeepResumeSlotUse(resume, slots) &&
-        resume.getOperation() == current.getOperation())
+        resume.getOperation() == current.getOperation()) {
       return current.emitOpError()
              << "duplicates an earlier slot " << resume.getSlot()
              << " in the SIMT resume prologue group";
+    }
   }
   return success();
 }
@@ -170,17 +176,18 @@ static LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
 static LogicalResult verifyUniqueKeepGroupSlots(KeepOp current,
                                                 Operation *first,
                                                 Operation *last) {
-  SmallVector<int64_t, 4> slots;
+  SmallVector<int64_t, mlir::pto::kValue4> slots;
   for (Operation *cur = first; cur; cur = cur->getNextNode()) {
     auto keep = dyn_cast<KeepOp>(cur);
     if (!keep) {
       break;
     }
     if (overlapsEarlierSimtKeepResumeSlotUse(keep, slots) &&
-        keep.getOperation() == current.getOperation())
+        keep.getOperation() == current.getOperation()) {
       return current.emitOpError()
              << "duplicates an earlier slot " << keep.getSlot()
              << " in the SIMT keep epilogue group";
+    }
     if (cur == last) {
       break;
     }
@@ -317,11 +324,11 @@ public:
     }
 
     switch (intType.getWidth()) {
-    case 8:
+    case mlir::pto::kValue8:
       return VPTOMaskGranularity::B8;
-    case 16:
+    case mlir::pto::kValue16:
       return VPTOMaskGranularity::B16;
-    case 32:
+    case mlir::pto::kValue32:
       return VPTOMaskGranularity::B32;
     default:
       return std::nullopt;
@@ -353,19 +360,22 @@ public:
     }
 
     if (isa<CopyGmToUbufOp, CopyUbufToUbufOp, CopyUbufToGmOp,
-            CopyCbufToUbufOp, CopyUbufToCbufOp>(op))
+            CopyCbufToUbufOp, CopyUbufToCbufOp>(op)) {
       return VPTOBufferAddressFamily::Copy;
+    }
 
     if (isa<VldasOp, VldusOp, PstuOp, VstusOp, VsturOp, MadOp, MadMxOp,
             CopyGmToCbufOp, LoadCbufToCaOp,
-            LoadCbufToCbOp, CopyMatrixCcToGmOp>(op))
+            LoadCbufToCbOp, CopyMatrixCcToGmOp>(op)) {
       return VPTOBufferAddressFamily::PtrOnly;
+    }
 
     if (isa<VldsOp, UvldOp, PldsOp, PldiOp, VstsOp, PstiOp, PstsOp,
             VbitsortOp, Vmrgsort4Op, Vgather2Op,
             VgatherbOp, Vgather2BcOp, VscatterOp, Vldsx2Op, Vstsx2Op, VsldbOp,
-            VsstbOp, VstasOp, VstarOp>(op))
+            VsstbOp, VstasOp, VstarOp>(op)) {
       return VPTOBufferAddressFamily::BufferLike;
+    }
 
     return VPTOBufferAddressFamily::None;
   }
@@ -431,8 +441,9 @@ public:
     }
 
     if (stage == VPTOLegalityStage::Emission &&
-        failed(validateEmissionRules()))
+        failed(validateEmissionRules())) {
       return failure();
+    }
 
     return success();
   }
@@ -508,53 +519,53 @@ private:
     if (auto elementIntType = dyn_cast<IntegerType>(elementType)) {
       width = elementIntType.getWidth();
     } else if (elementType.isF16() || elementType.isBF16()) {
-      width = 16;
+      width = mlir::pto::kValue16;
     } else if (elementType.isF32()) {
-      width = 32;
+      width = mlir::pto::kValue32;
     } else if (elementType.isF64()) {
-      width = 64;
+      width = mlir::pto::kValue64;
     } else {
       return std::nullopt;
     }
 
     if (dist == "PK_B16") {
-      if (width == 8) {
+      if (width == mlir::pto::kValue8) {
         return VPTOMaskGranularity::B16;
       }
       return std::nullopt;
     }
     if (dist == "PK_B32") {
-      if (width == 16) {
+      if (width == mlir::pto::kValue16) {
         return VPTOMaskGranularity::B32;
       }
       return std::nullopt;
     }
     if (dist == "PK_B64") {
-      if (width == 32) {
+      if (width == mlir::pto::kValue32) {
         return VPTOMaskGranularity::B32;
       }
       return std::nullopt;
     }
     if (dist == "PK4_B32") {
-      if (width == 8) {
+      if (width == mlir::pto::kValue8) {
         return VPTOMaskGranularity::B32;
       }
       return std::nullopt;
     }
     if (dist == "MRG4CHN_B8") {
-      if (width == 8) {
+      if (width == mlir::pto::kValue8) {
         return VPTOMaskGranularity::B32;
       }
       return std::nullopt;
     }
     if (dist == "MRG2CHN_B8") {
-      if (width == 8) {
+      if (width == mlir::pto::kValue8) {
         return VPTOMaskGranularity::B16;
       }
       return std::nullopt;
     }
     if (dist == "MRG2CHN_B16") {
-      if (width == 16) {
+      if (width == mlir::pto::kValue16) {
         return VPTOMaskGranularity::B32;
       }
     }
@@ -595,8 +606,9 @@ private:
     auto input = VPTOLegalityHelper::getMaskGranularity(op.getInput().getType());
     auto result = VPTOLegalityHelper::getMaskGranularity(op.getResult().getType());
     if (!input || !result || *input == *result ||
-        isAdjacentMaskGranularityNarrowing(*input, *result))
+        isAdjacentMaskGranularityNarrowing(*input, *result)) {
       return success();
+    }
 
     return op.emitOpError()
            << "input mask type " << op.getInput().getType()
@@ -608,8 +620,9 @@ private:
     auto input = VPTOLegalityHelper::getMaskGranularity(op.getInput().getType());
     auto result = VPTOLegalityHelper::getMaskGranularity(op.getResult().getType());
     if (!input || !result || *input == *result ||
-        isAdjacentMaskGranularityWidening(*input, *result))
+        isAdjacentMaskGranularityWidening(*input, *result)) {
       return success();
+    }
 
     return op.emitOpError()
            << "input mask type " << op.getInput().getType()
@@ -655,7 +668,7 @@ private:
   }
 
   void emitHardwareSupportWarnings(Operation *op) const {
-    auto emitForStore = [&](auto storeOp) {
+    auto emitForStore = [this](auto storeOp) {
       Operation *store = storeOp.getOperation();
       auto distAttr = store->getAttrOfType<StringAttr>("dist");
       if (!distAttr) {
@@ -663,11 +676,12 @@ private:
       }
 
       StringRef dist = distAttr.getValue();
-      if (dist == "MRG4CHN_B8" || dist == "MRG2CHN_B8" || dist == "MRG2CHN_B16")
+      if (dist == "MRG4CHN_B8" || dist == "MRG2CHN_B8" || dist == "MRG2CHN_B16") {
         writeDiagnostic((Twine("warning: ") + store->getName().getStringRef() +
                          " dist " + dist +
                          " is not supported on the current hardware\n")
                             .str());
+      }
     };
 
     if (auto vsts = dyn_cast<VstsOp>(op)) {
@@ -693,8 +707,9 @@ private:
         failed(validateSameMaskGranularity(op, op.getMask().getType(),
                                            "mask type",
                                            op.getCarry().getType(),
-                                           "carry type")))
+                                           "carry type"))) {
       return failure();
+    }
 
     if constexpr (std::is_same_v<CarryOp, VaddcsOp> ||
                   std::is_same_v<CarryOp, VsubcsOp>) {
@@ -705,8 +720,9 @@ private:
           failed(validateSameMaskGranularity(op, op.getCarryIn().getType(),
                                              "carry_in type",
                                              op.getCarry().getType(),
-                                             "carry type")))
+                                             "carry type"))) {
         return failure();
+      }
     }
 
     return success();
@@ -723,8 +739,9 @@ private:
         failed(validateSameMaskGranularity(op, op.getMask().getType(),
                                            "seed mask type",
                                            op.getResult().getType(),
-                                           "result mask type")))
+                                           "result mask type"))) {
       return failure();
+    }
     return success();
   }
 
@@ -744,8 +761,9 @@ private:
         failed(validateSameMaskGranularity(op, op.getInput().getType(),
                                            "input mask type",
                                            op.getResult().getType(),
-                                           "result mask type")))
+                                           "result mask type"))) {
       return failure();
+    }
     return success();
   }
 
@@ -761,8 +779,9 @@ private:
         failed(validateSameMaskGranularity(op, op.getSrc0().getType(),
                                            "src0 mask type",
                                            op.getResult().getType(),
-                                           "result mask type")))
+                                           "result mask type"))) {
       return failure();
+    }
     return success();
   }
 
@@ -839,7 +858,7 @@ private:
 
           Type elemType = vecType.getElementType();
           if (auto intType = dyn_cast<IntegerType>(elemType)) {
-            if (intType.getWidth() == 32 && !intType.isUnsigned()) {
+            if (intType.getWidth() == mlir::pto::kValue32 && !intType.isUnsigned()) {
               return success();
             }
           } else if (elemType.isF16() || elemType.isF32()) {
@@ -929,33 +948,36 @@ private:
         }
 
         auto intAttr = dyn_cast<IntegerAttr>(attr);
-        if (!intAttr || !intAttr.getType().isSignlessInteger(32))
+        if (!intAttr || !intAttr.getType().isSignlessInteger(32)) {
           return func.emitError()
                  << "'" << attrName
                  << "' must be a signless i32 integer attribute";
+        }
 
-        if (intAttr.getInt() <= 0)
+        if (intAttr.getInt() <= 0) {
           return func.emitError()
                  << "'" << attrName << "' must be a positive integer, got "
                  << intAttr.getInt();
+        }
 
-        if (intAttr.getInt() > upperBound)
+        if (intAttr.getInt() > upperBound) {
           return func.emitError()
                  << "'" << attrName << "' must be in range [1, "
                  << upperBound << "] for " << description;
+        }
 
-        if (!func->hasAttr(pto::kPTOSimtEntryAttrName))
+        if (!func->hasAttr(pto::kPTOSimtEntryAttrName)) {
           return func.emitError()
                  << "'" << attrName << "' is only allowed on functions marked '"
                  << pto::kPTOSimtEntryAttrName << "'";
+        }
 
         return success();
       };
-
       if (failed(validatePositiveI32FuncAttr(pto::kPTOSimtMaxThreadsAttrName,
-                                             2048, "SIMT max threads")) ||
+                                             mlir::pto::kValue2048, "SIMT max threads")) ||
           failed(validatePositiveI32FuncAttr(pto::kPTOSimtMaxRegistersAttrName,
-                                             128, "SIMT max registers"))) {
+                                             mlir::pto::kValue128, "SIMT max registers"))) {
         return failure();
       }
 
@@ -1198,7 +1220,6 @@ private:
 
       VPTOBufferAddressFamily family =
           VPTOLegalityHelper::classifyBufferAddressFamily(op);
-
       if (family == VPTOBufferAddressFamily::BufferLike) {
         for (OpOperand *operand : VPTOLegalityHelper::collectBufferOperands(op)) {
           Type operandType = operand->get().getType();

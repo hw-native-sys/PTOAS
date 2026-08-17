@@ -58,6 +58,18 @@ def _add_configured_python_root(wrapper: Path) -> Path:
     return python_root
 
 
+def _disable_editable_import_redirects() -> None:
+    # Editable installs register meta-path finders before the configured
+    # build-tree root can be imported.  Those finders would otherwise resolve
+    # ``ptoas._core`` from an unrelated installed checkout, bypassing the
+    # native extension and staged resources belonging to this wrapper.
+    sys.meta_path[:] = [
+        finder
+        for finder in sys.meta_path
+        if "editable" not in repr(finder).lower()
+    ]
+
+
 def main() -> None:
     wrapper = _resolve_wrapper_path()
     requirement_file = wrapper.parent.parent / _ARCHIVE_PYTHON_REQUIREMENT_FILE
@@ -73,6 +85,7 @@ def main() -> None:
                 f"{actual} ({sys.executable})"
             )
     _add_configured_python_root(wrapper)
+    _disable_editable_import_redirects()
     from ptoas import _cli
 
     raise SystemExit(_cli.launch(sys.argv[1:], wrapper=wrapper))

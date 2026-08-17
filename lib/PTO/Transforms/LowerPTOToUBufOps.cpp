@@ -14,7 +14,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -46,6 +48,7 @@ static constexpr int64_t kRepeatStrideMax = 255;
 static constexpr int64_t kSmallRptBinOp = 4;
 static constexpr int64_t kDefaultRepeatStride = 8;
 static constexpr unsigned kMaskLen = 64;
+static constexpr unsigned kHalfElementSizeBytes = 2;
 
 //===----------------------------------------------------------------------===//
 // Utilities
@@ -53,15 +56,15 @@ static constexpr unsigned kMaskLen = 64;
 
 static unsigned getElementSize(Type elemTy) {
   if (elemTy.isF16() || elemTy.isBF16()) {
-    return 2;
+    return kHalfElementSizeBytes;
   }
   if (elemTy.isF32()) {
-    return 4;
+    return mlir::pto::kValue4;
   }
   if (auto intTy = dyn_cast<IntegerType>(elemTy)) {
     unsigned width = intTy.getWidth();
-    if (width == 16 || width == 32) {
-      return width / 8;
+    if (width == mlir::pto::kValue16 || width == 32) {
+      return width / mlir::pto::kValue8;
     }
   }
   return 0;
@@ -145,8 +148,8 @@ struct TileShapeInfo {
 };
 
 struct TileShapeMetadata {
-  SmallVector<int64_t, 2> shape;
-  SmallVector<int64_t, 2> validShape;
+  SmallVector<int64_t, mlir::pto::kValue2> shape;
+  SmallVector<int64_t, mlir::pto::kValue2> validShape;
 };
 
 using TileShapeMap = DenseMap<Value, TileShapeMetadata>;
@@ -187,7 +190,7 @@ static std::optional<TileShapeInfo> extractTileShapeInfoFromValue(
     return std::nullopt;
   }
 
-  if (shape.size() < 2) {
+  if (shape.size() < mlir::pto::kValue2) {
     return std::nullopt;
   }
 
@@ -210,14 +213,14 @@ static std::optional<TileShapeInfo> extractTileShapeInfoFromValue(
   info.cols = cols;
   info.rows = rows;
   info.elemSize = elemSize;
-  info.elementsPerRepeat = 256 / elemSize;
-  info.blockSizeElem = 32 / elemSize;
+  info.elementsPerRepeat = mlir::pto::kValue256 / elemSize;
+  info.blockSizeElem = mlir::pto::kValue32 / elemSize;
   return info;
 }
 
 static std::optional<TileShapeInfo> extractTileShapeInfo(
     Operation *op, const TileShapeMap &tileShapes) {
-  return extractTileShapeInfoFromValue(op->getOperand(2), tileShapes);
+  return extractTileShapeInfoFromValue(op->getOperand(mlir::pto::kValue2), tileShapes);
 }
 
 static bool canLower(Operation *op, const TileShapeMap &tileShapes) {
@@ -1004,7 +1007,7 @@ private:
       Value asInt = builder.create<arith::BitcastOp>(loc, intTy, scalar);
       return builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), asInt);
     }
-    if (scalar.getType().isInteger(64)) {
+    if (scalar.getType().isInteger(mlir::pto::kValue64)) {
       return scalar;
     }
     return builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), scalar);
@@ -1055,7 +1058,7 @@ private:
     int64_t headRepeats = totalV / epr;
     int64_t tailElements = totalV % epr;
 
-    auto emitShift = [&](Value d, Value s) {
+    auto emitShift = [this, loc, &b, scalar](Value d, Value s) {
       Value scalarI64 = scalar;
       if (scalarI64.getType() != b.getI64Type()) {
         scalarI64 = b.create<arith::ExtSIOp>(
@@ -1118,7 +1121,7 @@ private:
       b.setInsertionPointAfter(forOp);
       return;
     }
-    auto emit = [&](Value rd, Value rs) {
+    auto emit = [this, loc, &b](Value rd, Value rs) {
       b.create<UBop>(loc, rd, rs,
                      i64c1(loc, b), i64c1(loc, b), i64c1(loc, b),
                      i64c8(loc, b), i64c8(loc, b));
@@ -1179,7 +1182,7 @@ private:
       b.setInsertionPointAfter(forOp);
       return;
     }
-    auto emit = [&](Value rd) {
+    auto emit = [this, loc, &b, scalar](Value rd) {
       Value scalarI64 = scalar;
       if (scalarI64.getType() != b.getI64Type()) {
         scalarI64 = b.create<arith::ExtSIOp>(loc, b.getI64Type(), scalar);
@@ -1326,7 +1329,10 @@ private:
     if (!memTy) {
       return false;
     }
-    auto strides = memTy.getStridesAndOffset().first;
+    SmallVector<int64_t> strides;
+    int64_t offset = 0;
+    if (failed(pto::getPTOMemRefStridesAndOffset(memTy, strides, offset)))
+      return false;
     return !strides.empty() && strides.back() == 1;
   }
 
@@ -1386,7 +1392,7 @@ private:
       return failure();
     }
     ArrayRef<int64_t> shape = memTy.getShape();
-    if (shape.size() < 2) {
+    if (shape.size() < mlir::pto::kValue2) {
       return failure();
     }
     if (!hasUnitInnermostStride(view)) {
@@ -1481,13 +1487,13 @@ private:
   LogicalResult emitMteGmUb(Location loc, OpBuilder &b, Value gmPtr,
                              Value ubPtr, const DmaViewInfo &viewInfo,
                              Type elemTy, ArrayRef<int64_t> tileShape) {
-    if (tileShape.size() < 2) {
+    if (tileShape.size() < mlir::pto::kValue2) {
       return failure();
     }
     int64_t ubCols = tileShape[1];
     unsigned elemSize = getElementSize(elemTy);
     unsigned nd = viewInfo.sizes.size();
-    if (nd < 2) {
+    if (nd < mlir::pto::kValue2) {
       return failure();
     }
 
@@ -1531,13 +1537,13 @@ private:
   LogicalResult emitMteUbGm(Location loc, OpBuilder &b, Value ubPtr,
                              Value gmPtr, const DmaViewInfo &viewInfo,
                              Type elemTy, ArrayRef<int64_t> tileShape) {
-    if (tileShape.size() < 2) {
+    if (tileShape.size() < mlir::pto::kValue2) {
       return failure();
     }
     int64_t ubCols = tileShape[1];
     unsigned elemSize = getElementSize(elemTy);
     unsigned nd = viewInfo.sizes.size();
-    if (nd < 2) {
+    if (nd < mlir::pto::kValue2) {
       return failure();
     }
 

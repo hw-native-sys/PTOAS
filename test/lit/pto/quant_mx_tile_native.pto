@@ -10,8 +10,8 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync %s | FileCheck %s --check-prefix=EMITC
 
 module {
-  func.func private @tquant_mx_arg(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
-    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  func.func private @tquant_mx_arg(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
     return
   }
 }
@@ -22,4 +22,4 @@ module {
 // NATIVE-NOT: memref<
 
 // EMITC-LABEL: tquant_mx_arg(
-// EMITC: TQUANT<pto::QuantType::MXFP8
+// EMITC: TQUANT<1, pto::MxQuantAlg::OcpMxFp8E4M3>(

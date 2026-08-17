@@ -1,0 +1,169 @@
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @decode_build_cache_metadata(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i64>, %arg3: !pto.ptr<i32>, %arg4: !pto.ptr<i32>, %arg5: !pto.ptr<i64>, %arg6: !pto.ptr<i32>, %arg7: !pto.ptr<i64>, %arg8: !pto.ptr<i64>, %arg9: !pto.ptr<i32>, %arg10: !pto.ptr<i64>, %arg11: !pto.ptr<i32>, %arg12: !pto.ptr<i64>, %arg13: !pto.ptr<i32>, %arg14: !pto.ptr<i64>, %arg15: index, %arg16: index, %__pypto_spmd_block_idx: i32, %__pypto_spmd_block_num: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c8_index = arith.constant 8 : index
+  %c1_index = arith.constant 1 : index
+  %c4_index = arith.constant 4 : index
+  %c128_index = arith.constant 128 : index
+  %c6_index = arith.constant 6 : index
+  %c32_index = arith.constant 32 : index
+  %c64_index = arith.constant 64 : index
+  %c4096_index = arith.constant 4096 : index
+  %c2_index = arith.constant 2 : index
+  %cn1_index = arith.constant -1 : index
+  %c0_index = arith.constant 0 : index
+  %c3_index = arith.constant 3 : index
+  %c5_index = arith.constant 5 : index
+  %position_ids__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %block_table__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c4_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %ori_slot_mapping_inline293__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %block_counts__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c4_index, %c6_index], strides = [%c6_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %cmp_block_table__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%c4_index, %c32_index], strides = [%c32_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %hca_cmp_slot_mapping_inline308__ssa_v0_view = pto.make_tensor_view %arg5, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %idx_block_table__ssa_v0_view = pto.make_tensor_view %arg6, shape = [%c4_index, %c64_index], strides = [%c64_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %csa_cmp_slot_mapping_inline314__ssa_v0_view = pto.make_tensor_view %arg7, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %csa_idx_slot_mapping_inline296__ssa_v0_view = pto.make_tensor_view %arg8, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %hca_compress_state_block_table__ssa_v0_view = pto.make_tensor_view %arg9, shape = [%arg15, %arg16], strides = [%arg16, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %hca_state_slot_mapping_inline181__ssa_v0_view = pto.make_tensor_view %arg10, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %csa_compress_state_block_table__ssa_v0_view = pto.make_tensor_view %arg11, shape = [%c4_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %csa_state_slot_mapping_inline279__ssa_v0_view = pto.make_tensor_view %arg12, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %csa_inner_compress_state_block_table__ssa_v0_view = pto.make_tensor_view %arg13, shape = [%c4_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %csa_inner_state_slot_mapping_inline316__ssa_v0_view = pto.make_tensor_view %arg14, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %metadata_core_inline2823__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
+  scf.for %token_inline2821__idx_v0 = %metadata_core_inline2823__ssa_v0 to %c8_index step %c1_index {
+    %0 = arith.divsi %token_inline2821__idx_v0, %c2_index : index
+    %position_inline2807__tile = pto.load_scalar %arg0[%token_inline2821__idx_v0] : !pto.ptr<i32> -> i32
+    %1 = arith.index_cast %position_inline2807__tile : i32 to index
+    %2 = arith.divsi %1, %c128_index : index
+    %3 = arith.index_cast %position_inline2807__tile : i32 to index
+    %4 = arith.remsi %3, %c128_index : index
+    %flat_offset_mul = arith.muli %0, %c128_index : index
+    %flat_offset = arith.addi %flat_offset_mul, %2 : index
+    %ori_physical_block_inline2804__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+    %6 = arith.index_cast %ori_physical_block_inline2804__tile : i32 to index
+    %7 = arith.muli %6, %c128_index : index
+    %8 = arith.addi %7, %4 : index
+    %9 = arith.index_cast %8 : index to i64
+    pto.store_scalar %9, %arg2[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+    %10 = arith.index_cast %cn1_index : index to i64
+    %11 = arith.index_cast %position_inline2807__tile : i32 to index
+    %12 = arith.addi %11, %c1_index : index
+    %13 = arith.remsi %12, %c128_index : index
+    %14 = arith.cmpi eq, %13, %c0_index : index
+    %hca_cmp_slot_inline2829__phi_v2 = scf.if %14 -> (i64) {
+      %15 = arith.index_cast %position_inline2807__tile : i32 to index
+      %16 = arith.divsi %15, %c128_index : index
+      %17 = arith.muli %0, %c6_index : index
+      %18 = arith.addi %17, %c1_index : index
+      %count_inline2817__tile = pto.load_scalar %arg3[%18] : !pto.ptr<i32> -> i32
+      %19 = arith.divsi %16, %c128_index : index
+      %20 = arith.index_cast %count_inline2817__tile : i32 to index
+      %21 = arith.remsi %19, %20 : index
+      %23 = arith.muli %0, %c32_index : index
+      %24 = arith.addi %23, %21 : index
+      %physical_block_inline2815__tile = pto.load_scalar %arg4[%24] : !pto.ptr<i32> -> i32
+      %25 = arith.index_cast %physical_block_inline2815__tile : i32 to index
+      %26 = arith.muli %25, %c128_index : index
+      %27 = arith.remsi %16, %c128_index : index
+      %28 = arith.addi %26, %27 : index
+      %29 = arith.index_cast %28 : index to i64
+      scf.yield %29 : i64
+    } else {
+      scf.yield %10 : i64
+    }
+    pto.store_scalar %hca_cmp_slot_inline2829__phi_v2, %arg5[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+    %30 = arith.index_cast %cn1_index : index to i64
+    %31 = arith.index_cast %cn1_index : index to i64
+    %32 = arith.index_cast %position_inline2807__tile : i32 to index
+    %33 = arith.addi %32, %c1_index : index
+    %34 = arith.remsi %33, %c4_index : index
+    %35 = arith.cmpi eq, %34, %c0_index : index
+    %csa_cmp_slot_inline2801__phi_v2, %csa_idx_slot_inline2800__phi_v2 = scf.if %35 -> (i64, i64) {
+      %36 = arith.index_cast %position_inline2807__tile : i32 to index
+      %37 = arith.divsi %36, %c4_index : index
+      %38 = arith.muli %0, %c6_index : index
+      %39 = arith.addi %38, %c1_index : index
+      %cmp_count_inline2820__tile = pto.load_scalar %arg3[%39] : !pto.ptr<i32> -> i32
+      %40 = arith.divsi %37, %c128_index : index
+      %41 = arith.index_cast %cmp_count_inline2820__tile : i32 to index
+      %42 = arith.remsi %40, %41 : index
+      %44 = arith.muli %0, %c32_index : index
+      %45 = arith.addi %44, %42 : index
+      %cmp_physical_block_inline2799__tile = pto.load_scalar %arg4[%45] : !pto.ptr<i32> -> i32
+      %46 = arith.index_cast %cmp_physical_block_inline2799__tile : i32 to index
+      %47 = arith.muli %46, %c128_index : index
+      %48 = arith.remsi %37, %c128_index : index
+      %49 = arith.addi %47, %48 : index
+      %50 = arith.index_cast %49 : index to i64
+      %51 = arith.muli %0, %c6_index : index
+      %52 = arith.addi %51, %c2_index : index
+      %idx_count_inline2798__tile = pto.load_scalar %arg3[%52] : !pto.ptr<i32> -> i32
+      %53 = arith.divsi %37, %c128_index : index
+      %54 = arith.index_cast %idx_count_inline2798__tile : i32 to index
+      %55 = arith.remsi %53, %54 : index
+      %57 = arith.muli %0, %c64_index : index
+      %58 = arith.addi %57, %55 : index
+      %idx_physical_block_inline2797__tile = pto.load_scalar %arg6[%58] : !pto.ptr<i32> -> i32
+      %59 = arith.index_cast %idx_physical_block_inline2797__tile : i32 to index
+      %60 = arith.muli %59, %c128_index : index
+      %61 = arith.remsi %37, %c128_index : index
+      %62 = arith.addi %60, %61 : index
+      %63 = arith.index_cast %62 : index to i64
+      scf.yield %50, %63 : i64, i64
+    } else {
+      scf.yield %30, %31 : i64, i64
+    }
+    pto.store_scalar %csa_cmp_slot_inline2801__phi_v2, %arg7[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+    pto.store_scalar %csa_idx_slot_inline2800__phi_v2, %arg8[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+    %64 = arith.index_cast %position_inline2807__tile : i32 to index
+    %65 = arith.divsi %64, %c8_index : index
+    %66 = arith.muli %0, %c6_index : index
+    %67 = arith.addi %66, %c3_index : index
+    %hca_state_count_inline2795__tile = pto.load_scalar %arg3[%67] : !pto.ptr<i32> -> i32
+    %68 = arith.index_cast %hca_state_count_inline2795__tile : i32 to index
+    %69 = arith.remsi %65, %68 : index
+    %71 = arith.muli %0, %arg16 : index
+    %72 = arith.addi %71, %69 : index
+    %hca_state_physical_block_inline2794__tile = pto.load_scalar %arg9[%72] : !pto.ptr<i32> -> i32
+    %73 = arith.index_cast %hca_state_physical_block_inline2794__tile : i32 to index
+    %74 = arith.muli %73, %c8_index : index
+    %75 = arith.index_cast %position_inline2807__tile : i32 to index
+    %76 = arith.remsi %75, %c8_index : index
+    %77 = arith.addi %74, %76 : index
+    %78 = arith.index_cast %77 : index to i64
+    pto.store_scalar %78, %arg10[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+    %79 = arith.index_cast %position_inline2807__tile : i32 to index
+    %80 = arith.divsi %79, %c4_index : index
+    %81 = arith.muli %0, %c6_index : index
+    %82 = arith.addi %81, %c4_index : index
+    %csa_state_count_inline2792__tile = pto.load_scalar %arg3[%82] : !pto.ptr<i32> -> i32
+    %83 = arith.index_cast %csa_state_count_inline2792__tile : i32 to index
+    %84 = arith.remsi %80, %83 : index
+    %86 = arith.muli %0, %c4096_index : index
+    %87 = arith.addi %86, %84 : index
+    %csa_state_physical_block_inline2791__tile = pto.load_scalar %arg11[%87] : !pto.ptr<i32> -> i32
+    %88 = arith.index_cast %csa_state_physical_block_inline2791__tile : i32 to index
+    %89 = arith.muli %88, %c4_index : index
+    %90 = arith.index_cast %position_inline2807__tile : i32 to index
+    %91 = arith.remsi %90, %c4_index : index
+    %92 = arith.addi %89, %91 : index
+    %93 = arith.index_cast %92 : index to i64
+    pto.store_scalar %93, %arg12[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+    %94 = arith.muli %0, %c6_index : index
+    %95 = arith.addi %94, %c5_index : index
+    %inner_state_count_inline2812__tile = pto.load_scalar %arg3[%95] : !pto.ptr<i32> -> i32
+    %96 = arith.index_cast %inner_state_count_inline2812__tile : i32 to index
+    %97 = arith.remsi %80, %96 : index
+    %99 = arith.muli %0, %c4096_index : index
+    %100 = arith.addi %99, %97 : index
+    %inner_state_physical_block_inline2828__tile = pto.load_scalar %arg13[%100] : !pto.ptr<i32> -> i32
+    %101 = arith.index_cast %inner_state_physical_block_inline2828__tile : i32 to index
+    %102 = arith.muli %101, %c4_index : index
+    %103 = arith.index_cast %position_inline2807__tile : i32 to index
+    %104 = arith.remsi %103, %c4_index : index
+    %105 = arith.addi %102, %104 : index
+    %106 = arith.index_cast %105 : index to i64
+    pto.store_scalar %106, %arg14[%token_inline2821__idx_v0] : !pto.ptr<i64>, i64
+  }
+  return
+  }
+}

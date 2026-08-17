@@ -218,7 +218,8 @@ def coerce_integer_like(value, target_type):
 
     if source_width < target_width:
         source_signedness = _integer_signedness(source_type)
-        if source_signedness == "unsigned":
+        # i1 carries boolean truth values; widening must preserve 0/1 storage.
+        if source_width == 1 or source_signedness == "unsigned":
             widened = arith.ExtUIOp(signless_target, signless_source).result
         else:
             widened = arith.ExtSIOp(signless_target, signless_source).result

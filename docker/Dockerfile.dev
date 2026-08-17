@@ -12,7 +12,7 @@ FROM quay.io/ascend/cann:9.0.0-910b-ubuntu22.04-py3.12
 
 # ---- Build args (matching CI) ----
 ARG LLVM_REPO=https://github.com/vpto-dev/llvm-project.git
-ARG LLVM_REF=feature-vpto-llvm21
+ARG LLVM_REF=feature-vpto
 ARG PTO_ISA_REPO=https://gitcode.com/cann/pto-isa.git
 ARG PTO_ISA_COMMIT=662d7f2a916d6bbde3109ce4a16ed5c28f5d900a
 
@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # =========================================================================
 # 2. Python dependencies
 # =========================================================================
-RUN pip install --no-cache-dir 'pybind11<3' numpy pyyaml pytest nanobind
+RUN pip install --no-cache-dir 'pybind11<3' numpy pyyaml pytest
 
 # =========================================================================
 # 3. Build LLVM/MLIR (vpto fork, feature-vpto branch)

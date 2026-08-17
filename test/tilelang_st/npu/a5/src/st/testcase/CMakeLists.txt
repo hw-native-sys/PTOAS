@@ -206,6 +206,7 @@ set(ALL_TESTCASES
     tmatmul_bias
     tmatmul_bias_mx
     tmatmul_mx
+    tquant_mx_dn
     tgemv
     tgemv_mx
     textract

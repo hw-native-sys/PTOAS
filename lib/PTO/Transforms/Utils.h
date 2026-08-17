@@ -60,6 +60,9 @@ namespace pto {
   constexpr const uint8_t kBitsToByte = 8;
   func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp);
   std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
+  SmallVector<std::pair<Value, Value>, 15>
+  getSemanticNoAliasPairs(Operation *op);
+  LogicalResult verifySemanticNoAliasRanges(func::FuncOp func);
   std::optional<AddressSpaceAttr> GetBufferSpaceAttr(Value operand);
   bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
   Value tracebackMemRef(Value memrefVal);

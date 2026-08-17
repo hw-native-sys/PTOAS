@@ -11,10 +11,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
-#include "PTO/Transforms/InsertSync/SyncCommon.h"
-#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include <algorithm>
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+
 
 #define DEBUG_TYPE "pto-inject-sync"
 
@@ -90,7 +91,9 @@ void SyncEventIdAllocation::reserveBlockAllEventIds() {
       }
     }
     // ... check pipeAfter ...
-    if (blockSyncAllExists) break;
+    if (blockSyncAllExists) {
+      break;
+    }
   }
   if (blockSyncAllExists) {
     reservedBlockSyncEventIdNum = kReservedBlockSyncEventIdNum;
@@ -109,9 +112,15 @@ void SyncEventIdAllocation::SetBlockSyncAllEventID(SyncOperation *sync) {
 
 void SyncEventIdAllocation::AllocateEventId(InstanceElement *e) {
   for (auto &sync : e->pipeBefore) {
-    if (sync->uselessSync) continue;
-    if (!sync->eventIds.empty()) continue; // Already allocated
-    if (sync->isBarrierType()) continue;   // Barrier needs no ID
+    if (sync->uselessSync) {
+      continue;
+    }
+    if (!sync->eventIds.empty()) {
+      continue; // Already allocated
+    }
+    if (sync->isBarrierType()) {
+      continue; // Barrier needs no ID
+    }
 
     if (sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_ALL) {
       SetBlockSyncAllEventID(sync);
@@ -147,8 +156,9 @@ void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
   // unavailable. Historically this pass treated reserved IDs as being at the
   // end of the [0..kTotalEventIdNum) range.
   if (availableEventIdNum < poolSize) {
-    for (size_t id = availableEventIdNum; id < poolSize; ++id)
+    for (size_t id = availableEventIdNum; id < poolSize; ++id) {
       eventIdLifetimeAvailableStatus[id] = false;
+    }
   }
 
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
@@ -175,7 +185,9 @@ SmallVector<int> SyncEventIdAllocation::UpdateBlockAvailableEventId(
   SmallVector<int> canAllocaEventId;
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
   for (unsigned id = 0; id < eventIdNum; id++) {
-    if (canAllocaEventId.size() == idSize) break;
+    if (canAllocaEventId.size() == idSize) {
+      break;
+    }
     if (!canAllocaEventId.empty() && !eventIdLifetimeAvailableStatus[id]) {
       canAllocaEventId.clear();
       continue;
@@ -199,7 +211,9 @@ SmallVector<int> SyncEventIdAllocation::GetAvailableEventId(
 
   // Strategy 1: Prioritize idle IDs
   for (unsigned id = 0; id < eventIdNum; id++) {
-    if (canAllocaEventId.size() == idSize) break;
+    if (canAllocaEventId.size() == idSize) {
+      break;
+    }
     if (eventIdLifetimeAvailableStatus[id] && eventIdIdleStatus[id]) {
       eventIdLifetimeAvailableStatus[id] = false;
       canAllocaEventId.push_back(id);
@@ -208,7 +222,9 @@ SmallVector<int> SyncEventIdAllocation::GetAvailableEventId(
 
   // Strategy 2: Use any available
   for (unsigned id = 0; id < eventIdNum; id++) {
-    if (canAllocaEventId.size() == idSize) break;
+    if (canAllocaEventId.size() == idSize) {
+      break;
+    }
     if (eventIdLifetimeAvailableStatus[id]) {
       eventIdLifetimeAvailableStatus[id] = false;
       canAllocaEventId.push_back(id);
@@ -286,12 +302,15 @@ void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,
   eventCyclePool.try_emplace(scopePair, EventCyclePool(eventIdSize));
   EventCyclePool &seqPool = eventCyclePool[scopePair];
   // The pool is keyed by scopePair and should have a stable size.
-  if (seqPool.slot.size() < eventIdSize)
+  if (seqPool.slot.size() < eventIdSize) {
     seqPool.slot.resize(eventIdSize);
+  }
 
   for (size_t i = 0; i < eventIdSize; i++) {
     auto &syncLifeCycle = seqPool.slot[i];
-    if (syncLifeCycle.empty()) continue;
+    if (syncLifeCycle.empty()) {
+      continue;
+    }
 
     if (CheckSyncLifeCycleConflict(syncLifeCycle, begin, end, eventId, i)) {
       continue;
@@ -438,8 +457,9 @@ void SyncEventIdAllocation::SetUseEventID(unsigned int begin, unsigned int end,
   eventCyclePool.try_emplace(scopePair, EventCyclePool(poolSize));
 
   EventCyclePool &seqPool = eventCyclePool[scopePair];
-  if (seqPool.slot.size() < poolSize)
+  if (seqPool.slot.size() < poolSize) {
     seqPool.slot.resize(poolSize);
+  }
   auto &syncLifeCycle = seqPool.slot[eventId];
   bool isInsert = false;
 
@@ -460,7 +480,9 @@ void SyncEventIdAllocation::SetUseEventID(unsigned int begin, unsigned int end,
       return;
     }
   }
-  if (!isInsert) llvm_unreachable("Can't insert this sync cycle!");
+  if (!isInsert) {
+    llvm_unreachable("Can't insert this sync cycle!");
+  }
 }
 
 void SyncEventIdAllocation::SeedHiddenMacroEventIds(
@@ -472,16 +494,21 @@ void SyncEventIdAllocation::SeedHiddenMacroEventIds(
   // for every kernel.
   for (size_t i = 0; i < syncIR_.size(); ++i) {
     auto *firstPhase = dyn_cast<CompoundInstanceElement>(syncIR_[i].get());
-    if (!firstPhase || firstPhase->macroOpInstanceId != 0) continue;
+    if (!firstPhase || firstPhase->macroOpInstanceId != 0) {
+      continue;
+    }
     Operation *op = firstPhase->elementOp;
     auto model = getSyncMacroModel(op);
-    if (!model || model->hiddenEvents.empty())
+    if (!model || model->hiddenEvents.empty()) {
       continue;
+    }
 
     unsigned end = firstPhase->GetIndex() + 1;
     for (size_t j = i + 1; j < syncIR_.size(); ++j) {
       auto *otherPhase = dyn_cast<CompoundInstanceElement>(syncIR_[j].get());
-      if (!otherPhase || otherPhase->elementOp != op) continue;
+      if (!otherPhase || otherPhase->elementOp != op) {
+        continue;
+      }
       end = otherPhase->GetIndex();
     }
     unsigned begin = firstPhase->GetIndex();
@@ -491,12 +518,15 @@ void SyncEventIdAllocation::SeedHiddenMacroEventIds(
     if (end + 1 < syncIR_.size()) {
       ++end;
     }
-    if (begin >= end) continue;
+    if (begin >= end) {
+      continue;
+    }
 
     for (const auto &hiddenEvent : model->hiddenEvents) {
       int scopePair = ScopePair(hiddenEvent.srcPipe, hiddenEvent.dstPipe);
-      if (scopeFilter && !scopeFilter->contains(scopePair))
+      if (scopeFilter && !scopeFilter->contains(scopePair)) {
         continue;
+      }
       for (unsigned eventId : hiddenEvent.eventIds) {
         SetUseEventID(begin, end, scopePair, eventId, kTotalEventIdNum);
       }
@@ -564,8 +594,12 @@ void SyncEventIdAllocation::clearAllocatedEventId() {
   }
   // Clear IDs
   for (auto &e : syncIR_) {
-    for (auto &sync : e->pipeBefore) ClearEventId(sync);
-    for (auto &sync : e->pipeAfter) ClearEventId(sync);
+    for (auto& sync : e->pipeBefore) {
+      ClearEventId(sync);
+    }
+    for (auto& sync : e->pipeAfter) {
+      ClearEventId(sync);
+    }
   }
 }
 
@@ -586,7 +620,9 @@ void SyncEventIdAllocation::ReallocatedEventId() {
 }
 
 void SyncEventIdAllocation::ClearEventId(const SyncOperation *sync) {
-  if (sync->isBarrierType()) return;
+  if (sync->isBarrierType()) {
+    return;
+  }
   auto &syncPair = syncOperations_[sync->GetSyncIndex()];
   SyncOperation *setSync = syncPair[0].get();
   SyncOperation *waitSync = syncPair[1].get();
@@ -644,8 +680,12 @@ void SyncEventIdAllocation::MoveOutBackwardMatchSync(
 
   // Conflict detection logic (simplified for PTO port)
   for (unsigned int i = 0; i <= syncIR_.size() - 1; i++) {
-    if (isConflictEventId) break;
-    if ((i > setSync->GetSyncIRIndex()) && (i < waitSync->GetSyncIRIndex())) continue;
+    if (isConflictEventId) {
+      break;
+    }
+    if ((i > setSync->GetSyncIRIndex()) && (i < waitSync->GetSyncIRIndex())) {
+      continue;
+    }
 
     for (auto &sync : syncIR_[i]->pipeBefore) {
       if (!sync->uselessSync &&
@@ -675,7 +715,9 @@ void SyncEventIdAllocation::IgnoreBackHeadAndTailSync() {
     }
     bool isPipeMTE1ToPipeMSync = sync->GetSrcPipe() == PipelineType::PIPE_M &&
                                  sync->GetDstPipe() == PipelineType::PIPE_MTE1;
-    if (!isPipeMTE1ToPipeMSync) continue;
+    if (!isPipeMTE1ToPipeMSync) {
+      continue;
+    }
 
     auto &syncPair = syncOperations_[sync->GetSyncIndex()];
     if (sync->eventIds.empty()) {
@@ -692,7 +734,9 @@ bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
   SyncOperation *waitSync = syncPair[1].get();
 
   SyncOperation *widenSync = FindWidenSync(setSync, waitSync);
-  if (widenSync == nullptr) return false;
+  if (widenSync == nullptr) {
+    return false;
+  }
 
   setSync->uselessSync = true;
   waitSync->uselessSync = true;
@@ -716,7 +760,9 @@ bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
       }
     }
     widenSetSyncIR->pipeAfter = newPipeAfter;
-    if (!removeSync) llvm_unreachable("in widen fun, remove sync failed");
+    if (!removeSync) {
+      llvm_unreachable("in widen fun, remove sync failed");
+    }
   }
   return true;
 }
@@ -737,8 +783,12 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
 
     // Stop at control flow boundaries logic...
     if (auto *loopInst = dyn_cast<LoopInstanceElement>(tmpIr)) {
-       if (loopInst->getLoopKind() == KindOfLoop::LOOP_BEGIN) break;
-       if (loopInst->getLoopKind() == KindOfLoop::LOOP_END) loopId = static_cast<int>(loopInst->beginId);
+      if (loopInst->getLoopKind() == KindOfLoop::LOOP_BEGIN) {
+        break;
+      }
+      if (loopInst->getLoopKind() == KindOfLoop::LOOP_END) {
+        loopId = static_cast<int>(loopInst->beginId);
+      }
     }
     // ... Branch checks ...
 
@@ -767,9 +817,7 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
         bool canForwardReuse =
             (setSync->GetSyncIRIndex() > setSame->GetSyncIRIndex() &&
              setSync->GetSyncIRIndex() <= waitSame->GetSyncIRIndex());
-
         // ... Backward reuse logic ...
-
         if (canForwardReuse /* || canBackwardReuse */) {
             return setSame; // Simplification: return first valid match
         }

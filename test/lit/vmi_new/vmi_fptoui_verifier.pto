@@ -49,7 +49,7 @@ func.func @f16_to_u8_bad_sat(%source: !pto.vmi.vreg<128xf16>)
 // Negative: f16->s8 via fptoui (requires unsigned result).
 func.func @f16_to_s8_via_fptoui(%source: !pto.vmi.vreg<128xf16>)
     -> !pto.vmi.vreg<128xsi8> {
-  // expected-error@+1 {{requires unsigned integer result element type}}
+  // expected-error@+1 {{requires unsigned or signless integer result element type}}
   %result = pto.vmi.fptoui %source {saturate = "SAT"}
       : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xsi8>
   return %result : !pto.vmi.vreg<128xsi8>

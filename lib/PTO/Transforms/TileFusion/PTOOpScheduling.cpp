@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
 #include "PTO/Transforms/TileFusion/FusionOpSemantics.h"
 
@@ -54,7 +55,7 @@ struct GroupMember {
 struct ScheduledGroup {
   int64_t groupId = 0;
   unsigned firstOriginalIndex = 0;
-  SmallVector<GroupMember, 8> members;
+  SmallVector<GroupMember, mlir::pto::kValue8> members;
 };
 
 static std::optional<int64_t> getRequiredI64Attr(Operation *op,
@@ -72,19 +73,24 @@ static bool hasIncompleteFusionMetadata(Operation *op) {
 }
 
 static bool sharesAnyValue(ArrayRef<Value> lhs, ArrayRef<Value> rhs) {
-  for (Value value : lhs)
-    if (llvm::is_contained(rhs, value))
+  for (Value value : lhs) {
+    if (llvm::is_contained(rhs, value)) {
       return true;
+    }
+  }
   return false;
 }
 
 static SchedulingBarrierKind classifySchedulingBarrier(Operation *op) {
-  if (op->hasTrait<OpTrait::IsTerminator>() || !op->getRegions().empty())
+  if (op->hasTrait<OpTrait::IsTerminator>() || !op->getRegions().empty()) {
     return SchedulingBarrierKind::HardBoundary;
-  if (isa<CallOpInterface>(op))
+  }
+  if (isa<CallOpInterface>(op)) {
     return SchedulingBarrierKind::HardBoundary;
-  if (isa<pto::AllocTileOp>(op))
+  }
+  if (isa<pto::AllocTileOp>(op)) {
     return SchedulingBarrierKind::Movable;
+  }
 
   FailureOr<pto::FusionOpSemantics> semanticsOr = pto::getFusionOpSemantics(op);
   if (succeeded(semanticsOr)) {
@@ -106,8 +112,9 @@ static SchedulingBarrierKind classifySchedulingBarrier(Operation *op) {
 static bool hasTileDependency(Operation *opA, Operation *opB) {
   // alloc_tile is a pure buffer allocation with no tile-level data dependency
   // on any compute op — it does not consume or produce tile data.
-  if (isa<pto::AllocTileOp>(opA) || isa<pto::AllocTileOp>(opB))
+  if (isa<pto::AllocTileOp>(opA) || isa<pto::AllocTileOp>(opB)) {
     return false;
+  }
 
   FailureOr<pto::FusionOpSemantics> aSemOr = pto::getFusionOpSemantics(opA);
   FailureOr<pto::FusionOpSemantics> bSemOr = pto::getFusionOpSemantics(opB);
@@ -284,7 +291,7 @@ static void movePrefixPastBarrier(ArrayRef<GroupMember> members,
 }
 
 static void scheduleGroup(ScheduledGroup &group) {
-  if (group.members.size() < 2) {
+  if (group.members.size() < mlir::pto::kValue2) {
     return;
   }
 
@@ -299,8 +306,9 @@ static void scheduleGroup(ScheduledGroup &group) {
 
       Operation *blockingOp = placement->getNextNode();
       if (!blockingOp || blockingOp == op ||
-          !canMoveLaterAcross(placement, blockingOp))
+          !canMoveLaterAcross(placement, blockingOp)) {
         break;
+      }
 
       if (!canPrefixMoveLaterAcross(group.members, placement, blockingOp)) {
         break;
@@ -314,17 +322,21 @@ static void scheduleGroup(ScheduledGroup &group) {
 
 static LogicalResult scheduleRegion(Region &region) {
   for (Block &block : region.getBlocks()) {
-    SmallVector<ScheduledGroup, 8> groups;
-    if (failed(collectScheduledGroups(block, groups)))
+    SmallVector<ScheduledGroup, mlir::pto::kValue8> groups;
+    if (failed(collectScheduledGroups(block, groups))) {
       return failure();
+    }
     for (ScheduledGroup &group : groups) {
       scheduleGroup(group);
     }
 
-    for (Operation &op : block)
-      for (Region &nestedRegion : op.getRegions())
-        if (failed(scheduleRegion(nestedRegion)))
+    for (Operation &op : block) {
+      for (Region &nestedRegion : op.getRegions()) {
+        if (failed(scheduleRegion(nestedRegion))) {
           return failure();
+        }
+      }
+    }
   }
   return success();
 }
@@ -350,7 +362,7 @@ static LogicalResult scheduleRegion(Region &region) {
 
 struct FusionSpan {
   int64_t originalGroupId = 0;
-  SmallVector<Operation *, 8> members;
+  SmallVector<Operation *, mlir::pto::kValue8> members;
 };
 
 // Collect the physically contiguous spans of fusion metadata in `block`, in
@@ -367,7 +379,7 @@ collectPhysicalFusionSpans(Block &block,
   FusionSpan current;
   bool hasCurrent = false;
 
-  auto flush = [&]() {
+  auto flush = [&current, &hasCurrent, &spans]() {
     if (!hasCurrent) {
       return;
     }
@@ -411,7 +423,7 @@ collectPhysicalFusionSpans(Block &block,
 static LogicalResult
 normalizeBlockFusionMetadata(Block &block, MLIRContext *context,
                             int64_t &nextGroupId) {
-  SmallVector<FusionSpan, 8> spans;
+  SmallVector<FusionSpan, mlir::pto::kValue8> spans;
   if (failed(collectPhysicalFusionSpans(block, spans))) {
     return failure();
   }
@@ -426,7 +438,7 @@ normalizeBlockFusionMetadata(Block &block, MLIRContext *context,
 
   const IntegerType i64 = IntegerType::get(context, 64);
   for (FusionSpan &span : spans) {
-    if (span.members.size() < 2) {
+    if (span.members.size() < mlir::pto::kValue2) {
       continue;
     }
 
@@ -451,11 +463,14 @@ normalizeScheduledFusionMetadata(Region &region, MLIRContext *context,
 
     // Recurse into nested regions in the same pre-order walk used by
     // scheduleRegion, so the function-wide id counter stays deterministic.
-    for (Operation &op : block)
-      for (Region &nestedRegion : op.getRegions())
+    for (Operation &op : block) {
+      for (Region &nestedRegion : op.getRegions()) {
         if (failed(normalizeScheduledFusionMetadata(nestedRegion, context,
-                                                    nextGroupId)))
+                                                    nextGroupId))) {
           return failure();
+        }
+      }
+    }
   }
   return success();
 }

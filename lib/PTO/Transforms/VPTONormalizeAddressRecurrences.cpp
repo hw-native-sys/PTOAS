@@ -72,10 +72,12 @@ struct SourceRewrite {
 
 static std::optional<int64_t> getConstant(Value value, AddressDomain domain) {
   APInt bits;
-  if (!matchPattern(value, m_ConstantInt(&bits)) || bits.getBitWidth() > 64)
+  if (!matchPattern(value, m_ConstantInt(&bits)) || bits.getBitWidth() > 64) {
     return std::nullopt;
-  if (domain == AddressDomain::Signed)
+  }
+  if (domain == AddressDomain::Signed) {
     return bits.getSExtValue();
+  }
   uint64_t unsignedValue = bits.getZExtValue();
   if (unsignedValue >
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
@@ -513,20 +515,23 @@ private:
   requestRecurrence(Value value, Operation *owner, unsigned operandNumber,
                     AddressDomain domain) {
     auto proven = matchProvenRecurrence(value, forOp, tripCount, domain);
-    if (!proven)
+    if (!proven) {
       return std::nullopt;
+    }
 
     auto [it, inserted] = recurrenceIndices.try_emplace(
         std::make_pair(value, domain), recurrences.size());
-    if (inserted)
+    if (inserted) {
       recurrences.push_back(RecurrencePlan{*proven, {}});
+    }
     unsigned index = it->second;
     auto &targets = recurrences[index].targets;
     if (llvm::none_of(targets, [&](const RewriteTarget &target) {
           return target.owner == owner &&
                  target.operandNumber == operandNumber;
-        }))
+        })) {
       targets.push_back({owner, operandNumber});
+    }
     return index;
   }
 

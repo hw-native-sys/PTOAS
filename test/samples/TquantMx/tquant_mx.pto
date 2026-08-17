@@ -1,48 +1,67 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// Licensed under the CANN Open Software License Agreement Version 2.0.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @tquant_mx_kernel(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<i8, gm>,
                               %arg2: !pto.ptr<ui8, gm>, %arg3: !pto.ptr<f32, gm>,
-                              %arg4: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+                              %arg4: !pto.ptr<f32, gm>, %arg5: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
 
-    // src: f32 [16, 32], 512 elements, 32-aligned (16 groups of 32)
-    %0 = pto.make_tensor_view %arg0, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    // dst: i8 (fp8 e4m3 packed as int8) [16, 32]
-    %1 = pto.make_tensor_view %arg1, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xi8>
-    // exp: ui8 (e8m0) [1, 16] (512/32 = 16 groups)
-    %2 = pto.make_tensor_view %arg2, shape = [%c1, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xui8>
-    // max: f32 [1, 16]
-    %3 = pto.make_tensor_view %arg3, shape = [%c1, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
-    // scaling: f32 [1, 16] (per-group reciprocal scale, same as pto-isa ST testcase)
-    %4 = pto.make_tensor_view %arg4, shape = [%c1, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    // Canonical axis1 layout: source is [M, N] and grouped auxiliaries are [M, N/32].
+    %0 = pto.make_tensor_view %arg0, shape = [%c16, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
+    %1 = pto.make_tensor_view %arg1, shape = [%c16, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xi8>
+    %2 = pto.make_tensor_view %arg2, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xui8>
+    %3 = pto.make_tensor_view %arg3, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xf32>
+    %4 = pto.make_tensor_view %arg4, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xf32>
+    %5 = pto.make_tensor_view %arg5, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xui8>
 
-    %5 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32>
-    %6 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xi8>
-    %7 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c1, %c16] : !pto.tensor_view<?x?xui8>
-    %8 = pto.partition_view %3, offsets = [%c0, %c0], sizes = [%c1, %c16] : !pto.tensor_view<?x?xf32>
-    %9 = pto.partition_view %4, offsets = [%c0, %c0], sizes = [%c1, %c16] : !pto.tensor_view<?x?xf32>
+    %6 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xf32>
+    %7 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xi8>
+    %8 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xui8>
+    %9 = pto.partition_view %3, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xf32>
+    %10 = pto.partition_view %4, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xf32>
+    %11 = pto.partition_view %5, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xui8>
 
-    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %exp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %max = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x64xi8>
+    // Keep allocator-facing storage rows 32-byte aligned, then expose the exact
+    // canonical logical tiles required by TQUANT and ND-to-ZZ.
+    %exp_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
+    %max_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %scaling_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %exp_zz_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8, slayout=row_major>
+    // ND-to-ZZ needs 64 + ceil(16/16) * 2 = 66 bytes; the allocation is
+    // rounded up to a 32-byte row while its valid grouped width remains 2.
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x96xui8, valid=1x2>
+    %exp = pto.treshape %exp_storage : !pto.tile_buf<vec, 1x32xui8> -> !pto.tile_buf<vec, 16x2xui8>
+    %max = pto.treshape %max_storage : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 16x2xf32>
+    %scaling = pto.treshape %scaling_storage : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 16x2xf32>
+    %exp_zz = pto.treshape %exp_zz_storage : !pto.tile_buf<vec, 1x32xui8, slayout=row_major> -> !pto.tile_buf<vec, 16x2xui8, slayout=row_major>
 
-    pto.tload ins(%5 : !pto.partition_tensor_view<16x32xf32>) outs(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%6 : !pto.partition_tensor_view<16x64xf32>) outs(%src : !pto.tile_buf<vec, 16x64xf32>)
 
-    pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-                   outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x64xf32>)
+                   outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x64xi8>, !pto.tile_buf<vec, 16x2xui8>, !pto.tile_buf<vec, 16x2xf32>, !pto.tile_buf<vec, 16x2xf32>)
                    {quant_type = #pto<quant_type MXFP8>}
 
-    pto.tstore ins(%dst : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%6 : !pto.partition_tensor_view<16x32xi8>)
-    pto.tstore ins(%exp : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%7 : !pto.partition_tensor_view<1x16xui8>)
-    pto.tstore ins(%max : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%8 : !pto.partition_tensor_view<1x16xf32>)
-    pto.tstore ins(%scaling : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%9 : !pto.partition_tensor_view<1x16xf32>)
+    pto.tmov ins(%exp : !pto.tile_buf<vec, 16x2xui8>, %tmp : !pto.tile_buf<vec, 1x96xui8, valid=1x2>)
+              outs(%exp_zz : !pto.tile_buf<vec, 16x2xui8, slayout=row_major>)
+
+    pto.tstore ins(%dst : !pto.tile_buf<vec, 16x64xi8>) outs(%7 : !pto.partition_tensor_view<16x64xi8>)
+    pto.tstore ins(%exp : !pto.tile_buf<vec, 16x2xui8>) outs(%8 : !pto.partition_tensor_view<16x2xui8>)
+    pto.tstore ins(%max : !pto.tile_buf<vec, 16x2xf32>) outs(%9 : !pto.partition_tensor_view<16x2xf32>)
+    pto.tstore ins(%scaling : !pto.tile_buf<vec, 16x2xf32>) outs(%10 : !pto.partition_tensor_view<16x2xf32>)
+    pto.tstore ins(%exp_zz_storage : !pto.tile_buf<vec, 1x32xui8, slayout=row_major>) outs(%11 : !pto.partition_tensor_view<16x2xui8>)
     return
   }
 }

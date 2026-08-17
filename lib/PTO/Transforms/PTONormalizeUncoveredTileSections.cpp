@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "Utils.h"
@@ -30,6 +31,9 @@ namespace {
 
 using InferredSectionKind = PhysicalSectionKind;
 
+constexpr int8_t kC2VDirMask = 1;
+constexpr int8_t kV2CDirMask = 2;
+
 struct UncoveredTopLevelSegment {
   Operation *firstOp = nullptr;
   Operation *lastOp = nullptr;
@@ -38,7 +42,7 @@ struct UncoveredTopLevelSegment {
   bool containsNestedExplicitSection = false;
   unsigned vectorTileOpCount = 0;
   unsigned cubeTileOpCount = 0;
-  SmallVector<Operation *, 4> ambiguousTileOps;
+  SmallVector<Operation *, mlir::pto::kValue4> ambiguousTileOps;
 };
 
 static void mergeSegmentSummary(UncoveredTopLevelSegment &dst,
@@ -155,8 +159,9 @@ classifyMteOpByAddressSpace(MteOpInterface mteOp) {
 
 static std::optional<InferredSectionKind>
 classifyRawSectionCarrierOp(Operation *op) {
-  if (!isRawSectionCarrierOp(op))
+  if (!isRawSectionCarrierOp(op)) {
     return std::nullopt;
+  }
   if (isa<VectorMicroOpInterface>(op)) {
     return InferredSectionKind::Vector;
   }
@@ -164,8 +169,9 @@ classifyRawSectionCarrierOp(Operation *op) {
     return InferredSectionKind::Cube;
   }
   if (auto mteOp = dyn_cast<MteOpInterface>(op)) {
-    if (auto kind = classifyMteOpByAddressSpace(mteOp))
+    if (auto kind = classifyMteOpByAddressSpace(mteOp)) {
       return kind;
+    }
     return classifyTileOpByPipe(op);
   }
   if (auto setFlag = dyn_cast<SetFlagOp>(op)) {
@@ -187,10 +193,12 @@ classifyRawSectionCarrierOp(Operation *op) {
     }
     return classifySyncPipe(waitFlag.getDstPipe().getPipe());
   }
-  if (auto syncSet = dyn_cast<SyncSetOp>(op))
+  if (auto syncSet = dyn_cast<SyncSetOp>(op)) {
     return classifySyncPipe(syncSet.getPipe().getPipe());
-  if (auto syncWait = dyn_cast<SyncWaitOp>(op))
+  }
+  if (auto syncWait = dyn_cast<SyncWaitOp>(op)) {
     return classifySyncPipe(syncWait.getPipe().getPipe());
+  }
   return std::nullopt;
 }
 
@@ -237,8 +245,9 @@ static bool hasExplicitFunctionKernelKind(func::FuncOp funcOp) {
 }
 
 static bool isInsideKernelKindModule(func::FuncOp funcOp) {
-  if (!funcOp)
+  if (!funcOp) {
     return false;
+  }
   ModuleOp owner = funcOp->getParentOfType<ModuleOp>();
   return owner && owner->hasAttr(FunctionKernelKindAttr::name);
 }
@@ -249,18 +258,21 @@ static bool hasKnownKernelKindContext(func::FuncOp funcOp) {
 }
 
 static std::optional<AddressSpace> getBufferAddressSpace(Type type) {
-  if (auto ptrType = dyn_cast<PtrType>(type))
+  if (auto ptrType = dyn_cast<PtrType>(type)) {
     return ptrType.getMemorySpace().getAddressSpace();
+  }
   if (auto tileType = dyn_cast<TileBufType>(type)) {
     if (auto attr =
-            dyn_cast_or_null<AddressSpaceAttr>(tileType.getMemorySpace()))
+            dyn_cast_or_null<AddressSpaceAttr>(tileType.getMemorySpace())) {
       return attr.getAddressSpace();
+    }
     return std::nullopt;
   }
   if (auto memrefType = dyn_cast<MemRefType>(type)) {
     if (auto attr =
-            dyn_cast_or_null<AddressSpaceAttr>(memrefType.getMemorySpace()))
+            dyn_cast_or_null<AddressSpaceAttr>(memrefType.getMemorySpace())) {
       return attr.getAddressSpace();
+    }
     return std::nullopt;
   }
   return std::nullopt;
@@ -277,17 +289,20 @@ static std::optional<int8_t> getPipeHandleDirMask(Value pipeHandle) {
   if (!pipeHandle) {
     return std::nullopt;
   }
-  if (auto init = pipeHandle.getDefiningOp<InitializeL2LPipeOp>())
+  if (auto init = pipeHandle.getDefiningOp<InitializeL2LPipeOp>()) {
     return init.getDirMask();
-  if (auto init = pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>())
+  }
+  if (auto init = pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>()) {
     return init.getDirMask();
+  }
   return std::nullopt;
 }
 
 static std::optional<InferredSectionKind>
 classifyTileSectionByAddressSpace(std::optional<AddressSpace> space) {
-  if (!space)
+  if (!space) {
     return std::nullopt;
+  }
 
   switch (*space) {
   case AddressSpace::VEC:
@@ -311,10 +326,10 @@ classifyInternalPipeTileOp(Operation *op) {
     if (!dirMask) {
       return std::nullopt;
     }
-    if (*dirMask == 1) {
+    if (*dirMask == kC2VDirMask) {
       return InferredSectionKind::Cube;
     }
-    if (*dirMask == 2) {
+    if (*dirMask == kV2CDirMask) {
       return InferredSectionKind::Vector;
     }
     return classifyTileSectionByAddressSpace(
@@ -326,10 +341,10 @@ classifyInternalPipeTileOp(Operation *op) {
     if (!dirMask) {
       return std::nullopt;
     }
-    if (*dirMask == 1) {
+    if (*dirMask == kC2VDirMask) {
       return InferredSectionKind::Vector;
     }
-    if (*dirMask == 2) {
+    if (*dirMask == kV2CDirMask) {
       return InferredSectionKind::Cube;
     }
     return classifyTileSectionByAddressSpace(
@@ -341,10 +356,10 @@ classifyInternalPipeTileOp(Operation *op) {
     if (!dirMask) {
       return std::nullopt;
     }
-    if (*dirMask == 1) {
+    if (*dirMask == kC2VDirMask) {
       return InferredSectionKind::Vector;
     }
-    if (*dirMask == 2) {
+    if (*dirMask == kV2CDirMask) {
       return InferredSectionKind::Cube;
     }
     if (!free.getEntry()) {
@@ -359,10 +374,10 @@ classifyInternalPipeTileOp(Operation *op) {
     if (!dirMask) {
       return std::nullopt;
     }
-    if (*dirMask == 1) {
+    if (*dirMask == kC2VDirMask) {
       return InferredSectionKind::Cube;
     }
-    if (*dirMask == 2) {
+    if (*dirMask == kV2CDirMask) {
       return InferredSectionKind::Vector;
     }
     return std::nullopt;
@@ -373,16 +388,20 @@ classifyInternalPipeTileOp(Operation *op) {
 
 static std::optional<InferredSectionKind> classifyTileOpByName(Operation *op) {
   StringRef name = op->getName().getStringRef();
-  if (name.starts_with("pto.tmatmul") || name.starts_with("pto.tgemv"))
+  if (name.starts_with("pto.tmatmul") || name.starts_with("pto.tgemv")) {
     return InferredSectionKind::Cube;
+  }
   if (name == "pto.talloc_to_aiv" || name == "pto.tpush_to_aic" ||
-      name == "pto.tpop_from_aic" || name == "pto.tfree_from_aic")
+      name == "pto.tpop_from_aic" || name == "pto.tfree_from_aic") {
     return InferredSectionKind::Vector;
+  }
   if (name == "pto.talloc_to_aic" || name == "pto.tpush_to_aiv" ||
-      name == "pto.tpop_from_aiv" || name == "pto.tfree_from_aiv")
+      name == "pto.tpop_from_aiv" || name == "pto.tfree_from_aiv") {
     return InferredSectionKind::Cube;
-  if (name.ends_with("_to_aiv") || name.ends_with("_from_aiv"))
+  }
+  if (name.ends_with("_to_aiv") || name.ends_with("_from_aiv")) {
     return InferredSectionKind::Vector;
+  }
   return std::nullopt;
 }
 
@@ -392,11 +411,13 @@ static std::optional<InferredSectionKind> classifyTileOpByPipe(Operation *op) {
 
 static std::optional<InferredSectionKind>
 classifyTileOpByAddressSpace(Operation *op) {
-  SmallVector<AddressSpace, 8> spaces;
-  for (Value operand : op->getOperands())
+  SmallVector<AddressSpace, mlir::pto::kValue8> spaces;
+  for (Value operand : op->getOperands()) {
     collectTileAddressSpaces(operand.getType(), spaces);
-  for (Value result : op->getResults())
+  }
+  for (Value result : op->getResults()) {
     collectTileAddressSpaces(result.getType(), spaces);
+  }
 
   bool sawVec = false;
   bool sawMat = false;
@@ -514,7 +535,7 @@ static std::optional<InferredSectionKind> classifyTileOp(Operation *op) {
 struct ModuleKindSummary {
   unsigned vectorCount = 0;
   unsigned cubeCount = 0;
-  SmallVector<Operation *, 4> ambiguousOps;
+  SmallVector<Operation *, mlir::pto::kValue4> ambiguousOps;
 };
 
 enum class FunctionKindCacheState : uint8_t {
@@ -539,19 +560,21 @@ static void inspectModuleKindOperation(Operation *op,
   if (isRawSectionCarrierOp(op)) {
     if (std::optional<InferredSectionKind> kind =
             classifyRawSectionCarrierOp(op)) {
-      if (*kind == InferredSectionKind::Vector)
+      if (*kind == InferredSectionKind::Vector) {
         ++summary.vectorCount;
-      else
+      } else {
         ++summary.cubeCount;
+}
     } else {
       summary.ambiguousOps.push_back(op);
     }
   } else if (isPipeLikeOp(op)) {
     if (std::optional<InferredSectionKind> kind = classifyTileOp(op)) {
-      if (*kind == InferredSectionKind::Vector)
+      if (*kind == InferredSectionKind::Vector) {
         ++summary.vectorCount;
-      else
+      } else {
         ++summary.cubeCount;
+}
     } else if (isTileLikeOp(op)) {
       summary.ambiguousOps.push_back(op);
     }
@@ -561,16 +584,18 @@ static void inspectModuleKindOperation(Operation *op,
 
   for (Region &region : op->getRegions()) {
     for (Block &block : region.getBlocks()) {
-      for (Operation &nested : block.getOperations())
+      for (Operation &nested : block.getOperations()) {
         inspectModuleKindOperation(&nested, summary);
+      }
     }
   }
 }
 
 static FunctionKindCacheState
 encodeFunctionKind(std::optional<InferredSectionKind> kind) {
-  if (!kind)
+  if (!kind) {
     return FunctionKindCacheState::Unknown;
+  }
   return *kind == InferredSectionKind::Vector ? FunctionKindCacheState::Vector
                                               : FunctionKindCacheState::Cube;
 }
@@ -658,8 +683,9 @@ static std::optional<InferredSectionKind> inferWholeFunctionKind(
     if (func::CallOp callOp = getTransparentWrapperCall(funcOp)) {
       auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
           funcOp, callOp.getCalleeAttr());
-      if (callee && callee != funcOp)
+      if (callee && callee != funcOp) {
         inferredKind = inferWholeFunctionKind(callee, cache);
+      }
     }
   }
 
@@ -758,10 +784,11 @@ static void inspectSegmentOperation(Operation *op,
     std::optional<InferredSectionKind> kind =
         isTileLikeOp(op) ? classifyTileOp(op) : classifyRawSectionCarrierOp(op);
     if (kind) {
-      if (*kind == InferredSectionKind::Vector)
+      if (*kind == InferredSectionKind::Vector) {
         ++segment.vectorTileOpCount;
-      else
+      } else {
         ++segment.cubeTileOpCount;
+}
     } else {
       segment.ambiguousTileOps.push_back(op);
     }
@@ -799,8 +826,9 @@ inferSegmentKind(const UncoveredTopLevelSegment &segment) {
 
 static UncoveredTopLevelSegment summarizeTopLevelOperation(Operation *op) {
   UncoveredTopLevelSegment summary;
-  if (!op || isa<func::ReturnOp>(op) || isExplicitSection(op))
+  if (!op || isa<func::ReturnOp>(op) || isExplicitSection(op)) {
     return summary;
+  }
 
   summary.firstOp = op;
   summary.lastOp = op;
@@ -813,8 +841,9 @@ static UncoveredTopLevelSegment summarizeTopLevelOperation(Operation *op) {
 
 static void collectUncoveredTopLevelSegments(
     func::FuncOp funcOp, SmallVectorImpl<UncoveredTopLevelSegment> &segments) {
-  if (!funcOp || funcOp.isDeclaration() || !funcOp.getBody().hasOneBlock())
+  if (!funcOp || funcOp.isDeclaration() || !funcOp.getBody().hasOneBlock()) {
     return;
+  }
 
   Block &entryBlock = funcOp.getBody().front();
   UncoveredTopLevelSegment current;
@@ -898,10 +927,11 @@ emitSegmentInferenceError(func::FuncOp funcOp,
     diag << "; saw both vector-like and cube-like ops in the same segment";
   } else if (!segment.ambiguousTileOps.empty()) {
     diag << "; ambiguous op(s): ";
-    for (size_t i = 0, e = segment.ambiguousTileOps.size(); i < e && i < 3;
+    for (size_t i = 0, e = segment.ambiguousTileOps.size(); i < e && i < mlir::pto::kValue3;
          ++i) {
-      if (i)
+      if (i) {
         diag << ", ";
+      }
       diag << '\'' << segment.ambiguousTileOps[i]->getName().getStringRef()
            << '\'';
     }
@@ -935,7 +965,7 @@ static LogicalResult normalizeFunction(func::FuncOp funcOp) {
     return success();
   }
 
-  SmallVector<UncoveredTopLevelSegment, 4> segments;
+  SmallVector<UncoveredTopLevelSegment, mlir::pto::kValue4> segments;
   collectUncoveredTopLevelSegments(funcOp, segments);
   for (const UncoveredTopLevelSegment &segment : llvm::reverse(segments)) {
     if (!segment.containsTileOp || segment.containsNestedExplicitSection) {
@@ -965,7 +995,7 @@ verifyFunctionHasNoResidualUncoveredTileSegments(func::FuncOp funcOp) {
     return success();
   }
 
-  SmallVector<UncoveredTopLevelSegment, 4> segments;
+  SmallVector<UncoveredTopLevelSegment, mlir::pto::kValue4> segments;
   collectUncoveredTopLevelSegments(funcOp, segments);
   for (const UncoveredTopLevelSegment &segment : segments) {
     if (!segment.containsTileOp) {
@@ -979,23 +1009,28 @@ verifyFunctionHasNoResidualUncoveredTileSegments(func::FuncOp funcOp) {
 static LogicalResult scanModuleForUncoveredTileSegments(ModuleOp module) {
   LogicalResult status = success();
   module.walk([&](ModuleOp nestedModule) {
-    if (failed(status))
+    if (failed(status)) {
       return WalkResult::interrupt();
+    }
     status = tryAssignWholeModuleKernelKind(nestedModule);
     return failed(status) ? WalkResult::interrupt() : WalkResult::advance();
   });
-  if (failed(status))
+  if (failed(status)) {
     return status;
+  }
 
   module.walk([&](func::FuncOp funcOp) {
-    if (failed(status))
+    if (failed(status)) {
       return WalkResult::interrupt();
+    }
     status = tryAssignWholeFunctionKernelKind(funcOp);
-    if (failed(status))
+    if (failed(status)) {
       return WalkResult::interrupt();
+    }
     status = normalizeFunction(funcOp);
-    if (succeeded(status))
+    if (succeeded(status)) {
       status = verifyFunctionHasNoResidualUncoveredTileSegments(funcOp);
+    }
     return failed(status) ? WalkResult::interrupt() : WalkResult::advance();
   });
   return status;
@@ -1005,8 +1040,9 @@ struct PTONormalizeUncoveredTileSectionsPass
     : public mlir::pto::impl::PTONormalizeUncoveredTileSectionsBase<
           PTONormalizeUncoveredTileSectionsPass> {
   void runOnOperation() override {
-    if (failed(scanModuleForUncoveredTileSegments(getOperation())))
+    if (failed(scanModuleForUncoveredTileSegments(getOperation()))) {
       signalPassFailure();
+    }
   }
 };
 

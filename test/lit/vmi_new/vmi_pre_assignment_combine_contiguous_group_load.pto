@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s --check-prefix=COMBINE
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto -vpto-combine-reductions | FileCheck %s --check-prefix=LOWER
 
 module {
   func.func @contiguous_bf16_group_load(

@@ -35,6 +35,22 @@ def vector_float_cast_shape_mismatch_probe():
     _ = scalar.cast(value, pto.Vec(pto.f32, 8))
 
 
+@pto.jit(target="a5")
+def scalar_bool_store_probe(dst: pto.ptr(pto.i8, "gm")):
+    tid = pto.get_tid_x()
+    pred = tid == pto.i32(0)
+    scalar.store(pred, dst, 0)
+
+
+@pto.jit(target="a5")
+def scalar_bool_cast_probe():
+    data = pto.alloc_tile(shape=[1, 32], dtype=pto.i8, valid_shape=[1, 1])
+    tid = pto.get_tid_x()
+    pred = tid == pto.i32(0)
+    widened = scalar.cast(pred, pto.i8)
+    scalar.store(widened, data[0, 0])
+
+
 def test_scalar_cast_is_public():
     assert "cast" in scalar.__all__
 
@@ -66,11 +82,27 @@ def test_vector_float_cast_rejects_shape_mismatch():
         )
 
 
+def test_scalar_bool_store_zero_extends_i1_to_i8():
+    text = scalar_bool_store_probe.compile().mlir_text()
+    assert "arith.extui" in text
+    assert "i1 to i8" in text
+    assert "arith.extsi" not in text
+
+
+def test_scalar_bool_cast_zero_extends_i1_to_i8():
+    text = scalar_bool_cast_probe.compile().mlir_text()
+    assert "arith.extui" in text
+    assert "i1 to i8" in text
+    assert "arith.extsi" not in text
+
+
 def main():
     test_scalar_cast_is_public()
     test_scalar_float_cast()
     test_vector_float_cast_preserves_shape()
     test_vector_float_cast_rejects_shape_mismatch()
+    test_scalar_bool_store_zero_extends_i1_to_i8()
+    test_scalar_bool_cast_zero_extends_i1_to_i8()
     print("ptodsl_scalar_cast: PASS")
 
 if __name__ == "__main__":

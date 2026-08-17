@@ -1,0 +1,27 @@
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @qr_proj_seed(%arg0: !pto.ptr<f32>, %arg1: index, %arg2: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c1024_index = arith.constant 1024 : index
+  %c1_index = arith.constant 1 : index
+  %c0_index = arith.constant 0 : index
+  %c16_index = arith.constant 16 : index
+  %c8_index = arith.constant 8 : index
+  %c128_index = arith.constant 128 : index
+  %cst_7 = arith.constant 0.00000000000000000e+00 : f32
+  %qr_fp32_inline1606_inline2972__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%arg2, %c1024_index], strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %0 = arith.divsi %arg2, %c16_index : index
+  scf.for %tc_inline1545_inline3169__idx_v0 = %c0_index to %0 step %c1_index {
+    %1 = arith.muli %tc_inline1545_inline3169__idx_v0, %c16_index : index
+    scf.for %nb_inline1555_inline3082__idx_v0 = %c0_index to %c8_index step %c1_index {
+      %2 = arith.muli %nb_inline1555_inline3082__idx_v0, %c128_index : index
+      %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.texpands ins(%cst_7 : f32) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      %3 = arith.maxsi %1, %c0_index : index
+      %4 = arith.maxsi %2, %c0_index : index
+      %qr_fp32_inline1606_inline2972__iter_v3_pview = pto.partition_view %qr_fp32_inline1606_inline2972__ssa_v0_view, offsets = [%3, %4], sizes = [%c16_index, %c128_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+      pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%qr_fp32_inline1606_inline2972__iter_v3_pview : !pto.partition_tensor_view<16x128xf32>)
+    }
+  }
+  return
+  }
+}

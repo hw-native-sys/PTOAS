@@ -1746,6 +1746,5 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertEqual(selected.name, expected_name)
                 self.assertIn("pto.vmul", selected.specialize(**specs).mlir_text())
 
-
 if __name__ == "__main__":
     unittest.main()

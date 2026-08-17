@@ -43,12 +43,21 @@ add_mlir_dialect_library(PTOTransforms
   VPTOLLVMEmitterHelper.cpp
   VPTOPtrNormalize.cpp
   VPTOPtrCastCleanup.cpp
+  VPTOCombineReductions.cpp
   VPTOOptimizeVcvt.cpp
   VPTOMaskSimplify.cpp
   VPTOExpandWrapperOps.cpp
   VPTONormalizeAddressRecurrences.cpp
   VPTOPostUpdateUtils.cpp
   VPTOSoftPostUpdate.cpp
+  VPTOScheduler/VPTORegPressureTracker.cpp
+  VPTOScheduler/VPTOSchedBoundary.cpp
+  VPTOScheduler/VPTOSchedDAG.cpp
+  VPTOScheduler/VPTOSchedDAGBuilder.cpp
+  VPTOScheduler/VPTOSchedModel.cpp
+  VPTOScheduler/VPTOSchedRegion.cpp
+  VPTOScheduler/VPTOSchedResourceTracker.cpp
+  VPTOScheduler/VPTOSchedulerPass.cpp
   PTOVPTOPtrBoundary.cpp
   VPTOBufferMaterialization.cpp
   PTOValidateVPTOIR.cpp
@@ -68,6 +77,7 @@ add_mlir_dialect_library(PTOTransforms
   VMILayoutRematerialize.cpp
   VMILayoutSinkMaterialization.cpp
   VMIToVPTO.cpp
+  PTOExpandSoftLib.cpp
   SIMTPersistentFragmentAnalysis.cpp
   PTOAnalyzeSIMTPersistentFragment.cpp
   PTOMaterializeSIMTPersistentFragment.cpp
@@ -81,6 +91,7 @@ add_mlir_dialect_library(PTOTransforms
   PTORematerializeFixpipeVectorQuant.cpp
   PTOValidateIntToPtrUses.cpp
   TileLibService.cpp
+  SoftLibService.cpp
   InsertTemplateAttributes.cpp
   ExpandTileOp.cpp
   FoldTileBufIntrinsics.cpp

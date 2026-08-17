@@ -35,8 +35,8 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_contiguous_tail(
-// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
 // CHECK: arith.constant 64 : i32
+// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
 // CHECK: arith.addi %arg0
 // CHECK: %[[P1:.*]] = pto.vci
 // CHECK: return %[[P0]], %[[P1]]

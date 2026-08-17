@@ -218,8 +218,9 @@ static func::FuncOp createOutlinedHelper(ModuleOp module,
 
   Block *entry = helper.addEntryBlock();
   IRMapping mapping;
-  for (auto [capture, arg] : llvm::zip(captures, entry->getArguments()))
+  for (auto [capture, arg] : llvm::zip(captures, entry->getArguments())) {
     mapping.map(capture, arg);
+  }
 
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(entry);
   cloneExternalConstants(sectionOp, bodyBuilder, mapping);

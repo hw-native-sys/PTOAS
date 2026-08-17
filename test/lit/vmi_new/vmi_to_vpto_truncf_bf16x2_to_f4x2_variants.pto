@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// L1: contiguous bf16x2 -> f4x2 variants matrix.
+// The conversion contract accepts {R,A,F,Z,C}; this matrix exercises every
+// accepted token plus the omitted-attribute default (R).
+
+module {
+  // Single register: 128 bf16 -> 64 bf16x2 -> 64 f4E1M2x2 (1 physical reg, 1 vcvt{P0}).
+  func.func @bf16x2_to_f4e1m2x2_r(
+      %src: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    return
+  }
+
+  // Multi register: 256 bf16 -> 128 bf16x2 -> 128 f4E2M1x2 (2 physical regs, 2 vcvt{P0}).
+  func.func @bf16x2_to_f4e2m1x2_a(
+      %src: !pto.vmi.vreg<256xbf16>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair {rounding = "A"}
+        : !pto.vmi.vreg<128x!pto.bf16x2> -> !pto.vmi.vreg<128x!pto.f4E2M1x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<128x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+    return
+  }
+
+  // Single register, rounding Z: 128 bf16 -> 64 bf16x2 -> 64 f4E1M2x2.
+  func.func @bf16x2_to_f4e1m2x2_z(
+      %src: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair {rounding = "Z"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    return
+  }
+
+  // Contract-specific rounding F must survive unified and legacy lowering.
+  func.func @bf16x2_to_f4e1m2x2_f(
+      %src: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair {rounding = "F"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    return
+  }
+
+  // Contract-specific rounding C on the second packed FP4 format.
+  func.func @bf16x2_to_f4e2m1x2_c(
+      %src: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair {rounding = "C"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+    return
+  }
+
+  // Omitted rounding defaults to R for bf16x2 -> f4x2.
+  func.func @bf16x2_to_f4e2m1x2_default(
+      %src: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+    return
+  }
+}
+
+// LOWER-LABEL: func.func @bf16x2_to_f4e1m2x2_r(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @bf16x2_to_f4e2m1x2_a(
+// LOWER-COUNT-2: pto.vcvt {{.*}} {part = "P0", rnd = "A"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E2M1x2>
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @bf16x2_to_f4e1m2x2_z(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "Z"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @bf16x2_to_f4e1m2x2_f(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "F"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @bf16x2_to_f4e2m1x2_c(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "C"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E2M1x2>
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @bf16x2_to_f4e2m1x2_default(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E2M1x2>
+// LOWER-NOT: pto.vor

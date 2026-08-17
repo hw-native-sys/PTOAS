@@ -23,12 +23,14 @@
 //===---------- SyncSolverIR.cpp ---- Graph Sync Solver -------------------===//
 //===----------------------------------------------------------------------===//
 
-#include "PTO/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include <string>
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/GraphSyncSolver/MemInfo.h"
+#include "PTO/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "PTO/Transforms/GraphSyncSolver/Utility.h"
 #include "llvm/ADT/StringExtras.h"
-#include <string>
+
 
 using namespace mlir;
 using namespace pto::syncsolver;
@@ -157,7 +159,7 @@ std::string Scope::str(int indent, bool recursive) const {
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
-      ret += op->str(indent + 2, true) + "\n";
+      ret += op->str(indent + mlir::pto::kValue2, true) + "\n";
     }
     ret += std::string(indent, ' ') + "}";
   }
@@ -179,7 +181,7 @@ std::string Loop::str(int indent, bool recursive) const {
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
-      ret += op->str(indent + 2, true) + "\n";
+      ret += op->str(indent + mlir::pto::kValue2, true) + "\n";
     }
     ret += std::string(indent, ' ') + "}";
   }
@@ -198,11 +200,11 @@ std::string Condition::str(int indent, bool recursive) const {
     ret += " {\n";
     for (auto &op : body) {
       if (op.get() == getTrueScope()) {
-        ret += std::string(indent + 2, ' ') + "(trueScope)\n";
+        ret += std::string(indent + mlir::pto::kValue2, ' ') + "(trueScope)\n";
       } else if (op.get() == getFalseScope()) {
-        ret += std::string(indent + 2, ' ') + "(falseScope)\n";
+        ret += std::string(indent + mlir::pto::kValue2, ' ') + "(falseScope)\n";
       }
-      ret += op->str(indent + 2, true) + "\n";
+      ret += op->str(indent + mlir::pto::kValue2, true) + "\n";
     }
     ret += std::string(indent, ' ') + "}";
   }
@@ -250,10 +252,10 @@ std::string RWOperation::str(int indent, bool recursive) const {
          " " + unitFlag + "\n";
   if (indent) {
     for (auto memInfo : this->readMemInfo) {
-      ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";
+      ret += std::string(indent + mlir::pto::kValue2, ' ') + "read: " + memInfo.str() + "\n";
     }
     for (auto memInfo : this->writeMemInfo) {
-      ret += std::string(indent + 2, ' ') + "write: " + memInfo.str() + "\n";
+      ret += std::string(indent + mlir::pto::kValue2, ' ') + "write: " + memInfo.str() + "\n";
     }
   }
   ret.pop_back();
@@ -370,10 +372,10 @@ std::string ConflictPair::str() const {
 
   ret += "\n";
   if (this->op1 != nullptr) {
-    ret += this->op1->str(2, false) + '\n';
+    ret += this->op1->str(mlir::pto::kValue2, false) + '\n';
   }
   if (this->op2 != nullptr) {
-    ret += this->op2->str(2, false) + '\n';
+    ret += this->op2->str(mlir::pto::kValue2, false) + '\n';
   }
   // ret += this->opSet->str(0, false) + '\n';
   // ret += this->opWait->str(0, false) + '\n';

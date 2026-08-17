@@ -20,21 +20,7 @@ module {
   }
 }
 
-// CHECK: error: 'pto.vmi.extui' op requires unsigned integer source and result element types
-
-// -----
-
-module {
-  func.func @extui_rejects_signless(
-      %src: !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 1>>) {
-    %wide = pto.vmi.extui %src
-        : !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 1>>
-        -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 1>>
-    return
-  }
-}
-
-// CHECK: error: 'pto.vmi.extui' op requires unsigned integer source and result element types
+// CHECK: error: 'pto.vmi.extui' op requires unsigned or signless integer source and result element types
 
 // -----
 
@@ -48,7 +34,7 @@ module {
   }
 }
 
-// CHECK: error: 'pto.vmi.extsi' op requires signed or signless integer source and result element types
+// CHECK: error: 'pto.vmi.extsi' op requires signed integer source and result element types
 
 // -----
 

@@ -84,27 +84,23 @@ module {
 // CHECK-LABEL: AICORE void cube_c2v_kernel(__gm__ float*
 // CHECK: TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>({{.*}}, {{.*}}, {{.*}});
 // CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[CUBE_C2V_ENTRY:v[0-9]+]](nullptr);
-// CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[CUBE_C2V_ENTRY_VAL:v[0-9]+]] = [[CUBE_C2V_ENTRY]];
-// CHECK: TALLOC<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[CUBE_C2V_ENTRY_VAL]]);
-// CHECK: TPUSH<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[CUBE_C2V_ENTRY_VAL]]);
+// CHECK: TALLOC<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[CUBE_C2V_ENTRY:v[0-9]+]]);
+// CHECK: TPUSH<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[CUBE_C2V_ENTRY]]);
 
 // CHECK-LABEL: AICORE void vector_c2v_kernel(__gm__ float*
 // CHECK: TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>({{.*}}, {{.*}}, {{.*}});
 // CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[VEC_C2V_ENTRY:v[0-9]+]](nullptr);
-// CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[VEC_C2V_ENTRY_VAL:v[0-9]+]] = [[VEC_C2V_ENTRY]];
-// CHECK: TPOP<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>(
-// CHECK: TFREE<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>(
+// CHECK: TPOP<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[VEC_C2V_ENTRY:v[0-9]+]]);
+// CHECK: TFREE<TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[VEC_C2V_ENTRY]]);
 
 // CHECK-LABEL: AICORE void vector_v2c_kernel(__gm__ float*
 // CHECK: TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>({{.*}}, {{.*}}, {{.*}});
 // CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[VEC_V2C_ENTRY:v[0-9]+]](nullptr);
-// CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[VEC_V2C_ENTRY_VAL:v[0-9]+]] = [[VEC_V2C_ENTRY]];
-// CHECK: TALLOC<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[VEC_V2C_ENTRY_VAL]]);
-// CHECK: TPUSH<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[VEC_V2C_ENTRY_VAL]]);
+// CHECK: TALLOC<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[VEC_V2C_ENTRY:v[0-9]+]]);
+// CHECK: TPUSH<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[VEC_V2C_ENTRY]]);
 
 // CHECK-LABEL: AICORE void cube_v2c_kernel(__gm__ float*
 // CHECK: TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>({{.*}}, {{.*}}, {{.*}});
 // CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[CUBE_V2C_ENTRY:v[0-9]+]](nullptr);
-// CHECK: GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND> [[CUBE_V2C_ENTRY_VAL:v[0-9]+]] = [[CUBE_V2C_ENTRY]];
-// CHECK: TPOP<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>(
-// CHECK: TFREE<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>(
+// CHECK: TPOP<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[CUBE_V2C_ENTRY:v[0-9]+]]);
+// CHECK: TFREE<TPipe<0, Direction::DIR_V2C_GM, 1024, 8, 8, true>, GlobalTensor<float, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<256, 256, 256, 16, 1>, pto::Layout::ND>, TileSplitAxis::TILE_NO_SPLIT>({{.*}}, [[CUBE_V2C_ENTRY]]);

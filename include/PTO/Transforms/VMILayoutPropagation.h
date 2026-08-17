@@ -12,6 +12,7 @@
 #ifndef PTO_TRANSFORMS_VMILAYOUTPROPAGATION_H
 #define PTO_TRANSFORMS_VMILAYOUTPROPAGATION_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 
 #include "mlir/IR/Operation.h"
@@ -32,7 +33,7 @@ struct VMILayoutConflict {
 
 struct VMIValueLayoutAssignment {
   VMILayoutAttr layout;
-  SmallVector<VMILayoutConflict, 2> conflicts;
+  SmallVector<VMILayoutConflict, mlir::pto::kValue2> conflicts;
 };
 
 class VMILayoutPropagator {
@@ -88,11 +89,11 @@ private:
   Operation *scope = nullptr;
   MLIRContext *ctx = nullptr;
   DenseMap<Value, VMIValueLayoutAssignment> assignments;
-  SmallVector<Value, 16> orderedValues;
-  SmallVector<LayoutFact, 16> worklist;
-  SmallVector<LayoutFact, 16> seenFacts;
-  SmallVector<OperandLayoutFact, 16> seenOperandFacts;
-  DenseMap<Value, SmallVector<Value, 2>> equivalentValues;
+  SmallVector<Value, mlir::pto::kValue16> orderedValues;
+  SmallVector<LayoutFact, mlir::pto::kValue16> worklist;
+  SmallVector<LayoutFact, mlir::pto::kValue16> seenFacts;
+  SmallVector<OperandLayoutFact, mlir::pto::kValue16> seenOperandFacts;
+  DenseMap<Value, SmallVector<Value, mlir::pto::kValue2>> equivalentValues;
 };
 
 } // namespace mlir::pto

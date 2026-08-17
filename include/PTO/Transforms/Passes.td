@@ -1162,6 +1162,23 @@ def VMIToVPTO : Pass<"vmi-to-vpto", "ModuleOp"> {
                            "mlir::scf::SCFDialect"];
 }
 
+def PTOExpandSoftLib : Pass<"pto-expand-soft-lib", "ModuleOp"> {
+  let summary = "Expand VPTO operations that lack native target support";
+  let description = [{
+    Materializes matching PTODSL SoftOps implementations for f32 SIMT
+    `pto.sin`/`pto.cos` at the final VPTO emission boundary. The generated
+    helpers are then inlined by PTOInlineLibCall. A5 `pto.vdiv`, including its
+    supported integer forms, remains on the native emitter path. The A2/A3
+    `pto.ub.vdiv` operation is a different operation and is intentionally not
+    handled by this pass. Trigonometric helpers use the PTODSL software
+    approximation authored in `lib/SoftOps`.
+  }];
+  let constructor = "mlir::pto::createPTOExpandSoftLibPass()";
+  let dependentDialects = ["mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::func::FuncDialect"];
+}
+
 def PTOValidateVPTOEmissionIR
     : Pass<"pto-validate-vpto-emission-ir", "ModuleOp"> {
   let summary =
@@ -1177,6 +1194,32 @@ def PTOValidateVPTOEmissionIR
                            "mlir::pto::PTODialect",
                            "mlir::memref::MemRefDialect",
                            "mlir::scf::SCFDialect"];
+}
+
+def VPTOScheduler : Pass<"pto-vpto-scheduler", "ModuleOp"> {
+  let summary = "Analyze emission-ready VPTO scheduling regions";
+  let description = [{
+    Builds block-local scheduling regions, typed dependency DAGs, target
+    resource timelines, and register-pressure summaries for operations inside
+    dedicated `pto.vecscope` and `pto.strict_vecscope` regions.
+    The target model supports A5 vector kernel modules only:
+    normalized cube kernel modules are skipped, while modules without an
+    explicit kernel kind remain available for standalone pass testing. The
+    module must declare `pto.target_arch = "a5"` directly or inherit it from
+    an enclosing module; a missing or different target is rejected.
+    `off` is an exact no-op. `analyze` emits a deterministic report without
+    mutating IR.
+  }];
+  let constructor = "mlir::pto::createVPTOSchedulerPass()";
+  let options = [
+    Option<"mode", "mode", "std::string", "\"off\"",
+           "Scheduler mode: off, analyze, or on">
+  ];
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::memref::MemRefDialect",
+                           "mlir::scf::SCFDialect",
+                           "mlir::arith::ArithDialect"];
 }
 
 def VPTOExpandWrapperOps
@@ -1398,6 +1441,20 @@ def VPTOOptimizeVcvt
     pass can then merge duplicate conversions and remove dead masks.
   }];
   let constructor = "mlir::pto::createVPTOOptimizeVcvtPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def VPTOCombineReductions
+    : Pass<"vpto-combine-reductions", "ModuleOp"> {
+  let summary = "Combine VPTO reduction trees with equivalent masks";
+  let description = [{
+    Reassociates conservative physical reduction trees emitted by VMI-to-VPTO
+    lowering. When every chunk reduction uses an equivalent mask, the pass
+    combines the source chunks first and emits one vcadd/vcmax/vcmin or
+    vcgadd/vcgmax/vcgmin operation. Run this after mask simplification, LICM,
+    and CSE so equivalent predicates have stable VPTO producers.
+  }];
+  let constructor = "mlir::pto::createVPTOCombineReductionsPass()";
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 

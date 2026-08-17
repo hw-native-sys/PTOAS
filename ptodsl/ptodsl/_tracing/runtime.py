@@ -67,6 +67,11 @@ class TracingRuntime:
             return session.lower_helper_subkernel(subkernel, *args, **kwargs)
         return subkernel.emit_body(*args, **kwargs)
 
+    def dispatch_ptodsl_func_call(self, func_template, *args, **kwargs):
+        """Dispatch one ``@pto.func`` helper call in the active trace."""
+        session = require_active_session("@pto.func")
+        return session.lower_ptodsl_func_call(func_template, *args, **kwargs)
+
     def dispatch_kernel_module_call(self, kernel_handle, *args, **kwargs):
         """Dispatch one ``@pto.jit(entry=False)`` kernel-module call in the active trace."""
         session = require_active_session("@pto.jit(entry=False)")

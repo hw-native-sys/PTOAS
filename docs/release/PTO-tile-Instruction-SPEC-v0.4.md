@@ -135,7 +135,7 @@ Some Tile Instruction ops carry an extra `%tmp` tile operand whose only purpose 
 
 `%tmp` exists for cross-arch interface compatibility — A5 templates may not materially use it, but it remains in the public op signature so the same Tile IR can be reused across A2/A3 and A5. Treat it as a required operand whose dtype/shape constraints are stated by the individual op page.
 
-### 1.8 Conventions for Chapters 5–12
+### 1.8 Conventions for Chapters 5–13
 
 Unless an op page states otherwise, the chapters that follow assume:
 
@@ -1808,4 +1808,183 @@ pto.tfillpad ins(%tile : !pto.tile_buf<vec, 32x32xf32, pad=1>)
 
 pto.tfillpad ins(%src_small : !pto.tile_buf<vec, 4x32xf32>)
              outs(%dst_large : !pto.tile_buf<vec, 8x64xf32, pad=1>)
+```
+
+<a id="tile-13-mx-quantization"></a>
+
+## 13. MX Quantization and Exponent Layout Conversion
+
+> **Category:** A5 tile-local grouped quantization and exponent packing
+> **Pipeline:** PIPE_V
+
+This chapter defines the A5 MX quantization surface. `pto.tquant.mx` produces
+the quantized payload plus exponent, maximum, and scaling tiles. A following
+three-tile `pto.tmov` can pack the exponent tile from ND or DN order into the ZZ
+box order used by Cube operations.
+
+### 13.1 `pto.tquant.mx`
+
+**Syntax:**
+
+```mlir
+pto.tquant.mx ins(%src : !pto.tile_buf<...>)
+              outs(%dst, %exp, %max, %scaling :
+                    !pto.tile_buf<...>, !pto.tile_buf<...>,
+                    !pto.tile_buf<...>, !pto.tile_buf<...>)
+              {quant_type = #pto<quant_type MXFP8>,
+               quantScaleAlg = #pto<quant_scale_alg ocp>,
+               grpAxis = #pto<mx_group_axis axis0>,
+               interleave = false}
+```
+
+`quantScaleAlg`, `grpAxis`, and `interleave` default to `ocp`, `axis1`, and
+`false`, respectively.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | vec tile | f32/f16/bf16 source values. |
+| `dst` | vec tile | MXFP8 bytes or packed MXFP4 E2M1 pairs. |
+| `exp` | vec tile | One shared 8-bit exponent per group. |
+| `max` | vec tile | One maximum-magnitude value per group, stored in the source type. |
+| `scaling` | vec tile | One reciprocal scale per group, stored in the source type. |
+| `quant_type` | `#pto.quant_type` | `MXFP8` or `MXFP4_E2M1`. |
+| `quantScaleAlg` | `#pto.quant_scale_alg` | `ocp` or `nv`. |
+| `grpAxis` | `#pto.mx_group_axis` | `axis0` groups rows; `axis1` groups columns. |
+| `interleave` | bool | Interleaves the axis0 exponent output; false by default. |
+
+For each 32-element group, the operation computes the maximum magnitude,
+derives a shared exponent and reciprocal scale according to the selected
+algorithm, and quantizes the scaled values. `MXFP8` produces one output byte
+per source element. `MXFP4_E2M1` packs two output values per byte.
+
+Let `M=src.valid_rows`, `N=src.valid_cols`, `Ps=src.cols`, and
+`G=M*N/32`.
+
+**Valid-shape table:**
+
+| Mode | `exp` | `max` / `scaling` | `dst` |
+|------|-------|-------------------|-------|
+| axis0 | `[M/32, N]` | `[M/32, N]` | `[M, N]` for MXFP8; `[M, N/2]` for packed MXFP4 |
+| axis0 + interleave | `[M/64, 2N]` | `[M/32, N]` | Same as non-interleaved axis0 |
+| axis1 canonical | `[M, N/32]` | `[M, N/32]` | `[M, N]` for MXFP8; `[M, N/2]` for packed MXFP4 |
+| axis1 legacy flat | `[1, G]` | `[1, G]` | Same as canonical axis1 |
+
+Axis0 requires `M % 32 == 0`; interleave additionally requires
+`M % 64 == 0`. Axis1 requires `N % 32 == 0`. Legacy-flat axis1 requires a
+tight source (`Ps == N`) and `exp.rows == 1`.
+
+**Physical-layout table:**
+
+| Mode/tile | Contract |
+|-----------|----------|
+| axis0 MXFP4 `dst` | `dst.cols == Ps/2`; capacity >= `(M-1)*(Ps/2) + N/2` bytes. |
+| axis0 `max/scaling` | Physical columns equal `Ps`; capacity >= `(M/32)*Ps` elements. |
+| axis0 non-interleaved `exp` | Physical columns equal `Ps`; capacity >= `(M/32)*Ps` elements. |
+| axis0 interleaved `exp` | Exact physical shape `[src.rows/64, alignTo(2*Ps, 32)]`; `src.rows % 64 == 0`. |
+| axis1 MXFP8 `dst` | `dst.cols == Ps`; capacity >= `(M-1)*Ps + N` bytes. |
+| axis1 MXFP4 `dst` | `dst.cols == Ps/2`; capacity >= `(M-1)*(Ps/2) + N/2` bytes. |
+| axis1 `max/scaling` | Valid values form a compact allocation prefix. |
+| axis1 canonical `exp` | Physical shape covers `[M, N/32]`; capacity >= `(M-1)*exp.cols + N/32`. |
+| axis1 flat `exp` | `exp.rows == 1`; capacity >= `G` elements. |
+
+Flat axis1 scaling writes full vector widths. Its required capacity is
+`alignTo(G,64)*4` bytes for ordinary f32, `alignTo(2G,64)*4` bytes for the
+unrolled f32 path, and `alignTo(G,128)*2` bytes for f16/bf16 OCP. These bounds
+are at least 256, 512, and 256 bytes, respectively. The f32 path is unrolled
+when `src.rows*src.cols > 1024` and both `src.rows*src.cols` and
+`src.valid_rows*src.cols` are multiples of 256.
+
+The pinned A5 revisions reject these combinations:
+
+- axis1 canonical f16/bf16;
+- axis1 legacy-flat f16/bf16 with NV scaling;
+- axis0 FP16 MXFP4 when `Ps/2` is not a multiple of 32 bytes;
+- axis0 FP32 MXFP8 with `interleave=true`;
+- padded f16/bf16 source whose final vector-aligned padding store is incomplete.
+
+Padded f16/bf16 source may be zeroed in place, so it has Read+Write effects.
+The source allocation must not overlap any output allocation. All relevant
+valid and physical dimensions are static.
+
+Four-output lowering uses the grouped form
+`TQUANT<grp_axis, MxQuantAlg[, interleave]>`. The `MxQuantAlg` value is selected
+from the Cartesian product of `quant_type` and `quantScaleAlg`.
+
+The older `exp_zz + storeMode` fused form remains readable but is deprecated
+and restricted to axis1. Use the four-output form followed by §13.2 instead.
+
+**Example:**
+
+```mlir
+pto.tquant.mx ins(%src : !pto.tile_buf<vec, 64x64xf32>)
+              outs(%dst, %exp, %max, %scaling :
+                    !pto.tile_buf<vec, 64x64xi8>,
+                    !pto.tile_buf<vec, 2x64xui8>,
+                    !pto.tile_buf<vec, 2x64xf32>,
+                    !pto.tile_buf<vec, 2x64xf32>)
+              {quant_type = #pto<quant_type MXFP8>,
+               grpAxis = #pto<mx_group_axis axis0>}
+```
+
+### 13.2 `pto.tmov` MX Exponent X-to-ZZ Form
+
+**Syntax:**
+
+```mlir
+pto.tmov ins(%exp : !pto.tile_buf<vec, ...>,
+             %tmp : !pto.tile_buf<vec, ...>)
+         outs(%exp_zz : !pto.tile_buf<vec, ..., slayout=row_major>)
+         {grpAxis = #pto<mx_group_axis axis0>}
+```
+
+The existing optional operand name remains `fp`. A third tile in
+`loc=scaling` still selects FP TMOV. A non-scaling third tile selects X-to-ZZ
+and is interpreted as `%tmp`; `grpAxis` is legal only in that form and defaults
+to `axis1`.
+
+All three tiles are rank-2 `loc=vec`, use the same type from
+`{ui8, !pto.hif8, !pto.f8E8M0}`, and have static source/destination valid and
+physical shapes plus a static temporary physical shape. Source layout is
+row-major/none-box; destination layout is row-major/row-major. Signed `i8` is
+not legal. X-to-ZZ cannot carry `preQuantScalar`, `accToVecMode`, or a
+non-default `reluPreMode`.
+
+**Axis0 (DN) mapping:**
+
+```text
+dst[col_block, pair, q, delta] = src[2*pair + delta, 16*col_block + q]
+```
+
+`src.valid_rows` is even and at least 2, `src.valid_cols` is a multiple of 16,
+and `src.cols == src.valid_cols`. Source and destination capacity each cover
+`src.valid_rows * src.valid_cols` bytes. The temporary tile is not accessed and
+has no minimum capacity beyond a valid static tile. Lowering emits
+`TMOV<0>(dst, src, tmp)`.
+
+**Axis1 (ND) mapping:**
+
+```text
+dst[row_block, col_pair, row_in_block, pair_lane] =
+    src[16*row_block + row_in_block, 2*col_pair + pair_lane]
+```
+
+`dst.valid_cols` is even. Source valid values form a compact prefix. Source and
+destination capacity each cover
+`alignTo(dst.valid_rows,16) * dst.valid_cols` bytes. Temporary capacity covers
+`64 + ceil(dst.valid_rows/16) * dst.valid_cols` bytes. Padding rows are zeroed
+in the source before packing, so source and temporary have Read+Write effects.
+Lowering emits `TMOV(dst, src, tmp)`.
+
+For both axes, source and destination valid element counts match and their byte
+ranges do not overlap, including through subviews or reshaped views.
+
+**Example:**
+
+```mlir
+pto.tmov ins(%exp : !pto.tile_buf<vec, 2x16xui8>,
+             %tmp : !pto.tile_buf<vec, 1x1xui8>)
+         outs(%exp_zz : !pto.tile_buf<vec, 2x16xui8, slayout=row_major>)
+         {grpAxis = #pto<mx_group_axis axis0>}
 ```

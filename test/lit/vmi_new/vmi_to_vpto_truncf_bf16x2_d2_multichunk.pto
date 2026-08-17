@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not='part = "P1"' --implicit-check-not='part = "P3"' --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=unrealized_conversion_cast
+
+// Protect part-major source indexing for a two-chunk d2 conversion. Output
+// chunk 0 consumes P0C0/P2C0, output chunk 1 consumes P0C1/P2C1, and the
+// compact stores advance by 128 logical f4x2 lanes.
+
+module {
+  func.func @bf16x2_d2_multichunk(
+      %src: !pto.vmi.vreg<256x!pto.bf16x2,
+                           #pto.vmi.layout<deinterleaved = 2>>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub>,
+      %off: index) {
+    %packed = pto.vmi.vcvt %src {rounding = "C"}
+        : !pto.vmi.vreg<256x!pto.bf16x2,
+                        #pto.vmi.layout<deinterleaved = 2>>
+       -> !pto.vmi.vreg<256x!pto.f4E2M1x2>
+    pto.vmi.vstore %packed, %dst[%off]
+        : !pto.vmi.vreg<256x!pto.f4E2M1x2>,
+          !pto.ptr<!pto.f4E2M1x2, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @bf16x2_d2_multichunk(
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: !pto.vmi.vreg<256x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256x!pto.f4E2M1x2, #pto.vmi.layout<contiguous, lane_stride = 2>>
+
+// LOWER-LABEL: func.func @bf16x2_d2_multichunk(
+// LOWER-SAME: %[[P0C0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// LOWER-SAME: %[[P0C1:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// LOWER-SAME: %[[P2C0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// LOWER-SAME: %[[P2C1:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<!pto.f4E2M1x2, ub>
+// LOWER-SAME: %[[OFF:[^)]+]]: index)
+// LOWER: %[[P0C0_BF16:.*]] = pto.vbitcast %[[P0C0]]
+// LOWER: %[[C0P0:.*]] = pto.vcvt %[[P0C0_BF16]], {{.*}} {part = "P0", rnd = "C"}
+// LOWER: %[[P2C0_BF16:.*]] = pto.vbitcast %[[P2C0]]
+// LOWER: %[[C0P2:.*]] = pto.vcvt %[[P2C0_BF16]], {{.*}} {part = "P2", rnd = "C"}
+// LOWER: %[[C0:.*]] = pto.vor %[[C0P0]], %[[C0P2]]
+// LOWER: %[[P0C1_BF16:.*]] = pto.vbitcast %[[P0C1]]
+// LOWER: %[[C1P0:.*]] = pto.vcvt %[[P0C1_BF16]], {{.*}} {part = "P0", rnd = "C"}
+// LOWER: %[[P2C1_BF16:.*]] = pto.vbitcast %[[P2C1]]
+// LOWER: %[[C1P2:.*]] = pto.vcvt %[[P2C1_BF16]], {{.*}} {part = "P2", rnd = "C"}
+// LOWER: %[[C1:.*]] = pto.vor %[[C1P0]], %[[C1P2]]
+// LOWER: pto.vsts %[[C0]], %[[DST]][%[[OFF]]], {{.*}} {dist = "PK_B16"}
+// LOWER: %[[OFF128:.*]] = arith.addi %[[OFF]], %{{.*}} : index
+// LOWER: pto.vsts %[[C1]], %[[DST]][%[[OFF128]]], {{.*}} {dist = "PK_B16"}

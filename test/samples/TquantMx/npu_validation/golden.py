@@ -7,7 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""Golden generator for the TquantMx (MXFP8, OCP) sample.
+"""Board golden generator for the axis1 MXFP8 plus ND-to-ZZ sample.
 
 Replicates the OCP MXFP8 quantization contract implemented by pto-isa
 TQuant.hpp (AbsReduceMax -> ExtractB8ExponentAndScaling -> CalcQuantizedFP8Values):
@@ -19,17 +19,18 @@ TQuant.hpp (AbsReduceMax -> ExtractB8ExponentAndScaling -> CalcQuantizedFP8Value
     -> fp8 e4m3 output = clamp(src * scaling, -448, 448)
 
 Auxiliary tiles:
-  exp     : ui8  [groups]          (e8m0 exponent per group)
-  max     : f32  [groups]          (per-group absmax)
-  scaling : f32  [M, K]            (broadcast reciprocal scale)
+  exp     : ui8  [M, K/32]         (e8m0 exponent per group)
+  max     : f32  [M, K/32]         (per-group absmax)
+  scaling : f32  [M, K/32]         (reciprocal scale per group)
 """
 
 import numpy as np
 
 M = 16
-K = 32
+K = 64
 GROUP_SIZE = 32
 EMAX = 8  # e4m3 max exponent
+GROUP_COLS = K // GROUP_SIZE
 
 
 def fp32_to_fp8e4m3fn_bytes(arr):
@@ -114,6 +115,14 @@ def fp32_to_fp8_element(data_abs_max, emax=EMAX):
     return e8m0, scaling
 
 
+def nd_to_zz(exp):
+    rows, cols = exp.shape
+    padded_rows = ((rows + 15) // 16) * 16
+    padded = np.zeros((padded_rows, cols), dtype=np.uint8)
+    padded[:rows, :] = exp
+    return padded.reshape(padded_rows // 16, 16, cols // 2, 2).transpose(0, 2, 1, 3).reshape(-1)
+
+
 def main():
     np.random.seed(23)
     src = np.random.uniform(-10, 10, [M, K]).astype(np.float32)
@@ -121,7 +130,7 @@ def main():
 
     # Per-group absmax along last dim (group_size=32).
     src_abs = np.abs(src)
-    group_max = np.max(src_abs.reshape(-1, GROUP_SIZE), axis=1)  # [M * K / 32] = [16]
+    group_max = np.max(src_abs.reshape(M, GROUP_COLS, GROUP_SIZE), axis=2)
 
     e8m0s = []
     scalings = []
@@ -132,22 +141,21 @@ def main():
     e8m0 = np.array(e8m0s).astype(np.uint8)
     scaling_per_group = np.array(scalings).astype(np.float32)
 
-    # exp tile: ui8 [1, 16] (16 groups)
-    exp_tile = e8m0.reshape(1, -1)
+    # exp tile: canonical ui8 [M, K/32].
+    exp_tile = e8m0.reshape(M, GROUP_COLS)
     exp_tile.tofile("exp.bin")
 
-    # max tile: f32 [1, 16]
-    max_tile = group_max.reshape(1, -1).astype(np.float32)
+    max_tile = group_max.reshape(M, GROUP_COLS).astype(np.float32)
     max_tile.tofile("max.bin")
 
-    # scaling tile: f32 [1, 16] (per-group reciprocal scale, matching ISA semantics)
-    scaling_tile = scaling_per_group.reshape(1, -1).astype(np.float32)
+    scaling_tile = scaling_per_group.reshape(M, GROUP_COLS).astype(np.float32)
     scaling_tile.tofile("scaling.bin")
+
+    nd_to_zz(exp_tile).tofile("exp_zz.bin")
 
     # dst: fp8 e4m3 = clamp(src * scaling, -448, 448), packed as int8 bytes.
     # Pure-numpy fp32 -> fp8 e4m3fn (round-to-nearest-even), no ml_dtypes needed.
-    # scaling_per_group is [16]; broadcast across each group of 32 to match src [16,32].
-    scaling_broadcast = np.repeat(scaling_per_group, GROUP_SIZE).reshape(M, K).astype(np.float32)
+    scaling_broadcast = np.repeat(scaling_tile, GROUP_SIZE, axis=1).astype(np.float32)
     scaled = src.astype(np.float64) * scaling_broadcast.astype(np.float64)
     scaled = np.clip(scaled, -448.0, 448.0).astype(np.float32)
     dst_bytes = fp32_to_fp8e4m3fn_bytes(scaled)

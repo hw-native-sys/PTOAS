@@ -39,5 +39,4 @@ module {
 // ASSIGN: pto.vmi.group_store %[[SUM]]
 // ASSIGN-SAME: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, {{(!pto\.ptr)?<f32, ub>}}
 
-// LOWERERR: failed to legalize operation 'pto.vmi.ensure_mask_layout'
 // LOWERERR: VMI{{-}}RESIDUAL{{-}}OP: failed to convert all VMI ops/types to VPTO

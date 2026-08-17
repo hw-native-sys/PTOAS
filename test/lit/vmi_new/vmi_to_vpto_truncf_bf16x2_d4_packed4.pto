@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// L3: d4 direct truncf probe. A pre-annotated deinterleaved=4 bf16x2 source
+// feeds the full Packed4 path (4x vcvt{P0-P3} + 3x vor). NOTE: this uses a
+// pre-annotated argument to bypass the pairing bitcast (which is only legal
+// under contiguous; see the d4 pairing negative test). It is a lowering
+// probe, not the full real-data flow (which needs phase-2 pairing unlock).
+
+module {
+  func.func @bf16x2_d4_to_f4x2_packed4(
+      %src: !pto.vmi.vreg<256x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 4>>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index) {
+    %r = pto.vmi.vcvt %src {rounding = "R"}
+        : !pto.vmi.vreg<256x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 4>>
+       -> !pto.vmi.vreg<256x!pto.f4E1M2x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    return
+  }
+}
+
+// LOWER-LABEL: func.func @bf16x2_d4_to_f4x2_packed4(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: pto.vcvt {{.*}} {part = "P1", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: pto.vcvt {{.*}} {part = "P2", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: pto.vcvt {{.*}} {part = "P3", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER-COUNT-3: pto.vor
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.

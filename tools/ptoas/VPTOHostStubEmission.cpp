@@ -20,6 +20,12 @@ using namespace mlir;
 
 namespace {
 
+constexpr unsigned kBooleanBitWidth = 1;
+constexpr unsigned kByteBitWidth = 8;
+constexpr unsigned kShortBitWidth = 16;
+constexpr unsigned kIntBitWidth = 32;
+constexpr unsigned kLongLongBitWidth = 64;
+
 struct VPTOKernelStubDecl {
   std::string logicalName;
   SmallVector<std::string> argTypes;
@@ -41,14 +47,14 @@ static std::string getStubScalarCType(Type type) {
   }
   if (auto intType = dyn_cast<IntegerType>(type)) {
     switch (intType.getWidth()) {
-    case 1:
-    case 8:
+    case kBooleanBitWidth:
+    case kByteBitWidth:
       return "signed char";
-    case 16:
+    case kShortBitWidth:
       return "short";
-    case 32:
+    case kIntBitWidth:
       return "int";
-    case 64:
+    case kLongLongBitWidth:
       return "long long";
     default:
       return "long long";

@@ -68,8 +68,9 @@ static LogicalResult eraseDeadVPTOMemRefScaffold(ModuleOp module) {
         return;
       }
       if (isa<memref::ReinterpretCastOp, memref::SubViewOp,
-              memref::MemorySpaceCastOp>(op))
+              memref::MemorySpaceCastOp>(op)) {
         deadOps.push_back(op);
+      }
     });
 
     for (pto::CastPtrOp castOp : trivialCasts) {
@@ -290,10 +291,11 @@ LogicalResult mlir::pto::convertVPTOEmissionBoundaryToPtr(
 
       Type newType = convertVPTOBoundaryMemRefType(inputType);
       if (!newType) {
-        if (diagOS)
+        if (diagOS) {
           *diagOS << "VPTO emission-boundary ptr rewrite failed: unsupported "
                      "memref argument type in "
                   << func.getName() << ": " << inputType << "\n";
+        }
         sawFailure = true;
         continue;
       }
@@ -342,10 +344,11 @@ LogicalResult mlir::pto::convertVPTOEmissionBoundaryToPtr(
       if (!isa<BaseMemRefType>(resultType)) {
         continue;
       }
-      if (diagOS)
+      if (diagOS) {
         *diagOS << "VPTO emission-boundary ptr rewrite failed: memref result "
                    "is unsupported for "
                 << func.getName() << ": " << resultType << "\n";
+      }
       sawFailure = true;
     }
 

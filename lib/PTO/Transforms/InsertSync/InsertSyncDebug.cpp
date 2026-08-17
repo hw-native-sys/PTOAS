@@ -123,34 +123,41 @@ static void dumpEventIds(llvm::raw_ostream &os,
   os << "[";
   for (size_t i = 0; i < eventIds.size(); ++i) {
     os << eventIds[i];
-    if (i + 1 != eventIds.size())
+    if (i + 1 != eventIds.size()) {
       os << ",";
+    }
   }
   os << "]";
 }
 
 static void dumpSyncOp(llvm::raw_ostream &os, const SyncOperation *op,
                        bool showUselessSync) {
-  if (!op)
+  if (!op) {
     return;
-  if (op->uselessSync && !showUselessSync)
+  }
+  if (op->uselessSync && !showUselessSync) {
     return;
+  }
 
   os << SyncOperation::TypeName(op->GetType());
   os << " <" << getPipelineName(op->GetSrcPipe()) << " -> "
      << getPipelineName(op->GetDstPipe()) << ">";
   os << " idx=" << op->GetSyncIndex();
 
-  if (op->GetForEndIndex().has_value())
+  if (op->GetForEndIndex().has_value()) {
     os << " forEnd=" << op->GetForEndIndex().value();
+  }
 
-  if (op->eventIdNum != 1)
+  if (op->eventIdNum != 1) {
     os << " eventIdNum=" << op->eventIdNum;
+  }
 
-  if (op->isCompensation)
+  if (op->isCompensation) {
     os << " compensation";
-  if (op->uselessSync)
+  }
+  if (op->uselessSync) {
     os << " useless";
+  }
 
   if (!op->eventIds.empty()) {
     os << " eventIds=";
@@ -176,8 +183,9 @@ static void dumpMemInfoList(llvm::raw_ostream &os, llvm::StringRef tag,
     } else {
       os << "<null-root>";
     }
-    if (i + 1 != list.size())
+    if (i + 1 != list.size()) {
       os << ", ";
+    }
   }
   os << "]";
 }
@@ -186,26 +194,30 @@ static void dumpSyncIR(llvm::raw_ostream &os, const SyncIRs &syncIR,
                        Operation *opForPrinting, InsertSyncDumpOptions options,
                        bool showMemInfo) {
   std::optional<mlir::AsmState> state;
-  if (showMemInfo && opForPrinting)
+  if (showMemInfo && opForPrinting) {
     state.emplace(opForPrinting);
+  }
 
   int indent = 0;
-  auto indentBy = [&](int extra = 0) {
+  auto indentBy = [&indent](int extra = 0) {
     return static_cast<unsigned>(std::max(0, indent) * 2 + extra);
   };
 
   for (const auto &e : syncIR) {
-    if (!e)
+    if (!e) {
       continue;
+    }
 
     if (auto *loop = dyn_cast<LoopInstanceElement>(e.get())) {
-      if (loop->getLoopKind() == KindOfLoop::LOOP_END)
+      if (loop->getLoopKind() == KindOfLoop::LOOP_END) {
         indent = std::max(0, indent - 1);
+      }
     }
     if (auto *branch = dyn_cast<BranchInstanceElement>(e.get())) {
       if (branch->getBranchKind() == KindOfBranch::IF_END ||
-          branch->getBranchKind() == KindOfBranch::ELSE_BEGIN)
+          branch->getBranchKind() == KindOfBranch::ELSE_BEGIN) {
         indent = std::max(0, indent - 1);
+      }
     }
 
     os.indent(indentBy());
@@ -243,8 +255,9 @@ static void dumpSyncIR(llvm::raw_ostream &os, const SyncIRs &syncIR,
     case InstanceElement::KindTy::PLACE_HOLDER: {
       auto *ph = cast<PlaceHolderInstanceElement>(e.get());
       os << "PLACE_HOLDER (parentScopeId=" << ph->parentScopeId;
-      if (ph->isVirtualElse)
+      if (ph->isVirtualElse) {
         os << ", virtualElse";
+      }
       os << ")\n";
       break;
     }
@@ -252,10 +265,12 @@ static void dumpSyncIR(llvm::raw_ostream &os, const SyncIRs &syncIR,
 
     auto dumpOps = [&](llvm::StringRef prefix, const SyncOps &ops) {
       for (const auto *op : ops) {
-        if (!op)
+        if (!op) {
           continue;
-        if (op->uselessSync && !options.showUselessSync)
+        }
+        if (op->uselessSync && !options.showUselessSync) {
           continue;
+        }
         os.indent(indentBy(kDebugDumpIndentSpaces));
         os << prefix << ": ";
         dumpSyncOp(os, op, options.showUselessSync);
@@ -267,13 +282,15 @@ static void dumpSyncIR(llvm::raw_ostream &os, const SyncIRs &syncIR,
     dumpOps("POST", e->pipeAfter);
 
     if (auto *loop = dyn_cast<LoopInstanceElement>(e.get())) {
-      if (loop->getLoopKind() == KindOfLoop::LOOP_BEGIN)
+      if (loop->getLoopKind() == KindOfLoop::LOOP_BEGIN) {
         indent += 1;
+      }
     }
     if (auto *branch = dyn_cast<BranchInstanceElement>(e.get())) {
       if (branch->getBranchKind() == KindOfBranch::IF_BEGIN ||
-          branch->getBranchKind() == KindOfBranch::ELSE_BEGIN)
+          branch->getBranchKind() == KindOfBranch::ELSE_BEGIN) {
         indent += 1;
+      }
     }
   }
 }
@@ -283,18 +300,21 @@ void mlir::pto::dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR
                                    Operation *opForPrinting,
                                    llvm::raw_ostream &os) {
   const unsigned level = getInsertSyncDebugLevel();
-  if (level < static_cast<unsigned>(InsertSyncDebugLevel::Phase))
+  if (level < static_cast<unsigned>(InsertSyncDebugLevel::Phase)) {
     return;
+  }
 
   unsigned activeOps = 0;
   unsigned setCnt = 0, waitCnt = 0, barrierCnt = 0;
   unsigned blockSetCnt = 0, blockWaitCnt = 0, blockAllCnt = 0;
   for (const auto &group : syncOperations) {
     for (const auto &op : group) {
-      if (!op)
+      if (!op) {
         continue;
-      if (op->uselessSync)
+      }
+      if (op->uselessSync) {
         continue;
+      }
       activeOps++;
       switch (op->GetType()) {
       case SyncOperation::TYPE::SET_EVENT:

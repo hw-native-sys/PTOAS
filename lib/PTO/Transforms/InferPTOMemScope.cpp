@@ -94,6 +94,37 @@ static LogicalResult propagateForScope(MemScopeInferAndPropagateHelper &helper,
                  helper.Run(result, memrefScope).succeeded());
 }
 
+static LogicalResult propagateWhileScope(
+    MemScopeInferAndPropagateHelper &helper,
+    const AddressSpaceAttr &memrefScope, OpOperand &user) {
+  auto op = cast<scf::WhileOp>(user.getOwner());
+  unsigned index = user.getOperandNumber();
+  if (index >= op.getInits().size() || index >= op.getBeforeArguments().size() ||
+      index >= op.getResults().size())
+    return failure();
+  return success(helper.Run(op.getBeforeArguments()[index], memrefScope)
+                     .succeeded() &&
+                 helper.Run(op.getResults()[index], memrefScope).succeeded());
+}
+
+static LogicalResult propagateWhileConditionScope(
+    MemScopeInferAndPropagateHelper &helper,
+    const AddressSpaceAttr &memrefScope, OpOperand &user) {
+  auto op = cast<scf::ConditionOp>(user.getOwner());
+  unsigned index = user.getOperandNumber();
+  if (index == 0)
+    return success();
+  --index;
+  auto whileOp = cast<scf::WhileOp>(op->getParentOp());
+  auto conditionArgs = whileOp.getConditionOp().getArgs();
+  if (index >= conditionArgs.size() || index >= whileOp.getAfterArguments().size() ||
+      index >= whileOp.getResults().size())
+    return failure();
+  return success(helper.Run(whileOp.getAfterArguments()[index], memrefScope)
+                     .succeeded() &&
+                 helper.Run(whileOp.getResults()[index], memrefScope).succeeded());
+}
+
 static LogicalResult
 propagateViewLikeScope(MemScopeInferAndPropagateHelper &helper,
                        const AddressSpaceAttr &memrefScope, Operation *op) {
@@ -111,6 +142,12 @@ propagateMemScopeToUser(MemScopeInferAndPropagateHelper &helper, Value val,
       })
       .Case<scf::ForOp>([&](scf::ForOp) {
         return propagateForScope(helper, memrefScope, user);
+      })
+      .Case<scf::WhileOp>([&](scf::WhileOp) {
+        return propagateWhileScope(helper, memrefScope, user);
+      })
+      .Case<scf::ConditionOp>([&](scf::ConditionOp) {
+        return propagateWhileConditionScope(helper, memrefScope, user);
       })
       .Case<memref::SubViewOp, memref::ViewOp, memref::ReinterpretCastOp,
             memref::CastOp, memref::CollapseShapeOp, memref::ExpandShapeOp,

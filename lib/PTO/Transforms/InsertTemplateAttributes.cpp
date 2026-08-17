@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
@@ -85,40 +86,40 @@ static std::string getDtypeString(Type elementType) {
   if (isa<pto::F4E2M1x2Type>(elementType)) {
     return "f4e2m1x2";
   }
-  if (elementType.isUnsignedInteger(64)) {
+  if (elementType.isUnsignedInteger(mlir::pto::kValue64)) {
     return "ui64";
   }
-  if (elementType.isUnsignedInteger(32)) {
+  if (elementType.isUnsignedInteger(mlir::pto::kValue32)) {
     return "ui32";
   }
-  if (elementType.isUnsignedInteger(16)) {
+  if (elementType.isUnsignedInteger(mlir::pto::kValue16)) {
     return "ui16";
   }
-  if (elementType.isUnsignedInteger(8)) {
+  if (elementType.isUnsignedInteger(mlir::pto::kValue8)) {
     return "ui8";
   }
-  if (elementType.isSignedInteger(64)) {
+  if (elementType.isSignedInteger(mlir::pto::kValue64)) {
     return "si64";
   }
-  if (elementType.isSignedInteger(32)) {
+  if (elementType.isSignedInteger(mlir::pto::kValue32)) {
     return "si32";
   }
-  if (elementType.isSignedInteger(16)) {
+  if (elementType.isSignedInteger(mlir::pto::kValue16)) {
     return "si16";
   }
-  if (elementType.isSignedInteger(8)) {
+  if (elementType.isSignedInteger(mlir::pto::kValue8)) {
     return "si8";
   }
-  if (elementType.isSignlessInteger(64)) {
+  if (elementType.isSignlessInteger(mlir::pto::kValue64)) {
     return "i64";
   }
-  if (elementType.isSignlessInteger(32)) {
+  if (elementType.isSignlessInteger(mlir::pto::kValue32)) {
     return "i32";
   }
-  if (elementType.isSignlessInteger(16)) {
+  if (elementType.isSignlessInteger(mlir::pto::kValue16)) {
     return "i16";
   }
-  if (elementType.isSignlessInteger(8)) {
+  if (elementType.isSignlessInteger(mlir::pto::kValue8)) {
     return "i8";
   }
   return "";
@@ -535,14 +536,16 @@ static void appendOpContextAttrs(
     attrs.emplace_back("rounds", std::to_string(trandom.getRounds()));
   }
   if (auto tcmp = dyn_cast<pto::TCmpOp>(op)) {
-    if (auto cmpModeAttr = tcmp.getCmpModeAttr())
+    if (auto cmpModeAttr = tcmp.getCmpModeAttr()) {
       attrs.emplace_back("cmp_mode",
                          stringifyCmpMode(cmpModeAttr.getValue()).str());
+    }
   }
   if (auto tcmps = dyn_cast<pto::TCmpSOp>(op)) {
-    if (auto cmpModeAttr = tcmps.getCmpModeAttr())
+    if (auto cmpModeAttr = tcmps.getCmpModeAttr()) {
       attrs.emplace_back("cmp_mode",
                          stringifyCmpMode(cmpModeAttr.getValue()).str());
+    }
   }
   if (auto tinsert = dyn_cast<pto::TInsertOp>(op)) {
     if (auto modeAttr = tinsert.getAccToVecModeAttr()) {
@@ -552,9 +555,10 @@ static void appendOpContextAttrs(
     attrs.emplace_back("relu_pre_mode",
                        stringifyReluPreMode(tinsert.getReluPreMode()).str());
   }
-  if (auto tmrgsort = dyn_cast<pto::TMrgSortOp>(op))
+  if (auto tmrgsort = dyn_cast<pto::TMrgSortOp>(op)) {
     attrs.emplace_back("exhausted",
                        tmrgsort.getExhausted() ? "1" : "0");
+  }
   if (auto tgather = dyn_cast<pto::TGatherOp>(op)) {
     if (auto maskPatternAttr = tgather.getMaskPatternAttr()) {
       attrs.emplace_back(
@@ -597,7 +601,7 @@ static void appendOpContextAttrs(
 }
 
 static std::string buildContextAttrsJson(Operation *operation) {
-  SmallVector<std::pair<std::string, std::string>, 4> attrs;
+  SmallVector<std::pair<std::string, std::string>, mlir::pto::kValue4> attrs;
   appendOpContextAttrs(operation, attrs);
 
   std::string json = "{";

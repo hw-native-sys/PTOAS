@@ -13,47 +13,47 @@
 module {
   func.func @group_add_i16_full_chunks(
       %source: !pto.vmi.vreg<512xi16>,
-      %mask: !pto.vmi.mask<512xpred>) {
+      %mask: !pto.vmi.mask<512xpred>) -> !pto.vmi.vreg<2xi16> {
     %sum = pto.vmi.vcadd %source, %mask {group = 2}
         : !pto.vmi.vreg<512xi16>, !pto.vmi.mask<512xpred>
         -> !pto.vmi.vreg<2xi16>
-    return
+    return %sum : !pto.vmi.vreg<2xi16>
   }
 
   func.func @group_min_i8_one_block(
       %source: !pto.vmi.vreg<256xi8>,
-      %mask: !pto.vmi.mask<256xpred>) {
+      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<8xi8> {
     %min = pto.vmi.vcmin %source, %mask {group = 8}
         : !pto.vmi.vreg<256xi8>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xi8>
-    return
+    return %min : !pto.vmi.vreg<8xi8>
   }
 
   func.func @group_min_f32_two_blocks(
       %source: !pto.vmi.vreg<128xf32>,
-      %mask: !pto.vmi.mask<128xpred>) {
+      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<8xf32> {
     %min = pto.vmi.vcmin %source, %mask {group = 8}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
-    return
+    return %min : !pto.vmi.vreg<8xf32>
   }
 
   func.func @reduce_max_i8(
       %source: !pto.vmi.vreg<256xi8>,
-      %mask: !pto.vmi.mask<256xpred>) {
+      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<1xi8> {
     %max = pto.vmi.vcmax %source, %mask
         : !pto.vmi.vreg<256xi8>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<1xi8>
-    return
+    return %max : !pto.vmi.vreg<1xi8>
   }
 
   func.func @reduce_min_i16(
       %source: !pto.vmi.vreg<128xi16>,
-      %mask: !pto.vmi.mask<128xpred>) {
+      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<1xi16> {
     %min = pto.vmi.vcmin %source, %mask
         : !pto.vmi.vreg<128xi16>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<1xi16>
-    return
+    return %min : !pto.vmi.vreg<1xi16>
   }
 }
 

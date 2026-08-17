@@ -38,10 +38,10 @@ module {
   }
 
   func.func @vmi_to_vpto_absi(
-      %value: !pto.vmi.vreg<64xi32>) -> !pto.vmi.vreg<64xi32> {
+      %value: !pto.vmi.vreg<64xsi32>) -> !pto.vmi.vreg<64xsi32> {
     %abs = pto.vmi.vabs %value
-        : !pto.vmi.vreg<64xi32> -> !pto.vmi.vreg<64xi32>
-    return %abs : !pto.vmi.vreg<64xi32>
+        : !pto.vmi.vreg<64xsi32> -> !pto.vmi.vreg<64xsi32>
+    return %abs : !pto.vmi.vreg<64xsi32>
   }
 }
 
@@ -80,9 +80,9 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_absi(
-// CHECK-SAME: %[[I0:[^)]+]]: !pto.vreg<64xi32>
-// CHECK-SAME: -> !pto.vreg<64xi32>
-// CHECK: %[[ABSI:.*]] = pto.vabs %[[I0]], {{.*}} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+// CHECK-SAME: %[[I0:[^)]+]]: !pto.vreg<64xsi32>
+// CHECK-SAME: -> !pto.vreg<64xsi32>
+// CHECK: %[[ABSI:.*]] = pto.vabs %[[I0]], {{.*}} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
 // CHECK: return %[[ABSI]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

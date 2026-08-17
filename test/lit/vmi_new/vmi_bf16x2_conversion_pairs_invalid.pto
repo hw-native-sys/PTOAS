@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+// bf16x2 is a conversion-only carrier. Phase 1 supports exactly
+// bf16x2 <-> f4E1M2x2/f4E2M1x2 (quant narrow and dequant widen); every other
+// conversion pair is rejected.
+
+module {
+  func.func @unified_bf16x2_to_f16(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vcvt' op unsupported conversion involving bf16x2 element type}}
+    %result = pto.vmi.vcvt %source
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xf16>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_bf16x2_to_bf16(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vcvt' op unsupported conversion involving bf16x2 element type}}
+    %result = pto.vmi.vcvt %source
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xbf16>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_bf16x2_to_f8(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vcvt' op unsupported conversion involving bf16x2 element type}}
+    %result = pto.vmi.vcvt %source
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xf8E4M3FN>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_si32_to_bf16x2(
+      %source: !pto.vmi.vreg<64xsi32>) {
+    // expected-error@+1 {{'pto.vmi.vcvt' op unsupported conversion involving bf16x2 element type}}
+    %result = pto.vmi.vcvt %source
+        : !pto.vmi.vreg<64xsi32>
+       -> !pto.vmi.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_bf16x2_to_si32(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vcvt' op unsupported conversion involving bf16x2 element type}}
+    %result = pto.vmi.vcvt %source
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xsi32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_bf16x2_to_si32(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.fptosi' op unsupported fp-to-si conversion element type pair}}
+    %result = pto.vmi.fptosi %source {saturate = "NOSAT"}
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xsi32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_bf16x2_to_ui8(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.fptoui' op unsupported fp-to-ui conversion element type pair}}
+    %result = pto.vmi.fptoui %source {saturate = "SAT"}
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xui8>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_truncf_bf16x2_to_f16(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.truncf' op unsupported bf16x2 fp-to-fp conversion element type pair}}
+    %result = pto.vmi.truncf %source {saturate = "SAT"}
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xf16>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_truncf_bf16x2_to_f8(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.truncf' op unsupported bf16x2 fp-to-fp conversion element type pair}}
+    %result = pto.vmi.truncf %source {saturate = "SAT"}
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+       -> !pto.vmi.vreg<64xf8E4M3FN>
+    return
+  }
+}
+

@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/partial.pto -o - 2>&1 | FileCheck %s --check-prefix=PARTIAL
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/mixed.pto -o - 2>&1 | FileCheck %s --check-prefix=MIXED
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/five-positional.pto -o - 2>&1 | FileCheck %s --check-prefix=FIVE-POSITIONAL
+
+//--- partial.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @partial(%src: !pto.ptr<f16, l1>, %dst: !pto.ptr<f16, l0a>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    pto.mte_l1_l0a %src, %dst, m_start(%c0)
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64
+    return
+  }
+}
+
+//--- mixed.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mixed(%src: !pto.ptr<f16, l1>, %dst: !pto.ptr<f16, l0a>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c16 = arith.constant 16 : i64
+    pto.mte_l1_l0a %src, %dst, m(%c16), k(%c16), start_row(%c0), start_col(%c0), m_start(%c0)
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- five-positional.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @five_positional(%src: !pto.ptr<f16, l1>, %dst: !pto.ptr<f16, l0a>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    pto.mte_l1_l0a %src, %dst, %c0, %c0, %c0, %c0, %c0
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+// PARTIAL: 'pto.mte_l1_l0a' op full control form requires k_start
+// MIXED: 'pto.mte_l1_l0a' op cannot mix shape-derived operands with full control operands
+// FIVE-POSITIONAL: expects either four shape-derived or six full positional operands

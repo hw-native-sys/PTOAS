@@ -18,5 +18,4 @@ module {
   }
 }
 
-// vrelu lowers to legacy relu, whose verifier rejects the bf16 element type.
-// CHECK: 'pto.vmi.relu' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vrelu' op requires si32, f16, or f32 VMI element type

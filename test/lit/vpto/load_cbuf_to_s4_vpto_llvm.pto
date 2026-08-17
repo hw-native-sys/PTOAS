@@ -14,18 +14,39 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     %c1 = arith.constant 1 : i64
     %c4 = arith.constant 4 : i64
     %c8 = arith.constant 8 : i64
+    %c16 = arith.constant 16 : i64
     %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
     %dsta = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
     %dstb = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0b>
 
-    pto.load_cbuf_to_ca_s4 %src, %dsta, %c0, %c0, %c8, %c1, %c8, %c8, %c0
+    pto.load_cbuf_to_ca_s4 %src, %dsta, %c0, %c4, %c16, %c4, %c8, %c16, %c0
       : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
-    pto.load_cbuf_to_cb_s4 %src, %dstb, %c0, %c0, %c4, %c1, %c4, %c4, %c1
+    pto.load_cbuf_to_cb_s4 %src, %dstb, %c0, %c4, %c16, %c4, %c8, %c16, %c1
       : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64, i64, i64, i64
     return
   }
 }
 
 // CHECK-LABEL: llvm.func @load_cbuf_to_s4_2dv2_control
-// CHECK: llvm.call @llvm.hivm.LOAD.L1.TO.L0A.2Dv2.s4
-// CHECK: llvm.call @llvm.hivm.LOAD.L1.TO.L0B.2Dv2.s4
+// CHECK-DAG: %[[SRC_STRIDE:.*]] = llvm.mlir.constant(8 : i64)
+// CHECK-DAG: %[[TRUE:.*]] = llvm.mlir.constant(1 : i64)
+// CHECK-DAG: %[[FALSE:.*]] = llvm.mlir.constant(0 : i64)
+// CHECK-DAG: %[[SRC:.*]] = llvm.inttoptr %[[FALSE]] : i64 to !llvm.ptr<2>
+// CHECK-DAG: %[[DSTA:.*]] = llvm.inttoptr %[[FALSE]] : i64 to !llvm.ptr<3>
+// CHECK-DAG: %[[DSTB:.*]] = llvm.inttoptr %[[FALSE]] : i64 to !llvm.ptr<4>
+// CHECK: %[[A_K_START:.*]] = llvm.mlir.constant(262144 : i64)
+// CHECK: %[[A_M_STEP:.*]] = llvm.mlir.constant(68719476736 : i64)
+// CHECK: %[[A_LOW:.*]] = llvm.or %[[A_K_START]], %[[A_M_STEP]] : i64
+// CHECK: %[[A_K_STEP:.*]] = llvm.mlir.constant(4398046511104 : i64)
+// CHECK: %[[A_CONFIG0:.*]] = llvm.or %[[A_LOW]], %[[A_K_STEP]] : i64
+// CHECK: %[[A_DST_STRIDE_SHIFTED:.*]] = llvm.mlir.constant(1048576 : i64)
+// CHECK: %[[A_CONFIG1:.*]] = llvm.or %[[A_DST_STRIDE_SHIFTED]], %[[SRC_STRIDE]] : i64
+// CHECK: llvm.call @llvm.hivm.LOAD.L1.TO.L0A.2Dv2.s4(%[[DSTA]], %[[SRC]], %[[A_CONFIG0]], %[[A_CONFIG1]], %[[FALSE]])
+// CHECK: %[[B_K_START:.*]] = llvm.mlir.constant(262144 : i64)
+// CHECK: %[[B_M_STEP:.*]] = llvm.mlir.constant(68719476736 : i64)
+// CHECK: %[[B_LOW:.*]] = llvm.or %[[B_K_START]], %[[B_M_STEP]] : i64
+// CHECK: %[[B_K_STEP:.*]] = llvm.mlir.constant(4398046511104 : i64)
+// CHECK: %[[B_CONFIG0:.*]] = llvm.or %[[B_LOW]], %[[B_K_STEP]] : i64
+// CHECK: %[[B_DST_STRIDE_SHIFTED:.*]] = llvm.mlir.constant(1048576 : i64)
+// CHECK: %[[B_CONFIG1:.*]] = llvm.or %[[B_DST_STRIDE_SHIFTED]], %[[SRC_STRIDE]] : i64
+// CHECK: llvm.call @llvm.hivm.LOAD.L1.TO.L0B.2Dv2.s4(%[[DSTB]], %[[SRC]], %[[B_CONFIG0]], %[[B_CONFIG1]], %[[TRUE]])

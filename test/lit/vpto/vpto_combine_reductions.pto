@@ -1,0 +1,134 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-combine-reductions | FileCheck %s
+
+module {
+  // CHECK-LABEL: func.func @combine_vcadd(
+  // CHECK: %[[M:.*]] = pto.pset_b32 "PAT_ALL"
+  // CHECK: %[[FIRST:.*]] = pto.pset_b32 "PAT_VL1"
+  // CHECK: %[[COMBINED:.*]] = pto.vadd %arg0, %arg1, %[[M]]
+  // CHECK: %[[REDUCED:.*]] = pto.vcadd %[[COMBINED]], %[[M]]
+  // CHECK: %[[RESULT:.*]] = pto.vadd %[[REDUCED]], %arg2, %[[FIRST]]
+  // CHECK: return %[[RESULT]]
+  func.func @combine_vcadd(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>,
+      %init: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %first = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
+    %r0 = pto.vcadd %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %a0 = pto.vadd %r0, %init, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcadd %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vadd %r1, %a0, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @combine_vcmax(
+  // CHECK: %[[M:.*]] = pto.pset_b32 "PAT_ALL"
+  // CHECK: %[[FIRST:.*]] = pto.pset_b32 "PAT_VL1"
+  // CHECK: %[[COMBINED:.*]] = pto.vmax %arg0, %arg1, %[[M]]
+  // CHECK: %[[REDUCED:.*]] = pto.vcmax %[[COMBINED]], %[[M]]
+  // CHECK: %[[RESULT:.*]] = pto.vmax %[[REDUCED]], %arg2, %[[FIRST]]
+  // CHECK: return %[[RESULT]]
+  func.func @combine_vcmax(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>,
+      %init: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %first = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
+    %r0 = pto.vcmax %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %a0 = pto.vmax %r0, %init, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcmax %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vmax %r1, %a0, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @combine_vcmin(
+  // CHECK: %[[M:.*]] = pto.pset_b32 "PAT_ALL"
+  // CHECK: %[[FIRST:.*]] = pto.pset_b32 "PAT_VL1"
+  // CHECK: %[[COMBINED:.*]] = pto.vmin %arg0, %arg1, %[[M]]
+  // CHECK: %[[REDUCED:.*]] = pto.vcmin %[[COMBINED]], %[[M]]
+  // CHECK: %[[RESULT:.*]] = pto.vmin %[[REDUCED]], %arg2, %[[FIRST]]
+  // CHECK: return %[[RESULT]]
+  func.func @combine_vcmin(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>,
+      %init: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %first = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
+    %r0 = pto.vcmin %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %a0 = pto.vmin %r0, %init, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcmin %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vmin %r1, %a0, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @combine_vcgadd(
+  // CHECK: %[[M:.*]] = pto.pset_b32 "PAT_ALL"
+  // CHECK: %[[COMBINED:.*]] = pto.vadd %arg0, %arg1, %[[M]]
+  // CHECK: %[[RESULT:.*]] = pto.vcgadd %[[COMBINED]], %[[M]]
+  // CHECK: return %[[RESULT]]
+  func.func @combine_vcgadd(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %first = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+    %r0 = pto.vcgadd %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcgadd %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vadd %r0, %r1, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @combine_vcgmax(
+  // CHECK: %[[M:.*]] = pto.pset_b32 "PAT_ALL"
+  // CHECK: %[[COMBINED:.*]] = pto.vmax %arg0, %arg1, %[[M]]
+  // CHECK: %[[RESULT:.*]] = pto.vcgmax %[[COMBINED]], %[[M]]
+  // CHECK: return %[[RESULT]]
+  func.func @combine_vcgmax(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %first = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+    %r0 = pto.vcgmax %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcgmax %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vmax %r0, %r1, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @combine_vcgmin(
+  // CHECK: %[[M:.*]] = pto.pset_b32 "PAT_ALL"
+  // CHECK: %[[COMBINED:.*]] = pto.vmin %arg0, %arg1, %[[M]]
+  // CHECK: %[[RESULT:.*]] = pto.vcgmin %[[COMBINED]], %[[M]]
+  // CHECK: return %[[RESULT]]
+  func.func @combine_vcgmin(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %first = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+    %r0 = pto.vcgmin %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcgmin %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vmin %r0, %r1, %first : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+
+  // CHECK-LABEL: func.func @preserve_different_masks(
+  // CHECK: %[[R0:.*]] = pto.vcgmax %arg0, %arg2
+  // CHECK: %[[R1:.*]] = pto.vcgmax %arg1, %arg3
+  // CHECK: %[[RESULT:.*]] = pto.vmax %[[R0]], %[[R1]], %arg4
+  // CHECK: return %[[RESULT]]
+  func.func @preserve_different_masks(
+      %a: !pto.vreg<64xf32>, %b: !pto.vreg<64xf32>,
+      %m0: !pto.mask<b32>, %m1: !pto.mask<b32>, %combine: !pto.mask<b32>)
+      -> !pto.vreg<64xf32> {
+    %r0 = pto.vcgmax %a, %m0 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %r1 = pto.vcgmax %b, %m1 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %out = pto.vmax %r0, %r1, %combine : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %out : !pto.vreg<64xf32>
+  }
+}

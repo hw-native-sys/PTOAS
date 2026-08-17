@@ -27,8 +27,9 @@ static bool isTraceEnabled() {
  
 // [Debug] 打印 Value 详细信息
 static void printValueDebug(const char* tag, Value v) {
-  if (!isTraceEnabled())
+  if (!isTraceEnabled()) {
     return;
+  }
   llvm::errs() << tag << ": ";
   if (!v) {
     llvm::errs() << "NULL\n";
@@ -57,8 +58,9 @@ static Value GetRealRoot(Value v) {
   while (v && depth++ < maxDepth) {
     Operation *defOp = v.getDefiningOp();
     if (!defOp) {
-        if (trace)
-          llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
+      if (trace) {
+        llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
+      }
         break; 
     }
  
@@ -75,41 +77,47 @@ static Value GetRealRoot(Value v) {
 // constant. Tile roots otherwise carry their planned addresses in
 // `BaseMemInfo::baseAddresses`.
 static uint64_t getRootBaseAddress(Value rootBuffer) {
-  if (!rootBuffer)
+  if (!rootBuffer) {
     return 0;
+  }
   if (auto cst = rootBuffer.getDefiningOp<arith::ConstantOp>()) {
-    if (auto attr = dyn_cast<IntegerAttr>(cst.getValue()))
+    if (auto attr = dyn_cast<IntegerAttr>(cst.getValue())) {
       return attr.getValue().getZExtValue();
+    }
   }
   return 0;
 }
 
 static bool isIntegerConstant(Value value) {
-  if (!value)
+  if (!value) {
     return false;
+  }
   auto cst = value.getDefiningOp<arith::ConstantOp>();
   return cst && isa<IntegerAttr>(cst.getValue());
 }
 
 static bool hasKnownLocalAbsoluteAddress(const BaseMemInfo *info) {
-  if (!info || info->baseAddresses.empty() || info->allocateSize == 0)
+  if (!info || info->baseAddresses.empty() || info->allocateSize == 0) {
     return false;
+  }
 
   Value root = info->rootBuffer;
-  if (!root)
+  if (!root) {
     return false;
+  }
 
-  if (auto alloc = root.getDefiningOp<pto::AllocTileOp>())
+  if (auto alloc = root.getDefiningOp<pto::AllocTileOp>()) {
     return isIntegerConstant(alloc.getAddr());
+  }
 
-  if (isIntegerConstant(root))
+  if (isIntegerConstant(root)) {
     return true;
+  }
 
   return false;
 }
 
 // Cross-root byte-range overlap check for local memory (UB/L1).
-//
 // `MemAlias` historically only checked byte-range overlap when the two
 // `rootBuffer` SSA values were identical (same `alloc_tile`).
 // When PlanMemory reuses the same physical UB region for two *different*
@@ -117,7 +125,6 @@ static bool hasKnownLocalAbsoluteAddress(const BaseMemInfo *info) {
 // overlap — so `MemAlias` returned false and InsertSync silently dropped the
 // cross-pipe hazard (issue #934: MTE3 tstore racing a V-pipe write into an
 // overlapping-but-different-root buffer).
-//
 // This helper re-derives the absolute address as `getRootBaseAddress(root) +
 // baseAddresses[i]` and performs the same `maxStart < minEnd` overlap test
 // across every address pair, regardless of root identity.
@@ -126,8 +133,9 @@ static bool isLocalBufferOverlapCrossRoot(const BaseMemInfo *a,
   // Cross-root checks are only meaningful after physical addresses have been
   // materialized. For unknown-address roots keep the historical behavior:
   // different roots are treated as independent.
-  if (!hasKnownLocalAbsoluteAddress(a) || !hasKnownLocalAbsoluteAddress(b))
+  if (!hasKnownLocalAbsoluteAddress(a) || !hasKnownLocalAbsoluteAddress(b)) {
     return false;
+  }
 
   uint64_t rootBaseA = getRootBaseAddress(a->rootBuffer);
   uint64_t rootBaseB = getRootBaseAddress(b->rootBuffer);
@@ -140,8 +148,9 @@ static bool isLocalBufferOverlapCrossRoot(const BaseMemInfo *a,
       uint64_t bEnd = bStart + b->allocateSize;
       uint64_t maxStart = std::max(aStart, bStart);
       uint64_t minEnd = std::min(aEnd, bEnd);
-      if (maxStart < minEnd)
+      if (maxStart < minEnd) {
         return true;
+      }
     }
   }
   return false;
@@ -185,14 +194,16 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
  
   if (as != bs) {
-    if (isTraceEnabled())
+    if (isTraceEnabled()) {
       llvm::errs() << "    -> Scope Mismatch. False.\n";
+    }
     return false;
   }
 
   if (a->aliasesUnknownRange || b->aliasesUnknownRange) {
-    if (isTraceEnabled())
+    if (isTraceEnabled()) {
       llvm::errs() << "    -> Unknown range in same scope. True.\n";
+    }
     return true;
   }
  
@@ -207,18 +218,25 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   // the same physical range with a different alloc_tile root. Compare those
   // ranges directly when both sides carry known physical local addresses.
   if (a->hasKnownPhysicalAddresses && b->hasKnownPhysicalAddresses) {
-    if (isTraceEnabled())
+    if (isTraceEnabled()) {
       llvm::errs() << "    -> Comparing known physical local ranges.\n";
-    if (a->baseAddresses.empty() || b->baseAddresses.empty())
+    }
+    if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
       return true;
-    if (a->allocateSize == 0 || b->allocateSize == 0)
+    }
+    if (a->allocateSize == 0 || b->allocateSize == 0) {
       return true;
+    }
     return isBufferAddressRangeOverlap(a, b);
   }
 
   if (a->rootBuffer == b->rootBuffer) {
-    if (a->baseAddresses.empty() || b->baseAddresses.empty()) return true;
-    if (a->allocateSize == 0 || b->allocateSize == 0) return true;
+    if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
+      return true;
+    }
+    if (a->allocateSize == 0 || b->allocateSize == 0) {
+      return true;
+    }
     return isBufferAddressRangeOverlap(a, b);
   }
  
@@ -233,16 +251,20 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
  
   if (realRootA == realRootB && realRootA != nullptr) {
-      if (isTraceEnabled())
-        llvm::errs() << "      -> MATCH! Real roots are the same.\n";
-      if (a->baseAddresses.empty() || b->baseAddresses.empty())
-        return true;
-      if (a->allocateSize == 0 || b->allocateSize == 0)
-        return true;
+    if (isTraceEnabled()) {
+      llvm::errs() << "      -> MATCH! Real roots are the same.\n";
+    }
+    if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
+      return true;
+    }
+    if (a->allocateSize == 0 || b->allocateSize == 0) {
+      return true;
+    }
       return isBufferAddressRangeOverlap(a, b);
   } else {
-      if (isTraceEnabled())
-        llvm::errs() << "      -> Mismatch. Real roots differ.\n";
+    if (isTraceEnabled()) {
+      llvm::errs() << "      -> Mismatch. Real roots differ.\n";
+    }
   }
 
   // 2.3 Cross-root absolute-address overlap check.
@@ -254,28 +276,34 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   // a cross-pipe hazard (e.g. MTE3 tstore vs a V-pipe write into an
   // overlapping region) is not silently dropped (issue #934).
   bool crossRootOverlap = isLocalBufferOverlapCrossRoot(a, b);
-  if (isTraceEnabled())
+  if (isTraceEnabled()) {
     llvm::errs() << "      -> Cross-root overlap check: "
                  << (crossRootOverlap ? "true" : "false") << "\n";
+  }
   return crossRootOverlap;
 }
  
 bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
                                                 const BaseMemInfo *b) {
-  if (a->baseAddresses.empty() || b->baseAddresses.empty())
+  if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
     return true;
+  }
   if (a->rootBuffer != b->rootBuffer) {
     Value realRootA = GetRealRoot(a->rootBuffer);
     Value realRootB = GetRealRoot(b->rootBuffer);
     if (realRootA != realRootB) {
         return false;
     }
-    if (a->allocateSize == 0 || b->allocateSize == 0) return true;
+    if (a->allocateSize == 0 || b->allocateSize == 0) {
+      return true;
+    }
     return isBufferAddressRangeOverlap(a, b);
   }
- 
-  if (a->allocateSize == 0 || b->allocateSize == 0) return true;
- 
+
+  if (a->allocateSize == 0 || b->allocateSize == 0) {
+    return true;
+  }
+
   return isBufferAddressRangeOverlap(a, b);
 }
  

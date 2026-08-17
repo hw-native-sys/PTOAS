@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_TILEFUSION_FUSIONOPSEMANTICS_H
 #define PTO_TRANSFORMS_TILEFUSION_FUSIONOPSEMANTICS_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Support/LLVM.h"
@@ -38,9 +39,9 @@ struct FusionOpSemantics {
   FusionComputeFamily computeFamily = FusionComputeFamily::Unknown;
   Operation *op = nullptr;
   std::string opName;
-  SmallVector<Value, 4> tileInputs;
-  SmallVector<Value, 2> tileOutputs;
-  SmallVector<Value, 2> scalarInputs;
+  SmallVector<Value, mlir::pto::kValue4> tileInputs;
+  SmallVector<Value, mlir::pto::kValue2> tileOutputs;
+  SmallVector<Value, mlir::pto::kValue2> scalarInputs;
 };
 
 bool isSupportedPreFusionComputeOp(StringRef opName);

@@ -13,7 +13,8 @@ module {
       %arg0: !pto.hif8,
       %arg1: !pto.hif8x2,
       %arg2: !pto.f4E1M2x2,
-      %arg3: !pto.f4E2M1x2) {
+      %arg3: !pto.f4E2M1x2,
+      %arg4: !pto.bf16x2) {
     return
   }
 }
@@ -23,3 +24,4 @@ module {
 // CHECK-SAME: %arg1: !pto.hif8x2
 // CHECK-SAME: %arg2: !pto.f4E1M2x2
 // CHECK-SAME: %arg3: !pto.f4E2M1x2
+// CHECK-SAME: %arg4: !pto.bf16x2

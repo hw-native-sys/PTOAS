@@ -63,9 +63,8 @@ struct VPTOMaskSimplifyPass
                  SimplifyAllTruePredicateReorder<PdintlvB16Op>,
                  SimplifyAllTruePredicateReorder<PdintlvB32Op>>(&getContext());
 
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
-    }
   }
 };
 

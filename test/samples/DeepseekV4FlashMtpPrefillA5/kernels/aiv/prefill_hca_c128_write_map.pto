@@ -1,0 +1,51 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @prefill_hca_c128_write_map(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i64>, %arg3: !pto.ptr<i32>, %arg4: i32, %arg5: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c1_index = arith.constant 1 : index
+  %c8_index = arith.constant 8 : index
+  %c128_index = arith.constant 128 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c0_index = arith.constant 0 : index
+  %cn1_i32 = arith.constant -1 : i32
+  %write_pos_map_inline6329__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c1_index, %c8_index], strides = [%c8_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %write_dst_map_inline6343__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c1_index, %c8_index], strides = [%c8_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %hca_cmp_slot_mapping__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c128_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %position_ids__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%arg5], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%c0_i32 : i32) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %write_pos_map_inline6329__ssa_v0_pview = pto.partition_view %write_pos_map_inline6329__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c8_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x8xi32>
+  pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%write_pos_map_inline6329__ssa_v0_pview : !pto.partition_tensor_view<1x8xi32>)
+  %0 = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%cn1_i32 : i32) outs(%0 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %write_dst_map_inline6343__ssa_v0_pview = pto.partition_view %write_dst_map_inline6343__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c8_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x8xi32>
+  pto.tstore ins(%0 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%write_dst_map_inline6343__ssa_v0_pview : !pto.partition_tensor_view<1x8xi32>)
+  %map_seen_inline6346__rv_v2 = scf.for %map_w_inline6339__idx_v0 = %c0_index to %c128_index step %c1_index iter_args(%map_seen_inline6346__iter_v1 = %c0_index) -> (index) {
+    %2 = arith.index_cast %arg4 : i32 to index
+    %3 = arith.cmpi slt, %map_w_inline6339__idx_v0, %2 : index
+    %map_seen_inline6346__phi_v5 = scf.if %3 -> (index) {
+      %map_slot_raw_inline6351__tile = pto.load_scalar %arg2[%map_w_inline6339__idx_v0] : !pto.ptr<i64> -> i64
+      %4 = arith.index_cast %map_slot_raw_inline6351__tile : i64 to index
+      %5 = arith.cmpi sle, %c0_index, %4 : index
+      %map_seen_inline6346__phi_v4 = scf.if %5 -> (index) {
+        %6 = pto.load_scalar %arg3[%map_w_inline6339__idx_v0] : !pto.ptr<i32> -> i32
+        %flat_offset_mul = arith.muli %c0_index, %c8_index : index
+        %flat_offset = arith.addi %flat_offset_mul, %map_seen_inline6346__iter_v1 : index
+        pto.store_scalar %6, %arg0[%flat_offset] : !pto.ptr<i32>, i32
+        %7 = arith.trunci %map_slot_raw_inline6351__tile : i64 to i32
+        %8 = arith.muli %c0_index, %c8_index : index
+        %9 = arith.addi %8, %map_seen_inline6346__iter_v1 : index
+        pto.store_scalar %7, %arg1[%9] : !pto.ptr<i32>, i32
+        %10 = arith.addi %map_seen_inline6346__iter_v1, %c1_index : index
+        scf.yield %10 : index
+      } else {
+        scf.yield %map_seen_inline6346__iter_v1 : index
+      }
+      scf.yield %map_seen_inline6346__phi_v4 : index
+    } else {
+      scf.yield %map_seen_inline6346__iter_v1 : index
+    }
+    scf.yield %map_seen_inline6346__phi_v5 : index
+  }
+  return
+  }
+}

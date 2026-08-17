@@ -8,6 +8,7 @@
 
 #include "PTO/Transforms/CppPostprocess.h"
 
+#include "PTO/Support/CodeConstants.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -21,10 +22,12 @@ namespace pto {
 
 namespace {
 
+constexpr size_t kLastUseReplacementReserve = 32;
+
 struct ParsedMarkerCall {
   size_t markerPos;
   size_t rparenPos;
-  llvm::SmallVector<llvm::StringRef, 8> args;
+  llvm::SmallVector<llvm::StringRef, mlir::pto::kValue8> args;
 };
 
 static bool parseMarkerArgs(llvm::StringRef argsRef,
@@ -90,14 +93,17 @@ static bool parseLastUseMarkerName(llvm::StringRef markerName,
     if (token.empty()) {
       return false;
     }
-    if (!llvm::all_of(token, [](char c) { return std::isdigit(c); }))
+    if (!llvm::all_of(token, [](char c) { return std::isdigit(c); })) {
       return false;
-    if (!lastUseArgs.empty())
+    }
+    if (!lastUseArgs.empty()) {
       lastUseArgs.append(", ");
+    }
     lastUseArgs.append(token.str());
-    if (next == llvm::StringRef::npos)
+    if (next == llvm::StringRef::npos) {
       break;
-    pos = next + 2;
+    }
+    pos = next + mlir::pto::kValue2;
   }
   return !lastUseArgs.empty();
 }
@@ -115,8 +121,9 @@ bool rewriteLastUseMarkersInCpp(std::string &cpp) {
     }
 
     size_t lparenPos = markerPos + kPrefix.size();
-    while (lparenPos < cpp.size() && cpp[lparenPos] != '(')
+    while (lparenPos < cpp.size() && cpp[lparenPos] != '(') {
       ++lparenPos;
+    }
     if (lparenPos >= cpp.size()) {
       searchPos = markerPos + 1;
       continue;
@@ -131,8 +138,9 @@ bool rewriteLastUseMarkersInCpp(std::string &cpp) {
         ++parenDepth;
         continue;
       }
-      if (c != ')')
+      if (c != ')') {
         continue;
+      }
       if (parenDepth == 0) {
         call.rparenPos = i;
         break;
@@ -160,7 +168,7 @@ bool rewriteLastUseMarkersInCpp(std::string &cpp) {
 
     std::string replacement;
     replacement.reserve(callee.size() + lastUseArgs.size() + argsRef.size() +
-                        32);
+                        kLastUseReplacementReserve);
     replacement.append("[[pto::last_use(");
     replacement.append(lastUseArgs);
     replacement.append(")]] ");

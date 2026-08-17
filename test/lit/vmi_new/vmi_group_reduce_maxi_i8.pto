@@ -13,11 +13,11 @@
 module {
   func.func @group_reduce_maxi_i8(
       %source: !pto.vmi.vreg<256xi8>,
-      %mask: !pto.vmi.mask<256xpred>) {
+      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<8xi8> {
     %max = pto.vmi.vcmax %source, %mask {group = 8}
         : !pto.vmi.vreg<256xi8>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xi8>
-    return
+    return %max : !pto.vmi.vreg<8xi8>
   }
 }
 

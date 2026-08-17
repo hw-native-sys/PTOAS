@@ -83,7 +83,7 @@
 ```bash
 git clone https://github.com/vpto-dev/llvm-project.git
 cd llvm-project
-git checkout feature-vpto-llvm21
+git checkout feature-vpto
 
 cmake -G Ninja -S llvm -B llvm/build-shared \
   -DLLVM_ENABLE_PROJECTS="mlir;clang" \
@@ -103,7 +103,7 @@ ninja -C llvm/build-shared
 ```bash
 export LLVM_DIR=$PWD/llvm-project/llvm/build-shared
 export PTO_INSTALL_DIR=$PWD/install
-python3 -m pip install 'pybind11<3' 'nanobind>=2.4'
+python3 -m pip install 'pybind11<3'
 
 cmake -G Ninja -S . -B build \
   -DLLVM_DIR="$LLVM_DIR/lib/cmake/llvm" \

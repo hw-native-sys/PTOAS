@@ -25,8 +25,8 @@ module {
 // CHECK-SAME: %[[P1:[^,]+]]: !pto.vreg<64xf32>
 // CHECK-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
 // CHECK-SAME: %[[OFF:[^)]+]]: index
-// CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[P0]], %[[P1]]
 // CHECK: %[[C6:.*]] = arith.constant 6 : i32
+// CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[P0]], %[[P1]]
 // CHECK: %[[MASK:.*]], %{{.*}} = pto.plt_b32 %[[C6]] : i32 -> !pto.mask<b32>, i32
 // CHECK: pto.vsts %[[LOW]], %[[DST]][%[[OFF]]], %[[MASK]]
 // CHECK-NOT: pto.vsts %[[HIGH]]

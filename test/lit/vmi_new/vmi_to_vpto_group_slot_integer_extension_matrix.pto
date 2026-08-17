@@ -43,130 +43,152 @@
 module {
   func.func @group_slot_ext_slots1_g1(
       %u8: !g1s1u8, %u16: !g1s1u16, %s8: !g1s1s8,
-      %s16: !g1s1s16, %i8: !g1s1i8, %i16: !g1s1i16) {
+      %s16: !g1s1s16, %i8: !g1s1i8, %i16: !g1s1i16)
+      -> (!g1s1u16, !g1s1u32, !g1s1u32,
+          !g1s1s16, !g1s1s32, !g1s1s32,
+          !g1s1i16, !g1s1i32, !g1s1i32) {
     %u8u16 = pto.vmi.extui %u8 : !g1s1u8 -> !g1s1u16
     %u16u32 = pto.vmi.extui %u16 : !g1s1u16 -> !g1s1u32
     %u8u32 = pto.vmi.extui %u8 : !g1s1u8 -> !g1s1u32
     %s8s16 = pto.vmi.extsi %s8 : !g1s1s8 -> !g1s1s16
     %s16s32 = pto.vmi.extsi %s16 : !g1s1s16 -> !g1s1s32
     %s8s32 = pto.vmi.extsi %s8 : !g1s1s8 -> !g1s1s32
-    %i8i16 = pto.vmi.extsi %i8 : !g1s1i8 -> !g1s1i16
-    %i16i32 = pto.vmi.extsi %i16 : !g1s1i16 -> !g1s1i32
-    %i8i32 = pto.vmi.extsi %i8 : !g1s1i8 -> !g1s1i32
-    %s8i16 = pto.vmi.extsi %s8 : !g1s1s8 -> !g1s1i16
-    %s16i32 = pto.vmi.extsi %s16 : !g1s1s16 -> !g1s1i32
-    %s8i32 = pto.vmi.extsi %s8 : !g1s1s8 -> !g1s1i32
-    %i8s16 = pto.vmi.extsi %i8 : !g1s1i8 -> !g1s1s16
-    %i16s32 = pto.vmi.extsi %i16 : !g1s1i16 -> !g1s1s32
-    %i8s32 = pto.vmi.extsi %i8 : !g1s1i8 -> !g1s1s32
-    return
+    %i8i16 = pto.vmi.extui %i8 : !g1s1i8 -> !g1s1i16
+    %i16i32 = pto.vmi.extui %i16 : !g1s1i16 -> !g1s1i32
+    %i8i32 = pto.vmi.extui %i8 : !g1s1i8 -> !g1s1i32
+    return %u8u16, %u16u32, %u8u32,
+           %s8s16, %s16s32, %s8s32,
+           %i8i16, %i16i32, %i8i32
+        : !g1s1u16, !g1s1u32, !g1s1u32,
+          !g1s1s16, !g1s1s32, !g1s1s32,
+          !g1s1i16, !g1s1i32, !g1s1i32
   }
 
   func.func @group_slot_ext_slots1_g2(
-      %src: !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>>) {
+      %src: !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 1>> {
     %wide = pto.vmi.extui %src
         : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>>
         -> !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 1>>
-    return
+    return %wide : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 1>>
   }
 
   func.func @group_slot_ext_slots1_g4(
-      %src: !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 1>>) {
+      %src: !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 1>>)
+      -> !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 1>> {
     %wide = pto.vmi.extsi %src
         : !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 1>>
         -> !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 1>>
-    return
+    return %wide : !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 1>>
   }
 
   func.func @group_slot_ext_slots1_g8(
-      %src: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 1>>) {
-    %wide = pto.vmi.extsi %src
+      %src: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %wide = pto.vmi.extui %src
         : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 1>>
         -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 1>>
-    return
+    return %wide : !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 1>>
   }
 
   func.func @group_slot_ext_slots8_g1(
       %u8x2: !g1s8u8x2, %u8x4: !g1s8u8x4, %u16x2: !g1s8u16x2,
       %s8x2: !g1s8s8x2, %s8x4: !g1s8s8x4, %s16x2: !g1s8s16x2,
-      %i8x2: !g1s8i8x2, %i8x4: !g1s8i8x4, %i16x2: !g1s8i16x2) {
+      %i8x2: !g1s8i8x2, %i8x4: !g1s8i8x4, %i16x2: !g1s8i16x2)
+      -> (!g1s8u16, !g1s8u32, !g1s8u32,
+          !g1s8s16, !g1s8s32, !g1s8s32,
+          !g1s8i16, !g1s8i32, !g1s8i32) {
     %u8u16 = pto.vmi.extui %u8x2 : !g1s8u8x2 -> !g1s8u16
     %u16u32 = pto.vmi.extui %u16x2 : !g1s8u16x2 -> !g1s8u32
     %u8u32 = pto.vmi.extui %u8x4 : !g1s8u8x4 -> !g1s8u32
     %s8s16 = pto.vmi.extsi %s8x2 : !g1s8s8x2 -> !g1s8s16
     %s16s32 = pto.vmi.extsi %s16x2 : !g1s8s16x2 -> !g1s8s32
     %s8s32 = pto.vmi.extsi %s8x4 : !g1s8s8x4 -> !g1s8s32
-    %i8i16 = pto.vmi.extsi %i8x2 : !g1s8i8x2 -> !g1s8i16
-    %i16i32 = pto.vmi.extsi %i16x2 : !g1s8i16x2 -> !g1s8i32
-    %i8i32 = pto.vmi.extsi %i8x4 : !g1s8i8x4 -> !g1s8i32
-    %s8i16 = pto.vmi.extsi %s8x2 : !g1s8s8x2 -> !g1s8i16
-    %s16i32 = pto.vmi.extsi %s16x2 : !g1s8s16x2 -> !g1s8i32
-    %s8i32 = pto.vmi.extsi %s8x4 : !g1s8s8x4 -> !g1s8i32
-    %i8s16 = pto.vmi.extsi %i8x2 : !g1s8i8x2 -> !g1s8s16
-    %i16s32 = pto.vmi.extsi %i16x2 : !g1s8i16x2 -> !g1s8s32
-    %i8s32 = pto.vmi.extsi %i8x4 : !g1s8i8x4 -> !g1s8s32
-    return
+    %i8i16 = pto.vmi.extui %i8x2 : !g1s8i8x2 -> !g1s8i16
+    %i16i32 = pto.vmi.extui %i16x2 : !g1s8i16x2 -> !g1s8i32
+    %i8i32 = pto.vmi.extui %i8x4 : !g1s8i8x4 -> !g1s8i32
+    return %u8u16, %u16u32, %u8u32,
+           %s8s16, %s16s32, %s8s32,
+           %i8i16, %i16i32, %i8i32
+        : !g1s8u16, !g1s8u32, !g1s8u32,
+          !g1s8s16, !g1s8s32, !g1s8s32,
+          !g1s8i16, !g1s8i32, !g1s8i32
   }
 
   func.func @group_slot_ext_slots8_g2(
-      %src: !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>) {
+      %src: !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>)
+      -> !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 8>> {
     %wide = pto.vmi.extui %src
         : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
         -> !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 8>>
-    return
+    return %wide : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 8>>
   }
 
   func.func @group_slot_ext_slots8_g4(
-      %src: !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 8, lane_stride = 2>>) {
+      %src: !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 8, lane_stride = 2>>)
+      -> !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 8>> {
     %wide = pto.vmi.extsi %src
         : !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 8, lane_stride = 2>>
         -> !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 8>>
-    return
+    return %wide : !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 8>>
   }
 
   func.func @group_slot_ext_slots8_g8(
-      %src: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) {
-    %wide = pto.vmi.extsi %src
+      %src: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>)
+      -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %wide = pto.vmi.extui %src
         : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
         -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
-    return
+    return %wide : !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
   }
 
   func.func @group_slot_ext_slots8_g16(
       %u8x2: !pto.vmi.vreg<16xui8, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>,
       %s16x2: !pto.vmi.vreg<16xsi16, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>,
-      %i8x4: !pto.vmi.vreg<16xi8, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 4>>) {
+      %i8x4: !pto.vmi.vreg<16xi8, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 4>>)
+      -> (!pto.vmi.vreg<16xui16, #pto.vmi.layout<num_groups = 16, slots = 8>>,
+          !pto.vmi.vreg<16xsi32, #pto.vmi.layout<num_groups = 16, slots = 8>>,
+          !pto.vmi.vreg<16xi32, #pto.vmi.layout<num_groups = 16, slots = 8>>) {
     %u16 = pto.vmi.extui %u8x2
         : !pto.vmi.vreg<16xui8, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>
         -> !pto.vmi.vreg<16xui16, #pto.vmi.layout<num_groups = 16, slots = 8>>
     %s32 = pto.vmi.extsi %s16x2
         : !pto.vmi.vreg<16xsi16, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>
         -> !pto.vmi.vreg<16xsi32, #pto.vmi.layout<num_groups = 16, slots = 8>>
-    %i32 = pto.vmi.extsi %i8x4
+    %i32 = pto.vmi.extui %i8x4
         : !pto.vmi.vreg<16xi8, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 4>>
         -> !pto.vmi.vreg<16xi32, #pto.vmi.layout<num_groups = 16, slots = 8>>
-    return
+    return %u16, %s32, %i32
+        : !pto.vmi.vreg<16xui16, #pto.vmi.layout<num_groups = 16, slots = 8>>,
+          !pto.vmi.vreg<16xsi32, #pto.vmi.layout<num_groups = 16, slots = 8>>,
+          !pto.vmi.vreg<16xi32, #pto.vmi.layout<num_groups = 16, slots = 8>>
   }
 
   func.func @group_slot_ext_slots8_g32(
       %u8x2: !pto.vmi.vreg<32xui8, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 2>>,
       %s16x2: !pto.vmi.vreg<32xsi16, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 2>>,
-      %i8x4: !pto.vmi.vreg<32xi8, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 4>>) {
+      %i8x4: !pto.vmi.vreg<32xi8, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 4>>)
+      -> (!pto.vmi.vreg<32xui16, #pto.vmi.layout<num_groups = 32, slots = 8>>,
+          !pto.vmi.vreg<32xsi32, #pto.vmi.layout<num_groups = 32, slots = 8>>,
+          !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>) {
     %u16 = pto.vmi.extui %u8x2
         : !pto.vmi.vreg<32xui8, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 2>>
         -> !pto.vmi.vreg<32xui16, #pto.vmi.layout<num_groups = 32, slots = 8>>
     %s32 = pto.vmi.extsi %s16x2
         : !pto.vmi.vreg<32xsi16, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 2>>
         -> !pto.vmi.vreg<32xsi32, #pto.vmi.layout<num_groups = 32, slots = 8>>
-    %i32 = pto.vmi.extsi %i8x4
+    %i32 = pto.vmi.extui %i8x4
         : !pto.vmi.vreg<32xi8, #pto.vmi.layout<num_groups = 32, slots = 8, lane_stride = 4>>
         -> !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>
-    return
+    return %u16, %s32, %i32
+        : !pto.vmi.vreg<32xui16, #pto.vmi.layout<num_groups = 32, slots = 8>>,
+          !pto.vmi.vreg<32xsi32, #pto.vmi.layout<num_groups = 32, slots = 8>>,
+          !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>
   }
 }
 
 // CHECK-LABEL: func.func @group_slot_ext_slots1_g1(
-// CHECK-COUNT-15: pto.vcvt
+// CHECK-COUNT-9: pto.vcvt
 // CHECK-NOT: pto.vmi.
 // CHECK-LABEL: func.func @group_slot_ext_slots1_g2(
 // CHECK-COUNT-2: pto.vcvt
@@ -175,7 +197,7 @@ module {
 // CHECK-LABEL: func.func @group_slot_ext_slots1_g8(
 // CHECK-COUNT-8: pto.vcvt
 // CHECK-LABEL: func.func @group_slot_ext_slots8_g1(
-// CHECK-COUNT-15: pto.vcvt
+// CHECK-COUNT-9: pto.vcvt
 // CHECK-LABEL: func.func @group_slot_ext_slots8_g2(
 // CHECK-COUNT-1: pto.vcvt
 // CHECK-LABEL: func.func @group_slot_ext_slots8_g4(

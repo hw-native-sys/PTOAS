@@ -32,13 +32,10 @@ module attributes {pto.target_arch = "a5"} {
 }
 
 // CHECK-LABEL: AICORE void treshape_static_valid_shape_emitc()
-// CHECK: Tile<TileType::Vec, float, 16, 1, BLayout::ColMajor, 16, 1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC_STORAGE:v[0-9]+]];
-// CHECK: Tile<TileType::Vec, float, 16, 1, BLayout::ColMajor, 16, 1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC:v[0-9]+]] = [[SRC_STORAGE]];
+// CHECK: Tile<TileType::Vec, float, 16, 1, BLayout::ColMajor, 16, 1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[SRC:v[0-9]+]];
 // CHECK: TASSIGN([[SRC]],
 // CHECK: // pto: %reshaped
-// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[RESHAPED_STORAGE:v[0-9]+]];
-// CHECK: // pto: %reshaped
-// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[RESHAPED:v[0-9]+]] = [[RESHAPED_STORAGE]];
+// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[RESHAPED:v[0-9]+]];
 // CHECK-NEXT: TRESHAPE([[RESHAPED]], [[SRC]]);
 // CHECK-NOT: SetValidShape
 // CHECK-NOT: TRESHAPE

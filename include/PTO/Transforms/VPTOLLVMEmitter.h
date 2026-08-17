@@ -38,7 +38,7 @@ struct VPTOEmissionOptions {
   std::string aicoreArch;
   std::string defaultTargetCPU;
   std::string defaultTargetFeatures;
-  CANNVersion cannVersion = CANNVersion{9, 0, 0, 1};
+  CANNVersion cannVersion = kDefaultCANNVersion;
 };
 
 struct EmittedLLVMModule {

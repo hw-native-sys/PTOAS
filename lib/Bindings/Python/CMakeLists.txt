@@ -11,9 +11,8 @@ include(AddMLIRPython)
 # Keep the complete PTOAS-owned MLIR Python runtime below the project namespace
 # so it can coexist with independently packaged MLIR distributions. This is a
 # package-prefix contract as well as a Python import path: MLIR's generated
-# capsules and nanobind registration code use the same value.
+# capsules and pybind11 registration code use the same value.
 add_compile_definitions("MLIR_PYTHON_PACKAGE_PREFIX=ptoas.mlir.")
-set(MLIR_BINDINGS_PYTHON_NB_DOMAIN "ptoas_mlir")
 
 # Do not carry toolchain-injected paths, such as a Conda compiler RPATH, into
 # installed Python modules. Wheel builds retain AddMLIRPython's package-relative
@@ -59,7 +58,6 @@ declare_mlir_python_extension(PTOASPythonSources.Registration
   MODULE_NAME _site_initialize_0
   ADD_TO_PARENT PTOASPythonSources
   ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
-  PYTHON_BINDINGS_LIBRARY nanobind
   SOURCES PythonRegistration.cpp
   EMBED_CAPI_LINK_LIBS
     MLIRCAPIArith
@@ -70,7 +68,7 @@ declare_mlir_python_extension(PTOASPythonSources.Registration
     MLIRCAPISCF
 )
 
-# This directory otherwise materializes only upstream MLIR/nanobind C++
+# This directory otherwise materializes only upstream MLIR/pybind11 C++
 # sources under -Wno-error. Keep the project-owned registration source under
 # PTOAS's default strict warning policy while retaining one declarative Python
 # package graph.

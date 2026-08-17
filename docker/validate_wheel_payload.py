@@ -21,6 +21,7 @@ REQUIRED_FILES = {
     "ptoas/__init__.py",
     "ptoas/_cli.py",
     "ptoas/_runtime/share/ptoas/TileOps/__init__.py",
+    "ptoas/_runtime/share/ptoas/SoftOps/__init__.py",
     "ptoas/mlir/ir.py",
     "ptoas/mlir/dialects/pto.py",
 }

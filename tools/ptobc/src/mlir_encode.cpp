@@ -9,6 +9,7 @@
 //===- mlir_encode.cpp ----------------------------------------------------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "ptobc/mlir_helpers.h"
 #include "ptobc/ptobc_format.h"
 
@@ -75,7 +76,9 @@ using FunctionVector = llvm::SmallVector<mlir::func::FuncOp,
 } // namespace
 
 static bool canUseLegacyTMovFpWireOpcode(mlir::pto::TMovOp op) {
-  return op->getNumResults() == 0 && !op.getAccToVecModeAttr() &&
+  return mlir::pto::classifyTMovForm(op.getFp()) ==
+             mlir::pto::TMovForm::Fp &&
+         op->getNumResults() == 0 && !op.getAccToVecModeAttr() &&
          op.getReluPreMode() == mlir::pto::ReluPreMode::NoRelu;
 }
 
@@ -90,20 +93,35 @@ static bool shouldEncodeViaGenericV0CompatibilityShim(mlir::Operation &op) {
   // pto.tci / pto.trowexpandadd forms without tmp. Newer tmp-operand forms
   // must not reuse those schemas or older .ptobc files would become
   // undecodable, so serialize the new forms through the generic v0 opcode.
-  if (auto tci = llvm::dyn_cast<mlir::pto::TCIOp>(&op))
+  if (auto tci = llvm::dyn_cast<mlir::pto::TCIOp>(&op)) {
     return static_cast<bool>(tci.getTmp());
-  if (auto trowexpandadd = llvm::dyn_cast<mlir::pto::TRowExpandAddOp>(&op))
+  }
+  if (auto trowexpandadd = llvm::dyn_cast<mlir::pto::TRowExpandAddOp>(&op)) {
     return static_cast<bool>(trowexpandadd.getTmp());
+  }
+  // tquant.mx intentionally has no v0 known-op schema. Preserve its complete
+  // operand and attribute dictionary through the existing generic record even
+  // when PTOBC_ALLOW_GENERIC is not enabled globally.
+  if (llvm::isa<mlir::pto::TQuantMxOp>(&op)) {
+    return true;
+  }
   // The compact v0 schemas for these ops predate their optional pre-quant
   // operands. Keep the shipped fixed payloads unchanged and use the generic
   // opcode for forms that cannot be represented by those schemas.
-  if (auto textract = llvm::dyn_cast<mlir::pto::TExtractOp>(&op))
+  if (auto textract = llvm::dyn_cast<mlir::pto::TExtractOp>(&op)) {
     return static_cast<bool>(textract.getPreQuantScalar());
-  if (auto tinsert = llvm::dyn_cast<mlir::pto::TInsertOp>(&op))
+  }
+  if (auto tinsert = llvm::dyn_cast<mlir::pto::TInsertOp>(&op)) {
     return static_cast<bool>(tinsert.getPreQuantScalar());
+  }
   if (auto tmov = llvm::dyn_cast<mlir::pto::TMovOp>(&op)) {
-    if (tmov.getPreQuantScalar())
+    if (mlir::pto::classifyTMovForm(tmov.getFp()) ==
+        mlir::pto::TMovForm::XToZz) {
       return true;
+    }
+    if (tmov.getPreQuantScalar()) {
+      return true;
+    }
     // The removed pto.tmov.fp op carried only src/fp/dst. Its legacy opcode
     // would silently discard mode/relu semantics when read by an older PTOAS.
     // The pre-unification pto.tmov op already understood fp plus these attrs,
@@ -114,54 +132,68 @@ static bool shouldEncodeViaGenericV0CompatibilityShim(mlir::Operation &op) {
   // Result-bearing non-fp forms are readable by older unified pto.tstore
   // readers through generic v0. The fp form is rejected separately because
   // no pre-unification operation represented both fp and a result.
-  if (auto tstore = llvm::dyn_cast<mlir::pto::TStoreOp>(&op))
+  if (auto tstore = llvm::dyn_cast<mlir::pto::TStoreOp>(&op)) {
     return tstore->getNumResults() != 0;
+  }
   if (llvm::isa<mlir::pto::CmoCacheInvalidOp, mlir::pto::FenceBarrierAllOp>(
-          &op))
+          &op)) {
     return true;
+  }
   // The aiv_subblockid operand extends pipe transfer forms after the v0
   // known-op schemas were fixed. Keep the legacy compact payloads unchanged
   // and route only the new optional-operand forms through generic encoding.
-  if (auto push = llvm::dyn_cast<mlir::pto::TPushToAicOp>(&op))
+  if (auto push = llvm::dyn_cast<mlir::pto::TPushToAicOp>(&op)) {
     return static_cast<bool>(push.getAivSubblockid());
-  if (auto pop = llvm::dyn_cast<mlir::pto::TPopFromAicOp>(&op))
+  }
+  if (auto pop = llvm::dyn_cast<mlir::pto::TPopFromAicOp>(&op)) {
     return static_cast<bool>(pop.getAivSubblockid());
-  if (auto push = llvm::dyn_cast<mlir::pto::TPushOp>(&op))
+  }
+  if (auto push = llvm::dyn_cast<mlir::pto::TPushOp>(&op)) {
     return static_cast<bool>(push.getAivSubblockid());
-  if (auto pop = llvm::dyn_cast<mlir::pto::TPopOp>(&op))
+  }
+  if (auto pop = llvm::dyn_cast<mlir::pto::TPopOp>(&op)) {
     return static_cast<bool>(pop.getAivSubblockid());
+  }
   return false;
 }
 
 static std::optional<uint16_t> getLegacyFpWireOpcode(mlir::Operation &op) {
-  if (auto textract = llvm::dyn_cast<mlir::pto::TExtractOp>(&op))
+  if (auto textract = llvm::dyn_cast<mlir::pto::TExtractOp>(&op)) {
     return textract.getFp() ? std::optional<uint16_t>(kTExtractFpWireOpcode)
                             : std::nullopt;
-  if (auto tinsert = llvm::dyn_cast<mlir::pto::TInsertOp>(&op))
+  }
+  if (auto tinsert = llvm::dyn_cast<mlir::pto::TInsertOp>(&op)) {
     return tinsert.getFp() ? std::optional<uint16_t>(kTInsertFpWireOpcode)
                            : std::nullopt;
-  if (auto tmov = llvm::dyn_cast<mlir::pto::TMovOp>(&op))
+  }
+  if (auto tmov = llvm::dyn_cast<mlir::pto::TMovOp>(&op)) {
     return tmov.getFp() && canUseLegacyTMovFpWireOpcode(tmov)
                ? std::optional<uint16_t>(kTMovFpWireOpcode)
                : std::nullopt;
-  if (auto tstore = llvm::dyn_cast<mlir::pto::TStoreOp>(&op))
+  }
+  if (auto tstore = llvm::dyn_cast<mlir::pto::TStoreOp>(&op)) {
     return tstore.getFp() && canUseLegacyTStoreFpWireOpcode(tstore)
                ? std::optional<uint16_t>(kTStoreFpWireOpcode)
                : std::nullopt;
+  }
   return std::nullopt;
 }
 
 static std::optional<std::string>
 getUnsupportedV0EncodingReason(mlir::Operation &op) {
   if (auto tmov = llvm::dyn_cast<mlir::pto::TMovOp>(&op);
-      tmov && tmov.getFp() && tmov->getNumResults() != 0)
+      tmov && mlir::pto::classifyTMovForm(tmov.getFp()) ==
+                  mlir::pto::TMovForm::Fp &&
+      tmov->getNumResults() != 0) {
     return "pto.tmov fp with a result cannot be represented safely in "
            "PTO-BC v0; legacy opcode 0x1039 would silently drop the result, "
            "and PTOAS backends do not lower the generic result-bearing form";
+  }
 
   auto tstore = llvm::dyn_cast<mlir::pto::TStoreOp>(&op);
-  if (!tstore || !tstore.getFp() || canUseLegacyTStoreFpWireOpcode(tstore))
+  if (!tstore || !tstore.getFp() || canUseLegacyTStoreFpWireOpcode(tstore)) {
     return std::nullopt;
+  }
 
   return "pto.tstore fp with a result or non-default atomicType/reluPreMode "
          "cannot be represented safely in PTO-BC v0; legacy opcode 0x1066 "
@@ -189,7 +221,9 @@ static uint64_t internType(PTOBCFile& f, mlir::Type t) {
   f.strings.intern(s);
   // type ids are 1-based
   for (size_t i = 0; i < f.typeAsm.size(); ++i) {
-    if (f.typeAsm[i] == s) return i + 1;
+    if (f.typeAsm[i] == s) {
+      return i + 1;
+    }
   }
   f.typeAsm.push_back(s);
   return f.typeAsm.size();
@@ -198,18 +232,21 @@ static uint64_t internType(PTOBCFile& f, mlir::Type t) {
 static mlir::DictionaryAttr stripAttrs(mlir::MLIRContext *ctx,
                                        mlir::DictionaryAttr dict,
                                        llvm::ArrayRef<llvm::StringRef> keys) {
-  if (!dict || dict.empty() || keys.empty())
+  if (!dict || dict.empty() || keys.empty()) {
     return dict;
+  }
 
-  llvm::SmallVector<mlir::NamedAttribute, 8> keep;
+  llvm::SmallVector<mlir::NamedAttribute, mlir::pto::kValue8> keep;
   keep.reserve(dict.size());
   for (auto na : dict) {
-    if (llvm::is_contained(keys, na.getName().getValue()))
+    if (llvm::is_contained(keys, na.getName().getValue())) {
       continue;
+    }
     keep.push_back(na);
   }
-  if (keep.size() == dict.size())
+  if (keep.size() == dict.size()) {
     return dict;
+  }
   return mlir::DictionaryAttr::get(ctx, keep);
 }
 
@@ -241,29 +278,36 @@ static bool isFrontendPipeOpWithDefaultId(mlir::Operation &op) {
 static mlir::DictionaryAttr
 dropDefaultZeroPipeIdForV0Encoding(mlir::Operation &op,
                                    mlir::DictionaryAttr dict) {
-  if (!dict || dict.empty() || !isFrontendPipeOpWithDefaultId(op))
+  if (!dict || dict.empty() || !isFrontendPipeOpWithDefaultId(op)) {
     return dict;
+  }
 
   auto idAttr = dict.getAs<mlir::IntegerAttr>("id");
-  if (!idAttr || idAttr.getInt() != 0)
+  if (!idAttr || idAttr.getInt() != 0) {
     return dict;
+  }
 
   llvm::SmallVector<mlir::NamedAttribute, kNamedAttributeInlineCapacity> keep;
   keep.reserve(dict.size());
   for (auto attr : dict) {
-    if (attr.getName() == "id")
+    if (attr.getName() == "id") {
       continue;
+    }
     keep.push_back(attr);
   }
   return mlir::DictionaryAttr::get(op.getContext(), keep);
 }
 
 static uint64_t internAttr(PTOBCFile& f, mlir::DictionaryAttr dict) {
-  if (!dict || dict.empty()) return 0;
+  if (!dict || dict.empty()) {
+    return 0;
+  }
   std::string s = printAttrDict(dict);
   f.strings.intern(s);
   for (size_t i = 0; i < f.attrAsm.size(); ++i) {
-    if (f.attrAsm[i] == s) return i + 1;
+    if (f.attrAsm[i] == s) {
+      return i + 1;
+    }
   }
   f.attrAsm.push_back(s);
   return f.attrAsm.size();
@@ -306,8 +350,9 @@ buildScalarConstantDebugName(mlir::Value value,
                              std::unordered_map<std::string, int> &constCounts) {
   auto cst = llvm::dyn_cast_or_null<mlir::arith::ConstantOp>(
       value.getDefiningOp());
-  if (!cst)
+  if (!cst) {
     return std::nullopt;
+  }
 
   mlir::Attribute attr = cst.getValue();
   std::string typeName = printType(value.getType());
@@ -316,16 +361,18 @@ buildScalarConstantDebugName(mlir::Value value,
     baseName = "c" + hexFloatLiteral(floatAttr) + "_" + typeName;
   } else if (auto intAttr = llvm::dyn_cast<mlir::IntegerAttr>(attr)) {
     baseName = "c" + apIntToSignedDecimal(intAttr.getValue());
-    if (typeName != "index")
+    if (typeName != "index") {
       baseName += "_" + typeName;
+    }
   } else {
     return std::nullopt;
   }
 
   int &count = constCounts[baseName];
   std::string name = baseName;
-  if (count > 0)
+  if (count > 0) {
     name += "_" + std::to_string(count);
+  }
   ++count;
   return name;
 }
@@ -359,7 +406,9 @@ struct Encoder {
   uint64_t allocValueId(mlir::Value v) {
     uint64_t id = valueId.size();
     auto [it, inserted] = valueId.try_emplace(v, id);
-    if (!inserted) throw std::runtime_error("value already has an id");
+    if (!inserted) {
+      throw std::runtime_error("value already has an id");
+    }
     valueById.push_back(v);
     return it->second;
   }
@@ -367,7 +416,9 @@ struct Encoder {
   uint64_t internDbgFile(llvm::StringRef path) {
     auto p = path.str();
     auto it = dbgFileIdByPath.find(p);
-    if (it != dbgFileIdByPath.end()) return it->second;
+    if (it != dbgFileIdByPath.end()) {
+      return it->second;
+    }
 
     uint64_t sid = file.strings.intern(p);
     uint64_t fileId = file.dbgFiles.size();
@@ -377,10 +428,14 @@ struct Encoder {
   }
 
   void recordOpLocation(uint64_t opId, mlir::Operation &op) {
-    if (!emitDebugInfo) return;
+    if (!emitDebugInfo) {
+      return;
+    }
     auto loc = op.getLoc();
     auto flc = llvm::dyn_cast<mlir::FileLineColLoc>(loc);
-    if (!flc) return;
+    if (!flc) {
+      return;
+    }
 
     uint64_t fileId = internDbgFile(flc.getFilename().getValue());
     uint64_t sl = flc.getLine();
@@ -392,7 +447,9 @@ struct Encoder {
   }
 
   void finalizeValueNamesForFunction() {
-    if (!emitDebugInfo) return;
+    if (!emitDebugInfo) {
+      return;
+    }
     // Deterministic value names for DebugInfo.
     std::unordered_map<std::string, int> constCounts;
 
@@ -412,7 +469,9 @@ struct Encoder {
       std::copy(payload.begin(), payload.end(), key.begin() + 1);
     }
     auto it = constIdByKey.find(key);
-    if (it != constIdByKey.end()) return it->second;
+    if (it != constIdByKey.end()) {
+      return it->second;
+    }
     uint64_t id = file.consts.size();
     file.consts.push_back(ConstEntry{tag, payload});
     constIdByKey.emplace(std::move(key), id);
@@ -483,7 +542,9 @@ void Encoder::encodeBlock(mlir::Block& block, Buffer& out) {
 
   // ops count
   size_t opCount = 0;
-  for (auto& op : block.getOperations()) (void)op, ++opCount;
+  for (auto& op : block.getOperations()) {
+    (void)op, ++opCount;
+  }
   writeULEB128(opCount, out.bytes);
 
   for (auto& op : block.getOperations()) {
@@ -500,8 +561,9 @@ void Encoder::encodeKnownOpImmediates(
     return;
   case 0x01: {
     auto cmp = llvm::dyn_cast<mlir::arith::CmpIOp>(&op);
-    if (!cmp)
+    if (!cmp) {
       throw std::runtime_error("imm_kind=cmpi_pred but op is not arith.cmpi");
+    }
     uint8_t predicate = 0;
     switch (cmp.getPredicate()) {
     case mlir::arith::CmpIPredicate::eq:
@@ -534,8 +596,9 @@ void Encoder::encodeKnownOpImmediates(
     auto src = op.getAttrOfType<mlir::pto::SyncOpTypeAttr>("src_op");
     auto dst = op.getAttrOfType<mlir::pto::SyncOpTypeAttr>("dst_op");
     auto event = op.getAttrOfType<mlir::pto::EventAttr>("event_id");
-    if (!src || !dst || !event)
+    if (!src || !dst || !event) {
       throw std::runtime_error("event op missing src_op/dst_op/event_id attrs");
+    }
     uint8_t srcValue = uint8_t(src.getOpType());
     uint8_t dstValue = uint8_t(dst.getOpType());
     uint8_t eventValue = uint8_t(event.getEvent());
@@ -547,8 +610,9 @@ void Encoder::encodeKnownOpImmediates(
   }
   case 0x05: {
     auto cst = llvm::dyn_cast<mlir::arith::ConstantOp>(&op);
-    if (!cst)
+    if (!cst) {
       throw std::runtime_error("imm_kind=const_id but op is not arith.constant");
+    }
 
     mlir::Attribute attr = cst.getValue();
     uint64_t constId = 0;
@@ -571,9 +635,10 @@ void Encoder::encodeKnownOpImmediates(
   }
   case 0x06: {
     auto mtv = llvm::dyn_cast<mlir::pto::MakeTensorViewOp>(&op);
-    if (!mtv)
+    if (!mtv) {
       throw std::runtime_error(
           "imm_kind=make_tensor_view but op is not pto.make_tensor_view");
+    }
     uint8_t listMode = 0;
     out.appendU8(listMode);
     writeULEB128(mtv.getShape().size(), out.bytes);
@@ -584,9 +649,10 @@ void Encoder::encodeKnownOpImmediates(
   }
   case 0x07: {
     auto pv = llvm::dyn_cast<mlir::pto::PartitionViewOp>(&op);
-    if (!pv)
+    if (!pv) {
       throw std::runtime_error(
           "imm_kind=partition_view but op is not pto.partition_view");
+    }
     uint8_t listMode = 0;
     out.appendU8(listMode);
     writeULEB128(pv.getOffsets().size(), out.bytes);
@@ -597,16 +663,20 @@ void Encoder::encodeKnownOpImmediates(
   }
   case 0x08: {
     auto at = llvm::dyn_cast<mlir::pto::AllocTileOp>(&op);
-    if (!at)
+    if (!at) {
       throw std::runtime_error(
           "imm_kind=alloc_tile but op is not pto.alloc_tile");
+    }
     uint8_t mask = 0;
-    if (at.getValidRow())
+    if (at.getValidRow()) {
       mask |= 0x1;
-    if (at.getValidCol())
+    }
+    if (at.getValidCol()) {
       mask |= 0x2;
-    if (at.getAddr())
+    }
+    if (at.getAddr()) {
       mask |= 0x4;
+    }
     out.appendU8(mask);
     imms.push_back(mask);
     return;
@@ -626,8 +696,9 @@ void Encoder::encodeKnownOpOperands(
       throw std::runtime_error("operand count mismatch for op: " +
                                op.getName().getStringRef().str());
     }
-    for (auto value : op.getOperands())
+    for (auto value : op.getOperands()) {
       writeULEB128(getValueId(value), out.bytes);
+    }
   };
   auto emitLegacyIndexedTscatterOperands = [&]() {
     auto tscatter = llvm::dyn_cast<mlir::pto::TScatterOp>(&op);
@@ -648,8 +719,9 @@ void Encoder::encodeKnownOpOperands(
   };
   auto emitLegacyFpOperands = [&]() {
     auto emit = [&](llvm::ArrayRef<mlir::Value> operands) {
-      for (mlir::Value value : operands)
+      for (mlir::Value value : operands) {
         writeULEB128(getValueId(value), out.bytes);
+      }
     };
     switch (variantInfo.opcode) {
     case kTExtractFpWireOpcode: {
@@ -678,41 +750,47 @@ void Encoder::encodeKnownOpOperands(
       return false;
     }
   };
-
-  if (emitLegacyFpOperands())
+  if (emitLegacyFpOperands()) {
     return;
+  }
 
   switch (info.operand_mode) {
   case 0x00:
-    if (emitLegacyIndexedTscatterOperands())
+    if (emitLegacyIndexedTscatterOperands()) {
       return;
+    }
     emitOperands(info.num_operands);
     return;
   case 0x01: {
     auto count =
         ptobc::v0::lookupOperandsByVariant(variantInfo.opcode, variantInfo.variant);
-    if (!count)
+    if (!count) {
       throw std::runtime_error("missing by-variant operand count");
+    }
     emitOperands(*count);
     return;
   }
   case 0x02:
     writeULEB128(op.getNumOperands(), out.bytes);
-    for (auto value : op.getOperands())
+    for (auto value : op.getOperands()) {
       writeULEB128(getValueId(value), out.bytes);
+    }
     return;
   case 0x03: {
-    if (imms.size() < kSegmentedOperandImmediateCount)
+    if (imms.size() < kSegmentedOperandImmediateCount) {
       throw std::runtime_error("segmented operands missing immediates");
-    if (imms[0] != 0)
+    }
+    if (imms[0] != 0) {
       throw std::runtime_error(
           "list_mode=1 not implemented in ptobc encoder yet");
-    emitOperands(size_t(info.num_operands) + size_t(imms[1]) + size_t(imms[2]));
+    }
+    emitOperands(size_t(info.num_operands) + size_t(imms[1]) + size_t(imms[mlir::pto::kValue2]));
     return;
   }
   case 0x04: {
-    if (imms.empty())
+    if (imms.empty()) {
       throw std::runtime_error("optmask operands missing immediate");
+    }
     uint8_t mask = uint8_t(imms.front());
     emitOperands(((mask & 0x1) ? 1 : 0) + ((mask & 0x2) ? 1 : 0) +
                  ((mask & 0x4) ? 1 : 0));
@@ -726,21 +804,24 @@ void Encoder::encodeKnownOpOperands(
 void Encoder::encodeKnownOp(mlir::Operation &op, Buffer &out,
                             const ptobc::v0::OpInfo &info,
                             const ptobc::v0::OpcodeAndVariant &variantInfo) {
-  for (auto result : op.getResults())
+  for (auto result : op.getResults()) {
     allocValueId(result);
+  }
 
   out.appendU16LE(variantInfo.opcode);
   mlir::DictionaryAttr dict = op.getAttrDictionary();
   dict = stripKnownImmediateAttrs(op.getContext(), dict, info);
-  if (omitsDerivedOperandSegmentsInV0(variantInfo.opcode))
+  if (omitsDerivedOperandSegmentsInV0(variantInfo.opcode)) {
     dict = stripAttrs(op.getContext(), dict, {"operandSegmentSizes"});
+  }
   // The assembly printer omits default pipe ids on transfer/free ops. Keep v0
   // byte roundtrips stable by using the same representation while encoding.
   dict = dropDefaultZeroPipeIdForV0Encoding(op, dict);
   writeULEB128(internAttr(file, dict), out.bytes);
 
-  if (info.has_variant_u8)
+  if (info.has_variant_u8) {
     out.appendU8(variantInfo.variant);
+  }
 
   WordVector imms;
   encodeKnownOpImmediates(op, out, info, variantInfo, imms);
@@ -751,12 +832,14 @@ void Encoder::encodeKnownOp(mlir::Operation &op, Buffer &out,
       throw std::runtime_error("result count mismatch for op: " +
                                op.getName().getStringRef().str());
     }
-    for (auto result : op.getResults())
+    for (auto result : op.getResults()) {
       writeULEB128(internType(file, result.getType()), out.bytes);
+    }
   } else if (info.result_type_mode == 0x02) {
     writeULEB128(op.getNumResults(), out.bytes);
-    for (auto result : op.getResults())
+    for (auto result : op.getResults()) {
       writeULEB128(internType(file, result.getType()), out.bytes);
+    }
   } else if (info.result_type_mode != 0x00) {
     throw std::runtime_error("unknown result_type_mode in v0 schema");
   }
@@ -765,8 +848,9 @@ void Encoder::encodeKnownOp(mlir::Operation &op, Buffer &out,
     throw std::runtime_error("region count mismatch for op: " +
                              op.getName().getStringRef().str());
   }
-  for (auto &region : op.getRegions())
+  for (auto &region : op.getRegions()) {
     encodeRegion(region, out);
+  }
 }
 
 void Encoder::encodeGenericOp(mlir::Operation &op, Buffer &out) {
@@ -783,12 +867,14 @@ void Encoder::encodeGenericOp(mlir::Operation &op, Buffer &out) {
   }
 
   writeULEB128(op.getNumOperands(), out.bytes);
-  for (auto operand : op.getOperands())
+  for (auto operand : op.getOperands()) {
     writeULEB128(getValueId(operand), out.bytes);
+  }
 
   writeULEB128(op.getNumRegions(), out.bytes);
-  for (auto &region : op.getRegions())
+  for (auto &region : op.getRegions()) {
     encodeRegion(region, out);
+  }
 }
 
 void Encoder::encodeOp(mlir::Operation& op, Buffer& out) {
@@ -798,8 +884,9 @@ void Encoder::encodeOp(mlir::Operation& op, Buffer& out) {
   }
 
   auto fullName = op.getName().getStringRef();
-  if (auto reason = getUnsupportedV0EncodingReason(op))
+  if (auto reason = getUnsupportedV0EncodingReason(op)) {
     throw std::runtime_error(*reason);
+  }
 
   if (auto tscatter = llvm::dyn_cast<mlir::pto::TScatterOp>(&op)) {
     uint16_t opcode = tscatter.getMaskPatternAttr()
@@ -808,9 +895,10 @@ void Encoder::encodeOp(mlir::Operation& op, Buffer& out) {
     auto variantInfo =
         ptobc::v0::OpcodeAndVariant{opcode, /*hasVariant=*/0, /*variant=*/0};
     const auto *info = ptobc::v0::lookupByOpcode(opcode);
-    if (!info)
+    if (!info) {
       throw std::runtime_error("missing v0 opcode schema for op: " +
                                fullName.str());
+    }
     encodeKnownOp(op, out, *info, variantInfo);
     return;
   }
@@ -824,9 +912,10 @@ void Encoder::encodeOp(mlir::Operation& op, Buffer& out) {
     auto variantInfo =
         ptobc::v0::OpcodeAndVariant{*opcode, /*hasVariant=*/0, /*variant=*/0};
     const auto *info = ptobc::v0::lookupByOpcode(*opcode);
-    if (!info)
+    if (!info) {
       throw std::runtime_error("missing legacy FP v0 opcode schema for op: " +
                                fullName.str());
+    }
     encodeKnownOp(op, out, *info, variantInfo);
     return;
   }
@@ -834,9 +923,10 @@ void Encoder::encodeOp(mlir::Operation& op, Buffer& out) {
   auto variantInfo = ptobc::v0::lookupOpcodeAndVariantByFullName(fullName);
   if (variantInfo) {
     const auto *info = ptobc::v0::lookupByOpcode(variantInfo->opcode);
-    if (!info)
+    if (!info) {
       throw std::runtime_error("missing v0 opcode schema for op: " +
                                fullName.str());
+    }
     encodeKnownOp(op, out, *info, *variantInfo);
     return;
   }

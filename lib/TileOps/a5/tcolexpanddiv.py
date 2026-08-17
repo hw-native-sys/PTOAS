@@ -11,6 +11,7 @@ from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 from ._expand_binary import _ub_or_vec_row_major, _valid_column_expand_binary, register_column_expand_binary
+from SoftOps import div_i32_soft
 
 
 def _divide_i16(lhs, rhs, mask, f32_mask):
@@ -38,19 +39,6 @@ def _divide_i16(lhs, rhs, mask, f32_mask):
         part=pto.VcvtPartMode.ODD,
     )
     return pto.vor(result_even, result_odd, mask)
-
-
-def _divide_i32(lhs, rhs, mask):
-    lhs_f32 = pto.vcvt(lhs, pto.f32, mask, rnd=pto.VcvtRoundMode.R)
-    rhs_f32 = pto.vcvt(rhs, pto.f32, mask, rnd=pto.VcvtRoundMode.R)
-    divided = pto.vdiv(lhs_f32, rhs_f32, mask)
-    return pto.vcvt(
-        divided,
-        pto.i32,
-        mask,
-        rnd=pto.VcvtRoundMode.Z,
-        sat=pto.VcvtSatMode.NOSAT,
-    )
 
 
 template_tcolexpanddiv = register_column_expand_binary(
@@ -98,6 +86,6 @@ def template_tcolexpanddiv_i32(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
                 f32_mask, _ = pto.make_mask(pto.f32, f32_remained)
                 result = _divide_i16(lhs, rhs, mask, f32_mask)
             else:
-                result = _divide_i32(lhs, rhs, mask)
+                result = div_i32_soft(lhs, rhs, mask)
             pto.vsts(result, dst[row, col:], mask)
             col_loop.update(remained=remained)

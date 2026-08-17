@@ -59,8 +59,8 @@ using Body = std::vector<std::unique_ptr<OperationBase>>;
 
 // Currently gss-code-gen will handle offsetting induction variables for
 // multibuffer-enabled sync pairs, which can be done by create-preload.
-// TODO: move create-preload pass after gss in the PTO compilation pipeline and
-// let it handle preload-offset values.
+// Future pipeline ordering may move create-preload after gss so it can handle
+// preload-offset values.
 struct EventIdInfo {
   int64_t eventIdNum{0};
   int64_t eventIdRepeatNum{1};
@@ -113,7 +113,6 @@ enum struct OpType {
 std::string getOpTypeStr(OpType opType);
 
 class OperationBase {
-
 public:
   int id{-1};
   const OpType opType;
@@ -194,7 +193,6 @@ public:
 };
 
 class Scope : public OperationBase {
-
 public:
   Body body;
   std::optional<int64_t> preloadNum;
@@ -231,8 +229,6 @@ public:
 };
 
 class Loop : public Scope {
-
-private:
 public:
   bool isParallel{false};
   std::optional<int64_t> multibufferUnrollNum;
@@ -260,8 +256,6 @@ public:
 };
 
 class Condition : public Scope {
-
-private:
 public:
   Scope *trueScope{nullptr};
   Scope *falseScope{nullptr};
@@ -470,8 +464,6 @@ public:
 };
 
 class SetFlagOp : public SetWaitOp {
-
-private:
 public:
   SetFlagOp(Operation *op, OperationBase *parentOp,
             const llvm::SmallVector<int64_t> &eventIds, pto::PIPE pipeSrc,
@@ -492,8 +484,6 @@ public:
 };
 
 class WaitFlagOp : public SetWaitOp {
-
-private:
 public:
   WaitFlagOp(Operation *op, OperationBase *parentOp,
              const llvm::SmallVector<int64_t> &eventIds, pto::PIPE pipeSrc,
@@ -514,7 +504,6 @@ public:
 };
 
 class BarrierOp : public SyncOp {
-
 public:
   pto::PIPE pipe{pto::PIPE::PIPE_UNASSIGNED};
 

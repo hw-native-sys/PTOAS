@@ -23,6 +23,4 @@ module {
   }
 }
 
-// vcmp lowers to legacy cmpf before the element type is rejected, so the
-// diagnostic names the legacy op.
-// CHECK: 'pto.vmi.cmpf' op requires f16, bf16, or f32 VMI element type
+// CHECK: 'pto.vmi.vcmp' op requires i8, i16, i32, f16, bf16, or f32 VMI element type

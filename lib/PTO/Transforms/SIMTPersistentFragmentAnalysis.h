@@ -53,8 +53,9 @@ struct PersistentFragmentAnalysis {
 
   ResidentElementPlan *findResidentElement(int64_t elementOffset) {
     for (ResidentElementPlan &element : residentElements) {
-      if (element.elementOffset == elementOffset)
+      if (element.elementOffset == elementOffset) {
         return &element;
+      }
     }
     return nullptr;
   }

@@ -2,10 +2,11 @@
 
 PTODSL provides one kernel decorator (`@pto.jit`) with two roles
 (`entry=True` / `entry=False`), two compilation backends (`vpto` / `emitc`),
-and two reusable compute helper decorators (`@pto.tileop` and `@pto.simt`),
-plus inline unit-specific context managers. This chapter covers
-the `@pto.jit` entry and module contracts, the two programming models, the two
-compilation backends, sub-kernel reference, parameter contracts, and boundary
+two reusable compute helper decorators (`@pto.tileop` and `@pto.simt`), and
+reusable PTODSL helper functions (`@pto.func`) plus inline unit-specific
+context managers. This chapter covers the `@pto.jit` entry and module
+contracts, the two programming models, the two compilation backends, helper
+functions, sub-kernel reference, parameter contracts, and boundary
 constraints.
 
 
@@ -22,6 +23,7 @@ Decorator overview:
   mode="explicit"           micro-instruction authoring, user-managed staging
 
 @pto.tileop                 Single-core Tile/scalar compute helper with inferred Vector/Cube kind
+@pto.func                   Reusable PTODSL helper with AST-rewritten control flow
 @pto.simt                   Explicitly launched SIMT helper with pointer/scalar ABI
 ```
 
@@ -58,6 +60,30 @@ manual-address, user-managed staging contract of explicit kernels.
 `entry=True` — runtime launch binding. The compute helper decorators
 (`@pto.tileop` and `@pto.simt`) define sub-kernels that
 are called from within `@pto.jit` bodies.
+
+`@pto.func` defines reusable PTODSL helper functions. Use it when a helper
+contains PTODSL operations or native Python `if` / `for range(...)` that should
+compile as device-side control flow. By default, supported native control flow
+in a `@pto.func` body is AST-rewritten just like in `@pto.jit` and named
+sub-kernels. The helper can return PTODSL runtime values, including multiple
+values via a tuple. Every `@pto.func` helper must declare its return type with
+`returns=...` or a Python return annotation; use `returns=None` or `-> None` for
+helpers that do not return values.
+
+```python
+@pto.func(returns=pto.i32)
+def add_rows(total: pto.i32, rows: pto.i32):
+    one = pto.const(1, dtype=pto.i32)
+    for _ in range(rows):
+        total = total + one
+    return total
+
+
+@pto.jit(target="a5")
+def kernel(rows: pto.i32):
+    total = add_rows(pto.const(0, dtype=pto.i32), rows)
+    _ = total
+```
 
 
 ## 3.2 `entry=True` — host-launchable kernel entry

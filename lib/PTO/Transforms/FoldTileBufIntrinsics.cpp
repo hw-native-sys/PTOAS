@@ -32,6 +32,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -105,17 +106,19 @@ static bool isPTOViewBridgeType(Type type) {
 }
 
 static bool eraseDeadViewBridgeCasts(func::FuncOp func) {
-  SmallVector<UnrealizedConversionCastOp, 8> deadCasts;
+  SmallVector<UnrealizedConversionCastOp, mlir::pto::kValue8> deadCasts;
   func.walk([&](UnrealizedConversionCastOp castOp) {
     if (!castOp.use_empty() || castOp.getNumOperands() != 1 ||
-        castOp.getNumResults() != 1)
+        castOp.getNumResults() != 1) {
       return;
+    }
 
     Type srcTy = castOp.getOperand(0).getType();
     Type dstTy = castOp.getResult(0).getType();
     if ((isa<MemRefType>(srcTy) && isPTOViewBridgeType(dstTy)) ||
-        (isPTOViewBridgeType(srcTy) && isa<MemRefType>(dstTy)))
+        (isPTOViewBridgeType(srcTy) && isa<MemRefType>(dstTy))) {
       deadCasts.push_back(castOp);
+    }
   });
 
   for (auto castOp : llvm::reverse(deadCasts)) {
@@ -125,12 +128,13 @@ static bool eraseDeadViewBridgeCasts(func::FuncOp func) {
 }
 
 static bool eraseDeadMemrefViewOps(func::FuncOp func) {
-  SmallVector<Operation *, 8> deadMemrefOps;
+  SmallVector<Operation *, mlir::pto::kValue8> deadMemrefOps;
   func.walk([&](Operation *op) {
     if ((isa<memref::SubViewOp>(op) ||
          isa<memref::ReinterpretCastOp>(op)) &&
-        op->use_empty())
+        op->use_empty()) {
       deadMemrefOps.push_back(op);
+    }
   });
 
   for (Operation *op : llvm::reverse(deadMemrefOps)) {
@@ -140,12 +144,13 @@ static bool eraseDeadMemrefViewOps(func::FuncOp func) {
 }
 
 static bool eraseDeadTensorViewOps(func::FuncOp func) {
-  SmallVector<Operation *, 8> deadViewOps;
+  SmallVector<Operation *, mlir::pto::kValue8> deadViewOps;
   func.walk([&](Operation *op) {
     if ((isa<pto::PartitionViewOp>(op) ||
          isa<pto::MakeTensorViewOp>(op)) &&
-        op->use_empty())
+        op->use_empty()) {
       deadViewOps.push_back(op);
+    }
   });
 
   for (Operation *op : llvm::reverse(deadViewOps)) {
@@ -419,7 +424,6 @@ static Value computeLinearOffset(OpBuilder &builder, Location loc,
                                  ArrayRef<OpFoldResult> rcStrides) {
   bool rcAllZero = isAllStaticZero(rcOffsets);
   bool svAllZero = isAllStaticZero(svOffsets);
-
   if (rcAllZero && svAllZero) {
     return Value();
   }
@@ -475,16 +479,19 @@ static Value resolvePTOViewDim(Value view, int64_t dim, OpBuilder &builder,
                                Operation *user) {
   view = unwrapPTOViewBridge(view);
   if (Value projected = projectSCFIfViewResult(
-          view, PTOViewProjectionKind::Dim, dim, {}, builder, user))
+          view, PTOViewProjectionKind::Dim, dim, {}, builder, user)) {
     return projected;
+  }
   if (auto partition = view.getDefiningOp<pto::PartitionViewOp>()) {
-    if (dim < 0 || dim >= static_cast<int64_t>(partition.getSizes().size()))
+    if (dim < 0 || dim >= static_cast<int64_t>(partition.getSizes().size())) {
       return {};
+    }
     return partition.getSizes()[dim];
   }
   if (auto makeView = view.getDefiningOp<pto::MakeTensorViewOp>()) {
-    if (dim < 0 || dim >= static_cast<int64_t>(makeView.getShape().size()))
+    if (dim < 0 || dim >= static_cast<int64_t>(makeView.getShape().size())) {
       return {};
+    }
     return makeView.getShape()[dim];
   }
   (void)builder;
@@ -496,14 +503,16 @@ static Value resolvePTOViewStride(Value view, int64_t dim, OpBuilder &builder,
                                   Operation *user) {
   view = unwrapPTOViewBridge(view);
   if (Value projected = projectSCFIfViewResult(
-          view, PTOViewProjectionKind::Stride, dim, {}, builder, user))
+          view, PTOViewProjectionKind::Stride, dim, {}, builder, user)) {
     return projected;
+  }
   if (auto partition = view.getDefiningOp<pto::PartitionViewOp>()) {
     return resolvePTOViewStride(partition.getSource(), dim, builder, user);
   }
   if (auto makeView = view.getDefiningOp<pto::MakeTensorViewOp>()) {
-    if (dim < 0 || dim >= static_cast<int64_t>(makeView.getStrides().size()))
+    if (dim < 0 || dim >= static_cast<int64_t>(makeView.getStrides().size())) {
       return {};
+    }
     return makeView.getStrides()[dim];
   }
   return {};
@@ -513,8 +522,9 @@ static Value resolvePTOViewAddress(Value view, pto::PtrType resultType,
                                    OpBuilder &builder, Operation *user) {
   view = unwrapPTOViewBridge(view);
   if (Value projected = projectSCFIfViewResult(
-          view, PTOViewProjectionKind::Address, 0, resultType, builder, user))
+          view, PTOViewProjectionKind::Address, 0, resultType, builder, user)) {
     return projected;
+  }
   if (auto makeView = view.getDefiningOp<pto::MakeTensorViewOp>()) {
     Value ptr = makeView.getPtr();
     if (ptr.getType() == resultType) {
@@ -523,15 +533,17 @@ static Value resolvePTOViewAddress(Value view, pto::PtrType resultType,
     return builder.create<pto::CastPtrOp>(user->getLoc(), resultType, ptr);
   }
   auto partition = view.getDefiningOp<pto::PartitionViewOp>();
-  if (!partition)
+  if (!partition) {
     return {};
+  }
 
   Value linearOffset;
   for (unsigned index = 0; index < partition.getOffsets().size(); ++index) {
     Value stride = resolvePTOViewStride(partition.getSource(), index, builder,
                                         user);
-    if (!stride)
+    if (!stride) {
       return {};
+    }
     Value offset = partition.getOffsets()[index];
     Value term = builder.create<arith::MulIOp>(user->getLoc(), offset, stride);
     linearOffset = linearOffset
@@ -541,8 +553,9 @@ static Value resolvePTOViewAddress(Value view, pto::PtrType resultType,
   }
   Value base =
       resolvePTOViewAddress(partition.getSource(), resultType, builder, user);
-  if (!base)
+  if (!base) {
     return {};
+  }
   if (!linearOffset) {
     return base;
   }
@@ -564,23 +577,27 @@ static Value projectSCFIfViewResult(Value view, PTOViewProjectionKind kind,
                                     OpBuilder &builder, Operation *user) {
   auto result = dyn_cast<OpResult>(view);
   auto ifOp = result ? dyn_cast<scf::IfOp>(result.getOwner()) : scf::IfOp();
-  if (!ifOp || ifOp.getNumRegions() != 2)
+  if (!ifOp || ifOp.getNumRegions() != mlir::pto::kValue2) {
     return {};
-  if (kind == PTOViewProjectionKind::Address && !resultPtrType)
+  }
+  if (kind == PTOViewProjectionKind::Address && !resultPtrType) {
     return {};
+  }
   auto thenYield = dyn_cast<scf::YieldOp>(ifOp.thenBlock()->getTerminator());
   auto elseYield = dyn_cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
   unsigned resultIndex = result.getResultNumber();
   if (!thenYield || !elseYield ||
       resultIndex >= thenYield.getNumOperands() ||
-      resultIndex >= elseYield.getNumOperands())
+      resultIndex >= elseYield.getNumOperands()) {
     return {};
+  }
 
   Type projectionType = kind == PTOViewProjectionKind::Address
                             ? Type(resultPtrType)
                             : Type(builder.getIndexType());
-  if (!projectionType)
+  if (!projectionType) {
     return {};
+  }
   SmallVector<Type> resultTypes(ifOp.getResultTypes().begin(),
                                 ifOp.getResultTypes().end());
   resultTypes.push_back(projectionType);
@@ -591,7 +608,8 @@ static Value projectSCFIfViewResult(Value view, PTOViewProjectionKind kind,
       /*addThenBlock=*/true, /*addElseBlock=*/true);
   newIf->setAttrs(ifOp->getAttrs());
 
-  auto cloneBranch = [&](Block *source, Block *target, scf::YieldOp oldYield,
+  auto cloneBranch = [&ifBuilder, dim, kind, resultIndex, resultPtrType, user](
+                         Block *source, Block *target, scf::YieldOp oldYield,
                          bool &failed) {
     IRMapping mapping;
     cloneBlockWithoutTerminator(source, target, mapping, ifBuilder);
@@ -635,8 +653,9 @@ static Value projectSCFIfViewResult(Value view, PTOViewProjectionKind kind,
 
   for (auto [oldResult, newResult] :
        llvm::zip_equal(ifOp.getResults(), newIf.getResults().take_front(
-                                               ifOp.getNumResults())))
+                                              ifOp.getNumResults()))) {
     oldResult.replaceAllUsesWith(newResult);
+  }
   Value projection = newIf.getResult(newIf.getNumResults() - 1);
   ifOp.erase();
   return projection;
@@ -668,30 +687,30 @@ struct FoldTileBufIntrinsicsPass
       return;
     }
 
-    SmallVector<pto::TileBufAddrOp, 8> addrOps;
-    SmallVector<pto::TileValidRowsOp, 8> rowsOps;
-    SmallVector<pto::TileValidColsOp, 8> colsOps;
-    SmallVector<pto::TensorViewAddrOp, 8> tvAddrOps;
-    SmallVector<pto::GetTensorViewDimOp, 8> tvDimOps;
-    SmallVector<pto::GetTensorViewStrideOp, 8> tvStrideOps;
-    SmallVector<pto::GetValidShapeOp, 8> getValidShapeOps;
+    SmallVector<pto::TileBufAddrOp, mlir::pto::kValue8> addrOps;
+    SmallVector<pto::TileValidRowsOp, mlir::pto::kValue8> rowsOps;
+    SmallVector<pto::TileValidColsOp, mlir::pto::kValue8> colsOps;
+    SmallVector<pto::TensorViewAddrOp, mlir::pto::kValue8> tvAddrOps;
+    SmallVector<pto::GetTensorViewDimOp, mlir::pto::kValue8> tvDimOps;
+    SmallVector<pto::GetTensorViewStrideOp, mlir::pto::kValue8> tvStrideOps;
+    SmallVector<pto::GetValidShapeOp, mlir::pto::kValue8> getValidShapeOps;
 
     func.walk([&](Operation *op) {
       if (auto addr = dyn_cast<pto::TileBufAddrOp>(op)) {
         addrOps.push_back(addr);
-      }
-      else if (auto rows = dyn_cast<pto::TileValidRowsOp>(op))
+      } else if (auto rows = dyn_cast<pto::TileValidRowsOp>(op)) {
         rowsOps.push_back(rows);
-      else if (auto cols = dyn_cast<pto::TileValidColsOp>(op))
+      } else if (auto cols = dyn_cast<pto::TileValidColsOp>(op)) {
         colsOps.push_back(cols);
-      else if (auto tvAddr = dyn_cast<pto::TensorViewAddrOp>(op))
+      } else if (auto tvAddr = dyn_cast<pto::TensorViewAddrOp>(op)) {
         tvAddrOps.push_back(tvAddr);
-      else if (auto tvDim = dyn_cast<pto::GetTensorViewDimOp>(op))
+      } else if (auto tvDim = dyn_cast<pto::GetTensorViewDimOp>(op)) {
         tvDimOps.push_back(tvDim);
-      else if (auto tvStride = dyn_cast<pto::GetTensorViewStrideOp>(op))
+      } else if (auto tvStride = dyn_cast<pto::GetTensorViewStrideOp>(op)) {
         tvStrideOps.push_back(tvStride);
-      else if (auto gvs = dyn_cast<pto::GetValidShapeOp>(op))
+      } else if (auto gvs = dyn_cast<pto::GetValidShapeOp>(op)) {
         getValidShapeOps.push_back(gvs);
+      }
     });
 
     if (shouldFoldAddrFamily(*mode)) {
@@ -714,14 +733,16 @@ struct FoldTileBufIntrinsicsPass
         auto validShape = tileTy.getValidShape();
 
         Value rowReplacement;
-        if (!validShape.empty() && validShape[0] != ShapedType::kDynamic)
+        if (!validShape.empty() && validShape[0] != ShapedType::kDynamic) {
           rowReplacement =
               builder.create<arith::ConstantIndexOp>(gvsOp.getLoc(), validShape[0]);
+        }
 
         Value colReplacement;
-        if (validShape.size() >= 2 && validShape[1] != ShapedType::kDynamic)
+        if (validShape.size() >= mlir::pto::kValue2 && validShape[1] != ShapedType::kDynamic) {
           colReplacement =
               builder.create<arith::ConstantIndexOp>(gvsOp.getLoc(), validShape[1]);
+        }
 
         if (!rowReplacement || !colReplacement) {
           auto handleInfo = resolveTileHandle(gvsOp.getSource(), gvsOp);
@@ -864,7 +885,7 @@ struct FoldTileBufIntrinsicsPass
       for (auto colsOp : colsOps) {
         builder.setInsertionPoint(colsOp);
         auto tbTy = dyn_cast<pto::TileBufType>(colsOp.getSrc().getType());
-        if (!tbTy || tbTy.getValidShape().size() < 2) {
+        if (!tbTy || tbTy.getValidShape().size() < mlir::pto::kValue2) {
           colsOp.emitError("tile_valid_cols: invalid tile_buf type");
           return signalPassFailure();
         }
@@ -1037,25 +1058,27 @@ struct FoldTileBufIntrinsicsPass
     // Clean up dead unrealized_conversion_cast ops that bridged
     // memref -> partition_tensor_view / tile_buf and are now unused
     // after folding.
-    SmallVector<UnrealizedConversionCastOp, 8> deadCasts;
+    SmallVector<UnrealizedConversionCastOp, mlir::pto::kValue8> deadCasts;
     func.walk([&](UnrealizedConversionCastOp castOp) {
       if (castOp.use_empty() && castOp.getNumOperands() == 1 &&
           isa<MemRefType>(castOp.getOperand(0).getType()) &&
           isa<MemRefType, pto::PartitionTensorViewType, pto::TileBufType>(
-              castOp.getResult(0).getType()))
+              castOp.getResult(0).getType())) {
         deadCasts.push_back(castOp);
+      }
     });
     for (auto castOp : llvm::reverse(deadCasts)) {
       castOp.erase();
     }
 
     while (true) {
-      SmallVector<Operation *, 8> deadMemrefOps;
+      SmallVector<Operation *, mlir::pto::kValue8> deadMemrefOps;
       func.walk([&](Operation *op) {
         if ((isa<memref::SubViewOp>(op) ||
              isa<memref::ReinterpretCastOp>(op)) &&
-            op->use_empty())
+            op->use_empty()) {
           deadMemrefOps.push_back(op);
+        }
       });
       if (deadMemrefOps.empty()) {
         break;
@@ -1068,7 +1091,7 @@ struct FoldTileBufIntrinsicsPass
     // Erase metadata writes only after every reader has been folded. TileOp
     // helper ABI reads marked above must remain runtime reads, so their
     // set_validshape updates are still observable by later lowering.
-    SmallVector<pto::SetValidShapeOp, 8> setValidShapeOps;
+    SmallVector<pto::SetValidShapeOp, mlir::pto::kValue8> setValidShapeOps;
     func.walk([&](pto::SetValidShapeOp op) { setValidShapeOps.push_back(op); });
     for (auto op : llvm::reverse(setValidShapeOps)) {
       bool hasRuntimeReader = false;
@@ -1090,7 +1113,7 @@ struct FoldTileBufIntrinsicsPass
     bool tileDceChanged = true;
     while (tileDceChanged) {
       tileDceChanged = false;
-      SmallVector<Operation *, 8> deadTileOps;
+      SmallVector<Operation *, mlir::pto::kValue8> deadTileOps;
       func.walk([&](Operation *op) {
         if (!op->use_empty()) {
           return;
@@ -1100,8 +1123,9 @@ struct FoldTileBufIntrinsicsPass
         }
         else if (auto castOp = dyn_cast<UnrealizedConversionCastOp>(op)) {
           if (castOp.getNumOperands() == 1 &&
-              isa<pto::TileBufType>(castOp.getResult(0).getType()))
+              isa<pto::TileBufType>(castOp.getResult(0).getType())) {
             deadTileOps.push_back(op);
+          }
         }
       });
       for (auto *op : llvm::reverse(deadTileOps)) {

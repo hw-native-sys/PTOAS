@@ -24,5 +24,5 @@ module {
   }
 }
 
-// CHECK-COUNT-4: Tile<TileType::Acc, float, 32, 128, BLayout::ColMajor, 32, 128, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Null>
+// CHECK-COUNT-2: Tile<TileType::Acc, float, 32, 128, BLayout::ColMajor, 32, 128, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Null>
 // CHECK-COUNT-2: TMATMUL(

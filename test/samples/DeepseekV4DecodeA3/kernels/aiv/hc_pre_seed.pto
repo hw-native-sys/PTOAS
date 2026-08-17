@@ -1,0 +1,19 @@
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @hc_pre_seed(%arg0: !pto.ptr<f32>, %arg1: index, %arg2: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c32_index = arith.constant 32 : index
+  %c1_index = arith.constant 1 : index
+  %c0_index = arith.constant 0 : index
+  %c8_index = arith.constant 8 : index
+  %cst_5 = arith.constant 0.00000000000000000e+00 : f32
+  %mixes_raw_inline13769__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%arg2, %c32_index], strides = [%c32_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  scf.for %ts0_inline13726__idx_v0 = %c0_index to %arg2 step %c8_index {
+    %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c8_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.texpands ins(%cst_5 : f32) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %0 = arith.maxsi %ts0_inline13726__idx_v0, %c0_index : index
+    %mixes_raw_inline13769__iter_v1_pview = pto.partition_view %mixes_raw_inline13769__ssa_v0_view, offsets = [%0, %c0_index], sizes = [%c8_index, %c32_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<8x32xf32>
+    pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%mixes_raw_inline13769__iter_v1_pview : !pto.partition_tensor_view<8x32xf32>)
+  }
+  return
+  }
+}

@@ -21,18 +21,21 @@ namespace mlir::pto {
 
 inline std::optional<std::string>
 resolvePythonExecutable(llvm::StringRef pythonExe) {
-  if (pythonExe.empty())
+  if (pythonExe.empty()) {
     return std::nullopt;
+  }
 
   if (llvm::sys::path::is_absolute(pythonExe)) {
-    if (llvm::sys::fs::can_execute(pythonExe))
+    if (llvm::sys::fs::can_execute(pythonExe)) {
       return pythonExe.str();
+    }
     return std::nullopt;
   }
 
   auto found = llvm::sys::findProgramByName(pythonExe);
-  if (!found)
+  if (!found) {
     return std::nullopt;
+  }
   return *found;
 }
 

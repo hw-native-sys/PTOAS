@@ -74,6 +74,27 @@ ls $PTO_ISA_ROOT/tests/common
 
 建议直接使用当前 CI pin 的版本，避免本地和 CI 结果不一致。
 
+### 2.3 维护 pto-isa pin
+
+仓库按 remote 和兼容环境维护三个独立 target，不能把同一个 SHA 跨 target 广播：
+
+- `gitcode-default`：`.github/workflows/ci.yml`、`docker/Dockerfile`、本文档和 remote validation；每周 workflow 自动更新。
+- `github-ci-sim`：`.github/workflows/ci_sim.yml`；按 CPU simulator 兼容性手动更新。
+- `cann90-dev`：`docker/Dockerfile.dev`；按 CANN 9.0 开发镜像兼容性手动更新。
+
+手动更新时必须显式指定 target。脚本会在对应 remote 上验证候选 commit 是当前 pin
+的后继或相同 revision，拒绝回退和跨 remote SHA：
+
+```bash
+python3 .github/scripts/update_pto_isa_pin.py --target gitcode-default --commit <gitcode-sha>
+python3 .github/scripts/update_pto_isa_pin.py --target github-ci-sim --commit <github-sha>
+python3 .github/scripts/update_pto_isa_pin.py --target cann90-dev --commit <gitcode-cann90-sha>
+python3 .github/scripts/update_pto_isa_pin_test.py
+```
+
+`update_pto_isa_pin.yml` 只自动驱动 `gitcode-default`。另外两个 target 有意保持手动，
+避免 GitCode、GitHub CPU simulator 和 CANN 9.0 的兼容性边界被一次定时更新混在一起。
+
 ## 3. 单个 case 的 compile-only
 
 ### 3.1 A3 示例

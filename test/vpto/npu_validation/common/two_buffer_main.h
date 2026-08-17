@@ -54,8 +54,9 @@ int main() {
 
   ACL_CHECK(aclInit(nullptr));
   aclInited = true;
-  if (const char *envDevice = std::getenv("ACL_DEVICE_ID"))
+  if (const char *envDevice = std::getenv("ACL_DEVICE_ID")) {
     deviceId = std::atoi(envDevice);
+  }
   ACL_CHECK(aclrtSetDevice(deviceId));
   deviceSet = true;
   ACL_CHECK(aclrtCreateStream(&stream));
@@ -87,12 +88,15 @@ cleanup:
   aclrtFree(outputDevice);
   aclrtFreeHost(inputHost);
   aclrtFreeHost(outputHost);
-  if (stream != nullptr)
+  if (stream != nullptr) {
     aclrtDestroyStream(stream);
-  if (deviceSet)
+  }
+  if (deviceSet) {
     aclrtResetDevice(deviceId);
-  if (aclInited)
+  }
+  if (aclInited) {
     aclFinalize();
+  }
   return rc;
 }
 

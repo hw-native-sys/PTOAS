@@ -77,8 +77,9 @@ struct PTORematerializeFixpipeVectorQuantPass
 
         for (Region &region : op->getRegions()) {
           for (Block &nestedBlock : region) {
-            if (failed(self(self, nestedBlock)))
+            if (failed(self(self, nestedBlock))) {
               return failure();
+            }
           }
         }
       }

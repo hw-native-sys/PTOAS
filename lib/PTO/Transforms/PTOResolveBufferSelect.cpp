@@ -17,6 +17,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -41,6 +42,15 @@ using namespace mlir;
 
 namespace {
 
+constexpr int64_t kSFractal1024 = 1024;
+constexpr int64_t kSFractal512 = 512;
+constexpr int64_t kSFractal32 = 32;
+constexpr int64_t kFractalInnerDimension = 16;
+constexpr int64_t kSFractal32InnerColumnCount = 2;
+constexpr uint64_t kCubeTileAddressAlignmentBytes = 512;
+constexpr uint64_t kVectorTileAddressAlignmentBytes = 32;
+constexpr unsigned kI64BitWidth = 64;
+
 static uint64_t alignUp(uint64_t value, uint64_t align) {
   if (align == 0) {
     return value;
@@ -52,7 +62,7 @@ static Value ensureI64(Value value, IRRewriter &rewriter, Location loc) {
   if (!value) {
     return {};
   }
-  if (value.getType().isInteger(64)) {
+  if (value.getType().isInteger(kI64BitWidth)) {
     return value;
   }
   if (value.getType().isIndex()) {
@@ -67,8 +77,9 @@ static Value ensureI64(Value value, IRRewriter &rewriter, Location loc) {
 static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
                                   int64_t &colStride) {
   auto shape = type.getShape();
-  if (shape.size() != 2 || llvm::is_contained(shape, ShapedType::kDynamic))
+  if (shape.size() != mlir::pto::kValue2 || llvm::is_contained(shape, ShapedType::kDynamic)) {
     return false;
+  }
 
   auto config = type.getConfigAttr();
   int32_t bl = static_cast<int32_t>(config.getBLayout().getValue());
@@ -89,18 +100,18 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
   int64_t innerRows = 1;
   int64_t innerCols = 1;
   int32_t fractal = config.getSFractalSize().getInt();
-  if (fractal == 1024) {
-    innerRows = 16;
-    innerCols = 16;
-  } else if (fractal == 32) {
-    innerRows = 16;
-    innerCols = 2;
-  } else if (fractal == 512 && sl == 1) {
-    innerRows = 16;
-    innerCols = 32 / elemBytes;
-  } else if (fractal == 512 && sl == 2) {
-    innerRows = 32 / elemBytes;
-    innerCols = 16;
+  if (fractal == kSFractal1024) {
+    innerRows = kFractalInnerDimension;
+    innerCols = kFractalInnerDimension;
+  } else if (fractal == kSFractal32) {
+    innerRows = kFractalInnerDimension;
+    innerCols = kSFractal32InnerColumnCount;
+  } else if (fractal == kSFractal512 && sl == 1) {
+    innerRows = kFractalInnerDimension;
+    innerCols = kSFractal32 / elemBytes;
+  } else if (fractal == kSFractal512 && sl == 2) {
+    innerRows = kSFractal32 / elemBytes;
+    innerCols = kFractalInnerDimension;
   } else {
     return false;
   }
@@ -131,19 +142,20 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
 static uint64_t getTileAddressAlignmentBytes(pto::TileBufType type) {
   auto addrSpace =
       dyn_cast_or_null<pto::AddressSpaceAttr>(type.getMemorySpace());
-  if (!addrSpace)
+  if (!addrSpace) {
     return 1;
+  }
 
   switch (addrSpace.getAddressSpace()) {
   case pto::AddressSpace::LEFT:
   case pto::AddressSpace::RIGHT:
   case pto::AddressSpace::ACC:
-    return 512;
+    return kCubeTileAddressAlignmentBytes;
   case pto::AddressSpace::VEC:
   case pto::AddressSpace::MAT:
   case pto::AddressSpace::BIAS:
   case pto::AddressSpace::SCALING:
-    return 32;
+    return kVectorTileAddressAlignmentBytes;
   case pto::AddressSpace::GM:
   case pto::AddressSpace::Zero:
     return 1;
@@ -153,20 +165,23 @@ static uint64_t getTileAddressAlignmentBytes(pto::TileBufType type) {
 
 static Value computeTileAddress(Value value, IRRewriter &rewriter,
                                 Location loc) {
-  if (auto alloc = value.getDefiningOp<pto::AllocTileOp>())
+  if (auto alloc = value.getDefiningOp<pto::AllocTileOp>()) {
     return ensureI64(alloc.getAddr(), rewriter, loc);
+  }
   if (auto subview = value.getDefiningOp<pto::SubViewOp>()) {
     Value base = computeTileAddress(subview.getSource(), rewriter, loc);
     auto sourceType = subview.getSource().getType();
     int64_t rowStride = 0;
     int64_t colStride = 0;
     if (!base || !getTilePointerStrides(sourceType, rowStride, colStride) ||
-        subview.getOffsets().size() != 2)
+        subview.getOffsets().size() != mlir::pto::kValue2) {
       return {};
+    }
     Value row = ensureI64(subview.getOffsets()[0], rewriter, loc);
     Value col = ensureI64(subview.getOffsets()[1], rewriter, loc);
-    if (!row || !col)
+    if (!row || !col) {
       return {};
+    }
     Value rowScale = rewriter.create<arith::ConstantIntOp>(loc, rowStride, 64);
     Value colScale = rewriter.create<arith::ConstantIntOp>(loc, colStride, 64);
     row = rewriter.create<arith::MulIOp>(loc, row, rowScale);
@@ -204,8 +219,9 @@ static pto::TileBufType getSubviewPhysicalType(pto::SubViewOp op) {
                             inheritedColStride) &&
       getTilePointerStrides(compactChildType, childRowStride, childColStride) &&
       inheritedRowStride == childRowStride &&
-      inheritedColStride == childColStride)
+      inheritedColStride == childColStride) {
     physicalShape = resultType.getShape();
+  }
 
   return pto::TileBufType::get(
       op.getContext(), physicalShape, resultType.getElementType(),
@@ -218,19 +234,22 @@ static Value getSubviewValidOperand(pto::SubViewOp op,
                                     unsigned dim, IRRewriter &rewriter) {
   Value operand = dim == 0 ? op.getValidRow() : op.getValidCol();
   ArrayRef<int64_t> validShape = physicalType.getValidShape();
-  if (validShape.size() <= dim || validShape[dim] >= 0)
+  if (validShape.size() <= dim || validShape[dim] >= 0) {
     return {};
-  if (operand)
+  }
+  if (operand) {
     return operand;
+  }
   ArrayRef<int64_t> shape = physicalType.getShape();
-  if (shape.size() > dim && shape[dim] != ShapedType::kDynamic)
+  if (shape.size() > dim && shape[dim] != ShapedType::kDynamic) {
     return rewriter.create<arith::ConstantIndexOp>(op.getLoc(), shape[dim]);
+  }
   return {};
 }
 
 static LogicalResult resolveTileNativeSubviews(ModuleOp module,
                                                MLIRContext *ctx) {
-  SmallVector<pto::SubViewOp, 16> subviews;
+  SmallVector<pto::SubViewOp, mlir::pto::kValue16> subviews;
   module.walk([&](pto::SubViewOp op) { subviews.push_back(op); });
   for (pto::SubViewOp op : subviews) {
     IRRewriter rewriter(ctx);
@@ -277,9 +296,10 @@ static LogicalResult getMultiTileAddresses(pto::AllocMultiTileOp alloc,
     if (planned.size() != count) {
       return alloc.emitError("planned address count does not match slot count");
     }
-    for (int64_t address : planned.asArrayRef())
+    for (int64_t address : planned.asArrayRef()) {
       addrs.push_back(rewriter.create<arith::ConstantIntOp>(
-          alloc.getLoc(), address, 64));
+          alloc.getLoc(), address, kI64BitWidth));
+    }
     return success();
   }
 
@@ -311,18 +331,19 @@ static LogicalResult getMultiTileAddresses(pto::AllocMultiTileOp alloc,
 
 static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
                                                 MLIRContext *ctx) {
-  SmallVector<pto::MultiTileGetOp, 8> gets;
+  SmallVector<pto::MultiTileGetOp, mlir::pto::kValue8> gets;
   module.walk([&](pto::MultiTileGetOp op) { gets.push_back(op); });
 
   for (pto::MultiTileGetOp op : gets) {
     auto alloc = op.getSource().getDefiningOp<pto::AllocMultiTileOp>();
-    if (!alloc)
+    if (!alloc) {
       return op.emitError(
           "currently requires a direct pto.alloc_multi_tile source");
+    }
 
     IRRewriter rewriter(ctx);
     rewriter.setInsertionPoint(op);
-    SmallVector<Value, 8> addrs;
+    SmallVector<Value, mlir::pto::kValue8> addrs;
     if (failed(getMultiTileAddresses(alloc, rewriter, addrs))) {
       return failure();
     }
@@ -331,8 +352,9 @@ static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
     IntegerAttr constSlotAttr;
     if (matchPattern(op.getSlot(), m_Constant(&constSlotAttr))) {
       int64_t slot = constSlotAttr.getValue().getSExtValue();
-      if (slot < 0 || slot >= static_cast<int64_t>(addrs.size()))
+      if (slot < 0 || slot >= static_cast<int64_t>(addrs.size())) {
         return op.emitError("constant slot is outside planned address range");
+      }
       selectedAddr = addrs[static_cast<size_t>(slot)];
     } else {
       selectedAddr = addrs.front();
@@ -352,7 +374,7 @@ static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
     rewriter.replaceOp(op, slotHandle.getResult());
   }
 
-  SmallVector<pto::AllocMultiTileOp, 8> allocs;
+  SmallVector<pto::AllocMultiTileOp, mlir::pto::kValue8> allocs;
   module.walk([&](pto::AllocMultiTileOp op) { allocs.push_back(op); });
   for (pto::AllocMultiTileOp alloc : allocs) {
     if (!alloc.getResult().use_empty()) {

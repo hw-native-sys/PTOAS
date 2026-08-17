@@ -37,8 +37,9 @@ LogicalResult mlir::pto::validateIntToPtrUses(func::FuncOp func) {
   WalkResult walkResult = func.walk([&](IntToPtrOp op) -> WalkResult {
     Value ptr = op.getResult();
     for (OpOperand &use : ptr.getUses()) {
-      if (isAllowedIntToPtrUse(ptr, use))
+      if (isAllowedIntToPtrUse(ptr, use)) {
         continue;
+      }
 
       Operation *user = use.getOwner();
       InFlightDiagnostic diag =
@@ -62,8 +63,9 @@ struct PTOValidateIntToPtrUsesPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOValidateIntToPtrUsesPass)
 
   void runOnOperation() override {
-    if (failed(validateIntToPtrUses(getOperation())))
+    if (failed(validateIntToPtrUses(getOperation()))) {
       signalPassFailure();
+    }
   }
 };
 } // namespace

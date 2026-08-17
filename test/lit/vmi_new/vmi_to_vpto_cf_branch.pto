@@ -53,14 +53,14 @@ module {
 // CHECK-SAME: %[[A:[^,]+]]: !pto.vreg<128xf16>
 // CHECK-SAME: %[[B:[^)]+]]: !pto.vreg<128xf16>
 // CHECK-SAME: -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>)
-// CHECK: cf.cond_br %[[COND]], ^[[THEN:.*]](%[[A]] : !pto.vreg<128xf16>), ^[[ELSE:.*]](%[[B]] : !pto.vreg<128xf16>)
-// CHECK: ^[[THEN]](%[[THEN_ARG:.*]]: !pto.vreg<128xf16>):
-// CHECK-DAG: %[[THEN_P0:.*]] = pto.vcvt %[[THEN_ARG]]
-// CHECK-DAG: %[[THEN_P1:.*]] = pto.vcvt %[[THEN_ARG]]
+// CHECK: cf.cond_br %[[COND]], ^[[THEN:.*]], ^[[ELSE:.*]]
+// CHECK: ^[[THEN]]:
+// CHECK-DAG: %[[THEN_P0:.*]] = pto.vcvt %[[A]]
+// CHECK-DAG: %[[THEN_P1:.*]] = pto.vcvt %[[A]]
 // CHECK: cf.br ^[[JOIN:.*]](%[[THEN_P0]], %[[THEN_P1]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>)
-// CHECK: ^[[ELSE]](%[[ELSE_ARG:.*]]: !pto.vreg<128xf16>):
-// CHECK-DAG: %[[ELSE_P0:.*]] = pto.vcvt %[[ELSE_ARG]]
-// CHECK-DAG: %[[ELSE_P1:.*]] = pto.vcvt %[[ELSE_ARG]]
+// CHECK: ^[[ELSE]]:
+// CHECK-DAG: %[[ELSE_P0:.*]] = pto.vcvt %[[B]]
+// CHECK-DAG: %[[ELSE_P1:.*]] = pto.vcvt %[[B]]
 // CHECK: cf.br ^[[JOIN]]({{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>)
 // CHECK: ^[[JOIN]](%{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>):
 // CHECK: pto.vadd

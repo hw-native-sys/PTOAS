@@ -156,15 +156,15 @@ module {
   }
 
   func.func @vmi_layout_sink_materialization_unary_integer(
-      %src: !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>)
-      -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>> {
+      %src: !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>> {
     %src_deint = pto.vmi.ensure_layout %src
-        : !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+        : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
     %abs = pto.vmi.vabs %src_deint
-        : !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
-        -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
-    return %abs : !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+        : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+    return %abs : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
   }
 
   func.func @vmi_layout_sink_materialization_bitwise(
@@ -264,7 +264,7 @@ module {
 // CHECK-LABEL: func.func @vmi_layout_sink_materialization_cmpi(
 // CHECK-NOT: pto.vmi.ensure_layout %arg0
 // CHECK-NOT: pto.vmi.ensure_layout %arg1
-// CHECK: %[[CMPI:.*]] = pto.vmi.cmpi "slt", %arg0, %arg1
+// CHECK: %[[CMPI:.*]] = pto.vmi.cmpi "ult", %arg0, %arg1
 // CHECK-SAME: !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
 // CHECK: %[[CMPI_DEINT:.*]] = pto.vmi.ensure_mask_layout %[[CMPI]]
@@ -295,8 +295,8 @@ module {
 // CHECK-LABEL: func.func @vmi_layout_sink_materialization_unary_integer(
 // CHECK-NOT: pto.vmi.ensure_layout %arg0
 // CHECK: %[[ABS:.*]] = pto.vmi.absi %arg0
-// CHECK-SAME: !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
-// CHECK-SAME: -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
+// CHECK-SAME: !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
+// CHECK-SAME: -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
 // CHECK: %[[ABS_DEINT:.*]] = pto.vmi.ensure_layout %[[ABS]]
 // CHECK-SAME: #pto.vmi.layout<deinterleaved = 2>
 // CHECK: return %[[ABS_DEINT]]

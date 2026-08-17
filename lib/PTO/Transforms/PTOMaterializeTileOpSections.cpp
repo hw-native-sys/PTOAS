@@ -318,10 +318,8 @@ static LogicalResult expandValidShapeFunctionArguments(
         argumentIndices.size() * 2, DictionaryAttr::get(function.getContext()));
     SmallVector<Location> argumentLocations(argumentIndices.size() * 2,
                                             function.getLoc());
-    if (failed(function.insertArguments(insertionIndices, argumentTypes,
-                                        argumentAttrs, argumentLocations)))
-      return function.emitOpError(
-          "failed to append internal Tile valid-shape ABI arguments");
+    function.insertArguments(insertionIndices, argumentTypes, argumentAttrs,
+                             argumentLocations);
 
     auto &functionArguments = expandedArguments[functionOperation];
     for (auto [position, originalIndex] : llvm::enumerate(argumentIndices)) {

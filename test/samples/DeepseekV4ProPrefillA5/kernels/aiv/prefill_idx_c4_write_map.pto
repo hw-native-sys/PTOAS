@@ -1,0 +1,52 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @prefill_idx_c4_write_map(%arg0: !pto.ptr<i64>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i32>, %arg3: !pto.ptr<i32>, %arg4: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c128_i64 = arith.constant 128 : i64
+  %c128_index = arith.constant 128 : index
+  %c1_index = arith.constant 1 : index
+  %c32_index = arith.constant 32 : index
+  %c0_i32 = arith.constant 0 : i32
+  %cn1_i32 = arith.constant -1 : i32
+  %c0_index = arith.constant 0 : index
+  %c64_index = arith.constant 64 : index
+  %csa_idx_slot_mapping__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c128_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %position_ids__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%arg4], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %write_pos_map_inline34_inline5283__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c1_index, %c32_index], strides = [%c32_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %write_dst_map_inline64_inline5281__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c1_index, %c32_index], strides = [%c32_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %write_pos_tile_inline108_inline5280__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%c0_i32 : i32) outs(%write_pos_tile_inline108_inline5280__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %write_dst_tile_inline112_inline5369__tile = pto.alloc_tile addr = %c128_i64 valid_row = %c1_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%cn1_i32 : i32) outs(%write_dst_tile_inline112_inline5369__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %map_seen_inline109_inline5339__rv_v2 = scf.for %map_w_inline83_inline5360__idx_v0 = %c0_index to %c128_index step %c1_index iter_args(%map_seen_inline109_inline5339__iter_v1 = %c0_index) -> (index) {
+    %2 = arith.cmpi slt, %map_w_inline83_inline5360__idx_v0, %c64_index : index
+    %map_seen_inline109_inline5339__phi_v5 = scf.if %2 -> (index) {
+      %map_slot_raw_inline48_inline5320__tile = pto.load_scalar %arg0[%map_w_inline83_inline5360__idx_v0] : !pto.ptr<i64> -> i64
+      %3 = arith.index_cast %map_slot_raw_inline48_inline5320__tile : i64 to index
+      %4 = arith.cmpi sle, %c0_index, %3 : index
+      %map_seen_inline109_inline5339__phi_v4 = scf.if %4 -> (index) {
+        %t__tile = pto.load_scalar %arg1[%map_w_inline83_inline5360__idx_v0] : !pto.ptr<i32> -> i32
+        %flat_offset_mul = arith.muli %c0_index, %c32_index : index
+        %flat_offset = arith.addi %flat_offset_mul, %map_seen_inline109_inline5339__iter_v1 : index
+        pto.tsetval ins(%flat_offset, %t__tile : index, i32) outs(%write_pos_tile_inline108_inline5280__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        %5 = arith.trunci %map_slot_raw_inline48_inline5320__tile : i64 to i32
+        %6 = arith.muli %c0_index, %c32_index : index
+        %7 = arith.addi %6, %map_seen_inline109_inline5339__iter_v1 : index
+        pto.tsetval ins(%7, %5 : index, i32) outs(%write_dst_tile_inline112_inline5369__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        %8 = arith.addi %map_seen_inline109_inline5339__iter_v1, %c1_index : index
+        scf.yield %8 : index
+      } else {
+        scf.yield %map_seen_inline109_inline5339__iter_v1 : index
+      }
+      scf.yield %map_seen_inline109_inline5339__phi_v4 : index
+    } else {
+      scf.yield %map_seen_inline109_inline5339__iter_v1 : index
+    }
+    scf.yield %map_seen_inline109_inline5339__phi_v5 : index
+  }
+  %write_pos_map_inline34_inline5283__ssa_v0_pview = pto.partition_view %write_pos_map_inline34_inline5283__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c32_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+  pto.tstore ins(%write_pos_tile_inline108_inline5280__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%write_pos_map_inline34_inline5283__ssa_v0_pview : !pto.partition_tensor_view<1x32xi32>)
+  %write_dst_map_inline64_inline5281__ssa_v0_pview = pto.partition_view %write_dst_map_inline64_inline5281__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c32_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+  pto.tstore ins(%write_dst_tile_inline112_inline5369__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%write_dst_map_inline64_inline5281__ssa_v0_pview : !pto.partition_tensor_view<1x32xi32>)
+  return
+  }
+}

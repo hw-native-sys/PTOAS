@@ -1,0 +1,27 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @dispatch_wait(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i32>, %arg2: i32, %arg3: i32, %arg4: !pto.ptr<i64>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c32_index = arith.constant 32 : index
+  %c6_index = arith.constant 6 : index
+  %c1_index = arith.constant 1 : index
+  %c2_index = arith.constant 2 : index
+  %c0_index = arith.constant 0 : index
+  %c16_index = arith.constant 16 : index
+  %indices_inline5__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c32_index, %c6_index], strides = [%c6_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %data_arrived__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %_idx_anchor_inline775__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<i32> -> i32
+  scf.for %src_inline753__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %0 = arith.index_cast %arg2 : i32 to index
+    %1 = arith.cmpi ne, %src_inline753__idx_v0, %0 : index
+    scf.if %1 {
+      %2 = arith.maxsi %src_inline753__idx_v0, %c0_index : index
+      %data_arrived__ssa_v0_local_pview = pto.partition_view %data_arrived__ssa_v0_view, offsets = [%2, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      %3 = arith.index_cast %arg3 : i32 to index
+      %4 = arith.muli %3, %c16_index : index
+      %5 = arith.index_cast %4 : index to i32
+      pto.comm.twait(%data_arrived__ssa_v0_local_pview, %5 : !pto.partition_tensor_view<1x1xi32>, i32) {cmp = #pto<wait_cmp ge>}
+      pto.cmo.cacheinvalid all #pto.address_space<gm>
+    }
+  }
+  return
+  }
+}

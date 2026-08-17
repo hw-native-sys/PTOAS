@@ -6,14 +6,16 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "BufidSyncAnalysis.h"
-#include "PTO/IR/PTO.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "llvm/Support/Debug.h"
 #include <algorithm>
 #include <functional>
 #include <map>
 #include <tuple>
+#include "BufidSyncAnalysis.h"
+#include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/Support/Debug.h"
+
 
 #define DEBUG_TYPE "pto-bufid-sync"
 
@@ -23,8 +25,9 @@ using namespace mlir::pto;
 bool BufidSyncAnalysis::isGMDependency(
     const SmallVector<const BaseMemInfo *> &tiles) const {
   for (auto *tile : tiles) {
-    if (tile->scope == pto::AddressSpace::GM)
+    if (tile->scope == pto::AddressSpace::GM) {
       return true;
+    }
   }
   return false;
 }
@@ -51,8 +54,9 @@ void BufidSyncAnalysis::collectDependencies() {
       auto *src = compounds[i];
       auto *dst = compounds[j];
 
-      if (isSamePipe(src, dst))
+      if (isSamePipe(src, dst)) {
         continue;
+      }
 
       DepBaseMemInfoPairVec depBaseMemInfosVec;
       bool hasDep = memAnalyzer_.DepBetween(src->defVec, dst->useVec,
@@ -68,22 +72,26 @@ void BufidSyncAnalysis::collectDependencies() {
                                          depBaseMemInfosVec);
       }
 
-      if (!hasDep)
+      if (!hasDep) {
         continue;
+      }
 
       SmallVector<const BaseMemInfo *> depTiles;
       for (auto &pair : depBaseMemInfosVec) {
         if (pair.first->scope == pto::AddressSpace::GM ||
-            pair.second->scope == pto::AddressSpace::GM)
+            pair.second->scope == pto::AddressSpace::GM) {
           continue;
-        if (pair.first->scope != pair.second->scope)
+        }
+        if (pair.first->scope != pair.second->scope) {
           continue;
+        }
         depTiles.push_back(pair.first);
         depTiles.push_back(pair.second);
       }
 
-      if (depTiles.empty())
+      if (depTiles.empty()) {
         continue;
+      }
 
       DepPair dp;
       dp.srcElement = src;
@@ -107,8 +115,9 @@ void BufidSyncAnalysis::collectTilesFromDepPairs() {
   for (auto &dp : depPairs_) {
     for (auto *memInfo : dp.depTiles) {
       Value baseBuf = memInfo->baseBuffer;
-      if (!seenBaseBuffers.insert(baseBuf).second)
+      if (!seenBaseBuffers.insert(baseBuf).second) {
         continue;
+      }
       TileInfo ti;
       ti.memInfo = memInfo;
       ti.scope = memInfo->scope;
@@ -118,8 +127,9 @@ void BufidSyncAnalysis::collectTilesFromDepPairs() {
       ti.tileValue = baseBuf;
       Value rootBuf = memInfo->rootBuffer;
       if (rootBuf && rootBuf.getDefiningOp() &&
-          rootBuf.getDefiningOp()->hasTrait<mlir::OpTrait::ConstantLike>())
+          rootBuf.getDefiningOp()->hasTrait<mlir::OpTrait::ConstantLike>()) {
         rootBuf = baseBuf;
+      }
       ti.rootBuffer = rootBuf;
       allTiles_.push_back(ti);
     }
@@ -135,8 +145,9 @@ void BufidSyncAnalysis::collectTilesFromDepPairs() {
   SmallVector<TileInfo> deduped;
   DenseSet<unsigned> removed;
   for (auto &[key, indices] : keyToIndices) {
-    if (indices.size() <= 1)
+    if (indices.size() <= 1) {
       continue;
+    }
     DenseMap<Value, unsigned> rootToFirst;
     for (unsigned idx : indices) {
       Value root = allTiles_[idx].rootBuffer;
@@ -150,23 +161,27 @@ void BufidSyncAnalysis::collectTilesFromDepPairs() {
   }
 
   for (auto &[key, indices] : keyToIndices) {
-    if (indices.size() <= 1)
+    if (indices.size() <= 1) {
       continue;
+    }
     for (unsigned k = 1; k < indices.size(); ++k) {
-      if (removed.count(indices[k]))
+      if (removed.count(indices[k])) {
         continue;
+      }
       auto &a = allTiles_[indices[0]];
       auto &b = allTiles_[indices[k]];
       if (a.scope == b.scope && a.baseAddr == b.baseAddr && a.size == b.size &&
-          memAnalyzer_.MemAlias(a.memInfo, b.memInfo))
+          memAnalyzer_.MemAlias(a.memInfo, b.memInfo)) {
         removed.insert(indices[k]);
+      }
     }
   }
 
   if (!removed.empty()) {
     for (unsigned i = 0; i < allTiles_.size(); ++i) {
-      if (!removed.count(i))
+      if (!removed.count(i)) {
         deduped.push_back(std::move(allTiles_[i]));
+      }
     }
     if (debugEnabled_) {
       llvm::outs() << "[bufid_sync] allTiles dedup: " << allTiles_.size()
@@ -181,8 +196,9 @@ void BufidSyncAnalysis::collectTilesFromDepPairs() {
 }
 
 void BufidSyncAnalysis::classifyTiles() {
-  if (allTiles_.empty())
+  if (allTiles_.empty()) {
     return;
+  }
 
   DenseMap<pto::AddressSpace, SmallVector<unsigned>> spaceGroups;
   for (unsigned i = 0; i < allTiles_.size(); ++i) {
@@ -192,8 +208,9 @@ void BufidSyncAnalysis::classifyTiles() {
   for (auto &[space, indices] : spaceGroups) {
     unsigned n = indices.size();
     SmallVector<unsigned> parent(n);
-    for (unsigned i = 0; i < n; ++i)
+    for (unsigned i = 0; i < n; ++i) {
       parent[i] = i;
+    }
 
     auto find = [&](unsigned x) -> unsigned {
       while (parent[x] != x) {
@@ -206,8 +223,9 @@ void BufidSyncAnalysis::classifyTiles() {
     auto unite = [&](unsigned a, unsigned b) {
       a = find(a);
       b = find(b);
-      if (a != b)
+      if (a != b) {
         parent[a] = b;
+      }
     };
 
     for (unsigned i = 0; i < n; ++i) {
@@ -240,12 +258,13 @@ void BufidSyncAnalysis::bronKerbosch(
     const SmallVector<SmallVector<bool>> &adjMatrix,
     SmallVector<SmallVector<unsigned>> &maximalCliques) {
   if (P.empty() && X.empty()) {
-    if (!R.empty())
+    if (!R.empty()) {
       maximalCliques.push_back(R);
+    }
     return;
   }
 
-  if (maximalCliques.size() > 100000) {
+  if (maximalCliques.size() > mlir::pto::kValue100000) {
     llvm::errs() << "[bufid_sync] bronKerbosch WARNING: too many cliques ("
                  << maximalCliques.size() << "), aborting!\n";
     return;
@@ -254,8 +273,9 @@ void BufidSyncAnalysis::bronKerbosch(
   unsigned pivot = P.empty() ? X[0] : P[0];
   SmallVector<unsigned> candidates;
   for (unsigned v : P) {
-    if (!adjMatrix[pivot][v])
+    if (!adjMatrix[pivot][v]) {
       candidates.push_back(v);
+    }
   }
 
   for (unsigned v : candidates) {
@@ -264,19 +284,22 @@ void BufidSyncAnalysis::bronKerbosch(
 
     SmallVector<unsigned> newP, newX;
     for (unsigned u : P) {
-      if (adjMatrix[v][u])
+      if (adjMatrix[v][u]) {
         newP.push_back(u);
+      }
     }
     for (unsigned u : X) {
-      if (adjMatrix[v][u])
+      if (adjMatrix[v][u]) {
         newX.push_back(u);
+      }
     }
 
     bronKerbosch(newR, newP, newX, adjMatrix, maximalCliques);
 
     auto it = std::find(P.begin(), P.end(), v);
-    if (it != P.end())
+    if (it != P.end()) {
       P.erase(it);
+    }
     X.push_back(v);
   }
 }
@@ -287,8 +310,9 @@ void BufidSyncAnalysis::allocateVirtualBufIds() {
   for (unsigned gi = 0; gi < tileGroups_.size(); ++gi) {
     auto &group = tileGroups_[gi];
     unsigned n = group.size();
-    if (n == 0)
+    if (n == 0) {
       continue;
+    }
 
     SmallVector<SmallVector<bool>> adjMatrix(
         n, SmallVector<bool>(n, false));
@@ -303,8 +327,9 @@ void BufidSyncAnalysis::allocateVirtualBufIds() {
     }
 
     SmallVector<unsigned> P;
-    for (unsigned i = 0; i < n; ++i)
+    for (unsigned i = 0; i < n; ++i) {
       P.push_back(i);
+    }
 
     SmallVector<SmallVector<unsigned>> maximalCliques;
     bronKerbosch({}, P, {}, adjMatrix, maximalCliques);
@@ -332,17 +357,20 @@ void BufidSyncAnalysis::allocateVirtualBufIds() {
 
 bool BufidSyncAnalysis::virtualBufIdContainsTile(const VirtualBufId &vbid,
                                                  const BaseMemInfo *tile) const {
-  if (!tile)
+  if (!tile) {
     return false;
-  if (vbid.scope != tile->scope)
+  }
+  if (vbid.scope != tile->scope) {
     return false;
+  }
   for (auto &t : vbid.tiles) {
     bool ptrMatch = (t.memInfo == tile);
     bool valMatch = (t.tileValue == tile->baseBuffer);
     bool aliasMatch =
         (!ptrMatch && !valMatch && memAnalyzer_.MemAlias(t.memInfo, tile));
-    if (ptrMatch || valMatch || aliasMatch)
+    if (ptrMatch || valMatch || aliasMatch) {
       return true;
+    }
   }
   return false;
 }
@@ -370,12 +398,14 @@ int BufidSyncAnalysis::findBestVirtualBufId(const DepPair &depPair) const {
   for (auto &vbid : virtualBufIds_) {
     unsigned matchedTiles = 0;
     for (auto *tile : depPair.depTiles) {
-      if (virtualBufIdContainsTile(vbid, tile))
+      if (virtualBufIdContainsTile(vbid, tile)) {
         ++matchedTiles;
+      }
     }
 
-    if (matchedTiles == 0)
+    if (matchedTiles == 0) {
       continue;
+    }
 
     bool isBetter =
         matchedTiles > bestMatchedTiles ||
@@ -397,9 +427,9 @@ int BufidSyncAnalysis::findBestVirtualBufId(const DepPair &depPair) const {
 void BufidSyncAnalysis::insertSyncOperations() {
   for (auto &dp : depPairs_) {
     int bestLogicId = findBestVirtualBufId(dp);
-
-    if (bestLogicId < 0)
+    if (bestLogicId < 0) {
       continue;
+    }
 
     Operation *srcOp = dp.srcElement->elementOp;
     Operation *dstOp = dp.dstElement->elementOp;
@@ -420,8 +450,9 @@ void BufidSyncAnalysis::insertSyncOperations() {
           break;
         }
       }
-      if (!exists)
+      if (!exists) {
         pipeBefore.push_back(getOp);
+      }
     }
 
     {
@@ -440,8 +471,9 @@ void BufidSyncAnalysis::insertSyncOperations() {
           break;
         }
       }
-      if (!exists)
+      if (!exists) {
         pipeAfter.push_back(rlsOp);
+      }
     }
 
     {
@@ -460,8 +492,9 @@ void BufidSyncAnalysis::insertSyncOperations() {
           break;
         }
       }
-      if (!exists)
+      if (!exists) {
         pipeBefore.push_back(getOp);
+      }
     }
 
     {
@@ -480,8 +513,9 @@ void BufidSyncAnalysis::insertSyncOperations() {
           break;
         }
       }
-      if (!exists)
+      if (!exists) {
         pipeAfter.push_back(rlsOp);
+      }
     }
   }
 
@@ -496,13 +530,15 @@ void BufidSyncAnalysis::optimizeSamePipeMerge() {
     DenseSet<std::pair<int, int>> seen;
     for (auto &s : build.pipeBefore) {
       auto key = std::make_pair(static_cast<int>(s.pipe), s.logicId);
-      if (seen.insert(key).second)
+      if (seen.insert(key).second) {
         logicIdToPipeInts[s.logicId].insert(static_cast<int>(s.pipe));
+      }
     }
     for (auto &s : build.pipeAfter) {
       auto key = std::make_pair(static_cast<int>(s.pipe), s.logicId);
-      if (seen.insert(key).second)
+      if (seen.insert(key).second) {
         logicIdToPipeInts[s.logicId].insert(static_cast<int>(s.pipe));
+      }
     }
   }
 
@@ -513,39 +549,46 @@ void BufidSyncAnalysis::optimizeSamePipeMerge() {
     DenseSet<std::pair<int, int>> seen;
     for (auto &s : build.pipeBefore) {
       auto key = std::make_pair(static_cast<int>(s.pipe), s.logicId);
-      if (seen.insert(key).second)
+      if (seen.insert(key).second) {
         pipeIntToLogicIds[static_cast<int>(s.pipe)].push_back(s.logicId);
+      }
     }
     for (auto &s : build.pipeAfter) {
       auto key = std::make_pair(static_cast<int>(s.pipe), s.logicId);
-      if (seen.insert(key).second)
+      if (seen.insert(key).second) {
         pipeIntToLogicIds[static_cast<int>(s.pipe)].push_back(s.logicId);
+      }
     }
 
     for (auto &[pipeInt, logicIds] : pipeIntToLogicIds) {
-      if (logicIds.size() <= 1)
+      if (logicIds.size() <= 1) {
         continue;
+      }
 
       DenseMap<int, SmallVector<int>> sigPipeToIds;
       for (int lid : logicIds) {
         auto it = logicIdToPipeInts.find(lid);
-        if (it == logicIdToPipeInts.end())
+        if (it == logicIdToPipeInts.end()) {
           continue;
+        }
         SmallVector<int> otherPipes;
         for (int p : it->second) {
-          if (p != pipeInt)
+          if (p != pipeInt) {
             otherPipes.push_back(p);
+          }
         }
-        if (otherPipes.size() == 1)
+        if (otherPipes.size() == 1) {
           sigPipeToIds[otherPipes[0]].push_back(lid);
+        }
       }
 
       for (auto &[sigPipe, ids] : sigPipeToIds) {
         if (ids.size() > 1) {
           int survivor = *std::min_element(ids.begin(), ids.end());
           for (int id : ids) {
-            if (id != survivor && !mergeMap.count(id))
+            if (id != survivor && !mergeMap.count(id)) {
               mergeMap[id] = survivor;
+            }
           }
         }
       }
@@ -560,8 +603,9 @@ void BufidSyncAnalysis::optimizeSamePipeMerge() {
   }
 
   for (auto &[id, target] : mergeMap) {
-    while (mergeMap.count(target))
+    while (mergeMap.count(target)) {
       target = mergeMap[target];
+    }
   }
 
   DenseMap<Operation *, BufSyncPipeBuild> newOp2BufSync;
@@ -572,8 +616,9 @@ void BufidSyncAnalysis::optimizeSamePipeMerge() {
     for (auto &s : build.pipeBefore) {
       int newLogicId = s.logicId;
       auto it = mergeMap.find(newLogicId);
-      if (it != mergeMap.end())
+      if (it != mergeMap.end()) {
         newLogicId = it->second;
+      }
       auto key = std::make_pair(static_cast<int>(s.pipe), newLogicId);
       if (seenBefore.insert(key).second) {
         BufSyncOperation newS = s;
@@ -586,8 +631,9 @@ void BufidSyncAnalysis::optimizeSamePipeMerge() {
     for (auto &s : build.pipeAfter) {
       int newLogicId = s.logicId;
       auto it = mergeMap.find(newLogicId);
-      if (it != mergeMap.end())
+      if (it != mergeMap.end()) {
         newLogicId = it->second;
+      }
       auto key = std::make_pair(static_cast<int>(s.pipe), newLogicId);
       if (seenAfter.insert(key).second) {
         BufSyncOperation newS = s;
@@ -659,8 +705,9 @@ void BufidSyncAnalysis::mergeGetRls() {
                     keysToErase.push_back(existingKey);
                   }
                 }
-                for (auto &key : keysToErase)
+                for (auto &key : keysToErase) {
                   rlsMap.erase(key);
+                }
               }
               newPipeBefore.push_back(sync);
             }
@@ -681,6 +728,21 @@ void BufidSyncAnalysis::mergeGetRls() {
           if (auto forOp = dyn_cast<scf::ForOp>(&op)) {
             for (auto &region : forOp->getRegions()) {
               RlsMap freshMap;
+              for (auto &subBlock : region.getBlocks()) {
+                processBlock(&subBlock, freshMap);
+              }
+            }
+            rlsMap.clear();
+            continue;
+          }
+
+          // A while loop has two regions and a back-edge. Keep release/get
+          // state local to each region and do not carry a linear-scan map
+          // across the loop boundary: the loop may execute zero or many
+          // times, so keeping an outer linear state would be unsound.
+          if (auto whileOp = dyn_cast<scf::WhileOp>(&op)) {
+            for (auto &region : whileOp->getRegions()) {
+              RlsMap freshMap;
               for (auto &subBlock : region.getBlocks())
                 processBlock(&subBlock, freshMap);
             }
@@ -691,8 +753,9 @@ void BufidSyncAnalysis::mergeGetRls() {
           if (auto ifOp = dyn_cast<scf::IfOp>(&op)) {
             for (auto &region : ifOp->getRegions()) {
               RlsMap freshMap;
-              for (auto &subBlock : region.getBlocks())
+              for (auto &subBlock : region.getBlocks()) {
                 processBlock(&subBlock, freshMap);
+              }
             }
             rlsMap.clear();
             continue;
@@ -701,16 +764,19 @@ void BufidSyncAnalysis::mergeGetRls() {
       };
 
   RlsMap rootMap;
-  for (auto &block : func_.getBody().getBlocks())
+  for (auto &block : func_.getBody().getBlocks()) {
     processBlock(&block, rootMap);
+  }
 
   SmallVector<Operation *> emptyOps;
   for (auto &[op, build] : op2BufSync_) {
-    if (build.pipeBefore.empty() && build.pipeAfter.empty())
+    if (build.pipeBefore.empty() && build.pipeAfter.empty()) {
       emptyOps.push_back(op);
+    }
   }
-  for (auto *op : emptyOps)
+  for (auto *op : emptyOps) {
     op2BufSync_.erase(op);
+  }
 
   if (debugEnabled_) {
     printOp2BufSync(llvm::outs(), op2BufSync_, func_,

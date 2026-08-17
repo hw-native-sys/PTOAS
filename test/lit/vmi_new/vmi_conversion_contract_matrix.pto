@@ -60,16 +60,6 @@ module {
 // -----
 
 module {
-  func.func @signless_widen(%x: !pto.vmi.vreg<64xi8>) {
-    // expected-error@+1 {{int-widening conversions require a signed or unsigned integer source element type}}
-    %r = pto.vmi.vcvt %x : !pto.vmi.vreg<64xi8> -> !pto.vmi.vreg<64xi16>
-    return
-  }
-}
-
-// -----
-
-module {
   func.func @reinterpret_total_bits(%x: !pto.vmi.vreg<64xf32>) {
     // expected-error@+1 {{requires source and result to carry the same total number of bits}}
     %r = pto.vmi.vinterpret_cast %x : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>

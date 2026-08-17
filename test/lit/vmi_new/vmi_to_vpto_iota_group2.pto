@@ -29,9 +29,9 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_vadds_vsts(
 // CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
 // CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
 // CHECK-NOT: pto.vci
-// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
 // CHECK: pto.vadds %[[IDX]], %[[C1000]]
 // CHECK: pto.vadds %[[IDX]], %[[C1000]]
 // CHECK: pto.vsts

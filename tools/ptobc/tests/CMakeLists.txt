@@ -139,6 +139,16 @@ add_test(NAME ptobc_fp_operand_forms_v0_encode
     ${CMAKE_CURRENT_LIST_DIR}/fp_operand_forms_v0_encode.sh
 )
 
+add_test(NAME ptobc_mx_grp_axis_v0_encode
+  COMMAND ${CMAKE_COMMAND} -E env
+    --unset=PTOBC_ALLOW_GENERIC
+    PTOBC_BIN=$<TARGET_FILE:ptobc>
+    PTOAS_BIN=${CMAKE_BINARY_DIR}/tools/ptoas/ptoas
+    PYTHON_EXECUTABLE=${Python3_EXECUTABLE}
+    TESTDATA_DIR=${PTObc_TESTDATA_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/mx_grp_axis_v0_encode.sh
+)
+
 add_test(NAME ptobc_fp_extended_v0_compatibility
   COMMAND ${CMAKE_COMMAND} -E env
     PTOBC_BIN=$<TARGET_FILE:ptobc>

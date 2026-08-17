@@ -44,7 +44,6 @@ mlir::Value findMultiTileSlotExpr(mlir::Value v);
 /// intentionally narrow: it accepts the forms commonly produced by
 /// frontends and lowerings (`iv % N`, `(iv + c) % N`, `c`, and same-SSA
 /// equality) and bails to `kUnknown` for anything else.
-///
 /// Examples (all with N == 2):
 ///   compareSlotSSA(%iv % 2, %iv % 2)         -> kEqual
 ///   compareSlotSSA((%iv + 1) % 2, %iv % 2)   -> kDisjoint

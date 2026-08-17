@@ -1,4 +1,0 @@
-interface:
-  display_name: "Build PTOAS in WSL"
-  short_description: "Build PTOAS with LLVM 19 inside WSL"
-  default_prompt: "Use $build-ptoas-wsl to build PTOAS from source in WSL."

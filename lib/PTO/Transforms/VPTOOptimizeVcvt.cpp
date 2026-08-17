@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
@@ -101,13 +102,13 @@ static bool isZeroGapLoad(Value value, AlignedUnsignedWidening widening) {
     return false;
   }
 
-  if (widening.payloadBits == 8 && widening.carrierBits == 16) {
+  if (widening.payloadBits == mlir::pto::kValue8 && widening.carrierBits == 16) {
     return *dist == "UNPK_B8";
   }
-  if (widening.payloadBits == 16 && widening.carrierBits == 32) {
+  if (widening.payloadBits == mlir::pto::kValue16 && widening.carrierBits == 32) {
     return *dist == "UNPK_B16";
   }
-  if (widening.payloadBits == 8 && widening.carrierBits == 32) {
+  if (widening.payloadBits == mlir::pto::kValue8 && widening.carrierBits == 32) {
     return *dist == "UNPK4";
   }
   return false;
@@ -140,8 +141,8 @@ static bool isZeroGapNarrowingVcvt(Value value,
   if (!part) {
     return false;
   }
-  return (inputBits == resultBits * 2 && *part == "EVEN") ||
-         (inputBits == resultBits * 4 && *part == "P0");
+  return (inputBits == resultBits * mlir::pto::kValue2 && *part == "EVEN") ||
+         (inputBits == resultBits * mlir::pto::kValue4 && *part == "P0");
 }
 
 // Deliberately admit only instructions that construct a carrier by zero
@@ -172,7 +173,7 @@ static bool isCanonicalZeroGapCarrier(Value value,
   unsigned resultBits =
       getPTOStorageElemBitWidth(resultType.getElementType());
   if (sourceBits == 0 || resultBits != widening.carrierBits ||
-      resultBits != sourceBits * 2 || widening.payloadBits > sourceBits) {
+      resultBits != sourceBits * mlir::pto::kValue2 || widening.payloadBits > sourceBits) {
     return false;
   }
 
@@ -211,9 +212,9 @@ matchAlignedUnsignedWidening(VcvtOp op) {
   if (!part) {
     return std::nullopt;
   }
-  if ((resultBits == inputBits * 2 && *part != "EVEN") ||
-      (resultBits == inputBits * 4 && *part != "P0") ||
-      (resultBits != inputBits * 2 && resultBits != inputBits * 4)) {
+  if ((resultBits == inputBits * mlir::pto::kValue2 && *part != "EVEN") ||
+      (resultBits == inputBits * mlir::pto::kValue4 && *part != "P0") ||
+      (resultBits != inputBits * mlir::pto::kValue2 && resultBits != inputBits * 4)) {
     return std::nullopt;
   }
 
@@ -268,9 +269,8 @@ struct VPTOOptimizeVcvtPass
     RewritePatternSet patterns(&getContext());
     patterns.add<CanonicalizeEquivalentPartPattern,
                  FoldZeroGapExtensionPattern>(&getContext());
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
-    }
   }
 };
 

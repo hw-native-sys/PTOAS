@@ -1,0 +1,305 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not pto-test-opt %t/record_event.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=RECORD-EVENT
+// RUN: not pto-test-opt %t/wait_event.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=WAIT-EVENT
+// RUN: not pto-test-opt %t/barrier_sync.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=BARRIER-SYNC
+// RUN: not pto-test-opt %t/set_flag.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=SET-FLAG
+// RUN: not pto-test-opt %t/set_flag_dyn.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=SET-FLAG-DYN
+// RUN: not pto-test-opt %t/wait_flag_dyn.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=WAIT-FLAG-DYN
+// RUN: not pto-test-opt %t/get_buf_nested.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=GET-BUF
+// RUN: not pto-test-opt %t/rls_buf.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=RLS-BUF
+// RUN: not pto-test-opt %t/get_buf_dyn.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=GET-BUF-DYN
+// RUN: not pto-test-opt %t/rls_buf_dyn.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=RLS-BUF-DYN
+// RUN: not pto-test-opt %t/sync_set.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=SYNC-SET
+// RUN: not pto-test-opt %t/sync_wait.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=SYNC-WAIT
+// RUN: not pto-test-opt %t/barrier.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=BARRIER
+// RUN: not pto-test-opt %t/cmo.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=CMO
+// RUN: not pto-test-opt %t/fence.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=FENCE
+// RUN: not pto-test-opt %t/tsync.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=TSYNC
+// RUN: not pto-test-opt %t/syncall.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=SYNCALL
+// RUN: not pto-test-opt %t/dsb.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=DSB
+// RUN: not pto-test-opt %t/dcci.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=DCCI
+// RUN: not pto-test-opt %t/syncthreads.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=SYNCTHREADS
+// RUN: not pto-test-opt %t/threadfence.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=THREADFENCE
+// RUN: not pto-test-opt %t/threadfence_block.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=THREADFENCE-BLOCK
+// RUN: not pto-test-opt %t/strict_wait.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=STRICT-WAIT
+// RUN: pto-test-opt %t/mem_bar.pto -o /dev/null
+
+// RECORD-EVENT: error: 'pto.record_event' op must be outside 'pto.vecscope'
+// WAIT-EVENT: error: 'pto.wait_event' op must be outside 'pto.vecscope'
+// BARRIER-SYNC: error: 'pto.barrier_sync' op must be outside 'pto.vecscope'
+// SET-FLAG: error: 'pto.set_flag' op must be outside 'pto.vecscope'
+// SET-FLAG-DYN: error: 'pto.set_flag_dyn' op must be outside 'pto.vecscope'
+// WAIT-FLAG-DYN: error: 'pto.wait_flag_dyn' op must be outside 'pto.vecscope'
+// GET-BUF: error: 'pto.get_buf' op must be outside 'pto.vecscope'
+// RLS-BUF: error: 'pto.rls_buf' op must be outside 'pto.vecscope'
+// GET-BUF-DYN: error: 'pto.get_buf_dyn' op must be outside 'pto.vecscope'
+// RLS-BUF-DYN: error: 'pto.rls_buf_dyn' op must be outside 'pto.vecscope'
+// SYNC-SET: error: 'pto.sync.set' op must be outside 'pto.vecscope'
+// SYNC-WAIT: error: 'pto.sync.wait' op must be outside 'pto.vecscope'
+// BARRIER: error: 'pto.barrier' op must be outside 'pto.vecscope'
+// CMO: error: 'pto.cmo.cacheinvalid' op must be outside 'pto.vecscope'
+// FENCE: error: 'pto.fence.barrier_all' op must be outside 'pto.vecscope'
+// TSYNC: error: 'pto.tsync' op must be outside 'pto.vecscope'
+// SYNCALL: error: 'pto.syncall' op must be outside 'pto.vecscope'
+// DSB: error: 'pto.dsb' op must be outside 'pto.vecscope'
+// DCCI: error: 'pto.dcci' op must be outside 'pto.vecscope'
+// SYNCTHREADS: error: 'pto.syncthreads' op must be outside 'pto.vecscope'
+// THREADFENCE: error: 'pto.threadfence' op must be outside 'pto.vecscope'
+// THREADFENCE-BLOCK: error: 'pto.threadfence_block' op must be outside 'pto.vecscope'
+// STRICT-WAIT: error: 'pto.wait_flag' op must be outside 'pto.strict_vecscope'
+
+//--- record_event.pto
+module {
+  func.func @record_event() {
+    pto.vecscope {
+      pto.record_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    }
+    return
+  }
+}
+
+//--- wait_event.pto
+module {
+  func.func @wait_event() {
+    pto.vecscope {
+      pto.wait_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    }
+    return
+  }
+}
+
+//--- barrier_sync.pto
+module {
+  func.func @barrier_sync() {
+    pto.vecscope {
+      pto.barrier_sync [<TVEC>]
+    }
+    return
+  }
+}
+
+//--- set_flag.pto
+module {
+  func.func @set_flag() {
+    pto.vecscope {
+      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    }
+    return
+  }
+}
+
+//--- set_flag_dyn.pto
+module {
+  func.func @set_flag_dyn() {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+    }
+    return
+  }
+}
+
+//--- wait_flag_dyn.pto
+module {
+  func.func @wait_flag_dyn() {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+    }
+    return
+  }
+}
+
+//--- get_buf_nested.pto
+module {
+  func.func @get_buf_nested() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.vecscope {
+      scf.for %i = %c0 to %c1 step %c1 {
+        pto.get_buf "PIPE_V", 0, 0
+      }
+    }
+    return
+  }
+}
+
+//--- sync_set.pto
+module {
+  func.func @sync_set() {
+    pto.vecscope {
+      pto.sync.set <PIPE_V>, 0
+    }
+    return
+  }
+}
+
+//--- sync_wait.pto
+module {
+  func.func @sync_wait() {
+    pto.vecscope {
+      pto.sync.wait <PIPE_V>, 0
+    }
+    return
+  }
+}
+
+//--- barrier.pto
+module {
+  func.func @barrier() {
+    pto.vecscope {
+      pto.barrier #pto.pipe<PIPE_V>
+    }
+    return
+  }
+}
+
+//--- cmo.pto
+module {
+  func.func @cmo() {
+    pto.vecscope {
+      pto.cmo.cacheinvalid all #pto.address_space<gm>
+    }
+    return
+  }
+}
+
+//--- fence.pto
+module {
+  func.func @fence() {
+    pto.vecscope {
+      pto.fence.barrier_all #pto.fence_scope<gm>
+    }
+    return
+  }
+}
+
+//--- tsync.pto
+module {
+  func.func @tsync(%event: !pto.partition_tensor_view<32x32xf32>) {
+    pto.vecscope {
+      pto.tsync ins(%event : !pto.partition_tensor_view<32x32xf32>)
+    }
+    return
+  }
+}
+
+//--- syncall.pto
+module {
+  func.func @syncall() {
+    pto.vecscope {
+      pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aiv_only>
+    }
+    return
+  }
+}
+
+//--- rls_buf.pto
+module {
+  func.func @rls_buf() {
+    pto.vecscope {
+      pto.rls_buf "PIPE_V", 0, 0
+    }
+    return
+  }
+}
+
+//--- get_buf_dyn.pto
+module {
+  func.func @get_buf_dyn() {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      pto.get_buf_dyn "PIPE_V", %c0, 0
+    }
+    return
+  }
+}
+
+//--- rls_buf_dyn.pto
+module {
+  func.func @rls_buf_dyn() {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      pto.rls_buf_dyn "PIPE_V", %c0, 0
+    }
+    return
+  }
+}
+
+//--- dsb.pto
+module {
+  func.func @dsb() {
+    pto.vecscope {
+      pto.dsb "DDR"
+    }
+    return
+  }
+}
+
+//--- dcci.pto
+module {
+  func.func @dcci(%gm: !pto.ptr<i8, gm>) {
+    pto.vecscope {
+      pto.dcci %gm "SINGLE_CACHE_LINE" : !pto.ptr<i8, gm>
+    }
+    return
+  }
+}
+
+//--- syncthreads.pto
+module {
+  func.func @syncthreads() attributes {pto.simt_entry} {
+    pto.vecscope {
+      pto.syncthreads
+    }
+    return
+  }
+}
+
+//--- threadfence.pto
+module {
+  func.func @threadfence() attributes {pto.simt_entry} {
+    pto.vecscope {
+      pto.threadfence
+    }
+    return
+  }
+}
+
+//--- threadfence_block.pto
+module {
+  func.func @threadfence_block() attributes {pto.simt_entry} {
+    pto.vecscope {
+      pto.threadfence_block
+    }
+    return
+  }
+}
+
+//--- strict_wait.pto
+module {
+  func.func @strict_wait() {
+    pto.strict_vecscope() {
+      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    } : () -> ()
+    return
+  }
+}
+
+//--- mem_bar.pto
+module {
+  func.func @mem_bar() {
+    pto.vecscope {
+      pto.mem_bar "VV_ALL"
+    }
+    return
+  }
+}

@@ -34,7 +34,7 @@ struct SyncRecord {
   llvm::DenseMap<int, bool> syncFinder;
 };
  
-using SyncRecordList = std::array<SyncRecord, MAX_MULTI_BUFFER_NUM>;
+using SyncRecordList = std::array<SyncRecord, kMaxMultiBufferCount>;
  
 class InsertSyncAnalysis {
 public:

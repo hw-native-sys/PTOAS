@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "ptobc/mlir_helpers.h"
 #include "ptobc/ptobc_format.h"
 #include "ptobc/leb128.h"
@@ -71,7 +72,9 @@ struct Reader {
   const uint8_t* end;
 
   uint8_t readU8() {
-    if (p >= end) throw std::runtime_error("EOF");
+    if (p >= end) {
+      throw std::runtime_error("EOF");
+    }
     return *p++;
   }
   uint16_t readU16LE() {
@@ -103,7 +106,9 @@ struct Reader {
   }
 
   std::vector<uint8_t> readBytes(size_t n) {
-    if (size_t(end - p) < n) throw std::runtime_error("EOF");
+    if (size_t(end - p) < n) {
+      throw std::runtime_error("EOF");
+    }
     std::vector<uint8_t> out(p, p + n);
     p += n;
     return out;
@@ -120,7 +125,9 @@ static void parseStringsSection(const std::vector<uint8_t>& data, std::vector<st
     auto bs = r.readBytes(len);
     strings.emplace_back(reinterpret_cast<const char*>(bs.data()), bs.size());
   }
-  if (r.p != r.end) throw std::runtime_error("trailing bytes in STRINGS");
+  if (r.p != r.end) {
+    throw std::runtime_error("trailing bytes in STRINGS");
+  }
 }
 
 struct TypeEntry { uint8_t tag; std::string asmStr; };
@@ -201,7 +208,9 @@ static DebugInfo parseDebugInfoSection(const std::vector<uint8_t>& data) {
     di.snippets.push_back({fid, opid, ssid});
   }
 
-  if (r.p != r.end) throw std::runtime_error("trailing bytes in DEBUGINFO");
+  if (r.p != r.end) {
+    throw std::runtime_error("trailing bytes in DEBUGINFO");
+  }
   return di;
 }
 
@@ -217,12 +226,18 @@ static void parseTypesSection(const std::vector<uint8_t>& data,
   for (uint64_t i = 0; i < cnt; ++i) {
     uint8_t tag = r.readU8();
     uint8_t flags = r.readU8();
-    if ((flags & 0x1) == 0) throw std::runtime_error("type missing asm");
+    if ((flags & 0x1) == 0) {
+      throw std::runtime_error("type missing asm");
+    }
     uint64_t sid = r.readULEB();
-    if (sid >= strings.size()) throw std::runtime_error("bad asm_sid");
+    if (sid >= strings.size()) {
+      throw std::runtime_error("bad asm_sid");
+    }
     types.push_back({tag, strings[sid]});
   }
-  if (r.p != r.end) throw std::runtime_error("trailing bytes in TYPES");
+  if (r.p != r.end) {
+    throw std::runtime_error("trailing bytes in TYPES");
+  }
 }
 
 static void parseAttrsSection(const std::vector<uint8_t>& data,
@@ -236,12 +251,18 @@ static void parseAttrsSection(const std::vector<uint8_t>& data,
   for (uint64_t i = 0; i < cnt; ++i) {
     uint8_t tag = r.readU8();
     uint8_t flags = r.readU8();
-    if ((flags & 0x1) == 0) throw std::runtime_error("attr missing asm");
+    if ((flags & 0x1) == 0) {
+      throw std::runtime_error("attr missing asm");
+    }
     uint64_t sid = r.readULEB();
-    if (sid >= strings.size()) throw std::runtime_error("bad asm_sid");
+    if (sid >= strings.size()) {
+      throw std::runtime_error("bad asm_sid");
+    }
     attrs.push_back({tag, strings[sid]});
   }
-  if (r.p != r.end) throw std::runtime_error("trailing bytes in ATTRS");
+  if (r.p != r.end) {
+    throw std::runtime_error("trailing bytes in ATTRS");
+  }
 }
 
 static void parseConstPoolSection(const std::vector<uint8_t>& data,
@@ -273,7 +294,9 @@ static void parseConstPoolSection(const std::vector<uint8_t>& data,
     } else if (tag == 0x03) {
       // index vec (not yet needed for sample decoding)
       uint64_t n = r.readULEB();
-      for (uint64_t j = 0; j < n; ++j) (void)r.readSLEB();
+      for (uint64_t j = 0; j < n; ++j) {
+        (void)r.readSLEB();
+      }
       ConstEntryParsed e;
       e.tag = tag;
       consts.push_back(std::move(e));
@@ -292,7 +315,9 @@ static void parseConstPoolSection(const std::vector<uint8_t>& data,
     }
   }
 
-  if (r.p != r.end) throw std::runtime_error("trailing bytes in CONSTPOOL");
+  if (r.p != r.end) {
+    throw std::runtime_error("trailing bytes in CONSTPOOL");
+  }
 }
 
 struct BuildCtx {
@@ -311,13 +336,19 @@ struct BuildCtx {
 };
 
 static mlir::Type getType(BuildCtx& bc, uint64_t tid) {
-  if (tid >= bc.types->size()) throw std::runtime_error("bad type_id");
+  if (tid >= bc.types->size()) {
+    throw std::runtime_error("bad type_id");
+  }
   return parseType(*bc.ctx, (*bc.types)[tid].asmStr);
 }
 
 static mlir::DictionaryAttr getAttrDict(BuildCtx& bc, uint64_t aid) {
-  if (aid == 0) return mlir::DictionaryAttr::get(bc.ctx);
-  if (aid >= bc.attrs->size()) throw std::runtime_error("bad attr_id");
+  if (aid == 0) {
+    return mlir::DictionaryAttr::get(bc.ctx);
+  }
+  if (aid >= bc.attrs->size()) {
+    throw std::runtime_error("bad attr_id");
+  }
   return parseAttrDict(*bc.ctx, (*bc.attrs)[aid].asmStr);
 }
 
@@ -339,13 +370,15 @@ static mlir::Attribute buildFloatConstAttr(BuildCtx &bc,
                                            const ConstEntryParsed &entry) {
   auto ty = getType(bc, entry.typeId);
   auto floatType = mlir::dyn_cast<mlir::FloatType>(ty);
-  if (!floatType)
+  if (!floatType) {
     throw std::runtime_error("ConstFloatBits type is not FloatType");
+  }
 
   unsigned bitWidth = floatType.getWidth();
   unsigned byteLen = (bitWidth + 7) / 8;
-  if (entry.floatBytes.size() != byteLen)
+  if (entry.floatBytes.size() != byteLen) {
     throw std::runtime_error("ConstFloatBits byte_len mismatch");
+  }
 
   llvm::APInt bits = rebuildAPIntFromBytes(entry.floatBytes, bitWidth);
   llvm::APFloat value(floatType.getFloatSemantics(), bits);
@@ -356,21 +389,27 @@ static mlir::Attribute buildIntegerConstAttr(BuildCtx &bc,
                                              const ConstEntryParsed &entry) {
   auto ty = getType(bc, entry.typeId);
   auto intType = mlir::dyn_cast<mlir::IntegerType>(ty);
-  if (!intType)
+  if (!intType) {
     throw std::runtime_error("ConstIntBits type is not IntegerType");
+  }
 
   unsigned bitWidth = intType.getWidth();
   unsigned byteLen = (bitWidth + 7) / 8;
-  if (entry.intBytes.size() != byteLen)
+  if (entry.intBytes.size() != byteLen) {
     throw std::runtime_error("ConstIntBits byte_len mismatch");
+  }
 
   llvm::APInt bits = rebuildAPIntFromBytes(entry.intBytes, bitWidth);
   return mlir::IntegerAttr::get(intType, bits);
 }
 
 static mlir::Attribute buildConstAttr(BuildCtx &bc, uint64_t constId) {
-  if (!bc.consts) throw std::runtime_error("constpool not available");
-  if (constId >= bc.consts->size()) throw std::runtime_error("const_id out of range");
+  if (!bc.consts) {
+    throw std::runtime_error("constpool not available");
+  }
+  if (constId >= bc.consts->size()) {
+    throw std::runtime_error("const_id out of range");
+  }
   const auto &e = (*bc.consts)[constId];
 
   if (e.tag == 0x01) {
@@ -379,45 +418,54 @@ static mlir::Attribute buildConstAttr(BuildCtx &bc, uint64_t constId) {
     if (mlir::isa<mlir::IndexType>(ty)) {
       return mlir::IntegerAttr::get(ty, e.intValue);
     }
-    if (!it) throw std::runtime_error("ConstInt type is not integer/index");
+    if (!it) {
+      throw std::runtime_error("ConstInt type is not integer/index");
+    }
     return mlir::IntegerAttr::get(ty, e.intValue);
   }
 
-  if (e.tag == 0x02)
+  if (e.tag == 0x02) {
     return buildFloatConstAttr(bc, e);
+  }
 
-  if (e.tag == 0x04)
+  if (e.tag == 0x04) {
     return buildIntegerConstAttr(bc, e);
+  }
 
   throw std::runtime_error("unsupported const tag");
 }
 
 static void addAttrDictionary(mlir::OperationState &state,
                               mlir::DictionaryAttr dict) {
-  for (auto attr : dict)
+  for (auto attr : dict) {
     state.addAttribute(attr.getName(), attr.getValue());
+  }
 }
 
 static void registerDecodedOp(BuildCtx &bc, uint64_t opId, mlir::Operation *op) {
-  if (!bc.opsById)
+  if (!bc.opsById) {
     return;
-  if (opId >= bc.opsById->size())
+  }
+  if (opId >= bc.opsById->size()) {
     bc.opsById->resize(opId + 1, nullptr);
+  }
   (*bc.opsById)[opId] = op;
 }
 
 static void assignDecodedResults(BuildCtx &bc, size_t resStart,
                                  mlir::Operation *op, size_t numResults) {
-  for (size_t i = 0; i < numResults; ++i)
+  for (size_t i = 0; i < numResults; ++i) {
     bc.values[resStart + i] = op->getResult(i);
+  }
 }
 
 static llvm::SmallVector<uint64_t, kValueIdInlineCapacity>
 readValueIds(Reader &r, size_t count) {
   llvm::SmallVector<uint64_t, kValueIdInlineCapacity> ids;
   ids.reserve(count);
-  for (size_t i = 0; i < count; ++i)
+  for (size_t i = 0; i < count; ++i) {
     ids.push_back(r.readULEB());
+  }
   return ids;
 }
 
@@ -468,9 +516,11 @@ static llvm::SmallVector<uint64_t, kValueIdInlineCapacity>
 readKnownOperandIds(BuildCtx &bc, Reader &r, uint16_t opcode, uint8_t variant,
                     const ptobc::v0::OpInfo &info,
                     const KnownOpImmediates &imms) {
-  auto reorderLegacyIndexedTscatter = [&](llvm::SmallVector<uint64_t, 8> ids) {
-    if (opcode != 0x1056 || ids.size() != 3)
+  auto reorderLegacyIndexedTscatter = [opcode](
+                                       llvm::SmallVector<uint64_t, 8> ids) {
+    if (opcode != 0x1056 || ids.size() != 3) {
       return ids;
+    }
     // Historical v0 indexed tscatter payload is (src, indexes, dst), while the
     // current IR operand order is (src, dst, indexes).
     return llvm::SmallVector<uint64_t, 8>{ids[0], ids[2], ids[1]};
@@ -480,15 +530,17 @@ readKnownOperandIds(BuildCtx &bc, Reader &r, uint16_t opcode, uint8_t variant,
     return reorderLegacyIndexedTscatter(readValueIds(r, info.num_operands));
   case 0x01: {
     auto count = ptobc::v0::lookupOperandsByVariant(opcode, variant);
-    if (!count)
+    if (!count) {
       throw std::runtime_error("missing by-variant operand count");
+    }
     return reorderLegacyIndexedTscatter(readValueIds(r, *count));
   }
   case 0x02:
     return reorderLegacyIndexedTscatter(readValueIds(r, r.readULEB()));
   case 0x03:
-    if (imms.listMode != 0)
+    if (imms.listMode != 0) {
       throw std::runtime_error("list_mode=1 not supported yet");
+    }
     return reorderLegacyIndexedTscatter(
         readValueIds(r, size_t(info.num_operands) + size_t(imms.n1) +
                             size_t(imms.n2)));
@@ -508,8 +560,9 @@ materializeOperands(BuildCtx &bc, llvm::ArrayRef<uint64_t> operandIds) {
   llvm::SmallVector<mlir::Value, kOperandInlineCapacity> operands;
   operands.reserve(operandIds.size());
   for (uint64_t valueId : operandIds) {
-    if (valueId >= bc.values.size())
+    if (valueId >= bc.values.size()) {
       throw std::runtime_error("operand value_id out of range");
+    }
     operands.push_back(bc.values[valueId]);
   }
   return operands;
@@ -520,50 +573,51 @@ static void normalizeLegacyFpOperandOrder(
     llvm::SmallVectorImpl<mlir::Value> &operands) {
   if ((opcode == kTExtractFpWireOpcode ||
        opcode == kTInsertFpWireOpcode) &&
-      operands.size() == 5) {
+      operands.size() == mlir::pto::kValue5) {
     // Legacy wire order: src, fp, row, col, dst.
-    llvm::SmallVector<mlir::Value, 5> reordered{
+    llvm::SmallVector<mlir::Value, mlir::pto::kValue5> reordered{
         operands[0], operands[2], operands[3], operands[4], operands[1]};
     operands.assign(reordered.begin(), reordered.end());
     return;
   }
   if ((opcode == kTMovFpWireOpcode || opcode == kTStoreFpWireOpcode) &&
-      operands.size() == 3) {
+      operands.size() == mlir::pto::kValue3) {
     // Legacy wire order: src, fp, dst.
-    llvm::SmallVector<mlir::Value, 3> reordered{operands[0], operands[2],
+    llvm::SmallVector<mlir::Value, mlir::pto::kValue3> reordered{operands[0], operands[2],
                                                 operands[1]};
     operands.assign(reordered.begin(), reordered.end());
   }
 }
 
-static std::optional<llvm::SmallVector<int32_t, 6>>
+static std::optional<llvm::SmallVector<int32_t, mlir::pto::kValue6>>
 getUnifiedOperandSegments(uint16_t opcode,
                           llvm::ArrayRef<mlir::Value> operands) {
   switch (opcode) {
   case kTExtractOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 0, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 1, 1, 0, 0};
   case kTExtractFpWireOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 1, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 1, 1, 1, 0};
   case kTInsertOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 0, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 1, 1, 0, 0};
   case kTInsertFpWireOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 1, 1, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 1, 1, 1, 0};
   case kTMovOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 0, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 0, 0};
   case kTMovFpWireOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 1, 0};
   case kTStoreOpcode:
-    if (operands.size() == 2)
-      return llvm::SmallVector<int32_t, 6>{1, 1, 0, 0};
-    if (operands.size() == 3) {
+    if (operands.size() == mlir::pto::kValue2) {
+      return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 0, 0};
+    }
+    if (operands.size() == mlir::pto::kValue3) {
       const bool thirdIsFp =
           mlir::isa<mlir::pto::TileBufType>(operands.back().getType());
-      return llvm::SmallVector<int32_t, 6>{1, 1, thirdIsFp ? 1 : 0,
+      return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, thirdIsFp ? 1 : 0,
                                            thirdIsFp ? 0 : 1};
     }
     return std::nullopt;
   case kTStoreFpWireOpcode:
-    return llvm::SmallVector<int32_t, 6>{1, 1, 1, 0};
+    return llvm::SmallVector<int32_t, mlir::pto::kValue6>{1, 1, 1, 0};
   default:
     return std::nullopt;
   }
@@ -606,8 +660,9 @@ static mlir::Operation *buildGenericOpFromReader(BuildCtx &bc, Reader &r,
                                                  uint64_t opId,
                                                  uint64_t attrId) {
   uint64_t nameSid = r.readULEB();
-  if (nameSid >= bc.strings->size())
+  if (nameSid >= bc.strings->size()) {
     throw std::runtime_error("bad op_name sid");
+  }
   std::string opName = (*bc.strings)[nameSid];
 
   uint64_t nres = r.readULEB();
@@ -628,15 +683,17 @@ static mlir::Operation *buildGenericOpFromReader(BuildCtx &bc, Reader &r,
   state.addOperands(operands);
   state.addTypes(resultTypes);
   addAttrDictionary(state, getAttrDict(bc, attrId));
-  for (uint64_t i = 0; i < nreg; ++i)
+  for (uint64_t i = 0; i < nreg; ++i) {
     (void)state.addRegion();
+  }
 
   mlir::Operation *op = mlir::Operation::create(state);
   block.getOperations().push_back(op);
   registerDecodedOp(bc, opId, op);
   assignDecodedResults(bc, resStart, op, nres);
-  for (uint64_t i = 0; i < nreg; ++i)
+  for (uint64_t i = 0; i < nreg; ++i) {
     buildRegionInto(bc, r, op->getRegion(i));
+  }
   return op;
 }
 
@@ -671,8 +728,9 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
                                                uint16_t opcode,
                                                uint64_t attrId) {
   const auto *info = ptobc::v0::lookupByOpcode(opcode);
-  if (!info)
+  if (!info) {
     throw std::runtime_error("missing opcode schema");
+  }
 
   uint8_t variant = info->has_variant_u8 ? r.readU8() : 0;
   KnownOpImmediates imms = readKnownOpImmediates(r, *info);
@@ -685,31 +743,36 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
   switch (info->result_type_mode) {
   case 0x00:
     resultTypes.reserve(numResults);
-    for (uint64_t i = 0; i < numResults; ++i)
+    for (uint64_t i = 0; i < numResults; ++i) {
       resultTypes.push_back(mlir::NoneType::get(bc.ctx));
+    }
     break;
   case 0x01:
     resultTypes.reserve(numResults);
-    for (uint64_t i = 0; i < numResults; ++i)
+    for (uint64_t i = 0; i < numResults; ++i) {
       resultTypes.push_back(getType(bc, r.readULEB()));
+    }
     break;
   case 0x02:
     numResults = r.readULEB();
     resultTypes.reserve(numResults);
-    for (uint64_t i = 0; i < numResults; ++i)
+    for (uint64_t i = 0; i < numResults; ++i) {
       resultTypes.push_back(getType(bc, r.readULEB()));
+    }
     break;
   default:
     throw std::runtime_error("unknown result_type_mode");
   }
 
   const size_t resStart = bc.values.size();
-  for (uint64_t i = 0; i < numResults; ++i)
+  for (uint64_t i = 0; i < numResults; ++i) {
     bc.values.push_back(mlir::Value());
+  }
 
   const char *opNameC = ptobc::v0::fullNameFromOpcodeVariant(opcode, variant);
-  if (!opNameC)
+  if (!opNameC) {
     throw std::runtime_error("failed to map opcode->name");
+  }
 
   mlir::OperationState state(mlir::UnknownLoc::get(bc.ctx), opNameC);
   state.addOperands(operands);
@@ -717,30 +780,37 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
   addAttrDictionary(state, getAttrDict(bc, attrId));
   auto unifiedOperandSegments = getUnifiedOperandSegments(opcode, operands);
   addImmediateAttrs(bc, state, *info, imms);
-  for (unsigned i = 0; i < info->num_regions; ++i)
+  for (unsigned i = 0; i < info->num_regions; ++i) {
     (void)state.addRegion();
+  }
 
   mlir::Operation *op = mlir::Operation::create(state);
   // In MLIR 21, AttrSizedOperandSegments is stored as an inherent property.
   // OperationState's generic attribute list does not initialize it, so update
   // the generated property storage directly after creating the registered op.
-  if (unifiedOperandSegments)
+  if (unifiedOperandSegments) {
     setUnifiedOperandSegmentProperty(op, opcode, *unifiedOperandSegments);
+  }
   block.getOperations().push_back(op);
   registerDecodedOp(bc, opId, op);
   assignDecodedResults(bc, resStart, op, numResults);
-  for (unsigned i = 0; i < info->num_regions; ++i)
+  for (unsigned i = 0; i < info->num_regions; ++i) {
     buildRegionInto(bc, r, op->getRegion(i));
+  }
   return op;
 }
 
 static void buildOpList(BuildCtx& bc, Reader& r, mlir::Block& block) {
   const bool dbg = debugEnabled();
   uint64_t opcnt = r.readULEB();
-  if (dbg) llvm::errs() << "[ptobc]   ops=" << opcnt << "\n";
+  if (dbg) {
+    llvm::errs() << "[ptobc]   ops=" << opcnt << "\n";
+  }
 
   for (uint64_t oi = 0; oi < opcnt; ++oi) {
-    if (dbg) llvm::errs() << "[ptobc]    op[" << oi << "]...\n";
+    if (dbg) {
+      llvm::errs() << "[ptobc]    op[" << oi << "]...\n";
+    }
     const uint64_t opId = bc.nextOpId ? (*bc.nextOpId)++ : 0;
 
     uint16_t opcode = r.readU16LE();
@@ -757,15 +827,21 @@ static void buildOpList(BuildCtx& bc, Reader& r, mlir::Block& block) {
 static void buildRegionInto(BuildCtx& bc, Reader& r, mlir::Region& region) {
   const bool dbg = debugEnabled();
   uint64_t bcnt = r.readULEB();
-  if (dbg) llvm::errs() << "[ptobc] region: blocks=" << bcnt << "\n";
+  if (dbg) {
+    llvm::errs() << "[ptobc] region: blocks=" << bcnt << "\n";
+  }
   region.getBlocks().clear();
 
   for (uint64_t bi = 0; bi < bcnt; ++bi) {
-    if (dbg) llvm::errs() << "[ptobc]  block[" << bi << "]...\n";
+    if (dbg) {
+      llvm::errs() << "[ptobc]  block[" << bi << "]...\n";
+    }
     auto* block = new mlir::Block();
 
     uint64_t nargs = r.readULEB();
-    if (dbg) llvm::errs() << "[ptobc]   nargs=" << nargs << "\n";
+    if (dbg) {
+      llvm::errs() << "[ptobc]   nargs=" << nargs << "\n";
+    }
     for (uint64_t ai = 0; ai < nargs; ++ai) {
       uint64_t tid = r.readULEB();
       auto ty = getType(bc, tid);
@@ -799,16 +875,18 @@ static uint64_t readModuleHeader(Reader &r, bool dbg) {
     llvm::errs() << "[ptobc] module: moduleAttrId=" << moduleAttrId
                  << " globals=" << globalCount << "\n";
   }
-  if (globalCount != 0)
+  if (globalCount != 0) {
     throw std::runtime_error("globals not supported");
+  }
   return moduleAttrId;
 }
 
 static std::vector<FuncDecl> readFunctionDecls(BuildCtx &bc, Reader &r,
                                                bool dbg) {
   uint64_t funcCount = r.readULEB();
-  if (dbg)
+  if (dbg) {
     llvm::errs() << "[ptobc] module: funcs=" << funcCount << "\n";
+  }
 
   std::vector<FuncDecl> decls;
   decls.reserve(funcCount);
@@ -817,10 +895,12 @@ static std::vector<FuncDecl> readFunctionDecls(BuildCtx &bc, Reader &r,
     uint64_t ftypeId = r.readULEB();
     uint8_t flags = r.readU8();
     uint64_t fattrId = r.readULEB();
-    if (nameSid >= bc.strings->size())
+    if (nameSid >= bc.strings->size()) {
       throw std::runtime_error("bad func name sid");
-    if (ftypeId >= bc.types->size())
+    }
+    if (ftypeId >= bc.types->size()) {
       throw std::runtime_error("bad func type id");
+    }
 
     if (dbg) {
       llvm::errs() << "[ptobc] func[" << i << "]: nameSid=" << nameSid
@@ -830,8 +910,9 @@ static std::vector<FuncDecl> readFunctionDecls(BuildCtx &bc, Reader &r,
 
     auto type = parseType(*bc.ctx, bc.types->at(ftypeId).asmStr);
     auto funcType = mlir::dyn_cast<mlir::FunctionType>(type);
-    if (!funcType)
+    if (!funcType) {
       throw std::runtime_error("func type parse failed");
+    }
     decls.push_back(
         {bc.strings->at(nameSid), funcType, getAttrDict(bc, fattrId), flags});
   }
@@ -839,16 +920,18 @@ static std::vector<FuncDecl> readFunctionDecls(BuildCtx &bc, Reader &r,
 }
 
 static void applyAttrDictionary(mlir::Operation *op, mlir::DictionaryAttr dict) {
-  for (auto attr : dict)
+  for (auto attr : dict) {
     op->setAttr(attr.getName(), attr.getValue());
+  }
 }
 
 static void buildFunctionBody(BuildCtx &bc, Reader &r, mlir::func::FuncOp fn,
                               uint8_t flags, bool dbg,
                               std::vector<std::vector<mlir::Operation *>> *opsByFuncOut) {
   if ((flags & 0x1) != 0) {
-    if (opsByFuncOut)
+    if (opsByFuncOut) {
       opsByFuncOut->push_back({});
+    }
     return;
   }
 
@@ -862,8 +945,9 @@ static void buildFunctionBody(BuildCtx &bc, Reader &r, mlir::func::FuncOp fn,
     llvm::errs() << "[ptobc] func body built ok: values=" << bc.values.size()
                  << " ops=" << opsById.size() << "\n";
   }
-  if (opsByFuncOut)
+  if (opsByFuncOut) {
     opsByFuncOut->push_back(std::move(opsById));
+  }
 }
 
 static mlir::ModuleOp decodeToModule(mlir::MLIRContext& ctx,
@@ -886,17 +970,22 @@ static mlir::ModuleOp decodeToModule(mlir::MLIRContext& ctx,
   applyAttrDictionary(module.getOperation(), getAttrDict(bc, moduleAttrId));
 
   for (const auto &decl : decls) {
-    if (dbg)
+    if (dbg) {
       llvm::errs() << "[ptobc] building func body: " << decl.name << "\n";
+    }
     auto fn = mlir::func::FuncOp::create(mlir::UnknownLoc::get(&ctx), decl.name,
                                          decl.type);
-    if (dbg) llvm::errs() << "[ptobc] created func op\n";
+    if (dbg) {
+      llvm::errs() << "[ptobc] created func op\n";
+    }
     applyAttrDictionary(fn, decl.attrs);
     buildFunctionBody(bc, r, fn, decl.flags, dbg, opsByFuncOut);
     module.push_back(fn);
   }
 
-  if (r.p != r.end) throw std::runtime_error("trailing bytes in MODULE");
+  if (r.p != r.end) {
+    throw std::runtime_error("trailing bytes in MODULE");
+  }
   return module;
 }
 
@@ -904,9 +993,10 @@ static std::pair<uint8_t, std::vector<uint8_t>> readSection(Reader &r, bool dbg)
   uint8_t sid = r.readU8();
   uint32_t sectionLen = r.readU32LE();
   auto bytes = r.readBytes(sectionLen);
-  if (dbg)
+  if (dbg) {
     llvm::errs() << "[ptobc] section id=" << unsigned(sid)
                  << " len=" << sectionLen << "\n";
+  }
   return {sid, bytes};
 }
 
@@ -915,17 +1005,21 @@ static void applyDebugLocations(mlir::MLIRContext &ctx,
                                 const DebugInfo &dbgInfo,
                                 const std::vector<std::vector<mlir::Operation *>> &opsByFunc) {
   for (const auto &location : dbgInfo.locations) {
-    if (location.funcId >= opsByFunc.size())
+    if (location.funcId >= opsByFunc.size()) {
       continue;
+    }
     const auto &ops = opsByFunc[location.funcId];
-    if (location.opId >= ops.size())
+    if (location.opId >= ops.size()) {
       continue;
+    }
     mlir::Operation *op = ops[location.opId];
-    if (!op || location.fileId >= dbgInfo.files.size())
+    if (!op || location.fileId >= dbgInfo.files.size()) {
       continue;
+    }
     const auto &file = dbgInfo.files[location.fileId];
-    if (file.pathSid >= strings.size())
+    if (file.pathSid >= strings.size()) {
       continue;
+    }
     op->setLoc(mlir::FileLineColLoc::get(&ctx, strings[file.pathSid],
                                          unsigned(location.sl),
                                          unsigned(location.sc)));
@@ -935,21 +1029,26 @@ static void applyDebugLocations(mlir::MLIRContext &ctx,
 mlir::OwningOpRef<mlir::ModuleOp>
 decodePTOBCToModule(llvm::ArrayRef<uint8_t> fileBytes, mlir::MLIRContext &ctx) {
   const bool dbg = debugEnabled();
-  if (fileBytes.size() < kPTOBCHeaderSize)
+  if (fileBytes.size() < kPTOBCHeaderSize) {
     throw std::runtime_error("file too small");
-  if (std::memcmp(fileBytes.data(), kPTOBCMagic, kPTOBCMagicSize) != 0)
+  }
+  if (std::memcmp(fileBytes.data(), kPTOBCMagic, kPTOBCMagicSize) != 0) {
     throw std::runtime_error("bad magic");
+  }
 
   Reader versionReader{fileBytes.data() + kPTOBCVersionOffset,
                        fileBytes.data() + fileBytes.size()};
   uint16_t ver = versionReader.readU16LE();
-  if (ver != kVersionV0) throw std::runtime_error("unsupported version");
+  if (ver != kVersionV0) {
+    throw std::runtime_error("unsupported version");
+  }
 
   Reader payloadLengthReader{fileBytes.data() + kPTOBCPayloadLengthOffset,
                              fileBytes.data() + fileBytes.size()};
   uint32_t payloadLen = payloadLengthReader.readU32LE();
-  if (payloadLen != fileBytes.size() - kPTOBCHeaderSize)
+  if (payloadLen != fileBytes.size() - kPTOBCHeaderSize) {
     throw std::runtime_error("payload_len mismatch");
+  }
 
   Reader r{fileBytes.data() + kPTOBCHeaderSize,
            fileBytes.data() + fileBytes.size()};
@@ -964,7 +1063,9 @@ decodePTOBCToModule(llvm::ArrayRef<uint8_t> fileBytes, mlir::MLIRContext &ctx) {
   while (r.p != r.end) {
     auto [sid, sec] = readSection(r, dbg);
     if (sid == kSectionDebugInfo) {
-      if (dbgInfo) throw std::runtime_error("duplicate DEBUGINFO section");
+      if (dbgInfo) {
+        throw std::runtime_error("duplicate DEBUGINFO section");
+      }
       dbgInfo = parseDebugInfoSection(sec);
     } else if (sid == kSectionExtra) {
       // Ignore EXTRA payload for now.
@@ -996,21 +1097,26 @@ decodePTOBCToModule(llvm::ArrayRef<uint8_t> fileBytes, mlir::MLIRContext &ctx) {
   (void)ctx.getOrLoadDialect<mlir::scf::SCFDialect>();
   (void)ctx.getOrLoadDialect<mlir::pto::PTODialect>();
 
-  if (dbg) llvm::errs() << "[ptobc] decoding module...\n";
+  if (dbg) {
+    llvm::errs() << "[ptobc] decoding module...\n";
+  }
 
   std::vector<std::vector<mlir::Operation*>> opsByFunc;
   auto module = decodeToModule(ctx, strings, types, attrs, d4, d6, dbgInfo ? &opsByFunc : nullptr);
 
   // Apply op locations from DEBUGINFO (best-effort).
-  if (dbgInfo)
+  if (dbgInfo) {
     applyDebugLocations(ctx, strings, *dbgInfo, opsByFunc);
+  }
 
   return module;
 }
 
 void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
   const bool dbg = debugEnabled();
-  if (dbg) llvm::errs() << "[ptobc] decode: reading file: " << inPath << "\n";
+  if (dbg) {
+    llvm::errs() << "[ptobc] decode: reading file: " << inPath << "\n";
+  }
   auto data = readFile(inPath);
 
   mlir::DialectRegistry registry;
@@ -1025,7 +1131,9 @@ void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
 
   auto module = decodePTOBCToModule(data, ctx);
 
-  if (dbg) llvm::errs() << "[ptobc] decoded module ok; printing...\n";
+  if (dbg) {
+    llvm::errs() << "[ptobc] decoded module ok; printing...\n";
+  }
 
   CanonicalPrintOptions opt;
   opt.generic = (std::getenv("PTOBC_PRINT_GENERIC") != nullptr);
@@ -1034,10 +1142,14 @@ void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
 
   std::string out = printModuleCanonical(module.get(), opt);
 
-  if (dbg) llvm::errs() << "[ptobc] writing output: " << outPath << "\n";
+  if (dbg) {
+    llvm::errs() << "[ptobc] writing output: " << outPath << "\n";
+  }
   std::ofstream ofs(outPath);
   ofs << out;
-  if (!out.empty() && out.back() != '\n') ofs << "\n";
+  if (!out.empty() && out.back() != '\n') {
+    ofs << "\n";
+  }
 }
 
 } // namespace ptobc

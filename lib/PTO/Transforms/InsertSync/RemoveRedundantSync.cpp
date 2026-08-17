@@ -11,10 +11,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
-#include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 #include <vector>
+#include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
+#include "llvm/ADT/STLExtras.h"
+
 
 #define DEBUG_TYPE "pto-inject-sync"
 
@@ -49,7 +50,6 @@ void RemoveRedundantSync::Run() {
          auto *syncOp2 = syncPair2.first;
          bool hasLoop1 = syncOp1->GetForEndIndex().has_value();
          bool hasLoop2 = syncOp2->GetForEndIndex().has_value();
-
          if (hasLoop1 && hasLoop2) {
            if (syncOp1->GetForEndIndex().value() != syncOp2->GetForEndIndex().value()) {
              return syncOp1->GetForEndIndex().value() > syncOp2->GetForEndIndex().value();
@@ -187,7 +187,9 @@ bool RemoveRedundantSync::CheckBranchBetween(
   bool endIsInsideThenBranch =
       (!hasElseBranch && endId < branchElement->endId) ||
       (hasElseBranch && endId < branchElement->branchId);
-  if (endIsInsideThenBranch) return false;
+  if (endIsInsideThenBranch) {
+    return false;
+  }
 
   bool endIsInsideElseBranch = hasElseBranch &&
                                endId >= branchElement->branchId &&
@@ -201,7 +203,6 @@ bool RemoveRedundantSync::CheckBranchBetween(
   if (hasElseBranch) {
     bool coveredInThen = CheckRepeatSync(branchElement->beginId, branchElement->branchId, syncFinder, setFlag);
     bool coveredInElse = CheckRepeatSync(branchElement->branchId, branchElement->endId, syncFinder, setFlag);
-
     if (coveredInThen && coveredInElse) {
       return true;
     }
@@ -236,7 +237,9 @@ bool RemoveRedundantSync::CanMatchedSync(SmallVector<bool> &syncFinder,
   // whole-pipe pair -- which is strictly stronger -- but it may never PROVIDE
   // coverage for another pair. Letting it do so drops the guard on every access
   // that resolves to a different slot (issue #1118).
-  if (isSlotKeyedSync(relatedSync)) return false;
+  if (isSlotKeyedSync(relatedSync)) {
+    return false;
+  }
 
   bool isWait = (relatedSync->GetType() == SyncOperation::TYPE::WAIT_EVENT);
   bool isSet = (relatedSync->GetType() == SyncOperation::TYPE::SET_EVENT);
@@ -247,14 +250,26 @@ bool RemoveRedundantSync::CanMatchedSync(SmallVector<bool> &syncFinder,
       isSet |= (relatedSync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET);
   }
 
-  if (!isWait && !isSet) return false;
-  if (relatedSync->GetSyncIndex() == setFlag->GetSyncIndex()) return false;
-  if (relatedSync->eventIdNum > setFlag->eventIdNum) return false;
-  if (relatedSync->isCompensation || setFlag->isCompensation) return false;
+  if (!isWait && !isSet) {
+    return false;
+  }
+  if (relatedSync->GetSyncIndex() == setFlag->GetSyncIndex()) {
+    return false;
+  }
+  if (relatedSync->eventIdNum > setFlag->eventIdNum) {
+    return false;
+  }
+  if (relatedSync->isCompensation || setFlag->isCompensation) {
+    return false;
+  }
 
   // Pipe 检查：内部同步必须也是解决同样的 Src -> Dst 依赖
-  if (relatedSync->GetSrcPipe() != setFlag->GetSrcPipe()) return false;
-  if (relatedSync->GetDstPipe() != setFlag->GetDstPipe()) return false;
+  if (relatedSync->GetSrcPipe() != setFlag->GetSrcPipe()) {
+    return false;
+  }
+  if (relatedSync->GetDstPipe() != setFlag->GetDstPipe()) {
+    return false;
+  }
 
   // 2. 状态机逻辑
   // 如果遇到了 Set，记录下来

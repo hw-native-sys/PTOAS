@@ -59,13 +59,36 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemValsStep(Value val) {
   if (auto blockArg = dyn_cast<BlockArgument>(val)) {
     if (auto forOp =
             dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp())) {
-      if (auto *init = forOp.getTiedLoopInit(blockArg))
+      if (auto *init = forOp.getTiedLoopInit(blockArg)) {
         out.push_back(init->get());
-      if (auto *yield = forOp.getTiedLoopYieldedValue(blockArg))
+      }
+      if (auto *yield = forOp.getTiedLoopYieldedValue(blockArg)) {
         out.push_back(yield->get());
+      }
     }
-    if (blockArgAliases.contains(val))
+    if (auto whileOp = dyn_cast_if_present<scf::WhileOp>(
+            blockArg.getOwner()->getParentOp())) {
+      unsigned index = blockArg.getArgNumber();
+      if (blockArg.getOwner() == &whileOp.getBefore().front()) {
+        if (index < whileOp.getInits().size()) {
+          out.push_back(whileOp.getInits()[index]);
+        }
+        if (index < whileOp.getYieldedValues().size()) {
+          out.push_back(whileOp.getYieldedValues()[index]);
+        }
+      } else if (blockArg.getOwner() == &whileOp.getAfter().front()) {
+        auto conditionArgs = whileOp.getConditionOp().getArgs();
+        if (index < conditionArgs.size()) {
+          out.push_back(conditionArgs[index]);
+        }
+        if (index < whileOp.getYieldedValues().size()) {
+          out.push_back(whileOp.getYieldedValues()[index]);
+        }
+      }
+    }
+    if (blockArgAliases.contains(val)) {
       llvm::append_range(out, blockArgAliases[val]);
+    }
     return out;
   }
 

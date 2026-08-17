@@ -303,6 +303,26 @@ def define_emitc_ub_ptr_entry_annotation_probe():
     return bad_probe
 
 
+def define_tprint_vpto_rejected_probe():
+    @pto.jit(target="a5", backend="vpto", mode="explicit")
+    def bad_probe():
+        tile = pto.alloc_tile(shape=[1, 8], dtype=pto.f32)
+        pto.tile.print(tile, print_format="width10_precision6")
+
+    return bad_probe
+
+
+def define_tprint_emitc_allowed_probe():
+    @pto.jit(target="a5", backend="emitc")
+    def good_probe(src: pto.ptr(pto.f32, "gm")):
+        view = pto.make_tensor_view(src, shape=[1, 8], strides=[8, 1])
+        tile = pto.alloc_tile(shape=[1, 8], dtype=pto.f32)
+        pto.tile.load(view, tile)
+        pto.tile.print(tile, print_format="width10_precision6")
+
+    return good_probe
+
+
 def define_frontend_options_conflict_probe():
     @pto.jit(target="a5", ast_rewrite=False, frontend_options={"ast_rewrite": True})
     def bad_probe():
@@ -898,10 +918,9 @@ def main() -> None:
         NameError,
         "value",
     )
-    expect_raises(
-        lambda: define_ast_for_else_probe().compile(),
-        PTODSLAstRewriteError,
-        "does not support for-else",
+    expect(
+        "scf.while" in define_ast_for_else_probe().compile().mlir_text(),
+        "runtime for-else must lower through scf.while",
     )
     expect_raises(
         lambda: define_ast_for_non_range_probe().compile(),
@@ -913,16 +932,11 @@ def main() -> None:
         PTODSLAstRewriteError,
         "runtime for-loops require a simple name target",
     )
-    expect_raises(
-        lambda: define_ast_for_break_probe().compile(),
-        PTODSLAstRewriteError,
-        "does not support break/continue",
-    )
-    expect_raises(
-        lambda: define_ast_runtime_for_constexpr_break_probe().compile(),
-        PTODSLAstRewriteError,
-        "does not support break/continue",
-    )
+    for probe in (define_ast_for_break_probe, define_ast_runtime_for_constexpr_break_probe):
+        expect(
+            "scf.while" in probe().compile().mlir_text(),
+            "runtime for-break must lower through scf.while",
+        )
     expect_raises(
         lambda: define_ast_for_last_value_probe().compile(),
         PTODSLAstRewriteError,
@@ -1264,6 +1278,14 @@ def main() -> None:
         "target='a3'",
         "target='a5'",
     )
+    expect_raises(
+        define_tprint_vpto_rejected_probe().compile,
+        ValueError,
+        "pto.tprint is supported only by the EmitC backend",
+    )
+    tprint_emitc_text = define_tprint_emitc_allowed_probe().compile().mlir_text()
+    expect("pto.tprint" in tprint_emitc_text, "tprint should compile under the EmitC backend")
+    expect("width10_precision6" in tprint_emitc_text, "tprint EmitC probe should preserve printFormat")
     expect_raises(
         lambda: inspect_host_tensor_metadata(MissingDTypeTensor()),
         TypeError,

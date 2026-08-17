@@ -1,0 +1,1211 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @csa_slots_build_valid_qk_plan(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i32>, %arg3: !pto.ptr<i32>, %arg4: !pto.ptr<i32>, %arg5: !pto.ptr<f32>, %arg6: !pto.ptr<i32>, %arg7: !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c32800_i64 = arith.constant 32800 : i64
+  %c0_i64 = arith.constant 0 : i64
+  %c32_i64 = arith.constant 32 : i64
+  %c16416_i64 = arith.constant 16416 : i64
+  %c8_index = arith.constant 8 : index
+  %c4096_index = arith.constant 4096 : index
+  %c1_index = arith.constant 1 : index
+  %c512_index = arith.constant 512 : index
+  %c5_index = arith.constant 5 : index
+  %c128_index = arith.constant 128 : index
+  %c640_index = arith.constant 640 : index
+  %c40_index = arith.constant 40 : index
+  %c0_index = arith.constant 0 : index
+  %cst_13 = arith.constant 1.00000000000000000e+00 : f32
+  %cst_14 = arith.constant 2.50000000000000000e-01 : f32
+  %cst_15 = arith.constant 0.00000000000000000e+00 : f32
+  %cst_16 = arith.constant 1.00000000000000000e+20 : f32
+  %c2_index = arith.constant 2 : index
+  %c3_index = arith.constant 3 : index
+  %c4_index = arith.constant 4 : index
+  %c6_index = arith.constant 6 : index
+  %c7_index = arith.constant 7 : index
+  %c9_index = arith.constant 9 : index
+  %c10_index = arith.constant 10 : index
+  %c11_index = arith.constant 11 : index
+  %c12_index = arith.constant 12 : index
+  %c13_index = arith.constant 13 : index
+  %c14_index = arith.constant 14 : index
+  %c15_index = arith.constant 15 : index
+  %c16_index = arith.constant 16 : index
+  %c17_index = arith.constant 17 : index
+  %c18_index = arith.constant 18 : index
+  %c19_index = arith.constant 19 : index
+  %c20_index = arith.constant 20 : index
+  %c21_index = arith.constant 21 : index
+  %c22_index = arith.constant 22 : index
+  %c23_index = arith.constant 23 : index
+  %c24_index = arith.constant 24 : index
+  %c25_index = arith.constant 25 : index
+  %c26_index = arith.constant 26 : index
+  %c27_index = arith.constant 27 : index
+  %c28_index = arith.constant 28 : index
+  %c29_index = arith.constant 29 : index
+  %c30_index = arith.constant 30 : index
+  %c31_index = arith.constant 31 : index
+  %c32_index = arith.constant 32 : index
+  %c33_index = arith.constant 33 : index
+  %c34_index = arith.constant 34 : index
+  %c35_index = arith.constant 35 : index
+  %c36_index = arith.constant 36 : index
+  %c37_index = arith.constant 37 : index
+  %c38_index = arith.constant 38 : index
+  %c39_index = arith.constant 39 : index
+  %idx_topk_flat_inline5022__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c8_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %position_ids_t1_inline4483__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c8_index, %c1_index], strides = [%c1_index, %c8_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %cmp_sparse_indices_inline2279_inline4481__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c8_index, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %valid_block_mask_inline2431_inline4480__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c8_index, %c5_index], strides = [%c5_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %swa_indices_inline217__ssa_v1_view = pto.make_tensor_view %arg4, shape = [%c8_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %sparse_bias_inline2447_inline4692__ssa_v0_view = pto.make_tensor_view %arg5, shape = [%c8_index, %c640_index], strides = [%c640_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %qk_wcur_inline2449_inline4935__ssa_v0_view = pto.make_tensor_view %arg6, shape = [%c1_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %qk_order_inline2412_inline4549__ssa_v0_view = pto.make_tensor_view %arg7, shape = [%c40_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %t__tile = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %idx_topk_flat_inline5022__ssa_v0_pview = pto.partition_view %idx_topk_flat_inline5022__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c512_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<8x512xi32>
+  pto.tload ins(%idx_topk_flat_inline5022__ssa_v0_pview : !pto.partition_tensor_view<8x512xi32>) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_raw_inline2440_inline4475__tile = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%t__tile {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c_raw_inline2440_inline4475__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %0 = pto.alloc_tile addr = %c0_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %position_ids_t1_inline4483__ssa_v0_pview = pto.partition_view %position_ids_t1_inline4483__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<8x1xi32>
+  pto.tload ins(%position_ids_t1_inline4483__ssa_v0_pview : !pto.partition_tensor_view<8x1xi32>) outs(%0 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+  %c_pos_inline2368_inline5020__rm_a0_tmp_v0 = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_inline2368_inline5020__row_major_tmp_v1 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%c_pos_inline2368_inline5020__rm_a0_tmp_v0 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c_pos_inline2368_inline5020__row_major_tmp_v1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_pos_inline2368_inline5020__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %t__rm_a0_tmp_v2 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %t__row_major_tmp_v3 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tadds ins(%t__rm_a0_tmp_v2, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%t__row_major_tmp_v3 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %1 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_scaled_inline2391_inline5028__rm_a0_tmp_v4 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_scaled_inline2391_inline5028__row_major_tmp_v5 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmuls ins(%c_pos_scaled_inline2391_inline5028__rm_a0_tmp_v4, %cst_14 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%c_pos_scaled_inline2391_inline5028__row_major_tmp_v5 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_pos_scaled_inline2391_inline5028__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_i32_inline2397_inline4524__rm_a0_tmp_v6 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_i32_inline2397_inline4524__row_major_tmp_v7 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%c_pos_i32_inline2397_inline4524__rm_a0_tmp_v6 {rmode = #pto<round_mode TRUNC>} : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c_pos_i32_inline2397_inline4524__row_major_tmp_v7 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_pos_i32_inline2397_inline4524__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_q_inline2364_inline4506__rm_a0_tmp_v8 = pto.alloc_tile addr = %c32_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %c_pos_q_inline2364_inline4506__row_major_tmp_v9 = pto.alloc_tile addr = %c16416_i64 valid_row = %c1_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%c_pos_q_inline2364_inline4506__rm_a0_tmp_v8 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c_pos_q_inline2364_inline4506__row_major_tmp_v9 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_pos_q_inline2364_inline4506__tile = pto.alloc_tile addr = %c16416_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %2 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%cst_13 : f32) outs(%2 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_upper_b_inline2424_inline4474__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.trowexpandmul ins(%2, %c_pos_q_inline2364_inline4506__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%c_upper_b_inline2424_inline4474__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %3 = pto.alloc_tile addr = %c16416_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tadds ins(%c_raw_inline2440_inline4475__tile, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%3 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %4 = pto.alloc_tile addr = %c16416_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmaxs ins(%3, %cst_15 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%4 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_ge_inline2429_inline4473__tile = pto.alloc_tile addr = %c16416_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmins ins(%4, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%c_ge_inline2429_inline4473__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %5 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tsub ins(%c_upper_b_inline2424_inline4474__tile, %c_raw_inline2440_inline4475__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%5 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %6 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmaxs ins(%5, %cst_15 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%6 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_lt_inline2392_inline4472__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmins ins(%6, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%c_lt_inline2392_inline4472__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_mask_inline2428_inline4471__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmul ins(%c_ge_inline2429_inline4473__tile, %c_lt_inline2392_inline4472__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c_mask_inline2428_inline4471__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %7 = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tadds ins(%c_raw_inline2440_inline4475__tile, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%7 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %8 = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmul ins(%c_mask_inline2428_inline4471__tile, %7 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%8 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %c_out_inline2437_inline4470__tile = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tsubs ins(%8, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%c_out_inline2437_inline4470__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %9 = pto.alloc_tile addr = %c16416_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%c_out_inline2437_inline4470__tile {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%9 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %cmp_sparse_indices_inline2279_inline4481__ssa_v0_pview = pto.partition_view %cmp_sparse_indices_inline2279_inline4481__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c512_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<8x512xi32>
+  pto.tstore ins(%9 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%cmp_sparse_indices_inline2279_inline4481__ssa_v0_pview : !pto.partition_tensor_view<8x512xi32>)
+  scf.for %c_t0_inline2456_inline4467__idx_v0 = %c0_index to %c8_index step %c1_index {
+    %18 = arith.index_cast %c1_index : index to i32
+    %flat_offset_mul = arith.muli %c_t0_inline2456_inline4467__idx_v0, %c5_index : index
+    %flat_offset = arith.addi %flat_offset_mul, %c0_index : index
+    pto.store_scalar %18, %arg3[%flat_offset] : !pto.ptr<i32>, i32
+  }
+  scf.for %c_sb_inline2346_inline4963__idx_v0 = %c1_index to %c5_index step %c1_index {
+    %19 = arith.subi %c_sb_inline2346_inline4963__idx_v0, %c1_index : index
+    %20 = arith.muli %19, %c128_index : index
+    %10 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %slice_view = pto.subview %c_mask_inline2428_inline4471__tile[%c0_index, %20] sizes [8, 128] : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0> -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=8, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp_tile = pto.alloc_tile addr = %c16416_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %c_blk_valid_inline2425_inline4465__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c8_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    pto.trowmax ins(%slice_view, %tmp_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=8, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c_blk_valid_inline2425_inline4465__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+    scf.for %c_dt_inline2339_inline4702__idx_v0 = %c0_index to %c8_index step %c1_index {
+      %22 = arith.muli %c_dt_inline2339_inline4702__idx_v0, %c1_index : index
+      %23 = arith.addi %22, %c0_index : index
+      %21 = pto.tgetval ins(%c_blk_valid_inline2425_inline4465__tile, %23 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>, index) outs : f32
+      %24 = arith.fptosi %21 : f32 to i32
+      %25 = arith.muli %c_dt_inline2339_inline4702__idx_v0, %c5_index : index
+      %26 = arith.addi %25, %c_sb_inline2346_inline4963__idx_v0 : index
+      pto.store_scalar %24, %arg3[%26] : !pto.ptr<i32>, i32
+    }
+  }
+  %11 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %swa_indices_inline217__ssa_v1_pview = pto.partition_view %swa_indices_inline217__ssa_v1_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c128_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<8x128xi32>
+  pto.tload ins(%swa_indices_inline217__ssa_v1_pview : !pto.partition_tensor_view<8x128xi32>) outs(%11 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %v_win_f_inline2258_inline4463__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%11 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%v_win_f_inline2258_inline4463__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %12 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tadds ins(%v_win_f_inline2258_inline4463__tile, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%12 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %13 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmaxs ins(%12, %cst_15 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %v_win_valid_inline2417_inline4462__tile = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmins ins(%13, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%v_win_valid_inline2417_inline4462__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %14 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tsubs ins(%v_win_valid_inline2417_inline4462__tile, %cst_13 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%14 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %15 = pto.alloc_tile addr = %c32_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmuls ins(%14, %cst_16 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%15 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %sparse_bias_inline2447_inline4692__ssa_v0_pview = pto.partition_view %sparse_bias_inline2447_inline4692__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c128_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<8x128xf32>
+  pto.tstore ins(%15 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%sparse_bias_inline2447_inline4692__ssa_v0_pview : !pto.partition_tensor_view<8x128xf32>)
+  %16 = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmins ins(%c_out_inline2437_inline4470__tile, %cst_15 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%16 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %17 = pto.alloc_tile addr = %c32800_i64 valid_row = %c8_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tmuls ins(%16, %cst_16 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%17 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %sparse_bias_inline2447_inline4692__tile_pview = pto.partition_view %sparse_bias_inline2447_inline4692__ssa_v0_view, offsets = [%c0_index, %c128_index], sizes = [%c8_index, %c512_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<8x512xf32>
+  pto.tstore ins(%17 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%sparse_bias_inline2447_inline4692__tile_pview : !pto.partition_tensor_view<8x512xf32>)
+  %28 = arith.index_cast %c0_index : index to i32
+  pto.store_scalar %28, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  %29 = pto.load_scalar %arg3[%c0_index] : !pto.ptr<i32> -> i32
+  %30 = arith.index_cast %29 : i32 to index
+  %31 = arith.cmpi slt, %c0_index, %30 : index
+  scf.if %31 {
+    %plan_w_inline2396_inline4461__tile = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %32 = arith.index_cast %c0_index : index to i32
+    %plan_w_inline2396_inline4461__tile_idx = arith.index_cast %plan_w_inline2396_inline4461__tile : i32 to index
+    pto.store_scalar %32, %arg7[%plan_w_inline2396_inline4461__tile_idx] : !pto.ptr<i32>, i32
+    %33 = arith.index_cast %plan_w_inline2396_inline4461__tile : i32 to index
+    %34 = arith.addi %33, %c1_index : index
+    %35 = arith.index_cast %34 : index to i32
+    pto.store_scalar %35, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %36 = pto.load_scalar %arg3[%c1_index] : !pto.ptr<i32> -> i32
+  %37 = arith.index_cast %36 : i32 to index
+  %38 = arith.cmpi slt, %c0_index, %37 : index
+  scf.if %38 {
+    %39 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %40 = arith.index_cast %c1_index : index to i32
+    %41 = arith.index_cast %39 : i32 to index
+    pto.store_scalar %40, %arg7[%41] : !pto.ptr<i32>, i32
+    %42 = arith.index_cast %39 : i32 to index
+    %43 = arith.addi %42, %c1_index : index
+    %44 = arith.index_cast %43 : index to i32
+    pto.store_scalar %44, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %45 = pto.load_scalar %arg3[%c2_index] : !pto.ptr<i32> -> i32
+  %46 = arith.index_cast %45 : i32 to index
+  %47 = arith.cmpi slt, %c0_index, %46 : index
+  scf.if %47 {
+    %48 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %49 = arith.index_cast %c2_index : index to i32
+    %50 = arith.index_cast %48 : i32 to index
+    pto.store_scalar %49, %arg7[%50] : !pto.ptr<i32>, i32
+    %51 = arith.index_cast %48 : i32 to index
+    %52 = arith.addi %51, %c1_index : index
+    %53 = arith.index_cast %52 : index to i32
+    pto.store_scalar %53, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %54 = pto.load_scalar %arg3[%c3_index] : !pto.ptr<i32> -> i32
+  %55 = arith.index_cast %54 : i32 to index
+  %56 = arith.cmpi slt, %c0_index, %55 : index
+  scf.if %56 {
+    %57 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %58 = arith.index_cast %c3_index : index to i32
+    %59 = arith.index_cast %57 : i32 to index
+    pto.store_scalar %58, %arg7[%59] : !pto.ptr<i32>, i32
+    %60 = arith.index_cast %57 : i32 to index
+    %61 = arith.addi %60, %c1_index : index
+    %62 = arith.index_cast %61 : index to i32
+    pto.store_scalar %62, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %63 = pto.load_scalar %arg3[%c4_index] : !pto.ptr<i32> -> i32
+  %64 = arith.index_cast %63 : i32 to index
+  %65 = arith.cmpi slt, %c0_index, %64 : index
+  scf.if %65 {
+    %66 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %67 = arith.index_cast %c4_index : index to i32
+    %68 = arith.index_cast %66 : i32 to index
+    pto.store_scalar %67, %arg7[%68] : !pto.ptr<i32>, i32
+    %69 = arith.index_cast %66 : i32 to index
+    %70 = arith.addi %69, %c1_index : index
+    %71 = arith.index_cast %70 : index to i32
+    pto.store_scalar %71, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %72 = pto.load_scalar %arg3[%c5_index] : !pto.ptr<i32> -> i32
+  %73 = arith.index_cast %72 : i32 to index
+  %74 = arith.cmpi slt, %c0_index, %73 : index
+  scf.if %74 {
+    %75 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %76 = arith.index_cast %c5_index : index to i32
+    %77 = arith.index_cast %75 : i32 to index
+    pto.store_scalar %76, %arg7[%77] : !pto.ptr<i32>, i32
+    %78 = arith.index_cast %75 : i32 to index
+    %79 = arith.addi %78, %c1_index : index
+    %80 = arith.index_cast %79 : index to i32
+    pto.store_scalar %80, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %81 = pto.load_scalar %arg3[%c6_index] : !pto.ptr<i32> -> i32
+  %82 = arith.index_cast %81 : i32 to index
+  %83 = arith.cmpi slt, %c0_index, %82 : index
+  scf.if %83 {
+    %84 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %85 = arith.index_cast %c6_index : index to i32
+    %86 = arith.index_cast %84 : i32 to index
+    pto.store_scalar %85, %arg7[%86] : !pto.ptr<i32>, i32
+    %87 = arith.index_cast %84 : i32 to index
+    %88 = arith.addi %87, %c1_index : index
+    %89 = arith.index_cast %88 : index to i32
+    pto.store_scalar %89, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %90 = pto.load_scalar %arg3[%c7_index] : !pto.ptr<i32> -> i32
+  %91 = arith.index_cast %90 : i32 to index
+  %92 = arith.cmpi slt, %c0_index, %91 : index
+  scf.if %92 {
+    %93 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %94 = arith.index_cast %c7_index : index to i32
+    %95 = arith.index_cast %93 : i32 to index
+    pto.store_scalar %94, %arg7[%95] : !pto.ptr<i32>, i32
+    %96 = arith.index_cast %93 : i32 to index
+    %97 = arith.addi %96, %c1_index : index
+    %98 = arith.index_cast %97 : index to i32
+    pto.store_scalar %98, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %99 = pto.load_scalar %arg3[%c8_index] : !pto.ptr<i32> -> i32
+  %100 = arith.index_cast %99 : i32 to index
+  %101 = arith.cmpi slt, %c0_index, %100 : index
+  scf.if %101 {
+    %102 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %103 = arith.index_cast %c8_index : index to i32
+    %104 = arith.index_cast %102 : i32 to index
+    pto.store_scalar %103, %arg7[%104] : !pto.ptr<i32>, i32
+    %105 = arith.index_cast %102 : i32 to index
+    %106 = arith.addi %105, %c1_index : index
+    %107 = arith.index_cast %106 : index to i32
+    pto.store_scalar %107, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %108 = pto.load_scalar %arg3[%c9_index] : !pto.ptr<i32> -> i32
+  %109 = arith.index_cast %108 : i32 to index
+  %110 = arith.cmpi slt, %c0_index, %109 : index
+  scf.if %110 {
+    %111 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %112 = arith.index_cast %c9_index : index to i32
+    %113 = arith.index_cast %111 : i32 to index
+    pto.store_scalar %112, %arg7[%113] : !pto.ptr<i32>, i32
+    %114 = arith.index_cast %111 : i32 to index
+    %115 = arith.addi %114, %c1_index : index
+    %116 = arith.index_cast %115 : index to i32
+    pto.store_scalar %116, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %117 = pto.load_scalar %arg3[%c10_index] : !pto.ptr<i32> -> i32
+  %118 = arith.index_cast %117 : i32 to index
+  %119 = arith.cmpi slt, %c0_index, %118 : index
+  scf.if %119 {
+    %120 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %121 = arith.index_cast %c10_index : index to i32
+    %122 = arith.index_cast %120 : i32 to index
+    pto.store_scalar %121, %arg7[%122] : !pto.ptr<i32>, i32
+    %123 = arith.index_cast %120 : i32 to index
+    %124 = arith.addi %123, %c1_index : index
+    %125 = arith.index_cast %124 : index to i32
+    pto.store_scalar %125, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %126 = pto.load_scalar %arg3[%c11_index] : !pto.ptr<i32> -> i32
+  %127 = arith.index_cast %126 : i32 to index
+  %128 = arith.cmpi slt, %c0_index, %127 : index
+  scf.if %128 {
+    %129 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %130 = arith.index_cast %c11_index : index to i32
+    %131 = arith.index_cast %129 : i32 to index
+    pto.store_scalar %130, %arg7[%131] : !pto.ptr<i32>, i32
+    %132 = arith.index_cast %129 : i32 to index
+    %133 = arith.addi %132, %c1_index : index
+    %134 = arith.index_cast %133 : index to i32
+    pto.store_scalar %134, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %135 = pto.load_scalar %arg3[%c12_index] : !pto.ptr<i32> -> i32
+  %136 = arith.index_cast %135 : i32 to index
+  %137 = arith.cmpi slt, %c0_index, %136 : index
+  scf.if %137 {
+    %138 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %139 = arith.index_cast %c12_index : index to i32
+    %140 = arith.index_cast %138 : i32 to index
+    pto.store_scalar %139, %arg7[%140] : !pto.ptr<i32>, i32
+    %141 = arith.index_cast %138 : i32 to index
+    %142 = arith.addi %141, %c1_index : index
+    %143 = arith.index_cast %142 : index to i32
+    pto.store_scalar %143, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %144 = pto.load_scalar %arg3[%c13_index] : !pto.ptr<i32> -> i32
+  %145 = arith.index_cast %144 : i32 to index
+  %146 = arith.cmpi slt, %c0_index, %145 : index
+  scf.if %146 {
+    %147 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %148 = arith.index_cast %c13_index : index to i32
+    %149 = arith.index_cast %147 : i32 to index
+    pto.store_scalar %148, %arg7[%149] : !pto.ptr<i32>, i32
+    %150 = arith.index_cast %147 : i32 to index
+    %151 = arith.addi %150, %c1_index : index
+    %152 = arith.index_cast %151 : index to i32
+    pto.store_scalar %152, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %153 = pto.load_scalar %arg3[%c14_index] : !pto.ptr<i32> -> i32
+  %154 = arith.index_cast %153 : i32 to index
+  %155 = arith.cmpi slt, %c0_index, %154 : index
+  scf.if %155 {
+    %156 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %157 = arith.index_cast %c14_index : index to i32
+    %158 = arith.index_cast %156 : i32 to index
+    pto.store_scalar %157, %arg7[%158] : !pto.ptr<i32>, i32
+    %159 = arith.index_cast %156 : i32 to index
+    %160 = arith.addi %159, %c1_index : index
+    %161 = arith.index_cast %160 : index to i32
+    pto.store_scalar %161, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %162 = pto.load_scalar %arg3[%c15_index] : !pto.ptr<i32> -> i32
+  %163 = arith.index_cast %162 : i32 to index
+  %164 = arith.cmpi slt, %c0_index, %163 : index
+  scf.if %164 {
+    %165 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %166 = arith.index_cast %c15_index : index to i32
+    %167 = arith.index_cast %165 : i32 to index
+    pto.store_scalar %166, %arg7[%167] : !pto.ptr<i32>, i32
+    %168 = arith.index_cast %165 : i32 to index
+    %169 = arith.addi %168, %c1_index : index
+    %170 = arith.index_cast %169 : index to i32
+    pto.store_scalar %170, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %171 = pto.load_scalar %arg3[%c16_index] : !pto.ptr<i32> -> i32
+  %172 = arith.index_cast %171 : i32 to index
+  %173 = arith.cmpi slt, %c0_index, %172 : index
+  scf.if %173 {
+    %174 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %175 = arith.index_cast %c16_index : index to i32
+    %176 = arith.index_cast %174 : i32 to index
+    pto.store_scalar %175, %arg7[%176] : !pto.ptr<i32>, i32
+    %177 = arith.index_cast %174 : i32 to index
+    %178 = arith.addi %177, %c1_index : index
+    %179 = arith.index_cast %178 : index to i32
+    pto.store_scalar %179, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %180 = pto.load_scalar %arg3[%c17_index] : !pto.ptr<i32> -> i32
+  %181 = arith.index_cast %180 : i32 to index
+  %182 = arith.cmpi slt, %c0_index, %181 : index
+  scf.if %182 {
+    %183 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %184 = arith.index_cast %c17_index : index to i32
+    %185 = arith.index_cast %183 : i32 to index
+    pto.store_scalar %184, %arg7[%185] : !pto.ptr<i32>, i32
+    %186 = arith.index_cast %183 : i32 to index
+    %187 = arith.addi %186, %c1_index : index
+    %188 = arith.index_cast %187 : index to i32
+    pto.store_scalar %188, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %189 = pto.load_scalar %arg3[%c18_index] : !pto.ptr<i32> -> i32
+  %190 = arith.index_cast %189 : i32 to index
+  %191 = arith.cmpi slt, %c0_index, %190 : index
+  scf.if %191 {
+    %192 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %193 = arith.index_cast %c18_index : index to i32
+    %194 = arith.index_cast %192 : i32 to index
+    pto.store_scalar %193, %arg7[%194] : !pto.ptr<i32>, i32
+    %195 = arith.index_cast %192 : i32 to index
+    %196 = arith.addi %195, %c1_index : index
+    %197 = arith.index_cast %196 : index to i32
+    pto.store_scalar %197, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %198 = pto.load_scalar %arg3[%c19_index] : !pto.ptr<i32> -> i32
+  %199 = arith.index_cast %198 : i32 to index
+  %200 = arith.cmpi slt, %c0_index, %199 : index
+  scf.if %200 {
+    %201 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %202 = arith.index_cast %c19_index : index to i32
+    %203 = arith.index_cast %201 : i32 to index
+    pto.store_scalar %202, %arg7[%203] : !pto.ptr<i32>, i32
+    %204 = arith.index_cast %201 : i32 to index
+    %205 = arith.addi %204, %c1_index : index
+    %206 = arith.index_cast %205 : index to i32
+    pto.store_scalar %206, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %207 = pto.load_scalar %arg3[%c20_index] : !pto.ptr<i32> -> i32
+  %208 = arith.index_cast %207 : i32 to index
+  %209 = arith.cmpi slt, %c0_index, %208 : index
+  scf.if %209 {
+    %210 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %211 = arith.index_cast %c20_index : index to i32
+    %212 = arith.index_cast %210 : i32 to index
+    pto.store_scalar %211, %arg7[%212] : !pto.ptr<i32>, i32
+    %213 = arith.index_cast %210 : i32 to index
+    %214 = arith.addi %213, %c1_index : index
+    %215 = arith.index_cast %214 : index to i32
+    pto.store_scalar %215, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %216 = pto.load_scalar %arg3[%c21_index] : !pto.ptr<i32> -> i32
+  %217 = arith.index_cast %216 : i32 to index
+  %218 = arith.cmpi slt, %c0_index, %217 : index
+  scf.if %218 {
+    %219 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %220 = arith.index_cast %c21_index : index to i32
+    %221 = arith.index_cast %219 : i32 to index
+    pto.store_scalar %220, %arg7[%221] : !pto.ptr<i32>, i32
+    %222 = arith.index_cast %219 : i32 to index
+    %223 = arith.addi %222, %c1_index : index
+    %224 = arith.index_cast %223 : index to i32
+    pto.store_scalar %224, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %225 = pto.load_scalar %arg3[%c22_index] : !pto.ptr<i32> -> i32
+  %226 = arith.index_cast %225 : i32 to index
+  %227 = arith.cmpi slt, %c0_index, %226 : index
+  scf.if %227 {
+    %228 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %229 = arith.index_cast %c22_index : index to i32
+    %230 = arith.index_cast %228 : i32 to index
+    pto.store_scalar %229, %arg7[%230] : !pto.ptr<i32>, i32
+    %231 = arith.index_cast %228 : i32 to index
+    %232 = arith.addi %231, %c1_index : index
+    %233 = arith.index_cast %232 : index to i32
+    pto.store_scalar %233, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %234 = pto.load_scalar %arg3[%c23_index] : !pto.ptr<i32> -> i32
+  %235 = arith.index_cast %234 : i32 to index
+  %236 = arith.cmpi slt, %c0_index, %235 : index
+  scf.if %236 {
+    %237 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %238 = arith.index_cast %c23_index : index to i32
+    %239 = arith.index_cast %237 : i32 to index
+    pto.store_scalar %238, %arg7[%239] : !pto.ptr<i32>, i32
+    %240 = arith.index_cast %237 : i32 to index
+    %241 = arith.addi %240, %c1_index : index
+    %242 = arith.index_cast %241 : index to i32
+    pto.store_scalar %242, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %243 = pto.load_scalar %arg3[%c24_index] : !pto.ptr<i32> -> i32
+  %244 = arith.index_cast %243 : i32 to index
+  %245 = arith.cmpi slt, %c0_index, %244 : index
+  scf.if %245 {
+    %246 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %247 = arith.index_cast %c24_index : index to i32
+    %248 = arith.index_cast %246 : i32 to index
+    pto.store_scalar %247, %arg7[%248] : !pto.ptr<i32>, i32
+    %249 = arith.index_cast %246 : i32 to index
+    %250 = arith.addi %249, %c1_index : index
+    %251 = arith.index_cast %250 : index to i32
+    pto.store_scalar %251, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %252 = pto.load_scalar %arg3[%c25_index] : !pto.ptr<i32> -> i32
+  %253 = arith.index_cast %252 : i32 to index
+  %254 = arith.cmpi slt, %c0_index, %253 : index
+  scf.if %254 {
+    %255 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %256 = arith.index_cast %c25_index : index to i32
+    %257 = arith.index_cast %255 : i32 to index
+    pto.store_scalar %256, %arg7[%257] : !pto.ptr<i32>, i32
+    %258 = arith.index_cast %255 : i32 to index
+    %259 = arith.addi %258, %c1_index : index
+    %260 = arith.index_cast %259 : index to i32
+    pto.store_scalar %260, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %261 = pto.load_scalar %arg3[%c26_index] : !pto.ptr<i32> -> i32
+  %262 = arith.index_cast %261 : i32 to index
+  %263 = arith.cmpi slt, %c0_index, %262 : index
+  scf.if %263 {
+    %264 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %265 = arith.index_cast %c26_index : index to i32
+    %266 = arith.index_cast %264 : i32 to index
+    pto.store_scalar %265, %arg7[%266] : !pto.ptr<i32>, i32
+    %267 = arith.index_cast %264 : i32 to index
+    %268 = arith.addi %267, %c1_index : index
+    %269 = arith.index_cast %268 : index to i32
+    pto.store_scalar %269, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %270 = pto.load_scalar %arg3[%c27_index] : !pto.ptr<i32> -> i32
+  %271 = arith.index_cast %270 : i32 to index
+  %272 = arith.cmpi slt, %c0_index, %271 : index
+  scf.if %272 {
+    %273 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %274 = arith.index_cast %c27_index : index to i32
+    %275 = arith.index_cast %273 : i32 to index
+    pto.store_scalar %274, %arg7[%275] : !pto.ptr<i32>, i32
+    %276 = arith.index_cast %273 : i32 to index
+    %277 = arith.addi %276, %c1_index : index
+    %278 = arith.index_cast %277 : index to i32
+    pto.store_scalar %278, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %279 = pto.load_scalar %arg3[%c28_index] : !pto.ptr<i32> -> i32
+  %280 = arith.index_cast %279 : i32 to index
+  %281 = arith.cmpi slt, %c0_index, %280 : index
+  scf.if %281 {
+    %282 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %283 = arith.index_cast %c28_index : index to i32
+    %284 = arith.index_cast %282 : i32 to index
+    pto.store_scalar %283, %arg7[%284] : !pto.ptr<i32>, i32
+    %285 = arith.index_cast %282 : i32 to index
+    %286 = arith.addi %285, %c1_index : index
+    %287 = arith.index_cast %286 : index to i32
+    pto.store_scalar %287, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %288 = pto.load_scalar %arg3[%c29_index] : !pto.ptr<i32> -> i32
+  %289 = arith.index_cast %288 : i32 to index
+  %290 = arith.cmpi slt, %c0_index, %289 : index
+  scf.if %290 {
+    %291 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %292 = arith.index_cast %c29_index : index to i32
+    %293 = arith.index_cast %291 : i32 to index
+    pto.store_scalar %292, %arg7[%293] : !pto.ptr<i32>, i32
+    %294 = arith.index_cast %291 : i32 to index
+    %295 = arith.addi %294, %c1_index : index
+    %296 = arith.index_cast %295 : index to i32
+    pto.store_scalar %296, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %297 = pto.load_scalar %arg3[%c30_index] : !pto.ptr<i32> -> i32
+  %298 = arith.index_cast %297 : i32 to index
+  %299 = arith.cmpi slt, %c0_index, %298 : index
+  scf.if %299 {
+    %300 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %301 = arith.index_cast %c30_index : index to i32
+    %302 = arith.index_cast %300 : i32 to index
+    pto.store_scalar %301, %arg7[%302] : !pto.ptr<i32>, i32
+    %303 = arith.index_cast %300 : i32 to index
+    %304 = arith.addi %303, %c1_index : index
+    %305 = arith.index_cast %304 : index to i32
+    pto.store_scalar %305, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %306 = pto.load_scalar %arg3[%c31_index] : !pto.ptr<i32> -> i32
+  %307 = arith.index_cast %306 : i32 to index
+  %308 = arith.cmpi slt, %c0_index, %307 : index
+  scf.if %308 {
+    %309 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %310 = arith.index_cast %c31_index : index to i32
+    %311 = arith.index_cast %309 : i32 to index
+    pto.store_scalar %310, %arg7[%311] : !pto.ptr<i32>, i32
+    %312 = arith.index_cast %309 : i32 to index
+    %313 = arith.addi %312, %c1_index : index
+    %314 = arith.index_cast %313 : index to i32
+    pto.store_scalar %314, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %315 = pto.load_scalar %arg3[%c32_index] : !pto.ptr<i32> -> i32
+  %316 = arith.index_cast %315 : i32 to index
+  %317 = arith.cmpi slt, %c0_index, %316 : index
+  scf.if %317 {
+    %318 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %319 = arith.index_cast %c32_index : index to i32
+    %320 = arith.index_cast %318 : i32 to index
+    pto.store_scalar %319, %arg7[%320] : !pto.ptr<i32>, i32
+    %321 = arith.index_cast %318 : i32 to index
+    %322 = arith.addi %321, %c1_index : index
+    %323 = arith.index_cast %322 : index to i32
+    pto.store_scalar %323, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %324 = pto.load_scalar %arg3[%c33_index] : !pto.ptr<i32> -> i32
+  %325 = arith.index_cast %324 : i32 to index
+  %326 = arith.cmpi slt, %c0_index, %325 : index
+  scf.if %326 {
+    %327 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %328 = arith.index_cast %c33_index : index to i32
+    %329 = arith.index_cast %327 : i32 to index
+    pto.store_scalar %328, %arg7[%329] : !pto.ptr<i32>, i32
+    %330 = arith.index_cast %327 : i32 to index
+    %331 = arith.addi %330, %c1_index : index
+    %332 = arith.index_cast %331 : index to i32
+    pto.store_scalar %332, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %333 = pto.load_scalar %arg3[%c34_index] : !pto.ptr<i32> -> i32
+  %334 = arith.index_cast %333 : i32 to index
+  %335 = arith.cmpi slt, %c0_index, %334 : index
+  scf.if %335 {
+    %336 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %337 = arith.index_cast %c34_index : index to i32
+    %338 = arith.index_cast %336 : i32 to index
+    pto.store_scalar %337, %arg7[%338] : !pto.ptr<i32>, i32
+    %339 = arith.index_cast %336 : i32 to index
+    %340 = arith.addi %339, %c1_index : index
+    %341 = arith.index_cast %340 : index to i32
+    pto.store_scalar %341, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %342 = pto.load_scalar %arg3[%c35_index] : !pto.ptr<i32> -> i32
+  %343 = arith.index_cast %342 : i32 to index
+  %344 = arith.cmpi slt, %c0_index, %343 : index
+  scf.if %344 {
+    %345 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %346 = arith.index_cast %c35_index : index to i32
+    %347 = arith.index_cast %345 : i32 to index
+    pto.store_scalar %346, %arg7[%347] : !pto.ptr<i32>, i32
+    %348 = arith.index_cast %345 : i32 to index
+    %349 = arith.addi %348, %c1_index : index
+    %350 = arith.index_cast %349 : index to i32
+    pto.store_scalar %350, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %351 = pto.load_scalar %arg3[%c36_index] : !pto.ptr<i32> -> i32
+  %352 = arith.index_cast %351 : i32 to index
+  %353 = arith.cmpi slt, %c0_index, %352 : index
+  scf.if %353 {
+    %354 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %355 = arith.index_cast %c36_index : index to i32
+    %356 = arith.index_cast %354 : i32 to index
+    pto.store_scalar %355, %arg7[%356] : !pto.ptr<i32>, i32
+    %357 = arith.index_cast %354 : i32 to index
+    %358 = arith.addi %357, %c1_index : index
+    %359 = arith.index_cast %358 : index to i32
+    pto.store_scalar %359, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %360 = pto.load_scalar %arg3[%c37_index] : !pto.ptr<i32> -> i32
+  %361 = arith.index_cast %360 : i32 to index
+  %362 = arith.cmpi slt, %c0_index, %361 : index
+  scf.if %362 {
+    %363 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %364 = arith.index_cast %c37_index : index to i32
+    %365 = arith.index_cast %363 : i32 to index
+    pto.store_scalar %364, %arg7[%365] : !pto.ptr<i32>, i32
+    %366 = arith.index_cast %363 : i32 to index
+    %367 = arith.addi %366, %c1_index : index
+    %368 = arith.index_cast %367 : index to i32
+    pto.store_scalar %368, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %369 = pto.load_scalar %arg3[%c38_index] : !pto.ptr<i32> -> i32
+  %370 = arith.index_cast %369 : i32 to index
+  %371 = arith.cmpi slt, %c0_index, %370 : index
+  scf.if %371 {
+    %372 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %373 = arith.index_cast %c38_index : index to i32
+    %374 = arith.index_cast %372 : i32 to index
+    pto.store_scalar %373, %arg7[%374] : !pto.ptr<i32>, i32
+    %375 = arith.index_cast %372 : i32 to index
+    %376 = arith.addi %375, %c1_index : index
+    %377 = arith.index_cast %376 : index to i32
+    pto.store_scalar %377, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %378 = pto.load_scalar %arg3[%c39_index] : !pto.ptr<i32> -> i32
+  %379 = arith.index_cast %378 : i32 to index
+  %380 = arith.cmpi slt, %c0_index, %379 : index
+  scf.if %380 {
+    %381 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %382 = arith.index_cast %c39_index : index to i32
+    %383 = arith.index_cast %381 : i32 to index
+    pto.store_scalar %382, %arg7[%383] : !pto.ptr<i32>, i32
+    %384 = arith.index_cast %381 : i32 to index
+    %385 = arith.addi %384, %c1_index : index
+    %386 = arith.index_cast %385 : index to i32
+    pto.store_scalar %386, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %387 = pto.load_scalar %arg3[%c0_index] : !pto.ptr<i32> -> i32
+  %388 = arith.index_cast %387 : i32 to index
+  %389 = arith.cmpi sle, %388, %c0_index : index
+  scf.if %389 {
+    %plan_w_v1_inline2435_inline4458__tile = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %390 = arith.index_cast %c0_index : index to i32
+    %plan_w_v1_inline2435_inline4458__tile_idx = arith.index_cast %plan_w_v1_inline2435_inline4458__tile : i32 to index
+    pto.store_scalar %390, %arg7[%plan_w_v1_inline2435_inline4458__tile_idx] : !pto.ptr<i32>, i32
+    %391 = arith.index_cast %plan_w_v1_inline2435_inline4458__tile : i32 to index
+    %392 = arith.addi %391, %c1_index : index
+    %393 = arith.index_cast %392 : index to i32
+    pto.store_scalar %393, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %394 = pto.load_scalar %arg3[%c1_index] : !pto.ptr<i32> -> i32
+  %395 = arith.index_cast %394 : i32 to index
+  %396 = arith.cmpi sle, %395, %c0_index : index
+  scf.if %396 {
+    %397 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %398 = arith.index_cast %c1_index : index to i32
+    %399 = arith.index_cast %397 : i32 to index
+    pto.store_scalar %398, %arg7[%399] : !pto.ptr<i32>, i32
+    %400 = arith.index_cast %397 : i32 to index
+    %401 = arith.addi %400, %c1_index : index
+    %402 = arith.index_cast %401 : index to i32
+    pto.store_scalar %402, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %403 = pto.load_scalar %arg3[%c2_index] : !pto.ptr<i32> -> i32
+  %404 = arith.index_cast %403 : i32 to index
+  %405 = arith.cmpi sle, %404, %c0_index : index
+  scf.if %405 {
+    %406 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %407 = arith.index_cast %c2_index : index to i32
+    %408 = arith.index_cast %406 : i32 to index
+    pto.store_scalar %407, %arg7[%408] : !pto.ptr<i32>, i32
+    %409 = arith.index_cast %406 : i32 to index
+    %410 = arith.addi %409, %c1_index : index
+    %411 = arith.index_cast %410 : index to i32
+    pto.store_scalar %411, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %412 = pto.load_scalar %arg3[%c3_index] : !pto.ptr<i32> -> i32
+  %413 = arith.index_cast %412 : i32 to index
+  %414 = arith.cmpi sle, %413, %c0_index : index
+  scf.if %414 {
+    %415 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %416 = arith.index_cast %c3_index : index to i32
+    %417 = arith.index_cast %415 : i32 to index
+    pto.store_scalar %416, %arg7[%417] : !pto.ptr<i32>, i32
+    %418 = arith.index_cast %415 : i32 to index
+    %419 = arith.addi %418, %c1_index : index
+    %420 = arith.index_cast %419 : index to i32
+    pto.store_scalar %420, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %421 = pto.load_scalar %arg3[%c4_index] : !pto.ptr<i32> -> i32
+  %422 = arith.index_cast %421 : i32 to index
+  %423 = arith.cmpi sle, %422, %c0_index : index
+  scf.if %423 {
+    %424 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %425 = arith.index_cast %c4_index : index to i32
+    %426 = arith.index_cast %424 : i32 to index
+    pto.store_scalar %425, %arg7[%426] : !pto.ptr<i32>, i32
+    %427 = arith.index_cast %424 : i32 to index
+    %428 = arith.addi %427, %c1_index : index
+    %429 = arith.index_cast %428 : index to i32
+    pto.store_scalar %429, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %430 = pto.load_scalar %arg3[%c5_index] : !pto.ptr<i32> -> i32
+  %431 = arith.index_cast %430 : i32 to index
+  %432 = arith.cmpi sle, %431, %c0_index : index
+  scf.if %432 {
+    %433 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %434 = arith.index_cast %c5_index : index to i32
+    %435 = arith.index_cast %433 : i32 to index
+    pto.store_scalar %434, %arg7[%435] : !pto.ptr<i32>, i32
+    %436 = arith.index_cast %433 : i32 to index
+    %437 = arith.addi %436, %c1_index : index
+    %438 = arith.index_cast %437 : index to i32
+    pto.store_scalar %438, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %439 = pto.load_scalar %arg3[%c6_index] : !pto.ptr<i32> -> i32
+  %440 = arith.index_cast %439 : i32 to index
+  %441 = arith.cmpi sle, %440, %c0_index : index
+  scf.if %441 {
+    %442 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %443 = arith.index_cast %c6_index : index to i32
+    %444 = arith.index_cast %442 : i32 to index
+    pto.store_scalar %443, %arg7[%444] : !pto.ptr<i32>, i32
+    %445 = arith.index_cast %442 : i32 to index
+    %446 = arith.addi %445, %c1_index : index
+    %447 = arith.index_cast %446 : index to i32
+    pto.store_scalar %447, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %448 = pto.load_scalar %arg3[%c7_index] : !pto.ptr<i32> -> i32
+  %449 = arith.index_cast %448 : i32 to index
+  %450 = arith.cmpi sle, %449, %c0_index : index
+  scf.if %450 {
+    %451 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %452 = arith.index_cast %c7_index : index to i32
+    %453 = arith.index_cast %451 : i32 to index
+    pto.store_scalar %452, %arg7[%453] : !pto.ptr<i32>, i32
+    %454 = arith.index_cast %451 : i32 to index
+    %455 = arith.addi %454, %c1_index : index
+    %456 = arith.index_cast %455 : index to i32
+    pto.store_scalar %456, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %457 = pto.load_scalar %arg3[%c8_index] : !pto.ptr<i32> -> i32
+  %458 = arith.index_cast %457 : i32 to index
+  %459 = arith.cmpi sle, %458, %c0_index : index
+  scf.if %459 {
+    %460 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %461 = arith.index_cast %c8_index : index to i32
+    %462 = arith.index_cast %460 : i32 to index
+    pto.store_scalar %461, %arg7[%462] : !pto.ptr<i32>, i32
+    %463 = arith.index_cast %460 : i32 to index
+    %464 = arith.addi %463, %c1_index : index
+    %465 = arith.index_cast %464 : index to i32
+    pto.store_scalar %465, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %466 = pto.load_scalar %arg3[%c9_index] : !pto.ptr<i32> -> i32
+  %467 = arith.index_cast %466 : i32 to index
+  %468 = arith.cmpi sle, %467, %c0_index : index
+  scf.if %468 {
+    %469 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %470 = arith.index_cast %c9_index : index to i32
+    %471 = arith.index_cast %469 : i32 to index
+    pto.store_scalar %470, %arg7[%471] : !pto.ptr<i32>, i32
+    %472 = arith.index_cast %469 : i32 to index
+    %473 = arith.addi %472, %c1_index : index
+    %474 = arith.index_cast %473 : index to i32
+    pto.store_scalar %474, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %475 = pto.load_scalar %arg3[%c10_index] : !pto.ptr<i32> -> i32
+  %476 = arith.index_cast %475 : i32 to index
+  %477 = arith.cmpi sle, %476, %c0_index : index
+  scf.if %477 {
+    %478 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %479 = arith.index_cast %c10_index : index to i32
+    %480 = arith.index_cast %478 : i32 to index
+    pto.store_scalar %479, %arg7[%480] : !pto.ptr<i32>, i32
+    %481 = arith.index_cast %478 : i32 to index
+    %482 = arith.addi %481, %c1_index : index
+    %483 = arith.index_cast %482 : index to i32
+    pto.store_scalar %483, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %484 = pto.load_scalar %arg3[%c11_index] : !pto.ptr<i32> -> i32
+  %485 = arith.index_cast %484 : i32 to index
+  %486 = arith.cmpi sle, %485, %c0_index : index
+  scf.if %486 {
+    %487 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %488 = arith.index_cast %c11_index : index to i32
+    %489 = arith.index_cast %487 : i32 to index
+    pto.store_scalar %488, %arg7[%489] : !pto.ptr<i32>, i32
+    %490 = arith.index_cast %487 : i32 to index
+    %491 = arith.addi %490, %c1_index : index
+    %492 = arith.index_cast %491 : index to i32
+    pto.store_scalar %492, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %493 = pto.load_scalar %arg3[%c12_index] : !pto.ptr<i32> -> i32
+  %494 = arith.index_cast %493 : i32 to index
+  %495 = arith.cmpi sle, %494, %c0_index : index
+  scf.if %495 {
+    %496 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %497 = arith.index_cast %c12_index : index to i32
+    %498 = arith.index_cast %496 : i32 to index
+    pto.store_scalar %497, %arg7[%498] : !pto.ptr<i32>, i32
+    %499 = arith.index_cast %496 : i32 to index
+    %500 = arith.addi %499, %c1_index : index
+    %501 = arith.index_cast %500 : index to i32
+    pto.store_scalar %501, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %502 = pto.load_scalar %arg3[%c13_index] : !pto.ptr<i32> -> i32
+  %503 = arith.index_cast %502 : i32 to index
+  %504 = arith.cmpi sle, %503, %c0_index : index
+  scf.if %504 {
+    %505 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %506 = arith.index_cast %c13_index : index to i32
+    %507 = arith.index_cast %505 : i32 to index
+    pto.store_scalar %506, %arg7[%507] : !pto.ptr<i32>, i32
+    %508 = arith.index_cast %505 : i32 to index
+    %509 = arith.addi %508, %c1_index : index
+    %510 = arith.index_cast %509 : index to i32
+    pto.store_scalar %510, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %511 = pto.load_scalar %arg3[%c14_index] : !pto.ptr<i32> -> i32
+  %512 = arith.index_cast %511 : i32 to index
+  %513 = arith.cmpi sle, %512, %c0_index : index
+  scf.if %513 {
+    %514 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %515 = arith.index_cast %c14_index : index to i32
+    %516 = arith.index_cast %514 : i32 to index
+    pto.store_scalar %515, %arg7[%516] : !pto.ptr<i32>, i32
+    %517 = arith.index_cast %514 : i32 to index
+    %518 = arith.addi %517, %c1_index : index
+    %519 = arith.index_cast %518 : index to i32
+    pto.store_scalar %519, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %520 = pto.load_scalar %arg3[%c15_index] : !pto.ptr<i32> -> i32
+  %521 = arith.index_cast %520 : i32 to index
+  %522 = arith.cmpi sle, %521, %c0_index : index
+  scf.if %522 {
+    %523 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %524 = arith.index_cast %c15_index : index to i32
+    %525 = arith.index_cast %523 : i32 to index
+    pto.store_scalar %524, %arg7[%525] : !pto.ptr<i32>, i32
+    %526 = arith.index_cast %523 : i32 to index
+    %527 = arith.addi %526, %c1_index : index
+    %528 = arith.index_cast %527 : index to i32
+    pto.store_scalar %528, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %529 = pto.load_scalar %arg3[%c16_index] : !pto.ptr<i32> -> i32
+  %530 = arith.index_cast %529 : i32 to index
+  %531 = arith.cmpi sle, %530, %c0_index : index
+  scf.if %531 {
+    %532 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %533 = arith.index_cast %c16_index : index to i32
+    %534 = arith.index_cast %532 : i32 to index
+    pto.store_scalar %533, %arg7[%534] : !pto.ptr<i32>, i32
+    %535 = arith.index_cast %532 : i32 to index
+    %536 = arith.addi %535, %c1_index : index
+    %537 = arith.index_cast %536 : index to i32
+    pto.store_scalar %537, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %538 = pto.load_scalar %arg3[%c17_index] : !pto.ptr<i32> -> i32
+  %539 = arith.index_cast %538 : i32 to index
+  %540 = arith.cmpi sle, %539, %c0_index : index
+  scf.if %540 {
+    %541 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %542 = arith.index_cast %c17_index : index to i32
+    %543 = arith.index_cast %541 : i32 to index
+    pto.store_scalar %542, %arg7[%543] : !pto.ptr<i32>, i32
+    %544 = arith.index_cast %541 : i32 to index
+    %545 = arith.addi %544, %c1_index : index
+    %546 = arith.index_cast %545 : index to i32
+    pto.store_scalar %546, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %547 = pto.load_scalar %arg3[%c18_index] : !pto.ptr<i32> -> i32
+  %548 = arith.index_cast %547 : i32 to index
+  %549 = arith.cmpi sle, %548, %c0_index : index
+  scf.if %549 {
+    %550 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %551 = arith.index_cast %c18_index : index to i32
+    %552 = arith.index_cast %550 : i32 to index
+    pto.store_scalar %551, %arg7[%552] : !pto.ptr<i32>, i32
+    %553 = arith.index_cast %550 : i32 to index
+    %554 = arith.addi %553, %c1_index : index
+    %555 = arith.index_cast %554 : index to i32
+    pto.store_scalar %555, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %556 = pto.load_scalar %arg3[%c19_index] : !pto.ptr<i32> -> i32
+  %557 = arith.index_cast %556 : i32 to index
+  %558 = arith.cmpi sle, %557, %c0_index : index
+  scf.if %558 {
+    %559 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %560 = arith.index_cast %c19_index : index to i32
+    %561 = arith.index_cast %559 : i32 to index
+    pto.store_scalar %560, %arg7[%561] : !pto.ptr<i32>, i32
+    %562 = arith.index_cast %559 : i32 to index
+    %563 = arith.addi %562, %c1_index : index
+    %564 = arith.index_cast %563 : index to i32
+    pto.store_scalar %564, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %565 = pto.load_scalar %arg3[%c20_index] : !pto.ptr<i32> -> i32
+  %566 = arith.index_cast %565 : i32 to index
+  %567 = arith.cmpi sle, %566, %c0_index : index
+  scf.if %567 {
+    %568 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %569 = arith.index_cast %c20_index : index to i32
+    %570 = arith.index_cast %568 : i32 to index
+    pto.store_scalar %569, %arg7[%570] : !pto.ptr<i32>, i32
+    %571 = arith.index_cast %568 : i32 to index
+    %572 = arith.addi %571, %c1_index : index
+    %573 = arith.index_cast %572 : index to i32
+    pto.store_scalar %573, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %574 = pto.load_scalar %arg3[%c21_index] : !pto.ptr<i32> -> i32
+  %575 = arith.index_cast %574 : i32 to index
+  %576 = arith.cmpi sle, %575, %c0_index : index
+  scf.if %576 {
+    %577 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %578 = arith.index_cast %c21_index : index to i32
+    %579 = arith.index_cast %577 : i32 to index
+    pto.store_scalar %578, %arg7[%579] : !pto.ptr<i32>, i32
+    %580 = arith.index_cast %577 : i32 to index
+    %581 = arith.addi %580, %c1_index : index
+    %582 = arith.index_cast %581 : index to i32
+    pto.store_scalar %582, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %583 = pto.load_scalar %arg3[%c22_index] : !pto.ptr<i32> -> i32
+  %584 = arith.index_cast %583 : i32 to index
+  %585 = arith.cmpi sle, %584, %c0_index : index
+  scf.if %585 {
+    %586 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %587 = arith.index_cast %c22_index : index to i32
+    %588 = arith.index_cast %586 : i32 to index
+    pto.store_scalar %587, %arg7[%588] : !pto.ptr<i32>, i32
+    %589 = arith.index_cast %586 : i32 to index
+    %590 = arith.addi %589, %c1_index : index
+    %591 = arith.index_cast %590 : index to i32
+    pto.store_scalar %591, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %592 = pto.load_scalar %arg3[%c23_index] : !pto.ptr<i32> -> i32
+  %593 = arith.index_cast %592 : i32 to index
+  %594 = arith.cmpi sle, %593, %c0_index : index
+  scf.if %594 {
+    %595 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %596 = arith.index_cast %c23_index : index to i32
+    %597 = arith.index_cast %595 : i32 to index
+    pto.store_scalar %596, %arg7[%597] : !pto.ptr<i32>, i32
+    %598 = arith.index_cast %595 : i32 to index
+    %599 = arith.addi %598, %c1_index : index
+    %600 = arith.index_cast %599 : index to i32
+    pto.store_scalar %600, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %601 = pto.load_scalar %arg3[%c24_index] : !pto.ptr<i32> -> i32
+  %602 = arith.index_cast %601 : i32 to index
+  %603 = arith.cmpi sle, %602, %c0_index : index
+  scf.if %603 {
+    %604 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %605 = arith.index_cast %c24_index : index to i32
+    %606 = arith.index_cast %604 : i32 to index
+    pto.store_scalar %605, %arg7[%606] : !pto.ptr<i32>, i32
+    %607 = arith.index_cast %604 : i32 to index
+    %608 = arith.addi %607, %c1_index : index
+    %609 = arith.index_cast %608 : index to i32
+    pto.store_scalar %609, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %610 = pto.load_scalar %arg3[%c25_index] : !pto.ptr<i32> -> i32
+  %611 = arith.index_cast %610 : i32 to index
+  %612 = arith.cmpi sle, %611, %c0_index : index
+  scf.if %612 {
+    %613 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %614 = arith.index_cast %c25_index : index to i32
+    %615 = arith.index_cast %613 : i32 to index
+    pto.store_scalar %614, %arg7[%615] : !pto.ptr<i32>, i32
+    %616 = arith.index_cast %613 : i32 to index
+    %617 = arith.addi %616, %c1_index : index
+    %618 = arith.index_cast %617 : index to i32
+    pto.store_scalar %618, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %619 = pto.load_scalar %arg3[%c26_index] : !pto.ptr<i32> -> i32
+  %620 = arith.index_cast %619 : i32 to index
+  %621 = arith.cmpi sle, %620, %c0_index : index
+  scf.if %621 {
+    %622 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %623 = arith.index_cast %c26_index : index to i32
+    %624 = arith.index_cast %622 : i32 to index
+    pto.store_scalar %623, %arg7[%624] : !pto.ptr<i32>, i32
+    %625 = arith.index_cast %622 : i32 to index
+    %626 = arith.addi %625, %c1_index : index
+    %627 = arith.index_cast %626 : index to i32
+    pto.store_scalar %627, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %628 = pto.load_scalar %arg3[%c27_index] : !pto.ptr<i32> -> i32
+  %629 = arith.index_cast %628 : i32 to index
+  %630 = arith.cmpi sle, %629, %c0_index : index
+  scf.if %630 {
+    %631 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %632 = arith.index_cast %c27_index : index to i32
+    %633 = arith.index_cast %631 : i32 to index
+    pto.store_scalar %632, %arg7[%633] : !pto.ptr<i32>, i32
+    %634 = arith.index_cast %631 : i32 to index
+    %635 = arith.addi %634, %c1_index : index
+    %636 = arith.index_cast %635 : index to i32
+    pto.store_scalar %636, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %637 = pto.load_scalar %arg3[%c28_index] : !pto.ptr<i32> -> i32
+  %638 = arith.index_cast %637 : i32 to index
+  %639 = arith.cmpi sle, %638, %c0_index : index
+  scf.if %639 {
+    %640 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %641 = arith.index_cast %c28_index : index to i32
+    %642 = arith.index_cast %640 : i32 to index
+    pto.store_scalar %641, %arg7[%642] : !pto.ptr<i32>, i32
+    %643 = arith.index_cast %640 : i32 to index
+    %644 = arith.addi %643, %c1_index : index
+    %645 = arith.index_cast %644 : index to i32
+    pto.store_scalar %645, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %646 = pto.load_scalar %arg3[%c29_index] : !pto.ptr<i32> -> i32
+  %647 = arith.index_cast %646 : i32 to index
+  %648 = arith.cmpi sle, %647, %c0_index : index
+  scf.if %648 {
+    %649 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %650 = arith.index_cast %c29_index : index to i32
+    %651 = arith.index_cast %649 : i32 to index
+    pto.store_scalar %650, %arg7[%651] : !pto.ptr<i32>, i32
+    %652 = arith.index_cast %649 : i32 to index
+    %653 = arith.addi %652, %c1_index : index
+    %654 = arith.index_cast %653 : index to i32
+    pto.store_scalar %654, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %655 = pto.load_scalar %arg3[%c30_index] : !pto.ptr<i32> -> i32
+  %656 = arith.index_cast %655 : i32 to index
+  %657 = arith.cmpi sle, %656, %c0_index : index
+  scf.if %657 {
+    %658 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %659 = arith.index_cast %c30_index : index to i32
+    %660 = arith.index_cast %658 : i32 to index
+    pto.store_scalar %659, %arg7[%660] : !pto.ptr<i32>, i32
+    %661 = arith.index_cast %658 : i32 to index
+    %662 = arith.addi %661, %c1_index : index
+    %663 = arith.index_cast %662 : index to i32
+    pto.store_scalar %663, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %664 = pto.load_scalar %arg3[%c31_index] : !pto.ptr<i32> -> i32
+  %665 = arith.index_cast %664 : i32 to index
+  %666 = arith.cmpi sle, %665, %c0_index : index
+  scf.if %666 {
+    %667 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %668 = arith.index_cast %c31_index : index to i32
+    %669 = arith.index_cast %667 : i32 to index
+    pto.store_scalar %668, %arg7[%669] : !pto.ptr<i32>, i32
+    %670 = arith.index_cast %667 : i32 to index
+    %671 = arith.addi %670, %c1_index : index
+    %672 = arith.index_cast %671 : index to i32
+    pto.store_scalar %672, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %673 = pto.load_scalar %arg3[%c32_index] : !pto.ptr<i32> -> i32
+  %674 = arith.index_cast %673 : i32 to index
+  %675 = arith.cmpi sle, %674, %c0_index : index
+  scf.if %675 {
+    %676 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %677 = arith.index_cast %c32_index : index to i32
+    %678 = arith.index_cast %676 : i32 to index
+    pto.store_scalar %677, %arg7[%678] : !pto.ptr<i32>, i32
+    %679 = arith.index_cast %676 : i32 to index
+    %680 = arith.addi %679, %c1_index : index
+    %681 = arith.index_cast %680 : index to i32
+    pto.store_scalar %681, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %682 = pto.load_scalar %arg3[%c33_index] : !pto.ptr<i32> -> i32
+  %683 = arith.index_cast %682 : i32 to index
+  %684 = arith.cmpi sle, %683, %c0_index : index
+  scf.if %684 {
+    %685 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %686 = arith.index_cast %c33_index : index to i32
+    %687 = arith.index_cast %685 : i32 to index
+    pto.store_scalar %686, %arg7[%687] : !pto.ptr<i32>, i32
+    %688 = arith.index_cast %685 : i32 to index
+    %689 = arith.addi %688, %c1_index : index
+    %690 = arith.index_cast %689 : index to i32
+    pto.store_scalar %690, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %691 = pto.load_scalar %arg3[%c34_index] : !pto.ptr<i32> -> i32
+  %692 = arith.index_cast %691 : i32 to index
+  %693 = arith.cmpi sle, %692, %c0_index : index
+  scf.if %693 {
+    %694 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %695 = arith.index_cast %c34_index : index to i32
+    %696 = arith.index_cast %694 : i32 to index
+    pto.store_scalar %695, %arg7[%696] : !pto.ptr<i32>, i32
+    %697 = arith.index_cast %694 : i32 to index
+    %698 = arith.addi %697, %c1_index : index
+    %699 = arith.index_cast %698 : index to i32
+    pto.store_scalar %699, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %700 = pto.load_scalar %arg3[%c35_index] : !pto.ptr<i32> -> i32
+  %701 = arith.index_cast %700 : i32 to index
+  %702 = arith.cmpi sle, %701, %c0_index : index
+  scf.if %702 {
+    %703 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %704 = arith.index_cast %c35_index : index to i32
+    %705 = arith.index_cast %703 : i32 to index
+    pto.store_scalar %704, %arg7[%705] : !pto.ptr<i32>, i32
+    %706 = arith.index_cast %703 : i32 to index
+    %707 = arith.addi %706, %c1_index : index
+    %708 = arith.index_cast %707 : index to i32
+    pto.store_scalar %708, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %709 = pto.load_scalar %arg3[%c36_index] : !pto.ptr<i32> -> i32
+  %710 = arith.index_cast %709 : i32 to index
+  %711 = arith.cmpi sle, %710, %c0_index : index
+  scf.if %711 {
+    %712 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %713 = arith.index_cast %c36_index : index to i32
+    %714 = arith.index_cast %712 : i32 to index
+    pto.store_scalar %713, %arg7[%714] : !pto.ptr<i32>, i32
+    %715 = arith.index_cast %712 : i32 to index
+    %716 = arith.addi %715, %c1_index : index
+    %717 = arith.index_cast %716 : index to i32
+    pto.store_scalar %717, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %718 = pto.load_scalar %arg3[%c37_index] : !pto.ptr<i32> -> i32
+  %719 = arith.index_cast %718 : i32 to index
+  %720 = arith.cmpi sle, %719, %c0_index : index
+  scf.if %720 {
+    %721 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %722 = arith.index_cast %c37_index : index to i32
+    %723 = arith.index_cast %721 : i32 to index
+    pto.store_scalar %722, %arg7[%723] : !pto.ptr<i32>, i32
+    %724 = arith.index_cast %721 : i32 to index
+    %725 = arith.addi %724, %c1_index : index
+    %726 = arith.index_cast %725 : index to i32
+    pto.store_scalar %726, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %727 = pto.load_scalar %arg3[%c38_index] : !pto.ptr<i32> -> i32
+  %728 = arith.index_cast %727 : i32 to index
+  %729 = arith.cmpi sle, %728, %c0_index : index
+  scf.if %729 {
+    %730 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %731 = arith.index_cast %c38_index : index to i32
+    %732 = arith.index_cast %730 : i32 to index
+    pto.store_scalar %731, %arg7[%732] : !pto.ptr<i32>, i32
+    %733 = arith.index_cast %730 : i32 to index
+    %734 = arith.addi %733, %c1_index : index
+    %735 = arith.index_cast %734 : index to i32
+    pto.store_scalar %735, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  %736 = pto.load_scalar %arg3[%c39_index] : !pto.ptr<i32> -> i32
+  %737 = arith.index_cast %736 : i32 to index
+  %738 = arith.cmpi sle, %737, %c0_index : index
+  scf.if %738 {
+    %739 = pto.load_scalar %arg6[%c0_index] : !pto.ptr<i32> -> i32
+    %740 = arith.index_cast %c39_index : index to i32
+    %741 = arith.index_cast %739 : i32 to index
+    pto.store_scalar %740, %arg7[%741] : !pto.ptr<i32>, i32
+    %742 = arith.index_cast %739 : i32 to index
+    %743 = arith.addi %742, %c1_index : index
+    %744 = arith.index_cast %743 : index to i32
+    pto.store_scalar %744, %arg6[%c0_index] : !pto.ptr<i32>, i32
+  }
+  return
+  }
+}

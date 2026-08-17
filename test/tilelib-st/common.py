@@ -19,7 +19,6 @@ import numpy as np
 
 _DEVICE = "npu:0"
 
-
 def init_runtime():
     import torch
     import torch_npu  # noqa: F401

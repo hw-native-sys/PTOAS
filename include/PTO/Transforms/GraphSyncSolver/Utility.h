@@ -27,16 +27,16 @@
 #include <pthread.h>
 #include <string>
 
-#define INTRA_CORE_EVENT_ID_NUM (int64_t)8
-#define CROSS_CORE_EVENT_ID_NUM (int64_t)16
-#define TEST_INTRA_CORE_EVENT_ID_NUM (int64_t)8
-#define TEST_CROSS_CORE_EVENT_ID_NUM (int64_t)999
-
 namespace mlir::pto::syncsolver {
-const int64_t blockAllIntraSyncFlagId1 = 15;
-const int64_t blockAllIntraSyncFlagId2 = 14;
-const int64_t reservedCrossCoreEventIdNum = 2;
-const int64_t reservedIntraCoreEventIdNum = 0;
+inline constexpr size_t kDebugIndentWidth = 2;
+inline constexpr int64_t kIntraCoreEventIdCount = 8;
+inline constexpr int64_t kCrossCoreEventIdCount = 16;
+inline constexpr int64_t kTestIntraCoreEventIdCount = 8;
+inline constexpr int64_t kTestCrossCoreEventIdCount = 999;
+inline constexpr int64_t kBlockAllIntraSyncFlagId1 = 15;
+inline constexpr int64_t kBlockAllIntraSyncFlagId2 = 14;
+inline constexpr int64_t kReservedCrossCoreEventIdCount = 2;
+inline constexpr int64_t kReservedIntraCoreEventIdCount = 0;
 } // namespace mlir::pto::syncsolver
 
 using SyncMap = llvm::MapVector<
@@ -291,7 +291,6 @@ struct Occurrence {
 struct EventIdNode;
 
 struct ConflictPair {
-
   static int globalIdCounter;
 
   const int id;
@@ -432,7 +431,7 @@ public:
     if (printConflictPairs) {
       for (auto [conflictPair, frq] : conflictPairs) {
         assert(frq > 0);
-        ret += std::string(2, ' ') + conflictPair->str() + "\n";
+        ret += std::string(kDebugIndentWidth, ' ') + conflictPair->str() + "\n";
       }
     }
     ret.pop_back();

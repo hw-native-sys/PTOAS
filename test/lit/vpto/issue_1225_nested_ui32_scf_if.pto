@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Guards VPTO type lowering of nested multi-result ui32 scf.if operations.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @nested_ui32_scf_if(
+      %src: !pto.ptr<ui32, gm>,
+      %dst: !pto.ptr<ui32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %lhs = pto.load_scalar %src[%c0]
+        : !pto.ptr<ui32, gm> -> ui32
+    %rhs = pto.load_scalar %src[%c1]
+        : !pto.ptr<ui32, gm> -> ui32
+    %block_idx = pto.get_block_idx
+    %outer_cond = arith.cmpi eq, %block_idx, %c0_i64 : i64
+    %inner_cond = arith.cmpi eq, %block_idx, %c1_i64 : i64
+
+    %result:2 = scf.if %outer_cond -> (ui32, ui32) {
+      scf.yield %lhs, %rhs : ui32, ui32
+    } else {
+      %nested:2 = scf.if %inner_cond -> (ui32, ui32) {
+        scf.yield %rhs, %lhs : ui32, ui32
+      } else {
+        scf.yield %lhs, %rhs : ui32, ui32
+      }
+      scf.yield %nested#0, %nested#1 : ui32, ui32
+    }
+
+    pto.store_scalar %result#0, %dst[%c0]
+        : !pto.ptr<ui32, gm>, ui32
+    pto.store_scalar %result#1, %dst[%c1]
+        : !pto.ptr<ui32, gm>, ui32
+    return
+  }
+}
+
+// CHECK-LABEL: define void @nested_ui32_scf_if_mix_aiv
+// CHECK: select i1 {{.*}}, i32 {{.*}}, i32
+// CHECK: select i1 {{.*}}, i32 {{.*}}, i32

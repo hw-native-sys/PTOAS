@@ -6,13 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include <algorithm>
+#include <tuple>
 #include "BufidSyncCodegen.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/Support/Debug.h"
-#include <algorithm>
-#include <tuple>
+
 
 #define DEBUG_TYPE "pto-bufid-sync"
 
@@ -51,8 +52,9 @@ LogicalResult BufidSyncCodegen::run() {
 
   WalkResult walkResult = func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
     auto it = op2BufSync_.find(op);
-    if (it == op2BufSync_.end())
+    if (it == op2BufSync_.end()) {
       return WalkResult::advance();
+    }
 
     auto &build = it->second;
     SmallVector<BufSyncOperation> pipeBefore(build.pipeBefore.begin(),

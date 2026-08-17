@@ -69,6 +69,6 @@ module {
 // CHECK-LABEL: AICORE void single_line_partition_view_nonzero_offset(
 // CHECK-DAG: unsigned [[OFFSET:[_A-Za-z][_A-Za-z0-9]*]] = 34;
 // CHECK: pto::Stride<512, 512, 512, 32, 1>
-// CHECK: GlobalTensor<float, {{.*1, 16, 16.*}}> [[OFFSET_PVIEW:[_A-Za-z][_A-Za-z0-9]*]] = GlobalTensor<float, {{.*1, 16, 16.*}}>({{[_A-Za-z][_A-Za-z0-9]*}} + [[OFFSET]],
+// CHECK: GlobalTensor<float, {{.*1, 16, 16.*}}> [[OFFSET_PVIEW:[_A-Za-z][_A-Za-z0-9]*]] = GlobalTensor<float, {{.*1, 16, 16.*}}>({{.*}} + [[OFFSET]],
 // CHECK: __gm__ float* [[OFFSET_DATA:[_A-Za-z][_A-Za-z0-9]*]] = PTOAS__GLOBAL_TENSOR_DATA([[OFFSET_PVIEW]]);
 // CHECK: PTOAS__DCCI_SINGLE_CACHE_LINE([[OFFSET_DATA]]);

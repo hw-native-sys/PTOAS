@@ -50,6 +50,8 @@ bool mlirPTOTypeIsAF4E1M2x2Type(MlirType type);
 MlirType mlirPTOF4E1M2x2TypeGet(MlirContext ctx);
 bool mlirPTOTypeIsAF4E2M1x2Type(MlirType type);
 MlirType mlirPTOF4E2M1x2TypeGet(MlirContext ctx);
+bool mlirPTOTypeIsABF16x2Type(MlirType type);
+MlirType mlirPTOBF16x2TypeGet(MlirContext ctx);
 
 // ---- #pto.address_space<...> ----
 bool mlirPTOAttrIsAAddressSpaceAttr(MlirAttribute attr);
@@ -253,6 +255,9 @@ MLIR_CAPI_EXPORTED int32_t mlirPTOQuantTypeAttrGetValue(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOQuantScaleAlgAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAQuantScaleAlgAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTOQuantScaleAlgAttrGetValue(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMxGroupAxisAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAMxGroupAxisAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOMxGroupAxisAttrGetValue(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOVecStoreModeAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAVecStoreModeAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTOVecStoreModeAttrGetValue(MlirAttribute attr);

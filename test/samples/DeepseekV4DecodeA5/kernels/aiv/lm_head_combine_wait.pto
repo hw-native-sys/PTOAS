@@ -1,0 +1,27 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @lm_head_combine_wait(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<i32>, %arg2: i32, %arg3: !pto.ptr<i64>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c16_index = arith.constant 16 : index
+  %c64640_index = arith.constant 64640 : index
+  %c1_index = arith.constant 1 : index
+  %c2_index = arith.constant 2 : index
+  %c0_index = arith.constant 0 : index
+  %c24_index = arith.constant 24 : index
+  %logits_shards_inline49_inline7379__rv_v2_view = pto.make_tensor_view %arg0, shape = [%c16_index, %c64640_index], strides = [%c64640_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %lm_head_logits_done__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %_shard_anchor_inline32_inline7374__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<f32> -> f32
+  scf.for %src_tp_inline50_inline7389__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %0 = arith.index_cast %arg2 : i32 to index
+    %1 = arith.remsi %0, %c2_index : index
+    %3 = arith.cmpi ne, %src_tp_inline50_inline7389__idx_v0, %1 : index
+    scf.if %3 {
+      %4 = arith.maxsi %src_tp_inline50_inline7389__idx_v0, %c0_index : index
+      %lm_head_logits_done__ssa_v0_local_pview = pto.partition_view %lm_head_logits_done__ssa_v0_view, offsets = [%4, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      %6 = arith.muli %c1_index, %c24_index : index
+      %7 = arith.index_cast %6 : index to i32
+      pto.comm.twait(%lm_head_logits_done__ssa_v0_local_pview, %7 : !pto.partition_tensor_view<1x1xi32>, i32) {cmp = #pto<wait_cmp ge>}
+      pto.cmo.cacheinvalid all #pto.address_space<gm>
+    }
+  }
+  return
+  }
+}

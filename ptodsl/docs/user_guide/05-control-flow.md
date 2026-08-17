@@ -4,7 +4,7 @@ PTODSL uses a **tracing** compilation model. When you call `kernel.compile(...)`
 
 This has one critical implication for how you write loops and branches:
 
-- **Python native `for`/`if`** is rewritten to device-side control flow by default in `@pto.jit` bodies and named `@pto.tileop` / `@pto.simt` helpers. A `for i in range(rows)` loop records a device loop, and a runtime `if` records both branches.
+ - **Python native `for`/`if`** is rewritten to device-side control flow by default in `@pto.jit` bodies, `@pto.func` helpers, and named `@pto.tileop` / `@pto.simt` helpers. A `for i in range(rows)` loop records a device loop, and a runtime `if` records both branches.
 - **Assign-form Python conditional expressions** such as `x = a if cond else b` are normalized through the same AST rewrite path, so runtime conditions lower to device-side branches before the assignment is merged back into `x`.
 - **`pto.const_expr` / `pto.static_range`** keep compile-time Python behavior when you want trace-time specialization or unrolling.
 - **`pto.for_` / `pto.if_`** produce device-side control flow. The loop bound or branch condition can be a runtime value, and the hardware will execute the loop or take the branch dynamically.
@@ -255,10 +255,19 @@ This lets you write a single kernel that specializes into different strategies b
 
 ## 5.5 Native Python control-flow rewrite
 
-`@pto.jit` rewrites supported native Python control flow before tracing. In the
-default mode, plain Python `if` and `for range(...)` in the rewritten scope
-become device-side control flow. Use `pto.const_expr(...)` and
-`pto.static_range(...)` when you want trace-time behavior.
+`@pto.jit`, `@pto.func`, and named `@pto.tileop` / `@pto.simt`
+callables rewrite supported native Python control flow before tracing their
+bodies. In the default mode, plain Python `if` and `for range(...)`, and `while`
+in the rewritten scope become device-side control flow. Use `pto.const_expr(...)`
+and `pto.static_range(...)` when you want trace-time behavior.
+
+PTODSL does not recursively rewrite arbitrary undecorated Python callees. If an
+external helper should contain runtime native control flow, decorate it with
+`@pto.func` or one of the other PTODSL callable decorators. `@pto.func` helpers
+must explicitly declare their return type with `returns=...` or a Python return
+annotation. A plain Python helper is still executed during tracing; static
+`range(...)` loops in such a helper unroll at trace time, and runtime loop
+bounds or branch conditions are not converted into `scf.for` / `scf.if`.
 
 ### Runtime branches
 
@@ -354,6 +363,23 @@ range(start, stop, step)
 
 The loop target must be a simple name.
 
+### Runtime `while`
+
+Native Python `while` is device-side control flow in the default AST rewrite
+mode. Its condition is evaluated at the loop header on every iteration, so it
+may depend on runtime scalar values and loop-carried state:
+
+```python
+value = pto.const(0, dtype=pto.i32)
+while value < limit:
+    value = value + pto.const(1, dtype=pto.i32)
+```
+
+The runtime rewrite supports condition-driven loops with inferred loop-carried
+values. `break`, `continue`, and loop `else` are lowered through hidden
+control-state values in `scf.while`. A plain loop over `pto.static_range(...)`
+remains trace-time Python and keeps ordinary Python execution semantics.
+
 ### Loop-carried values
 
 Accumulator-style loops are rewritten through `pto.for_(...).carry(...)`:
@@ -373,9 +399,11 @@ def ast_rewrite_accumulator_kernel(rows: pto.i32):
 
 This lowers to an `scf.for` with `iter_args`.
 
-The first implementation requires a carried value to have an initial value and
-to be read before it is reassigned in the loop body. If you need a more complex
-loop state pattern, use the explicit API:
+The loop-carried state of a native runtime `while` is inferred from values that
+are assigned in the loop and used by the condition, by later iterations, or
+after the loop. Each such value must have a stable type and a well-defined
+initial value before the loop. If you need a more complex loop state pattern,
+use the explicit API:
 
 ```python
 loop = pto.for_(0, rows, step=1).carry(acc=acc)
@@ -544,22 +572,21 @@ is reserved for debugging output and currently must remain `False`.
 
 ### Unsupported patterns
 
-The first version does not support:
-
-- `break` or `continue` in rewritten runtime loops;
-- `for ... else`;
-- runtime loops over iterables other than `range(...)`;
-- tuple/list loop targets;
-- using the runtime loop induction variable after the loop;
-- last-iteration-only loop values without an initial carried value.
-
-Use explicit `pto.if_` / `pto.for_` if a kernel needs one of those patterns.
+The runtime rewrite does not support dynamic `return` from inside a loop, or
+runtime iteration over arbitrary Python iterables. Tuple/list loop targets and
+trace-time-only values still require the existing static forms. A plain runtime
+`for` cannot expose its induction variable after the loop; the controlled
+`for` form using `break`, `continue`, or `else` can carry it explicitly. Use an explicit
+kernel-level result/carry protocol when a loop needs to communicate a result;
+do not use Python `return` as a dynamic loop exit.
 
 ## 5.6 Summary
 
 | Construct | When evaluated | Use for |
 |-----------|---------------|---------|
 | Python `for` / `if` | Device-side | Native syntax for dynamic loops and branches |
+| Python `while` | Device-side | Runtime condition-driven loops |
+| Runtime `break` / `continue` / loop `else` | Lowered through hidden `scf.while` control state | Dynamic `return` from a runtime loop remains unsupported |
 | `pto.const_expr` / `pto.static_range` | Trace time | Compile-time branches and unrolling |
 | `pto.for_` | Device-side | Dynamic bounds, runtime loop counts |
 | `pto.for_(...).carry(...)` | Device-side | Loops with accumulated state across iterations |

@@ -17,6 +17,7 @@
 
 #include "SIMTPersistentFragmentAnalysis.h"
 
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Dominance.h"
@@ -39,6 +40,7 @@ namespace {
 
 constexpr llvm::StringLiteral kPersistentAttrName = "pto.persistent";
 constexpr int64_t kPersistentSlotLimit = 123;
+constexpr int64_t kWideValueSlotWidth = 2;
 
 struct PointerWorkItem {
   Value pointer;
@@ -69,14 +71,15 @@ struct PersistentAccessDiscovery {
 };
 
 static bool isSupportedPersistentScalarType(Type type) {
-  if (auto intType = dyn_cast<IntegerType>(type))
-    return intType.getWidth() <= 64;
+  if (auto intType = dyn_cast<IntegerType>(type)) {
+    return intType.getWidth() <= mlir::pto::kValue64;
+  }
   return type.isF16() || type.isBF16() || type.isF32();
 }
 
 static FailureOr<int64_t> getSignedInt64(const APInt &value, Operation *anchor,
                                          StringRef description) {
-  if (!value.isSignedIntN(64)) {
+  if (!value.isSignedIntN(mlir::pto::kValue64)) {
     anchor->emitOpError() << description << " does not fit in signed i64";
     return failure();
   }
@@ -121,8 +124,9 @@ static FailureOr<FragmentShape> getFragmentShape(LLVM::AllocaOp allocaOp,
 
   FailureOr<int64_t> elementCount = getConstantInt64(
       allocaOp.getArraySize(), allocaOp, "persistent fragment element count");
-  if (failed(elementCount))
+  if (failed(elementCount)) {
     return failure();
+  }
   if (*elementCount <= 0) {
     return allocaOp.emitOpError(
         "persistent SIMT fragment element count must be positive");
@@ -130,8 +134,9 @@ static FailureOr<FragmentShape> getFragmentShape(LLVM::AllocaOp allocaOp,
 
   FailureOr<int64_t> elementByteSize = getFixedTypeByteSize(
       elementType, allocaOp, "persistent fragment element type", dataLayout);
-  if (failed(elementByteSize))
+  if (failed(elementByteSize)) {
     return failure();
+  }
 
   int64_t totalByteSize;
   if (llvm::MulOverflow(*elementCount, *elementByteSize, totalByteSize)) {
@@ -152,8 +157,9 @@ static FailureOr<int64_t> getStaticGEPIndex(LLVM::GEPOp gep) {
   }
 
   auto index = indices[0];
-  if (auto constant = llvm::dyn_cast_if_present<IntegerAttr>(index))
+  if (auto constant = llvm::dyn_cast_if_present<IntegerAttr>(index)) {
     return getSignedInt64(constant.getValue(), gep, "GEP index");
+  }
 
   Value dynamicIndex = llvm::dyn_cast_if_present<Value>(index);
   if (!dynamicIndex) {
@@ -166,13 +172,15 @@ static FailureOr<int64_t> getStaticGEPIndex(LLVM::GEPOp gep) {
 static FailureOr<int64_t> getStaticGEPByteOffset(LLVM::GEPOp gep,
                                                  const DataLayout &dataLayout) {
   FailureOr<int64_t> index = getStaticGEPIndex(gep);
-  if (failed(index))
+  if (failed(index)) {
     return failure();
+  }
 
   FailureOr<int64_t> elementByteSize = getFixedTypeByteSize(
       gep.getElemType(), gep, "GEP element type", dataLayout);
-  if (failed(elementByteSize))
+  if (failed(elementByteSize)) {
     return failure();
+  }
 
   int64_t byteOffset;
   if (llvm::MulOverflow(*index, *elementByteSize, byteOffset)) {
@@ -216,7 +224,7 @@ getPersistentAccessLaneCount(Operation *access, Type accessType,
       return failure();
     }
     int64_t vectorLaneCount = vectorType.getDimSize(0);
-    if (vectorLaneCount != 2 && vectorLaneCount != 4) {
+    if (vectorLaneCount != mlir::pto::kValue2 && vectorLaneCount != 4) {
       access->emitOpError()
           << "persistent SIMT fragment currently supports only 2- or 4-lane "
              "vector accesses, got "
@@ -225,8 +233,9 @@ getPersistentAccessLaneCount(Operation *access, Type accessType,
     }
     scalarType = vectorType.getElementType();
     laneCount = static_cast<unsigned>(vectorLaneCount);
-    if (failed(validateScalarizableVectorAccess(access)))
+    if (failed(validateScalarizableVectorAccess(access))) {
       return failure();
+    }
   }
 
   if (!isSupportedPersistentScalarType(scalarType)) {
@@ -268,8 +277,9 @@ static LogicalResult recordAccess(Operation *access, Type accessType,
   Type elementType = allocaOp.getElemType();
   FailureOr<unsigned> laneCount =
       getPersistentAccessLaneCount(access, accessType, elementType);
-  if (failed(laneCount))
+  if (failed(laneCount)) {
     return failure();
+  }
   if (byteOffset < 0 || byteOffset % shape.elementByteSize != 0) {
     return access->emitOpError()
            << "persistent SIMT fragment byte offset " << byteOffset
@@ -347,8 +357,9 @@ findInitSection(DominanceInfo &dominance,
   // storing a long-lived operation-to-index map in the analysis result.
   SmallVector<pto::SectionSimtOp> accessedSections;
   for (pto::SectionSimtOp section : plan.sections) {
-    if (accessedSectionSet.contains(section.getOperation()))
+    if (accessedSectionSet.contains(section.getOperation())) {
       accessedSections.push_back(section);
+    }
   }
   if (accessedSections.size() != accessedSectionSet.size()) {
     return fragment.allocaOp.emitOpError(
@@ -360,13 +371,15 @@ findInitSection(DominanceInfo &dominance,
   for (pto::SectionSimtOp candidate : accessedSections) {
     bool dominatesAllAccessSections =
         llvm::all_of(accessedSections, [&](pto::SectionSimtOp section) {
-          if (section == candidate)
+          if (section == candidate) {
             return true;
+          }
           return dominance.dominates(candidate.getOperation(),
                                      section.getOperation());
         });
-    if (!dominatesAllAccessSections)
+    if (!dominatesAllAccessSections) {
       continue;
+    }
 
     if (initSection) {
       fragment.allocaOp.emitOpError(
@@ -453,12 +466,14 @@ validateCarrySectionDimensions(pto::SectionSimtOp initSection,
                                PersistentFragmentAnalysis &fragment) {
   fragment.carrySections.clear();
   for (pto::SectionSimtOp section : plan.sections) {
-    if (section == initSection)
+    if (section == initSection) {
       continue;
+    }
     // Only sections dominated by init can carry initialized fragment state.
     if (!dominance.dominates(initSection.getOperation(),
-                             section.getOperation()))
+                             section.getOperation())) {
       continue;
+    }
     if (!haveSameLaunchDimensions(initSection, section)) {
       return section.emitOpError()
              << "persistent SIMT fragment carry section launch dimensions ("
@@ -481,16 +496,19 @@ analyzeResidentElements(DominanceInfo &dominance,
                         const PersistentAccessDiscovery &discovery) {
   FailureOr<pto::SectionSimtOp> initSection =
       findInitSection(dominance, plan, discovery, fragment);
-  if (failed(initSection))
+  if (failed(initSection)) {
     return failure();
+  }
   fragment.initSection = *initSection;
 
   llvm::DenseSet<int64_t> residentElementSet;
   if (failed(collectResidentElements(*initSection, discovery, fragment,
-                                     residentElementSet)))
+                                     residentElementSet))) {
     return failure();
-  if (failed(validateResidentAccesses(residentElementSet, discovery)))
+  }
+  if (failed(validateResidentAccesses(residentElementSet, discovery))) {
     return failure();
+  }
 
   return validateCarrySectionDimensions(*initSection, dominance, plan,
                                         fragment);
@@ -498,10 +516,12 @@ analyzeResidentElements(DominanceInfo &dominance,
 
 static FailureOr<int64_t> getPersistentSlotWidth(Type type, Operation *anchor) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() <= 32)
+    if (intType.getWidth() <= mlir::pto::kValue32) {
       return 1;
-    if (intType.getWidth() <= 64)
-      return 2;
+    }
+    if (intType.getWidth() <= 64) {
+      return kWideValueSlotWidth;
+    }
   } else if (type.isF16() || type.isBF16() || type.isF32()) {
     return 1;
   }
@@ -519,14 +539,16 @@ allocatePersistentSlots(func::FuncOp func,
     Type elementType = fragment.allocaOp.getElemType();
     FailureOr<int64_t> slotWidth =
         getPersistentSlotWidth(elementType, fragment.allocaOp);
-    if (failed(slotWidth))
+    if (failed(slotWidth)) {
       return failure();
+    }
 
     for (ResidentElementPlan &residentElement : fragment.residentElements) {
       int64_t elementOffset = residentElement.elementOffset;
       int64_t slot = nextSlot;
-      if (*slotWidth == 2 && slot % 2 != 0)
+      if (*slotWidth == mlir::pto::kValue2 && slot % mlir::pto::kValue2 != 0) {
         ++slot;
+      }
 
       if (slot > kPersistentSlotLimit - *slotWidth) {
         return fragment.allocaOp.emitOpError()
@@ -605,8 +627,9 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
                           PersistentFragmentAnalysis &fragment,
                           PersistentAccessDiscovery &discovery) {
   func::FuncOp parentFunc = allocaOp->getParentOfType<func::FuncOp>();
-  if (!parentFunc)
+  if (!parentFunc) {
     return allocaOp.emitOpError("must be nested in a func.func");
+  }
 
   if (!isa<UnitAttr>(allocaOp->getAttr(kPersistentAttrName))) {
     return allocaOp.emitOpError()
@@ -623,8 +646,9 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
 
   DataLayout dataLayout = DataLayout::closest(allocaOp);
   FailureOr<FragmentShape> shape = getFragmentShape(allocaOp, dataLayout);
-  if (failed(shape))
+  if (failed(shape)) {
     return failure();
+  }
 
   SmallVector<PointerWorkItem> pointerWorklist{{allocaOp.getRes(), 0}};
   llvm::DenseMap<Value, int64_t> pointerOffsets;
@@ -662,8 +686,9 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
 
         FailureOr<int64_t> gepByteOffset =
             getStaticGEPByteOffset(gep, dataLayout);
-        if (failed(gepByteOffset))
+        if (failed(gepByteOffset)) {
           return failure();
+        }
         int64_t derivedByteOffset;
         if (llvm::AddOverflow(item.byteOffset, *gepByteOffset,
                               derivedByteOffset)) {
@@ -677,8 +702,9 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
 
       if (auto load = dyn_cast<LLVM::LoadOp>(user)) {
         if (failed(recordAccess(load, load.getRes().getType(), item.byteOffset,
-                                parentFunc, allocaOp, *shape, discovery)))
+                                parentFunc, allocaOp, *shape, discovery))) {
           return failure();
+        }
         continue;
       }
 
@@ -690,8 +716,9 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
         }
         if (failed(recordAccess(store, store.getValue().getType(),
                                 item.byteOffset, parentFunc, allocaOp, *shape,
-                                discovery)))
+                                discovery))) {
           return failure();
+        }
         continue;
       }
 
@@ -748,19 +775,22 @@ SIMTPersistentFragmentAnalysis::SIMTPersistentFragmentAnalysis(
     accessDiscoveries.emplace_back();
     if (failed(analyzePersistentFragment(allocaOp, dominance, candidate,
                                          candidate.fragments.back(),
-                                         accessDiscoveries.back())))
+                                         accessDiscoveries.back()))) {
       return;
+    }
   }
 
-  if (failed(allocatePersistentSlots(func, candidate)))
+  if (failed(allocatePersistentSlots(func, candidate))) {
     return;
+  }
   for (unsigned fragmentIndex = 0;
        fragmentIndex < static_cast<unsigned>(candidate.fragments.size());
        ++fragmentIndex) {
     if (failed(materializeResidentAccessLanes(
             candidate, candidate.fragments[fragmentIndex],
-            accessDiscoveries[fragmentIndex])))
+            accessDiscoveries[fragmentIndex]))) {
       return;
+    }
   }
   // Publish only a fully checked plan. No analysis result is visible to the
   // materialization pass after an intermediate failure.

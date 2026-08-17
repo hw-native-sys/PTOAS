@@ -45,19 +45,22 @@ static bool isPipeAllBarrier(Operation *op) {
 
 static bool hasPreviousPipeAllBarrier(Operation *op) {
   Block *block = op->getBlock();
-  if (!block)
+  if (!block) {
     return false;
+  }
   auto it = op->getIterator();
-  if (it == block->begin())
+  if (it == block->begin()) {
     return false;
+  }
   return isPipeAllBarrier(&*std::prev(it));
 }
 
 static bool shouldInjectBarrierAllBefore(Operation *op) {
   Dialect *dialect = op->getDialect();
   if (!dialect ||
-      dialect->getNamespace() != pto::PTODialect::getDialectNamespace())
+      dialect->getNamespace() != pto::PTODialect::getDialectNamespace()) {
     return false;
+  }
 
   return isa<pto::OpPipeInterface>(op) && hasReadOrWriteMemoryEffect(op);
 }
@@ -74,8 +77,9 @@ struct PTOInjectBarrierAllSyncPass
     func.walk<WalkOrder::PreOrder>([&](Operation *op) {
       if (shouldInjectBarrierAllBefore(op)) {
         sawMemoryEffectingPipeOp = true;
-        if (hasPreviousPipeAllBarrier(op))
+        if (hasPreviousPipeAllBarrier(op)) {
           return WalkResult::advance();
+        }
         insertionPoints.push_back(op);
       }
       return WalkResult::advance();
@@ -83,8 +87,9 @@ struct PTOInjectBarrierAllSyncPass
 
     if (sawMemoryEffectingPipeOp) {
       func.walk([&](func::ReturnOp ret) {
-        if (!hasPreviousPipeAllBarrier(ret))
+        if (!hasPreviousPipeAllBarrier(ret)) {
           tailInsertionPoints.push_back(ret);
+        }
       });
     }
 

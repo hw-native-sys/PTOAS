@@ -6,8 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %s 2>&1 | FileCheck %s
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/tprelu.pto 2>&1 | FileCheck %s --check-prefix=TPRELU
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/tcvt.pto 2>&1 | FileCheck %s --check-prefix=TCVT
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/tmrgsort.pto 2>&1 | FileCheck %s --check-prefix=TMRGSORT
 
+//--- tprelu.pto
 module {
   func.func @tprelu_missing_tmp() {
     %a0 = arith.constant 0 : i64
@@ -19,7 +23,12 @@ module {
     pto.tprelu ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+}
 
+// TPRELU: error: 'pto.tprelu' op requires explicit tmp when PlanMemory is skipped
+
+//--- tcvt.pto
+module {
   func.func @tcvt_missing_tmp() {
     %a0 = arith.constant 0 : i64
     %a1 = arith.constant 256 : i64
@@ -28,7 +37,12 @@ module {
     pto.tcvt ins(%src {satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+}
 
+// TCVT: error: 'pto.tcvt' op requires explicit tmp for non-saturating narrowing tcvt when PlanMemory is skipped
+
+//--- tmrgsort.pto
+module {
   func.func @tmrgsort_missing_tmp(%executed : vector<4xi16>) {
     %a0 = arith.constant 0 : i64
     %a1 = arith.constant 256 : i64
@@ -41,6 +55,4 @@ module {
   }
 }
 
-// CHECK: error: 'pto.tprelu' op requires explicit tmp when PlanMemory is skipped
-// CHECK: error: 'pto.tcvt' op requires explicit tmp for non-saturating narrowing tcvt when PlanMemory is skipped
-// CHECK: error: 'pto.tmrgsort' op requires explicit tmp for tmrgsort format2 when PlanMemory is skipped
+// TMRGSORT: error: 'pto.tmrgsort' op requires explicit tmp for tmrgsort format2 when PlanMemory is skipped

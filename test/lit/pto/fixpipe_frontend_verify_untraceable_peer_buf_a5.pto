@@ -9,6 +9,7 @@
 // RUN: split-file %s %t
 // RUN: not ptoas --pto-arch=a5 %t/producer_opaque_buf.pto 2>&1 | FileCheck %s --check-prefix=PRODUCER
 // RUN: not ptoas --pto-arch=a5 %t/consumer_opaque_buf.pto 2>&1 | FileCheck %s --check-prefix=CONSUMER
+// RUN: not ptoas --pto-arch=a5 %t/consumer_opaque_buf_with_peer.pto 2>&1 | FileCheck %s --check-prefix=CONSUMER-PEER
 
 //--- producer_opaque_buf.pto
 module {
@@ -30,20 +31,6 @@ module {
 
 //--- consumer_opaque_buf.pto
 module {
-  func.func @cube_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
-    %c0_i32 = arith.constant 0 : i32
-    %c2v_import = pto.import_reserved_buffer {name = "c2v_fifo", peer_func = @vector_kernel} -> i32
-    pto.aic_initialize_pipe {
-      id = 0,
-      dir_mask = 1,
-      slot_size = 512,
-      nosplit = true,
-      acc_push_epilogue =
-          #pto.acc_push_epilogue<layout = nz2nd, quant = deqf16_scalar, relu = no_relu>
-    } (c2v_consumer_buf = %c2v_import : i32, v2c_consumer_buf = %c0_i32 : i32)
-    return
-  }
-
   func.func @vector_kernel(%opaque_buf: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0_i32 = arith.constant 0 : i32
     %c2v_local = pto.reserve_buffer {name = "c2v_fifo", size = 4096, location = #pto.address_space<vec>, auto = true} -> i32
@@ -60,3 +47,38 @@ module {
 }
 
 // CONSUMER: error: 'pto.aiv_initialize_pipe' op expects fixpipe pipe 'c2v_consumer_buf' to trace to reserve_buffer or import_reserved_buffer for peer contract verification
+
+//--- consumer_opaque_buf_with_peer.pto
+module {
+  // Keep the malformed consumer first: LLVM 19 verification stops at the
+  // first op failure, and the producer reports only the derived peer error.
+  func.func @vector_kernel(%opaque_buf: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c2v_local = pto.reserve_buffer {name = "c2v_fifo", size = 4096, location = #pto.address_space<vec>, auto = true} -> i32
+    pto.aiv_initialize_pipe {
+      id = 0,
+      dir_mask = 1,
+      slot_size = 512,
+      nosplit = true,
+      acc_push_epilogue =
+          #pto.acc_push_epilogue<layout = nz2nd, quant = deqf16_scalar, relu = no_relu>
+    } (c2v_consumer_buf = %opaque_buf : i32, v2c_consumer_buf = %c0_i32 : i32)
+    return
+  }
+
+  func.func @cube_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c2v_import = pto.import_reserved_buffer {name = "c2v_fifo", peer_func = @vector_kernel} -> i32
+    pto.aic_initialize_pipe {
+      id = 0,
+      dir_mask = 1,
+      slot_size = 512,
+      nosplit = true,
+      acc_push_epilogue =
+          #pto.acc_push_epilogue<layout = nz2nd, quant = deqf16_scalar, relu = no_relu>
+    } (c2v_consumer_buf = %c2v_import : i32, v2c_consumer_buf = %c0_i32 : i32)
+    return
+  }
+}
+
+// CONSUMER-PEER: error: 'pto.aiv_initialize_pipe' op expects fixpipe pipe 'c2v_consumer_buf' to trace to reserve_buffer or import_reserved_buffer for peer contract verification

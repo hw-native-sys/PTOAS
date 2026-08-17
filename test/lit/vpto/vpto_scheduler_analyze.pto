@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=off' > %t.off
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > %t.analyze 2> %t.analyze-report
+// RUN: diff %t.off %t.analyze
+// RUN: FileCheck %s --check-prefix=OFF < %t.off
+// RUN: FileCheck %s --check-prefix=ANALYZE < %t.analyze-report
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on' > %t.on 2> %t.on-report
+// RUN: diff %t.off %t.on
+// RUN: FileCheck %s --check-prefix=ON < %t.on-report
+// RUN: not pto-test-opt %s '-pto-vpto-scheduler=mode=invalid' 2>&1 | FileCheck %s --check-prefix=INVALID
+
+// OFF-LABEL: func.func @scheduler_analysis
+// OFF: pto.vadd
+
+// ANALYZE: vpto-scheduler: function=scheduler_analysis mode=analyze target=a5 model=generic-a5-v1 issue-width=1
+// ANALYZE: vpto-scheduler: block=0 regions=1
+// ANALYZE: vpto-scheduler: region=0 before=block-start after=block-end nodes=3
+// ANALYZE: vpto-scheduler: node=0 original-index=0 op=pto.pset_b32 semantic=schedulable sched-class=vector known=true
+// ANALYZE: vpto-scheduler: node=1 original-index=1 op=pto.vadd semantic=schedulable sched-class=vector known=true
+// ANALYZE: vpto-scheduler: edge=0->1 kind=data strength=must
+// ANALYZE: vpto-scheduler: issue node=0 cycle=0
+// ANALYZE-SAME: delta={vector:0,predicate:1
+// ANALYZE: vpto-scheduler: timeline cycle=0 issue=1
+// ANALYZE-NOT: op=pto.set_ctrl
+// ANALYZE: vpto-scheduler: coverage schedulable=3 structural=0 boundary=0 unsupported=0 unclassified=0
+
+// ON: vpto-scheduler: function=scheduler_analysis mode=on
+// INVALID: error: unknown VPTO scheduler mode 'invalid'
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @scheduler_analysis(%lhs: !pto.vreg<64xf32>,
+                                %rhs: !pto.vreg<64xf32>) {
+    %c0 = arith.constant 0 : i64
+    pto.set_ctrl %c0 : i64
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %sum0 = pto.vadd %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %sum1 = pto.vadd %sum0, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+}

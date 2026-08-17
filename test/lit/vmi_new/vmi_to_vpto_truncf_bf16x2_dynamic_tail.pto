@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-layout-rematerialize | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-layout-rematerialize -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not='part = "P1"' --implicit-check-not='part = "P2"' --implicit-check-not='part = "P3"' --implicit-check-not=pto.vor --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=unrealized_conversion_cast
+
+// Combination guard for a runtime tail count. The original contiguous b32 mask
+// and the lane_stride=4 store mask are materialized independently. Conversion
+// uses an all-true b16 predicate, followed by two masked PK4_B32 stores without
+// compact-result assembly.
+
+module {
+  func.func @bf16x2_dynamic_tail(
+      %src: !pto.vmi.vreg<256xbf16>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index,
+      %active: index) {
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<128xpred>
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<128x!pto.bf16x2>
+    %packed = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<128x!pto.bf16x2>
+       -> !pto.vmi.vreg<128x!pto.f4E1M2x2>
+    pto.vmi.vstore %packed, %dst[%off], %mask
+        : !pto.vmi.vreg<128x!pto.f4E1M2x2>,
+          !pto.ptr<!pto.f4E1M2x2, ub>,
+          !pto.vmi.mask<128xpred>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @bf16x2_dynamic_tail(
+// ASSIGN-SAME: %[[SRC:.*]]: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %{{.*}} = pto.vmi.create_mask
+// ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[PAIR:.*]] = pto.vmi.bitcast %[[SRC]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[PACKED:.*]] = pto.vmi.truncf %[[PAIR]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128x!pto.f4E1M2x2, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: %[[MASK:.*]] = pto.vmi.create_mask
+// ASSIGN-SAME: -> !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.masked_store %[[PACKED]], {{.*}}, %[[MASK]]
+// ASSIGN-SAME: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+
+// LOWER-LABEL: func.func @bf16x2_dynamic_tail(
+// LOWER-SAME: %[[SRC0:[^,]+]]: !pto.vreg<128xbf16>
+// LOWER-SAME: %[[SRC1:[^,]+]]: !pto.vreg<128xbf16>
+// LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<!pto.f4E1M2x2, ub>
+// LOWER-SAME: %[[OFF:[^,]+]]: index
+// LOWER-SAME: %[[ACTIVE:[^)]+]]: index)
+// LOWER: %[[SRC0_PAIR:.*]] = pto.vbitcast %[[SRC0]] : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: %[[SRC1_PAIR:.*]] = pto.vbitcast %[[SRC1]] : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER-DAG: %[[VCVT_MASK:.*]] = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+// LOWER: %[[SRC0_BF16:.*]] = pto.vbitcast %[[SRC0_PAIR]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
+// LOWER: %[[R0:.*]] = pto.vcvt %[[SRC0_BF16]], %[[VCVT_MASK]] {part = "P0", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: %[[SRC1_BF16:.*]] = pto.vbitcast %[[SRC1_PAIR]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
+// LOWER: %[[R1:.*]] = pto.vcvt %[[SRC1_BF16]], %[[VCVT_MASK]] {part = "P0", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: %[[STORE_ACTIVE_I32:.*]] = arith.index_cast %[[ACTIVE]] : index to i32
+// LOWER: %[[STORE_NONNEG:.*]] = arith.maxsi %[[STORE_ACTIVE_I32]], {{.*}} : i32
+// LOWER: %[[STORE_CLAMPED:.*]] = arith.minui %[[STORE_NONNEG]], {{.*}} : i32
+// LOWER: %[[STORE_M0:.*]], %[[STORE_REM:.*]] = pto.plt_b32 %[[STORE_CLAMPED]] : i32 -> !pto.mask<b32>, i32
+// LOWER: %[[STORE_M1:.*]], %{{.*}} = pto.plt_b32 %[[STORE_REM]] : i32 -> !pto.mask<b32>, i32
+// LOWER: pto.vsts %[[R0]], %[[DST]][%[[OFF]]], %[[STORE_M0]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// LOWER: %[[OFF64:.*]] = arith.addi %[[OFF]], %{{.*}} : index
+// LOWER: pto.vsts %[[R1]], %[[DST]][%[[OFF64]]], %[[STORE_M1]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>

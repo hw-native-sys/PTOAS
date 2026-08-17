@@ -29,23 +29,28 @@ static EventAttr makeEvent(MLIRContext *ctx, int64_t eventId) {
 }
 
 Operation *CodeGenerator::resolveSyncAnchor(OperationBase *opBase) {
-  if (!opBase)
+  if (!opBase) {
     return nullptr;
+  }
   if (auto *ph = dyn_cast<PlaceHolder>(opBase)) {
-    if (ph->beforeOp)
+    if (ph->beforeOp) {
       return ph->beforeOp->op;
-    if (ph->afterOp)
+    }
+    if (ph->afterOp) {
       return ph->afterOp->op;
-    if (ph->block)
+    }
+    if (ph->block) {
       return ph->block->getParentOp();
+    }
     return nullptr;
   }
   return opBase->op;
 }
 
 Location CodeGenerator::resolveSyncLoc(OperationBase *opBase) {
-  if (Operation *anchor = resolveSyncAnchor(opBase))
+  if (Operation *anchor = resolveSyncAnchor(opBase)) {
     return anchor->getLoc();
+  }
   return funcOp.getLoc();
 }
 
@@ -62,10 +67,11 @@ void CodeGenerator::setInsertionPoint(IRRewriter &rewriter,
     // at the end of the block.
     if (ph->scopeEnd && ph->block) {
       if (!ph->block->empty() &&
-          ph->block->back().hasTrait<OpTrait::IsTerminator>())
+          ph->block->back().hasTrait<OpTrait::IsTerminator>()) {
         rewriter.setInsertionPoint(&ph->block->back());
-      else
+      } else {
         rewriter.setInsertionPointToEnd(ph->block);
+}
       return;
     }
     // Loop-boundary slot. The placeholder names the linked loop op via
@@ -73,10 +79,11 @@ void CodeGenerator::setInsertionPoint(IRRewriter &rewriter,
     // by the solver's convention agrees with the field that is set.
     OperationBase *linked = ph->beforeOp ? ph->beforeOp : ph->afterOp;
     if (linked && linked->op) {
-      if (insertAfter)
+      if (insertAfter) {
         rewriter.setInsertionPointAfter(linked->op);
-      else
+      } else {
         rewriter.setInsertionPoint(linked->op);
+}
       return;
     }
     // Malformed placeholder: fall back to the function entry to keep the
@@ -89,10 +96,11 @@ void CodeGenerator::setInsertionPoint(IRRewriter &rewriter,
     rewriter.setInsertionPointToStart(&funcOp.getBody().front());
     return;
   }
-  if (insertAfter)
+  if (insertAfter) {
     rewriter.setInsertionPointAfter(anchor);
-  else
+  } else {
     rewriter.setInsertionPoint(anchor);
+}
 }
 
 void CodeGenerator::emitSyncOp(IRRewriter &rewriter, SyncOp *syncOp) {
@@ -104,8 +112,9 @@ void CodeGenerator::emitSyncOp(IRRewriter &rewriter, SyncOp *syncOp) {
   }
 
   auto *setWait = dyn_cast<SetWaitOp>(syncOp);
-  if (!setWait || setWait->eventIds.empty())
+  if (!setWait || setWait->eventIds.empty()) {
     return;
+  }
 
   // The first/last-iter wrapping path (scf.if(isFirstIter/isLastIter) {
   // set/wait }) lives behind the MmadL1 decomposition optimization in the
@@ -153,10 +162,11 @@ void CodeGenerator::emitSyncOp(IRRewriter &rewriter, SyncOp *syncOp) {
       selected = rewriter.create<arith::SelectOp>(loc, isThis, idI, selected);
     }
 
-    if (isSet)
+    if (isSet) {
       rewriter.create<pto::SetFlagDynOp>(loc, srcAttr, dstAttr, selected);
-    else if (isWait)
+    } else if (isWait) {
       rewriter.create<pto::WaitFlagDynOp>(loc, srcAttr, dstAttr, selected);
+    }
     return;
   }
 
@@ -166,10 +176,11 @@ void CodeGenerator::emitSyncOp(IRRewriter &rewriter, SyncOp *syncOp) {
   // the conservative N-static fanout rather than dropping the dep).
   for (int64_t eventId : setWait->eventIds) {
     auto eventAttr = makeEvent(rewriter.getContext(), eventId);
-    if (isSet)
+    if (isSet) {
       rewriter.create<pto::SetFlagOp>(loc, srcAttr, dstAttr, eventAttr);
-    else if (isWait)
+    } else if (isWait) {
       rewriter.create<pto::WaitFlagOp>(loc, srcAttr, dstAttr, eventAttr);
+    }
   }
 }
 
@@ -177,8 +188,9 @@ void CodeGenerator::emitSyncMap(IRRewriter &rewriter, SyncMap &syncMap,
                                 bool insertAfter) {
   for (auto &[opBase, syncOps] : syncMap) {
     setInsertionPoint(rewriter, opBase, insertAfter);
-    for (auto &syncOp : syncOps)
+    for (auto &syncOp : syncOps) {
       emitSyncOp(rewriter, syncOp.get());
+    }
   }
 }
 

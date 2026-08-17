@@ -30,10 +30,10 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group_size1_i8_256(
 // CHECK-SAME: %[[BASE:.*]]: i8
-// CHECK: %[[DUP:.*]] = pto.vdup %[[BASE]]
 // CHECK-NOT: pto.vci
-// CHECK-NOT: pto.vsel
 // CHECK: %[[C1:.*]] = arith.constant 1 : i8
+// CHECK: %[[DUP:.*]] = pto.vdup %[[BASE]]
+// CHECK-NOT: pto.vsel
 // CHECK: pto.vadds %[[DUP]], %[[C1]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.

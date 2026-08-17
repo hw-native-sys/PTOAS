@@ -1,0 +1,37 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @decode_build_swa_scalar_metadata(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i64>, %arg3: !pto.ptr<i32>, %arg4: i32, %arg5: index, %__pypto_spmd_block_idx: i32, %__pypto_spmd_block_num: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c8_index = arith.constant 8 : index
+  %c1_index = arith.constant 1 : index
+  %c4_index = arith.constant 4 : index
+  %c128_index = arith.constant 128 : index
+  %c2_index = arith.constant 2 : index
+  %position_ids__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %block_table__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c4_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %swa_slot_mapping_inline264__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
+  %swa_lens_inline280__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c8_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %metadata_core_inline1451_inline2828__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
+  %position_inline1453_inline2840__rv_v2, %request_inline1454_inline2817__rv_v2 = scf.for %token_inline1441_inline2833__idx_v0 = %metadata_core_inline1451_inline2828__ssa_v0 to %c8_index step %c1_index iter_args(%position_inline1453_inline2840__iter_v1 = %arg4, %request_inline1454_inline2817__iter_v1 = %arg5) -> (i32, index) {
+    %0 = arith.divsi %token_inline1441_inline2833__idx_v0, %c2_index : index
+    %position_inline1453_inline2840__tile = pto.load_scalar %arg0[%token_inline1441_inline2833__idx_v0] : !pto.ptr<i32> -> i32
+    %1 = arith.index_cast %position_inline1453_inline2840__tile : i32 to index
+    %2 = arith.divsi %1, %c128_index : index
+    %3 = arith.index_cast %position_inline1453_inline2840__tile : i32 to index
+    %4 = arith.remsi %3, %c128_index : index
+    %flat_offset_mul = arith.muli %0, %c128_index : index
+    %flat_offset = arith.addi %flat_offset_mul, %2 : index
+    %physical_block_inline1440_inline2820__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+    %6 = arith.index_cast %physical_block_inline1440_inline2820__tile : i32 to index
+    %7 = arith.muli %6, %c128_index : index
+    %8 = arith.addi %7, %4 : index
+    %9 = arith.index_cast %8 : index to i64
+    pto.store_scalar %9, %arg2[%token_inline1441_inline2833__idx_v0] : !pto.ptr<i64>, i64
+    %10 = arith.index_cast %position_inline1453_inline2840__tile : i32 to index
+    %11 = arith.addi %10, %c1_index : index
+    %12 = arith.minsi %11, %c128_index : index
+    %13 = arith.index_cast %12 : index to i32
+    pto.store_scalar %13, %arg3[%token_inline1441_inline2833__idx_v0] : !pto.ptr<i32>, i32
+    scf.yield %position_inline1453_inline2840__tile, %0 : i32, index
+  }
+  return
+  }
+}

@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression test for issue 1181: released BiSheng cannot lower the A5 i32
+// HiVM VDIV intrinsic reliably. This intentionally exercises pto.vdiv, not
+// the distinct A2/A3 pto.ub.vdiv instruction.
+
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @issue_1181_vdiv_i32(%lhs: !pto.vreg<64xsi32>,
+                                  %rhs: !pto.vreg<64xsi32>,
+                                  %dst: !pto.ptr<si32, ub>,
+                                  %mask: !pto.mask<b32>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %quotient = pto.vdiv %lhs, %rhs, %mask :
+      !pto.vreg<64xsi32>, !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+    pto.vsts %quotient, %dst[%c0], %mask :
+      !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+    return
+  }
+}
+
+// CHECK-LABEL: define void @issue_1181_vdiv_i32_mix_aiv
+// CHECK-NOT: @llvm.hivm.vdiv.s.x.v64i32
+// CHECK-NOT: @llvm.hivm.vdiv.u.x.v64i32
+// The software fallback uses an f32 reciprocal, widening multiply, and exact
+// quotient/remainder correction.
+// CHECK: call <64 x float> @llvm.hivm.vdiv.s.x.v64f32
+// CHECK: call <32 x i64> @llvm.hivm.vcvtfi.f322s64.x
+// CHECK: call { <64 x i32>, <64 x i32> } @llvm.hivm.vmull.v64u32
+// CHECK: call <64 x i32> @llvm.hivm.vbr.v64i32(i32 -2147483648)
+// CHECK: call <64 x i32> @llvm.hivm.vsel.v64i32
+// CHECK-NOT: @llvm.hivm.vshr
+// CHECK-NOT: @llvm.hivm.vshl
+// CHECK-NOT: @llvm.hivm.vdiv.s.x.v64i32
+// CHECK-NOT: @llvm.hivm.vdiv.u.x.v64i32

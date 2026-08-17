@@ -49,3 +49,11 @@ install(
   PATTERN "__pycache__" EXCLUDE
   PATTERN "*.pyc" EXCLUDE
 )
+
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/lib/SoftOps"
+  DESTINATION "share/ptoas"
+  COMPONENT PTOAS_Runtime
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+)

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Matchers.h"
 
@@ -15,11 +16,14 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr size_t kTensorRank = 2;
+
 SmallVector<unsigned> getSequentialEventIds(unsigned count) {
   SmallVector<unsigned> eventIds;
   eventIds.reserve(count);
-  for (unsigned eventId = 0; eventId < count; ++eventId)
+  for (unsigned eventId = 0; eventId < count; ++eventId) {
     eventIds.push_back(eventId);
+  }
   return eventIds;
 }
 
@@ -49,8 +53,9 @@ void addBidirectionalHiddenEvent(SyncMacroModel &model, PipelineType firstPipe,
 SmallVector<Value> getPingPongValues(Value ping, Value pong = {}) {
   SmallVector<Value> values;
   values.push_back(ping);
-  if (pong)
+  if (pong) {
     values.push_back(pong);
+  }
   return values;
 }
 
@@ -156,8 +161,9 @@ std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
 }
 
 std::optional<SyncMacroModel> getTScatterSyncMacroModel(pto::TScatterOp op) {
-  if (!op.hasIndexForm() || getTargetArch(op.getOperation()) == PTOArch::A5)
+  if (!op.hasIndexForm() || getTargetArch(op.getOperation()) == PTOArch::A5) {
     return std::nullopt;
+  }
 
   SyncMacroModel model;
   // A2/A3 indexed TSCATTER first initializes dst with vector_dup, then runs a
@@ -171,13 +177,15 @@ std::optional<SyncMacroModel> getTScatterSyncMacroModel(pto::TScatterOp op) {
 }
 
 std::optional<SyncMacroModel> getTGatherSyncMacroModel(pto::TGatherOp op) {
-  if (!op.hasCompareForm() || getTargetArch(op.getOperation()) == PTOArch::A5)
+  if (!op.hasCompareForm() || getTargetArch(op.getOperation()) == PTOArch::A5) {
     return std::nullopt;
+  }
 
   Value tmp = op.getTmp();
   Value cdst = op.getCdst();
-  if (!tmp || !cdst)
+  if (!tmp || !cdst) {
     return std::nullopt;
+  }
 
   SyncMacroModel model;
   // A2/A3 compare TGATHER lowers to TCMPS on PIPE_V, an index generation loop
@@ -199,8 +207,9 @@ static std::optional<pto::AddressSpace>
 getMGatherOperandAddressSpace(::mlir::Type ty) {
   if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
     if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
-            tb.getMemorySpace()))
+            tb.getMemorySpace())) {
       return as.getAddressSpace();
+    }
     return std::nullopt;
   }
   return std::nullopt;
@@ -217,25 +226,29 @@ getMGatherOperandShapeFromType(::mlir::Type ty, bool useValidShape = true) {
 }
 
 static std::optional<int64_t> getConstantIndex(Value value) {
-  if (!value)
+  if (!value) {
     return std::nullopt;
+  }
 
   APInt intValue;
-  if (!matchPattern(value, m_ConstantInt(&intValue)))
+  if (!matchPattern(value, m_ConstantInt(&intValue))) {
     return std::nullopt;
+  }
   return intValue.getSExtValue();
 }
 
-static std::optional<SmallVector<Value, 2>> lookupMGatherValidDims(Value value) {
+static std::optional<SmallVector<Value, mlir::pto::kValue2>> lookupMGatherValidDims(Value value) {
   if (auto regionResult = dyn_cast<OpResult>(value)) {
     if (auto fusionRegion = dyn_cast<pto::FusionRegionOp>(regionResult.getOwner())) {
       auto yieldOp =
           dyn_cast<pto::YieldOp>(fusionRegion.getBody().front().getTerminator());
-      if (!yieldOp)
+      if (!yieldOp) {
         return std::nullopt;
+      }
       unsigned resultIndex = regionResult.getResultNumber();
-      if (resultIndex >= yieldOp.getNumOperands())
+      if (resultIndex >= yieldOp.getNumOperands()) {
         return std::nullopt;
+      }
       return lookupMGatherValidDims(yieldOp.getOperand(resultIndex));
     }
   }
@@ -246,24 +259,28 @@ static std::optional<SmallVector<Value, 2>> lookupMGatherValidDims(Value value) 
 static std::optional<SmallVector<int64_t>>
 getMGatherOperandShape(Value value, bool useValidShape = true) {
   auto shape = getMGatherOperandShapeFromType(value.getType(), useValidShape);
-  if (!shape || !useValidShape)
+  if (!shape || !useValidShape) {
     return shape;
+  }
 
   auto validDims = lookupMGatherValidDims(value);
-  if (!validDims || validDims->size() != 2)
+  if (!validDims || validDims->size() != kTensorRank) {
     return shape;
+  }
 
   if (shape->size() >= 1) {
-    if (auto validRow = getConstantIndex((*validDims)[0]))
+    if (auto validRow = getConstantIndex((*validDims)[0])) {
       (*shape)[0] = *validRow;
-    else if ((*validDims)[0])
+    } else if ((*validDims)[0]) {
       (*shape)[0] = ShapedType::kDynamic;
+    }
   }
-  if (shape->size() >= 2) {
-    if (auto validCol = getConstantIndex((*validDims)[1]))
+  if (shape->size() >= mlir::pto::kValue2) {
+    if (auto validCol = getConstantIndex((*validDims)[1])) {
       (*shape)[1] = *validCol;
-    else if ((*validDims)[1])
+    } else if ((*validDims)[1]) {
       (*shape)[1] = ShapedType::kDynamic;
+    }
   }
   return shape;
 }
@@ -273,7 +290,6 @@ getMGatherOperandShape(Value value, bool useValidShape = true) {
 // reachable lowering path as SyncMacroPhases so InsertSyncAnalysis can derive the
 // real cross-pipe sync (notably the MTE2->S wait for the scalar index read that
 // MGatherOp::getPipe() hides by reporting a single pipe).
-//
 // Also reserve pto-isa's fixed internal event ids through hiddenEvents so
 // compiler-generated sync around the macro does not reuse EVENT_ID0 on pipe
 // pairs already consumed inside the library implementation.
@@ -286,8 +302,9 @@ std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
   const bool isGm2L1 = dstSpace && *dstSpace == pto::AddressSpace::MAT;
 
   auto coalesceAttr = op.getCoalesceAttr();
-  if (!coalesceAttr)
+  if (!coalesceAttr) {
     return std::nullopt;
+  }
 
   const PTOArch arch = getTargetArch(op.getOperation());
   const pto::Coalesce coalesce = coalesceAttr.getValue();
@@ -299,8 +316,9 @@ std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
     // Elem additionally writes the GM scratch (owned by S in the template) before
     // the MTE2 bulk copy reads it, so model scratch as a S def / MTE2 use.
     SmallVector<Value> sDefs;
-    if (coalesce == pto::Coalesce::Elem && op.getScratch())
+    if (coalesce == pto::Coalesce::Elem && op.getScratch()) {
       sDefs.push_back(op.getScratch());
+    }
     addPhase(model, PipelineType::PIPE_S, ValueRange(sDefs),
              ValueRange{op.getIdx()});
     if (coalesce == pto::Coalesce::Elem && op.getScratch()) {
@@ -389,15 +407,20 @@ std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
 } // namespace
 
 std::optional<SyncMacroModel> mlir::pto::getSyncMacroModel(Operation *op) {
-  if (auto model = getP2PCommSyncMacroModel(op))
+  if (auto model = getP2PCommSyncMacroModel(op)) {
     return model;
-  if (auto model = getCollectiveCommSyncMacroModel(op))
+  }
+  if (auto model = getCollectiveCommSyncMacroModel(op)) {
     return model;
-  if (auto tscatter = dyn_cast<pto::TScatterOp>(op))
+  }
+  if (auto tscatter = dyn_cast<pto::TScatterOp>(op)) {
     return getTScatterSyncMacroModel(tscatter);
-  if (auto tgather = dyn_cast<pto::TGatherOp>(op))
+  }
+  if (auto tgather = dyn_cast<pto::TGatherOp>(op)) {
     return getTGatherSyncMacroModel(tgather);
-  if (auto mgather = dyn_cast<pto::MGatherOp>(op))
+  }
+  if (auto mgather = dyn_cast<pto::MGatherOp>(op)) {
     return getMGatherSyncMacroModel(mgather);
+  }
   return std::nullopt;
 }

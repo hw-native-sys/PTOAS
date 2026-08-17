@@ -27,6 +27,26 @@ def launch(user_args, *, wrapper=None):
 
 
 class TreeWrapperTests(unittest.TestCase):
+    def test_wrapper_disables_editable_import_redirects(self):
+        class EditableFinder:
+            pass
+
+        editable_finder = EditableFinder()
+        regular_finder = object()
+        saved_meta_path = list(sys.meta_path)
+        try:
+            sys.meta_path[:] = [editable_finder, regular_finder]
+            module = self._load_wrapper(
+                Path("/tmp/build/tools/ptoas/ptoas"),
+                "test_ptoas_editable_finder_filter",
+                python_root_mode="absolute",
+                python_root=Path("/tmp/build/python"),
+            )
+            module._disable_editable_import_redirects()
+            self.assertEqual(sys.meta_path, [regular_finder])
+        finally:
+            sys.meta_path[:] = saved_meta_path
+
     def _load_wrapper(
         self,
         wrapper_path: Path,

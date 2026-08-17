@@ -1,0 +1,123 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @dispatch_meta(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<i32>, %arg3: !pto.ptr<i32>, %arg4: !pto.ptr<i32>, %arg5: i32, %arg6: !pto.ptr<i64>, %arg7: !pto.ptr<i64>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c8_index = arith.constant 8 : index
+  %c6_index = arith.constant 6 : index
+  %c1_index = arith.constant 1 : index
+  %c2_index = arith.constant 2 : index
+  %c48_index = arith.constant 48 : index
+  %c0_index = arith.constant 0 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %indices_inline627__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c8_index, %c6_index], strides = [%c6_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %recv_meta__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c2_index, %c48_index], strides = [%c48_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %arrived__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %recv_meta_local_inline630__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c2_index, %c48_index], strides = [%c48_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %recv_count_out_inline622__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%c48_index, %c1_index], strides = [%c1_index, %c48_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %cursor_inline3137__ssa_v0 = pto.declare_local_array -> !pto.local_array<96xi32>
+  scf.for %d_inline3126__idx_v0 = %c0_index to %c2_index step %c1_index {
+    scf.for %e_inline3132__idx_v0 = %c0_index to %c48_index step %c1_index {
+      %1 = arith.muli %d_inline3126__idx_v0, %c48_index : index
+      %2 = arith.addi %1, %e_inline3132__idx_v0 : index
+      pto.local_array_set %cursor_inline3137__ssa_v0[%2], %c0_i32 : !pto.local_array<96xi32>, i32
+    }
+  }
+  scf.for %t_inline3122__idx_v0 = %c0_index to %c8_index step %c1_index {
+    scf.for %k_inline3131__idx_v0 = %c0_index to %c6_index step %c1_index {
+      %flat_offset_mul = arith.muli %t_inline3122__idx_v0, %c6_index : index
+      %flat_offset = arith.addi %flat_offset_mul, %k_inline3131__idx_v0 : index
+      %eid_inline3117__tile = pto.load_scalar %arg0[%flat_offset] : !pto.ptr<i32> -> i32
+      %3 = arith.index_cast %eid_inline3117__tile : i32 to index
+      %4 = arith.divsi %3, %c48_index : index
+      %5 = arith.index_cast %eid_inline3117__tile : i32 to index
+      %6 = arith.muli %4, %c48_index : index
+      %7 = arith.subi %5, %6 : index
+      %8 = arith.muli %4, %c48_index : index
+      %9 = arith.addi %8, %7 : index
+      %t__tmp_v347 = pto.local_array_get %cursor_inline3137__ssa_v0[%9] : !pto.local_array<96xi32> -> i32
+      %10 = arith.muli %4, %c48_index : index
+      %11 = arith.addi %10, %7 : index
+      %12 = arith.index_cast %t__tmp_v347 : i32 to index
+      %13 = arith.addi %12, %c1_index : index
+      %14 = arith.index_cast %13 : index to i32
+      pto.local_array_set %cursor_inline3137__ssa_v0[%11], %14 : !pto.local_array<96xi32>, i32
+    }
+  }
+  %meta_tile_inline3129__ssa_v0 = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c48_index : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%c0_i32 : i32) outs(%meta_tile_inline3129__ssa_v0 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  scf.for %dst_inline3130__idx_v0 = %c0_index to %c2_index step %c1_index {
+    scf.for %e_inline3120__idx_v0 = %c0_index to %c48_index step %c1_index {
+      %15 = arith.muli %dst_inline3130__idx_v0, %c48_index : index
+      %16 = arith.addi %15, %e_inline3120__idx_v0 : index
+      %t__tmp_v348 = pto.local_array_get %cursor_inline3137__ssa_v0[%16] : !pto.local_array<96xi32> -> i32
+      %17 = arith.muli %c0_index, %c48_index : index
+      %18 = arith.addi %17, %e_inline3120__idx_v0 : index
+      pto.tsetval ins(%18, %t__tmp_v348 : index, i32) outs(%meta_tile_inline3129__ssa_v0 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    }
+    %19 = func.call @CommRemoteOffset_i32(%arg6, %dst_inline3130__idx_v0) : (!pto.ptr<i64>, index) -> index
+    %20 = pto.addptr %arg1, %19 : !pto.ptr<i32> -> !pto.ptr<i32>
+    %21 = pto.make_tensor_view %20, shape = [%c2_index, %c48_index], strides = [%c48_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+    %my_rank__ssa_v0_idx = arith.index_cast %arg5 : i32 to index
+    %22 = arith.maxsi %my_rank__ssa_v0_idx, %c0_index : index
+    %recv_meta__ssa_v0_peer_pview = pto.partition_view %21, offsets = [%22, %c0_index], sizes = [%c1_index, %c48_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x48xi32>
+    pto.tstore ins(%meta_tile_inline3129__ssa_v0 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=48, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%recv_meta__ssa_v0_peer_pview : !pto.partition_tensor_view<1x48xi32>)
+    pto.cmo.cacheinvalid %recv_meta__ssa_v0_peer_pview single_cache_line : !pto.partition_tensor_view<1x48xi32>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    %23 = arith.index_cast %arg5 : i32 to index
+    %24 = arith.cmpi ne, %dst_inline3130__idx_v0, %23 : index
+    scf.if %24 {
+      %25 = func.call @CommRemoteOffset_i32(%arg7, %dst_inline3130__idx_v0) : (!pto.ptr<i64>, index) -> index
+      %26 = pto.addptr %arg2, %25 : !pto.ptr<i32> -> !pto.ptr<i32>
+      %27 = pto.make_tensor_view %26, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+      %28 = arith.index_cast %arg5 : i32 to index
+      %29 = arith.maxsi %28, %c0_index : index
+      %arrived__ssa_v0_peer_pview = pto.partition_view %27, offsets = [%29, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      pto.barrier <PIPE_ALL>
+      pto.comm.tnotify(%arrived__ssa_v0_peer_pview, %c1_i32 : !pto.partition_tensor_view<1x1xi32>, i32) {notifyOp = #pto<notify_op atomic_add>}
+    }
+  }
+  scf.for %src_inline3136__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %30 = arith.index_cast %arg5 : i32 to index
+    %31 = arith.cmpi ne, %src_inline3136__idx_v0, %30 : index
+    scf.if %31 {
+      %32 = arith.maxsi %src_inline3136__idx_v0, %c0_index : index
+      %arrived__ssa_v0_local_pview = pto.partition_view %arrived__ssa_v0_view, offsets = [%32, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      %33 = arith.index_cast %c1_index : index to i32
+      pto.comm.twait(%arrived__ssa_v0_local_pview, %33 : !pto.partition_tensor_view<1x1xi32>, i32) {cmp = #pto<wait_cmp ge>}
+      pto.cmo.cacheinvalid all #pto.address_space<gm>
+    }
+  }
+  scf.for %e_inline3124__idx_v0 = %c0_index to %c48_index step %c1_index {
+    %acc_inline3123__rv_v2 = scf.for %src_inline3121__idx_v0 = %c0_index to %c2_index step %c1_index iter_args(%acc_inline3123__iter_v1 = %c0_i32) -> (i32) {
+      %34 = arith.muli %src_inline3121__idx_v0, %c48_index : index
+      %35 = arith.addi %34, %e_inline3124__idx_v0 : index
+      %count_inline3118__tile = pto.load_scalar %arg1[%35] : !pto.ptr<i32> -> i32
+      %36 = arith.muli %src_inline3121__idx_v0, %c48_index : index
+      %37 = arith.addi %36, %e_inline3124__idx_v0 : index
+      pto.store_scalar %count_inline3118__tile, %arg3[%37] : !pto.ptr<i32>, i32
+      %38 = arith.addi %acc_inline3123__iter_v1, %count_inline3118__tile : i32
+      scf.yield %38 : i32
+    }
+    %39 = arith.muli %e_inline3124__idx_v0, %c1_index : index
+    %40 = arith.addi %39, %c0_index : index
+    pto.store_scalar %acc_inline3123__rv_v2, %arg4[%40] : !pto.ptr<i32>, i32
+  }
+  return
+  }
+  func.func private @CommRemoteOffset_i32(%ctx: !pto.ptr<i64>, %peer: index) -> index {
+    %c_r = arith.constant 2 : index
+    %c_w = arith.constant 4 : index
+    %rk_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rk_i32 = arith.trunci %rk_pair : i64 to i32
+    %rk_idx = arith.index_cast %rk_i32 : i32 to index
+    %lb_off = arith.addi %c_w, %rk_idx : index
+    %lbase = pto.load_scalar %ctx[%lb_off] : !pto.ptr<i64> -> i64
+    %pb_off = arith.addi %c_w, %peer : index
+    %pbase = pto.load_scalar %ctx[%pb_off] : !pto.ptr<i64> -> i64
+    %dbytes = arith.subi %pbase, %lbase : i64
+    %esize = arith.constant 4 : i64
+    %delems_i = arith.divsi %dbytes, %esize : i64
+    %delems = arith.index_cast %delems_i : i64 to index
+    return %delems : index
+  }
+}

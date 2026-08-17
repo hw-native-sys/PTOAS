@@ -1,0 +1,314 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-plan-memory %t/planned.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=LEGACY
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --plan-memory-impl=modern --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-plan-memory %t/planned.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MODERN
+// RUN: not pto-test-opt --pto-plan-memory %t/explicit_overlap.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN:   %t/explicit_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
+// RUN:   %t/src_tmp_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SRC-TMP-OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN:   %t/src_tmp_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SRC-TMP-OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
+// RUN:   %t/tmp_dst_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TMP-DST-OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN:   %t/tmp_dst_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TMP-DST-OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
+// RUN:   %t/tquant_output_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TQUANT-OUTPUT-OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN:   %t/tquant_output_overlap.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TQUANT-OUTPUT-OVERLAP
+// RUN: not ptoas --pto-arch=a5 --pto-level=level2 %t/view_alias.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=VIEW
+// RUN: not ptoas --pto-arch=a5 --pto-level=level2 --plan-memory-impl=modern \
+// RUN:   %t/view_alias.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=VIEW
+// RUN: not pto-test-opt --pto-plan-memory %t/strided_view_overlap.pto \
+// RUN:   -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STRIDED
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=legacy \
+// RUN:   %t/plain_control.pto -o /dev/null
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN:   %t/plain_control.pto -o /dev/null
+
+// LEGACY-LABEL: func.func @dn_x2zz_src_last_use_dst_first_write
+// LEGACY-DAG: %[[DN0:.*]] = arith.constant 0 : i64
+// LEGACY-DAG: %[[DN512:.*]] = arith.constant 512 : i64
+// LEGACY-DAG: %[[DN768:.*]] = arith.constant 768 : i64
+// LEGACY: pto.alloc_tile addr = %[[DN0]] : !pto.tile_buf<vec, 16x32xui8>
+// LEGACY: pto.alloc_tile addr = %[[DN512]] : !pto.tile_buf<vec, 1x32xui8, valid=1x1>
+// LEGACY: pto.alloc_tile addr = %[[DN768]] : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+// LEGACY-LABEL: func.func @nd_x2zz_src_last_use_dst_first_write
+// LEGACY-DAG: %[[ND0:.*]] = arith.constant 0 : i64
+// LEGACY-DAG: %[[ND1024:.*]] = arith.constant 1024 : i64
+// LEGACY-DAG: %[[ND1280:.*]] = arith.constant 1280 : i64
+// LEGACY: pto.alloc_tile addr = %[[ND0]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32>
+// LEGACY: pto.alloc_tile addr = %[[ND1024]] : !pto.tile_buf<vec, 1x128xui8, valid=1x32>
+// LEGACY: pto.alloc_tile addr = %[[ND1280]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>
+// LEGACY-LABEL: func.func @tquant_src_vs_each_output
+// LEGACY-DAG: %[[TQ_SRC_C:.*]] = arith.constant 0 : i64
+// LEGACY-DAG: %[[TQ_DST_C:.*]] = arith.constant 2048 : i64
+// LEGACY-DAG: %[[TQ_EXP_C:.*]] = arith.constant 2560 : i64
+// LEGACY-DAG: %[[TQ_MAX_C:.*]] = arith.constant 2816 : i64
+// LEGACY-DAG: %[[TQ_SCALING_C:.*]] = arith.constant 3072 : i64
+// LEGACY: pto.alloc_tile addr = %[[TQ_SRC_C]] : !pto.tile_buf<vec, 16x32xf32>
+// LEGACY: pto.alloc_tile addr = %[[TQ_DST_C]] : !pto.tile_buf<vec, 16x32xui8>
+// LEGACY: pto.alloc_tile addr = %[[TQ_EXP_C]] : !pto.tile_buf<vec, 1x32xui8, valid=1x16>
+// LEGACY: pto.alloc_tile addr = %[[TQ_MAX_C]] : !pto.tile_buf<vec, 1x16xf32>
+// LEGACY: pto.alloc_tile addr = %[[TQ_SCALING_C]] : !pto.tile_buf<vec, 1x64xf32, valid=1x16>
+// LEGACY-LABEL: func.func @tquant_src_vs_exp_zz
+// LEGACY-DAG: %[[FUSED_SRC:.*]] = arith.constant 0 : i64
+// LEGACY-DAG: %[[FUSED_DST:.*]] = arith.constant 4096 : i64
+// LEGACY-DAG: %[[FUSED_EXP:.*]] = arith.constant 5120 : i64
+// LEGACY-DAG: %[[FUSED_MAX:.*]] = arith.constant 5376 : i64
+// LEGACY-DAG: %[[FUSED_SCALING:.*]] = arith.constant 5632 : i64
+// LEGACY-DAG: %[[FUSED_EXP_ZZ:.*]] = arith.constant 5888 : i64
+// LEGACY: pto.alloc_tile addr = %[[FUSED_SRC]] : !pto.tile_buf<vec, 32x32xf32>
+// LEGACY: pto.alloc_tile addr = %[[FUSED_DST]] : !pto.tile_buf<vec, 32x32xui8>
+// LEGACY: pto.alloc_tile addr = %[[FUSED_EXP]] : !pto.tile_buf<vec, 1x32xui8>
+// LEGACY: pto.alloc_tile addr = %[[FUSED_MAX]] : !pto.tile_buf<vec, 1x32xf32>
+// LEGACY: pto.alloc_tile addr = %[[FUSED_SCALING]] : !pto.tile_buf<vec, 1x64xf32, valid=1x32>
+// LEGACY: pto.alloc_tile addr = %[[FUSED_EXP_ZZ]] : !pto.tile_buf<vec, 1x32xui8>
+// LEGACY-LABEL: func.func @plain_tmov_reuse_control
+// LEGACY-DAG: %[[PLAIN_C:.*]] = arith.constant 0 : i64
+// LEGACY-DAG: %[[PLAIN_NEXT:.*]] = arith.constant 2048 : i64
+// LEGACY: pto.alloc_tile addr = %[[PLAIN_C]] : !pto.tile_buf<vec, 16x32xf32>
+// LEGACY: pto.alloc_tile addr = %[[PLAIN_NEXT]] : !pto.tile_buf<vec, 16x32xf32>
+
+// MODERN-LABEL: func.func @dn_x2zz_src_last_use_dst_first_write
+// MODERN-DAG: %[[DN0:.*]] = arith.constant 0 : i64
+// MODERN-DAG: %[[DN512:.*]] = arith.constant 512 : i64
+// MODERN: pto.alloc_tile addr = %[[DN0]] : !pto.tile_buf<vec, 16x32xui8>
+// MODERN: pto.alloc_tile addr = %{{.*}} : !pto.tile_buf<vec, 1x32xui8, valid=1x1>
+// MODERN: pto.alloc_tile addr = %[[DN512]] : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+// MODERN-LABEL: func.func @nd_x2zz_src_last_use_dst_first_write
+// MODERN-DAG: %[[ND0:.*]] = arith.constant 0 : i64
+// MODERN-DAG: %[[ND1024:.*]] = arith.constant 1024 : i64
+// MODERN: pto.alloc_tile addr = %[[ND0]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32>
+// MODERN: pto.alloc_tile addr = %{{.*}} : !pto.tile_buf<vec, 1x128xui8, valid=1x32>
+// MODERN: pto.alloc_tile addr = %[[ND1024]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>
+// MODERN-LABEL: func.func @tquant_src_vs_each_output
+// MODERN-DAG: %[[TQ_SRC:.*]] = arith.constant 0 : i64
+// MODERN-DAG: %[[TQ_DST:.*]] = arith.constant 2048 : i64
+// MODERN-DAG: %[[TQ_EXP:.*]] = arith.constant 2560 : i64
+// MODERN-DAG: %[[TQ_MAX:.*]] = arith.constant 2816 : i64
+// MODERN-DAG: %[[TQ_SCALING:.*]] = arith.constant 3072 : i64
+// MODERN: pto.alloc_tile addr = %[[TQ_SRC]] : !pto.tile_buf<vec, 16x32xf32>
+// MODERN: pto.alloc_tile addr = %[[TQ_DST]] : !pto.tile_buf<vec, 16x32xui8>
+// MODERN: pto.alloc_tile addr = %[[TQ_EXP]] : !pto.tile_buf<vec, 1x32xui8, valid=1x16>
+// MODERN: pto.alloc_tile addr = %[[TQ_MAX]] : !pto.tile_buf<vec, 1x16xf32>
+// MODERN: pto.alloc_tile addr = %[[TQ_SCALING]] : !pto.tile_buf<vec, 1x64xf32, valid=1x16>
+// MODERN-LABEL: func.func @tquant_src_vs_exp_zz
+// MODERN-DAG: %[[FUSED_SRC:.*]] = arith.constant 0 : i64
+// MODERN-DAG: %[[FUSED_DST:.*]] = arith.constant 4096 : i64
+// MODERN-DAG: %[[FUSED_EXP:.*]] = arith.constant 5120 : i64
+// MODERN-DAG: %[[FUSED_MAX:.*]] = arith.constant 5376 : i64
+// MODERN-DAG: %[[FUSED_SCALING:.*]] = arith.constant 5632 : i64
+// MODERN-DAG: %[[FUSED_EXP_ZZ:.*]] = arith.constant 5888 : i64
+// MODERN: pto.alloc_tile addr = %[[FUSED_SRC]] : !pto.tile_buf<vec, 32x32xf32>
+// MODERN: pto.alloc_tile addr = %[[FUSED_DST]] : !pto.tile_buf<vec, 32x32xui8>
+// MODERN: pto.alloc_tile addr = %[[FUSED_EXP]] : !pto.tile_buf<vec, 1x32xui8>
+// MODERN: pto.alloc_tile addr = %[[FUSED_MAX]] : !pto.tile_buf<vec, 1x32xf32>
+// MODERN: pto.alloc_tile addr = %[[FUSED_SCALING]] : !pto.tile_buf<vec, 1x64xf32, valid=1x32>
+// MODERN: pto.alloc_tile addr = %[[FUSED_EXP_ZZ]] : !pto.tile_buf<vec, 1x32xui8>
+// MODERN-LABEL: func.func @plain_tmov_reuse_control
+// MODERN-DAG: %[[PLAIN0:.*]] = arith.constant 0 : i64
+// MODERN: pto.alloc_tile addr = %[[PLAIN0]] : !pto.tile_buf<vec, 16x32xf32>
+// MODERN: pto.alloc_tile addr = %[[PLAIN0]] : !pto.tile_buf<vec, 16x32xf32>
+
+// OVERLAP: PlanMemory semantic no-alias violation: operand byte ranges overlap
+// SRC-TMP-OVERLAP: PlanMemory semantic no-alias violation: operand byte ranges overlap
+// TMP-DST-OVERLAP: PlanMemory semantic no-alias violation: operand byte ranges overlap
+// TQUANT-OUTPUT-OVERLAP: PlanMemory semantic no-alias violation: operand byte ranges overlap
+// VIEW: PlanMemory semantic no-alias violation: operand byte ranges overlap
+// STRIDED: PlanMemory semantic no-alias violation: operand byte ranges overlap
+
+//--- planned.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @dn_x2zz_src_last_use_dst_first_write() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x32xui8>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8, valid=1x1>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x32xui8>, %tmp : !pto.tile_buf<vec, 1x32xui8, valid=1x1>)
+      outs(%dst : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>)
+      {grpAxis = #pto<mx_group_axis axis0>}
+    return
+  }
+
+  func.func @nd_x2zz_src_last_use_dst_first_write() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 32x32xui8, valid=20x32>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x128xui8, valid=1x32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 32x32xui8, valid=20x32>, %tmp : !pto.tile_buf<vec, 1x128xui8, valid=1x32>)
+      outs(%dst : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>)
+    return
+  }
+
+  func.func @tquant_src_vs_each_output() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x32xui8>
+    %exp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8, valid=1x16>
+    %max = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf32>
+    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>)
+      outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xui8>, !pto.tile_buf<vec, 1x32xui8, valid=1x16>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {quant_type = #pto<quant_type MXFP8>}
+    return
+  }
+
+  func.func @tquant_src_vs_exp_zz() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 32x32xui8>
+    %exp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
+    %max = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %scaling = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32, valid=1x32>
+    %exp_zz = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x32xf32>)
+      outs(%dst, %exp, %max, %scaling, %exp_zz : !pto.tile_buf<vec, 32x32xui8>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x64xf32, valid=1x32>, !pto.tile_buf<vec, 1x32xui8>)
+      {quant_type = #pto<quant_type MXFP8>, storeMode = #pto<vec_store_mode nz>}
+    return
+  }
+
+  func.func @plain_tmov_reuse_control() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst : !pto.tile_buf<vec, 16x32xf32>)
+    return
+  }
+}
+
+//--- plain_control.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @plain_tmov_explicit_inplace_control() {
+    %c0 = arith.constant 0 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xf32>
+    %dst = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst : !pto.tile_buf<vec, 16x32xf32>)
+    return
+  }
+}
+
+//--- explicit_overlap.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @explicit_address_overlap() {
+    %c0 = arith.constant 0 : i64
+    %c256 = arith.constant 256 : i64
+    %c1024 = arith.constant 1024 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xui8>
+    %tmp = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 1x32xui8, valid=1x1>
+    %dst = pto.alloc_tile addr = %c256 : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x32xui8>, %tmp : !pto.tile_buf<vec, 1x32xui8, valid=1x1>)
+      outs(%dst : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>)
+      {grpAxis = #pto<mx_group_axis axis0>}
+    return
+  }
+}
+
+//--- view_alias.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @tquant_src_view_alias() {
+    %c0 = arith.constant 0 : index
+    %root = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf32>
+    %sub = pto.subview %root[%c0, %c0] sizes [16, 32] :
+      !pto.tile_buf<vec, 16x32xf32> -> !pto.tile_buf<vec, 16x32xf32>
+    %src = pto.treshape %sub : !pto.tile_buf<vec, 16x32xf32> -> !pto.tile_buf<vec, 16x32xf32>
+    %dst = pto.bitcast %root : !pto.tile_buf<vec, 16x32xf32> -> !pto.tile_buf<vec, 16x32xui8>
+    %exp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8, valid=1x16>
+    %max = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf32>
+    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>)
+      outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xui8>, !pto.tile_buf<vec, 1x32xui8, valid=1x16>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {quant_type = #pto<quant_type MXFP8>}
+    return
+  }
+}
+
+//--- src_tmp_overlap.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @x2zz_src_tmp_explicit_overlap() {
+    %c0 = arith.constant 0 : i64
+    %c256 = arith.constant 256 : i64
+    %c768 = arith.constant 768 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xui8>
+    %tmp = pto.alloc_tile addr = %c256 : !pto.tile_buf<vec, 1x96xui8, valid=1x32>
+    %dst = pto.alloc_tile addr = %c768 : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x32xui8>, %tmp : !pto.tile_buf<vec, 1x96xui8, valid=1x32>)
+      outs(%dst : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>)
+    return
+  }
+}
+
+//--- tmp_dst_overlap.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @x2zz_tmp_dst_explicit_overlap() {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %c768 = arith.constant 768 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xui8>
+    %tmp = pto.alloc_tile addr = %c768 : !pto.tile_buf<vec, 1x96xui8, valid=1x32>
+    %dst = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x32xui8>, %tmp : !pto.tile_buf<vec, 1x96xui8, valid=1x32>)
+      outs(%dst : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>)
+    return
+  }
+}
+
+//--- tquant_output_overlap.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @tquant_dst_scaling_explicit_overlap() {
+    %c0 = arith.constant 0 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c3072 = arith.constant 3072 : i64
+    %c3328 = arith.constant 3328 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xf32>
+    %dst = pto.alloc_tile addr = %c2048 : !pto.tile_buf<vec, 16x32xui8>
+    %exp = pto.alloc_tile addr = %c3072 : !pto.tile_buf<vec, 1x32xui8, valid=1x16>
+    %max = pto.alloc_tile addr = %c3328 : !pto.tile_buf<vec, 1x16xf32>
+    %scaling = pto.alloc_tile addr = %c2048 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>)
+      outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xui8>, !pto.tile_buf<vec, 1x32xui8, valid=1x16>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {quant_type = #pto<quant_type MXFP8>}
+    return
+  }
+}
+
+//--- strided_view_overlap.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @strided_subview_envelope_overlap() {
+    %c0 = arith.constant 0 : index
+    %addr0 = arith.constant 0 : i64
+    %addr2048 = arith.constant 2048 : i64
+    %addr18432 = arith.constant 18432 : i64
+    %addr18688 = arith.constant 18688 : i64
+    %addr19200 = arith.constant 19200 : i64
+    %dst_root = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 64x64xui8>
+    %dst = pto.subview %dst_root[%c0, %c0] sizes [64, 32] :
+      !pto.tile_buf<vec, 64x64xui8> -> !pto.tile_buf<vec, 64x32xui8>
+    %src = pto.alloc_tile addr = %addr2048 : !pto.tile_buf<vec, 64x64xf32, valid=64x32>
+    %exp = pto.alloc_tile addr = %addr18432 : !pto.tile_buf<vec, 2x64xui8, valid=2x32>
+    %max = pto.alloc_tile addr = %addr18688 : !pto.tile_buf<vec, 2x64xf32, valid=2x32>
+    %scaling = pto.alloc_tile addr = %addr19200 : !pto.tile_buf<vec, 2x64xf32, valid=2x32>
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 64x64xf32, valid=64x32>)
+      outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x32xui8>, !pto.tile_buf<vec, 2x64xui8, valid=2x32>, !pto.tile_buf<vec, 2x64xf32, valid=2x32>, !pto.tile_buf<vec, 2x64xf32, valid=2x32>)
+      {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+    return
+  }
+}

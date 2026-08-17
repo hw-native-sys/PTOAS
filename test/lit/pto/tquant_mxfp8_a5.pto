@@ -13,7 +13,7 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
     %src = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
     %exp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
     %max = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
-    %scaling = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<vec, 32x32xui8>
 
     pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x32xf32>)
@@ -21,16 +21,16 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
                        !pto.tile_buf<vec, 32x32xui8>,
                        !pto.tile_buf<vec, 1x32xui8>,
                        !pto.tile_buf<vec, 1x32xf32>,
-                       !pto.tile_buf<vec, 1x32xf32>)
+                       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
                   {quant_type = #pto<quant_type MXFP8>}
     return
   }
 
-  func.func @tquant_mxfp4_nv() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @tquant_mxfp4_ocp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %src = pto.alloc_tile : !pto.tile_buf<vec, 32x64xbf16>
     %exp = pto.alloc_tile : !pto.tile_buf<vec, 1x64xui8>
     %max = pto.alloc_tile : !pto.tile_buf<vec, 1x64xbf16>
-    %scaling = pto.alloc_tile : !pto.tile_buf<vec, 1x64xbf16>
+    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<vec, 32x32x!pto.f4E2M1x2>
 
     pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x64xbf16>)
@@ -38,9 +38,8 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
                        !pto.tile_buf<vec, 32x32x!pto.f4E2M1x2>,
                        !pto.tile_buf<vec, 1x64xui8>,
                        !pto.tile_buf<vec, 1x64xbf16>,
-                       !pto.tile_buf<vec, 1x64xbf16>)
-                  {quant_type = #pto<quant_type MXFP4_E2M1>,
-                   quantScaleAlg = #pto<quant_scale_alg nv>}
+                       !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                  {quant_type = #pto<quant_type MXFP4_E2M1>}
     return
   }
 
@@ -48,7 +47,7 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
     %src = pto.alloc_tile : !pto.tile_buf<vec, 32x32xf32>
     %exp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
     %max = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
-    %scaling = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %scaling = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %exp_zz = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
     %dst = pto.alloc_tile : !pto.tile_buf<vec, 32x32xui8>
 
@@ -57,7 +56,7 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
                        !pto.tile_buf<vec, 32x32xui8>,
                        !pto.tile_buf<vec, 1x32xui8>,
                        !pto.tile_buf<vec, 1x32xf32>,
-                       !pto.tile_buf<vec, 1x32xf32>,
+                       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
                        !pto.tile_buf<vec, 1x32xui8>)
                   {quant_type = #pto<quant_type MXFP8>,
                    storeMode = #pto<vec_store_mode nz>}
@@ -66,11 +65,9 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
 }
 
 // A5-LABEL: AICORE void tquant_mxfp8(
-// A5: TQUANT<pto::QuantType::MXFP8
-// A5-SAME: >(
-// A5-LABEL: AICORE void tquant_mxfp4_nv(
-// A5: TQUANT<pto::QuantType::MXFP4_E2M1
-// A5-SAME: pto::QuantScaleAlg::NV
+// A5: TQUANT<1, pto::MxQuantAlg::OcpMxFp8E4M3>(
+// A5-LABEL: AICORE void tquant_mxfp4_ocp(
+// A5: TQUANT<1, pto::MxQuantAlg::OcpMxFp4E2M1>(
 // A5-LABEL: AICORE void tquant_mxfp8_nz(
 // A5: TQUANT<pto::QuantType::MXFP8, pto::VecStoreMode::NZ
 // A3ERR: error: 'pto.tquant.mx' op tquant.mx is only supported on A5

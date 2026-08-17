@@ -1,0 +1,18 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @prefill_idx_score_init(%arg0: !pto.ptr<f32>, %arg1: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c128_index = arith.constant 128 : index
+  %c2048_index = arith.constant 2048 : index
+  %c1_index = arith.constant 1 : index
+  %c16_index = arith.constant 16 : index
+  %cst_5 = arith.constant -3.40282346638528860e+38 : f32
+  %c0_index = arith.constant 0 : index
+  %score_wide_inline5158__iter_v1_view = pto.make_tensor_view %arg0, shape = [%c128_index, %c2048_index], strides = [%c2048_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c2048_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2048, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%cst_5 : f32) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2048, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %0 = arith.maxsi %arg1, %c0_index : index
+  %score_wide_inline5158__iter_v1_pview = pto.partition_view %score_wide_inline5158__iter_v1_view, offsets = [%0, %c0_index], sizes = [%c16_index, %c2048_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x2048xf32>
+  pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2048, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%score_wide_inline5158__iter_v1_pview : !pto.partition_tensor_view<16x2048xf32>)
+  return
+  }
+}

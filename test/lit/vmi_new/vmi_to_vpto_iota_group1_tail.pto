@@ -51,8 +51,8 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group1_tail(
 // Same as ungrouped contiguous tail: two physical vci chunks.
-// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
 // CHECK: arith.constant 64 : i32
+// CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
 // CHECK: arith.addi %arg0
 // CHECK: %[[P1:.*]] = pto.vci
 // CHECK: pto.vadds %[[P0]]

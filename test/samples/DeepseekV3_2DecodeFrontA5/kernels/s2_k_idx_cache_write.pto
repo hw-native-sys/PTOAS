@@ -1,0 +1,27 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @s2_k_idx_cache_write(%arg0: !pto.ptr<i32>, %arg1: !pto.ptr<bf16>, %arg2: !pto.ptr<bf16>, %arg3: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c16_index = arith.constant 16 : index
+  %c1_index = arith.constant 1 : index
+  %c128_index = arith.constant 128 : index
+  %c65536_index = arith.constant 65536 : index
+  %c4096_index = arith.constant 4096 : index
+  %c0_index = arith.constant 0 : index
+  %seq_lens__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c16_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %k_idx__ssa_v9_view = pto.make_tensor_view %arg1, shape = [%c16_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %k_cache_idx__iter_v1_view = pto.make_tensor_view %arg2, shape = [%c65536_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %0 = pto.load_scalar %arg0[%arg3] : !pto.ptr<i32> -> i32
+  %1 = arith.index_cast %0 : i32 to index
+  %2 = arith.subi %1, %c1_index : index
+  %3 = arith.muli %arg3, %c4096_index : index
+  %4 = arith.addi %3, %2 : index
+  %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %5 = arith.maxsi %arg3, %c0_index : index
+  %k_idx__ssa_v9_pview = pto.partition_view %k_idx__ssa_v9_view, offsets = [%5, %c0_index], sizes = [%c1_index, %c128_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x128xbf16>
+  pto.tload ins(%k_idx__ssa_v9_pview : !pto.partition_tensor_view<1x128xbf16>) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %6 = arith.maxsi %4, %c0_index : index
+  %k_cache_idx__iter_v1_pview = pto.partition_view %k_cache_idx__iter_v1_view, offsets = [%6, %c0_index], sizes = [%c1_index, %c128_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x128xbf16>
+  pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%k_cache_idx__iter_v1_pview : !pto.partition_tensor_view<1x128xbf16>)
+  return
+  }
+}

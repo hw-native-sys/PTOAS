@@ -1,0 +1,51 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @combine_wait(%arg0: !pto.ptr<i32>, %arg1: i32, %arg2: !pto.ptr<i64>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c2_index = arith.constant 2 : index
+  %c1_index = arith.constant 1 : index
+  %c0_index = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %combine_arrived__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  scf.for %peer_inline3240__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %0 = arith.index_cast %arg1 : i32 to index
+    %1 = arith.cmpi ne, %peer_inline3240__idx_v0, %0 : index
+    scf.if %1 {
+      %2 = func.call @CommRemoteOffset_i32(%arg2, %peer_inline3240__idx_v0) : (!pto.ptr<i64>, index) -> index
+      %3 = pto.addptr %arg0, %2 : !pto.ptr<i32> -> !pto.ptr<i32>
+      %4 = pto.make_tensor_view %3, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+      %my_rank__ssa_v0_idx = arith.index_cast %arg1 : i32 to index
+      %5 = arith.maxsi %my_rank__ssa_v0_idx, %c0_index : index
+      %combine_arrived__ssa_v0_peer_pview = pto.partition_view %4, offsets = [%5, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      pto.barrier <PIPE_ALL>
+      pto.comm.tnotify(%combine_arrived__ssa_v0_peer_pview, %c1_i32 : !pto.partition_tensor_view<1x1xi32>, i32) {notifyOp = #pto<notify_op atomic_add>}
+    }
+  }
+  scf.for %src_inline3232__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %6 = arith.index_cast %arg1 : i32 to index
+    %7 = arith.cmpi ne, %src_inline3232__idx_v0, %6 : index
+    scf.if %7 {
+      %8 = arith.maxsi %src_inline3232__idx_v0, %c0_index : index
+      %combine_arrived__ssa_v0_local_pview = pto.partition_view %combine_arrived__ssa_v0_view, offsets = [%8, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      %9 = arith.index_cast %c1_index : index to i32
+      pto.comm.twait(%combine_arrived__ssa_v0_local_pview, %9 : !pto.partition_tensor_view<1x1xi32>, i32) {cmp = #pto<wait_cmp ge>}
+      pto.cmo.cacheinvalid all #pto.address_space<gm>
+    }
+  }
+  return
+  }
+  func.func private @CommRemoteOffset_i32(%ctx: !pto.ptr<i64>, %peer: index) -> index {
+    %c_r = arith.constant 2 : index
+    %c_w = arith.constant 4 : index
+    %rk_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rk_i32 = arith.trunci %rk_pair : i64 to i32
+    %rk_idx = arith.index_cast %rk_i32 : i32 to index
+    %lb_off = arith.addi %c_w, %rk_idx : index
+    %lbase = pto.load_scalar %ctx[%lb_off] : !pto.ptr<i64> -> i64
+    %pb_off = arith.addi %c_w, %peer : index
+    %pbase = pto.load_scalar %ctx[%pb_off] : !pto.ptr<i64> -> i64
+    %dbytes = arith.subi %pbase, %lbase : i64
+    %esize = arith.constant 4 : i64
+    %delems_i = arith.divsi %dbytes, %esize : i64
+    %delems = arith.index_cast %delems_i : i64 to index
+    return %delems : index
+  }
+}

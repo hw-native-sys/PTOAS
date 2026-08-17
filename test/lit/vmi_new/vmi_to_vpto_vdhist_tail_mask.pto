@@ -33,11 +33,11 @@ module {
 // CHECK-SAME: %[[SRC1:[^,]+]]: !pto.vreg<256xui8>
 // CHECK-SAME: %[[MASK0:[^,]+]]: !pto.mask<b8>
 // CHECK-SAME: %[[MASK1:[^)]+]]: !pto.mask<b8>
+// CHECK: %[[C44:.*]] = arith.constant 44 : i32
 // CHECK-DAG: %[[BIN0:.*]] = arith.constant 0 : i32
 // CHECK-DAG: %[[BIN1:.*]] = arith.constant 1 : i32
 // CHECK: %[[LO0:.*]] = pto.dhistv2 %[[ACC0]], %[[SRC0]], %[[MASK0]], %[[BIN0]]
 // CHECK: %[[HI0:.*]] = pto.dhistv2 %[[ACC1]], %[[SRC0]], %[[MASK0]], %[[BIN1]]
-// CHECK: %[[C44:.*]] = arith.constant 44 : i32
 // CHECK: %[[TAIL:.*]], %{{.*}} = pto.plt_b8 %[[C44]] : i32 -> !pto.mask<b8>, i32
 // CHECK: %[[ALL:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
 // CHECK: %[[MASK1_VALID:.*]] = pto.pand %[[MASK1]], %[[TAIL]], %[[ALL]]

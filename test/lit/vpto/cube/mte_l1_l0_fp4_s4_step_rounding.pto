@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Shape-derived packed FP4 loads must round partial 64-value S4 blocks up
+// before creating the verifier-protected raw S4 bridge operation.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @fp4_s4_step_rounding(
+      %src: !pto.ptr<!pto.f4E2M1x2, l1>,
+      %dst_a: !pto.ptr<!pto.f4E2M1x2, l0a>,
+      %dst_b: !pto.ptr<!pto.f4E2M1x2, l0b>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c16 = arith.constant 16 : i64
+    %c32 = arith.constant 32 : i64
+    %c96 = arith.constant 96 : i64
+
+    pto.mte_l1_l0a %src, %dst_a, %c16, %c32, %c0, %c0
+      : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64
+    pto.mte_l1_l0b %src, %dst_b, %c96, %c16, %c0, %c0
+      : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @fp4_s4_step_rounding(
+// CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i64
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i64
+// CHECK: pto.load_cbuf_to_ca_s4 %{{.*}}, %{{.*}}, %[[C0]], %[[C0]], %[[C1]], %[[C1]], %[[C1]], %[[C1]], %[[C0]]
+// CHECK: pto.load_cbuf_to_cb_s4 %{{.*}}, %{{.*}}, %[[C0]], %[[C0]], %[[C1]], %[[C2]], %[[C1]], %[[C1]], %[[C0]]

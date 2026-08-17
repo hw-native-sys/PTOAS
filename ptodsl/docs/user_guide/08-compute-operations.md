@@ -1543,6 +1543,7 @@ pto.tile.store(dst_tile, out_view)
 | Windowing | `tile.extract`, `tile.insert` |
 | Tile movement | `tile.mov`, `tile.concat` |
 | Dequantize | `tile.dequant` |
+| Debug print | `tile.print` |
 | Tile matmul | `tile.matmul`, `tile.matmul_acc`, `tile.matmul_mx`, `tile.matmul_mx_acc`, `tile.matmul_mx_bias` |
 | Tile gemv | `tile.gemv_mx`, `tile.gemv_mx_acc`, `tile.gemv_mx_bias` |
 
@@ -1583,6 +1584,38 @@ then the broadcast offset is subtracted and the broadcast scale multiplied per v
 ```python
 # src: i16 [rows, cols]; scale/offset: f32 [rows, 1]; dst: f32 [rows, cols]
 pto.tile.dequant(src_tile, scale_tile, offset_tile, dst_tile)
+```
+
+---
+
+### 8.1.19 Debug Print
+
+#### `pto.tile.print(src: Tile, tmp: PartitionTensorView | None = None, *, print_format: str | None = None) -> None`
+
+**Description**: Print tile contents from device code for debugging. This maps to `pto.tprint`
+and has no tensor result; its observable behavior is device stdout output. `tprint`
+is currently supported only by the EmitC backend.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | `Tile` | Source tile to print |
+| `tmp` | `PartitionTensorView`, optional | Scratch GM view for ISA overload compatibility |
+| `print_format` | `str`, optional | `width8_precision4` (default), `width8_precision2`, or `width10_precision6` |
+
+**Constraints**:
+
+- A5 TileLib currently supports `loc=vec` row-major tiles with `none_box` storage layout.
+- Supported element types: `f16`, `f32`, `i8`, `i16`, `i32`, `ui8`, `ui16`, `ui32`.
+- `tmp`, when supplied, must match the source tile shape and dtype.
+- `tprint` is not supported by the VPTO backend; use `@pto.jit(..., backend="emitc")`.
+
+**Example**:
+
+```python
+pto.tile.print(src_tile)
+pto.tile.print(src_tile, print_format="width10_precision6")
 ```
 
 ---

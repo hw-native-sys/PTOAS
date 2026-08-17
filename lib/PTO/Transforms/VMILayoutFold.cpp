@@ -12,6 +12,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
@@ -46,37 +47,44 @@ static bool isUnitContiguousLayout(VMILayoutAttr layout) {
 }
 
 static bool isLoadProducerLayout(VMIVRegType type) {
-  if (!type)
+  if (!type) {
     return false;
-  VMILayoutAttr layout = type.getLayoutAttr();
-  if (!layout)
-    return false;
-  if (layout.isContiguous() && layout.getLaneStride() == 1)
-    return true;
-  if (layout.isContiguous() && layout.getLaneStride() == 2) {
-    unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-    return elementBits == 8 || elementBits == 16 || elementBits == 32;
   }
-  if (layout.isContiguous() && layout.getLaneStride() == 4) {
+  VMILayoutAttr layout = type.getLayoutAttr();
+  if (!layout) {
+    return false;
+  }
+  if (layout.isContiguous() && layout.getLaneStride() == 1) {
+    return true;
+  }
+  if (layout.isContiguous() && layout.getLaneStride() == mlir::pto::kValue2) {
     unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-    return elementBits == 8;
+    return elementBits == mlir::pto::kValue8 || elementBits == 16 || elementBits == 32;
+  }
+  if (layout.isContiguous() && layout.getLaneStride() == mlir::pto::kValue4) {
+    unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
+    return elementBits == mlir::pto::kValue8;
   }
   if (!layout.isDeinterleaved() || layout.getLaneStride() != 1 ||
-      (layout.getFactor() != 2 && layout.getFactor() != 4))
+      (layout.getFactor() != mlir::pto::kValue2 &&
+       layout.getFactor() != mlir::pto::kValue4)) {
     return false;
+  }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-  return elementBits == 8 || elementBits == 16 || elementBits == 32;
+  return elementBits == mlir::pto::kValue8 || elementBits == 16 || elementBits == 32;
 }
 
 static bool isFoldableLoadEnsure(VMIEnsureLayoutOp ensure) {
   auto load = ensure.getSource().getDefiningOp<VMILoadOp>();
-  if (!load)
+  if (!load) {
     return false;
+  }
 
   auto sourceType = dyn_cast<VMIVRegType>(ensure.getSource().getType());
   auto resultType = dyn_cast<VMIVRegType>(ensure.getResult().getType());
-  if (!hasSameDataShapeAndElementType(sourceType, resultType))
+  if (!hasSameDataShapeAndElementType(sourceType, resultType)) {
     return false;
+  }
 
   return isLoadProducerLayout(resultType);
 }
@@ -84,15 +92,17 @@ static bool isFoldableLoadEnsure(VMIEnsureLayoutOp ensure) {
 static void tryFoldLoadEnsures(
     VMILoadOp load, SmallVectorImpl<VMIEnsureLayoutOp> &maybeDeadEnsures) {
   auto sourceType = dyn_cast<VMIVRegType>(load.getResult().getType());
-  if (!sourceType)
+  if (!sourceType) {
     return;
+  }
 
   VMIVRegType targetType;
   SmallVector<VMIEnsureLayoutOp> ensures;
   for (OpOperand &use : load.getResult().getUses()) {
     auto ensure = dyn_cast<VMIEnsureLayoutOp>(use.getOwner());
-    if (!ensure || use.getOperandNumber() != 0 || !isFoldableLoadEnsure(ensure))
+    if (!ensure || use.getOperandNumber() != 0 || !isFoldableLoadEnsure(ensure)) {
       return;
+    }
 
     auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
     if (!targetType) {
@@ -103,8 +113,9 @@ static void tryFoldLoadEnsures(
     ensures.push_back(ensure);
   }
 
-  if (ensures.empty() || targetType == sourceType)
+  if (ensures.empty() || targetType == sourceType) {
     return;
+  }
 
   load.getResult().setType(targetType);
   for (VMIEnsureLayoutOp ensure : ensures) {
@@ -117,11 +128,13 @@ static void
 tryFoldNestedEnsureLayout(VMIEnsureLayoutOp ensure,
                           SmallVectorImpl<VMIEnsureLayoutOp> &maybeDeadEnsures) {
   auto inner = ensure.getSource().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!inner)
+  if (!inner) {
     return;
+  }
 
-  if (inner.getSource().getType() != ensure.getResult().getType())
+  if (inner.getSource().getType() != ensure.getResult().getType()) {
     return;
+  }
 
   ensure.getResult().replaceAllUsesWith(inner.getSource());
   maybeDeadEnsures.push_back(ensure);
@@ -131,14 +144,16 @@ tryFoldNestedEnsureLayout(VMIEnsureLayoutOp ensure,
 static bool isFoldableStoreEnsure(VMIEnsureLayoutOp ensure) {
   auto sourceType = dyn_cast<VMIVRegType>(ensure.getSource().getType());
   auto resultType = dyn_cast<VMIVRegType>(ensure.getResult().getType());
-  if (!sourceType || !resultType)
+  if (!sourceType || !resultType) {
     return false;
+  }
 
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   if (!isUnitContiguousLayout(resultLayout) ||
-      isUnitContiguousLayout(sourceLayout))
+      isUnitContiguousLayout(sourceLayout)) {
     return false;
+  }
 
   VMILayoutSupport supports;
   return succeeded(supports.getStoreLayoutFact(sourceType));
@@ -147,8 +162,9 @@ static bool isFoldableStoreEnsure(VMIEnsureLayoutOp ensure) {
 static void tryFoldEnsureLayoutIntoOperand(
     OpOperand &operand, SmallVectorImpl<VMIEnsureLayoutOp> &maybeDeadEnsures) {
   auto ensure = operand.get().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!ensure || !isFoldableStoreEnsure(ensure))
+  if (!ensure || !isFoldableStoreEnsure(ensure)) {
     return;
+  }
 
   operand.set(ensure.getSource());
   maybeDeadEnsures.push_back(ensure);
@@ -159,25 +175,30 @@ static void tryFoldEnsureLayoutIntoMaskedStore(
     SmallVectorImpl<VMIEnsureLayoutOp> &maybeDeadEnsures,
     SmallVectorImpl<VMIEnsureMaskLayoutOp> &maybeDeadMaskEnsures) {
   auto ensure = store.getValue().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!ensure || !isFoldableStoreEnsure(ensure))
+  if (!ensure || !isFoldableStoreEnsure(ensure)) {
     return;
+  }
   auto maskEnsure = store.getMask().getDefiningOp<VMIEnsureMaskLayoutOp>();
-  if (!maskEnsure)
+  if (!maskEnsure) {
     return;
+  }
 
   auto sourceType = dyn_cast<VMIVRegType>(ensure.getSource().getType());
   auto maskSourceType = dyn_cast<VMIMaskType>(maskEnsure.getSource().getType());
   auto maskResultType = dyn_cast<VMIMaskType>(maskEnsure.getResult().getType());
-  if (!sourceType || !maskSourceType || !maskResultType)
+  if (!sourceType || !maskSourceType || !maskResultType) {
     return;
+  }
 
   VMILayoutAttr maskResultLayout = maskResultType.getLayoutAttr();
-  if (!isUnitContiguousLayout(maskResultLayout))
+  if (!isUnitContiguousLayout(maskResultLayout)) {
     return;
+  }
 
   VMILayoutSupport supports;
-  if (failed(supports.getMaskedStoreLayoutFact(sourceType, maskSourceType)))
+  if (failed(supports.getMaskedStoreLayoutFact(sourceType, maskSourceType))) {
     return;
+  }
 
   store.getValueMutable().set(ensure.getSource());
   store.getMaskMutable().set(maskEnsure.getSource());
@@ -203,21 +224,25 @@ struct VMILayoutFoldPass
     });
 
     module.walk([&](Operation *op) {
-      if (auto store = dyn_cast<VMIStoreOp>(op))
+      if (auto store = dyn_cast<VMIStoreOp>(op)) {
         tryFoldEnsureLayoutIntoOperand(store.getValueMutable(),
                                        maybeDeadEnsures);
-      if (auto maskedStore = dyn_cast<VMIMaskedStoreOp>(op))
+      }
+      if (auto maskedStore = dyn_cast<VMIMaskedStoreOp>(op)) {
         tryFoldEnsureLayoutIntoMaskedStore(maskedStore, maybeDeadEnsures,
                                            maybeDeadMaskEnsures);
+      }
     });
 
     for (VMIEnsureMaskLayoutOp ensure : llvm::reverse(maybeDeadMaskEnsures)) {
-      if (ensure->use_empty())
+      if (ensure->use_empty()) {
         ensure.erase();
+      }
     }
     for (VMIEnsureLayoutOp ensure : llvm::reverse(maybeDeadEnsures)) {
-      if (ensure->use_empty())
+      if (ensure->use_empty()) {
         ensure.erase();
+      }
     }
   }
 };

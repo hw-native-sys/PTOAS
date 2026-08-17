@@ -17,4 +17,4 @@ module {
   }
 }
 
-// CHECK: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+// CHECK: VMI-RESIDUAL-OP: unrealized_conversion_cast cannot carry VMI types

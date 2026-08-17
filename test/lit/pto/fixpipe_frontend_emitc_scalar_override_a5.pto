@@ -73,9 +73,9 @@ module {
 }
 
 // A5-LABEL: AICORE void cube_kernel(
+// A5: using Pipe0FixpipeConfig = FixpipeParams<LayoutMode_t::NZ2ND, QuantMode_t::DEQF16, ReluPreMode::NoRelu>;
 // A5-DAG: const float [[SCALE1:.*]] = 2.5f;
 // A5-DAG: const float [[SCALE0:.*]] = 1.0f;
-// A5: using Pipe0FixpipeConfig = FixpipeParams<LayoutMode_t::NZ2ND, QuantMode_t::DEQF16, ReluPreMode::NoRelu>;
 // A5: SET_QUANT_SCALAR<half>([[SCALE0]]);
 // A5-NEXT: TPUSH<{{.*}}, Pipe0FixpipeConfig>(
 // A5: SET_QUANT_SCALAR<half>([[SCALE1]]);

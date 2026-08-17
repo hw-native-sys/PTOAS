@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The counter narrowing pass is counted-for-specific. A dynamic while must
+// stay structurally intact and must not be treated as an scf.for merely because
+// it carries an integer counter.
+// RUN: pto-test-opt --pto-narrow-vpto-loop-counters %s | FileCheck %s
+
+module {
+  func.func private @sink_i32(i32)
+
+  func.func @while_is_not_counted_for(%limit: i32) {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %result = scf.while (%value = %zero) : (i32) -> i32 {
+      %keep = arith.cmpi slt, %value, %limit : i32
+      scf.condition(%keep) %value : i32
+    } do {
+    ^bb0(%value2: i32):
+      func.call @sink_i32(%value2) : (i32) -> ()
+      %next = arith.addi %value2, %one : i32
+      scf.yield %next : i32
+    }
+    func.call @sink_i32(%result) : (i32) -> ()
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @while_is_not_counted_for
+// CHECK: scf.while
+// CHECK: scf.condition
+// CHECK: func.call @sink_i32
+// CHECK: scf.yield

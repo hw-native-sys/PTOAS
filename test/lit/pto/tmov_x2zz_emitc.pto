@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-insert-sync %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=EFFECT
+
+module {
+  func.func @tmov_x2zz_emitc(
+      %nd_src: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %nd_tmp: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %nd_dst: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>,
+      %dn_src: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %dn_tmp: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %dn_dst: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>,
+      %legacy_src: !pto.tile_buf<vec, 1x128x!pto.f8E8M0, valid=1x80>,
+      %legacy_dst: !pto.tile_buf<vec, 32x4x!pto.f8E8M0, valid=20x4, slayout=row_major>,
+      %hif8_src: !pto.tile_buf<vec, 16x4x!pto.hif8>,
+      %hif8_tmp: !pto.tile_buf<vec, 1x80x!pto.hif8>,
+      %hif8_dst: !pto.tile_buf<vec, 16x4x!pto.hif8, slayout=row_major>,
+      %fp_src: !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major>,
+      %fp: !pto.tile_buf<scaling, 1x32xf16>,
+      %fp_dst: !pto.tile_buf<mat, 32x32xf32>,
+      %plain_src: !pto.tile_buf<vec, 16x4x!pto.f8E8M0>,
+      %plain_dst: !pto.tile_buf<vec, 16x4x!pto.f8E8M0>) {
+    pto.tmov ins(%nd_src : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %nd_tmp : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%nd_dst : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+    pto.tmov ins(%dn_src : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dn_tmp : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dn_dst : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>) {grpAxis = #pto<mx_group_axis axis0>}
+    pto.tmov ins(%nd_src : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %nd_tmp : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%nd_dst : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>) {grpAxis = #pto<mx_group_axis axis1>}
+    pto.tmov ins(%legacy_src : !pto.tile_buf<vec, 1x128x!pto.f8E8M0, valid=1x80>, %nd_tmp : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%legacy_dst : !pto.tile_buf<vec, 32x4x!pto.f8E8M0, valid=20x4, slayout=row_major>)
+    pto.tmov ins(%hif8_src : !pto.tile_buf<vec, 16x4x!pto.hif8>, %hif8_tmp : !pto.tile_buf<vec, 1x80x!pto.hif8>) outs(%hif8_dst : !pto.tile_buf<vec, 16x4x!pto.hif8, slayout=row_major>)
+    pto.tmov ins(%fp_src : !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major>, %fp : !pto.tile_buf<scaling, 1x32xf16>) outs(%fp_dst : !pto.tile_buf<mat, 32x32xf32>)
+    pto.tmov ins(%plain_src : !pto.tile_buf<vec, 16x4x!pto.f8E8M0>) outs(%plain_dst : !pto.tile_buf<vec, 16x4x!pto.f8E8M0>)
+    return
+  }
+
+  func.func @nd_x2zz_source_and_tmp_effects(
+      %tmp_input: !pto.partition_tensor_view<1x96x!pto.f8E8M0>,
+      %src_sink: !pto.partition_tensor_view<20x4x!pto.f8E8M0>,
+      %src: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %tmp: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %dst: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>) {
+    pto.tload ins(%tmp_input : !pto.partition_tensor_view<1x96x!pto.f8E8M0>) outs(%tmp : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmov ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %tmp : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=1, cols=96, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+    pto.tstore ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=20, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%src_sink : !pto.partition_tensor_view<20x4x!pto.f8E8M0>)
+    return
+  }
+
+  func.func @dn_x2zz_tmp_none_source_read_control(
+      %tmp_input: !pto.partition_tensor_view<1x1x!pto.f8E8M0>,
+      %src_sink: !pto.partition_tensor_view<2x16x!pto.f8E8M0>,
+      %src: !pto.tile_buf<vec, 2x16x!pto.f8E8M0>,
+      %tmp: !pto.tile_buf<vec, 1x1x!pto.f8E8M0>,
+      %dst: !pto.tile_buf<vec, 2x16x!pto.f8E8M0, slayout=row_major>) {
+    pto.tload ins(%tmp_input : !pto.partition_tensor_view<1x1x!pto.f8E8M0>) outs(%tmp : !pto.tile_buf<vec, 1x1x!pto.f8E8M0>)
+    pto.tmov ins(%src : !pto.tile_buf<vec, 2x16x!pto.f8E8M0>, %tmp : !pto.tile_buf<vec, 1x1x!pto.f8E8M0>) outs(%dst : !pto.tile_buf<vec, 2x16x!pto.f8E8M0, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
+    pto.tstore ins(%src : !pto.tile_buf<vec, 2x16x!pto.f8E8M0>) outs(%src_sink : !pto.partition_tensor_view<2x16x!pto.f8E8M0>)
+    return
+  }
+}
+
+// CHECK: TMOV(
+// CHECK: TMOV<0>(
+// CHECK: TMOV_FP
+
+// EFFECT-LABEL: func.func @nd_x2zz_source_and_tmp_effects
+// EFFECT: pto.tload
+// EFFECT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// EFFECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// EFFECT: pto.tmov
+// EFFECT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// EFFECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// EFFECT: pto.tstore
+// EFFECT-LABEL: func.func @dn_x2zz_tmp_none_source_read_control
+// EFFECT: pto.tload
+// EFFECT-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// EFFECT-NOT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// EFFECT: pto.tmov
+// EFFECT-NOT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// EFFECT-NOT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// EFFECT: pto.tstore

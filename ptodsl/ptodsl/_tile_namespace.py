@@ -116,6 +116,7 @@ class _TileNamespace:
     abs = staticmethod(_ops.tabs)
     neg = staticmethod(_ops.tneg)
     dequant = staticmethod(_ops.tdequant)
+    print = staticmethod(_ops.tprint)
 
     relu = staticmethod(_ops.trelu)
     lrelu = staticmethod(_ops.tlrelu)

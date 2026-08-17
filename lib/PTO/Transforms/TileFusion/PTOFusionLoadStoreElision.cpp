@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -34,7 +35,7 @@ namespace {
 struct TrackedStore {
   Operation *op = nullptr;
   Value base;
-  SmallVector<Value, 2> indices;
+  SmallVector<Value, mlir::pto::kValue2> indices;
   Value mask;
   Value value;
 };
@@ -212,9 +213,11 @@ static Value getCanonicalTrackedValue(Value value) {
 }
 
 static Operation *getTopLevelAncestorInBlock(Operation *op, Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp())
-    if (cur->getBlock() == block)
+  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
+    if (cur->getBlock() == block) {
       return cur;
+    }
+  }
   return nullptr;
 }
 
@@ -290,7 +293,7 @@ static Block *getLeafLoopBody(scf::ForOp carrierLoop) {
 
   scf::ForOp currentLoop = carrierLoop;
   while (currentLoop) {
-    SmallVector<Operation *, 8> bodyOps;
+    SmallVector<Operation *, mlir::pto::kValue8> bodyOps;
     scf::ForOp innerLoop;
     for (Operation &op : currentLoop.getBody()->without_terminator()) {
       bodyOps.push_back(&op);
@@ -307,9 +310,11 @@ static Block *getLeafLoopBody(scf::ForOp carrierLoop) {
       if (!leafBody) {
         return nullptr;
       }
-      for (Operation &op : leafBody->without_terminator())
-        if (!isSupportedLeafOp(&op))
+      for (Operation &op : leafBody->without_terminator()) {
+        if (!isSupportedLeafOp(&op)) {
           return nullptr;
+        }
+      }
       return leafBody;
     }
 
@@ -331,9 +336,11 @@ static Block *getLeafLoopBody(scf::ForOp carrierLoop) {
 }
 
 static bool isSupportedStraightLineBlock(Block &body) {
-  for (Operation &op : body.without_terminator())
-    if (!isSupportedLeafOp(&op))
+  for (Operation &op : body.without_terminator()) {
+    if (!isSupportedLeafOp(&op)) {
       return false;
+    }
+  }
   return true;
 }
 
@@ -465,14 +472,15 @@ static bool shouldElideTailStore(
 
 static bool elideLoadStoreRoundTripsInLeafBody(
     Block &body, const FusionRegionStoreContext *context, Operation *scopeOp) {
-  SmallVector<Operation *, 8> eraseOrder;
-  llvm::SmallPtrSet<Operation *, 8> scheduledForErase;
-  SmallVector<TrackedStore, 8> trackedStores;
+  SmallVector<Operation *, mlir::pto::kValue8> eraseOrder;
+  llvm::SmallPtrSet<Operation *, mlir::pto::kValue8> scheduledForErase;
+  SmallVector<TrackedStore, mlir::pto::kValue8> trackedStores;
   bool changed = false;
 
-  auto scheduleErase = [&](Operation *op) {
-    if (scheduledForErase.insert(op).second)
+  auto scheduleErase = [&eraseOrder, &scheduledForErase](Operation *op) {
+    if (scheduledForErase.insert(op).second) {
       eraseOrder.push_back(op);
+    }
   };
 
   for (Operation &op : body.without_terminator()) {
@@ -488,7 +496,7 @@ static bool elideLoadStoreRoundTripsInLeafBody(
 
       Value base = load.getSource();
       Value offset = load.getOffset();
-      SmallVector<Value, 4> loadIndices{offset};
+      SmallVector<Value, mlir::pto::kValue4> loadIndices{offset};
       int matchIndex =
           findTrackedStoreIndex(trackedStores, base, loadIndices, inferredMask);
       if (matchIndex >= 0) {
@@ -505,7 +513,7 @@ static bool elideLoadStoreRoundTripsInLeafBody(
       Value base = store.getDestination();
       Value offset = store.getOffset();
       Value mask = store.getMask();
-      SmallVector<Value, 4> storeIndices{offset};
+      SmallVector<Value, mlir::pto::kValue4> storeIndices{offset};
       int matchIndex =
           findTrackedStoreIndex(trackedStores, base, storeIndices, mask);
       if (matchIndex >= 0) {
@@ -584,8 +592,9 @@ struct PTOFusionLoadStoreElisionPass
       changed |= elideLoadStoreRoundTripsInLeafBody(body, &it->second, nullptr);
     });
 
-    auto runElisionForLeafBody = [&](Block *leafBody, Operation *scopeOp,
-                                     pto::FusionRegionOp fusionRegion) {
+    auto runElisionForLeafBody = [&changed, &regionContexts](
+                                        Block *leafBody, Operation *scopeOp,
+                                        pto::FusionRegionOp fusionRegion) {
       if (!leafBody || !fusionRegion) {
         return;
       }

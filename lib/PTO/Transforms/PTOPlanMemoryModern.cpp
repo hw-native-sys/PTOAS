@@ -8,8 +8,11 @@
 
 //===- PTOPlanMemoryModern.cpp - modern static local memory planner -------===//
 
+#include <limits>
+#include <tuple>
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -20,16 +23,10 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
-#include <limits>
-#include <tuple>
+
 
 using namespace mlir;
 using namespace mlir::pto;
-
-namespace mlir::pto {
-LogicalResult runModernPlanMemory(func::FuncOp func, llvm::StringRef memMode,
-                                  bool orderBySize);
-} // namespace mlir::pto
 
 namespace {
 
@@ -59,7 +56,7 @@ struct RootInfo {
   SmallVector<uint64_t> offsets;
 };
 
-using RootList = SmallVector<Value, 4>;
+using RootList = SmallVector<Value, mlir::pto::kValue4>;
 
 struct OpAccess {
   Operation *op = nullptr;
@@ -151,22 +148,23 @@ static bool isIgnoredA5TmpOperandUse(OpOperand &use) {
   }
 
   if (name == "pto.txors") {
-    return operandNo == 2;
+    return operandNo == mlir::pto::kValue2;
   }
 
   if (isNameIn(name, {"pto.tprelu", "pto.txor", "pto.tsels",
-                     "pto.trowexpand", "pto.tcolexpand",
-                     "pto.trowexpandadd", "pto.trowexpanddiv",
-                     "pto.trowexpandexpdif", "pto.trowexpandmax",
-                     "pto.trowexpandmin", "pto.trowexpandmul",
-                     "pto.trowexpandsub", "pto.tcolexpandadd",
-                     "pto.tcolexpanddiv", "pto.tcolexpandexpdif",
-                     "pto.tcolexpandmax", "pto.tcolexpandmin",
-                     "pto.tcolexpandmul", "pto.tcolexpandsub"}))
-    return operandNo == 2;
+                      "pto.trowexpand", "pto.tcolexpand",
+                      "pto.trowexpandadd", "pto.trowexpanddiv",
+                      "pto.trowexpandexpdif", "pto.trowexpandmax",
+                      "pto.trowexpandmin", "pto.trowexpandmul",
+                      "pto.trowexpandsub", "pto.tcolexpandadd",
+                      "pto.tcolexpanddiv", "pto.tcolexpandexpdif",
+                      "pto.tcolexpandmax", "pto.tcolexpandmin",
+                      "pto.tcolexpandmul", "pto.tcolexpandsub"})) {
+    return operandNo == mlir::pto::kValue2;
+  }
 
   if (name == "pto.tsel") {
-    return operandNo == 3;
+    return operandNo == mlir::pto::kValue3;
   }
 
   return false;
@@ -297,7 +295,7 @@ static InplacePolicy getInplacePolicy(Operation *op) {
 
   if (name == "pto.tsel") {
     policy.forbidOutputAliasOperands.push_back(0); // mask
-    policy.forbidOutputAliasOperands.push_back(3); // tmp
+    policy.forbidOutputAliasOperands.push_back(mlir::pto::kValue3); // tmp
   }
 
   if (isOneOf(name, {
@@ -337,7 +335,7 @@ static SmallVector<Value> getWrittenNonDpsOperands(Operation *op,
     return scratchOperands;
   }
 
-  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 8> effects;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, mlir::pto::kValue8> effects;
   memEffect.getEffects(effects);
   for (const auto &effect : effects) {
     if (!isa<MemoryEffects::Write>(effect.getEffect())) {
@@ -366,7 +364,7 @@ static bool hasReadEffectOnValue(Operation *op, Value value) {
     return false;
   }
 
-  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 8> effects;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, mlir::pto::kValue8> effects;
   memEffect.getEffects(effects);
   for (const auto &effect : effects) {
     if (!isa<MemoryEffects::Read>(effect.getEffect())) {
@@ -453,10 +451,10 @@ struct PlannerAnalysis {
     uint64_t slotCount = 1;
     if (auto multiType = dyn_cast<MultiTileBufType>(value.getType())) {
       slotCount = multiType.getCount();
-    }
-    else if (auto attr =
-                 defOp->getAttrOfType<IntegerAttr>(pto::kPtoMultiBufferAttrName))
+    } else if (auto attr =
+                   defOp->getAttrOfType<IntegerAttr>(pto::kPtoMultiBufferAttrName)) {
       slotCount = attr.getValue().getZExtValue();
+    }
     MemSpec spec = getMemSpec(getTargetArch(func), *space);
     uint64_t slotBytes = alignUp(*bytesOr, spec.alignmentBytes);
 
@@ -712,6 +710,11 @@ struct PlannerAnalysis {
     recordInplacePolicyConflicts(op, dpsInits);
   }
 
+  void recordSemanticNoAliasConflicts(Operation *op) {
+    for (const auto &[lhs, rhs] : getSemanticNoAliasPairs(op))
+      addForbidAliasBetweenRoots(getRoots(lhs), getRoots(rhs));
+  }
+
   void recordLoadDerivedRoots(Operation *op, ValueRange dpsInits) {
     if (!isa<pto::TLoadOp, pto::TPrefetchOp>(op)) {
       return;
@@ -798,7 +801,7 @@ struct PlannerAnalysis {
     access.opIndex = facts.opAccesses.size();
     access.inLoop = isInsideLoop(op);
 
-    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 8> effects;
+    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, mlir::pto::kValue8> effects;
     memEffect.getEffects(effects);
     for (const auto &effect : effects) {
       Value value = effect.getValue();
@@ -1116,6 +1119,7 @@ struct PlannerAnalysis {
         recordSplitTpopDerivedValue(op);
         recordDpsTargetHazardFacts(op, index);
         recordDpsInplaceConflicts(op);
+        recordSemanticNoAliasConflicts(op);
         recordOpAccess(op, dpsInits);
       }
     }
@@ -1211,12 +1215,12 @@ static bool accessesRoot(const OpAccess &access, Value root) {
 static bool accessPairHasMemoryDependency(const OpAccess &lhs,
                                           const OpAccess &rhs, Value lhsRoot,
                                           Value rhsRoot) {
-  auto depends = [&](Value writtenRoot, Value otherRoot) {
+  auto depends = [&lhs, &rhs](Value writtenRoot, Value otherRoot) {
     return containsRoot(lhs.writes, writtenRoot) &&
            (containsRoot(rhs.reads, otherRoot) ||
             containsRoot(rhs.writes, otherRoot));
   };
-  auto reverseDepends = [&](Value readRoot, Value writtenRoot) {
+  auto reverseDepends = [&lhs, &rhs](Value readRoot, Value writtenRoot) {
     return containsRoot(lhs.reads, readRoot) &&
            containsRoot(rhs.writes, writtenRoot);
   };
@@ -1300,7 +1304,7 @@ static uint64_t getGroupReuseCost(const RootInfo &info,
 
 static bool isHotRoot(const RootInfo &info) {
   if (info.loopAccessCount > 0 &&
-      (info.accessCount >= 2 || info.pipeVAccessCount > 0 ||
+      (info.accessCount >= mlir::pto::kValue2 || info.pipeVAccessCount > 0 ||
        info.mteAccessCount > 0)) {
     return true;
   }
@@ -1308,16 +1312,16 @@ static bool isHotRoot(const RootInfo &info) {
   // Some PTODSL kernels express repeated work through task/block parallelism
   // rather than an explicit scf.for in PTO IR. Repeated local accesses on
   // PIPE_V/MTE are still hot enough that over-clustering can hurt scheduling.
-  return info.accessCount >= 2 &&
+  return info.accessCount >= mlir::pto::kValue2 &&
          (info.pipeVAccessCount > 0 || info.mteAccessCount > 0);
 }
 
 static uint64_t getRootHotness(const RootInfo &info) {
   uint64_t hotness = info.accessCount;
-  hotness += static_cast<uint64_t>(info.loopAccessCount) * 2;
+  hotness += static_cast<uint64_t>(info.loopAccessCount) * mlir::pto::kValue2;
   hotness += static_cast<uint64_t>(info.writeAccessCount);
-  hotness += static_cast<uint64_t>(info.pipeVAccessCount) * 2;
-  hotness += static_cast<uint64_t>(info.mteAccessCount) * 2;
+  hotness += static_cast<uint64_t>(info.pipeVAccessCount) * mlir::pto::kValue2;
+  hotness += static_cast<uint64_t>(info.mteAccessCount) * mlir::pto::kValue2;
   return hotness;
 }
 
@@ -1443,7 +1447,6 @@ static ReuseGroup *chooseReuseGroupByCost(
     return std::tie(lhsCost, lhsBytes, lhsOrder) <
            std::tie(rhsCost, rhsBytes, rhsOrder);
   };
-
   if (isBetter(freshFits, freshCost, freshProjectedBytes, freshOrder, bestFits,
                bestCost, bestProjectedBytes, bestOrder)) {
     return nullptr;
@@ -1648,17 +1651,16 @@ static LogicalResult materializePlannedOffsets(
                                                     buffer2Offsets);
   patterns.add<AllocMultiTileOpAddPlannedAddressesPattern>(
       patterns.getContext(), buffer2Offsets);
-  if (mlir::failed(applyPatternsGreedily(func, std::move(patterns)))) {
+  if (mlir::failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
     return failure();
-  }
   return success();
 }
 
 } // namespace
 
-LogicalResult mlir::pto::runModernPlanMemory(func::FuncOp func,
-                                             llvm::StringRef memMode,
-                                             bool orderBySize) {
+static LogicalResult runModernPlanMemory(func::FuncOp func,
+                                         llvm::StringRef memMode,
+                                         bool orderBySize) {
   if (!memMode.equals_insensitive("local")) {
     func.emitError("unsupported mem-mode '")
         << memMode << "'; only 'local' is currently implemented";
@@ -1732,8 +1734,8 @@ LogicalResult mlir::pto::runModernPlanMemory(func::FuncOp func,
 
     if (scopeRequiredBytes > spec.capacityBytes) {
       func.emitError() << stringifyEnum(space) << " overflow, requires "
-                       << (scopeRequiredBytes * 8) << " bits while "
-                       << (spec.capacityBytes * 8) << " bits available";
+                       << (scopeRequiredBytes * mlir::pto::kValue8) << " bits while "
+                       << (spec.capacityBytes * mlir::pto::kValue8) << " bits available";
       return failure();
     }
 
@@ -1771,7 +1773,7 @@ LogicalResult mlir::pto::runModernPlanMemory(func::FuncOp func,
       return WalkResult::interrupt();
     }
 
-    reserveOp->setAttr("base", IntegerAttr::get(IntegerType::get(ctx, 32),
+    reserveOp->setAttr("base", IntegerAttr::get(IntegerType::get(ctx, mlir::pto::kValue32),
                                                 static_cast<int32_t>(*baseOr)));
     return WalkResult::advance();
   });
@@ -1780,6 +1782,8 @@ LogicalResult mlir::pto::runModernPlanMemory(func::FuncOp func,
       mlir::failed(materializePlannedOffsets(func, buffer2Offsets))) {
     return failure();
   }
+  if (failed(verifySemanticNoAliasRanges(func)))
+    return failure();
 
   bool hasUnplannedAllocTile = false;
   func.walk([&](pto::AllocTileOp op) {
@@ -1837,7 +1841,7 @@ struct PlanMemoryModernPass
 
     for (func::FuncOp funcOp : funcs) {
       if (failed(
-              mlir::pto::runModernPlanMemory(funcOp, memMode, orderBySize))) {
+              runModernPlanMemory(funcOp, memMode, orderBySize))) {
         signalPassFailure();
         return;
       }

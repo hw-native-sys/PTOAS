@@ -25,5 +25,6 @@ module {
 // CHECK-LABEL: local_array_2d
 // CHECK: float [[M:[_A-Za-z][_A-Za-z0-9]*]][8][8];
 // CHECK: [[M]][{{[_A-Za-z][_A-Za-z0-9]*}}][{{[_A-Za-z][_A-Za-z0-9]*}}] = {{[_A-Za-z][_A-Za-z0-9]*}};
-// CHECK: float [[R:[_A-Za-z][_A-Za-z0-9]*]] = [[M]][{{[_A-Za-z][_A-Za-z0-9]*}}][{{[_A-Za-z][_A-Za-z0-9]*}}];
+// CHECK: float [[R:[_A-Za-z][_A-Za-z0-9]*]];
+// CHECK: [[R]] = [[M]][{{[_A-Za-z][_A-Za-z0-9]*}}][{{[_A-Za-z][_A-Za-z0-9]*}}];
 // CHECK: [[M]][{{[_A-Za-z][_A-Za-z0-9]*}}][{{[_A-Za-z][_A-Za-z0-9]*}}] = [[R]];

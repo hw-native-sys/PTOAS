@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vor
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @f4x2_to_bf16x2_vcvt_store(
+      %src: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %dst: !pto.ptr<!pto.bf16x2, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %packed = pto.vmi.vload %src[%c0]
+          : !pto.ptr<!pto.f4E1M2x2, ub>
+         -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+      %wide = pto.vmi.vcvt %packed
+          : !pto.vmi.vreg<64x!pto.f4E1M2x2>
+         -> !pto.vmi.vreg<64x!pto.bf16x2>
+      pto.vmi.vstore %wide, %dst[%c0]
+          : !pto.vmi.vreg<64x!pto.bf16x2>,
+            !pto.ptr<!pto.bf16x2, ub>
+    }
+    return
+  }
+
+  // 256-lane d4 path: Packed4 widen produces 4 bf16x2 registers; the store
+  // reorders them through a vintlv tree. bf16x2 has no dedicated vintlv
+  // intrinsic, so the tree lowers to the <64 x i32> intrinsic (bf16x2 is a
+  // 32-bit packed pair at the LLVM ABI; vintlv is a bit-level lane shuffle).
+  func.func @f4x2_to_bf16x2_d4_vcvt_store(
+      %src: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %dst: !pto.ptr<!pto.bf16x2, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %packed = pto.vmi.vload %src[%c0]
+          : !pto.ptr<!pto.f4E1M2x2, ub>
+         -> !pto.vmi.vreg<256x!pto.f4E1M2x2>
+      %wide = pto.vmi.vcvt %packed
+          : !pto.vmi.vreg<256x!pto.f4E1M2x2>
+         -> !pto.vmi.vreg<256x!pto.bf16x2>
+      pto.vmi.vstore %wide, %dst[%c0]
+          : !pto.vmi.vreg<256x!pto.bf16x2>,
+            !pto.ptr<!pto.bf16x2, ub>
+    }
+    return
+  }
+}
+
+// VPTO-LABEL: func.func @f4x2_to_bf16x2_vcvt_store
+// VPTO: pto.vlds {{.*}} : !pto.ptr<!pto.f4E1M2x2, ub> -> !pto.vreg<256x!pto.f4E1M2x2>
+// VPTO: pto.vcvt {{.*}} {part = "P0"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// VPTO: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// VPTO: pto.vsts {{.*}} : !pto.vreg<64x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>, !pto.mask<b32>
+// VPTO-NOT: pto.vmi.
+// VPTO-NOT: !pto.vmi.
+
+// LLVM-LABEL: define void @f4x2_to_bf16x2_vcvt_store_mix_aiv
+// LLVM: call <128 x bfloat> @llvm.hivm.vcvtff2.f4e1m2x22bf16.x(<256 x float4e1m2x2> {{.*}}, <256 x i1> {{.*}}, i32 0)
+// LLVM: call void @llvm.hivm.vstsx1.v64bf16x2(<64 x i32> {{.*}}, ptr addrspace(6) {{.*}}, i32 {{.*}}, i32 2, i32 0, <256 x i1> {{.*}})
+
+// LLVM-LABEL: define void @f4x2_to_bf16x2_d4_vcvt_store_mix_aiv
+// LLVM: call <128 x bfloat> @llvm.hivm.vcvtff2.f4e1m2x22bf16.x(<256 x float4e1m2x2> {{.*}}, <256 x i1> {{.*}}, i32 0)
+// LLVM-COUNT-4: call { <64 x i32>, <64 x i32> } @llvm.hivm.vintlv.v64i32(<64 x i32> {{.*}}, <64 x i32> {{.*}})
+// LLVM-COUNT-4: call void @llvm.hivm.vstsx1.v64bf16x2(<64 x i32> {{.*}}, ptr addrspace(6) {{.*}}, i32 {{.*}}, i32 2, i32 0, <256 x i1> {{.*}})

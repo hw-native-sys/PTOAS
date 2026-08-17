@@ -1,0 +1,110 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @lm_head_dispatch_push(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<bf16>, %arg3: !pto.ptr<bf16>, %arg4: !pto.ptr<i32>, %arg5: i32, %arg6: i32, %arg7: !pto.ptr<i64>, %arg8: !pto.ptr<i64>, %arg9: index, %__pypto_spmd_block_idx: i32, %__pypto_spmd_block_num: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c4096_index = arith.constant 4096 : index
+  %c1_index = arith.constant 1 : index
+  %c128_index = arith.constant 128 : index
+  %c256_index = arith.constant 256 : index
+  %c2_index = arith.constant 2 : index
+  %c0_index = arith.constant 0 : index
+  %cst_7 = arith.constant 0.00000000000000000e+00 : bf16
+  %c1_i32 = arith.constant 1 : i32
+  %hidden_states__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%arg9, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %logit_row_indices__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c128_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
+  %selected_hidden_inline136__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c128_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %hidden_window__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c256_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %hidden_done__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+  %row_inline139__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
+  %source_row_raw_inline142__tile = pto.load_scalar %arg1[%row_inline139__ssa_v0] : !pto.ptr<i32> -> i32
+  %1 = arith.index_cast %source_row_raw_inline142__tile : i32 to index
+  %2 = arith.subi %arg9, %c1_index : index
+  %3 = arith.minsi %1, %2 : index
+  %4 = arith.maxsi %3, %c0_index : index
+  %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%cst_7 : bf16) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %5 = arith.maxsi %row_inline139__ssa_v0, %c0_index : index
+  %selected_hidden_inline136__ssa_v0_pview = pto.partition_view %selected_hidden_inline136__ssa_v0_view, offsets = [%5, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
+  pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%selected_hidden_inline136__ssa_v0_pview : !pto.partition_tensor_view<1x4096xbf16>)
+  %6 = arith.index_cast %source_row_raw_inline142__tile : i32 to index
+  %7 = arith.cmpi sle, %c0_index, %6 : index
+  scf.if %7 {
+    %0 = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %9 = arith.maxsi %4, %c0_index : index
+    %hidden_states__ssa_v0_pview = pto.partition_view %hidden_states__ssa_v0_view, offsets = [%9, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
+    pto.tload ins(%hidden_states__ssa_v0_pview : !pto.partition_tensor_view<1x4096xbf16>) outs(%0 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %11 = arith.maxsi %row_inline139__ssa_v0, %c0_index : index
+    %selected_hidden_inline136__tile_pview = pto.partition_view %selected_hidden_inline136__ssa_v0_view, offsets = [%11, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
+    pto.tstore ins(%0 : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%selected_hidden_inline136__tile_pview : !pto.partition_tensor_view<1x4096xbf16>)
+  } else {
+  }
+  scf.for %peer_tp_inline132__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %tput_stage = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %12 = arith.index_cast %arg6 : i32 to index
+    %13 = arith.muli %12, %c128_index : index
+    %14 = arith.addi %13, %row_inline139__ssa_v0 : index
+    %15 = arith.maxsi %14, %c0_index : index
+    %16 = arith.maxsi %row_inline139__ssa_v0, %c0_index : index
+    %17 = arith.index_cast %arg5 : i32 to index
+    %18 = arith.addi %17, %peer_tp_inline132__idx_v0 : index
+    %19 = func.call @CommRemoteOffset_bf16(%arg7, %18) : (!pto.ptr<i64>, index) -> index
+    %20 = pto.addptr %arg3, %19 : !pto.ptr<bf16> -> !pto.ptr<bf16>
+    %21 = pto.make_tensor_view %20, shape = [%c256_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %hidden_window__ssa_v0_peer_pview = pto.partition_view %21, offsets = [%15, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
+    %selected_hidden_inline136__phi_v3_local_pview = pto.partition_view %selected_hidden_inline136__ssa_v0_view, offsets = [%16, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
+    pto.barrier <PIPE_ALL>
+    pto.comm.tput(%hidden_window__ssa_v0_peer_pview, %selected_hidden_inline136__phi_v3_local_pview, buf(%tput_stage) : !pto.partition_tensor_view<1x4096xbf16>, !pto.partition_tensor_view<1x4096xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {atomicType = #pto<atomic_type atomic_none>}
+    pto.barrier <PIPE_ALL>
+    pto.cmo.cacheinvalid %hidden_window__ssa_v0_peer_pview single_cache_line : !pto.partition_tensor_view<1x4096xbf16>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+  }
+  scf.for %peer_tp_inline146__idx_v0 = %c0_index to %c2_index step %c1_index {
+    %22 = arith.index_cast %arg6 : i32 to index
+    %23 = arith.cmpi ne, %peer_tp_inline146__idx_v0, %22 : index
+    scf.if %23 {
+      %24 = arith.index_cast %arg5 : i32 to index
+      %25 = arith.addi %24, %peer_tp_inline146__idx_v0 : index
+      %26 = func.call @CommRemoteOffset_i32(%arg8, %25) : (!pto.ptr<i64>, index) -> index
+      %27 = pto.addptr %arg4, %26 : !pto.ptr<i32> -> !pto.ptr<i32>
+      %28 = pto.make_tensor_view %27, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
+      %tp_rank__ssa_v0_idx = arith.index_cast %arg6 : i32 to index
+      %29 = arith.maxsi %tp_rank__ssa_v0_idx, %c0_index : index
+      %hidden_done__ssa_v0_peer_pview = pto.partition_view %28, offsets = [%29, %c0_index], sizes = [%c1_index, %c1_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x1xi32>
+      pto.barrier <PIPE_ALL>
+      pto.comm.tnotify(%hidden_done__ssa_v0_peer_pview, %c1_i32 : !pto.partition_tensor_view<1x1xi32>, i32) {notifyOp = #pto<notify_op atomic_add>}
+    }
+  }
+  return
+  }
+  func.func private @CommRemoteOffset_i32(%ctx: !pto.ptr<i64>, %peer: index) -> index {
+    %c_r = arith.constant 2 : index
+    %c_w = arith.constant 4 : index
+    %rk_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rk_i32 = arith.trunci %rk_pair : i64 to i32
+    %rk_idx = arith.index_cast %rk_i32 : i32 to index
+    %lb_off = arith.addi %c_w, %rk_idx : index
+    %lbase = pto.load_scalar %ctx[%lb_off] : !pto.ptr<i64> -> i64
+    %pb_off = arith.addi %c_w, %peer : index
+    %pbase = pto.load_scalar %ctx[%pb_off] : !pto.ptr<i64> -> i64
+    %dbytes = arith.subi %pbase, %lbase : i64
+    %esize = arith.constant 4 : i64
+    %delems_i = arith.divsi %dbytes, %esize : i64
+    %delems = arith.index_cast %delems_i : i64 to index
+    return %delems : index
+  }
+  func.func private @CommRemoteOffset_bf16(%ctx: !pto.ptr<i64>, %peer: index) -> index {
+    %c_r = arith.constant 2 : index
+    %c_w = arith.constant 4 : index
+    %rk_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rk_i32 = arith.trunci %rk_pair : i64 to i32
+    %rk_idx = arith.index_cast %rk_i32 : i32 to index
+    %lb_off = arith.addi %c_w, %rk_idx : index
+    %lbase = pto.load_scalar %ctx[%lb_off] : !pto.ptr<i64> -> i64
+    %pb_off = arith.addi %c_w, %peer : index
+    %pbase = pto.load_scalar %ctx[%pb_off] : !pto.ptr<i64> -> i64
+    %dbytes = arith.subi %pbase, %lbase : i64
+    %esize = arith.constant 2 : i64
+    %delems_i = arith.divsi %dbytes, %esize : i64
+    %delems = arith.index_cast %delems_i : i64 to index
+    return %delems : index
+  }
+}

@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression: EmitC must lower a while nested in a carried scf.for when the
+// while condition contains an scf.if that SCF-to-ControlFlow has split into
+// multiple CFG blocks.
+// RUN: ptoas --pto-arch=a5 %s -o - | FileCheck %s
+
+module {
+  func.func @psum_expert_cursor(
+      %psum: !pto.ptr<i32, gm>, %out: !pto.ptr<i32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c7 = arith.constant 7 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %false = arith.constant false
+    %final_eid = scf.for %token_id = %c0 to %c16 step %c1
+        iter_args(%expert_id = %c0) -> (index) {
+      %eid_after = scf.while (%eid = %expert_id) : (index) -> index {
+        %lt_e = arith.cmpi slt, %eid, %c2 : index
+        %go = scf.if %lt_e -> (i1) {
+          %thr_i32 = pto.load_scalar %psum[%eid] : !pto.ptr<i32, gm> -> i32
+          %thr = arith.index_cast %thr_i32 : i32 to index
+          %thr_plus = arith.addi %thr, %c7 : index
+          %thr_div = arith.divui %thr_plus, %c8 : index
+          %aligned = arith.muli %thr_div, %c8 : index
+          %ge_thr = arith.cmpi uge, %token_id, %aligned : index
+          scf.yield %ge_thr : i1
+        } else {
+          scf.yield %false : i1
+        }
+        scf.condition(%go) %eid : index
+      } do {
+      ^bb0(%eid2: index):
+        %next = arith.addi %eid2, %c1 : index
+        scf.yield %next : index
+      }
+      %lt_e2 = arith.cmpi slt, %eid_after, %c2 : index
+      %valid = scf.if %lt_e2 -> (i1) {
+        %end_i32 = pto.load_scalar %psum[%eid_after] : !pto.ptr<i32, gm> -> i32
+        %end = arith.index_cast %end_i32 : i32 to index
+        %lt_tok = arith.cmpi ult, %token_id, %end : index
+        scf.yield %lt_tok : i1
+      } else {
+        scf.yield %false : i1
+      }
+      %val = scf.if %valid -> (i32) {
+        scf.yield %c1_i32 : i32
+      } else {
+        scf.yield %c0_i32 : i32
+      }
+      pto.store_scalar %val, %out[%token_id] : !pto.ptr<i32, gm>, i32
+      scf.yield %eid_after : index
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void psum_expert_cursor(
+// CHECK: goto label{{[0-9]+}};
+// CHECK: if ({{.*}}) {
+// CHECK: goto label{{[0-9]+}};
+// CHECK: goto label{{[0-9]+}};
+// CHECK: goto label{{[0-9]+}};

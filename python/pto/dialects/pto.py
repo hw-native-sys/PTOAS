@@ -54,6 +54,7 @@ PrefetchAsyncContextType = _export_optional_cext_symbol("PrefetchAsyncContextTyp
 HiF8Type = _pto_mod.HiF8Type
 HiF8x2Type = _pto_mod.HiF8x2Type
 F8E8M0Type = _pto_mod.F8E8M0Type
+BF16x2Type = _pto_mod.BF16x2Type
 F4E1M2x2Type = _pto_mod.F4E1M2x2Type
 F4E2M1x2Type = _pto_mod.F4E2M1x2Type
 TensorViewType = _pto_mod.TensorViewType
@@ -125,6 +126,8 @@ QuantType = _pto_mod.QuantType
 QuantTypeAttr = _pto_mod.QuantTypeAttr
 QuantScaleAlg = _pto_mod.QuantScaleAlg
 QuantScaleAlgAttr = _pto_mod.QuantScaleAlgAttr
+MxGroupAxis = _pto_mod.MxGroupAxis
+MxGroupAxisAttr = _pto_mod.MxGroupAxisAttr
 VecStoreMode = _pto_mod.VecStoreMode
 VecStoreModeAttr = _pto_mod.VecStoreModeAttr
 
@@ -234,6 +237,7 @@ __all__ = [
     "HiF8Type",
     "HiF8x2Type",
     "F8E8M0Type",
+    "BF16x2Type",
     "F4E1M2x2Type",
     "F4E2M1x2Type",
     "TensorViewType",
@@ -304,6 +308,8 @@ __all__ = [
     "QuantTypeAttr",
     "QuantScaleAlg",
     "QuantScaleAlgAttr",
+    "MxGroupAxis",
+    "MxGroupAxisAttr",
     "VecStoreMode",
     "VecStoreModeAttr",
     "TileBufConfigAttr",

@@ -1,0 +1,33 @@
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @kv_hadamard(%arg0: !pto.ptr<bf16>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c4096_i64 = arith.constant 4096 : i64
+  %c16_index = arith.constant 16 : index
+  %c128_index = arith.constant 128 : index
+  %c1_index = arith.constant 1 : index
+  %c0_index = arith.constant 0 : index
+  %c64_index = arith.constant 64 : index
+  %normed_kv_inline14317__ssa_v4_view = pto.make_tensor_view %arg0, shape = [%c16_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %kv_final_inline14288__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c16_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %csa_hadamard_idx_csa_inline306__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c128_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %kv_proj_tile_inline14287__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c128_index : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+  %normed_kv_inline14317__ssa_v4_pview = pto.partition_view %normed_kv_inline14317__ssa_v4_view, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c128_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x128xbf16>
+  pto.tload ins(%normed_kv_inline14317__ssa_v4_pview : !pto.partition_tensor_view<16x128xbf16>) outs(%kv_proj_tile_inline14287__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+  scf.for %o0_inline14286__idx_v0 = %c0_index to %c128_index step %c64_index {
+    %hadamard_tile_inline14285__tile = pto.alloc_tile addr = %c4096_i64 valid_row = %c128_index valid_col = %c64_index : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %0 = arith.maxsi %o0_inline14286__idx_v0, %c0_index : index
+    %csa_hadamard_idx_csa_inline306__ssa_v0_pview = pto.partition_view %csa_hadamard_idx_csa_inline306__ssa_v0_view, offsets = [%c0_index, %0], sizes = [%c128_index, %c64_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<128x64xbf16>
+    pto.tload ins(%csa_hadamard_idx_csa_inline306__ssa_v0_pview : !pto.partition_tensor_view<128x64xbf16>) outs(%hadamard_tile_inline14285__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    %kv_proj_tile_inline14287__tile_Left = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c128_index : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tmov ins(%kv_proj_tile_inline14287__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%kv_proj_tile_inline14287__tile_Left : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    %hadamard_tile_inline14285__tile_Right = pto.alloc_tile addr = %c0_i64 valid_row = %c128_index valid_col = %c64_index : !pto.tile_buf<loc=right, dtype=bf16, rows=128, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    pto.tmov ins(%hadamard_tile_inline14285__tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%hadamard_tile_inline14285__tile_Right : !pto.tile_buf<loc=right, dtype=bf16, rows=128, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+    %kv_hadamard_acc_inline14284__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c64_index : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul ins(%kv_proj_tile_inline14287__tile_Left, %hadamard_tile_inline14285__tile_Right : !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=bf16, rows=128, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%kv_hadamard_acc_inline14284__tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    %1 = arith.maxsi %o0_inline14286__idx_v0, %c0_index : index
+    %kv_final_inline14288__iter_v1_pview = pto.partition_view %kv_final_inline14288__ssa_v0_view, offsets = [%c0_index, %1], sizes = [%c16_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x64xf32>
+    pto.tstore ins(%kv_hadamard_acc_inline14284__tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%kv_final_inline14288__iter_v1_pview : !pto.partition_tensor_view<16x64xf32>)
+  }
+  return
+  }
+}

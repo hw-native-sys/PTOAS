@@ -1,0 +1,87 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @mtp_dequant(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<f32>, %arg3: !pto.ptr<f32>, %arg4: !pto.ptr<f32>, %arg5: !pto.ptr<i32>, %arg6: !pto.ptr<f32>, %arg7: index, %arg8: index, %arg9: index, %arg10: index, %__pypto_spmd_block_idx: i32, %__pypto_spmd_block_num: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c4160_i64 = arith.constant 4160 : i64
+  %c69760_i64 = arith.constant 69760 : i64
+  %c0_i64 = arith.constant 0 : i64
+  %c64_i64 = arith.constant 64 : i64
+  %c69696_i64 = arith.constant 69696 : i64
+  %c4096_index = arith.constant 4096 : index
+  %c1_index = arith.constant 1 : index
+  %c16384_index = arith.constant 16384 : index
+  %c4_index = arith.constant 4 : index
+  %c16_index = arith.constant 16 : index
+  %c1024_index = arith.constant 1024 : index
+  %c0_index = arith.constant 0 : index
+  %e_proj_w_scale__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c4096_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xf32>
+  %hidden_acc_pad_inline33__ssa_v1_view = pto.make_tensor_view %arg1, shape = [%arg8, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %hidden_scale_dq_inline97__ssa_v1_view = pto.make_tensor_view %arg2, shape = [%arg8, %c1_index], strides = [%c1_index, %arg8] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+  %h_proj_w_scale__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c4096_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xf32>
+  %out_flat_inline12__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%arg9, %c16384_index], strides = [%c16384_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %prev_acc_pad_inline55__ssa_v1_view = pto.make_tensor_view %arg5, shape = [%arg10, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %prev_scale_dq_inline22__ssa_v1_view = pto.make_tensor_view %arg6, shape = [%c4_index, %arg8], strides = [%arg8, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %linear_idx_inline11__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
+  %2 = arith.divsi %linear_idx_inline11__ssa_v0, %c4_index : index
+  %3 = arith.muli %2, %c16_index : index
+  %4 = arith.remsi %linear_idx_inline11__ssa_v0, %c4_index : index
+  %5 = arith.muli %4, %c1024_index : index
+  %t__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c1_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %6 = arith.maxsi %5, %c0_index : index
+  %e_proj_w_scale__ssa_v0_pview = pto.partition_view %e_proj_w_scale__ssa_v0_view, offsets = [%6], sizes = [%c1024_index] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<1024xf32>
+  pto.tload ins(%e_proj_w_scale__ssa_v0_pview : !pto.partition_tensor_view<1024xf32>) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %e_scale_inline10__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c1_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %hidden_acc_inline9__tile = pto.alloc_tile addr = %c69760_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %7 = arith.maxsi %3, %c0_index : index
+  %8 = arith.maxsi %5, %c0_index : index
+  %hidden_acc_pad_inline33__ssa_v1_pview = pto.partition_view %hidden_acc_pad_inline33__ssa_v1_view, offsets = [%7, %8], sizes = [%c16_index, %c1024_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<16x1024xi32>
+  pto.tload ins(%hidden_acc_pad_inline33__ssa_v1_pview : !pto.partition_tensor_view<16x1024xi32>) outs(%hidden_acc_inline9__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %hidden_acc_f32_inline8__tile = pto.alloc_tile addr = %c69760_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcvt ins(%hidden_acc_inline9__tile {rmode = #pto<round_mode NONE>} : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%hidden_acc_f32_inline8__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %0 = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+  %9 = arith.maxsi %3, %c0_index : index
+  %hidden_scale_dq_inline97__ssa_v1_pview = pto.partition_view %hidden_scale_dq_inline97__ssa_v1_view, offsets = [%9, %c0_index], sizes = [%c16_index, %c1_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x1xf32>
+  pto.tload ins(%hidden_scale_dq_inline97__ssa_v1_pview : !pto.partition_tensor_view<16x1xf32>) outs(%0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+  %hidden_deq_scaled_inline7__tile = pto.alloc_tile addr = %c69760_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.trowexpandmul ins(%hidden_acc_f32_inline8__tile, %0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%hidden_deq_scaled_inline7__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %hidden_deq_inline6__tile = pto.alloc_tile addr = %c69760_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.tcolexpandmul ins(%hidden_deq_scaled_inline7__tile, %e_scale_inline10__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%hidden_deq_inline6__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %1 = pto.alloc_tile addr = %c64_i64 valid_row = %c1_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %10 = arith.maxsi %5, %c0_index : index
+  %h_proj_w_scale__ssa_v0_pview = pto.partition_view %h_proj_w_scale__ssa_v0_view, offsets = [%10], sizes = [%c1024_index] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<1024xf32>
+  pto.tload ins(%h_proj_w_scale__ssa_v0_pview : !pto.partition_tensor_view<1024xf32>) outs(%1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %h_scale_inline5__tile = pto.alloc_tile addr = %c64_i64 valid_row = %c1_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  %11 = arith.muli %3, %c4_index : index
+  %12 = arith.subi %arg9, %3 : index
+  %13 = arith.minsi %12, %c16_index : index
+  scf.for %hc_inline102__idx_v0 = %c0_index to %c4_index step %c1_index {
+    %14 = arith.muli %hc_inline102__idx_v0, %c4096_index : index
+    %15 = arith.addi %14, %5 : index
+    %16 = arith.muli %hc_inline102__idx_v0, %c16_index : index
+    %17 = arith.addi %11, %16 : index
+    %prev_acc_i32_inline3__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %18 = arith.maxsi %17, %c0_index : index
+    %19 = arith.maxsi %5, %c0_index : index
+    %prev_acc_pad_inline55__ssa_v1_pview = pto.partition_view %prev_acc_pad_inline55__ssa_v1_view, offsets = [%18, %19], sizes = [%c16_index, %c1024_index] : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<16x1024xi32>
+    pto.tload ins(%prev_acc_pad_inline55__ssa_v1_pview : !pto.partition_tensor_view<16x1024xi32>) outs(%prev_acc_i32_inline3__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %prev_hc_acc_inline39__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcvt ins(%prev_acc_i32_inline3__tile {rmode = #pto<round_mode NONE>} : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%prev_hc_acc_inline39__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %prev_hc_scale_row_inline46__tile = pto.alloc_tile addr = %c69696_i64 valid_row = %c1_index valid_col = %c16_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %20 = arith.maxsi %hc_inline102__idx_v0, %c0_index : index
+    %21 = arith.maxsi %3, %c0_index : index
+    %prev_scale_dq_inline22__ssa_v1_pview = pto.partition_view %prev_scale_dq_inline22__ssa_v1_view, offsets = [%20, %21], sizes = [%c1_index, %c16_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x16xf32>
+    pto.tload ins(%prev_scale_dq_inline22__ssa_v1_pview : !pto.partition_tensor_view<1x16xf32>) outs(%prev_hc_scale_row_inline46__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %prev_hc_scale_inline51__tile = pto.alloc_tile addr = %c69696_i64 valid_row = %c16_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %prev_hc_scaled_inline38__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.trowexpandmul ins(%prev_hc_acc_inline39__tile, %prev_hc_scale_inline51__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>) outs(%prev_hc_scaled_inline38__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %prev_hc_inline2__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolexpandmul ins(%prev_hc_scaled_inline38__tile, %h_scale_inline5__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%prev_hc_inline2__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %acc_inline16__tile = pto.alloc_tile addr = %c4160_i64 valid_row = %c16_index valid_col = %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tadd ins(%hidden_deq_inline6__tile, %prev_hc_inline2__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%acc_inline16__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.set_validshape %acc_inline16__tile, %13, %c1024_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %22 = arith.maxsi %3, %c0_index : index
+    %23 = arith.maxsi %15, %c0_index : index
+    %out_flat_inline12__iter_v1_pview = pto.partition_view %out_flat_inline12__ssa_v0_view, offsets = [%22, %23], sizes = [%13, %c1024_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<?x1024xf32>
+    pto.tstore ins(%acc_inline16__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out_flat_inline12__iter_v1_pview : !pto.partition_tensor_view<?x1024xf32>)
+  }
+  return
+  }
+}

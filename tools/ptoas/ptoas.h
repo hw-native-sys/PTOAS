@@ -9,6 +9,9 @@
 #ifndef PTOAS_H
 #define PTOAS_H
 
+#include <memory>
+#include <optional>
+#include <string>
 #include "ObjectEmission.h"
 #include "PTO/Compiler/CompilerApi.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
@@ -18,9 +21,7 @@
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
-#include <memory>
-#include <optional>
-#include <string>
+
 
 namespace mlir {
 class AsmParserState;
@@ -104,7 +105,7 @@ private:
   VFSIMTSizeFixMode vfsimtSizeFixMode = VFSIMTSizeFixMode::Auto;
   int argc = 0;
   char **argv = nullptr;
-  CANNVersion cannVersion = CANNVersion{9, 0, 0, 1};
+  CANNVersion cannVersion = kDefaultCANNVersion;
   std::optional<CANNVersion> outputCANNVersionOverride;
   std::optional<CANNToolchain> toolchain;
   TempFileRegistry tempFiles;

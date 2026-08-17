@@ -9,18 +9,19 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCANALYSIS_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCANALYSIS_H
 
-#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include <algorithm>
+#include <optional>
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm>
-#include <optional>
+
 
 namespace mlir {
 namespace pto {
@@ -92,22 +93,30 @@ inline llvm::StringRef stringifyAddressSpace(pto::AddressSpace as) {
 }
 
 inline std::optional<pto::AddressSpace> getTileLocFromType(Value tileValue) {
-  if (!tileValue) return std::nullopt;
+  if (!tileValue) {
+    return std::nullopt;
+  }
   auto tileType = dyn_cast<pto::TileBufType>(tileValue.getType());
   if (tileType) {
     auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(tileType.getMemorySpace());
-    if (asAttr) return asAttr.getAddressSpace();
+    if (asAttr) {
+      return asAttr.getAddressSpace();
+    }
   }
   auto memrefType = dyn_cast<mlir::MemRefType>(tileValue.getType());
   if (memrefType) {
     auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(memrefType.getMemorySpace());
-    if (asAttr) return asAttr.getAddressSpace();
+    if (asAttr) {
+      return asAttr.getAddressSpace();
+    }
   }
   return std::nullopt;
 }
 
 inline void printTileLoc(llvm::raw_ostream &os, Value tileValue) {
-  if (!tileValue) return;
+  if (!tileValue) {
+    return;
+  }
   auto *defOp = tileValue.getDefiningOp();
   if (!defOp) {
     os << " BlockArg";
@@ -115,8 +124,9 @@ inline void printTileLoc(llvm::raw_ostream &os, Value tileValue) {
   }
   os << " defBy=" << defOp->getName().getStringRef();
   auto locAs = getTileLocFromType(tileValue);
-  if (locAs)
+  if (locAs) {
     os << " typeLoc=" << stringifyAddressSpace(*locAs);
+  }
 }
 
 inline void printTileInfo(llvm::raw_ostream &os, const TileInfo &t) {
@@ -124,16 +134,17 @@ inline void printTileInfo(llvm::raw_ostream &os, const TileInfo &t) {
   os << " scope=" << static_cast<int>(t.scope)
      << "(" << stringifyAddressSpace(t.scope) << ")";
   auto typeLoc = getTileLocFromType(t.tileValue);
-  if (typeLoc && *typeLoc != t.scope)
+  if (typeLoc && *typeLoc != t.scope) {
     os << " MISMATCH! typeLoc=" << stringifyAddressSpace(*typeLoc);
+  }
   os << " baseAddr=" << t.baseAddr << " size=" << t.size;
   printTileLoc(os, t.tileValue);
   os << " root=";
   printTileValue(os, t.rootBuffer);
   if (t.rootBuffer) {
-    if (auto *defOp = t.rootBuffer.getDefiningOp())
+    if (auto *defOp = t.rootBuffer.getDefiningOp()) {
       os << " rootDefBy=" << defOp->getName().getStringRef();
-    else
+    } else
       os << " rootDefBy=BlockArg";
     os << " rootPtr=" << (const void *)t.rootBuffer.getAsOpaquePointer();
   }
@@ -177,7 +188,9 @@ inline void printTileGroups(llvm::raw_ostream &os,
   for (unsigned i = 0; i < tileGroups.size(); ++i) {
     os << "  group[" << i << "] size=" << tileGroups[i].size() << " tiles=[";
     for (unsigned j = 0; j < tileGroups[i].size(); ++j) {
-      if (j > 0) os << " ; ";
+      if (j > 0) {
+        os << " ; ";
+      }
       printTileValue(os, allTiles[tileGroups[i][j]].tileValue);
     }
     os << "]\n";
@@ -192,7 +205,9 @@ inline void printVirtualBufIds(llvm::raw_ostream &os,
        << " scope=" << static_cast<int>(vbid.scope)
        << " tileCount=" << vbid.tiles.size() << " tiles=[";
     for (unsigned i = 0; i < vbid.tiles.size(); ++i) {
-      if (i > 0) os << " ; ";
+      if (i > 0) {
+        os << " ; ";
+      }
       printTileValue(os, vbid.tiles[i].tileValue);
     }
     os << "]\n";
@@ -202,13 +217,15 @@ inline void printVirtualBufIds(llvm::raw_ostream &os,
 inline void printOp2BufSync(llvm::raw_ostream &os,
                             const DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync,
                             func::FuncOp func, const char *title = nullptr) {
-  if (title)
+  if (title) {
     os << "[bufid_sync] " << title << ":\n";
+  }
 
   SmallVector<Operation *> sortedOps;
   sortedOps.reserve(op2BufSync.size());
-  for (auto &[op, build] : op2BufSync)
+  for (auto &[op, build] : op2BufSync) {
     sortedOps.push_back(op);
+  }
 
   DenseMap<Operation *, unsigned> opOrder;
   unsigned orderIdx = 0;
@@ -235,7 +252,9 @@ inline void printOp2BufSync(llvm::raw_ostream &os,
     }
     os << " <- ";
     for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-      if (i > 0) os << ", ";
+      if (i > 0) {
+        os << ", ";
+      }
       op->getOperand(i).printAsOperand(os, OpPrintingFlags());
     }
     os << "\n    pipeBefore:";
@@ -261,8 +280,9 @@ inline void printLifeIntervals(llvm::raw_ostream &os,
   for (auto &iv : intervals) {
     os << "  logicId=" << iv.logicId
        << " [" << iv.startPos << "," << iv.endPos << "] pipes=";
-    for (auto p : iv.pipes)
+    for (auto p : iv.pipes) {
       os << static_cast<int>(p) << ",";
+    }
     os << "\n";
   }
 }

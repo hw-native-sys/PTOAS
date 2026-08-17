@@ -6,17 +6,19 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include <string>
 #include "BufidSyncAnalysis.h"
 #include "BufidSyncCodegen.h"
 #include "BufidSyncIdAlloc.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/Support/Debug.h"
-#include <string>
+
 
 #define DEBUG_TYPE "pto-bufid-sync"
 
@@ -31,7 +33,7 @@ namespace {
 struct PTOBufidSyncPass
     : public impl::PTOBufidSyncBase<PTOBufidSyncPass> {
   PTOBufidSyncPass() = default;
-  PTOBufidSyncPass(const PTOBufidSyncOptions &options) {
+  explicit PTOBufidSyncPass(const PTOBufidSyncOptions &options) {
     enableBufidSyncDebug = options.enableBufidSyncDebug;
   }
   void runOnOperation() override;
@@ -85,7 +87,7 @@ void PTOBufidSyncPass::runOnOperation() {
   }
 
   BufidSyncIdAlloc idAlloc(analysis.getVirtualBufIds(),
-                           analysis.getOp2BufSync(), syncIR, 32,
+                           analysis.getOp2BufSync(), syncIR, mlir::pto::kValue32,
                            enableBufidSyncDebug);
 
   idAlloc.computeLifeIntervals();

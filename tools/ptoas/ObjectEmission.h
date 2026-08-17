@@ -9,6 +9,7 @@
 #ifndef PTOAS_OBJECT_EMISSION_H
 #define PTOAS_OBJECT_EMISSION_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Support/CANNVersion.h"
 #include "VFSIMTSizePatcher.h"
 
@@ -52,7 +53,7 @@ public:
   std::string bishengCompilerBinDirPath;
   std::string ptoIsaPath;
   std::string cannVersionString;
-  CANNVersion cannVersion = CANNVersion{9, 0, 0, 1};
+  CANNVersion cannVersion = kDefaultCANNVersion;
   std::vector<std::string> cppIncludeDirs;
 };
 
@@ -71,7 +72,7 @@ public:
                        std::string &path, llvm::raw_ostream &diagOS);
 
 private:
-  llvm::SmallVector<std::string, 8> paths;
+  llvm::SmallVector<std::string, mlir::pto::kValue8> paths;
 };
 
 LogicalResult writeLLVMModule(llvm::Module &module, llvm::StringRef path,

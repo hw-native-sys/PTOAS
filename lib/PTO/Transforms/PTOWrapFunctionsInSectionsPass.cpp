@@ -61,12 +61,14 @@ static LogicalResult rewriteFunction(func::FuncOp funcOp) {
   auto kernelKindAttr =
       funcOp->getAttrOfType<FunctionKernelKindAttr>(
           FunctionKernelKindAttr::name);
-  if (!kernelKindAttr)
+  if (!kernelKindAttr) {
     return success();
+  }
 
-  if (!funcOp.getBody().hasOneBlock())
+  if (!funcOp.getBody().hasOneBlock()) {
     return funcOp.emitOpError(
         "requires a single-block body for kernel_kind wrapping");
+  }
 
   if (hasExistingSection(funcOp)) {
     return funcOp.emitOpError(
@@ -90,8 +92,9 @@ struct PTOWrapFunctionsInSectionsPass
           PTOWrapFunctionsInSectionsPass> {
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
-    if (failed(rewriteFunction(funcOp)))
+    if (failed(rewriteFunction(funcOp))) {
       signalPassFailure();
+    }
   }
 };
 

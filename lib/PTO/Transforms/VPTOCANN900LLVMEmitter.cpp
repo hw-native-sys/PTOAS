@@ -86,9 +86,17 @@ static Type getLowPrecisionLLVMType(Type type, MLIRContext *context) {
   return {};
 }
 
+static bool isLLVMExtensionVectorElementType(Type type) {
+  return isa<LLVM::LLVMHiFloat8Type, LLVM::LLVMFloat8E4M3Type,
+             LLVM::LLVMFloat8E5M2Type, LLVM::LLVMFloat4E1M2x2Type,
+             LLVM::LLVMFloat4E2M1x2Type>(type);
+}
+
 static Type getLLVMCompatibleVectorType(ArrayRef<int64_t> shape,
                                         Type elementType,
                                         ArrayRef<bool> scalableDims = {}) {
+  if (shape.size() == 1 && isLLVMExtensionVectorElementType(elementType))
+    return LLVM::LLVMFixedVectorType::get(elementType, shape.front());
   return VectorType::get(shape, elementType, scalableDims);
 }
 
@@ -96,6 +104,11 @@ static Type normalizePayloadTypeForLLVMLowering(Type type, Builder &builder) {
   if (pto::isPTOHiFloat8x2Type(type))
     return getLLVMCompatibleVectorType(
         {2}, LLVM::LLVMHiFloat8Type::get(builder.getContext()));
+  // bf16x2 is a 4-byte packed pair; lower it as an opaque i32 so vregs whose
+  // element type is bf16x2 get a valid LLVM type.
+  if (pto::isPTOBF16x2Type(type)) {
+    return builder.getI32Type();
+  }
   if (Type lowpType = getLowPrecisionLLVMType(type, builder.getContext())) {
     return lowpType;
   }
@@ -125,6 +138,10 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
   if (pto::isPTOHiFloat8x2Type(type)) {
     return builder.getI16Type();
   }
+  // bf16x2 is 4 bytes, not an 8-bit low-precision type.
+  if (pto::isPTOBF16x2Type(type)) {
+    return builder.getI32Type();
+  }
   if (pto::isPTOLowPrecisionType(type)) {
     return builder.getI8Type();
   }
@@ -142,6 +159,16 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
     }
     return getLLVMCompatibleVectorType(vecType.getShape(), normalizedElement,
                                        vecType.getScalableDims());
+  }
+
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
+    Type normalizedElement =
+        normalizeGEPElementTypeForLLVMLowering(vecType.getElementType(),
+                                               builder);
+    if (normalizedElement == vecType.getElementType())
+      return normalizePayloadTypeForLLVMLowering(type, builder);
+    return getLLVMCompatibleVectorType({vecType.getNumElements()},
+                                       normalizedElement);
   }
 
   return normalizePayloadTypeForLLVMLowering(type, builder);
@@ -183,11 +210,21 @@ static unsigned getNaturalByteAlignment(Type type) {
     }
     return elemAlign * static_cast<unsigned>(elems);
   }
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
+    unsigned elemAlign = getNaturalByteAlignment(vecType.getElementType());
+    if (!elemAlign) {
+      return 0;
+    }
+    return elemAlign * vecType.getNumElements();
+  }
   if (auto intType = dyn_cast<IntegerType>(type)) {
     return llvm::divideCeil(static_cast<unsigned>(intType.getWidth()), 8U);
   }
   if (pto::isPTOHiFloat8x2Type(type)) {
     return 2;
+  }
+  if (pto::isPTOBF16x2Type(type)) {
+    return 4;
   }
   if (pto::isPTOLowPrecisionType(type)) {
     return 1;
@@ -669,6 +706,8 @@ static std::string getLowPrecisionElementFragment(Type type) {
     return "f4e1m2x2";
   if (isa<pto::F4E2M1x2Type>(type))
     return "f4e2m1x2";
+  if (pto::isPTOBF16x2Type(type))
+    return "bf16x2";
   if (pto::isPTOFloat8E4M3LikeType(type))
     return "f8e4m3";
   if (pto::isPTOFloat8E5M2LikeType(type))
@@ -878,6 +917,8 @@ static Type getElementTypeFromVectorLike(Type type) {
     return vecType.getElementType();
   if (auto vecType = dyn_cast<VectorType>(type))
     return vecType.getElementType();
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type))
+    return vecType.getElementType();
   return {};
 }
 
@@ -889,6 +930,8 @@ static std::optional<int64_t> getElementCountFromVectorLike(Type type) {
       return std::nullopt;
     return vecType.getShape().front();
   }
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type))
+    return vecType.getNumElements();
   return std::nullopt;
 }
 
@@ -1231,6 +1274,9 @@ static std::optional<unsigned> getDistElementWidth(Type type) {
     return 32;
   if (type.isF64())
     return 64;
+  // bf16x2 is a 32-bit packed pair; its dist width is 32 (i32/align4 ABI).
+  if (pto::isPTOBF16x2Type(type))
+    return 32;
   return std::nullopt;
 }
 
@@ -3658,6 +3704,16 @@ StringRef buildPredicatePairReorderCallee<pto::PintlvB32Op>(MLIRContext *context
 static FailureOr<StringRef> buildInterleaveCallee(MLIRContext *context,
                                                   Type resultType,
                                                   StringRef stem) {
+  // bf16x2 has no dedicated vintlv/vdintlv intrinsic. It is a 32-bit packed
+  // pair lowered to i32 at the LLVM ABI, and (de)interleave is a bit-level
+  // lane shuffle, so the <N x i32> intrinsic serves the <N x bf16x2> type.
+  if (pto::isPTOBF16x2Type(getElementTypeFromVectorLike(resultType))) {
+    auto lanes = getElementCountFromVectorLike(resultType);
+    if (lanes)
+      return StringAttr::get(context, "llvm.hivm." + stem.str() + ".v" +
+                                          std::to_string(*lanes) + "i32")
+          .getValue();
+  }
   std::string vec = getCANN900VectorTypeFragment(resultType);
   if (vec.empty())
     return failure();
@@ -8266,6 +8322,13 @@ public:
   LogicalResult
   matchAndRewrite(pto::VbitcastOp op, pto::VbitcastOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    // A vbitcast whose result has no users is a dead noop (Pure). Erase it
+    // instead of emitting an LLVM bitcast the device compiler may not lower
+    // (e.g. bf16x2 <-> bf16 physical views).
+    if (op->use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     Type resultType =
         this->getTypeConverter()->convertType(op.getResult().getType());
     if (!resultType)
@@ -8841,7 +8904,6 @@ public:
     rewriter.create<LLVM::InlineAsmOp>(
         op.getLoc(), TypeRange{asmResultType}, payloads, "",
         buildSimtKeepResumeConstraints(*physicalRegs, true), true, false,
-        LLVM::tailcallkind::TailCallKind::None,
         LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
         ArrayAttr{});
     for (pto::KeepOp keep : llvm::reverse(keepOps))
@@ -8897,7 +8959,6 @@ public:
     auto asmOp = rewriter.create<LLVM::InlineAsmOp>(
         op.getLoc(), TypeRange{asmResultType}, ValueRange{}, "",
         buildSimtKeepResumeConstraints(*physicalRegs, false), true, false,
-        LLVM::tailcallkind::TailCallKind::None,
         LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
         ArrayAttr{});
 
@@ -10191,9 +10252,6 @@ public:
   LogicalResult
   matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (!hasVPTOConvertibleType(op->getOperandTypes()) &&
-        !hasVPTOConvertibleType(op->getResultTypes()))
-      return failure();
     if (!op.getCondition().getType().isInteger(1))
       return rewriter.notifyMatchFailure(
           op, "only scalar i1 conditions supported for VPTO arith.select");
@@ -11273,6 +11331,10 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
         return isLegalForBranchOpInterfaceTypeConversionPattern(op,
                                                                 typeConverter);
       });
+  target.addDynamicallyLegalOp<arith::SelectOp>([&](arith::SelectOp op) {
+    return typeConverter.isLegal(op->getOperandTypes()) &&
+           typeConverter.isLegal(op->getResultTypes());
+  });
   target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::LoadScalarOp,
                       pto::StoreScalarOp, pto::PTOLoadOp, pto::PTOStoreOp,
                       pto::PTOLdgOp, pto::PTOStgOp, pto::PTOLdDevOp,
@@ -11638,7 +11700,7 @@ static LogicalResult runPipeline(ModuleOp module, llvm::raw_ostream &diagOS,
   kernelModulePM.addPass(
       std::make_unique<NormalizeFuncSignaturesForLLVMLoweringPass>());
   kernelModulePM.addPass(arith::createArithExpandOpsPass());
-  kernelModulePM.addPass(createSCFToControlFlowPass());
+  kernelModulePM.addPass(createConvertSCFToCFPass());
   kernelModulePM.addPass(createArithToLLVMConversionPass());
   kernelModulePM.addPass(createConvertIndexToLLVMPass());
   kernelModulePM.addPass(createFinalizeMemRefToLLVMConversionPass());

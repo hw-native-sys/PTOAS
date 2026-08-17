@@ -42,6 +42,7 @@ bool isPTOFloat8E5M2LikeType(Type t);
 bool isPTOHiFloat8Type(Type t);
 bool isPTOF8E8M0Type(Type t);
 bool isPTOHiFloat8x2Type(Type t);
+bool isPTOBF16x2Type(Type t);
 bool isPTOFloat4PackedType(Type t);
 bool isPTOPackedLdgStgVectorType(Type t);
 bool isPTOLowPrecisionType(Type t);

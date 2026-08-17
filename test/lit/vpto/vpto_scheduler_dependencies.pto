@@ -1,0 +1,135 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
+// RUN: FileCheck %s < %t
+
+// CHECK-LABEL: vpto-scheduler: function=memory_and_implicit
+// CHECK: kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: kind=data strength=must latency=1 reason=implicit read of AR
+// CHECK: kind=output strength=must latency=0 reason=implicit write of AR
+// CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on AR
+// CHECK: coverage schedulable=4 structural=1 boundary=0 unsupported=0 unclassified=0
+// CHECK-NOT: vpto-scheduler: function=simt_barrier
+// CHECK-NOT: vpto-scheduler: function=pipe_classification
+
+// CHECK-LABEL: vpto-scheduler: function=memory_ranges
+// CHECK: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=volatile_reads
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+
+// CHECK-LABEL: vpto-scheduler: function=unknown_memory_fallback
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+
+// CHECK-LABEL: vpto-scheduler: function=post_update_address
+// CHECK: edge=1->2 kind=data strength=must latency=1 reason=post-update address operand #0
+
+// CHECK-LABEL: vpto-scheduler: function=vpto_memory_barrier
+// CHECK-NOT: kind=memory
+// CHECK: edge=0->1 kind=sync strength=must latency=0 reason=before scheduling barrier
+// CHECK-NOT: kind=memory
+// CHECK: edge=1->2 kind=sync strength=must latency=0 reason=after scheduling barrier
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=strict_vecscope
+// CHECK: op=pto.sprclr semantic=schedulable sched-class=vector known=true
+// CHECK: coverage schedulable=1 structural=0 boundary=0 unsupported=0 unclassified=0
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @memory_and_implicit(%dst: !pto.ptr<ui32, ub>) {
+    pto.vecscope {
+      %c0 = arith.constant 0 : i32
+      pto.sprclr "AR"
+      pto.sprsti "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+      pto.sprclr "AR"
+      pto.sprsts "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+    }
+    %ctrl0 = arith.constant 0 : i64
+    %ctrl1 = arith.constant 1 : i64
+    pto.set_ctrl %ctrl0 : i64
+    %ctrl = pto.get_ctrl : i64
+    pto.set_ctrl %ctrl1 : i64
+    return
+  }
+
+  func.func @simt_barrier() attributes {pto.simt_entry} {
+    %x = pto.get_tid_x : i32
+    pto.syncthreads
+    %y = pto.get_tid_y : i32
+    return
+  }
+
+  func.func @pipe_classification(%src: !pto.ptr<i32, gm>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %value = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    return
+  }
+
+  func.func @memory_ranges(%dst: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %value = arith.constant 42 : i32
+    pto.vecscope {
+      pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %dst[%c1] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %dst[%c0] : !pto.ptr<i32, gm>, i32
+    }
+    return
+  }
+
+  func.func @volatile_reads(%src: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %first = pto.ld_dev %src[%c0] {volatile} : !pto.ptr<i32, gm> -> i32
+      %second = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    }
+    return
+  }
+
+  func.func @unknown_memory_fallback(%src: !pto.ptr<i8, ub>,
+                                     %dst: !pto.ptr<i8, ub>) {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    pto.vecscope {
+      pto.copy_ubuf_to_ubuf %src, %dst, %c0, %c1, %c1, %c0, %c0
+          : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>, i64, i64, i64, i64, i64
+      pto.copy_ubuf_to_ubuf %src, %dst, %c0, %c1, %c1, %c0, %c0
+          : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>, i64, i64, i64, i64, i64
+    }
+    return
+  }
+
+  func.func @post_update_address(%dst: !pto.ptr<ui32, ub>) {
+    pto.vecscope {
+      %c0 = arith.constant 0 : i32
+      %updated = pto.sprsti "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
+          -> !pto.ptr<ui32, ub>
+      pto.sprsts "AR", %updated[%c0] : !pto.ptr<ui32, ub>, i32
+    }
+    return
+  }
+
+  func.func @vpto_memory_barrier() {
+    pto.vecscope {
+      pto.sprclr "AR"
+      pto.mem_bar "VV_ALL"
+      pto.sprclr "AR"
+    }
+    return
+  }
+
+  func.func @strict_vecscope() {
+    pto.strict_vecscope() {
+      pto.sprclr "AR"
+    } : () -> ()
+    return
+  }
+}

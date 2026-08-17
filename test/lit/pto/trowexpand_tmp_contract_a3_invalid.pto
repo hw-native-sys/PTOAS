@@ -6,26 +6,32 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %t/mode2.pto 2>&1 | FileCheck %s --check-prefix=MODE2
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %t/small-tmp.pto 2>&1 | FileCheck %s --check-prefix=SMALL-TMP
 
+//--- mode2.pto
 module {
   func.func @trowexpand_mode2_rejects_explicit_tmp() {
     %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=2048, v_row=1, v_col=2048, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    // CHECK: error: 'pto.trowexpandadd' op expects A2/A3 tmp-form trowexpand to use mode 1
+    // MODE2: error: 'pto.trowexpandadd' op expects A2/A3 tmp-form trowexpand to use mode 1
     pto.trowexpandadd ins(%src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=2048, v_row=1, v_col=2048, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
                        outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+}
 
+//--- small-tmp.pto
+module {
   func.func @trowexpand_mode1_rejects_small_tmp() {
     %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
     %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    // CHECK: error: 'pto.trowexpandmax' op expects A2/A3 trowexpand tmp capacity to be at least 512 bytes, but got 256 bytes
+    // SMALL-TMP: error: 'pto.trowexpandmax' op expects A2/A3 trowexpand tmp capacity to be at least 512 bytes, but got 256 bytes
     pto.trowexpandmax ins(%src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
                        outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return

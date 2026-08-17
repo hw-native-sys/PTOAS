@@ -70,7 +70,6 @@ Value materializeBufferPointer(Value value, Type elementType,
   auto ptrMemorySpace =
       getNormalizedPtrMemorySpace(memorySpace, rewriter.getContext());
   auto ptrType = PtrType::get(rewriter.getContext(), elementType, ptrMemorySpace);
-
   if (value.getType() == ptrType) {
     return value;
   }

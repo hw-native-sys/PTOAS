@@ -1,0 +1,274 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 %t/dn_rows_not_aligned.pto 2>&1 | FileCheck %s --check-prefix=DN-ROWS
+// RUN: not ptoas --pto-arch=a5 %t/dn_wrong_exp_shape.pto 2>&1 | FileCheck %s --check-prefix=DN-EXP-SHAPE
+// RUN: not ptoas --pto-arch=a5 %t/nd_shape_matches_neither.pto 2>&1 | FileCheck %s --check-prefix=ND-SHAPE
+// RUN: not ptoas --pto-arch=a5 %t/interleave_on_nd.pto 2>&1 | FileCheck %s --check-prefix=IL-ND
+// RUN: not ptoas --pto-arch=a5 %t/interleave_exp_valid_rows_mismatch.pto 2>&1 | FileCheck %s --check-prefix=IL-ROWS
+// RUN: not ptoas --pto-arch=a5 %t/interleave_exp_valid_cols_mismatch.pto 2>&1 | FileCheck %s --check-prefix=IL-COLS
+// RUN: not ptoas --pto-arch=a5 %t/interleave_valid_rows_not_multiple_of_64.pto 2>&1 | FileCheck %s --check-prefix=IL-SRC-ROWS
+// RUN: not ptoas --pto-arch=a5 %t/interleave_physical_rows_not_multiple_of_64.pto 2>&1 | FileCheck %s --check-prefix=IL-SRC-PHYS
+// RUN: not ptoas --pto-arch=a5 %t/interleave_exp_physical_rows_mismatch.pto 2>&1 | FileCheck %s --check-prefix=IL-PHYS-ROWS
+// RUN: not ptoas --pto-arch=a5 %t/interleave_exp_physical_cols_mismatch.pto 2>&1 | FileCheck %s --check-prefix=IL-PHYS-COLS
+// RUN: not ptoas --pto-arch=a5 %t/interleave_max_shape_follows_grouping.pto 2>&1 | FileCheck %s --check-prefix=IL-MAX-SHAPE
+// RUN: not ptoas --pto-arch=a5 %t/dn_exp_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=DN-EXP-STRIDE
+// RUN: not ptoas --pto-arch=a5 %t/dn_max_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=DN-MAX-STRIDE
+// RUN: not ptoas --pto-arch=a5 %t/dn_scaling_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=DN-SCALING-STRIDE
+// RUN: not ptoas --pto-arch=a5 %t/nd_max_not_compact.pto 2>&1 | FileCheck %s --check-prefix=ND-MAX-COMPACT
+// RUN: not ptoas --pto-arch=a5 %t/nd_scaling_not_compact.pto 2>&1 | FileCheck %s --check-prefix=ND-SCALING-COMPACT
+// RUN: not ptoas --pto-arch=a5 %t/nd_flat_f32_scaling_below_one_vl.pto 2>&1 | FileCheck %s --check-prefix=F32-VL
+// RUN: not ptoas --pto-arch=a5 %t/nd_flat_f32_unroll_scaling_below_two_vl.pto 2>&1 | FileCheck %s --check-prefix=F32-UNROLL
+// RUN: not ptoas --pto-arch=a5 %t/nd_flat_b16_ocp_scaling_below_one_vl.pto 2>&1 | FileCheck %s --check-prefix=B16-VL
+// RUN: not ptoas --pto-arch=a5 %t/nd_flat_b16_nv_unsupported.pto 2>&1 | FileCheck %s --check-prefix=B16-NV
+// RUN: not ptoas --pto-arch=a5 %t/nd_legacy_exp_selects_2d.pto 2>&1 | FileCheck %s --check-prefix=LEGACY-2D
+// RUN: not ptoas --pto-arch=a5 %t/nd_flat_exp_with_padded_src.pto 2>&1 | FileCheck %s --check-prefix=FLAT-PADDED
+// RUN: not ptoas --pto-arch=a5 %t/nd_fp8_dst_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=FP8-DST
+// RUN: not ptoas --pto-arch=a5 %t/nd_fp4_dst_packed_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=FP4-DST
+// RUN: not ptoas --pto-arch=a5 %t/dn_fp4_dst_packed_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=DN-FP4-DST
+// RUN: not ptoas --pto-arch=a5 %t/mxfp4_odd_src_physical_cols.pto 2>&1 | FileCheck %s --check-prefix=FP4-ODD
+// RUN: not ptoas --pto-arch=a5 %t/nd_canonical_b16_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=B16-CANONICAL
+// RUN: not ptoas --pto-arch=a5 %t/dn_fp4_fp16_unaligned_packed_stride_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=DN-FP16
+// RUN: not ptoas --pto-arch=a5 %t/dn_fp8_f32_interleave_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=DN-F32-IL
+// RUN: not ptoas --pto-arch=a5 %t/b16_padding_incomplete_vl_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=B16-PAD
+// RUN: not ptoas --pto-arch=a5 %t/tquant_dynamic_valid.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-VALID
+// RUN: not ptoas --pto-arch=a5 %t/tquant_dynamic_physical.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-PHYSICAL
+// RUN: not ptoas --pto-arch=a5 %t/exp_zz_with_axis0.pto 2>&1 | FileCheck %s --check-prefix=EXP-ZZ-AXIS0
+
+// DN-ROWS: expects src valid_shape[0] to be a multiple of 32 when grpAxis is axis0
+// DN-EXP-SHAPE: expects exp valid_shape to match canonical [M/32, N] for grpAxis=axis0
+// ND-SHAPE: expects exp valid_shape to match canonical [M, N/32] or legacy flat [1, M*N/32] for grpAxis=axis1
+// IL-ND: expects interleave to be used only with grpAxis=axis0
+// IL-ROWS: expects exp valid_shape to match [M/64, 2N] for grpAxis=axis0 with interleave=true
+// IL-COLS: expects exp valid_shape to match [M/64, 2N] for grpAxis=axis0 with interleave=true
+// IL-SRC-ROWS: expects src valid rows to be a multiple of 64 when interleave is true
+// IL-SRC-PHYS: expects src physical rows to be a multiple of 64 when interleave is true
+// IL-PHYS-ROWS: expects interleaved exp physical rows to be src physical rows / 64
+// IL-PHYS-COLS: expects interleaved exp physical cols to be align32(2 * src physical cols)
+// IL-MAX-SHAPE: expects max valid_shape to match canonical [M/32, N] for grpAxis=axis0
+// DN-EXP-STRIDE: expects exp physical cols to equal src physical cols for grpAxis=axis0
+// DN-MAX-STRIDE: expects max physical cols to equal src physical cols for grpAxis=axis0
+// DN-SCALING-STRIDE: expects scaling physical cols to equal src physical cols for grpAxis=axis0
+// ND-MAX-COMPACT: expects max valid elements to form a compact physical prefix
+// ND-SCALING-COMPACT: expects scaling valid elements to form a compact physical prefix
+// F32-VL: expects axis1 flat f32 scaling physical capacity to cover 256 bytes
+// F32-UNROLL: expects axis1 flat unrolled f32 scaling physical capacity to cover 512 bytes
+// B16-VL: expects axis1 flat B16 OCP scaling physical capacity to cover 256 bytes
+// B16-NV: does not support axis1 flat B16 NV quantization with the pinned pto-isa revisions
+// LEGACY-2D: expects legacy flat exp to use physical rows == 1
+// FLAT-PADDED: expects axis1 flat exp to use a tight source with physical cols equal to valid cols
+// FP8-DST: expects MXFP8 axis1 dst physical cols to equal src physical cols
+// FP4-DST: expects MXFP4 axis1 dst physical cols to equal src physical cols / 2
+// DN-FP4-DST: expects MXFP4 axis0 dst physical cols to equal src physical cols / 2
+// FP4-ODD: expects MXFP4 src physical cols to be even for packed destination addressing
+// B16-CANONICAL: does not support axis1 canonical 2D B16 quantization with the pinned pto-isa revision
+// DN-FP16: does not support FP16 MXFP4 axis0 when packed source stride is not a multiple of 32 bytes
+// DN-F32-IL: does not support FP32 interleave with the pinned pto-isa revision
+// B16-PAD: does not support padded B16 source whose VL-aligned padding store has an incomplete final VL
+// DYNAMIC-VALID: expects static valid and physical shapes for src in MX quantization
+// DYNAMIC-PHYSICAL: tile_buf rows/cols must be positive
+// EXP-ZZ-AXIS0: expects the deprecated exp_zz form to use grpAxis=axis1
+
+//--- dn_rows_not_aligned.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<vec, 1x16xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- nd_max_not_compact.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 16x1xui8>, %max: !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<vec, 16x1xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 16x1xui8>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 16x1xf32>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_scaling_not_compact.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 16x1xui8>, %max: !pto.tile_buf<vec, 16x1xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 16x1xui8>, !pto.tile_buf<vec, 16x1xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2, v_row=16, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_flat_f32_scaling_below_one_vl.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_flat_f32_unroll_scaling_below_two_vl.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 64x32xf32>, %dst: !pto.tile_buf<vec, 64x32xi8>, %exp: !pto.tile_buf<vec, 1x64xui8>, %max: !pto.tile_buf<vec, 1x64xf32>, %scaling: !pto.tile_buf<vec, 1x64xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 64x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x32xi8>, !pto.tile_buf<vec, 1x64xui8>, !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_flat_b16_ocp_scaling_below_one_vl.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xbf16>, %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_flat_b16_nv_unsupported.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xbf16>, %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>, quantScaleAlg = #pto<quant_scale_alg nv>}
+  return
+} }
+
+//--- nd_legacy_exp_selects_2d.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_flat_exp_with_padded_src.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=64, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=64, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_fp8_dst_stride_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=64, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=64, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- nd_fp4_dst_packed_stride_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=16, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xbf16>, %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=16, cols=32, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP4_E2M1>}
+  return
+} }
+
+//--- dn_fp4_dst_packed_stride_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x32xbf16>, %dst: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=32, v_row=32, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<vec, 1x32xbf16>, %scaling: !pto.tile_buf<vec, 1x32xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=32, v_row=32, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 1x32xbf16>, !pto.tile_buf<vec, 1x32xbf16>) {quant_type = #pto<quant_type MXFP4_E2M1>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- mxfp4_odd_src_physical_cols.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=33, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 32x16x!pto.f4E2M1x2>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=33, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=33, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=33, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 32x16x!pto.f4E2M1x2>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=33, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=33, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP4_E2M1>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- nd_canonical_b16_pinned_unsupported.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 16x1xui8>, %max: !pto.tile_buf<vec, 16x1xbf16>, %scaling: !pto.tile_buf<vec, 16x1xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 16x1xui8>, !pto.tile_buf<vec, 16x1xbf16>, !pto.tile_buf<vec, 16x1xbf16>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- dn_fp4_fp16_unaligned_packed_stride_pinned_unsupported.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x32xf16>, %dst: !pto.tile_buf<vec, 32x16x!pto.f4E2M1x2>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<vec, 1x32xf16>, %scaling: !pto.tile_buf<vec, 1x32xf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x32xf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 32x16x!pto.f4E2M1x2>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 1x32xf16>, !pto.tile_buf<vec, 1x32xf16>) {quant_type = #pto<quant_type MXFP4_E2M1>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- dn_fp8_f32_interleave_pinned_unsupported.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 64x32xf32>, %dst: !pto.tile_buf<vec, 64x32xi8>, %exp: !pto.tile_buf<vec, 1x64xui8>, %max: !pto.tile_buf<vec, 2x32xf32>, %scaling: !pto.tile_buf<vec, 2x32xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 64x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x32xi8>, !pto.tile_buf<vec, 1x64xui8>, !pto.tile_buf<vec, 2x32xf32>, !pto.tile_buf<vec, 2x32xf32>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- b16_padding_incomplete_vl_pinned_unsupported.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=2, v_row=32, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=2, v_row=32, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=2, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=2, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=2, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=2, v_row=32, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=2, v_row=32, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=2, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=2, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=2, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- tquant_dynamic_valid.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=?, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32, v_row=?, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=?, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32, v_row=?, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- tquant_dynamic_physical.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=-1, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 16x1xui8>, %max: !pto.tile_buf<vec, 16x1xf32>, %scaling: !pto.tile_buf<vec, 16x1xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=-1, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 16x1xui8>, !pto.tile_buf<vec, 16x1xf32>, !pto.tile_buf<vec, 16x1xf32>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- exp_zz_with_axis0.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x32xf32>, %dst: !pto.tile_buf<vec, 32x32xi8>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<vec, 1x32xf32>, %scaling: !pto.tile_buf<vec, 1x64xf32>, %exp_zz: !pto.tile_buf<vec, 1x32xui8>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x32xf32>) outs(%dst, %exp, %max, %scaling, %exp_zz : !pto.tile_buf<vec, 32x32xi8>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x32xui8>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, storeMode = #pto<vec_store_mode nz>}
+  return
+} }
+
+//--- dn_wrong_exp_shape.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x16xf32>, %dst: !pto.tile_buf<vec, 32x16xi8>, %exp: !pto.tile_buf<vec, 1x8xui8>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<vec, 1x16xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x16xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 32x16xi8>, !pto.tile_buf<vec, 1x8xui8>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- nd_shape_matches_neither.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x64xf32>, %dst: !pto.tile_buf<vec, 16x64xi8>, %exp: !pto.tile_buf<vec, 2x2xui8>, %max: !pto.tile_buf<vec, 1x32xf32>, %scaling: !pto.tile_buf<vec, 1x32xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x64xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x64xi8>, !pto.tile_buf<vec, 2x2xui8>, !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) {quant_type = #pto<quant_type MXFP8>}
+  return
+} }
+
+//--- interleave_on_nd.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 64x32xbf16>, %dst: !pto.tile_buf<vec, 64x32xi8>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<vec, 2x16xbf16>, %scaling: !pto.tile_buf<vec, 2x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 64x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x32xi8>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 2x16xbf16>, !pto.tile_buf<vec, 2x16xbf16>) {quant_type = #pto<quant_type MXFP8>, interleave = true}
+  return
+} }
+
+//--- interleave_exp_valid_rows_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 128x16xbf16>, %dst: !pto.tile_buf<vec, 128x16xi8>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<vec, 4x16xbf16>, %scaling: !pto.tile_buf<vec, 4x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 128x16xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 128x16xi8>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 4x16xbf16>, !pto.tile_buf<vec, 4x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- interleave_exp_valid_cols_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 128x16xbf16>, %dst: !pto.tile_buf<vec, 128x16xi8>, %exp: !pto.tile_buf<vec, 2x16xui8>, %max: !pto.tile_buf<vec, 4x16xbf16>, %scaling: !pto.tile_buf<vec, 4x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 128x16xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 128x16xi8>, !pto.tile_buf<vec, 2x16xui8>, !pto.tile_buf<vec, 4x16xbf16>, !pto.tile_buf<vec, 4x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- interleave_valid_rows_not_multiple_of_64.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 96x16xbf16>, %dst: !pto.tile_buf<vec, 96x16xi8>, %exp: !pto.tile_buf<vec, 2x32xui8>, %max: !pto.tile_buf<vec, 3x16xbf16>, %scaling: !pto.tile_buf<vec, 3x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 96x16xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 96x16xi8>, !pto.tile_buf<vec, 2x32xui8>, !pto.tile_buf<vec, 3x16xbf16>, !pto.tile_buf<vec, 3x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- interleave_physical_rows_not_multiple_of_64.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=bf16, rows=160, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 128x16xi8>, %exp: !pto.tile_buf<vec, 2x32xui8>, %max: !pto.tile_buf<vec, 4x16xbf16>, %scaling: !pto.tile_buf<vec, 4x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=bf16, rows=160, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 128x16xi8>, !pto.tile_buf<vec, 2x32xui8>, !pto.tile_buf<vec, 4x16xbf16>, !pto.tile_buf<vec, 4x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- interleave_exp_physical_rows_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 128x16xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=3, cols=32, v_row=2, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<vec, 4x16xbf16>, %scaling: !pto.tile_buf<vec, 4x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 128x16xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=3, cols=32, v_row=2, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 4x16xbf16>, !pto.tile_buf<vec, 4x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- interleave_exp_physical_cols_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 128x16xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<vec, 4x16xbf16>, %scaling: !pto.tile_buf<vec, 4x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 128x16xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 4x16xbf16>, !pto.tile_buf<vec, 4x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- interleave_max_shape_follows_grouping.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 128x16xbf16>, %dst: !pto.tile_buf<vec, 128x16xi8>, %exp: !pto.tile_buf<vec, 2x32xui8>, %max: !pto.tile_buf<vec, 2x32xbf16>, %scaling: !pto.tile_buf<vec, 4x16xbf16>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 128x16xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 128x16xi8>, !pto.tile_buf<vec, 2x32xui8>, !pto.tile_buf<vec, 2x32xbf16>, !pto.tile_buf<vec, 4x16xbf16>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
+  return
+} }
+
+//--- dn_exp_stride_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=32, v_row=64, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 64x16xi8>, %exp: !pto.tile_buf<vec, 2x16xui8>, %max: !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=32, v_row=64, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x16xi8>, !pto.tile_buf<vec, 2x16xui8>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- dn_max_stride_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=32, v_row=64, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 64x16xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<vec, 2x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=32, v_row=64, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x16xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 2x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- dn_scaling_stride_mismatch.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=32, v_row=64, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %dst: !pto.tile_buf<vec, 64x16xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %scaling: !pto.tile_buf<vec, 2x16xf32>) {
+  pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=32, v_row=64, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x16xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=32, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 2x16xf32>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }

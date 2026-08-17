@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s
+
+// N2: the bf16 <-> bf16x2 pairing bitcast is a width-changing bitcast whose
+// ONLY legal layout is contiguous. A deinterleaved=4 pairing must be rejected
+// by the layout-IR validation. This guards the phase-2 blocker: d4 pairing is
+// not unlocked until kWidthChangingBitcastLayoutPatterns gains a d(4) row.
+
+module {
+  func.func @pair_d4_invalid(
+      %s: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>) {
+    %p = pto.vmi.vinterpret_cast %s
+        : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>
+       -> !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 4>>
+    return
+  }
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.bitcast has no registered layout support
+// CHECK-SAME: width-changing bitcast layout does not match a bitcast layout table row

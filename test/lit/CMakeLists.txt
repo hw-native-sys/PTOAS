@@ -27,8 +27,7 @@ configure_lit_site_cfg(
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-test-opt
-  pto-vfsimt-size-patcher-test
-  yaml2obj
+  pto-vpto-scheduler-tracker-test
 )
 
 # Installed LLVM packages do not export the build-tree targets for these test

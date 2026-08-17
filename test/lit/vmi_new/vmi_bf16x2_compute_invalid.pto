@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+module {
+  func.func @vadd_bf16x2_invalid(
+      %lhs: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %rhs: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vadd' op does not support bf16x2 VMI element type; bf16x2 is conversion-only}}
+    %result = pto.vmi.vadd %lhs, %rhs
+        : !pto.vmi.vreg<64x!pto.bf16x2>,
+          !pto.vmi.vreg<64x!pto.bf16x2>
+        -> !pto.vmi.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vexp_bf16x2_invalid(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vexp' op does not support bf16x2 VMI element type; bf16x2 is conversion-only}}
+    %result = pto.vmi.vexp %source
+        : !pto.vmi.vreg<64x!pto.bf16x2>
+        -> !pto.vmi.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vadds_bf16x2_invalid(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %scalar: !pto.bf16x2,
+      %mask: !pto.vmi.mask<64xpred>) {
+    // expected-error@+1 {{'pto.vmi.vadds' op does not support bf16x2 VMI element type; bf16x2 is conversion-only}}
+    %result = pto.vmi.vadds %source, %scalar, %mask
+        : !pto.vmi.vreg<64x!pto.bf16x2>, !pto.bf16x2,
+          !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vmula_bf16x2_invalid(
+      %acc: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %lhs: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %rhs: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{'pto.vmi.vmula' op does not support bf16x2 VMI element type; bf16x2 is conversion-only}}
+    %result = pto.vmi.vmula %acc, %lhs, %rhs
+        : !pto.vmi.vreg<64x!pto.bf16x2>,
+          !pto.vmi.vreg<64x!pto.bf16x2>,
+          !pto.vmi.vreg<64x!pto.bf16x2>
+        -> !pto.vmi.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vcmp_bf16x2_invalid(
+      %lhs: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %rhs: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %seed: !pto.vmi.mask<64xpred>) {
+    // expected-error@+1 {{'pto.vmi.vcmp' op does not support bf16x2 VMI element type; bf16x2 is conversion-only}}
+    %result = pto.vmi.vcmp %lhs, %rhs, %seed {cmp = "olt"}
+        : !pto.vmi.vreg<64x!pto.bf16x2>,
+          !pto.vmi.vreg<64x!pto.bf16x2>,
+          !pto.vmi.mask<64xpred>
+        -> !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vcadd_bf16x2_invalid(
+      %source: !pto.vmi.vreg<64x!pto.bf16x2>,
+      %mask: !pto.vmi.mask<64xpred>) {
+    // expected-error@+1 {{'pto.vmi.vcadd' op does not support bf16x2 VMI element type; bf16x2 is conversion-only}}
+    %result = pto.vmi.vcadd %source, %mask {reassoc}
+        : !pto.vmi.vreg<64x!pto.bf16x2>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<1x!pto.bf16x2>
+    return
+  }
+}

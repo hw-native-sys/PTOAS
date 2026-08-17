@@ -16,7 +16,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vsqrt' op requires floating-point-like VMI element type
+// CHECK: 'pto.vmi.vsqrt' op requires f16 or f32 VMI element type
 
 // -----
 
@@ -28,7 +28,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vexp' op requires floating-point-like VMI element type
+// CHECK: 'pto.vmi.vexp' op requires f16 or f32 VMI element type
 
 // -----
 
@@ -40,16 +40,17 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vln' op requires floating-point-like VMI element type
+// CHECK: 'pto.vmi.vln' op requires f16 or f32 VMI element type
 
 // -----
 
 module {
-  func.func @vmi_relu_integer_invalid(%value: !pto.vmi.vreg<128xi32>) {
+  func.func @vmi_relu_signless_integer_invalid(
+      %value: !pto.vmi.vreg<128xi32>) {
     %relu = pto.vmi.vrelu %value
         : !pto.vmi.vreg<128xi32> -> !pto.vmi.vreg<128xi32>
     return
   }
 }
 
-// CHECK: 'pto.vmi.vrelu' op requires floating-point-like VMI element type
+// CHECK: 'pto.vmi.vrelu' op requires si32, f16, or f32 VMI element type

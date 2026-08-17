@@ -29,8 +29,8 @@ module {
 // CHECK-SAME: %[[M1:[^,]+]]: !pto.mask<b32>
 // CHECK-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
 // CHECK-SAME: %[[OFF:[^)]+]]: index
-// CHECK: pto.vsts %[[V0]], %[[DST]][%[[OFF]]], %[[M0]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 // CHECK: %[[C64:.*]] = arith.constant 64 : index
+// CHECK: pto.vsts %[[V0]], %[[DST]][%[[OFF]]], %[[M0]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 // CHECK: %[[OFF1:.*]] = arith.addi %[[OFF]], %[[C64]] : index
 // CHECK: pto.vsts %[[V1]], %[[DST]][%[[OFF1]]], %[[M1]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 // CHECK-NOT: pto.vmi.

@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+// The VMI contract mirrors the physical bf16-to-f4 "RAFZC" set. H and malformed
+// multi-character tokens must be rejected before reaching the VPTO verifier.
+
+module {
+  func.func @unified_h_invalid(%s: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{rounding is not valid for this fp-to-fp conversion type pair}}
+    %r = pto.vmi.vcvt %s {rounding = "H"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_h_invalid(%s: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{rounding attr is not valid for this fp-to-fp conversion type pair}}
+    %r = pto.vmi.truncf %s {rounding = "H"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_bad_token(%s: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{rounding is not valid for this fp-to-fp conversion type pair}}
+    %r = pto.vmi.vcvt %s {rounding = "Q"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_multichar_invalid(
+      %s: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{rounding must be a single-character mode token}}
+    %r = pto.vmi.vcvt %s {rounding = "RA"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_multichar_invalid(
+      %s: !pto.vmi.vreg<64x!pto.bf16x2>) {
+    // expected-error@+1 {{rounding attr must be a single-character mode token}}
+    %r = pto.vmi.truncf %s {rounding = "RA"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
+    return
+  }
+}

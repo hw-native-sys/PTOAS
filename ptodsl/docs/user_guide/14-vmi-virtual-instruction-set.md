@@ -990,15 +990,15 @@ stable softmax numerator.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `x` | `VRegType` | Input vector |
-| `max_value` | `VRegType` | Maximum value vector to subtract before exponentiation |
+| `x` | `VRegType` | Input vector with `f16` or `f32` elements |
+| `max_value` | `VRegType` | Maximum value vector with the same type as `x` |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` zeros inactive lanes; `"merge"` preserves their prior values. Defaults to `"zero"`. |
 **Returns**:
 
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `result` | `VRegType` | `exp(x - max_value)` |
+| `result` | `VRegType` | `exp(x - max_value)` with the same logical lane count and `f32` elements |
 
 ---
 

@@ -113,14 +113,14 @@ from ._ops import (             # noqa: F401
     vtrc, vprelu, vintlv, vdintlv, vselr,
     chistv2,
     vci, vaddc, vaddcs, vmull, vbitsort, vmrgsort4,
-    load_scalar, store_scalar,
+    load_scalar, store_scalar, print,
     vadds, vsubs, vmuls, vmaxs, vmins, vlrelu, vands, vors, vxors,
     vaxpy, vaddrelu, vsubrelu,
     vmula, vmadd,
     vsel,
     make_tensor_view, partition_view,
     alloc_buffer, alloc_tile,
-    tsort32, tmrgsort, tgather, tscatter,
+    tsort32, tmrgsort, tgather, tscatter, tprint,
     mte_load, mte_store, mte_gm_ub, mte_ub_gm, mte_ub_ub, mte_ub_l1,
     mte_gm_l1, mte_l1_ub, mte_gm_l1_frac, mte_l1_bt, mte_l1_fb, mem_bar,
     set_store_atomic_cfg,
@@ -146,7 +146,7 @@ from ._ops import (             # noqa: F401
     atomic_exch, atomic_add, atomic_sub, atomic_min, atomic_max,
     atomic_and, atomic_or, atomic_xor, atomic_cas,
     prmt, mulhi, mul_i32toi64,
-    absf, sqrt, exp, log, pow, ceil, floor, rint, round,
+    absf, sqrt, exp, log, sin, cos, pow, ceil, floor, rint, round,
     fmin, fmax, fma, convert,
     syncthreads, threadfence, threadfence_block, trap, keep, resume,
     pipe_barrier,
@@ -159,7 +159,7 @@ from ._ops import (             # noqa: F401
 # ── Control flow ──────────────────────────────────────────────────────────────
 from ._control_flow import (    # noqa: F401
     section, vecscope,
-    for_, if_, yield_,
+    for_, while_, _while, if_, yield_,
     static_range,
     LoopHandle, BranchHandle,
 )
@@ -169,6 +169,7 @@ from ._allreduce import simt_allreduce_max, simt_allreduce_min, simt_allreduce_s
 
 # ── Decorator ─────────────────────────────────────────────────────────────────
 from ._jit import jit, KernelHandle, merge_jit_modules      # noqa: F401
+from ._func import func  # noqa: F401
 from ._subkernels import cube, simd, simt, tileop     # noqa: F401
 from ._pipe_namespace import pipe  # noqa: F401
 

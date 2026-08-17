@@ -108,14 +108,16 @@ module {
 
 // LOWER-LABEL: func.func @compact_1(
 // LOWER: pto.vlds {{.*}} {dist = "BRC_B32"}
-// LOWER: pto.vsts
+// LOWER: pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
+// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @compact_1_after_addptr(
 // LOWER: %[[SRC_ELEMENT:.*]] = pto.addptr %arg0, %arg2
 // LOWER: pto.vlds %[[SRC_ELEMENT]][%{{.*}}] {dist = "BRC_B32"}
 // LOWER-NOT: pto.vsldb
-// LOWER: pto.vsts
+// LOWER: pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
+// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 // LOWER-NOT: pto.vmi.
 
 
@@ -140,5 +142,6 @@ module {
 // LOWER-LABEL: func.func @compact_reduce_through_elementwise(
 // LOWER: pto.vcmax
 // LOWER: pto.vdiv
-// LOWER: pto.vsts
+// LOWER: pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
+// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 // LOWER-NOT: pto.vmi.

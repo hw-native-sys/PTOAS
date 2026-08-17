@@ -8,23 +8,49 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 import argparse
+import dataclasses
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 
-DEFAULT_REPO_URL = "https://gitcode.com/cann/pto-isa.git"
+@dataclasses.dataclass(frozen=True)
+class PinTarget:
+    repo_url: str
+    compatibility: str
+
+
+TARGETS = {
+    "gitcode-default": PinTarget(
+        repo_url="https://gitcode.com/cann/pto-isa.git",
+        compatibility="default CANN CI, container, compile-only, and remote validation",
+    ),
+    "github-ci-sim": PinTarget(
+        repo_url="https://github.com/hw-native-sys/pto-isa.git",
+        compatibility="GitHub CPU-simulator CI",
+    ),
+    "cann90-dev": PinTarget(
+        repo_url="https://gitcode.com/cann/pto-isa.git",
+        compatibility="CANN 9.0 development container",
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Update the pinned pto-isa commit used by CI and Docker."
+        description="Update one repo-aware pto-isa pin target without rollback."
+    )
+    parser.add_argument(
+        "--target",
+        choices=TARGETS,
+        required=True,
+        help="Pin target to verify or update.",
     )
     parser.add_argument(
         "--repo-url",
-        default=DEFAULT_REPO_URL,
-        help="pto-isa git repository URL.",
+        help="Override the target repository URL (primarily for testing).",
     )
     parser.add_argument(
         "--commit",
@@ -51,6 +77,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to the remote NPU validation runner that falls back to a pinned pto-isa commit.",
     )
     parser.add_argument(
+        "--ci-sim-workflow",
+        default=".github/workflows/ci_sim.yml",
+        help="Path to the GitHub CPU-simulator workflow.",
+    )
+    parser.add_argument(
+        "--dev-dockerfile",
+        default="docker/Dockerfile.dev",
+        help="Path to the CANN 9.0 development Dockerfile.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Verify that all pinned locations already match the target commit.",
@@ -67,6 +103,56 @@ def resolve_head_commit(repo_url: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError(f"failed to resolve HEAD for {repo_url!r}: {out!r}")
     return sha
+
+
+def validate_commit(commit: str) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise RuntimeError(f"expected a full lowercase commit SHA, got {commit!r}")
+
+
+def run_git(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", *args],
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def verify_descendant(repo_url: str, current: str, candidate: str) -> None:
+    validate_commit(current)
+    validate_commit(candidate)
+    with tempfile.TemporaryDirectory(prefix="pto-isa-pin-") as temp_dir:
+        repo_dir = pathlib.Path(temp_dir)
+        init = run_git(["init", "--bare", "--quiet"], repo_dir)
+        if init.returncode != 0:
+            raise RuntimeError(f"failed to initialize temporary repository: {init.stderr.strip()}")
+
+        for revision in dict.fromkeys((current, candidate)):
+            fetched = run_git(
+                ["fetch", "--quiet", "--no-tags", repo_url, revision], repo_dir
+            )
+            if fetched.returncode != 0:
+                raise RuntimeError(
+                    f"revision {revision} is not reachable from {repo_url}: "
+                    f"{fetched.stderr.strip()}"
+                )
+
+        ancestry = run_git(
+            ["merge-base", "--is-ancestor", current, candidate], repo_dir
+        )
+        if ancestry.returncode == 1:
+            raise RuntimeError(
+                f"refusing non-fast-forward pin update: {candidate} is not a "
+                f"descendant of current pin {current} in {repo_url}"
+            )
+        if ancestry.returncode != 0:
+            raise RuntimeError(
+                f"failed to compare {current} and {candidate} in {repo_url}: "
+                f"{ancestry.stderr.strip()}"
+            )
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -228,6 +314,91 @@ def extract_remote_validation_commit(path: pathlib.Path) -> str:
     return match.group(1)
 
 
+def extract_ci_sim_commit(path: pathlib.Path) -> str:
+    match = re.search(
+        r"^\s*PTO_ISA_COMMIT:\s*([0-9a-f]{40})$",
+        read_text(path),
+        flags=re.MULTILINE,
+    )
+    if not match:
+        raise RuntimeError(f"failed to read pinned pto-isa commit from {path}")
+    return match.group(1)
+
+
+def extract_dev_docker_commit(path: pathlib.Path) -> str:
+    match = re.search(
+        r"^ARG PTO_ISA_COMMIT=([0-9a-f]{40})$",
+        read_text(path),
+        flags=re.MULTILINE,
+    )
+    if not match:
+        raise RuntimeError(f"failed to read pinned pto-isa commit from {path}")
+    return match.group(1)
+
+
+def update_single_commit(
+    path: pathlib.Path, pattern: str, replacement: str
+) -> bool:
+    original = read_text(path)
+    updated = replace_exactly_once(original, pattern, replacement, path)
+    if updated == original:
+        return False
+    write_text(path, updated)
+    return True
+
+
+def read_target_commit(args: argparse.Namespace) -> str:
+    if args.target == "github-ci-sim":
+        return extract_ci_sim_commit(pathlib.Path(args.ci_sim_workflow))
+    if args.target == "cann90-dev":
+        return extract_dev_docker_commit(pathlib.Path(args.dev_dockerfile))
+
+    ci_default, ci_env = extract_ci_commit(pathlib.Path(args.ci_workflow))
+    docker_arg, docker_comment = extract_docker_commit(pathlib.Path(args.dockerfile))
+    guide_setup, guide_run = extract_compile_only_commits(
+        pathlib.Path(args.compile_only_guide)
+    )
+    remote_validation = extract_remote_validation_commit(
+        pathlib.Path(args.remote_validation_script)
+    )
+    values = {
+        ci_default,
+        ci_env,
+        docker_arg,
+        docker_comment,
+        guide_setup,
+        guide_run,
+        remote_validation,
+    }
+    if len(values) != 1:
+        raise RuntimeError(
+            "gitcode-default pin locations disagree: " + ", ".join(sorted(values))
+        )
+    return values.pop()
+
+
+def update_target(args: argparse.Namespace, commit: str) -> None:
+    if args.target == "github-ci-sim":
+        update_single_commit(
+            pathlib.Path(args.ci_sim_workflow),
+            r"^(\s*PTO_ISA_COMMIT:\s*)([0-9a-f]{40})$",
+            rf"\g<1>{commit}",
+        )
+        return
+    if args.target == "cann90-dev":
+        update_single_commit(
+            pathlib.Path(args.dev_dockerfile),
+            r"^(ARG PTO_ISA_COMMIT=)([0-9a-f]{40})$",
+            rf"\g<1>{commit}",
+        )
+        return
+
+    update_ci_workflow(pathlib.Path(args.ci_workflow), commit)
+    update_dockerfile(pathlib.Path(args.dockerfile), commit)
+    update_compile_only_guide(pathlib.Path(args.compile_only_guide), commit)
+    update_remote_validation_script(pathlib.Path(args.remote_validation_script), commit)
+
+
 def verify(
     ci_path: pathlib.Path,
     docker_path: pathlib.Path,
@@ -258,34 +429,27 @@ def verify(
 
 def main() -> int:
     args = parse_args()
-    commit = args.commit or resolve_head_commit(args.repo_url)
-    ci_path = pathlib.Path(args.ci_workflow)
-    docker_path = pathlib.Path(args.dockerfile)
-    compile_only_guide_path = pathlib.Path(args.compile_only_guide)
-    remote_validation_path = pathlib.Path(args.remote_validation_script)
+    target = TARGETS[args.target]
+    repo_url = args.repo_url or target.repo_url
+    current = read_target_commit(args)
+    commit = args.commit or resolve_head_commit(repo_url)
+    validate_commit(commit)
+    verify_descendant(repo_url, current, commit)
 
     if args.check:
-        verify(
-            ci_path,
-            docker_path,
-            compile_only_guide_path,
-            remote_validation_path,
-            commit,
-        )
+        if current != commit:
+            raise RuntimeError(
+                f"{args.target} pin mismatch, expected {commit}, found {current}"
+            )
         print(commit)
         return 0
 
-    update_ci_workflow(ci_path, commit)
-    update_dockerfile(docker_path, commit)
-    update_compile_only_guide(compile_only_guide_path, commit)
-    update_remote_validation_script(remote_validation_path, commit)
-    verify(
-        ci_path,
-        docker_path,
-        compile_only_guide_path,
-        remote_validation_path,
-        commit,
-    )
+    update_target(args, commit)
+    updated = read_target_commit(args)
+    if updated != commit:
+        raise RuntimeError(
+            f"failed to update {args.target} pin to {commit}; found {updated}"
+        )
     print(commit)
     return 0
 

@@ -249,7 +249,7 @@ struct PTOInferValidatePipeInitPass
     llvm::DenseMap<Operation *, SmallVector<Operation *>> adjacency;
     std::map<PipePeerKey, SmallVector<Operation *>> keyedInits;
 
-    auto collectInit = [&](auto initOp) {
+    auto collectInit = [&adjacency, &initInfos, &keyedInits](auto initOp) {
       PipeInitInfo &info = initInfos.emplace_back();
       info.op = initOp.getOperation();
       info.funcOp = initOp->template getParentOfType<func::FuncOp>();
@@ -258,7 +258,8 @@ struct PTOInferValidatePipeInitPass
       info.explicitNoSplit = getNoSplitAttr(initOp);
       adjacency[info.op];
 
-      auto recordAddr = [&](Value addr, int8_t effectiveDirMask) {
+      auto recordAddr = [&info, &keyedInits](Value addr,
+                                              int8_t effectiveDirMask) {
         if (!addr) {
           return;
         }
@@ -270,7 +271,8 @@ struct PTOInferValidatePipeInitPass
         keyedInits[*key].push_back(info.op);
       };
 
-      auto recordGlobalTensor = [&](int8_t effectiveDirMask) {
+      auto recordGlobalTensor = [&info, &keyedInits](
+                                   int8_t effectiveDirMask) {
         keyedInits[getGlobalTensorPipeKey(info.op, effectiveDirMask)].push_back(
             info.op);
       };

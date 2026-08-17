@@ -14,6 +14,8 @@
 
 #include "PTO/Transforms/Passes.h"
 
+#include "PTO/Support/CodeConstants.h"
+
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
@@ -56,8 +58,8 @@ struct EscapingMovedValue {
 };
 
 struct ResultlessScopePlan {
-  SmallVector<Operation *, 16> hoistOps;
-  SmallVector<Operation *, 16> moveOps;
+  SmallVector<Operation *, mlir::pto::kValue16> hoistOps;
+  SmallVector<Operation *, mlir::pto::kValue16> moveOps;
 };
 
 struct LogicalScopePlan {
@@ -124,7 +126,10 @@ static bool requiresVectorScope(Operation *op) {
 }
 
 static bool isAtomicControlFlowCandidate(Operation *op) {
-  return isa<scf::IfOp, scf::ForOp>(op);
+  // Structured control flow is kept as one inference unit. In particular,
+  // scf.while carries vector-scope values through both regions and must not
+  // be split into a resultless vecscope around only one of its regions.
+  return isa<scf::IfOp, scf::ForOp, scf::WhileOp>(op);
 }
 
 static bool isSafeScalarOperation(Operation *op) {
@@ -255,9 +260,9 @@ static bool anyUserIsMoved(Value result,
   return false;
 }
 
-static llvm::SmallPtrSet<Operation *, 16>
+static llvm::SmallPtrSet<Operation *, mlir::pto::kValue16>
 computeMovedOpsForResultlessScope(ArrayRef<Operation *> ops) {
-  llvm::SmallPtrSet<Operation *, 16> movedOps;
+  llvm::SmallPtrSet<Operation *, mlir::pto::kValue16> movedOps;
   for (Operation *op : ops) {
     if (classifyOperationForInference(op) == VPTOInferenceOpClass::Vector) {
       movedOps.insert(op);
@@ -270,8 +275,9 @@ computeMovedOpsForResultlessScope(ArrayRef<Operation *> ops) {
     for (Operation *op : llvm::reverse(ops)) {
       if (movedOps.contains(op) ||
           classifyOperationForInference(op) !=
-              VPTOInferenceOpClass::SafeScalar)
+              VPTOInferenceOpClass::SafeScalar) {
         continue;
+      }
 
       bool hasMovedUser = false;
       bool allUsersMoved = true;
@@ -399,7 +405,7 @@ static void collectGreedyLogicalScopePlans(
 static void assignLogicalScopeAnchorsForCluster(
     ArrayRef<Operation *> ops,
     llvm::DenseMap<Operation *, Operation *> &logicalScopeAnchors) {
-  SmallVector<LogicalScopePlan, 8> plans;
+  SmallVector<LogicalScopePlan, mlir::pto::kValue8> plans;
   collectGreedyLogicalScopePlans(ops, plans);
 
   llvm::DenseMap<Operation *, Operation *> scopeAnchorByMovedOp;
@@ -432,9 +438,9 @@ static void assignLogicalScopeAnchorsForCluster(
 static llvm::DenseMap<Operation *, Operation *>
 computeLogicalScopeAnchors(Block &block) {
   llvm::DenseMap<Operation *, Operation *> logicalScopeAnchors;
-  SmallVector<Operation *, 32> pending;
+  SmallVector<Operation *, mlir::pto::kValue32> pending;
 
-  auto flush = [&]() {
+  auto flush = [&logicalScopeAnchors, &pending]() {
     if (pending.empty()) {
       return;
     }
@@ -467,7 +473,7 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
 
   llvm::DenseMap<Operation *, Operation *> logicalScopeAnchors =
       computeLogicalScopeAnchors(block);
-  llvm::DenseMap<Operation *, SmallVector<OpOperand *, 4>> usesBySegment;
+  llvm::DenseMap<Operation *, SmallVector<OpOperand *, mlir::pto::kValue4>> usesBySegment;
 
   for (OpOperand &use : result.getUses()) {
     Operation *user = use.getOwner();
@@ -582,7 +588,7 @@ buildResultlessScopePlan(ArrayRef<Operation *> ops, ResultlessScopePlan &plan,
     return failure();
   }
 
-  llvm::SmallPtrSet<Operation *, 16> movedOps =
+  llvm::SmallPtrSet<Operation *, mlir::pto::kValue16> movedOps =
       computeMovedOpsForResultlessScope(ops);
   if (movedOps.empty()) {
     return failure();
@@ -592,11 +598,12 @@ buildResultlessScopePlan(ArrayRef<Operation *> ops, ResultlessScopePlan &plan,
     return failure();
   }
 
-  llvm::SmallPtrSet<Operation *, 16> hoistedOps;
+  llvm::SmallPtrSet<Operation *, mlir::pto::kValue16> hoistedOps;
   for (Operation *op : ops) {
     if (movedOps.contains(op) ||
-        classifyOperationForInference(op) != VPTOInferenceOpClass::SafeScalar)
+        classifyOperationForInference(op) != VPTOInferenceOpClass::SafeScalar) {
       continue;
+    }
 
     for (Value result : op->getResults()) {
       if (anyUserIsMoved(result, movedOps)) {
@@ -612,8 +619,9 @@ buildResultlessScopePlan(ArrayRef<Operation *> ops, ResultlessScopePlan &plan,
     for (Operation *op : llvm::reverse(ops)) {
       if (movedOps.contains(op) || hoistedOps.contains(op) ||
           classifyOperationForInference(op) !=
-              VPTOInferenceOpClass::SafeScalar)
+              VPTOInferenceOpClass::SafeScalar) {
         continue;
+      }
 
       bool feedsHoistedOp = false;
       for (Value result : op->getResults()) {
@@ -709,8 +717,9 @@ static LogicalResult wrapGreedySubclusters(ArrayRef<Operation *> ops,
     if (bestEnd == begin) {
       if (classifyOperationForInference(ops[begin]) ==
               VPTOInferenceOpClass::Vector &&
-          sawEscapingMovedResult && escapingValue.requiresDiagnostic)
+          sawEscapingMovedResult && escapingValue.requiresDiagnostic) {
         return emitEscapingVectorScopeValueError(escapingValue);
+      }
       ++begin;
       continue;
     }
@@ -760,7 +769,7 @@ static FailureOr<bool> fixOneEscapingSubcluster(ArrayRef<Operation *> ops,
         ArrayRef<Operation *> escapingCandidate =
             ops.slice(escapingCandidateBegin,
                       escapingCandidateEnd - escapingCandidateBegin);
-        llvm::SmallPtrSet<Operation *, 16> movedOps =
+        llvm::SmallPtrSet<Operation *, mlir::pto::kValue16> movedOps =
             computeMovedOpsForResultlessScope(escapingCandidate);
         Block *block = ops.front()->getBlock();
         if (!block) {
@@ -768,8 +777,9 @@ static FailureOr<bool> fixOneEscapingSubcluster(ArrayRef<Operation *> ops,
         }
 
         if (succeeded(rematerializeEscapingValueForUserSegments(
-                escapingValue.value, movedOps, *block, cache, context)))
+                escapingValue.value, movedOps, *block, cache, context))) {
           return true;
+        }
         return false;
       }
       ++begin;
@@ -788,8 +798,8 @@ static LogicalResult repairEscapingSubclusters(Block &block,
   SegmentRematCache cache;
   for (unsigned iteration = 0; iteration < kMaxRepairIterations; ++iteration) {
     bool changedInIteration = false;
-    SmallVector<Operation *, 32> pending;
-    SmallVector<Operation *, 32> ops;
+    SmallVector<Operation *, mlir::pto::kValue32> pending;
+    SmallVector<Operation *, mlir::pto::kValue32> ops;
     for (Operation &op : block) {
       ops.push_back(&op);
     }
@@ -842,7 +852,7 @@ static LogicalResult inferVecScopesInBlock(Block &block, MLIRContext *context) {
     return failure();
   }
 
-  SmallVector<Operation *, 16> pending;
+  SmallVector<Operation *, mlir::pto::kValue16> pending;
 
   auto flush = [&]() -> LogicalResult {
     if (failed(wrapGreedySubclusters(pending, context))) {
@@ -852,7 +862,7 @@ static LogicalResult inferVecScopesInBlock(Block &block, MLIRContext *context) {
     return success();
   };
 
-  SmallVector<Operation *, 32> ops;
+  SmallVector<Operation *, mlir::pto::kValue32> ops;
   for (Operation &op : block) {
     ops.push_back(&op);
   }
@@ -874,7 +884,7 @@ static LogicalResult inferVecScopesInBlock(Block &block, MLIRContext *context) {
     return failure();
   }
 
-  SmallVector<Operation *, 32> remainingOps;
+  SmallVector<Operation *, mlir::pto::kValue32> remainingOps;
   for (Operation &op : block) {
     remainingOps.push_back(&op);
   }

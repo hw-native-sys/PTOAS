@@ -8,7 +8,7 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto -vpto-combine-reductions | FileCheck %s
 
 module {
   func.func @vmi_to_vpto_group_reduce_addi_widen_combine(
@@ -30,8 +30,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_reduce_addi_widen_combine(
 // CHECK: %[[MASK0:.*]] = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-// CHECK: pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-// CHECK: %[[MERGED:.*]] = pto.vadd %arg0, %arg1, %[[MASK0]] : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: %[[MERGED:.*]] = pto.vadd %arg1, %arg0, %[[MASK0]] : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
 // CHECK: %[[REDUCED:.*]] = pto.vcadd %[[MERGED]], %[[MASK0]] : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<64xi32>
 // CHECK: %[[RESULT:.*]] = pto.vbitcast %[[REDUCED]] : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
 // CHECK: return %[[RESULT]]

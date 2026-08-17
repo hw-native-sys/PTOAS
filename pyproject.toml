@@ -12,7 +12,7 @@
 # a persistent CMake build tree.
 
 [build-system]
-requires = ["scikit-build-core>=0.12.2,<2", "pybind11<3", "nanobind>=2.4"]
+requires = ["scikit-build-core>=0.12.2,<2", "pybind11<3"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -49,6 +49,7 @@ install.components = ["PTOAS_Python"]
 ptodsl = "ptodsl/ptodsl"
 ptoas = "ptodsl/ptoas"
 TileOps = "lib/TileOps"
+SoftOps = "lib/SoftOps"
 
 [tool.scikit-build.cmake.define]
 PTOAS_RELEASE_VERSION_OVERRIDE = { env = "PTOAS_RELEASE_VERSION_OVERRIDE", default = "" }

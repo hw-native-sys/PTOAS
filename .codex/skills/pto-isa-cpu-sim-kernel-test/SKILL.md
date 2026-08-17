@@ -21,16 +21,16 @@ When both Windows PowerShell and WSL are available, prefer WSL first for `ptoas`
 
 2. Generate C++ from PTOAS.
 
-- If `ptoas` is not already built, build it first. In this repository, the existing local build is usually under `build/tools/ptoas/ptoas`, and the companion project skill is `build-ptoas-wsl`.
+- Resolve the workspace through `ptoas-development` before compiling. It selects the isolated venv CLI and the matching build tree; do not assume a global `ptoas` or `build/tools/ptoas/ptoas`.
 - Save generated artifacts in a scratch folder in the current repository, for example `cpu_sim_debug/<case>/`, so repeated iterations do not immediately dirty the `pto-isa` checkout.
 - Typical flow:
 
 ```bash
 # example: produce .pto from a PTOAS sample
-python3 test/samples/MatMul/tmatmulk.py > /tmp/tmatmulk.pto
+"$PYTHON_BIN" test/samples/MatMul/tmatmulk.py > /tmp/tmatmulk.pto
 
 # emit C++
-build/tools/ptoas/ptoas /tmp/tmatmulk.pto -o /tmp/tmatmulk.cpp
+"$PTOAS_BIN" /tmp/tmatmulk.pto -o /tmp/tmatmulk.cpp
 ```
 
 3. Choose the integration path.

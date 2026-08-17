@@ -32,8 +32,9 @@ struct PTOAnalyzeSIMTPersistentFragmentPass
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    if (func.isExternal())
+    if (func.isExternal()) {
       return;
+    }
 
     const auto &analysis = getAnalysis<pto::SIMTPersistentFragmentAnalysis>();
     if (!analysis.isValid()) {

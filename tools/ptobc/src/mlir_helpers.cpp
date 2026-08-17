@@ -46,20 +46,26 @@ std::string printAttrDict(mlir::DictionaryAttr a) {
 
 mlir::Type parseType(mlir::MLIRContext& ctx, const std::string& s) {
   mlir::Type t = mlir::parseType(s, &ctx);
-  if (!t) throw std::runtime_error("failed to parse type: " + s);
+  if (!t) {
+    throw std::runtime_error("failed to parse type: " + s);
+  }
   return t;
 }
 
 mlir::Attribute parseAttr(mlir::MLIRContext& ctx, const std::string& s) {
   mlir::Attribute a = mlir::parseAttribute(s, &ctx);
-  if (!a) throw std::runtime_error("failed to parse attr: " + s);
+  if (!a) {
+    throw std::runtime_error("failed to parse attr: " + s);
+  }
   return a;
 }
 
 mlir::DictionaryAttr parseAttrDict(mlir::MLIRContext& ctx, const std::string& s) {
   auto a = parseAttr(ctx, s);
   auto d = mlir::dyn_cast<mlir::DictionaryAttr>(a);
-  if (!d) throw std::runtime_error("attr is not a dictionary: " + s);
+  if (!d) {
+    throw std::runtime_error("attr is not a dictionary: " + s);
+  }
   return d;
 }
 

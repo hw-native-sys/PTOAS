@@ -1,0 +1,193 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 %t/third_tile_without_address_space.pto 2>&1 | FileCheck %s --check-prefix=NO-SPACE
+// RUN: not ptoas --pto-arch=a5 %t/grp_axis_on_scaling_fp.pto 2>&1 | FileCheck %s --check-prefix=FP-AXIS
+// RUN: not ptoas --pto-arch=a5 %t/x2zz_with_fp_attributes.pto 2>&1 | FileCheck %s --check-prefix=FP-ATTR
+// RUN: not ptoas --pto-arch=a5 %t/x2zz_with_result.pto 2>&1 | FileCheck %s --check-prefix=RESULT
+// RUN: not ptoas --pto-arch=a5 %t/x2zz_src_is_tmp.pto 2>&1 | FileCheck %s --check-prefix=SAME-VALUE
+// RUN: not ptoas --pto-arch=a5 %t/x2zz_dst_is_tmp.pto 2>&1 | FileCheck %s --check-prefix=SAME-VALUE
+// RUN: not ptoas --pto-arch=a5 %t/x2zz_non_vec_tmp.pto 2>&1 | FileCheck %s --check-prefix=NON-VEC
+// RUN: not ptoas --pto-arch=a5 %t/mismatched_elem_type.pto 2>&1 | FileCheck %s --check-prefix=ELEM-MISMATCH
+// RUN: not ptoas --pto-arch=a5 %t/elem_type_i8.pto 2>&1 | FileCheck %s --check-prefix=I8
+// RUN: not ptoas --pto-arch=a5 %t/src_wrong_layout.pto 2>&1 | FileCheck %s --check-prefix=SRC-LAYOUT
+// RUN: not ptoas --pto-arch=a5 %t/dst_wrong_layout.pto 2>&1 | FileCheck %s --check-prefix=DST-LAYOUT
+// RUN: not ptoas --pto-arch=a5 %t/nd_dst_cols_odd.pto 2>&1 | FileCheck %s --check-prefix=ND-ODD
+// RUN: not ptoas --pto-arch=a5 %t/dn_src_rows_odd.pto 2>&1 | FileCheck %s --check-prefix=DN-ODD
+// RUN: not ptoas --pto-arch=a5 %t/dn_src_rows_is_one.pto 2>&1 | FileCheck %s --check-prefix=DN-ONE
+// RUN: not ptoas --pto-arch=a5 %t/dn_src_cols_not_multiple_of_16.pto 2>&1 | FileCheck %s --check-prefix=DN-COLS
+// RUN: not ptoas --pto-arch=a5 %t/tmp_too_small.pto 2>&1 | FileCheck %s --check-prefix=TMP
+// RUN: not ptoas --pto-arch=a5 %t/nd_src_padded_stride.pto 2>&1 | FileCheck %s --check-prefix=ND-STRIDE
+// RUN: not ptoas --pto-arch=a5 %t/nd_src_tight_capacity.pto 2>&1 | FileCheck %s --check-prefix=ND-SRC-CAP
+// RUN: not ptoas --pto-arch=a5 %t/nd_dst_tight_capacity.pto 2>&1 | FileCheck %s --check-prefix=ND-DST-CAP
+// RUN: not ptoas --pto-arch=a5 %t/dn_src_padded_stride.pto 2>&1 | FileCheck %s --check-prefix=DN-STRIDE
+// RUN: not ptoas --pto-arch=a5 %t/nd_dynamic_valid.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-VALID
+// RUN: not ptoas --pto-arch=a5 %t/dynamic_physical.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-PHYSICAL
+// RUN: not ptoas --pto-arch=a3 %t/on_a3.pto 2>&1 | FileCheck %s --check-prefix=A3
+
+// NO-SPACE: expects the third tile to have an explicit address space
+// FP-AXIS: expects grpAxis only on the X-to-ZZ form with a non-scaling third tile
+// FP-ATTR: expects the X-to-ZZ tmov form not to use preQuantScalar, accToVecMode, or reluPreMode
+// RESULT: expects X-to-ZZ tmov not to have results
+// SAME-VALUE: expects X-to-ZZ src, dst, and tmp to be distinct tile values
+// NON-VEC: expects X-to-ZZ src/dst/tmp to be vec tiles
+// ELEM-MISMATCH: expects src, dst, and tmp to share one element type
+// I8: expects element type to be one of ui8, !pto.hif8, !pto.f8E8M0
+// SRC-LAYOUT: expects src to use blayout=row_major, slayout=none_box
+// DST-LAYOUT: expects dst to use blayout=row_major, slayout=row_major (ZZ box)
+// ND-ODD: expects ND-to-ZZ dst valid_shape[1] (the grouped exponent column count) to be even
+// DN-ODD: expects DN-to-ZZ src valid_shape[0] to be an even count >= 2
+// DN-ONE: expects DN-to-ZZ src valid_shape[0] to be an even count >= 2
+// DN-COLS: expects DN-to-ZZ src valid_shape[1] to be a multiple of 16
+// TMP: expects tmp to provide at least 72 bytes for ND-to-ZZ
+// ND-STRIDE: expects ND-to-ZZ src valid elements to form a compact prefix
+// ND-SRC-CAP: expects ND-to-ZZ src physical capacity to cover align16(dst rows) * dst cols
+// ND-DST-CAP: expects ND-to-ZZ dst physical capacity to cover align16(dst rows) * dst cols
+// DN-STRIDE: expects DN-to-ZZ src physical row stride to equal src valid_shape[1]
+// DYNAMIC-VALID: expects static valid and physical shapes for src/dst and a static tmp physical shape for X-to-ZZ
+// DYNAMIC-PHYSICAL: tile_buf rows/cols must be positive
+// A3: X-to-ZZ tmov is only supported on A5
+
+//--- third_tile_without_address_space.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: tensor<1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : tensor<1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- grp_axis_on_scaling_fp.pto
+module { func.func @case(%src: !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major>, %fp: !pto.tile_buf<scaling, 1x32xf16>, %dst: !pto.tile_buf<mat, 32x32xi8>) {
+  pto.tmov ins(%src : !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major>, %fp : !pto.tile_buf<scaling, 1x32xf16>) outs(%dst : !pto.tile_buf<mat, 32x32xi8>) {grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- x2zz_with_fp_attributes.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: !pto.tile_buf<vec, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : !pto.tile_buf<vec, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {reluPreMode = #pto<relu_pre_mode normal_relu>}
+  return
+} }
+
+//--- x2zz_non_vec_tmp.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: !pto.tile_buf<mat, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : !pto.tile_buf<mat, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- x2zz_with_result.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: !pto.tile_buf<vec, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) -> tensor<16x4xui8> {
+  %result = pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : !pto.tile_buf<vec, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) -> tensor<16x4xui8>
+  return %result : tensor<16x4xui8>
+} }
+
+//--- x2zz_src_is_tmp.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %src : !pto.tile_buf<vec, 16x4xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- x2zz_dst_is_tmp.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- mismatched_elem_type.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: !pto.tile_buf<vec, 1x80x!pto.f8E8M0>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : !pto.tile_buf<vec, 1x80x!pto.f8E8M0>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- elem_type_i8.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xi8>, %tmp: !pto.tile_buf<vec, 1x80xi8>, %dst: !pto.tile_buf<vec, 16x4xi8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xi8>, %tmp : !pto.tile_buf<vec, 1x80xi8>) outs(%dst : !pto.tile_buf<vec, 16x4xi8, slayout=row_major>)
+  return
+} }
+
+//--- src_wrong_layout.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>, %tmp: !pto.tile_buf<vec, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>, %tmp : !pto.tile_buf<vec, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- dst_wrong_layout.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: !pto.tile_buf<vec, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : !pto.tile_buf<vec, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8>)
+  return
+} }
+
+//--- nd_dst_cols_odd.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x3xui8>, %tmp: !pto.tile_buf<vec, 1x67xui8>, %dst: !pto.tile_buf<vec, 16x3xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x3xui8>, %tmp : !pto.tile_buf<vec, 1x67xui8>) outs(%dst : !pto.tile_buf<vec, 16x3xui8, slayout=row_major>)
+  return
+} }
+
+//--- dn_src_rows_odd.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 3x16xui8>, %tmp: !pto.tile_buf<vec, 1x1xui8>, %dst: !pto.tile_buf<vec, 3x16xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 3x16xui8>, %tmp : !pto.tile_buf<vec, 1x1xui8>) outs(%dst : !pto.tile_buf<vec, 3x16xui8, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- dn_src_rows_is_one.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 1x16xui8>, %tmp: !pto.tile_buf<vec, 1x1xui8>, %dst: !pto.tile_buf<vec, 1x16xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 1x16xui8>, %tmp : !pto.tile_buf<vec, 1x1xui8>) outs(%dst : !pto.tile_buf<vec, 1x16xui8, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- dn_src_cols_not_multiple_of_16.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 2x8xui8>, %tmp: !pto.tile_buf<vec, 1x1xui8>, %dst: !pto.tile_buf<vec, 2x8xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 2x8xui8>, %tmp : !pto.tile_buf<vec, 1x1xui8>) outs(%dst : !pto.tile_buf<vec, 2x8xui8, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- tmp_too_small.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x4xui8, valid=20x4>, %tmp: !pto.tile_buf<vec, 1x71xui8>, %dst: !pto.tile_buf<vec, 32x4xui8, valid=20x4, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 32x4xui8, valid=20x4>, %tmp : !pto.tile_buf<vec, 1x71xui8>) outs(%dst : !pto.tile_buf<vec, 32x4xui8, valid=20x4, slayout=row_major>)
+  return
+} }
+
+//--- nd_src_padded_stride.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x32xui8, valid=20x4>, %tmp: !pto.tile_buf<vec, 1x72xui8>, %dst: !pto.tile_buf<vec, 32x4xui8, valid=20x4, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 32x32xui8, valid=20x4>, %tmp : !pto.tile_buf<vec, 1x72xui8>) outs(%dst : !pto.tile_buf<vec, 32x4xui8, valid=20x4, slayout=row_major>)
+  return
+} }
+
+//--- nd_src_tight_capacity.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 20x4xui8>, %tmp: !pto.tile_buf<vec, 1x72xui8>, %dst: !pto.tile_buf<vec, 32x4xui8, valid=20x4, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 20x4xui8>, %tmp : !pto.tile_buf<vec, 1x72xui8>) outs(%dst : !pto.tile_buf<vec, 32x4xui8, valid=20x4, slayout=row_major>)
+  return
+} }
+
+//--- nd_dst_tight_capacity.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x4xui8, valid=20x4>, %tmp: !pto.tile_buf<vec, 1x72xui8>, %dst: !pto.tile_buf<vec, 20x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 32x4xui8, valid=20x4>, %tmp : !pto.tile_buf<vec, 1x72xui8>) outs(%dst : !pto.tile_buf<vec, 20x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- dn_src_padded_stride.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 2x32xui8, valid=2x16>, %tmp: !pto.tile_buf<vec, 1x1xui8>, %dst: !pto.tile_buf<vec, 2x16xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 2x32xui8, valid=2x16>, %tmp : !pto.tile_buf<vec, 1x1xui8>) outs(%dst : !pto.tile_buf<vec, 2x16xui8, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
+  return
+} }
+
+//--- nd_dynamic_valid.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 32x4xui8, valid=?x4>, %tmp: !pto.tile_buf<vec, 1x72xui8>, %dst: !pto.tile_buf<vec, 32x4xui8, valid=?x4, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 32x4xui8, valid=?x4>, %tmp : !pto.tile_buf<vec, 1x72xui8>) outs(%dst : !pto.tile_buf<vec, 32x4xui8, valid=?x4, slayout=row_major>)
+  return
+} }
+
+//--- dynamic_physical.pto
+module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=ui8, rows=-1, cols=4, v_row=16, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %tmp: !pto.tile_buf<vec, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<loc=vec, dtype=ui8, rows=-1, cols=4, v_row=16, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %tmp : !pto.tile_buf<vec, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }
+
+//--- on_a3.pto
+module { func.func @case(%src: !pto.tile_buf<vec, 16x4xui8>, %tmp: !pto.tile_buf<vec, 1x80xui8>, %dst: !pto.tile_buf<vec, 16x4xui8, slayout=row_major>) {
+  pto.tmov ins(%src : !pto.tile_buf<vec, 16x4xui8>, %tmp : !pto.tile_buf<vec, 1x80xui8>) outs(%dst : !pto.tile_buf<vec, 16x4xui8, slayout=row_major>)
+  return
+} }

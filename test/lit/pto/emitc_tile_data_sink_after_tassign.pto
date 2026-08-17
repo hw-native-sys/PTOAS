@@ -26,9 +26,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // CHECK-LABEL: AICORE void kernel(int64_t
 // CHECK: // pto: %0
-// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16{{.*}}> [[ADDR_BASE:v[0-9]+]];
-// CHECK: // pto: %0
-// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16{{.*}}> [[ADDR_TILE:v[0-9]+]] = [[ADDR_BASE]];
+// CHECK-NEXT: Tile<TileType::Vec, float, 1, 16{{.*}}> [[ADDR_TILE:v[0-9]+]];
 // CHECK: // pto: %1
 // CHECK-NEXT: __ubuf__ float* [[SINK_PTR:v[0-9]+]] = [[ADDR_TILE]].data();
 // CHECK-NEXT: sink_ptr([[SINK_PTR]]);

@@ -50,8 +50,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha="$(python .github/scripts/update_pto_isa_pin.py)"
-          python .github/scripts/update_pto_isa_pin.py --commit "${sha}" --check
+          sha="$(python .github/scripts/update_pto_isa_pin.py --target gitcode-default)"
+          python .github/scripts/update_pto_isa_pin.py --target gitcode-default \
+            --commit "${sha}" --check
           echo "pto_isa_commit=${sha}" >> "${GITHUB_OUTPUT}"
           echo "pto_isa_short=${sha:0:12}" >> "${GITHUB_OUTPUT}"
 
@@ -62,7 +63,6 @@ jobs:
           set -euo pipefail
           if git diff --quiet -- \
             .github/workflows/ci.yml \
-            .github/workflows/ci_sim.yml \
             docker/Dockerfile \
             docs/no_npu_compile_only_guide_zh.md \
             test/npu_validation/scripts/run_remote_npu_validation.sh; then
@@ -75,7 +75,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             .github/workflows/ci.yml \
-            .github/workflows/ci_sim.yml \
             docker/Dockerfile \
             docs/no_npu_compile_only_guide_zh.md \
             test/npu_validation/scripts/run_remote_npu_validation.sh

@@ -17,10 +17,10 @@ module {
   }
 
   func.func @vmi_to_vpto_absi(
-      %value: !pto.vmi.vreg<256xi16>) -> !pto.vmi.vreg<256xi16> {
+      %value: !pto.vmi.vreg<256xsi16>) -> !pto.vmi.vreg<256xsi16> {
     %abs = pto.vmi.vabs %value
-        : !pto.vmi.vreg<256xi16> -> !pto.vmi.vreg<256xi16>
-    return %abs : !pto.vmi.vreg<256xi16>
+        : !pto.vmi.vreg<256xsi16> -> !pto.vmi.vreg<256xsi16>
+    return %abs : !pto.vmi.vreg<256xsi16>
   }
 
   // bf16: no absf — clear sign bit via bitcast + andi 0x7FFF (ASC vand path).
@@ -41,11 +41,11 @@ module {
 // CHECK: return %[[AF0]], %[[AF1]]
 
 // CHECK-LABEL: func.func @vmi_to_vpto_absi(
-// CHECK-SAME: %[[I0:[^,]+]]: !pto.vreg<128xi16>
-// CHECK-SAME: %[[I1:[^)]+]]: !pto.vreg<128xi16>
-// CHECK-SAME: -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>)
-// CHECK-DAG: %[[AI0:.*]] = pto.vabs %[[I0]], {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
-// CHECK-DAG: %[[AI1:.*]] = pto.vabs %[[I1]], {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK-SAME: %[[I0:[^,]+]]: !pto.vreg<128xsi16>
+// CHECK-SAME: %[[I1:[^)]+]]: !pto.vreg<128xsi16>
+// CHECK-SAME: -> (!pto.vreg<128xsi16>, !pto.vreg<128xsi16>)
+// CHECK-DAG: %[[AI0:.*]] = pto.vabs %[[I0]], {{.*}} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<128xsi16>
+// CHECK-DAG: %[[AI1:.*]] = pto.vabs %[[I1]], {{.*}} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<128xsi16>
 // CHECK: return %[[AI0]], %[[AI1]]
 
 // CHECK-LABEL: func.func @vmi_to_vpto_abs_bf16(

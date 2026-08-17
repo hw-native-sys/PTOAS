@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The public wrapper accepts both the legacy shape form and the full-control
+// form. Wrapper expansion selects the private S4 operation only for packed FP4.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=WRAPPER
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @full_controls(
+      %fp4_src: !pto.ptr<!pto.f4E2M1x2, l1>,
+      %fp4_a: !pto.ptr<!pto.f4E2M1x2, l0a>,
+      %fp4_b: !pto.ptr<!pto.f4E2M1x2, l0b>,
+      %f16_src: !pto.ptr<f16, l1>,
+      %f16_a: !pto.ptr<f16, l0a>,
+      %f16_b: !pto.ptr<f16, l0b>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c3 = arith.constant 3 : i64
+    %c5 = arith.constant 5 : i64
+    %c7 = arith.constant 7 : i64
+    %c9 = arith.constant 9 : i64
+    %c11 = arith.constant 11 : i64
+    %c13 = arith.constant 13 : i64
+    %c17 = arith.constant 17 : i64
+    %c19 = arith.constant 19 : i64
+    %c23 = arith.constant 23 : i64
+    %c29 = arith.constant 29 : i64
+    %c31 = arith.constant 31 : i64
+    %c37 = arith.constant 37 : i64
+    %c41 = arith.constant 41 : i64
+
+    pto.mte_l1_l0a %fp4_src, %fp4_a, %c3, %c5, %c7, %c9, %c11, %c13
+      : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64
+    pto.mte_l1_l0b %fp4_src, %fp4_b, dst_stride(%c41), k_step(%c37), m_step(%c31), k_start(%c29), src_stride(%c23), m_start(%c19) {transpose = true}
+      : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64, i64, i64
+    pto.mte_l1_l0a %f16_src, %f16_a, %c0, %c3, %c5, %c7, %c9, %c11
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64, i64, i64
+    pto.mte_l1_l0b %f16_src, %f16_b, %c13, %c17, %c19, %c23, %c29, %c31 {transpose = true}
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0b>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+// WRAPPER-LABEL: func.func @full_controls(
+// WRAPPER: pto.mte_l1_l0a %{{.*}}, %{{.*}}, %[[C3:.*]], %[[C5:.*]], %[[C7:.*]], %[[C9:.*]], %[[C11:.*]], %[[C13:[A-Za-z0-9_]+]]
+// WRAPPER: pto.mte_l1_l0b %{{.*}}, %{{.*}}, %[[C19:.*]], %[[C29:.*]], %[[C31:.*]], %[[C37:.*]], %[[C23:.*]], %[[C41:.*]] {transpose = true}
+// WRAPPER: pto.mte_l1_l0a %{{.*}}, %{{.*}}, %[[C0:.*]], %[[C3]], %[[C5]], %[[C7]], %[[C9]], %[[C11]]
+// WRAPPER: pto.mte_l1_l0b %{{.*}}, %{{.*}}, %[[C13]], %[[C17:.*]], %[[C19]], %[[C23]], %[[C29]], %[[C31]] {transpose = true}
+
+// EXPAND-LABEL: func.func @full_controls(
+// EXPAND: pto.load_cbuf_to_ca_s4 %{{.*}}, %{{.*}}, %[[C3:.*]], %[[C5:.*]], %[[C7:.*]], %[[C9:.*]], %[[C11:.*]], %[[C13:.*]], %{{.*}}
+// EXPAND: pto.load_cbuf_to_cb_s4 %{{.*}}, %{{.*}}, %[[C19:.*]], %[[C29:.*]], %[[C31:.*]], %[[C37:.*]], %[[C23:.*]], %[[C41:.*]], %{{.*}}
+// EXPAND: pto.load_cbuf_to_ca %{{.*}}, %{{.*}}, %[[C0:.*]], %[[C3]], %[[C5]], %[[C7]], %[[C9]], %[[C11:[A-Za-z0-9_]+]]
+// EXPAND: pto.load_cbuf_to_cb %{{.*}}, %{{.*}}, %[[C13]], %[[C17:.*]], %[[C19]], %[[C23]], %[[C29]], %[[C31]] {transpose = true}

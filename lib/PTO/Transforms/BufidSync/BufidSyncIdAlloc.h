@@ -9,8 +9,9 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCIDALLOC_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCIDALLOC_H
 
-#include "BufidSyncAnalysis.h"
 #include <string>
+#include "BufidSyncAnalysis.h"
+
 
 namespace mlir {
 namespace pto {

@@ -33,4 +33,4 @@ module {
 // A3: __gm__ int8_t* [[PART_DATA:[_A-Za-z][_A-Za-z0-9]*]] = PTOAS__GLOBAL_TENSOR_DATA(
 // A3: pto::Stride<-1, -1, -1, -1, -1>
 // A3: GlobalTensor<int8_t,
-// A3: ([[PART_DATA]] + ([[PART_ZERO]] + [[PART_OFF]] * [[PART_ONE]])
+// A3: ([[PART_DATA]] + ({{.*}} + (int64_t) [[PART_OFF]] * [[PART_ONE]])

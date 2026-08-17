@@ -27,6 +27,7 @@
 //      operands directly (no type bridging needed).
 //
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
@@ -97,8 +98,8 @@ struct OperandTypeInfo {
   std::string dtype; // all kinds: element type string (e.g. "f32")
 
   // --- Tile-only (TileBufType) ---
-  SmallVector<int64_t, 2> tileShape;
-  SmallVector<int64_t, 2> tileValidShape;
+  SmallVector<int64_t, mlir::pto::kValue2> tileShape;
+  SmallVector<int64_t, mlir::pto::kValue2> tileValidShape;
   std::string tileMemorySpace; // e.g. "ub", "gm", "mat", "left", "right", "acc", "bias"
   int32_t blayout = 0;
   int32_t slayout = 0;
@@ -123,13 +124,14 @@ struct OperandTypeInfo {
     if (kind != rhs.kind || dtype != rhs.dtype) {
       return false;
     }
-    if (kind == OperandKind::Tile)
+    if (kind == OperandKind::Tile) {
       return tileShape == rhs.tileShape &&
              tileValidShape == rhs.tileValidShape &&
              tileMemorySpace == rhs.tileMemorySpace &&
              blayout == rhs.blayout && slayout == rhs.slayout &&
              fractal == rhs.fractal && pad == rhs.pad &&
              compact == rhs.compact;
+    }
     if (kind == OperandKind::Vector) {
       return vectorShape == rhs.vectorShape;
     }
@@ -149,8 +151,8 @@ struct OperandTypeInfo {
 struct SpecKey {
   std::string opName;
   std::string targetArch;
-  SmallVector<OperandTypeInfo, 4> operands;
-  SmallVector<std::pair<std::string, std::string>, 4> contextAttrs;
+  SmallVector<OperandTypeInfo, mlir::pto::kValue4> operands;
+  SmallVector<std::pair<std::string, std::string>, mlir::pto::kValue4> contextAttrs;
 
   bool operator==(const SpecKey &rhs) const {
     return opName == rhs.opName && targetArch == rhs.targetArch &&
@@ -243,40 +245,40 @@ static std::string getDtypeString(Type elemTy) {
   if (isa<pto::F4E2M1x2Type>(elemTy)) {
     return "f4e2m1x2";
   }
-  if (elemTy.isUnsignedInteger(64)) {
+  if (elemTy.isUnsignedInteger(mlir::pto::kValue64)) {
     return "ui64";
   }
-  if (elemTy.isUnsignedInteger(32)) {
+  if (elemTy.isUnsignedInteger(mlir::pto::kValue32)) {
     return "ui32";
   }
-  if (elemTy.isUnsignedInteger(16)) {
+  if (elemTy.isUnsignedInteger(mlir::pto::kValue16)) {
     return "ui16";
   }
-  if (elemTy.isUnsignedInteger(8)) {
+  if (elemTy.isUnsignedInteger(mlir::pto::kValue8)) {
     return "ui8";
   }
-  if (elemTy.isSignedInteger(64)) {
+  if (elemTy.isSignedInteger(mlir::pto::kValue64)) {
     return "si64";
   }
-  if (elemTy.isSignedInteger(32)) {
+  if (elemTy.isSignedInteger(mlir::pto::kValue32)) {
     return "si32";
   }
-  if (elemTy.isSignedInteger(16)) {
+  if (elemTy.isSignedInteger(mlir::pto::kValue16)) {
     return "si16";
   }
-  if (elemTy.isSignedInteger(8)) {
+  if (elemTy.isSignedInteger(mlir::pto::kValue8)) {
     return "si8";
   }
-  if (elemTy.isSignlessInteger(64)) {
+  if (elemTy.isSignlessInteger(mlir::pto::kValue64)) {
     return "i64";
   }
-  if (elemTy.isSignlessInteger(32)) {
+  if (elemTy.isSignlessInteger(mlir::pto::kValue32)) {
     return "i32";
   }
-  if (elemTy.isSignlessInteger(16)) {
+  if (elemTy.isSignlessInteger(mlir::pto::kValue16)) {
     return "i16";
   }
-  if (elemTy.isSignlessInteger(8)) {
+  if (elemTy.isSignlessInteger(mlir::pto::kValue8)) {
     return "i8";
   }
   return "";
@@ -599,11 +601,12 @@ static LogicalResult appendOpContextAttrs(
   }
   if (auto tfillpad = dyn_cast<pto::TFillPadOp>(op)) {
     auto kind = pto::inferTFillPadLoweringKindAfterMemoryPlanning(tfillpad);
-    if (failed(kind))
+    if (failed(kind)) {
       return tfillpad.emitOpError(
           "cannot infer a supported lowering; expand and in-place forms "
           "require loc=vec, statically comparable physical shapes, and "
           "resolved planned addresses");
+    }
     StringRef token;
     switch (*kind) {
     case pto::TFillPadLoweringKind::Normal:
@@ -799,8 +802,9 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
     if (validShape.empty()) {
       info.tileValidShape.assign(tbTy.getShape().begin(), tbTy.getShape().end());
     }
-    else
+    else {
       info.tileValidShape.assign(validShape.begin(), validShape.end());
+}
     info.tileMemorySpace = getMemorySpaceString(tbTy);
     if (auto config = tbTy.getConfigAttr()) {
       info.blayout = static_cast<int32_t>(config.getBLayout().getValue());
@@ -1009,8 +1013,9 @@ static std::string buildOperandSpecsJson(const SpecKey &key) {
           if (ShapedType::isDynamic(op.viewStrides[dim])) {
             json += "null";
           }
-          else
+          else {
             json += std::to_string(op.viewStrides[dim]);
+}
         }
         json += "]";
       }
@@ -1216,10 +1221,11 @@ func::FuncOp ExpandState::invokeInProcessTileLib(const SpecKey &key,
                    << entrySymbol << "\n";
       return failure();
     }
-    if (!importedEntry->hasAttr("pto.tilelang.instance"))
+    if (!importedEntry->hasAttr("pto.tilelang.instance")) {
       llvm::errs() << "ExpandTileOp: warning: in-process PTODSL entry @"
                    << importedEntry.getSymName()
                    << " missing pto.tilelang.instance attribute\n";
+    }
     return success();
   });
   if (failed(materializationResult)) {
@@ -1277,7 +1283,7 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
   OpBuilder builder(ctx);
 
   // Collect tile ops first (avoid modifying while iterating).
-  SmallVector<Operation *, 16> tileOps;
+  SmallVector<Operation *, mlir::pto::kValue16> tileOps;
   func.walk([&](Operation *op) {
     if (pto::isTileLibExpandableOp(op)) {
       tileOps.push_back(op);
@@ -1286,8 +1292,9 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
 
   for (auto *op : tileOps) {
     auto specKey = buildSpecKey(op);
-    if (failed(specKey))
+    if (failed(specKey)) {
       return failure();
+    }
 
     // Materialize the selected PTODSL template in-process.
     func::FuncOp dslFn = invokeTileLib(*specKey, op, mod, ctx);

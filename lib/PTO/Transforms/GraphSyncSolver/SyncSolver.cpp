@@ -23,14 +23,21 @@
 //===--------- SyncSolver.cpp ------- Graph Sync Solver -------------------===//
 //===----------------------------------------------------------------------===//
 
-#include "PTO/Transforms/GraphSyncSolver/SyncSolver.h"
+#include <algorithm>
+#include <climits>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <numeric>
+#include <tuple>
+#include <utility>
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/GraphSyncSolver/GraphSolver.h"
 #include "PTO/Transforms/GraphSyncSolver/MemInfo.h"
+#include "PTO/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "PTO/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "PTO/Transforms/GraphSyncSolver/Utility.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
-
-#include "PTO/IR/PTO.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -42,14 +49,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
-#include <algorithm>
-#include <climits>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <numeric>
-#include <tuple>
-#include <utility>
+
 
 #define DEBUG_TYPE "PTO-gss-solver"
 
@@ -60,12 +60,14 @@ namespace {
 mlir::pto::SlotRelation compareMemInfoSlotSSA(const MemInfo &memInfo1,
                                               const MemInfo &memInfo2) {
   size_t n = std::max<size_t>(memInfo1.getSz(), memInfo2.getSz());
-  if (n < 2 || n > std::numeric_limits<uint32_t>::max())
+  if (n < 2 || n > std::numeric_limits<uint32_t>::max()) {
     return mlir::pto::SlotRelation::kUnknown;
+  }
   Value slot1 = mlir::pto::findMultiTileSlotExpr(memInfo1.value);
   Value slot2 = mlir::pto::findMultiTileSlotExpr(memInfo2.value);
-  if (!slot1 || !slot2)
+  if (!slot1 || !slot2) {
     return mlir::pto::SlotRelation::kUnknown;
+  }
   return mlir::pto::compareSlotSSA(slot1, slot2, static_cast<uint32_t>(n));
 }
 
@@ -164,8 +166,9 @@ bool Solver::checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2) {
   auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
   assert(parOcc1 != nullptr && parOcc2 != nullptr);
   auto *parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
-  if (parentLCALoopOcc == nullptr)
+  if (parentLCALoopOcc == nullptr) {
     return false;
+  }
   auto *parentLCALoopOp = llvm::cast<Loop>(parentLCALoopOcc->op);
   return parentLCALoopOp->isParallel;
 }
@@ -522,12 +525,14 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   bool slotOp1Ambiguous = false, slotOp2Ambiguous = false;
   auto collectSlot = [](const MemInfo &mi, Value &slot, bool &ambiguous) {
     Value s = mlir::pto::findMultiTileSlotExpr(mi.value);
-    if (!s)
+    if (!s) {
       return;
-    if (!slot)
+    }
+    if (!slot) {
       slot = s;
-    else if (slot != s)
+    } else if (slot != s) {
       ambiguous = true;
+    }
   };
 
   for (auto &memInfo1 : rwOp1->readMemInfo) {
@@ -703,6 +708,13 @@ Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
   if (parentLoop1 == nullptr || parentLoop1 != parentLoop2) {
     return {};
   }
+
+  // Preload offsets are derived from a counted-loop induction variable. A
+  // dynamic scf.while has no equivalent first/last iteration formula; leave
+  // this optional optimization disabled and let ordinary synchronization
+  // planning handle the pair.
+  if (!isa<scf::ForOp>(parentLoop1->op))
+    return {};
 
   assert(parentScope1->preloadNum.has_value());
   assert(parentScope2->preloadNum.has_value());

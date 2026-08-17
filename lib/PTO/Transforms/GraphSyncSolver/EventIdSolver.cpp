@@ -23,6 +23,9 @@
 //===----------- EventIdSolver.cpp ---- Graph Sync Solver -----------------===//
 //===----------------------------------------------------------------------===//
 
+#include <cstdint>
+#include <numeric>
+#include <utility>
 #include "PTO/Transforms/GraphSyncSolver/EventIdSolver.h"
 #include "PTO/Transforms/GraphSyncSolver/Utility.h"
 #include "llvm/ADT/DenseSet.h"
@@ -32,9 +35,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
-#include <cstdint>
-#include <numeric>
-#include <utility>
+
 
 #define DEBUG_TYPE "PTO-gss-eventidsolver"
 
@@ -237,8 +238,9 @@ EventIdSolver::getAdjNodesUsedEventIds(EventIdNode *node) {
   }
   LLVM_DEBUG({
     llvm::dbgs() << "used-event-ids: ";
-    for (auto e : usedEventIds)
+    for (auto e : usedEventIds) {
       llvm::dbgs() << e << ' ';
+    }
     llvm::dbgs() << "\n";
   });
   llvm::SmallVector<int64_t> usedEventIdsVec(usedEventIds.begin(),
@@ -291,8 +293,9 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
   }
   LLVM_DEBUG({
     llvm::dbgs() << "chosen-event-ids: ";
-    for (auto e : chosenEventIds)
+    for (auto e : chosenEventIds) {
       llvm::dbgs() << e << ' ';
+    }
     llvm::dbgs() << '\n';
   });
   assert(node->eventIdNum == static_cast<int64_t>(chosenEventIds.size()));

@@ -17,8 +17,9 @@ namespace mlir::pto {
 /// Frontend pipe/sync pseudo-ops use TileOpInterface for surface
 /// classification but must be handled by their dedicated lowering instead.
 inline bool isTileLibExpandableOp(Operation *op) {
-  if (!op || !isa<TileOpInterface>(op))
+  if (!op || !isa<TileOpInterface>(op)) {
     return false;
+  }
   return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
               TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
               TFreeFromAicOp, TFreeFromAivOp>(op);

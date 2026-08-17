@@ -152,7 +152,6 @@ public:
 };
 
 class EventIdSolver {
-
 private:
   int64_t eventIdsNumMax{-1};
   bool needRecalculateEventIds{false};

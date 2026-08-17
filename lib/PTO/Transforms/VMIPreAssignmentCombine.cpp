@@ -34,11 +34,14 @@ using namespace mlir::pto;
 namespace {
 
 static std::optional<int64_t> getConstantIndexValue(Value value) {
-  if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>())
+  if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>()) {
     return constant.value();
-  if (auto constant = value.getDefiningOp<arith::ConstantOp>())
-    if (auto integerAttr = dyn_cast<IntegerAttr>(constant.getValue()))
+  }
+  if (auto constant = value.getDefiningOp<arith::ConstantOp>()) {
+    if (auto integerAttr = dyn_cast<IntegerAttr>(constant.getValue())) {
       return integerAttr.getInt();
+    }
+  }
   return std::nullopt;
 }
 
@@ -46,18 +49,21 @@ static LogicalResult canonicalizeContiguousGroupLoads(ModuleOp module) {
   SmallVector<VMIGroupLoadOp> loads;
   module.walk([&](VMIGroupLoadOp load) {
     auto resultType = dyn_cast<VMIVRegType>(load.getResult().getType());
-    if (!resultType)
+    if (!resultType) {
       return;
+    }
 
     int64_t numGroups = load.getNumGroupsAttr().getInt();
     int64_t laneCount = resultType.getElementCount();
-    if (numGroups <= 0 || laneCount % numGroups != 0)
+    if (numGroups <= 0 || laneCount % numGroups != 0) {
       return;
+    }
 
     std::optional<int64_t> rowStride =
         getConstantIndexValue(load.getRowStride());
-    if (rowStride && *rowStride == laneCount / numGroups)
+    if (rowStride && *rowStride == laneCount / numGroups) {
       loads.push_back(load);
+    }
   });
 
   OpBuilder builder(module.getContext());
@@ -76,22 +82,26 @@ static LogicalResult fuseGroupSlotBroadcastLoads(ModuleOp module) {
   SmallVector<VMIGroupBroadcastOp> broadcasts;
   module.walk([&](VMIGroupBroadcastOp broadcast) {
     auto load = broadcast.getSource().getDefiningOp<VMIGroupSlotLoadOp>();
-    if (!load || !load.getResult().hasOneUse())
+    if (!load || !load.getResult().hasOneUse()) {
       return;
+    }
     if (load.getNumGroupsAttr().getInt() !=
-        broadcast.getNumGroupsAttr().getInt())
+        broadcast.getNumGroupsAttr().getInt()) {
       return;
+    }
 
-    if (!isa<VMIVRegType>(broadcast.getResult().getType()))
+    if (!isa<VMIVRegType>(broadcast.getResult().getType())) {
       return;
+    }
     broadcasts.push_back(broadcast);
   });
 
   OpBuilder builder(module.getContext());
   for (VMIGroupBroadcastOp broadcast : broadcasts) {
     auto load = broadcast.getSource().getDefiningOp<VMIGroupSlotLoadOp>();
-    if (!load)
+    if (!load) {
       continue;
+    }
 
     builder.setInsertionPoint(broadcast);
     auto fused = builder.create<VMIGroupBroadcastLoadOp>(
@@ -100,8 +110,9 @@ static LogicalResult fuseGroupSlotBroadcastLoads(ModuleOp module) {
         broadcast.getNumGroupsAttr());
     broadcast.getResult().replaceAllUsesWith(fused.getResult());
     broadcast.erase();
-    if (load->use_empty())
+    if (load->use_empty()) {
       load.erase();
+    }
   }
   return success();
 }
@@ -110,8 +121,9 @@ struct VMIPreAssignmentCombinePass
     : pto::impl::VMIPreAssignmentCombineBase<VMIPreAssignmentCombinePass> {
   void runOnOperation() override {
     if (failed(canonicalizeContiguousGroupLoads(getOperation())) ||
-        failed(fuseGroupSlotBroadcastLoads(getOperation())))
+        failed(fuseGroupSlotBroadcastLoads(getOperation()))) {
       signalPassFailure();
+    }
   }
 };
 

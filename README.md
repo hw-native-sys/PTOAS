@@ -2,7 +2,7 @@
 
 ## 1. 项目简介 (Introduction)
 
-**ptoas** (`ptoas`) 是一个基于 **LLVM/MLIR LLVM21 VPTO 分支 (`vpto-dev/llvm-project:feature-vpto-llvm21`)** 框架构建的专用编译器工具链，专为 **PTO Bytecode** (Programming Tiling Operator Bytecode) 设计。
+**ptoas** (`ptoas`) 是一个基于 **LLVM/MLIR LLVM19 VPTO 分支 (`vpto-dev/llvm-project:feature-vpto`)** 框架构建的专用编译器工具链，专为 **PTO Bytecode** (Programming Tiling Operator Bytecode) 设计。
 
 作为连接上层 AI 框架与底层各类NPU/GPGPU/CPU硬件，`ptoas` 采用 **Out-of-Tree** 架构构建，提供了完整的 C++ 与 Python 接口，主要职责包括：
 
@@ -37,7 +37,7 @@ PTOAS/
 
 ## 3. 构建指南 (Build Instructions)
 
-⚠️ **重要提示**：本项目严格依赖 **LLVM21 VPTO 分支 `vpto-dev/llvm-project:feature-vpto-llvm21`**。
+⚠️ **重要提示**：本项目严格依赖 **LLVM19 VPTO 分支 `vpto-dev/llvm-project:feature-vpto`**。
 
 
 ### 3.0 环境变量配置 (Configuration)
@@ -73,13 +73,13 @@ export PYTHON_BIN="$(command -v python3)"
 * **Compiler**: GCC >= 9 或 Clang (支持 C++17)
 * **Build System**: CMake >= 3.20, Ninja
 * **Python**: 3.10+
-* **Python Packages**: `scikit-build-core`, `pybind11<3`, `nanobind`, `numpy`
+* **Python Packages**: `scikit-build-core`, `pybind11<3`, `numpy`
 ```bash
-"$PYTHON_BIN" -m pip install 'scikit-build-core>=0.12.2,<2' 'pybind11<3' nanobind numpy
+"$PYTHON_BIN" -m pip install 'scikit-build-core>=0.12.2,<2' 'pybind11<3' numpy
 
 ```
 
-> 说明：当前 PTOAS Python 扩展继续使用 `pybind11`，LLVM21 的 MLIR Python 绑定构建需要 `nanobind`。
+> 说明：PTOAS 与 LLVM 19 的 MLIR Python 绑定均使用 `pybind11`。
 > 当前 LLVM/MLIR Python 绑定与 `pybind11` 3.x 不兼容。
 > 如果编译 LLVM 时遇到 `def_property family does not currently support keep_alive` 等报错，
 > 请确认使用上面的 `pybind11<3` 依赖。
@@ -88,7 +88,7 @@ export PYTHON_BIN="$(command -v python3)"
 
 ### 3.2 第一步：构建 LLVM/MLIR (Dependency)
 
-我们需要下载 VPTO 适配后的 LLVM 源码，切换到 `feature-vpto-llvm21` 分支，并以**动态库 (Shared Libs)** 模式编译，以确保 Python Binding 的正确链接。
+我们需要下载 VPTO 适配后的 LLVM 源码，切换到 `feature-vpto` 分支，并以**动态库 (Shared Libs)** 模式编译，以确保 Python Binding 的正确链接。
 
 ```bash
 # 1. 下载 LLVM 源码
@@ -97,7 +97,7 @@ git clone https://github.com/vpto-dev/llvm-project.git
 cd $LLVM_SOURCE_DIR
 
 # 2. [关键] 切换到 VPTO 适配分支
-git checkout feature-vpto-llvm21
+git checkout feature-vpto
 
 # 3. 配置 CMake (构建动态库并启用 Python 绑定)
 cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
@@ -108,7 +108,6 @@ cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
     -DPython3_EXECUTABLE="$PYTHON_BIN" \
     -DPython_EXECUTABLE="$PYTHON_BIN" \
     -Dpybind11_DIR="$("$PYTHON_BIN" -m pybind11 --cmakedir)" \
-    -Dnanobind_DIR="$("$PYTHON_BIN" -m nanobind --cmake_dir)" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_TARGETS_TO_BUILD="host"
 
@@ -119,7 +118,7 @@ ninja -C $LLVM_BUILD_DIR
 
 ### 3.3 第二步：构建 PTOAS (Out-of-Tree)
 
-下载 PTOAS 源码并基于刚刚编译好的 LLVM 21 进行构建。
+下载 PTOAS 源码并基于刚刚编译好的 LLVM 19 进行构建。
 
 ```bash
 # 1. 下载 PTOAS 源码
@@ -193,14 +192,13 @@ from ptoas.mlir.dialects import pto as mlir_pto
 ## 4. 运行环境配置 (Runtime Environment)
 
 每次打开新 shell 时，先恢复 3.0 中配置的路径变量并重新激活安装 PTOAS 的
-Python 环境。源码或 editable 安装会使用 LLVM 构建目录中的动态库，因此还需要
-将该目录加入动态库搜索路径：
+Python 环境。editable 安装会将选定 LLVM 构建目录记录为 native extension 的
+运行时搜索路径，不需要手工设置 `LD_LIBRARY_PATH`：
 
 ```bash
 # 先重新导出 WORKSPACE_DIR、LLVM_BUILD_DIR 等 3.0 中的路径变量
 source "$WORKSPACE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
-export LD_LIBRARY_PATH="$LLVM_BUILD_DIR/lib:${LD_LIBRARY_PATH:-}"
 
 command -v ptoas
 ptoas --version
@@ -212,8 +210,8 @@ ptoas --version
 ninja -C "$PTO_SOURCE_DIR/build" check-pto
 ```
 
-发布 wheel 自带运行时依赖，不使用外部 LLVM build tree 时无需设置上述
-`LD_LIBRARY_PATH`。无论哪种安装方式，都不需要手工拼接 `PYTHONPATH`。
+发布 wheel 自带运行时依赖。无论哪种安装方式，都不需要手工拼接
+`PYTHONPATH` 或 `LD_LIBRARY_PATH`。
 
 ### Daily wheel
 
@@ -249,12 +247,11 @@ source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
 ```
 
 如果没有使用虚拟环境，并且 pip 将软件包安装到了用户目录，请在运行 `ptoas`
-之前先配置 `PATH`，然后同样设置上述 `LD_LIBRARY_PATH`：
+之前先配置 `PATH`：
 
 ```bash
 export PATH="$(python3 -m site --user-base)/bin:$PATH"
 hash -r
-export LD_LIBRARY_PATH="$LLVM_BUILD_DIR/lib:${LD_LIBRARY_PATH:-}"
 command -v ptoas
 ptoas --version
 ```
@@ -282,10 +279,25 @@ ptoas test/lit/pto/empty_func.pto --pto-level=level3 -o outputfile.cpp
 # public function signature 不能直接暴露 !pto.vmi.* 类型
 ptoas test/lit/vmi_new/vmi_ptoas_cli_pipeline.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto -o -
 
+# 输出 VPTO 调度分析，不改变 IR
+ptoas input.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto \
+  --vpto-scheduler=analyze -o output.cpp
+
+# off（默认）完全禁用；on 执行相同分析，不重排 IR
+ptoas input.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto \
+  --vpto-scheduler=on -o output.cpp
+
 # 查看当前 ptoas release 版本号
 ptoas --version
 
 ```
+
+`--vpto-scheduler` 在 VPTO 发射流水线的最终 CSE 之后、发射合法性校验之前运行。
+目标模型仅支持 A5 Vector kernel；规范化后的 Cube 子模块会被跳过，不生成
+调度分析报告。在非 A5 架构上显式启用该选项会报错并终止编译。
+`analyze`/`on` 的确定性报告写入标准错误，包括区域边界、依赖 DAG、关键路径、
+目标资源占用和寄存器压力；生成代码仍写入正常输出。设计与分析格式详见
+[`docs/designs/vpto-scheduler-framework.md`](docs/designs/vpto-scheduler-framework.md)。
 
 ### 5.2 Python 接口 (Python API)
 

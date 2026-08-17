@@ -31,6 +31,7 @@ from ._types import (
     VMI_LANE_COUNTS,
     _ensure_tensor_storage_dtype,
     _resolve,
+    _vmi_bf16x2,
     vmi_mask_type,
     vmi_vreg_type,
 )
@@ -170,6 +171,13 @@ def _pointer_element_type(type_obj, *, context: str):
 def _type_bit_width(type_obj, *, context: str):
     if IntegerType.isinstance(type_obj):
         return IntegerType(type_obj).width
+    if _isinstance_pto_type(type_obj, "BF16x2Type"):
+        return 32
+    if any(
+        _isinstance_pto_type(type_obj, type_name)
+        for type_name in ("F4E1M2x2Type", "F4E2M1x2Type")
+    ):
+        return 8
     if Float8E4M3FNType.isinstance(type_obj) or Float8E5M2Type.isinstance(type_obj):
         return 8
     if F16Type.isinstance(type_obj) or BF16Type.isinstance(type_obj):
@@ -183,19 +191,59 @@ def _is_vmi_float_element_type(type_obj) -> bool:
     return any(
         cls.isinstance(type_obj)
         for cls in (BF16Type, F16Type, F32Type, Float8E4M3FNType, Float8E5M2Type)
+    ) or any(
+        _isinstance_pto_type(type_obj, type_name)
+        for type_name in ("BF16x2Type", "F4E1M2x2Type", "F4E2M1x2Type")
     )
 
 
-def _normalize_vmi_vcvt_rounding(mode, *, context: str):
+def _isinstance_pto_type(type_obj, type_name: str) -> bool:
+    type_cls = getattr(_pto, type_name, None)
+    if type_cls is None:
+        return False
+    try:
+        return type_cls.isinstance(type_obj)
+    except Exception:
+        return False
+
+
+def _is_bf16x2_type(type_obj) -> bool:
+    return _isinstance_pto_type(type_obj, "BF16x2Type")
+
+
+def _is_f4x2_type(type_obj) -> bool:
+    return any(
+        _isinstance_pto_type(type_obj, type_name)
+        for type_name in ("F4E1M2x2Type", "F4E2M1x2Type")
+    )
+
+
+def _validate_vmi_vcvt_bf16x2_pair(source_type, result_type, *, context: str) -> bool:
+    is_supported_pair = (
+        _is_bf16x2_type(source_type) and _is_f4x2_type(result_type)
+    ) or (
+        _is_f4x2_type(source_type) and _is_bf16x2_type(result_type)
+    )
+    if is_supported_pair:
+        return True
+    if _is_bf16x2_type(source_type) or _is_bf16x2_type(result_type):
+        raise TypeError(
+            f"{context} supports bf16x2 only for bf16x2 <-> "
+            f"f4E1M2x2/f4E2M1x2 conversion; got {source_type} -> {result_type}"
+        )
+    return False
+
+
+def _normalize_vmi_vcvt_rounding(mode, *, context: str, allowed=None):
     token = mode
     if not isinstance(token, str):
         token = str(token)
         if "." in token:
             token = token.rsplit(".", 1)[-1]
     normalized = token.strip().upper()
-    allowed = {"R", "A", "H", "Z"}
-    if normalized not in allowed:
-        expected = ", ".join(sorted(allowed))
+    allowed_modes = set(allowed or {"R", "A", "H", "Z"})
+    if normalized not in allowed_modes:
+        expected = ", ".join(sorted(allowed_modes))
         raise ValueError(
             f"{context} does not support rounding {mode!r}; expected one of {expected}"
         )
@@ -645,6 +693,7 @@ def _emit_reduce(
 class _VMINamespace:
     vreg = staticmethod(vmi_vreg_type)
     mask = staticmethod(vmi_mask_type)
+    bf16x2 = _vmi_bf16x2
 
     @staticmethod
     def vload(
@@ -991,28 +1040,56 @@ class _VMINamespace:
         if mask is not None:
             raise _unsupported_vmi_feature_error("pto.vmi.vcvt", "masked form")
         result_type = _derive_vcvt_result_type(source, to_dtype, context="pto.vmi.vcvt(...)")
+        source_type = _as_vmi_vreg_type(
+            _type_of(source),
+            context="pto.vmi.vcvt(...)",
+        )
+        is_bf16x2_pair = _validate_vmi_vcvt_bf16x2_pair(
+            source_type.element_type,
+            result_type.element_type,
+            context="pto.vmi.vcvt(...)",
+        )
+        is_bf16x2_to_f4x2 = is_bf16x2_pair and _is_bf16x2_type(
+            source_type.element_type
+        )
+        is_f4x2_to_bf16x2 = is_bf16x2_pair and _is_f4x2_type(
+            source_type.element_type
+        )
         if rounding is not None:
+            if is_f4x2_to_bf16x2:
+                raise ValueError(
+                    "pto.vmi.vcvt(...) does not support rounding for "
+                    "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
+                )
             rounding = _normalize_vmi_vcvt_rounding(
                 rounding,
                 context="pto.vmi.vcvt(..., rounding=...)",
+                allowed={"R", "A", "F", "Z", "C"} if is_bf16x2_to_f4x2 else None,
+            )
+        elif is_bf16x2_to_f4x2:
+            rounding = "R"
+        if is_bf16x2_to_f4x2 and saturate is not None:
+            raise ValueError(
+                "pto.vmi.vcvt(...) does not support saturate for bf16x2 -> "
+                "f4E1M2x2/f4E2M1x2 conversion"
+            )
+        if is_f4x2_to_bf16x2 and saturate is not None:
+            raise ValueError(
+                "pto.vmi.vcvt(...) does not support saturate for "
+                "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
             )
         if saturate is None:
             # The VMI verifier requires explicit "SAT" or "NOSAT" for
             # narrowing and fp-to-int directions.  Default to "SAT" when
             # the user does not specify.
-            src_bits = _type_bit_width(
-                _as_vmi_vreg_type(_type_of(source), context="pto.vmi.vcvt(...)").element_type,
-                context="pto.vmi.vcvt(...)",
-            )
+            src_bits = _type_bit_width(source_type.element_type, context="pto.vmi.vcvt(...)")
             dst_bits = _type_bit_width(
                 result_type.element_type,
                 context="pto.vmi.vcvt(...)",
             )
-            src_is_fp = _is_vmi_float_element_type(
-                _as_vmi_vreg_type(_type_of(source), context="pto.vmi.vcvt(...)").element_type
-            )
+            src_is_fp = _is_vmi_float_element_type(source_type.element_type)
             dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
-            if src_bits > dst_bits or (src_is_fp and not dst_is_fp):
+            if not is_bf16x2_pair and (src_bits > dst_bits or (src_is_fp and not dst_is_fp)):
                 saturate = "SAT"
         return _call_value(
             "vcvt",
@@ -1041,9 +1118,32 @@ class _VMINamespace:
 
     @staticmethod
     def vexpdif(x, max_value, mask, *, pmode=None, loc=None, ip=None):
+        context = "pto.vmi.vexpdif(...)"
+        x_type = _as_vmi_vreg_type(_type_of(x), context=context)
+        max_type = _as_vmi_vreg_type(_type_of(max_value), context=context)
+        if x_type != max_type:
+            raise TypeError(
+                f"{context} requires x and max_value to have identical VMI vreg types"
+            )
+        if not (
+            F16Type.isinstance(x_type.element_type)
+            or F32Type.isinstance(x_type.element_type)
+        ):
+            raise TypeError(f"{context} requires f16 or f32 input vectors")
+        mask_type = _as_vmi_mask_type(_type_of(mask), context=context)
+        if (
+            _vmi_mask_element_count(mask_type, context=context)
+            != x_type.element_count
+        ):
+            raise TypeError(f"{context} requires mask and input lane counts to match")
+        result_type = _pto.VMIVRegType.get(
+            x_type.element_count,
+            F32Type.get(),
+            layout=x_type.layout if F32Type.isinstance(x_type.element_type) else None,
+        )
         return _call_value(
             "vexpdif",
-            _type_of(max_value),
+            result_type,
             _raw(x),
             _raw(max_value),
             _required_mask(mask, context="pto.vmi.vexpdif(...)"),

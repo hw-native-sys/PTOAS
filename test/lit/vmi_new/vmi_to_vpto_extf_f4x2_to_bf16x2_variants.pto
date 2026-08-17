@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// Reverse widen (dequant) f4x2 -> bf16x2 variants matrix: 8->32, Packed4,
+// no rounding, no saturate. The physical pto.vcvt widens f4 -> bf16; each
+// P0-P3 part yields a bf16 register that is reinterpreted to bf16x2 with a
+// physical-noop vbitcast (mirror of viewVcvtSource in the truncf direction).
+// No vor: the four part results are independent registers.
+
+module {
+  // Single source register: 256 f4E1M2x2 (2048bit) -> 256 bf16x2 (8192bit,
+  // d4): 4 x vcvt{P0-P3} -> 4 x 128 bf16, each vbitcast to 64 bf16x2.
+  func.func @f4e1m2x2_to_bf16x2(
+      %src: !pto.vmi.vreg<256x!pto.f4E1M2x2>,
+      %dst: !pto.ptr<!pto.bf16x2, ub>,
+      %off: index) {
+    %r = pto.vmi.vcvt %src
+        : !pto.vmi.vreg<256x!pto.f4E1M2x2> -> !pto.vmi.vreg<256x!pto.bf16x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<256x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>
+    return
+  }
+
+  // Second packed FP4 format variant.
+  func.func @f4e2m1x2_to_bf16x2(
+      %src: !pto.vmi.vreg<256x!pto.f4E2M1x2>,
+      %dst: !pto.ptr<!pto.bf16x2, ub>,
+      %off: index) {
+    %r = pto.vmi.vcvt %src
+        : !pto.vmi.vreg<256x!pto.f4E2M1x2> -> !pto.vmi.vreg<256x!pto.bf16x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<256x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>
+    return
+  }
+}
+
+// LOWER-LABEL: func.func @f4e1m2x2_to_bf16x2(
+// LOWER: pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER-NOT: pto.vor
+// LOWER-NOT: rnd =
+// LOWER-NOT: sat =
+
+// LOWER-LABEL: func.func @f4e2m1x2_to_bf16x2(
+// LOWER: pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E2M1x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E2M1x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E2M1x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER: pto.vcvt {{.*}} {part = "P{{[0-3]}}"} : !pto.vreg<256x!pto.f4E2M1x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
+// LOWER: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// LOWER-NOT: pto.vor
+// LOWER-NOT: rnd =
+// LOWER-NOT: sat =

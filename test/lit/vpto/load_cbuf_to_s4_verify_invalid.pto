@@ -1,0 +1,211 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_source_space.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-SOURCE-SPACE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_destination_space.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-DESTINATION-SPACE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_source_type.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-SOURCE-TYPE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_destination_type.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-DESTINATION-TYPE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_type_mismatch.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-TYPE-MISMATCH
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_negative_start.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-NEGATIVE-START
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_start_overflow.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-START-OVERFLOW
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_zero_step.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-ZERO-STEP
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_step_overflow.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-STEP-OVERFLOW
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_zero_stride.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-ZERO-STRIDE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/ca_stride_overflow.pto -o - 2>&1 | FileCheck %s --check-prefix=CA-STRIDE-OVERFLOW
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/cb_transpose.pto -o - 2>&1 | FileCheck %s --check-prefix=CB-TRANSPOSE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/regular_fp4.pto -o - 2>&1 | FileCheck %s --check-prefix=REGULAR-FP4
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/regular_fp4_destination.pto -o - 2>&1 | FileCheck %s --check-prefix=REGULAR-FP4-DESTINATION
+
+//--- ca_source_space.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, gm>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, gm>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_destination_space.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_cb_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_source_type.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<i8, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<i8, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<i8, l1>, !pto.ptr<i8, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_destination_type.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<i8, l0b>
+    pto.load_cbuf_to_cb_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<i8, l0b>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_type_mismatch.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E1M2x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E1M2x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_start_overflow.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c65536 = arith.constant 65536 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %c0, %c65536, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_negative_start.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %cneg1 = arith.constant -1 : i64
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %cneg1, %c0, %c1, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_zero_step.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0b>
+    pto.load_cbuf_to_cb_s4 %src, %dst, %c0, %c0, %c1, %c0, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_step_overflow.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c256 = arith.constant 256 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0b>
+    pto.load_cbuf_to_cb_s4 %src, %dst, %c0, %c0, %c256, %c1, %c1, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_zero_stride.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %c0, %c0, %c1, %c1, %c0, %c1, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- ca_stride_overflow.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c65536 = arith.constant 65536 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c65536, %c0 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- cb_transpose.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0b>
+    pto.load_cbuf_to_cb_s4 %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1, %c2 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- regular_fp4.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0a>
+    pto.load_cbuf_to_ca %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1 : !pto.ptr<!pto.f4E2M1x2, l1>, !pto.ptr<!pto.f4E2M1x2, l0a>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+//--- regular_fp4_destination.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @test() attributes {pto.kernel} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %src = pto.castptr %c0 : i64 -> !pto.ptr<i8, l1>
+    %dst = pto.castptr %c0 : i64 -> !pto.ptr<!pto.f4E2M1x2, l0b>
+    pto.load_cbuf_to_cb %src, %dst, %c0, %c0, %c1, %c1, %c1, %c1 : !pto.ptr<i8, l1>, !pto.ptr<!pto.f4E2M1x2, l0b>, i64, i64, i64, i64, i64, i64
+    return
+  }
+}
+
+// CA-SOURCE-SPACE: 'pto.load_cbuf_to_ca_s4' op requires MAT source
+// CB-DESTINATION-SPACE: 'pto.load_cbuf_to_cb_s4' op requires RIGHT destination
+// CA-SOURCE-TYPE: 'pto.load_cbuf_to_ca_s4' op requires packed FP4 source element type f4e1m2x2 or f4e2m1x2
+// CB-DESTINATION-TYPE: 'pto.load_cbuf_to_cb_s4' op requires packed FP4 destination element type f4e1m2x2 or f4e2m1x2
+// CA-TYPE-MISMATCH: 'pto.load_cbuf_to_ca_s4' op requires source and destination packed FP4 element types to match
+// CA-NEGATIVE-START: 'pto.load_cbuf_to_ca_s4' op m_start must be non-negative
+// CA-START-OVERFLOW: 'pto.load_cbuf_to_ca_s4' op k_start must be <= 65535 to fit the hardware control field
+// CB-ZERO-STEP: 'pto.load_cbuf_to_cb_s4' op k_step must be greater than zero
+// CB-STEP-OVERFLOW: 'pto.load_cbuf_to_cb_s4' op m_step must be <= 255 to fit the hardware control field
+// CA-ZERO-STRIDE: 'pto.load_cbuf_to_ca_s4' op src_stride must be greater than zero
+// CA-STRIDE-OVERFLOW: 'pto.load_cbuf_to_ca_s4' op dst_stride must be <= 65535 to fit the hardware control field
+// CB-TRANSPOSE: 'pto.load_cbuf_to_cb_s4' op transpose must be <= 1 to fit the hardware control field
+// REGULAR-FP4: 'pto.load_cbuf_to_ca' op packed FP4 source requires the S4 load operation
+// REGULAR-FP4-DESTINATION: 'pto.load_cbuf_to_cb' op packed FP4 destination requires the S4 load operation

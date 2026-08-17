@@ -52,20 +52,6 @@ INCLUDE_REPLACEMENT = (
     "#include <pto/pto-inst.hpp>\n"
     "#include <pto/common/constants.hpp>\n"
     "\n"
-    "// Some PTO-ISA types are only available in the __CCE_AICORE__ compilation\n"
-    "// path, but `bisheng -xcce` still performs a host-side parse pass.\n"
-    "// Provide minimal fallbacks only when the corresponding header wasn't\n"
-    "// pulled in by the selected arch implementation.\n"
-    "#if !defined(__CCE_AICORE__) && !defined(TMRGSORT_HPP)\n"
-    "namespace pto {\n"
-    "struct MrgSortExecutedNumList {\n"
-    "    uint16_t mrgSortList0;\n"
-    "    uint16_t mrgSortList1;\n"
-    "    uint16_t mrgSortList2;\n"
-    "    uint16_t mrgSortList3;\n"
-    "};\n"
-    "} // namespace pto\n"
-    "#endif\n"
     "#ifndef __CPU_SIM\n"
     "#include \"acl/acl.h\"\n"
     "#endif\n"
@@ -75,7 +61,6 @@ UNSTABLE_A3_CUSTOM_GOLDEN_CASES = frozenset({
     "abs",
     "partmin",
     "prelu",
-    "rope_kv_cache",
     "rowexpanddiv",
     "rowexpandmul",
     "rowexpandsub",
@@ -104,9 +89,158 @@ CASE_INT_SCALAR_DEFAULTS = {
     for testcase in DEEPSEEK_V4_DIRECT_CASES
 }
 
+CASE_INT_SCALAR_DEFAULTS["hc_head_reduce"] = {"v9": 0, "v10": 1}
+CASE_INT_SCALAR_DEFAULTS["hc_post"] = {
+    "v6": 8,
+    "v7": 8,
+    "v8": 0,
+    "v9": 1,
+}
+CASE_INT_SCALAR_DEFAULTS["qr_hadamard_quant"] = {"v4": 0, "v5": 1}
+CASE_INT_SCALAR_DEFAULTS["rms_norm"] = {"v4": 0, "v5": 1}
+CASE_INT_SCALAR_DEFAULTS["swa_gather_kv"] = {"v4": 1, "v5": 0, "v6": 1}
+
+# Qwen3 decode exports use compact per-block inputs.  The generic fallback of
+# `1` for every dynamic integer selects the second batch/pair and makes the
+# golden builders address beyond those compact buffers.  Keep one context
+# block for the attention reductions, but select the first batch/block/pair.
+CASE_INT_SCALAR_DEFAULTS.update({
+    "down_proj_residual": {"v6": 0, "v7": 0},
+    "gate_proj": {"v4": 0, "v5": 0, "v6": 0},
+    "kv_proj": {"v6": 0, "v7": 0},
+    "online_softmax": {"v6": 0},
+    "out_proj_residual": {"v6": 0, "v7": 0},
+    "q_proj": {"v4": 0, "v5": 0},
+    "qk_matmul": {"v4": 0, "v6": 0},
+    "rope_kv_cache": {"v11": 0, "v12": 1},
+    "silu": {"v4": 0, "v5": 0, "v6": 0},
+    "softmax": {"v7": 0, "v8": 0},
+    "sv_matmul": {"v5": 0, "v6": 0},
+    "up_proj": {"v4": 0, "v5": 0, "v6": 0},
+})
+
+# PyPTO model exports pass the SPMD block index and block count as explicit
+# trailing scalar arguments.  The generated validation harness launches one
+# worker, so the representative invocation is always block 0 of 1.  Keep the
+# overrides sample-scoped because identically named kernels in other model
+# revisions can have different scalar signatures.
+SAMPLE_CASE_INT_SCALAR_DEFAULTS = {
+    "qwen3_14bdecodea3": {
+        # The exported projection kernels take tensor-view offsets followed by
+        # the PyPTO SPMD worker id/count.  Exercise the first valid view with a
+        # single worker; the generic value `1` selects a shifted weight block.
+        "k_proj": {"v4": 0, "v5": 0, "v6": 1},
+        "v_proj": {"v4": 0, "v5": 0, "v6": 1},
+        "q_proj": {"v4": 0, "v5": 0, "v6": 1},
+        "down_proj": {"v4": 0, "v5": 0, "v6": 0},
+        "out_proj": {"v4": 0, "v5": 0, "v6": 0},
+    },
+    "qwen3_14bprefilla3": {
+        # Dynamic tensor dimensions must describe the backing views, while
+        # offset and SPMD-index arguments select the first validation tile.
+        "gate_up_proj": {
+            "v6": 0,
+            "v7": 0,
+            "v8": 0,
+            "v9": 128,
+            "v10": 5_120,
+            "v11": 0,
+            "v12": 1,
+        },
+        "kv_proj": {"v6": 0, "v7": 5_120, "v8": 0, "v9": 1},
+        "out_proj_aic": {"v4": 0, "v5": 5_120, "v6": 0, "v7": 1},
+        "q_proj": {"v4": 0, "v5": 5_120, "v6": 0, "v7": 1},
+        "lm_head": {"v4": 1, "v5": 1, "v6": 0, "v7": 1},
+        "qk_pv_skew_probe": {
+            "v9": 0,
+            "v10": 0,
+            "v11": 1,
+            "v12": 0,
+            "v13": 0,
+            "v14": 0,
+            "v15": 1,
+            "v16": 128,
+            "v17": 0,
+            "v18": 1,
+        },
+        "qk_pv_online_phase": {
+            "v9": 1,
+            "v10": 0,
+            "v11": 0,
+            "v12": 1,
+            "v13": 0,
+            "v14": 0,
+            "v15": 0,
+            "v16": 0,
+            "v17": 1,
+            "v18": 128,
+            "v19": 0,
+            "v20": 1,
+        },
+    },
+    "deepseekv4decodea3": {
+        "qk_pv": {"v8": 0, "v9": 1},
+        "score": {"v11": 1, "v12": 0, "v13": 1},
+        "gate": {"v7": 0, "v8": 1},
+    },
+    "deepseekv4decodea5": {
+        "idx_qr_proj_matmul": {"v4": 0, "v5": 1},
+        # Exercise one complete 16-row tile instead of truncating arg5 / 16
+        # to zero, and select the first SPMD worker.
+        "kv_proj_matmul": {"v6": 16, "v7": 16, "v8": 0, "v9": 1},
+    },
+    "deepseekv4prodecodea5": {
+        "idx_qr_proj_matmul": {"v4": 0, "v5": 1},
+        "kv_score_proj": {"v8": 0, "v9": 1},
+    },
+    "deepseekv4flashdsparka5": {
+        "kv_proj_matmul": {"v8": 0, "v9": 1},
+        "qproj_matmul": {"v6": 0, "v7": 1},
+        "qr_proj_matmul": {"v8": 0, "v9": 1},
+        "lm_head_combine_gather": {"v4": 0, "v5": 1},
+        "rmsnorm_rope": {"v7": 0, "v8": 1},
+    },
+}
+
+# The generated EmitC for these atomic-add matmuls aliases the destination
+# tensor through intermediate GlobalTensor objects.  The generic writer scan
+# can lose that alias and fall back to the final pointer (the weight tensor),
+# which makes determinism validation compare an unchanged input.  Pin the
+# actual PTO destination parameter for the affected sample revisions.
+SAMPLE_CASE_OUTPUT_PARAMS = {
+    "deepseekv4decodea5": {
+        "kv_proj_matmul": ["v1"],
+    },
+    "deepseekv4flashdsparka5": {
+        "kv_proj_matmul": ["v1"],
+        "qr_proj_matmul": ["v1"],
+    },
+}
+
 CASE_BOOL_SCALAR_DEFAULTS = {}
 
 CASE_POINTER_COUNT_MINIMUMS = {
+    # These PyPTO kernels use the explicit SPMD block index to select GM
+    # subviews.  The EmitC footprint analysis sees one tile at a time but does
+    # not prove all loop iterations or the enclosing block offset, which left
+    # the generated A5 harness buffers smaller than the accessed tensor views
+    # and caused exit=139 during board execution.  Use the complete PTO tensor
+    # view sizes for the single-worker validation defaults above.
+    "hc_post": {
+        "v1": 8 * 16_384,
+        "v2": 8 * 4,
+        "v3": 8 * 4_096,
+        "v4": 8 * 16,
+        "v5": 8 * 16_384,
+    },
+    "kv_hadamard": {"v1": 2_048, "v2": 2_048, "v3": 16_384},
+    "merge_norm": {
+        # The packed sparse output is written through a large tiled GM address
+        # space even though each individual store only covers 448 bf16 values.
+        # Keep the backing buffer large enough for the maximum `v7=1` testcase
+        # offset emitted by the vendored DeepSeek V4 A3 sample.
+        "v2": 4_198_400,
+    },
     "down_proj_residual": {
         "v1": 123648,
         "v2": 123648,
@@ -115,6 +249,31 @@ CASE_POINTER_COUNT_MINIMUMS = {
         "v1": 123648,
         "v2": 123648,
     },
+    # These model kernels select GM subviews with dynamic base offsets.  The
+    # best-effort EmitC analysis sees the tile footprint but cannot always
+    # prove the enclosing loop/offset maxima, so use the complete PTO tensor
+    # view sizes as the validation backing-buffer lower bounds.
+    "exp_gate_mm": {"v1": 32_768, "v2": 2_097_152, "v3": 268_435_456},
+    "exp_up_mm": {"v1": 32_768, "v2": 2_097_152, "v3": 268_435_456},
+    "exp_w2_mm": {"v1": 65_536, "v2": 32_768, "v3": 268_435_456},
+    "gate": {"v1": 64, "v2": 65_536, "v3": 262_144, "v4": 16, "v5": 4_096, "v6": 16},
+    "hc_head_reduce": {
+        "v1": 1,
+        "v2": 8,
+        "v3": 128,
+        "v4": 128,
+        "v5": 32_768,
+        "v6": 131_072,
+    },
+    "idx_qr_proj_matmul": {"v1": 131_072, "v2": 8_192, "v3": 8_388_608},
+    "lm_head_matmul": {"v1": 1_034_240, "v2": 65_536, "v3": 264_765_440},
+    "proj_a_mm": {"v1": 262_144, "v2": 33_554_432, "v3": 131_072},
+    "proj_b_mm": {"v1": 524_288, "v2": 131_072, "v3": 33_554_432},
+    "qr_hadamard_quant": {"v1": 512 * 128, "v2": 512, "v3": 512 * 128},
+    "rms_norm": {"v1": 32_768, "v2": 32_768, "v3": 4_096},
+    "sh_gate_mm": {"v1": 32_768, "v2": 8_388_608, "v3": 32_768},
+    "sh_up_mm": {"v1": 32_768, "v2": 8_388_608, "v3": 32_768},
+    "swa_gather_kv": {"v1": 1_024 * 512, "v2": 8 * 128, "v3": 128 * 512},
     "tquant_mx": {
         # The generated MX auxiliary tiles use 1x32 Vec storage even though
         # the logical tensor views are 1x16. Keep the GM backing buffers large
@@ -132,6 +291,513 @@ CASE_POINTER_COUNT_MINIMUMS = {
         for testcase in DEEPSEEK_V4_DIRECT_CASES
     },
 }
+
+# The generic footprint analysis follows the currently selected tile, but
+# these model kernels address strided weight tensors whose backing storage is
+# larger than that tile.  Use the full tensor-view extents for the affected
+# source revision.  Scope by sample so older DeepSeek variants with the same
+# testcase names retain their already validated layouts.
+SAMPLE_CASE_POINTER_COUNT_MINIMUMS = {
+    "deepseekv4decodea3": {
+        # `rope_cs` fills two 8x32 output partitions at column offsets 0 and
+        # 32, and loads two 8x16 input partitions at offsets 0 and 16.  The
+        # best-effort footprint scan only sees the first loop iteration and
+        # used to allocate 480/464 elements for these 8x64 tensor views.  Keep
+        # the complete backing views so the second partition stays in bounds.
+        "rope_cs": {
+            "v2": 8 * 64,
+            "v3": 8 * 64,
+            "v4": 8 * 64,
+            "v5": 8 * 64,
+        },
+        # Mixed AIC/AIV kernels need their full exported tensor views plus the
+        # backing GM FIFO described by initialize_pipe. Keep these A3-export
+        # layouts sample-scoped because the A5 snapshot uses different shapes.
+        "qk_pv": {
+            "v1": 8 * 128,
+            "v2": 1_024 * 512,
+            "v3": 512,
+            "v4": 512,
+            "v5": 512 * 512,
+            "v6": 512 * 512,
+            "v7": 32_768,
+        },
+        "score": {
+            "v1": 4,
+            "v2": 4 * 2,
+            "v3": 512 * 128,
+            "v4": 512,
+            "v5": 16 * 64,
+            "v6": 8 * 4_096,
+            "v7": 256,
+            "v8": 128 * 128,
+            "v9": 128,
+            "v10": 16_384,
+        },
+        "gate": {
+            "v1": 64,
+            "v2": 16 * 4_096,
+            "v3": 64 * 4_096,
+            "v4": 16,
+            "v5": 16 * 256,
+            "v6": 2_048,
+        },
+    },
+    "qwen3_14bdecodea3": {
+        # The generic EmitC footprint analysis follows individual partition
+        # views and can miss later tiles in these large strided tensors.  Size
+        # the backing allocations from the complete PTO tensor-view shapes.
+        "k_proj": {
+            "v1": 16 * 1_024,
+            "v2": 16 * 5_120,
+            "v3": 5_120 * 1_024,
+        },
+        "v_proj": {
+            "v1": 16 * 1_024,
+            "v2": 16 * 5_120,
+            "v3": 5_120 * 1_024,
+        },
+        "q_proj": {
+            "v1": 16 * 5_120,
+            "v2": 16 * 5_120,
+            "v3": 5_120 * 5_120,
+        },
+        "down_proj": {
+            "v1": 16 * 17_408,
+            "v2": 17_408 * 5_120,
+            "v3": 16 * 5_120,
+        },
+        "out_proj": {
+            "v1": 16 * 5_120,
+            "v2": 5_120 * 5_120,
+            "v3": 16 * 5_120,
+        },
+    },
+    "qwen3_14bprefilla3": {
+        "gate_up_proj": {
+            "v1": 128 * 8_704,
+            "v2": 128 * 5_120,
+            "v3": 5_120 * 17_408,
+            "v4": 128 * 8_704,
+            "v5": 5_120 * 17_408,
+        },
+        "kv_proj": {
+            "v1": 64 * 1_024,
+            "v2": 64 * 1_024,
+            "v3": 64 * 5_120,
+            "v4": 5_120 * 1_024,
+            "v5": 5_120 * 1_024,
+        },
+        "out_proj_aic": {
+            "v1": 64 * 5_120,
+            "v2": 64 * 5_120,
+            "v3": 5_120 * 5_120,
+        },
+        "q_proj": {
+            "v1": 64 * 5_120,
+            "v2": 64 * 5_120,
+            "v3": 5_120 * 5_120,
+        },
+        # The exported SPMD worker uses a grid-stride loop over all 792
+        # vocabulary chunks (worker 0 visits chunks 0, 24, 48, ...).  Keep the
+        # full tensor-view backing storage so those non-contiguous reads stay
+        # within the allocation.
+        "lm_head": {
+            "v1": 152_064,
+            "v2": 16 * 5_120,
+            "v3": 152_064 * 5_120,
+        },
+        # The standalone mixed-kernel harness runs worker 0. Keep the complete
+        # tensor views reached by that worker and one 8-slot bidirectional GM
+        # FIFO (8 * 16 KiB == 32768 float elements), matching the upstream
+        # orchestration allocation per worker.
+        "qk_pv_skew_probe": {
+            "v1": 8_192,
+            "v2": 8_192 * 128,
+            "v3": 1,
+            "v4": 128 * 1_024,
+            "v5": 128 * 1_024,
+            "v6": 8_192 * 128,
+            "v7": 64 * 5_120,
+            "v8": 32_768,
+        },
+        # Match the first valid upstream orchestration call: one final token,
+        # cache block zero, worker zero, and one 8-slot bidirectional GM FIFO
+        # (8 * 8 KiB == 16384 float elements) for this mixed AIC/AIV kernel.
+        "qk_pv_online_phase": {
+            "v1": 8_192,
+            "v2": 8_192,
+            "v3": 8_192 * 128,
+            "v4": 1,
+            "v5": 128 * 1_024,
+            "v6": 128 * 1_024,
+            "v7": 8_192 * 128,
+            "v8": 16_384,
+        },
+    },
+    "qwen3decodea5": {
+        "sv_matmul": {
+            "v1": 2_048 * 128,
+            "v2": 2_048 * 256,
+            "v3": 524_288 * 128,
+        },
+    },
+    "qwen3_32bdecode4da5": {
+        "down_proj": {
+            "v1": 1_600 * 256,
+            "v2": 409_600 * 512,
+            "v3": 16 * 16 * 512,
+        },
+        "k_proj": {
+            "v1": 1_024 * 128,
+            "v2": 32_768 * 256,
+            "v3": 4 * 16 * 256,
+        },
+        "out_proj": {
+            "v1": 1_024 * 128,
+            "v2": 131_072 * 512,
+            "v3": 16 * 16 * 512,
+        },
+        "v_proj": {
+            "v1": 1_024 * 128,
+            "v2": 32_768 * 256,
+            "v3": 4 * 16 * 256,
+        },
+    },
+    "deepseekv4proprefilla5": {
+        "rope": {
+            "v1": 2_048 * 4_096,
+            "v2": 128 * 128 * 64,
+            "v3": 128 * 64,
+            "v4": 128 * 64,
+        },
+        "prefill_idx_qr_proj": {
+            "v1": 8_192,
+            "v2": 128 * 8_192,
+            "v3": 128 * 1_536,
+            "v4": 1_536 * 8_192,
+            "v5": 128,
+        },
+    },
+    "deepseekv4prodecodea5": {
+        "hca_cache_topk": {
+            "v1": 8,
+            "v2": 4,
+            "v3": 1_024,
+        },
+        "idx_qr_proj_matmul": {
+            "v1": 16 * 8_192,
+            "v2": 8 * 1_536,
+            "v3": 1_536 * 8_192,
+        },
+        "kv_score_proj": {
+            "v1": 7_168,
+            "v2": 512 * 7_168,
+            "v3": 512 * 7_168,
+            "v4": 16 * 512,
+            "v5": 16 * 512,
+        },
+    },
+    "deepseekv4flashmtpprefilla5": {
+        "merge_rope_pack": {
+            "v1": 128 * 8,
+            "v2": 16 * 64,
+            "v3": 128 * 64,
+            "v4": 128 * 64,
+            "v5": 8_192 * 512,
+            "v6": 1_024 * 4_096,
+            "v7": 1,
+            "v8": 1,
+            "v9": 512,
+            "v10": 64,
+        },
+        "prefill_idx_c4_rmsnorm_rope": {
+            "v1": 32,
+            "v2": 32,
+            "v3": 16_384 * 64,
+            "v4": 16_384 * 64,
+            "v5": 32 * 128,
+            "v6": 128,
+            "v7": 32 * 128,
+        },
+        "prefill_idx_qr_proj": {
+            "v1": 128 * 1_024,
+            "v2": 1_024 * 8_192,
+            "v3": 8_192,
+            "v4": 128 * 8_192,
+            "v5": 128,
+        },
+    },
+    "deepseekv4flashdsparka5": {
+        "kv_proj_matmul": {
+            "v1": 512,
+            "v2": 4_096,
+            "v3": 4_096 * 512,
+        },
+        "qproj_matmul": {
+            "v1": 32_768,
+            "v2": 1_024,
+            "v3": 1_024 * 32_768,
+        },
+        "qr_proj_matmul": {
+            "v1": 1_024,
+            "v2": 4_096,
+            "v3": 4_096 * 1_024,
+        },
+        "rmsnorm_rope": {
+            "v1": 16 * 64,
+            "v2": 16 * 64,
+            "v3": 16 * 128,
+            "v4": 16 * 128,
+            "v5": 128,
+        },
+        "gather_ori_kv": {
+            "v1": 49_152 * 512,
+            "v2": 128 * 128,
+            "v3": 512,
+        },
+        "lm_head_combine_gather": {
+            "v1": 128 * 129_280,
+            "v2": 128 * 129_280,
+        },
+        "merge_rope_pack": {
+            "v1": 128 * 8,
+            "v2": 16 * 64,
+            "v3": 128 * 64,
+            "v4": 128 * 64,
+            "v5": 8_192 * 512,
+            "v6": 1_024 * 4_096,
+            "v7": 1,
+            "v8": 1,
+            "v9": 512,
+            "v10": 64,
+        },
+        "prefill_idx_qr_proj": {
+            "v1": 128 * 1_024,
+            "v2": 1_024 * 8_192,
+            "v3": 8_192,
+            "v4": 128 * 8_192,
+            "v5": 128,
+        },
+    },
+    "deepseekv4decodea5": {
+        "hca_rope": {
+            "v1": 4 * 32,
+            "v2": 4 * 32,
+            "v3": 8 * 64,
+            "v4": 8 * 64,
+            "v5": 8,
+            "v6": 16_384 * 64,
+            "v7": 16_384 * 64,
+        },
+        "kv_proj_matmul": {
+            "v1": 16 * 512,
+            "v2": 16 * 4_096,
+            "v3": 4_096 * 512,
+        },
+    },
+    "deepseekv3_2prefillbacka5": {
+        "deepseek_v3_2_prefill_back_layer_incore_1": {
+            "v1": 64 * 16_384,
+            "v2": 16_384 * 7_168,
+            "v3": 64 * 7_168,
+        },
+        "deepseek_v3_2_prefill_back_layer_incore_5": {
+            "v1": 64 * 7_168,
+            "v2": 7_168 * 18_432,
+            "v3": 64 * 128,
+        },
+        "deepseek_v3_2_prefill_back_layer_incore_6": {
+            "v1": 64 * 7_168,
+            "v2": 7_168 * 18_432,
+            "v3": 64 * 128,
+        },
+        "deepseek_v3_2_prefill_back_layer_incore_8": {
+            "v1": 64 * 18_432,
+            "v2": 18_432 * 7_168,
+            "v3": 64 * 128,
+        },
+    },
+    "deepseekv3_2decodefronta5": {
+        "decode_cache_write": {
+            "v1": 16,
+            "v2": 256 * 1_024,
+            "v3": 256 * 1_024,
+            "v4": 8 * 1_024,
+            "v5": 9 * 1_024,
+            "v6": 32_768 * 1_024,
+            "v7": 4_096 * 1_024,
+        },
+        "kv_a_proj": {
+            "v1": 16 * 7_168,
+            "v2": 7_168 * 576,
+            "v3": 16 * 64,
+        },
+        "q_head_proj": {
+            "v1": 16 * 1_536,
+            "v2": 1_536 * 24_576,
+            "v3": 16 * 64,
+        },
+        "q_lora_proj": {
+            "v1": 16 * 7_168,
+            "v2": 7_168 * 1_536,
+            "v3": 16 * 1_536,
+        },
+        "s2_k_idx_proj": {
+            "v1": 16 * 7_168,
+            "v2": 7_168 * 128,
+            "v3": 16 * 64,
+        },
+        "s2_q_idx_proj": {
+            "v1": 16 * 1_536,
+            "v2": 1_536 * 8_192,
+            "v3": 16 * 128,
+        },
+        "s4_dispatch": {
+            "v1": 1,
+            "v2": 32_768 * 1_024,
+            "v3": 256 * 1_024,
+        },
+        "s4_softmax": {
+            "v1": 256 * 128,
+            "v2": 32_768 * 1_024,
+            "v3": 4_096 * 1_024,
+            "v4": 8 * 1_024,
+            "v5": 1_024,
+            "v6": 8 * 1_024,
+        },
+    },
+    "deepseekv3_2decodebacka5": {
+        "deepseek_v3_2_decode_back_layer_incore_0": {
+            "v1": 16 * 16_384,
+            "v2": 16_384 * 7_168,
+            "v3": 16 * 64,
+        },
+        "deepseek_v3_2_decode_back_layer_incore_3": {
+            "v1": 16 * 7_168,
+            "v2": 7_168 * 18_432,
+            "v3": 16 * 256,
+        },
+        "deepseek_v3_2_decode_back_layer_incore_4": {
+            "v1": 16 * 7_168,
+            "v2": 7_168 * 18_432,
+            "v3": 16 * 256,
+        },
+        "deepseek_v3_2_decode_back_layer_incore_6": {
+            "v1": 16 * 18_432,
+            "v2": 18_432 * 7_168,
+            "v3": 16 * 128,
+        },
+    },
+}
+
+CASE_COMPARE_PREFIX_COUNTS = {
+    # The dynamic output has shape [arg5, 32].  With the validation default
+    # arg5=1, only the first row is defined; the remaining physical ACC tile
+    # rows must not participate in the determinism comparison.
+    "hc_pre_linear": {"v3": 32},
+}
+
+QWEN3_DECODE_POINTER_COUNT_MINIMUMS = {
+    "down_proj_residual": {
+        "v1": 131072,
+        "v2": 131072,
+        "v3": 409600,
+        "v4": 209715200,
+        "v5": 8192,
+    },
+    "gate_proj": {
+        "v1": 131072,
+        "v2": 209715200,
+        "v3": 409600,
+    },
+    "kv_proj": {
+        "v1": 131072,
+        "v2": 8388608,
+        "v3": 8388608,
+        "v4": 16384,
+        "v5": 16384,
+    },
+    "online_softmax": {
+        "v1": 131072,
+        "v2": 1024,
+        "v3": 1024,
+        "v4": 8192,
+    },
+    "out_proj_residual": {
+        "v1": 131072,
+        "v2": 131072,
+        "v3": 131072,
+        "v4": 67108864,
+        "v5": 8192,
+    },
+    "post_rmsnorm": {
+        "v1": 131072,
+        "v2": 131072,
+        "v3": 8192,
+    },
+    "q_proj": {
+        "v1": 131072,
+        "v2": 67108864,
+        "v3": 131072,
+    },
+    "qk_matmul": {
+        "v1": 16384,
+        "v2": 524288,
+        "v3": 4194304,
+    },
+    "rmsnorm": {
+        "v1": 131072,
+        "v2": 131072,
+        "v3": 8192,
+    },
+    "rope_kv_cache": {
+        "v1": 16384,
+        "v2": 4194304,
+        "v3": 4194304,
+        "v4": 16384,
+        "v5": 64,
+        "v6": 64,
+        "v7": 64,
+        "v8": 64,
+        "v9": 16384,
+        "v10": 131072,
+    },
+    "silu": {
+        "v1": 409600,
+        "v2": 409600,
+        "v3": 409600,
+    },
+    "softmax": {
+        "v1": 1024,
+        "v2": 1024,
+        "v3": 524288,
+        "v4": 524288,
+    },
+    "sv_matmul": {
+        "v1": 65536,
+        "v2": 524288,
+        "v3": 4194304,
+    },
+    "up_proj": {
+        "v1": 131072,
+        "v2": 209715200,
+        "v3": 409600,
+    },
+}
+
+
+def _pointer_count_minimums_for_case(sample_name: str, testcase: str) -> dict[str, int]:
+    minimums = dict(CASE_POINTER_COUNT_MINIMUMS.get(testcase, {}))
+    sample_name_lc = sample_name.lower()
+    if sample_name_lc.startswith("qwen") and "decode" in sample_name_lc:
+        minimums.update(QWEN3_DECODE_POINTER_COUNT_MINIMUMS.get(testcase, {}))
+    minimums.update(
+        SAMPLE_CASE_POINTER_COUNT_MINIMUMS
+        .get(sample_name_lc, {})
+        .get(testcase, {})
+    )
+    return minimums
 
 
 def _parse_shape(text: str):
@@ -348,7 +1014,22 @@ def _describe_kernel_source(text: str):
 
     for base, group in mixed_groups.items():
         if "aic" in group and "aiv" in group:
-            params = group["aiv"]["raw_params"] or group["aic"]["raw_params"]
+            aic_params = group["aic"]["raw_params"]
+            aiv_params = group["aiv"]["raw_params"]
+            aiv_local_param = None
+            if (
+                len(aiv_params) == len(aic_params) + 1
+                and aiv_params[:len(aic_params)] == aic_params
+                and _extract_cpp_type(aiv_params[-1]) in {"int32_t", "int"}
+                and "%subblock_idx" in group["aiv"]["text"]
+            ):
+                # PyPTO mixed A3 exports append the lane-local subblock id only
+                # to the AIV function. It is supplied by the device runtime,
+                # not by the host launch ABI.
+                params = aic_params
+                aiv_local_param = _extract_cpp_name(aiv_params[-1])
+            else:
+                params = aiv_params or aic_params
             return {
                 "kind": "mixed",
                 "kernel_name": base,
@@ -357,6 +1038,7 @@ def _describe_kernel_source(text: str):
                 "writer_texts": [group["aiv"]["text"]],
                 "aic_text": group["aic"]["text"],
                 "aiv_text": group["aiv"]["text"],
+                "aiv_local_param": aiv_local_param,
                 "call_text": group["aiv"]["text"],
                 "needs_global_wrapper": False,
             }
@@ -408,6 +1090,7 @@ def _append_mixed_kernel_wrapper(
     raw_params: list[str],
     aic_text: str,
     aiv_text: str,
+    aiv_local_param: Optional[str] = None,
 ) -> str:
     pipe_decl_pattern = re.compile(
         r"^(?P<indent>\s*)auto\s+(?P<name>\w+)\s*=\s*(?P<type>TPipe<[^;=]+>)\s*\((?P<args>[^;]*)\)\s*;\s*$",
@@ -507,6 +1190,12 @@ def _append_mixed_kernel_wrapper(
 
     aic_body = _extract_function_body(aic_text)
     aiv_body = _extract_function_body(aiv_text)
+    if aiv_local_param:
+        aiv_body = re.sub(
+            rf"\b{re.escape(aiv_local_param)}\b",
+            "get_subblockid()",
+            aiv_body,
+        )
     aic_body, aic_has_tail = _strip_ptoas_auto_sync_tail(aic_body)
     aiv_body, aiv_has_tail = _strip_ptoas_auto_sync_tail(aiv_body)
     aic_decls = _extract_pipe_decls(aic_body)
@@ -1023,8 +1712,21 @@ def _default_bf16_max_ulp_for_cpp_type(cpp_type: str) -> int:
     return 1 if _is_bf16_cpp_type(cpp_type) else 0
 
 
-def _integer_scalar_default_value(testcase: str, name: str, host_type: str) -> Optional[int]:
-    override = CASE_INT_SCALAR_DEFAULTS.get(testcase, {}).get(name)
+def _integer_scalar_default_value(
+    testcase: str,
+    name: str,
+    host_type: str,
+    sample_name: str = "",
+) -> Optional[int]:
+    sample_override = (
+        SAMPLE_CASE_INT_SCALAR_DEFAULTS
+        .get(sample_name.lower(), {})
+        .get(testcase, {})
+        .get(name)
+    )
+    override = sample_override
+    if override is None:
+        override = CASE_INT_SCALAR_DEFAULTS.get(testcase, {}).get(name)
     if override is not None:
         return int(override)
     if re.match(r"^(u?int)(8|16|32|64)_t$", host_type) or host_type in {"int", "unsigned", "size_t"}:
@@ -1891,6 +2593,13 @@ def generate_testcase(
     for writer_text in kernel_info["writer_texts"]:
         output_param_names.extend(_detect_output_pointer_params(writer_text, non_runtime_pointer_param_names))
     output_param_names = _ordered_unique(output_param_names)
+    sample_output_param_names = (
+        SAMPLE_CASE_OUTPUT_PARAMS
+        .get(sample_root.name.lower(), {})
+        .get(testcase)
+    )
+    if sample_output_param_names is not None:
+        output_param_names = list(sample_output_param_names)
     if not output_param_names and non_runtime_pointer_param_names:
         output_param_names = [
             non_runtime_pointer_param_names[0]
@@ -1951,7 +2660,14 @@ def generate_testcase(
         p["name"]: default_value
         for p in params
         if p["kind"] == "scalar"
-        for default_value in [_integer_scalar_default_value(testcase, p["name"], p["host_type"])]
+        for default_value in [
+            _integer_scalar_default_value(
+                testcase,
+                p["name"],
+                p["host_type"],
+                sample_root.name,
+            )
+        ]
         if default_value is not None
     }
     inferred_counts = {}
@@ -1959,7 +2675,11 @@ def generate_testcase(
         partial_counts = _infer_gm_pointer_elem_counts(analysis_text, pointer_param_names, seed_int_env=scalar_int_defaults)
         for name, count in partial_counts.items():
             inferred_counts[name] = max(inferred_counts.get(name, 0), count)
-    for name, count in CASE_POINTER_COUNT_MINIMUMS.get(testcase, {}).items():
+    pointer_count_minimums = _pointer_count_minimums_for_case(
+        sample_root.name,
+        testcase,
+    )
+    for name, count in pointer_count_minimums.items():
         inferred_counts[name] = max(inferred_counts.get(name, 0), int(count))
     ptr_elem_counts = {}
     for p in data_ptrs:
@@ -2043,7 +2763,12 @@ def generate_testcase(
             bool_override = _bool_scalar_default_value(testcase, p["name"])
             value = "true" if bool_override is None else ("true" if bool_override else "false")
         elif re.match(r"^(u?int)(8|16|32|64)_t$", t) or t in {"int", "unsigned", "size_t"}:
-            int_override = _integer_scalar_default_value(testcase, p["name"], t)
+            int_override = _integer_scalar_default_value(
+                testcase,
+                p["name"],
+                t,
+                sample_root.name,
+            )
             value = "1" if int_override is None else str(int_override)
         elif t in {"float"}:
             value = "1.0f"
@@ -2421,6 +3146,7 @@ endif()
             raw_params,
             kernel_info["aic_text"],
             kernel_info["aiv_text"],
+            kernel_info.get("aiv_local_param"),
         )
 
     kernel_out = output_dir / f"{testcase}_kernel.cpp"
@@ -2660,6 +3386,9 @@ endif()
         file_cnt = ptr_elem_counts.get(name, logical_elem_count)
         if file_cnt and req < int(file_cnt):
             compare_prefix_counts[name] = req
+    for name, count in CASE_COMPARE_PREFIX_COUNTS.get(testcase, {}).items():
+        file_cnt = int(ptr_elem_counts.get(name, logical_elem_count))
+        compare_prefix_counts[name] = min(file_cnt, int(count))
     # TMRGSORT format2 testcase writes three contiguous regions:
     # 2-way (256) + 3-way (384) + 4-way (up to 512).
     # With 4-way exhausted mode, the stable worst-case valid prefix for 4-way

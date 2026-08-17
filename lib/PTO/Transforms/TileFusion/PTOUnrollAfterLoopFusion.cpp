@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "PTO/IR/PTO.h" // FusionRegionOp
@@ -179,7 +180,7 @@ struct PTOUnrollAfterLoopFusion
     // Gather all scf.for in post-order (innermost first). The walk callback
     // only collects; every mutation happens in the loop below, after the walk
     // completes, so we never walk IR being rewritten under us.
-    SmallVector<scf::ForOp, 4> candidates;
+    SmallVector<scf::ForOp, mlir::pto::kValue4> candidates;
     func.walk([&](scf::ForOp forOp) { candidates.push_back(forOp); });
 
     for (scf::ForOp forOp : candidates) {

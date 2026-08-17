@@ -15,6 +15,22 @@ module {
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<256xi16>
     return %cast : !pto.vmi.vreg<256xi16>
   }
+
+  func.func @vmi_to_vpto_bitcast_bf16_to_bf16x2(
+      %value: !pto.vmi.vreg<128xbf16>)
+      -> !pto.vmi.vreg<64x!pto.bf16x2> {
+    %cast = pto.vmi.vinterpret_cast %value
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    return %cast : !pto.vmi.vreg<64x!pto.bf16x2>
+  }
+
+  func.func @vmi_to_vpto_bitcast_bf16x2_to_bf16(
+      %value: !pto.vmi.vreg<64x!pto.bf16x2>)
+      -> !pto.vmi.vreg<128xbf16> {
+    %cast = pto.vmi.vinterpret_cast %value
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<128xbf16>
+    return %cast : !pto.vmi.vreg<128xbf16>
+  }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_bitcast_f32_to_i16(
@@ -27,3 +43,19 @@ module {
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_bitcast_bf16_to_bf16x2(
+// CHECK-SAME: %[[BF16:[^)]+]]: !pto.vreg<128xbf16>
+// CHECK-SAME: -> !pto.vreg<64x!pto.bf16x2>
+// CHECK: %[[PAIR:.*]] = pto.vbitcast %[[BF16]] : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
+// CHECK: return %[[PAIR]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+
+// CHECK-LABEL: func.func @vmi_to_vpto_bitcast_bf16x2_to_bf16(
+// CHECK-SAME: %[[PAIR_IN:[^)]+]]: !pto.vreg<64x!pto.bf16x2>
+// CHECK-SAME: -> !pto.vreg<128xbf16>
+// CHECK: %[[BF16_OUT:.*]] = pto.vbitcast %[[PAIR_IN]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
+// CHECK: return %[[BF16_OUT]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.

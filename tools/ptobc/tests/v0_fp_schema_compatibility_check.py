@@ -22,6 +22,7 @@ EXPECTED = {
     0x102E: ("pto.tinsert", 0x00, 5),
     0x1038: ("pto.tmov", 0x00, 2),
     0x1039: ("pto.tmov", 0x00, 3),
+    0x1047: ("pto.tquant", 0x02, 3),
     0x1065: ("pto.tstore", 0x02, 0),
     0x1066: ("pto.tstore", 0x00, 3),
 }
@@ -49,6 +50,10 @@ def main() -> int:
     if mismatches:
         for opcode, (actual, expected) in mismatches.items():
             print(f"{opcode}: actual={actual}, expected={expected}", file=sys.stderr)
+        return 1
+    if re.search(r'"pto\.tquant\.mx"', text):
+        print("pto.tquant.mx must not be added to the v0 known-op table",
+              file=sys.stderr)
         return 1
     return 0
 

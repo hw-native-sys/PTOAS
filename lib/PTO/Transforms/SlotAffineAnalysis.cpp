@@ -10,6 +10,7 @@
 
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -24,12 +25,14 @@ namespace pto {
 
 Value findMultiTileSlotExpr(Value v) {
   int hops = 0;
-  while (v && hops++ < 32) {
+  while (v && hops++ < mlir::pto::kValue32) {
     Operation *op = v.getDefiningOp();
-    if (!op)
+    if (!op) {
       return {};
-    if (auto get = dyn_cast<pto::MultiTileGetOp>(op))
+    }
+    if (auto get = dyn_cast<pto::MultiTileGetOp>(op)) {
       return get.getSlot();
+    }
     if (auto subview = dyn_cast<pto::SubViewOp>(op)) {
       v = subview.getSource();
       continue;
@@ -48,6 +51,8 @@ Value findMultiTileSlotExpr(Value v) {
 }
 
 namespace {
+
+constexpr int kMaxAddSubPeelCount = 4;
 
 // Canonical form `(innerSym + innerOffset) mod N`. `innerSym` may be null
 // when the input is a pure constant -- then the canonical form is just
@@ -130,10 +135,11 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
     // Peel at most one add/sub of a constant.
     Value rem = inner;
     int peeled = 0;
-    while (peeled++ < 4) {
+    while (peeled++ < kMaxAddSubPeelCount) {
       Value next;
-      if (!peelAddSubConst(rem, next, offset))
+      if (!peelAddSubConst(rem, next, offset)) {
         break;
+      }
       rem = next;
     }
     int64_t cst;
@@ -174,16 +180,19 @@ static int64_t pyMod(int64_t a, int64_t n) {
 } // namespace
 
 SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
-  if (!a || !b || N == 0)
+  if (!a || !b || N == 0) {
     return SlotRelation::kUnknown;
+  }
 
   // Shortcut: same SSA value -> always equal regardless of N.
-  if (a == b)
+  if (a == b) {
     return SlotRelation::kEqual;
+  }
 
   SlotForm fa, fb;
-  if (!extractSlotForm(a, N, fa) || !extractSlotForm(b, N, fb))
+  if (!extractSlotForm(a, N, fa) || !extractSlotForm(b, N, fb)) {
     return SlotRelation::kUnknown;
+  }
 
   // Only compare slot forms that share the canonical `mod N` window the
   // caller asked about. The shared utility leaves slots that were not

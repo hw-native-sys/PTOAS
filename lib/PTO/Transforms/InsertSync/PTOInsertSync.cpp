@@ -62,13 +62,13 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-
     // Backend-partitioned PTODSL containers carry private func declarations
     // in the outer child module to model cross-child calls. Those declaration
     // funcs have a function type but no entry block arguments, so the
     // translator's argument walk must not run on them.
-    if (func.isDeclaration())
+    if (func.isDeclaration()) {
       return;
+    }
 
     // If the function already contains explicit synchronization ops (either
     // low-level pipe flags or the higher-level record/wait events), do not run
@@ -100,7 +100,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     translator.Build();
 
     // 如果 IR 太简单，直接跳过
-    if (syncIR.size() <= 1) return;
+    if (syncIR.size() <= 1) {
+      return;
+    }
 
     dumpInsertSyncPhase("After Translator", syncIR, syncOpsStorage,
                         func.getOperation());

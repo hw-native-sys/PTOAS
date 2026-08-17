@@ -9,6 +9,7 @@
 //===- PTORemoveIdentityTMov.cpp -----------------------------------------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
@@ -37,10 +38,12 @@ using namespace mlir::pto;
 namespace {
 
 static std::optional<unsigned> getIntegerLikeBitWidth(Type type) {
-  if (auto intTy = dyn_cast<IntegerType>(type))
+  if (auto intTy = dyn_cast<IntegerType>(type)) {
     return intTy.getWidth();
-  if (isa<IndexType>(type))
-    return 64;
+  }
+  if (isa<IndexType>(type)) {
+    return mlir::pto::kValue64;
+  }
   return std::nullopt;
 }
 
@@ -92,23 +95,28 @@ static std::optional<APInt> tryEvalIntegerLikeConstant(Value value) {
     return std::nullopt;
   }
 
-  if (auto castOp = dyn_cast<arith::IndexCastOp>(defOp))
+  if (auto castOp = dyn_cast<arith::IndexCastOp>(defOp)) {
     return evalSignedCast(castOp.getIn(), castOp.getType());
-  if (auto castOp = dyn_cast<arith::IndexCastUIOp>(defOp))
+  }
+  if (auto castOp = dyn_cast<arith::IndexCastUIOp>(defOp)) {
     return evalUnsignedCast(castOp.getIn(), castOp.getType());
-  if (auto castOp = dyn_cast<arith::ExtSIOp>(defOp))
+  }
+  if (auto castOp = dyn_cast<arith::ExtSIOp>(defOp)) {
     return evalSignedCast(castOp.getIn(), castOp.getType());
-  if (auto castOp = dyn_cast<arith::ExtUIOp>(defOp))
+  }
+  if (auto castOp = dyn_cast<arith::ExtUIOp>(defOp)) {
     return evalUnsignedCast(castOp.getIn(), castOp.getType());
-  if (auto castOp = dyn_cast<arith::TruncIOp>(defOp))
+  }
+  if (auto castOp = dyn_cast<arith::TruncIOp>(defOp)) {
     return evalTruncCast(castOp.getIn(), castOp.getType());
+  }
 
   return std::nullopt;
 }
 
 static std::optional<int64_t> tryEvalI64Constant(Value value) {
   std::optional<APInt> apInt = tryEvalIntegerLikeConstant(value);
-  if (!apInt || apInt->getBitWidth() > 64) {
+  if (!apInt || apInt->getBitWidth() > mlir::pto::kValue64) {
     return std::nullopt;
   }
   return apInt->getSExtValue();
@@ -153,8 +161,9 @@ tryGetConcreteRootAddress(const BaseMemInfo *info) {
     return std::nullopt;
   }
 
-  if (auto alloc = dyn_cast<pto::AllocTileOp>(defOp))
+  if (auto alloc = dyn_cast<pto::AllocTileOp>(defOp)) {
     return tryEvalI64Constant(alloc.getAddr());
+  }
 
   return std::nullopt;
 }
@@ -312,21 +321,26 @@ static bool hasCompatibleIdentityTypes(TMovOp op) {
 }
 
 static bool hasLowPrecisionElement(Value value) {
-  if (auto tileTy = dyn_cast<TileBufType>(value.getType()))
+  if (auto tileTy = dyn_cast<TileBufType>(value.getType())) {
     return isPTOLowPrecisionType(tileTy.getElementType());
-  if (auto memrefTy = dyn_cast<MemRefType>(value.getType()))
+  }
+  if (auto memrefTy = dyn_cast<MemRefType>(value.getType())) {
     return isPTOLowPrecisionType(memrefTy.getElementType());
+  }
   return false;
 }
 
 static bool touchesLowPrecisionElement(TMovOp op) {
-  if (hasLowPrecisionElement(op.getSrc()) || hasLowPrecisionElement(op.getDst()))
+  if (hasLowPrecisionElement(op.getSrc()) || hasLowPrecisionElement(op.getDst())) {
     return true;
+  }
   return llvm::any_of(op->getResults(), [](OpResult result) {
-    if (auto tileTy = dyn_cast<TileBufType>(result.getType()))
+    if (auto tileTy = dyn_cast<TileBufType>(result.getType())) {
       return isPTOLowPrecisionType(tileTy.getElementType());
-    if (auto memrefTy = dyn_cast<MemRefType>(result.getType()))
+    }
+    if (auto memrefTy = dyn_cast<MemRefType>(result.getType())) {
       return isPTOLowPrecisionType(memrefTy.getElementType());
+    }
     return false;
   });
 }
@@ -335,7 +349,6 @@ static bool
 isIdentityTMovByMemInfo(TMovOp op, const Buffer2MemInfoMap &buffer2MemInfoMap) {
   Value src = op.getSrc();
   Value dst = op.getDst();
-
   if (!isStaticallyAddressableValue(src) || !isStaticallyAddressableValue(dst)) {
     return false;
   }
@@ -355,8 +368,8 @@ struct PTORemoveIdentityTMovPass
           PTORemoveIdentityTMovPass> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    SmallVector<TMovOp, 16> identityMoves;
-    SmallVector<TMovOp, 16> memInfoCandidates;
+    SmallVector<TMovOp, mlir::pto::kValue16> identityMoves;
+    SmallVector<TMovOp, mlir::pto::kValue16> memInfoCandidates;
 
     func.walk([&](TMovOp op) {
       if (!hasPlainTMovSemantics(op) || !hasCompatibleIdentityTypes(op) ||

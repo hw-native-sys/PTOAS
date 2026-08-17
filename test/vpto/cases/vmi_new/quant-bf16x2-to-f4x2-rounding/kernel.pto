@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// -----------------------------------------------------------------------------
+// case: vmi_new/quant-bf16x2-to-f4x2-rounding
+// family: conversion
+// target_ops: pto.vmi.vcvt (bf16x2 -> f4E1M2x2)
+// scenarios: rounding {R,A,Z} exercise tie-breaking differences on
+//            f4-boundary input values. Three chunks
+//            of the same 128-bf16 boundary input are converted with rounding
+//            R / A / Z and written to dst regions 0/1/2, so the golden can
+//            verify the hardware honors each rounding mode (RNE/RTA/RTZ).
+//            H is rejected by the bf16x2 -> f4x2 VMI contract.
+// -----------------------------------------------------------------------------
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_quant_bf16x2_to_f4x2_rounding_kernel(%src_gm: !pto.ptr<bf16, gm>,
+                                                      %dst_gm: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c192_i64 = arith.constant 192 : i64
+    %c768_i64 = arith.constant 768 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_dst_u8 = pto.castptr %c1024_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_dst_f4 = pto.castptr %c1024_i64 : i64 -> !pto.ptr<!pto.f4E1M2x2, ub>
+
+    // src: 384 bf16 = 768 bytes (3 chunks of 128); dst: 192 bytes (3 x 64 f4x2).
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c768_i64
+      nburst(%c1_i64, %c768_i64, %c768_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %dst_gm, %ub_dst_u8, %c0_i64, %c192_i64
+      nburst(%c1_i64, %c192_i64, %c192_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      // chunk 0: rounding R (RNE)
+      %bf0 = pto.vmi.vload %ub_src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+      %p0 = pto.vmi.vinterpret_cast %bf0
+          : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+      %r0 = pto.vmi.vcvt %p0 {rounding = "R"}
+          : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+      pto.vmi.vstore %r0, %ub_dst_f4[%c0]
+          : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+
+      // chunk 1: rounding A (RTA)
+      %bf1 = pto.vmi.vload %ub_src[%c128] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+      %p1 = pto.vmi.vinterpret_cast %bf1
+          : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+      %r1 = pto.vmi.vcvt %p1 {rounding = "A"}
+          : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+      pto.vmi.vstore %r1, %ub_dst_f4[%c64]
+          : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+
+      // chunk 2: rounding Z (RTZ)
+      %bf2 = pto.vmi.vload %ub_src[%c256] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+      %p2 = pto.vmi.vinterpret_cast %bf2
+          : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+      %r2 = pto.vmi.vcvt %p2 {rounding = "Z"}
+          : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+      pto.vmi.vstore %r2, %ub_dst_f4[%c128]
+          : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst_u8, %dst_gm, %c192_i64
+      nburst(%c1_i64, %c192_i64, %c192_i64)
+      : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

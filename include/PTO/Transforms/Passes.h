@@ -111,8 +111,11 @@ std::unique_ptr<Pass> createPTOUnrollAfterLoopFusionPass();
 std::unique_ptr<Pass> createPTOFlattenFusionRegionPass();
 std::unique_ptr<Pass> createVPTOPtrNormalizePass();
 std::unique_ptr<Pass> createVPTOPtrCastCleanupPass();
+std::unique_ptr<Pass> createVPTOCombineReductionsPass();
 std::unique_ptr<Pass> createVPTOOptimizeVcvtPass();
 std::unique_ptr<Pass> createVPTOMaskSimplifyPass();
+std::unique_ptr<Pass>
+createVPTOSchedulerPass(const VPTOSchedulerOptions &options = {});
 LogicalResult validateVPTOAuthoringIR(ModuleOp module,
                                       llvm::raw_ostream *diagOS = nullptr);
 LogicalResult validateVPTOEmissionIR(ModuleOp module,
@@ -136,6 +139,7 @@ std::unique_ptr<Pass> createVMILegalizeArithSelectPass();
 std::unique_ptr<Pass> createVMILowerUnifiedToLegacyPass();
 std::unique_ptr<Pass> createVMINormalizeSignlessIntToUnsignedPass();
 std::unique_ptr<Pass> createVMIToVPTOPass();
+std::unique_ptr<Pass> createPTOExpandSoftLibPass();
 std::unique_ptr<Pass> createInsertTemplateAttributesPass();
 std::unique_ptr<Pass> createExpandTileOpPass();
 std::unique_ptr<Pass> createFoldTileBufIntrinsicsPass();

@@ -89,9 +89,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
             -> !pto.vmi.vreg<256xf32>
         %i32 = pto.vmi.vcvt %shifted {saturate = "SAT"}
-            : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xi32>
+            : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xsi32>
         %u8 = pto.vmi.vcvt %i32 {saturate = "SAT"}
-            : !pto.vmi.vreg<256xi32> -> !pto.vmi.vreg<256xui8>
+            : !pto.vmi.vreg<256xsi32> -> !pto.vmi.vreg<256xui8>
         pto.vmi.vstore %u8, %ub_dst[%elem_offset]
             : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>
       }

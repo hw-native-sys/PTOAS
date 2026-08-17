@@ -306,13 +306,15 @@ static void verifyOrSetLayoutAttr(Operation *op,
 
 static std::optional<Layout> inferFromStaticMemRefTy(MemRefType mrTy) {
   if (!mrTy.hasStaticShape() || mrTy.getRank() == 0 ||
-      mrTy.getRank() > kPaddedLayoutRank)
+      mrTy.getRank() > kPaddedLayoutRank) {
     return std::nullopt;
+  }
   SmallVector<int64_t> strideInts;
   int64_t offset = ShapedType::kDynamic;
   if (failed(
-          mlir::pto::getPTOMemRefStridesAndOffset(mrTy, strideInts, offset)))
+          mlir::pto::getPTOMemRefStridesAndOffset(mrTy, strideInts, offset))) {
     return std::nullopt;
+  }
   if (offset == ShapedType::kDynamic ||
       llvm::any_of(strideInts,
                    [](int64_t s) { return s == ShapedType::kDynamic; })) {
@@ -384,7 +386,7 @@ struct LayoutPreference {
 
 static LayoutPreference collectPreferredLayoutFromConsumers(Value tensorView) {
   LayoutPreference result;
-  auto mergePref = [&](std::optional<Layout> candidate) {
+  auto mergePref = [&result](std::optional<Layout> candidate) {
     if (!candidate) {
       return;
     }
@@ -398,7 +400,7 @@ static LayoutPreference collectPreferredLayoutFromConsumers(Value tensorView) {
     }
   };
 
-  auto walkUses = [&](auto &&self, Value v) -> void {
+  auto walkUses = [&mergePref](auto &&self, Value v) -> void {
     for (OpOperand &use : v.getUses()) {
       Operation *owner = use.getOwner();
       unsigned operandIndex = use.getOperandNumber();
@@ -458,8 +460,9 @@ static std::optional<Layout> inferMakeTensorViewLayout(
   auto pref = collectPreferredLayoutFromConsumers(op.getResult());
   if (!pref.conflict && pref.preferred &&
       (*pref.preferred == Layout::MX_A_ZZ ||
-       *pref.preferred == Layout::MX_B_NN))
+       *pref.preferred == Layout::MX_B_NN)) {
     return pref.preferred;
+  }
   std::optional<Layout> preferredForAmbiguous = std::nullopt;
   if (!pref.conflict && isMinorColsOne(shape)) {
     preferredForAmbiguous = pref.preferred;
@@ -551,8 +554,9 @@ static ResolvedLayoutInfo resolveLayoutFromViewValue(Value v) {
       info.owner = def;
       info.layout = layoutAttr.getLayout();
       if (auto inferred =
-              def->getAttrOfType<BoolAttr>(kInferredLayoutAttrName))
+              def->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
         info.inferred = inferred.getValue();
+      }
       return info;
     }
     if (auto part = dyn_cast<PartitionViewOp>(def)) {

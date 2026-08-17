@@ -85,7 +85,7 @@ for (int i = 0; i < N; i++)
 ### `pto.vdiv`
 
 - **syntax:** `%result = pto.vdiv %lhs, %rhs, %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask<G> -> !pto.vreg<NxT>`
-- **A5 types:** f16, f32 only (no integer division)
+- **A5 types:** f16, f32; i32 is materialized through the A5 software library.
 
 ```c
 for (int i = 0; i < N; i++)
@@ -95,9 +95,13 @@ for (int i = 0; i < N; i++)
 - **inputs:** `%lhs` is the numerator, `%rhs` is the denominator, and `%mask`
   selects active lanes.
 - **outputs:** `%result` is the lane-wise quotient.
-- **constraints and limitations:** Floating-point element types only. Active
-  denominators containing `+0` or `-0` follow the target's exceptional
-  behavior.
+- **constraints and limitations:** i32 division is rounded toward zero and is
+  exact for every nonzero denominator, including values outside f32's exact
+  range. It is expanded late to a PTODSL SoftOps implementation because the
+  released BiSheng toolchain cannot lower the integer HiVM intrinsic reliably.
+  The overflowing pair `INT32_MIN / -1` follows the target's two's-complement
+  result representation. Division by zero is undefined. Active floating-point
+  denominators containing `+0` or `-0` follow the target's exceptional behavior.
 
 ---
 

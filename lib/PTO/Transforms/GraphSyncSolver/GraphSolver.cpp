@@ -23,14 +23,14 @@
 //===----------- GraphSolver.cpp ---- Graph Sync Solver -------------------===//
 //===----------------------------------------------------------------------===//
 
-#include "PTO/Transforms/GraphSyncSolver/GraphSolver.h"
-
-#include "PTO/IR/PTO.h"
-#include "PTO/Transforms/GraphSyncSolver/Utility.h"
-#include "llvm/Support/Debug.h"
 #include <optional>
 #include <queue>
 #include <utility>
+#include "PTO/IR/PTO.h"
+#include "PTO/Transforms/GraphSyncSolver/GraphSolver.h"
+#include "PTO/Transforms/GraphSyncSolver/Utility.h"
+#include "llvm/Support/Debug.h"
+
 
 #define DEBUG_TYPE "PTO-gss-graph-solver"
 

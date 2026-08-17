@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Keep scalar loop state outside physical sections. The same structured loop
+// shape is valid for scalar and tile-domain bodies.
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @scalar_while(%limit: i32) -> i32 {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %result = scf.while (%value = %zero) : (i32) -> i32 {
+      %keep = arith.cmpi slt, %value, %limit : i32
+      scf.condition(%keep) %value : i32
+    } do {
+    ^bb0(%value2: i32):
+      %next = arith.addi %value2, %one : i32
+      scf.yield %next : i32
+    }
+    return %result : i32
+  }
+
+  func.func @cube_while(%limit: i32) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %result = scf.while (%value = %zero) : (i32) -> i32 {
+      %keep = arith.cmpi slt, %value, %limit : i32
+      scf.condition(%keep) %value : i32
+    } do {
+    ^bb0(%value2: i32):
+      pto.section.cube {
+        pto.sync.set <PIPE_MTE1>, 0
+      }
+      %next = arith.addi %value2, %one : i32
+      scf.yield %next : i32
+    }
+    func.call @consume_i32(%result) : (i32) -> ()
+    return
+  }
+
+  func.func private @consume_i32(i32)
+}
+
+// CHECK-LABEL: AICORE int32_t scalar_while(
+// CHECK: goto [[SCALAR_HEADER:label[0-9]+]];
+// CHECK: [[SCALAR_HEADER]]:
+// CHECK: if ({{.*}}) {
+// CHECK: goto [[SCALAR_BODY:label[0-9]+]];
+// CHECK: } else {
+// CHECK: goto [[SCALAR_EXIT:label[0-9]+]];
+// CHECK: [[SCALAR_BODY]]:
+// CHECK: goto [[SCALAR_HEADER]];
+// CHECK: [[SCALAR_EXIT]]:
+// CHECK: return
+// CHECK-LABEL: AICORE void cube_while(
+// CHECK: goto [[CUBE_HEADER:label[0-9]+]];
+// CHECK: [[CUBE_HEADER]]:
+// CHECK: [[CUBE_BODY:label[0-9]+]]:
+// CHECK: set_intra_block(PIPE_MTE1, 0);
+// CHECK: goto [[CUBE_HEADER]];

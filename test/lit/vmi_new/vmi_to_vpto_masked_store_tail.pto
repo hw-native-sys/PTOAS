@@ -29,8 +29,8 @@ module {
 // CHECK-SAME: %[[M1:[^,]+]]: !pto.mask<b32>
 // CHECK-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
 // CHECK-SAME: %[[OFF:[^)]+]]: index
-// CHECK: pto.vsts %[[V0]], %[[DST]][%[[OFF]]], %[[M0]]
 // CHECK: %[[C36:.*]] = arith.constant 36 : i32
+// CHECK: pto.vsts %[[V0]], %[[DST]][%[[OFF]]], %[[M0]]
 // CHECK: %[[TAIL:.*]], %{{.*}} = pto.plt_b32 %[[C36]] : i32 -> !pto.mask<b32>, i32
 // CHECK: %[[ALL:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // CHECK: %[[COMBINED:.*]] = pto.pand %[[M1]], %[[TAIL]], %[[ALL]] : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>

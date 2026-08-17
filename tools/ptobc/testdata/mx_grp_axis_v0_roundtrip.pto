@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @mx_grp_axis_v0(
+      %src: !pto.tile_buf<loc=vec, dtype=bf16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %dst: !pto.tile_buf<loc=vec, dtype=ui8, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %max: !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %xsrc: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %xtmp: !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %xdst: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>,
+      %fp_src: !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+      %fp: !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>,
+      %fp_dst: !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>) {
+    pto.tquant.mx ins(%src : !pto.tile_buf<loc=vec, dtype=bf16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                  outs(%dst, %exp, %max, %scaling : !pto.tile_buf<loc=vec, dtype=ui8, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                  {grpAxis = #pto<mx_group_axis axis0>, interleave = true, quant_type = #pto<quant_type MXFP8>}
+    pto.tmov ins(%xsrc : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %xtmp : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%xdst : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+             {grpAxis = #pto<mx_group_axis axis0>}
+    pto.tmov ins(%fp_src : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+             outs(%fp_dst : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}

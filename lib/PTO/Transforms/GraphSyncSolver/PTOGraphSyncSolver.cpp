@@ -63,8 +63,9 @@ struct PTOGraphSyncSolverPass
       }
       return WalkResult::advance();
     });
-    if (hasExplicitSync)
+    if (hasExplicitSync) {
       return;
+    }
 
     // Derive the arch mode from the module's --pto-arch attribute (same
     // source as LoweringSyncToPipe / PTOA5NormalizeTMov / PTOPlanMemory).

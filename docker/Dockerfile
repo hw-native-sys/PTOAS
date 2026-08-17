@@ -10,7 +10,7 @@ ARG ARCH
 
 # NOTE: change $PY_VER for different Python versions (3.8 - 3.14 available)
 ARG PY_VER=cp311-cp311
-ARG LLVM_REF=feature-vpto-llvm21
+ARG LLVM_REF=feature-vpto
 ARG LLVM_REPO=https://github.com/vpto-dev/llvm-project.git
 
 ## -- usually no need to change below --
@@ -20,7 +20,7 @@ ENV PATH="${PY_PATH}/bin:${PATH}"
 
 # dependency
 RUN dnf install -y ninja-build cmake git ccache gcc-c++ lld zip binutils patchelf chrpath && dnf clean all
-RUN pip install --no-cache-dir numpy 'pybind11<3' nanobind 'scikit-build-core>=0.12.2,<2' auditwheel
+RUN pip install --no-cache-dir numpy 'pybind11<3' 'scikit-build-core>=0.12.2,<2' auditwheel
 
 COPY cmake/LinuxHardeningCache.cmake /tmp/LinuxHardeningCache.cmake
 
@@ -45,7 +45,6 @@ RUN cmake -C /tmp/LinuxHardeningCache.cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR 
     -DPython3_EXECUTABLE=${PY_PATH}/bin/python \
     -DPython_EXECUTABLE=${PY_PATH}/bin/python \
     -Dpybind11_DIR=$(${PY_PATH}/bin/python -m pybind11 --cmakedir) \
-    -Dnanobind_DIR=$(${PY_PATH}/bin/python -m nanobind --cmake_dir) \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_TARGETS_TO_BUILD="host"
 

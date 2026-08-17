@@ -31,7 +31,6 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -54,9 +53,12 @@
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
-#include "mlir/Dialect/EmitC/Transforms/Passes.h"
+#include "mlir/Dialect/EmitC/Transforms/Transforms.h"
+#include "mlir/IR/DialectInterface.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/InliningUtils.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
@@ -106,6 +108,54 @@ constexpr size_t kMarkerRewriteTernaryArgCount = 3;
 using StringRefVector =
     llvm::SmallVector<llvm::StringRef, kStringRefInlineCapacity>;
 
+/// LLVM 19's Func inliner interface accepts every call and callable, including
+/// operations carrying the standard `no_inline` attribute. Keep the upstream
+/// terminator handling while honoring the attribute used for PTO SIMT entry
+/// functions.
+struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  bool isLegalToInline(Operation *call, Operation *callable,
+                       bool wouldBeCloned) const final {
+    (void)wouldBeCloned;
+    return !call->hasAttr("no_inline") && !callable->hasAttr("no_inline");
+  }
+
+  bool isLegalToInline(Operation *, Region *, bool,
+                       IRMapping &) const final {
+    return true;
+  }
+
+  bool isLegalToInline(Region *, Region *, bool,
+                       IRMapping &) const final {
+    return true;
+  }
+
+  void handleTerminator(Operation *op, Block *newDest) const final {
+    auto returnOp = dyn_cast<func::ReturnOp>(op);
+    if (!returnOp)
+      return;
+    OpBuilder builder(op);
+    builder.create<cf::BranchOp>(op->getLoc(), newDest,
+                                 returnOp.getOperands());
+    op->erase();
+  }
+
+  void handleTerminator(Operation *op, ValueRange valuesToRepl) const final {
+    auto returnOp = cast<func::ReturnOp>(op);
+    assert(returnOp.getNumOperands() == valuesToRepl.size());
+    for (const auto &it : llvm::enumerate(returnOp.getOperands()))
+      valuesToRepl[it.index()].replaceAllUsesWith(it.value());
+  }
+};
+
+static void registerPTOASFuncInlinerExtension(DialectRegistry &registry) {
+  registry.addExtension(+[](MLIRContext *ctx, func::FuncDialect *dialect) {
+    dialect->addInterfaces<PTOASFuncInlinerInterface>();
+    ctx->getOrLoadDialect<cf::ControlFlowDialect>();
+  });
+}
+
 /// Materialize the implicit no-inline semantics of `pto.simt_entry` using the
 /// standard Func dialect attribute understood by MLIR's public inliner
 /// extension and by later LLVM lowering.
@@ -116,9 +166,70 @@ struct ApplySIMTEntryNoInlinePass final
 
   void runOnOperation() final {
     for (func::FuncOp func : getOperation().getOps<func::FuncOp>())
-      if (func->hasAttr(pto::kPTOSimtEntryAttrName)) {
-        func.setNoInline(true);
+      if (func->hasAttr(pto::kPTOSimtEntryAttrName))
+        func->setAttr("no_inline", UnitAttr::get(func.getContext()));
+  }
+};
+
+/// LLVM 21 runs the EmitC expression patterns without the greedy driver's
+/// generic operation folding. LLVM 19 cannot disable that folding, which can
+/// erase an expression while the EmitC pattern is rewriting it. Apply the
+/// same EmitC rewrite directly so PTOAS retains LLVM 21 expression semantics.
+struct FormEmitCExpressionsCompatPass final
+    : public PassWrapper<FormEmitCExpressionsCompatPass,
+                         OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FormEmitCExpressionsCompatPass)
+
+  static bool foldExpression(emitc::ExpressionOp expression,
+                             IRRewriter &rewriter) {
+    bool changed = false;
+    for (Operation &op : llvm::make_early_inc_range(
+             expression.getBody()->without_terminator())) {
+      auto apply = dyn_cast<emitc::ApplyOp>(op);
+      if (apply && apply.getApplicableOperator() == "&")
+        continue;
+
+      for (OpOperand &operand : llvm::make_early_inc_range(op.getOpOperands())) {
+        auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
+        if (!producer || !producer.getResult().hasOneUse() ||
+            producer.hasSideEffects())
+          continue;
+
+        rewriter.setInsertionPoint(&op);
+        IRMapping mapper;
+        for (Operation &toClone : producer.getBody()->without_terminator()) {
+          Operation *clone = rewriter.clone(toClone, mapper);
+          mapper.map(&toClone, clone);
+        }
+
+        Operation *clonedRoot = mapper.lookup(producer.getRootOp());
+        assert(clonedRoot && clonedRoot->getNumResults() == 1 &&
+               "expected a cloned single-result EmitC expression root");
+        rewriter.replaceOp(producer, clonedRoot->getResults());
+        changed = true;
       }
+    }
+    return changed;
+  }
+
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    OpBuilder builder(&getContext());
+    module.walk([&](Operation *op) {
+      if (op->hasTrait<OpTrait::emitc::CExpression>() &&
+          !op->getParentOfType<emitc::ExpressionOp>() &&
+          op->getNumResults() == 1)
+        emitc::createExpression(op, builder);
+    });
+
+    IRRewriter rewriter(&getContext());
+    bool changed;
+    do {
+      changed = false;
+      module.walk<WalkOrder::PostOrder>([&](emitc::ExpressionOp expression) {
+        changed |= foldExpression(expression, rewriter);
+      });
+    } while (changed);
   }
 };
 
@@ -188,8 +299,7 @@ static std::string resolveEffectiveTargetArch(ModuleOp module,
 int main(int argc, char **argv);
 
 void mlir::pto::registerPTOASDialects(DialectRegistry &registry) {
-  func::registerInlinerExtension(registry);
-  LLVM::registerInlinerInterface(registry);
+  registerPTOASFuncInlinerExtension(registry);
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::tensor::TensorDialect>();
   registry.insert<mlir::arith::ArithDialect>();
@@ -374,6 +484,18 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
+enum class VPTOSchedulerCLIMode { Off, Analyze, On };
+
+static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
+    "vpto-scheduler",
+    llvm::cl::desc("VPTO scheduler mode"),
+    llvm::cl::values(
+        clEnumValN(VPTOSchedulerCLIMode::Off, "off", "Disable scheduling"),
+        clEnumValN(VPTOSchedulerCLIMode::Analyze, "analyze",
+                   "Report scheduling analysis without changing IR"),
+        clEnumValN(VPTOSchedulerCLIMode::On, "on", "Run scheduler in on mode")),
+    llvm::cl::init(VPTOSchedulerCLIMode::Off));
+
 static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
@@ -1999,10 +2121,7 @@ static Attribute getDefaultEmitCVariableInitAttr(OpBuilder &builder, Type type) 
 }
 
 static Type getEmitCVariableStorageType(Type valueType) {
-  if (isa<emitc::ArrayType, emitc::LValueType>(valueType)) {
-    return valueType;
-  }
-  return emitc::LValueType::get(valueType);
+  return valueType;
 }
 
 // FormExpressions may inline conditions into emitc.expression, but the C++
@@ -2039,15 +2158,7 @@ static void materializeControlFlowOperands(Operation *rootOp) {
                           initAttr)
                       .getResult();
       builder.create<emitc::AssignOp>(op->getLoc(), tmp, value);
-      if (auto lvalueTy = dyn_cast<emitc::LValueType>(tmp.getType())) {
-        Value loaded = builder
-                           .create<emitc::LoadOp>(op->getLoc(),
-                                                  lvalueTy.getValueType(), tmp)
-                           .getResult();
-        operand.set(loaded);
-      } else {
-        operand.set(tmp);
-      }
+      operand.set(tmp);
     }
   }
 }
@@ -2075,6 +2186,22 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
         }
         return replacement;
       });
+}
+
+static void rewriteGlobalTensorMetadataMarkers(std::string &cpp) {
+  auto rewrite = [&](llvm::StringRef marker, llvm::StringRef method) {
+    (void)rewriteMarkerCalls(
+        cpp, marker,
+        [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+          if (call.args.size() != 2)
+            return std::nullopt;
+          return ("(" + call.args[0] + ")." + method +
+                  "(static_cast<int>(" + call.args[1] + "))")
+              .str();
+        });
+  };
+  rewrite("PTOAS__GLOBAL_TENSOR_GET_SHAPE", "GetShape");
+  rewrite("PTOAS__GLOBAL_TENSOR_GET_STRIDE", "GetStride");
 }
 
 static void rewriteMarkerCallsToSubscripts(
@@ -2973,6 +3100,22 @@ static void prepareVPTOForEmission(PassManager &pm) {
       pto::createPTONarrowVPTOLoopCountersPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
+  // SoftOps are materialized only after all VPTO optimization and layout
+  // decisions.  The materializer creates a temporary func.call; inline it
+  // immediately so the final legality check sees the actual VPTO sequence.
+  kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
+  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+  kernelModulePM.addPass(createCanonicalizerPass());
+  kernelModulePM.addPass(createCSEPass());
+  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off) {
+    pto::VPTOSchedulerOptions schedulerOptions;
+    schedulerOptions.mode = vptoSchedulerMode == VPTOSchedulerCLIMode::Analyze
+                                ? "analyze"
+                                : "on";
+    kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
+  }
+  kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
+  kernelModulePM.addPass(createCSEPass());
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
@@ -3118,8 +3261,8 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
 }
 
 static void appendVMISemanticPipeline(OpPassManager &pm) {
-  // Normalize signless integer element types on whitelisted ops to unsigned
-  // before any verifier, layout, or lowering pass sees them.
+  // Materialize unsigned carriers for sign-sensitive VMI ops before any
+  // verifier, layout, or lowering pass sees signless integer element types.
   pm.addNestedPass<func::FuncOp>(
       pto::createVMINormalizeSignlessIntToUnsignedPass());
   // Expand unified VMI ops before layout assignment so grouped vci becomes
@@ -3191,6 +3334,10 @@ int mlir::pto::compilePTOASModule(
   }
   if (enableBufidSync && arch != "a5") {
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
+    return 1;
+  }
+  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
+    llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
     return 1;
   }
 
@@ -3630,7 +3777,7 @@ int mlir::pto::compilePTOASModule(
   } else {
     emitcPM.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
   }
-  emitcPM.addPass(emitc::createFormExpressionsPass());
+  emitcPM.addPass(std::make_unique<FormEmitCExpressionsCompatPass>());
   emitcPM.addPass(mlir::createCSEPass());
   if (failed(applyConfiguredPassManagerCLOptions(
           emitcPM, "EmitC backend pipeline")))
@@ -3670,6 +3817,7 @@ int mlir::pto::compilePTOASModule(
   rewritePtrScalarMarkers(cppOutput);
   rewriteScalarGMStoreFlushMarkers(cppOutput);
   rewriteEventIdArrayMarkers(cppOutput);
+  rewriteGlobalTensorMetadataMarkers(cppOutput);
   pto::rewriteLastUseMarkersInCpp(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
   rewriteMalformedVerbatimSemicolons(cppOutput);

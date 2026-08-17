@@ -28,18 +28,18 @@ module {
   func.func @vmi_group_reduce_addi_i16_storage_to_i32_vlane(
       %source: !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>,
       %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
-      -> !pto.vreg<64xi32> {
+      -> !pto.vreg<64xsi32> {
     %wide = pto.vmi.vcvt %source
         : !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
     %out = pto.vmi.vcadd %wide, %mask {group = 8}
-        : !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>,
+        : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>,
           !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
-        -> !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
     %part = "pto.vmi.unpack"(%out)
-        : (!pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
-        -> !pto.vreg<64xi32>
-    return %part : !pto.vreg<64xi32>
+        : (!pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+        -> !pto.vreg<64xsi32>
+    return %part : !pto.vreg<64xsi32>
   }
 
   func.func @vmi_group_reduce_addi_i32_two_vlane(
@@ -62,8 +62,8 @@ module {
 // CHECK: return %[[OUT]]
 
 // CHECK-LABEL: func.func @vmi_group_reduce_addi_i16_storage_to_i32_vlane(
-// CHECK: %[[EVEN:.*]] = pto.vcvt %arg0, {{.*}} {part = "EVEN"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xi32>
-// CHECK: %[[ODD:.*]] = pto.vcvt %arg0, {{.*}} {part = "ODD"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xi32>
+// CHECK: %[[EVEN:.*]] = pto.vcvt %arg0, {{.*}} {part = "EVEN"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
+// CHECK: %[[ODD:.*]] = pto.vcvt %arg0, {{.*}} {part = "ODD"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
 // CHECK: %[[S0:.*]] = pto.vcgadd %[[EVEN]], %arg1
 // CHECK: %[[S1:.*]] = pto.vcgadd %[[ODD]], %arg2
 // CHECK: %[[SUM:.*]] = pto.vadd %[[S0]], %[[S1]]

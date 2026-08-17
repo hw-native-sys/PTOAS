@@ -14,6 +14,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_SYNC_COMMON_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_SYNC_COMMON_H
  
+#include <cstddef>
 #include <utility>
 #include <deque>
 #include <string>
@@ -32,11 +33,11 @@
 // 引入 PTO Dialect 定义 (获取 AddressSpace 等)
 #include "PTO/IR/PTO.h"
  
-#define MAX_MULTI_BUFFER_NUM 16
- 
 namespace mlir {
 namespace pto {
- 
+
+inline constexpr size_t kMaxMultiBufferCount = 16;
+
 enum class SyncAnalysisMode {
   NORMALSYNC, // 核内同步 (Intra-Core): 解决流水线冒险
   BLOCKSYNC   // 核间同步 (Inter-Core): 解决 CV 分离后的通讯
@@ -112,25 +113,41 @@ struct BaseMemInfo {
  
   bool areVectorEqual(const SmallVector<uint64_t>& vec1,
                       const SmallVector<uint64_t>& vec2) const {
-    if (vec1.size() != vec2.size()) return false;
+    if (vec1.size() != vec2.size()) {
+      return false;
+    }
     for (size_t i = 0; i < vec1.size(); ++i) {
-      if (vec1[i] != vec2[i]) return false;
+      if (vec1[i] != vec2[i]) {
+        return false;
+      }
     }
     return true;
   }
  
   bool operator==(const BaseMemInfo &other) const {
-    if (!areVectorEqual(baseAddresses, other.baseAddresses)) return false;
-    if (rootBuffer != other.rootBuffer) return false;
-    if (scope != other.scope) return false;
-    if (hasKnownPhysicalAddresses != other.hasKnownPhysicalAddresses)
+    if (!areVectorEqual(baseAddresses, other.baseAddresses)) {
       return false;
-    if (aliasesUnknownRange != other.aliasesUnknownRange)
+    }
+    if (rootBuffer != other.rootBuffer) {
       return false;
+    }
+    if (scope != other.scope) {
+      return false;
+    }
+    if (hasKnownPhysicalAddresses != other.hasKnownPhysicalAddresses) {
+      return false;
+    }
+    if (aliasesUnknownRange != other.aliasesUnknownRange) {
+      return false;
+    }
     // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
     // 但为了保持原有逻辑，先保留。重点是 rootBuffer 必须一致。
-    if (allocateSize != other.allocateSize) return false;
-    if (baseBuffer != other.baseBuffer) return false;
+    if (allocateSize != other.allocateSize) {
+      return false;
+    }
+    if (baseBuffer != other.baseBuffer) {
+      return false;
+    }
     return true;
   }
  
@@ -251,13 +268,11 @@ bool hasSameSyncDepRoots(const SyncOperation *lhs, const SyncOperation *rhs);
 /// True when `sync` lowers to `pto.set_flag_dyn` / `pto.wait_flag_dyn`, i.e.
 /// its rendezvous is keyed on the runtime slot index rather than on a fixed
 /// event id.
-///
 /// Such a sync orders ONLY the accesses that resolve to its own event lane
 /// (`slotSSAExpr % slotCount`); it does not serialize its (src, dst) pipe pair
 /// the way a static flag does. Every place that reasons about one sync
 /// "covering" another must therefore exclude it, or a second access through a
 /// different slot is left unguarded (issue #1118).
-///
 /// `slotSSAExpr` is the discriminator, NOT `GetForEndIndex()`. Slot keying is
 /// only ever established for a back-edge dependency (InsertSyncOperation), so
 /// it may be tempting to test for one -- but the synthetic prologue-prime and

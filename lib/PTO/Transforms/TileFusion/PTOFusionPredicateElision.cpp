@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -37,12 +38,12 @@ struct PltCandidate {
   Value mask;
   Value scalarOut;
   unsigned bitWidth = 0;
-  SmallVector<unsigned, 4> dominatingCandidates;
+  SmallVector<unsigned, mlir::pto::kValue4> dominatingCandidates;
 };
 
 struct FusionRegionPredicateContext {
   pto::FusionRegionOp fusionRegion;
-  SmallVector<PltCandidate, 8> pltCandidates;
+  SmallVector<PltCandidate, mlir::pto::kValue8> pltCandidates;
 };
 
 enum class EquivalenceState : uint8_t {
@@ -54,7 +55,7 @@ enum class EquivalenceState : uint8_t {
 struct ValueEquivalenceContext {
   // Cache pairwise equivalence inside one fusion-region rewrite walk. This
   // keeps recursive loop-carried checks bounded and deterministic.
-  llvm::DenseMap<Value, llvm::SmallDenseMap<Value, EquivalenceState, 4>>
+  llvm::DenseMap<Value, llvm::SmallDenseMap<Value, EquivalenceState, mlir::pto::kValue4>>
       states;
 };
 
@@ -90,11 +91,13 @@ static std::optional<EquivalenceState>
 lookupEquivalenceState(ValueEquivalenceContext &context, Value lhs, Value rhs) {
   normalizeValuePair(lhs, rhs);
   auto outerIt = context.states.find(lhs);
-  if (outerIt == context.states.end())
+  if (outerIt == context.states.end()) {
     return std::nullopt;
+  }
   auto innerIt = outerIt->second.find(rhs);
-  if (innerIt == outerIt->second.end())
+  if (innerIt == outerIt->second.end()) {
     return std::nullopt;
+  }
   return innerIt->second;
 }
 
@@ -152,12 +155,15 @@ static std::optional<PltScalarOutInfo> getPltScalarOutInfo(Value value) {
     return std::nullopt;
   }
 
-  if (auto plt = dyn_cast<pto::PltB8Op>(result.getOwner()))
+  if (auto plt = dyn_cast<pto::PltB8Op>(result.getOwner())) {
     return PltScalarOutInfo{plt.getScalar(), 8};
-  if (auto plt = dyn_cast<pto::PltB16Op>(result.getOwner()))
+  }
+  if (auto plt = dyn_cast<pto::PltB16Op>(result.getOwner())) {
     return PltScalarOutInfo{plt.getScalar(), 16};
-  if (auto plt = dyn_cast<pto::PltB32Op>(result.getOwner()))
+  }
+  if (auto plt = dyn_cast<pto::PltB32Op>(result.getOwner())) {
     return PltScalarOutInfo{plt.getScalar(), 32};
+  }
   return std::nullopt;
 }
 
@@ -173,16 +179,19 @@ static bool areEquivalentLoopCarriedValues(Value lhs, Value rhs,
   }
 
   if (lhsInfo->forOp.getRegionIterArgs().size() !=
-      lhsInfo->forOp.getInitArgs().size())
+      lhsInfo->forOp.getInitArgs().size()) {
     return false;
+  }
   if (lhsInfo->forOp.getRegionIterArgs().size() !=
-      lhsInfo->forOp.getYieldedValues().size())
+      lhsInfo->forOp.getYieldedValues().size()) {
     return false;
+  }
 
   ValueRange initArgs = lhsInfo->forOp.getInitArgs();
   if (!areEquivalentValues(initArgs[lhsInfo->iterArgIndex],
-                           initArgs[rhsInfo->iterArgIndex], context))
+                           initArgs[rhsInfo->iterArgIndex], context)) {
     return false;
+  }
 
   ValueRange yieldedValues = lhsInfo->forOp.getYieldedValues();
   std::optional<PltScalarOutInfo> lhsYieldInfo =
@@ -322,8 +331,9 @@ buildFusionRegionPredicateContext(pto::FusionRegionOp fusionRegion,
       return WalkResult::skip();
     }
 
-    if (std::optional<PltCandidate> candidate = buildPltCandidate(op))
+    if (std::optional<PltCandidate> candidate = buildPltCandidate(op)) {
       context.pltCandidates.push_back(std::move(*candidate));
+    }
     return WalkResult::advance();
   });
 
@@ -350,8 +360,9 @@ findEquivalentDominatingCandidate(FusionRegionPredicateContext &context,
     // Equivalence is checked on the scalar input; when it holds, both plt
     // results are reused as a pair.
     if (areEquivalentValues(getCurrentScalarOperand(previous), currentScalar,
-                            valueContext))
+                            valueContext)) {
       return previousIndex;
+    }
   }
   return std::nullopt;
 }
@@ -360,7 +371,7 @@ static bool
 elideEquivalentPltCandidates(FusionRegionPredicateContext &context) {
   bool changed = false;
   llvm::DenseSet<unsigned> erased;
-  SmallVector<Operation *, 8> opsToErase;
+  SmallVector<Operation *, mlir::pto::kValue8> opsToErase;
   ValueEquivalenceContext valueContext;
 
   for (unsigned currentIndex = 0; currentIndex < context.pltCandidates.size();
@@ -405,7 +416,7 @@ struct PTOFusionPredicateElisionPass
     }
 
     DominanceInfo &dominanceInfo = getAnalysis<DominanceInfo>();
-    SmallVector<FusionRegionPredicateContext, 4> fusionContexts;
+    SmallVector<FusionRegionPredicateContext, mlir::pto::kValue4> fusionContexts;
     func.walk([&](pto::FusionRegionOp fusionRegion) {
       FusionRegionPredicateContext context =
           buildFusionRegionPredicateContext(fusionRegion, dominanceInfo);

@@ -8,7 +8,7 @@
 // CHECK: TLOAD
 // CHECK: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[LOOP:[0-9]+]]);
 // CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[LOOP]]);
-// CHECK-NEXT: for (int64_t [[IV:[ij][0-9]+]] =
+// CHECK-NEXT: for (int64_t [[IV:[_A-Za-z][_A-Za-z0-9]*]] =
 // CHECK: if ([[IV]] ==
 // CHECK: TMOV
 // CHECK: }

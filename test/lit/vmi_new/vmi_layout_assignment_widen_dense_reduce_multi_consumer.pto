@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vdintlv
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto -vpto-combine-reductions | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vdintlv
 
 module {
   func.func @vmi_layout_assignment_widen_dense_reduce_multi_consumer(
@@ -69,12 +69,12 @@ module {
 // LOWER: pto.vmul
 // LOWER: pto.vadd
 // LOWER: pto.vcadd
-// LOWER: pto.vdup
-// LOWER: pto.vsts
+// LOWER: pto.pset_b32 "PAT_VL1"
+// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
 // LOWER: pto.vadd
 // LOWER: pto.vcadd
-// LOWER: pto.vdup
-// LOWER: pto.vsts
+// LOWER: pto.pset_b32 "PAT_VL1"
+// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

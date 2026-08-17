@@ -41,5 +41,6 @@ module {
 // CHECK: PtoStruct_S_f32_i8_E_i16 [[S:v[0-9]+]];
 // CHECK: [[S]].f0.f0 = {{v[0-9]+}};
 // CHECK: [[S]].f1 = {{v[0-9]+}};
-// CHECK: float [[G:v[0-9]+]] = [[S]].f0.f0;
+// CHECK: float [[G:v[0-9]+]];
+// CHECK: [[G]] = [[S]].f0.f0;
 // CHECK: [[S]].f0.f0 = [[G]];

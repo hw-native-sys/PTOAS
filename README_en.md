@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-**ptoas** is a specialized compiler toolchain built on top of the **LLVM21 VPTO branch (`vpto-dev/llvm-project:feature-vpto-llvm21`)**, designed specifically for **PTO Bytecode** (Programming Tiling Operator Bytecode).
+**ptoas** is a specialized compiler toolchain built on top of the **LLVM19 VPTO branch (`vpto-dev/llvm-project:feature-vpto`)**, designed specifically for **PTO Bytecode** (Programming Tiling Operator Bytecode).
 
 Acting as the bridge between upper-level AI frameworks and underlying NPU/GPGPU/CPU hardware, `ptoas` is built in an **Out-of-Tree** architecture and provides complete C++ and Python interfaces. Its primary responsibilities include:
 
@@ -36,7 +36,7 @@ PTOAS/
 
 ## 3. Build Instructions
 
-⚠️ **Important**: This project strictly requires the **LLVM21 VPTO branch `vpto-dev/llvm-project:feature-vpto-llvm21`**.
+⚠️ **Important**: This project strictly requires the **LLVM19 VPTO branch `vpto-dev/llvm-project:feature-vpto`**.
 
 ### 3.0 Environment Variable Configuration
 
@@ -71,10 +71,10 @@ export PYTHON_BIN="$(command -v python3)"
 * **Compiler**: GCC >= 9 or Clang (C++17 support required)
 * **Build System**: CMake >= 3.20, Ninja
 * **Python**: 3.10+
-* **Python Packages**: `scikit-build-core`, `pybind11<3`, `nanobind`, `numpy`
+* **Python Packages**: `scikit-build-core`, `pybind11<3`, `numpy`
 
 ```bash
-"$PYTHON_BIN" -m pip install "scikit-build-core>=0.12.2,<2" "pybind11<3" nanobind numpy
+"$PYTHON_BIN" -m pip install "scikit-build-core>=0.12.2,<2" "pybind11<3" numpy
 ```
 
 > **Note**: The current LLVM/MLIR Python bindings are not compatible with `pybind11` 3.x.
@@ -83,7 +83,7 @@ export PYTHON_BIN="$(command -v python3)"
 
 ### 3.2 Step 1: Build LLVM/MLIR (Dependency)
 
-Download the VPTO-adapted LLVM source, check out the `feature-vpto-llvm21` branch, and build with **shared libraries** to ensure correct linking for Python bindings.
+Download the VPTO-adapted LLVM source, check out the `feature-vpto` branch, and build with **shared libraries** to ensure correct linking for Python bindings.
 
 ```bash
 # 1. Clone LLVM
@@ -92,7 +92,7 @@ git clone https://github.com/vpto-dev/llvm-project.git
 cd $LLVM_SOURCE_DIR
 
 # 2. [Critical] Check out the VPTO adaptation branch
-git checkout feature-vpto-llvm21
+git checkout feature-vpto
 
 # 3. Configure CMake (build shared libs with Python bindings enabled)
 cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
@@ -103,7 +103,6 @@ cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
     -DPython3_EXECUTABLE="$PYTHON_BIN" \
     -DPython_EXECUTABLE="$PYTHON_BIN" \
     -Dpybind11_DIR="$("$PYTHON_BIN" -m pybind11 --cmakedir)" \
-    -Dnanobind_DIR="$("$PYTHON_BIN" -m nanobind --cmake_dir)" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_TARGETS_TO_BUILD="host"
 
@@ -113,7 +112,7 @@ ninja -C $LLVM_BUILD_DIR
 
 ### 3.3 Step 2: Build PTOAS (Out-of-Tree)
 
-Clone the PTOAS source and build against the LLVM 21 you just compiled.
+Clone the PTOAS source and build against the LLVM 19 you just compiled.
 
 ```bash
 # 1. Clone PTOAS

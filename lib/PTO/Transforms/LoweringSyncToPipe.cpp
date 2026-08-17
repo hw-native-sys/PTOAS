@@ -138,7 +138,7 @@ struct LoweringSyncToPipe
     patterns.add<RecordEventLowering, WaitEventLowering, BarrierSyncLowering,
                  BarrierLegalizeForArch>(
         context);
-    if (failed(applyPatternsGreedily(func, std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
       signalPassFailure();
   }
 };

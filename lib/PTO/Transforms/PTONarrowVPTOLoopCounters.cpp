@@ -52,8 +52,9 @@ static Value createI16Constant(PatternRewriter &rewriter, Location loc,
 static Value restoreInductionVariableType(PatternRewriter &rewriter,
                                           Location loc, Value inductionVar,
                                           Type originalType) {
-  if (isa<IndexType>(originalType))
+  if (isa<IndexType>(originalType)) {
     return rewriter.create<arith::IndexCastOp>(loc, originalType, inductionVar);
+  }
   return rewriter.create<arith::ExtSIOp>(loc, originalType, inductionVar);
 }
 
@@ -62,12 +63,14 @@ struct NarrowVecScopeLoopCounterPattern : public OpRewritePattern<scf::ForOp> {
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
                                 PatternRewriter &rewriter) const override {
-    if (!isNestedInVecScope(forOp))
+    if (!isNestedInVecScope(forOp)) {
       return failure();
+    }
 
     Type originalCounterType = forOp.getInductionVar().getType();
-    if (!pto::canNarrowLoopCounterToI16(forOp))
+    if (!pto::canNarrowLoopCounterToI16(forOp)) {
       return failure();
+    }
 
     int64_t lower = *getConstantIntValue(forOp.getLowerBound());
     int64_t upper = *getConstantIntValue(forOp.getUpperBound());
@@ -112,8 +115,10 @@ struct PTONarrowVPTOLoopCounters
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<NarrowVecScopeLoopCounterPattern>(&getContext());
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(getOperation(),
+                                            std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 

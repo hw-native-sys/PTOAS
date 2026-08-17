@@ -6,33 +6,47 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --emit-pto-ir %s 2>&1 | FileCheck %s
+// RUN: split-file %s %t
+// RUN: not ptoas --emit-pto-ir %t/f32_to_u8.pto 2>&1 | FileCheck %s --check-prefix=F32-TO-U8
+// RUN: not ptoas --emit-pto-ir %t/bf16_to_u8.pto 2>&1 | FileCheck %s --check-prefix=BF16-TO-U8
+// RUN: not ptoas --emit-pto-ir %t/f16_to_u8_no_sat.pto 2>&1 | FileCheck %s --check-prefix=NO-SAT
 
 // FpToUi verifier negative cases:
 //   - unsupported fp->ui pairs (f32->u8, bf16->u8)
 //   - saturate attr missing when required (f16->u8 no sat)
 
+// F32-TO-U8: unsupported fp-to-ui conversion element type pair
+// BF16-TO-U8: unsupported fp-to-ui conversion element type pair
+// NO-SAT: 'saturate' attribute is required for this fp-to-ui conversion
+
+//--- f32_to_u8.pto
 module {
-  // f32->u8: not in VPTO contract — must be rejected.
+  // f32->u8: not in VPTO contract - must be rejected.
   func.func @f32_to_u8(%source: !pto.vmi.vreg<64xf32>) {
     %result = pto.vmi.vcvt %source {saturate = "SAT"}
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xui8>
     return
   }
 
-  // bf16->u8: not in VPTO contract — must be rejected.
+}
+
+//--- bf16_to_u8.pto
+module {
+  // bf16->u8: not in VPTO contract - must be rejected.
   func.func @bf16_to_u8(%source: !pto.vmi.vreg<128xbf16>) {
     %result = pto.vmi.vcvt %source {saturate = "SAT"}
         : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xui8>
     return
   }
 
-  // f16->u8 without saturate — required by contract, must be rejected.
+}
+
+//--- f16_to_u8_no_sat.pto
+module {
+  // f16->u8 without saturate - required by contract, must be rejected.
   func.func @f16_to_u8_no_sat(%source: !pto.vmi.vreg<128xf16>) {
     %result = pto.vmi.vcvt %source
         : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xui8>
     return
   }
 }
-
-// CHECK: 'saturate' attribute is required for this fp-to-ui conversion

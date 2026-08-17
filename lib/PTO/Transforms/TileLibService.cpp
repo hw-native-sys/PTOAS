@@ -32,8 +32,9 @@ void mlir::pto::TileLibRuntime::install(
 
 void mlir::pto::TileLibRuntime::uninstall(TileLibService *service) {
   std::lock_guard<std::mutex> lock(getRuntimeMutex());
-  if (getRuntimeService().get() == service)
+  if (getRuntimeService().get() == service) {
     getRuntimeService().reset();
+  }
 }
 
 std::shared_ptr<mlir::pto::TileLibService>

@@ -1,0 +1,10 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @gate_pre_route() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_index = arith.constant 0 : index
+  %c32_index = arith.constant 32 : index
+  %c1_index = arith.constant 1 : index
+  scf.for %zt_inline38__idx_v0 = %c0_index to %c32_index step %c1_index {
+  }
+  return
+  }
+}

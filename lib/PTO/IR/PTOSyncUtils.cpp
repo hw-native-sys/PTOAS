@@ -15,10 +15,12 @@ using namespace mlir;
 using namespace mlir::pto;
 
 FailureOr<SyncOpType> mlir::pto::parseSyncOpTypeLikeAttr(Attribute attr) {
-  if (auto a = dyn_cast_or_null<PipeEventTypeAttr>(attr))
+  if (auto a = dyn_cast_or_null<PipeEventTypeAttr>(attr)) {
     return a.getOpType();
-  if (auto a = dyn_cast_or_null<SyncOpTypeAttr>(attr))
+  }
+  if (auto a = dyn_cast_or_null<SyncOpTypeAttr>(attr)) {
     return a.getOpType();
+  }
   return failure();
 }
 

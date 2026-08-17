@@ -1,0 +1,41 @@
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gate_pre_route(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<i32>, %arg2: !pto.ptr<f32>, %arg3: !pto.ptr<f32>, %arg4: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c8_index = arith.constant 8 : index
+  %c1_index = arith.constant 1 : index
+  %c6_index = arith.constant 6 : index
+  %c16_index = arith.constant 16 : index
+  %c256_index = arith.constant 256 : index
+  %c0_index = arith.constant 0 : index
+  %cst_7 = arith.constant 0.00000000000000000e+00 : f32
+  %c192_index = arith.constant 192 : index
+  %cst_9 = arith.constant -3.40282346638528860e+38 : f32
+  %c64_index = arith.constant 64 : index
+  %x_norm_scale_inline3585__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c8_index, %c1_index], strides = [%c1_index, %c8_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+  %indices_inline3591__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c8_index, %c6_index], strides = [%c6_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+  %weights_inline3513__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c8_index, %c6_index], strides = [%c6_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %biased_scores_buf_inline2524_inline3584__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c16_index, %c256_index], strides = [%c256_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  scf.for %zt_inline2558_inline3473__idx_v0 = %c0_index to %c8_index step %c1_index {
+    %0 = arith.cmpi sle, %arg4, %zt_inline2558_inline3473__idx_v0 : index
+    scf.if %0 {
+      %flat_offset_mul = arith.muli %zt_inline2558_inline3473__idx_v0, %c1_index : index
+      %flat_offset = arith.addi %flat_offset_mul, %c0_index : index
+      pto.store_scalar %cst_7, %arg0[%flat_offset] : !pto.ptr<f32>, f32
+      scf.for %zk_inline2505_inline3487__idx_v0 = %c0_index to %c6_index step %c1_index {
+        %2 = arith.index_cast %c0_index : index to i32
+        %3 = arith.muli %zt_inline2558_inline3473__idx_v0, %c6_index : index
+        %4 = arith.addi %3, %zk_inline2505_inline3487__idx_v0 : index
+        pto.store_scalar %2, %arg1[%4] : !pto.ptr<i32>, i32
+        %6 = arith.muli %zt_inline2558_inline3473__idx_v0, %c6_index : index
+        %7 = arith.addi %6, %zk_inline2505_inline3487__idx_v0 : index
+        pto.store_scalar %cst_7, %arg2[%7] : !pto.ptr<f32>, f32
+      }
+    }
+  }
+  %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c192_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=192, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  pto.texpands ins(%cst_9 : f32) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=192, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+  %biased_scores_buf_inline2524_inline3584__ssa_v0_pview = pto.partition_view %biased_scores_buf_inline2524_inline3584__ssa_v0_view, offsets = [%c0_index, %c64_index], sizes = [%c16_index, %c192_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x192xf32>
+  pto.tstore ins(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=192, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%biased_scores_buf_inline2524_inline3584__ssa_v0_pview : !pto.partition_tensor_view<16x192xf32>)
+  return
+  }
+}

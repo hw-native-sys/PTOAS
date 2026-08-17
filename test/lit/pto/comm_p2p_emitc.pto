@@ -26,13 +26,13 @@ module {
   }
 }
 
-// A3: pto::comm::WaitCmp::EQ
-// A3: pto::comm::WaitCmp::GE
-// A3: pto::comm::NotifyOp::Set
 // A3: pto::comm::TPUT(
 // A3: pto::comm::TPUT<pto::AtomicType::AtomicAdd>(
 // A3: pto::comm::TGET(
 // A3: pto::comm::TGET(
+// A3: pto::comm::NotifyOp::Set
 // A3: pto::comm::TNOTIFY(
+// A3: pto::comm::WaitCmp::GE
 // A3: pto::comm::TWAIT(
+// A3: pto::comm::WaitCmp::EQ
 // A3: pto::comm::TTEST(

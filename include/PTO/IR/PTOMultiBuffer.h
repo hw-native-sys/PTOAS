@@ -14,7 +14,7 @@
 //   - `kPtoMultiBufferAddrsAttrName` is the internal address list written
 //     directly on tile-native `pto.alloc_multi_tile` by PlanMemory.
 //   - `kPtoMultiBufferMaxNum` is the upper bound on the slot count N. It is
-//     kept in lock-step with the InsertSync `MAX_MULTI_BUFFER_NUM`.
+//     kept in lock-step with the InsertSync `kMaxMultiBufferCount`.
 //
 //===----------------------------------------------------------------------===//
 
@@ -34,7 +34,7 @@ inline constexpr llvm::StringLiteral kPtoMultiBufferAttrName =
 inline constexpr llvm::StringLiteral kPtoMultiBufferAddrsAttrName =
     "pto.multi_buffer_addrs";
 
-/// Upper bound for N; must stay consistent with `MAX_MULTI_BUFFER_NUM` in
+/// Upper bound for N; must stay consistent with `kMaxMultiBufferCount` in
 /// insert-sync.
 inline constexpr unsigned kPtoMultiBufferMaxNum = 16;
 

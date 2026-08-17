@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "PTO/Support/CANNVersion.h"
@@ -16,7 +17,7 @@ static bool usesCANN900Lowering(const VPTOEmissionOptions &options) {
   const bool isC220 = options.march == "dav-c220-vec" ||
                       options.march == "dav-c220-cube";
   return !isC220 &&
-         options.cannVersion >= CANNVersion::release(9, 0, 0);
+         options.cannVersion >= CANNVersion::release(mlir::pto::kValue9, 0, 0);
 }
 
 static bool containsLdStDev(ModuleOp module) {

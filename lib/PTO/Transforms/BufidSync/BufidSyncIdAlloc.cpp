@@ -6,18 +6,24 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "BufidSyncIdAlloc.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "llvm/Support/Debug.h"
 #include <algorithm>
 #include <climits>
+#include <cstddef>
 #include <map>
 #include <set>
 #include <sstream>
 #include <string>
 #include <tuple>
+#include "BufidSyncIdAlloc.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/Support/Debug.h"
+
 
 #define DEBUG_TYPE "pto-bufid-sync"
+
+namespace {
+constexpr size_t kMinimumReusableIdGroupSize = 2;
+}
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -27,12 +33,14 @@ void BufidSyncIdAlloc::collectPipeSignature(
   DenseSet<PipelineType> seen;
   for (auto &[op, build] : op2BufSync_) {
     for (auto &s : build.pipeBefore) {
-      if (s.logicId == logicId && seen.insert(s.pipe).second)
+      if (s.logicId == logicId && seen.insert(s.pipe).second) {
         pipes.push_back(s.pipe);
+      }
     }
     for (auto &s : build.pipeAfter) {
-      if (s.logicId == logicId && seen.insert(s.pipe).second)
+      if (s.logicId == logicId && seen.insert(s.pipe).second) {
         pipes.push_back(s.pipe);
+      }
     }
   }
 }
@@ -40,17 +48,17 @@ void BufidSyncIdAlloc::collectPipeSignature(
 unsigned BufidSyncIdAlloc::getOutermostLoopBegin(Operation *op) const {
   unsigned begin = UINT_MAX;
   Operation *current = op;
-  while (auto forOp = current->getParentOfType<scf::ForOp>()) {
-    Operation *forOpOp = forOp.getOperation();
+  while (auto loop = current->getParentOfType<LoopLikeOpInterface>()) {
+    Operation *loopOp = loop.getOperation();
     for (auto &e : syncIR_) {
       auto *loop = dyn_cast<LoopInstanceElement>(e.get());
       if (loop && loop->getLoopKind() == KindOfLoop::LOOP_BEGIN &&
-          loop->elementOp == forOpOp) {
+          loop->elementOp == loopOp) {
         begin = std::min(begin, loop->beginId);
         break;
       }
     }
-    current = forOpOp;
+    current = loopOp;
   }
   return begin;
 }
@@ -58,17 +66,17 @@ unsigned BufidSyncIdAlloc::getOutermostLoopBegin(Operation *op) const {
 unsigned BufidSyncIdAlloc::getOutermostLoopEnd(Operation *op) const {
   unsigned end = 0;
   Operation *current = op;
-  while (auto forOp = current->getParentOfType<scf::ForOp>()) {
-    Operation *forOpOp = forOp.getOperation();
+  while (auto loop = current->getParentOfType<LoopLikeOpInterface>()) {
+    Operation *loopOp = loop.getOperation();
     for (auto &e : syncIR_) {
       auto *loop = dyn_cast<LoopInstanceElement>(e.get());
       if (loop && loop->getLoopKind() == KindOfLoop::LOOP_END &&
-          loop->elementOp == forOpOp) {
+          loop->elementOp == loopOp) {
         end = std::max(end, loop->endId);
         break;
       }
     }
-    current = forOpOp;
+    current = loopOp;
   }
   return end;
 }
@@ -84,17 +92,19 @@ void BufidSyncIdAlloc::computeLifeIntervals() {
 
     for (auto &s : build.pipeBefore) {
       unsigned pos = inLoop ? loopBegin : s.syncIRIndex;
-      if (!logicIdStartPos.count(s.logicId))
+      if (!logicIdStartPos.count(s.logicId)) {
         logicIdStartPos[s.logicId] = pos;
-      else
+      } else {
         logicIdStartPos[s.logicId] = std::min(logicIdStartPos[s.logicId], pos);
+}
     }
     for (auto &s : build.pipeAfter) {
       unsigned pos = inLoop ? loopEnd : s.syncIRIndex;
-      if (!logicIdEndPos.count(s.logicId))
+      if (!logicIdEndPos.count(s.logicId)) {
         logicIdEndPos[s.logicId] = pos;
-      else
+      } else {
         logicIdEndPos[s.logicId] = std::max(logicIdEndPos[s.logicId], pos);
+}
     }
   }
 
@@ -140,8 +150,9 @@ void BufidSyncIdAlloc::linearScanAllocate() {
     for (unsigned idx : active) {
       if (intervals_[idx].endPos < interval.startPos) {
         auto it = logicToPhysical_.find(intervals_[idx].logicId);
-        if (it != logicToPhysical_.end())
+        if (it != logicToPhysical_.end()) {
           freeIds.insert(it->second);
+        }
       } else {
         newActive.push_back(idx);
       }
@@ -175,24 +186,27 @@ void BufidSyncIdAlloc::compactPhysicalIds() {
   for (auto &[op, build] : op2BufSync_) {
     for (auto &s : build.pipeBefore) {
       activeLogicIds.insert(s.logicId);
-      if (!logicIdFirstPos.count(s.logicId))
+      if (!logicIdFirstPos.count(s.logicId)) {
         logicIdFirstPos[s.logicId] = s.syncIRIndex;
-      else
+      } else {
         logicIdFirstPos[s.logicId] = std::min(logicIdFirstPos[s.logicId], s.syncIRIndex);
+}
     }
     for (auto &s : build.pipeAfter) {
       activeLogicIds.insert(s.logicId);
-      if (!logicIdFirstPos.count(s.logicId))
+      if (!logicIdFirstPos.count(s.logicId)) {
         logicIdFirstPos[s.logicId] = s.syncIRIndex;
-      else
+      } else {
         logicIdFirstPos[s.logicId] = std::min(logicIdFirstPos[s.logicId], s.syncIRIndex);
+}
     }
   }
 
   SmallVector<int> logicIdsByPos;
   for (auto &[lid, pid] : logicToPhysical_) {
-    if (activeLogicIds.count(lid))
+    if (activeLogicIds.count(lid)) {
       logicIdsByPos.push_back(lid);
+    }
   }
   std::sort(logicIdsByPos.begin(), logicIdsByPos.end(), [&](int a, int b) {
     return logicIdFirstPos[a] < logicIdFirstPos[b];
@@ -202,13 +216,15 @@ void BufidSyncIdAlloc::compactPhysicalIds() {
   for (unsigned i = 0; i < logicIdsByPos.size(); ++i) {
     int lid = logicIdsByPos[i];
     int oldPid = logicToPhysical_[lid];
-    if (!oldPidToNew.count(oldPid))
+    if (!oldPidToNew.count(oldPid)) {
       oldPidToNew[oldPid] = static_cast<int>(oldPidToNew.size());
+    }
   }
 
   for (auto &[lid, pid] : logicToPhysical_) {
-    if (oldPidToNew.count(pid))
+    if (oldPidToNew.count(pid)) {
       pid = oldPidToNew[pid];
+    }
   }
 
   maxPhysicalIdUsed_ = static_cast<int>(oldPidToNew.size()) - 1;
@@ -226,8 +242,9 @@ void BufidSyncIdAlloc::reuseIds() {
     std::sort(s.begin(), s.end());
     std::string key;
     for (auto p : s) {
-      if (!key.empty())
+      if (!key.empty()) {
         key += ",";
+      }
       key += std::to_string(static_cast<int>(p));
     }
     return key;
@@ -238,8 +255,9 @@ void BufidSyncIdAlloc::reuseIds() {
     std::string token;
     std::istringstream iss(key);
     while (std::getline(iss, token, ',')) {
-      if (!token.empty())
+      if (!token.empty()) {
         pipes.push_back(static_cast<PipelineType>(std::stoi(token)));
+      }
     }
     return pipes;
   };
@@ -256,15 +274,17 @@ void BufidSyncIdAlloc::reuseIds() {
     }
   };
 
-  auto getMinPipeScore = [&](const SmallVector<PipelineType> &pipes) -> int {
+  auto getMinPipeScore = [&getPipeScore](
+                             const SmallVector<PipelineType> &pipes) -> int {
     int minScore = 99;
-    for (auto p : pipes)
+    for (auto p : pipes) {
       minScore = std::min(minScore, getPipeScore(p));
+    }
     return minScore;
   };
 
-  auto isConsecutiveOnPipe = [&](const SmallVector<int> &ids,
-                                 PipelineType pipe) -> bool {
+  auto isConsecutiveOnPipe = [this](const SmallVector<int> &ids,
+                                    PipelineType pipe) -> bool {
     SmallVector<std::pair<unsigned, unsigned>> idRanges;
     for (int lid : ids) {
       unsigned minIdx = UINT_MAX, maxIdx = 0;
@@ -282,25 +302,29 @@ void BufidSyncIdAlloc::reuseIds() {
           }
         }
       }
-      if (minIdx != UINT_MAX)
+      if (minIdx != UINT_MAX) {
         idRanges.push_back({minIdx, maxIdx});
+      }
     }
     std::sort(idRanges.begin(), idRanges.end());
     for (unsigned i = 1; i < idRanges.size(); ++i) {
-      if (idRanges[i].first <= idRanges[i - 1].second)
+      if (idRanges[i].first <= idRanges[i - 1].second) {
         return false;
+      }
     }
     for (unsigned i = 1; i < idRanges.size(); ++i) {
       unsigned gapStart = idRanges[i - 1].second;
       unsigned gapEnd = idRanges[i].first;
       for (auto &[op, build] : op2BufSync_) {
         for (auto &s : build.pipeBefore) {
-          if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd)
+          if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd) {
             return false;
+          }
         }
         for (auto &s : build.pipeAfter) {
-          if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd)
+          if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd) {
             return false;
+          }
         }
       }
     }
@@ -316,22 +340,26 @@ void BufidSyncIdAlloc::reuseIds() {
     DenseMap<int, DenseSet<PipelineType>> logicIdSeenPipes;
     for (auto &[op, build] : op2BufSync_) {
       for (auto &s : build.pipeBefore) {
-        if (logicIdSeenPipes[s.logicId].insert(s.pipe).second)
+        if (logicIdSeenPipes[s.logicId].insert(s.pipe).second) {
           logicIdPipes[s.logicId].push_back(s.pipe);
-        if (!logicIdFirstPos.count(s.logicId))
+        }
+        if (!logicIdFirstPos.count(s.logicId)) {
           logicIdFirstPos[s.logicId] = s.syncIRIndex;
-        else
+        } else {
           logicIdFirstPos[s.logicId] =
               std::min(logicIdFirstPos[s.logicId], s.syncIRIndex);
+}
       }
       for (auto &s : build.pipeAfter) {
-        if (logicIdSeenPipes[s.logicId].insert(s.pipe).second)
+        if (logicIdSeenPipes[s.logicId].insert(s.pipe).second) {
           logicIdPipes[s.logicId].push_back(s.pipe);
-        if (!logicIdFirstPos.count(s.logicId))
+        }
+        if (!logicIdFirstPos.count(s.logicId)) {
           logicIdFirstPos[s.logicId] = s.syncIRIndex;
-        else
+        } else {
           logicIdFirstPos[s.logicId] =
               std::min(logicIdFirstPos[s.logicId], s.syncIRIndex);
+}
       }
     }
 
@@ -352,8 +380,9 @@ void BufidSyncIdAlloc::reuseIds() {
     int bestScore = -1;
     std::string bestSigKey;
     for (auto &[sigKey, ids] : sigGroups) {
-      if (ids.size() < 2)
+      if (ids.size() < kMinimumReusableIdGroupSize) {
         continue;
+      }
       SmallVector<PipelineType> sigPipes = decodeSig(sigKey);
       int pipeScore = getMinPipeScore(sigPipes);
       int idNum = static_cast<int>(ids.size());
@@ -376,8 +405,9 @@ void BufidSyncIdAlloc::reuseIds() {
     std::sort(groupIds.begin(), groupIds.end(), [&](int a, int b) {
       auto itA = logicIdFirstPos.find(a);
       auto itB = logicIdFirstPos.find(b);
-      if (itA == logicIdFirstPos.end() || itB == logicIdFirstPos.end())
+      if (itA == logicIdFirstPos.end() || itB == logicIdFirstPos.end()) {
         return a < b;
+      }
       return itA->second < itB->second;
     });
 
@@ -425,8 +455,9 @@ void BufidSyncIdAlloc::reuseIds() {
     }
 
     for (auto &[lid, donorLid] : mergeMap) {
-      while (mergeMap.count(donorLid))
+      while (mergeMap.count(donorLid)) {
         donorLid = mergeMap[donorLid];
+      }
     }
 
     DenseMap<Operation *, BufSyncPipeBuild> newOp2BufSync;
@@ -437,8 +468,9 @@ void BufidSyncIdAlloc::reuseIds() {
       for (auto &s : build.pipeBefore) {
         int newLogicId = s.logicId;
         auto it = mergeMap.find(newLogicId);
-        if (it != mergeMap.end())
+        if (it != mergeMap.end()) {
           newLogicId = it->second;
+        }
         auto key = std::make_pair(static_cast<int>(s.pipe), newLogicId);
         if (seenBefore.insert(key).second) {
           BufSyncOperation newS = s;
@@ -451,8 +483,9 @@ void BufidSyncIdAlloc::reuseIds() {
       for (auto &s : build.pipeAfter) {
         int newLogicId = s.logicId;
         auto it = mergeMap.find(newLogicId);
-        if (it != mergeMap.end())
+        if (it != mergeMap.end()) {
           newLogicId = it->second;
+        }
         auto key = std::make_pair(static_cast<int>(s.pipe), newLogicId);
         if (seenAfter.insert(key).second) {
           BufSyncOperation newS = s;
@@ -480,8 +513,9 @@ void BufidSyncIdAlloc::reuseIds() {
 
     for (auto &[lid, pid] : logicToPhysical_) {
       auto it = mergeMap.find(lid);
-      if (it != mergeMap.end())
+      if (it != mergeMap.end()) {
         pid = logicToPhysical_[it->second];
+      }
     }
 
     compactPhysicalIds();
@@ -527,9 +561,10 @@ bool BufidSyncIdAlloc::validateNoSamePhysicalIdNesting(
     for (auto &sync : build.pipeBefore) {
       auto it = logicToPhysical_.find(sync.logicId);
       if (it == logicToPhysical_.end()) {
-        if (error)
+        if (error) {
           *error = "missing physical bufid for logic id " +
                    std::to_string(sync.logicId);
+        }
         return false;
       }
       events.push_back({sync.syncIRIndex, 0, sync.type, sync.logicId,
@@ -538,9 +573,10 @@ bool BufidSyncIdAlloc::validateNoSamePhysicalIdNesting(
     for (auto &sync : build.pipeAfter) {
       auto it = logicToPhysical_.find(sync.logicId);
       if (it == logicToPhysical_.end()) {
-        if (error)
+        if (error) {
           *error = "missing physical bufid for logic id " +
                    std::to_string(sync.logicId);
+        }
         return false;
       }
       events.push_back({sync.syncIRIndex, 1, sync.type, sync.logicId,

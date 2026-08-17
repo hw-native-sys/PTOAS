@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -47,7 +48,7 @@ struct GroupSpanMember {
 struct GroupSpan {
   Block *block = nullptr;
   int64_t groupId = -1;
-  SmallVector<GroupSpanMember, 8> members;
+  SmallVector<GroupSpanMember, mlir::pto::kValue8> members;
 };
 
 static bool isTileType(Type type) {
@@ -58,8 +59,9 @@ static bool isDpsInitOperand(OpOperand &operand) {
   Operation *owner = operand.getOwner();
   if (auto dpsIface = dyn_cast<pto::PTO_DpsInitOpInterface>(owner)) {
     for (OpOperand &init : dpsIface.getDpsInitsMutable()) {
-      if (&init == &operand)
+      if (&init == &operand) {
         return true;
+      }
     }
   }
   return false;
@@ -76,8 +78,8 @@ static bool isTileInputOperand(OpOperand &operand) {
 // The last-use mask is indexed by tile operand slots only, in source operand
 // order after filtering out scalar operands. DPS init/output tile slots are
 // preserved and always materialize as 0.
-static SmallVector<OpOperand *, 4> collectTileOperands(Operation *op) {
-  SmallVector<OpOperand *, 4> tileOperands;
+static SmallVector<OpOperand *, mlir::pto::kValue4> collectTileOperands(Operation *op) {
+  SmallVector<OpOperand *, mlir::pto::kValue4> tileOperands;
   for (OpOperand &operand : op->getOpOperands()) {
     if (isTileOperand(operand)) {
       tileOperands.push_back(&operand);
@@ -107,8 +109,9 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
   GroupSpan current;
 
   auto flush = [&]() -> LogicalResult {
-    if (current.members.empty())
+    if (current.members.empty()) {
       return success();
+    }
 
     current.block = &block;
     auto [it, inserted] =
@@ -159,8 +162,9 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
     }
 
     if (current.groupId != *groupId) {
-      if (failed(flush()))
+      if (failed(flush())) {
         return failure();
+      }
       current.groupId = *groupId;
     }
 
@@ -221,7 +225,7 @@ static bool isHardSpanBarrier(Operation *op) {
 }
 
 static bool hasHardBarrierInSpan(const GroupSpan &span) {
-  if (span.members.size() < 2) {
+  if (span.members.size() < mlir::pto::kValue2) {
     return false;
   }
   for (size_t i = 0; i + 1 < span.members.size(); ++i) {
@@ -250,13 +254,13 @@ static void markGroupSpanLastUse(const GroupSpan &span) {
   Operation *spanEnd = span.members.back().op;
   for (const GroupSpanMember &member : span.members) {
     Operation &op = *member.op;
-    SmallVector<OpOperand *, 4> tileOperands = collectTileOperands(&op);
+    SmallVector<OpOperand *, mlir::pto::kValue4> tileOperands = collectTileOperands(&op);
     if (tileOperands.empty()) {
       op.removeAttr(kLastUseAttrName);
       continue;
     }
 
-    SmallVector<int64_t, 8> lastUseMask;
+    SmallVector<int64_t, mlir::pto::kValue8> lastUseMask;
     lastUseMask.reserve(tileOperands.size());
     for (OpOperand *operand : tileOperands) {
       if (!isTileInputOperand(*operand)) {
@@ -279,7 +283,7 @@ static void markGroupSpanLastUse(const GroupSpan &span) {
 
 static LogicalResult markRegionLastUse(Region &region) {
   for (Block &block : region.getBlocks()) {
-    SmallVector<GroupSpan, 8> spans;
+    SmallVector<GroupSpan, mlir::pto::kValue8> spans;
     if (failed(collectGroupSpansInBlock(block, spans))) {
       return failure();
     }
@@ -287,11 +291,13 @@ static LogicalResult markRegionLastUse(Region &region) {
       markGroupSpanLastUse(span);
     }
 
-    for (Operation &op : block)
-      for (Region &nestedRegion : op.getRegions())
+    for (Operation &op : block) {
+      for (Region &nestedRegion : op.getRegions()) {
         if (failed(markRegionLastUse(nestedRegion))) {
           return failure();
         }
+      }
+    }
   }
   return success();
 }

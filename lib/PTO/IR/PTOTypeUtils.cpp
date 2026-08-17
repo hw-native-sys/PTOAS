@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTOTypeUtils.h"
 
 #include "PTO/IR/PTO.h"
@@ -15,6 +16,9 @@ using namespace mlir::pto;
 
 namespace {
 constexpr unsigned kBitsPerByte = 8;
+constexpr unsigned kPackedLdgStgBitWidth16 = 16;
+constexpr unsigned kPackedLdgStgBitWidth32 = 32;
+constexpr unsigned kPackedLdgStgBitWidth64 = 64;
 } // namespace
 
 bool mlir::pto::isPTOFloat8Type(Type t) {
@@ -36,6 +40,8 @@ bool mlir::pto::isPTOF8E8M0Type(Type t) { return isa<F8E8M0Type>(t); }
 
 bool mlir::pto::isPTOHiFloat8x2Type(Type t) { return isa<HiF8x2Type>(t); }
 
+bool mlir::pto::isPTOBF16x2Type(Type t) { return isa<BF16x2Type>(t); }
+
 bool mlir::pto::isPTOFloat4PackedType(Type t) {
   return isa<F4E1M2x2Type, F4E2M1x2Type>(t);
 }
@@ -46,22 +52,23 @@ bool mlir::pto::isPTOPackedLdgStgVectorType(Type t) {
     return true;
   }
   auto vecType = dyn_cast<VectorType>(t);
-  if (!vecType || vecType.isScalable() || vecType.getRank() != 1)
+  if (!vecType || vecType.isScalable() || vecType.getRank() != 1) {
     return false;
+  }
   int64_t lanes = vecType.getDimSize(0);
   Type elemType = vecType.getElementType();
   bool validElem = false;
   if (isPTOFloat8Type(elemType)) {
-    validElem = lanes == 2 || lanes == 4 || lanes == 8;
+    validElem = lanes == mlir::pto::kValue2 || lanes == 4 || lanes == 8;
   } else {
     validElem =
-        lanes == 2 &&
+        lanes == mlir::pto::kValue2 &&
         (elemType.isF16() || elemType.isBF16() || elemType.isF32());
   }
   if (!validElem) {
     if (auto intTy = dyn_cast<IntegerType>(elemType)) {
       unsigned w = intTy.getWidth();
-      validElem = lanes == 2 && (w == 8 || w == 16 || w == 32);
+      validElem = lanes == mlir::pto::kValue2 && (w == 8 || w == 16 || w == 32);
     }
   }
   if (!validElem) {
@@ -69,12 +76,15 @@ bool mlir::pto::isPTOPackedLdgStgVectorType(Type t) {
   }
   unsigned totalBits =
       vecType.getDimSize(0) * getPTOStorageElemBitWidth(elemType);
-  return totalBits == 16 || totalBits == 32 || totalBits == 64;
+  return totalBits == kPackedLdgStgBitWidth16 ||
+         totalBits == kPackedLdgStgBitWidth32 ||
+         totalBits == kPackedLdgStgBitWidth64;
 }
 
 unsigned mlir::pto::getPTOPackedLdgStgTotalBits(Type t) {
-  if (isPTOHiFloat8x2Type(t))
+  if (isPTOHiFloat8x2Type(t)) {
     return getPTOStorageElemBitWidth(t); // 16
+  }
   auto vecType = cast<VectorType>(t);
   return vecType.getDimSize(0) *
          getPTOStorageElemBitWidth(vecType.getElementType());
@@ -82,19 +92,28 @@ unsigned mlir::pto::getPTOPackedLdgStgTotalBits(Type t) {
 
 bool mlir::pto::isPTOLowPrecisionType(Type t) {
   return isPTOFloat8Type(t) || isPTOHiFloat8Type(t) || isPTOF8E8M0Type(t) ||
-         isPTOHiFloat8x2Type(t) || isPTOFloat4PackedType(t);
+         isPTOHiFloat8x2Type(t) || isPTOFloat4PackedType(t) ||
+         isPTOBF16x2Type(t);
 }
 
 unsigned mlir::pto::getPTOStorageElemBitWidth(Type t) {
   if (isPTOHiFloat8x2Type(t)) {
     return 16;
   }
-  if (isPTOLowPrecisionType(t))
+  // bf16x2 is a 4-byte packed pair; special-case it before the generic
+  // low-precision branch (which would otherwise report 8 bits).
+  if (isPTOBF16x2Type(t)) {
+    return 32;
+  }
+  if (isPTOLowPrecisionType(t)) {
     return kBitsPerByte;
-  if (auto floatTy = dyn_cast<FloatType>(t))
+}
+  if (auto floatTy = dyn_cast<FloatType>(t)) {
     return floatTy.getWidth();
-  if (auto intTy = dyn_cast<IntegerType>(t))
+}
+  if (auto intTy = dyn_cast<IntegerType>(t)) {
     return intTy.getWidth();
+}
   return 0;
 }
 

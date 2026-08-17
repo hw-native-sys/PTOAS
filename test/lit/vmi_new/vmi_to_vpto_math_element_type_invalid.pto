@@ -20,8 +20,7 @@ module {
   }
 }
 
-// vadd lowers to legacy addf, whose verifier rejects the f8 element type.
-// CHECK: 'pto.vmi.addf' op requires f16, bf16, or f32 VMI element type
+// CHECK: 'pto.vmi.vadd' op requires i8, i16, i32, f16, bf16, or f32 VMI element type
 
 // -----
 
@@ -37,7 +36,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.divf' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vdiv' op requires f16 or f32 VMI element type
 
 // -----
 
@@ -51,7 +50,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.sqrt' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vsqrt' op requires f16 or f32 VMI element type
 
 // -----
 
@@ -65,7 +64,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.exp' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vexp' op requires f16 or f32 VMI element type
 
 // -----
 
@@ -79,7 +78,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.negf' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vneg' op requires i8, i16, i32, f16, or f32 VMI element type
 
 // -----
 
@@ -93,7 +92,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.ln' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vln' op requires f16 or f32 VMI element type
 
 // -----
 
@@ -107,5 +106,51 @@ module {
   }
 }
 
-// vabs(ui16) lowers to legacy absi, whose verifier rejects unsigned integers.
-// CHECK: 'pto.vmi.absi' op requires signless or signed i8, i16, or i32 VMI element type
+// CHECK: 'pto.vmi.vabs' op requires si8, si16, si32, f16, bf16, or f32 VMI element type
+
+// -----
+
+module {
+  func.func @vmi_to_vpto_absi_signless_invalid(
+      %source: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>) {
+    %out = pto.vmi.vabs %source
+        : !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vabs' op requires si8, si16, si32, f16, bf16, or f32 VMI element type
+
+// -----
+
+module {
+  func.func @vmi_to_vpto_muli_i8_invalid(
+      %lhs: !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
+      %rhs: !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>) {
+    %out = pto.vmi.vmul %lhs, %rhs
+        : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vmul' op requires i16, i32, f16, bf16, or f32 VMI element type
+
+// -----
+
+module {
+  func.func @vmi_to_vpto_vmuls_bf16_invalid(
+      %source: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>,
+      %scalar: bf16,
+      %mask: !pto.vmi.mask<128xpred>) {
+    %out = pto.vmi.vmuls %source, %scalar, %mask
+        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, bf16,
+          !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vmuls' op requires i16, i32, f16, or f32 VMI element type

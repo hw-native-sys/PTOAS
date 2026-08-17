@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The scalar condition and loop-carried state are shared control-flow
+// skeleton. Splitting must preserve them in both domain-specific children.
+// RUN: pto-test-opt --vpto-split-cv-module %s | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @cross_domain_while(%limit: i32) attributes {pto.kernel} {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %result = scf.while (%value = %zero) : (i32) -> i32 {
+      %keep = arith.cmpi slt, %value, %limit : i32
+      scf.condition(%keep) %value : i32
+    } do {
+    ^bb0(%value2: i32):
+      pto.section.vector {
+        pto.sync.set <PIPE_V>, 0
+      }
+      pto.section.cube {
+        pto.sync.set <PIPE_MTE1>, 0
+      }
+      %next = arith.addi %value2, %one : i32
+      scf.yield %next : i32
+    }
+    func.call @consume_i32(%result) : (i32) -> ()
+    return
+  }
+
+  func.func private @consume_i32(i32)
+}
+
+// CHECK: module attributes {pto.target_arch = "a5"} {
+// CHECK: module attributes {{.*}}pto.kernel_kind = #pto.kernel_kind<vector>
+// CHECK-LABEL: func.func @cross_domain_while
+// CHECK: scf.while
+// CHECK: scf.condition
+// CHECK: pto.sync.set <PIPE_V>, 0
+// CHECK-NOT: pto.sync.set <PIPE_M>, 0
+// CHECK: scf.yield
+// CHECK: module attributes {{.*}}pto.kernel_kind = #pto.kernel_kind<cube>
+// CHECK-LABEL: func.func @cross_domain_while
+// CHECK: scf.while
+// CHECK: scf.condition
+// CHECK: pto.sync.set <PIPE_MTE1>, 0
+// CHECK-NOT: pto.sync.set <PIPE_V>, 0
+// CHECK: scf.yield

@@ -116,8 +116,9 @@ static LogicalResult verifyNoTileUsesAfterTFree(TPopOp tpopOp,
 
 static bool isInsideSectionOrAttributedKernel(TPopOp tpopOp, func::FuncOp funcOp) {
   if (tpopOp->getParentOfType<SectionCubeOp>() ||
-      tpopOp->getParentOfType<SectionVectorOp>())
+      tpopOp->getParentOfType<SectionVectorOp>()) {
     return true;
+  }
   return funcOp &&
          funcOp->hasAttr(FunctionKernelKindAttr::name);
 }

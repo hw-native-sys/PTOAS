@@ -1,0 +1,11 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+# RUN: bash -c 'eval "$(awk '\''/^board_runtime_skip_reason\(\)/ { copy=1 } copy { print } copy && /^}$/ { exit }'\'' "$1")"; for testcase in qr_hadamard_quant rope_interleave rmsnorm_rope_cache_write rmsnorm_rope rope_cs swa_cache_insert_valid_bias; do board_runtime_skip_reason run DeepseekV4DecodeA3 "${testcase}"; done; board_runtime_skip_reason build DeepseekV4DecodeA3 rope_cs || true; board_runtime_skip_reason run DeepseekV4DecodeA5 rope_cs || true' _ %S/../../npu_validation/scripts/run_remote_npu_validation.sh | FileCheck %s
+
+# CHECK-COUNT-6: A3 level2 implicit-tmp fallback cannot preserve explicit UB address aliases

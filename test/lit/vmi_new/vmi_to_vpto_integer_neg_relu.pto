@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vmi_to_vpto_negi(
+      %value: !pto.vmi.vreg<256xi16>) -> !pto.vmi.vreg<256xi16> {
+    %neg = pto.vmi.vneg %value
+        : !pto.vmi.vreg<256xi16> -> !pto.vmi.vreg<256xi16>
+    return %neg : !pto.vmi.vreg<256xi16>
+  }
+
+  func.func @vmi_to_vpto_relu_si32(
+      %value: !pto.vmi.vreg<128xsi32>) -> !pto.vmi.vreg<128xsi32> {
+    %relu = pto.vmi.vrelu %value
+        : !pto.vmi.vreg<128xsi32> -> !pto.vmi.vreg<128xsi32>
+    return %relu : !pto.vmi.vreg<128xsi32>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_negi(
+// CHECK-DAG: %[[NEG0:.*]] = pto.vneg {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK-DAG: %[[NEG1:.*]] = pto.vneg {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: return %[[NEG0]], %[[NEG1]]
+
+// CHECK-LABEL: func.func @vmi_to_vpto_relu_si32(
+// CHECK-DAG: %[[RELU0:.*]] = pto.vrelu {{.*}} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// CHECK-DAG: %[[RELU1:.*]] = pto.vrelu {{.*}} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// CHECK: return %[[RELU0]], %[[RELU1]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

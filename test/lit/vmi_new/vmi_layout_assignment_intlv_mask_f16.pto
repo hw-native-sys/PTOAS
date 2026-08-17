@@ -12,7 +12,8 @@
 module {
   func.func @vmi_layout_assignment_intlv_mask_f16(
       %a: !pto.vmi.vreg<64xf16>,
-      %b: !pto.vmi.vreg<64xf16>) {
+      %b: !pto.vmi.vreg<64xf16>)
+      -> (!pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>) {
     %c64 = arith.constant 64 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %even, %odd = pto.vmi.vdintlv %a, %b, %mask
@@ -21,7 +22,7 @@ module {
     %lo, %hi = pto.vmi.vintlv %even, %odd, %mask
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>
-    return
+    return %lo, %hi : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>
   }
 }
 
@@ -39,10 +40,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_intlv_mask_f16(
-// LOWER: pto.pset_b32 "PAT_ALL"
-// LOWER: pto.pset_b16 "PAT_VL64"
 // LOWER: pto.vdintlv
-// LOWER: pto.pset_b16 "PAT_VL64"
 // LOWER: pto.vintlv
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

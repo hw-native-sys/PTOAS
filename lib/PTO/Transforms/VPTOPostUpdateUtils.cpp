@@ -29,8 +29,9 @@ static bool fitsSignedI16(__int128 value) {
 
 static std::optional<int64_t> getSignedConstant(Value value) {
   APInt bits;
-  if (!matchPattern(value, m_ConstantInt(&bits)) || bits.getBitWidth() > 64)
+  if (!matchPattern(value, m_ConstantInt(&bits)) || bits.getBitWidth() > 64) {
     return std::nullopt;
+  }
   return bits.getSExtValue();
 }
 
@@ -39,10 +40,12 @@ static bool loopCounterFitsSignedI16(scf::ForOp forOp) {
   auto upper = getSignedConstant(forOp.getUpperBound());
   auto step = getSignedConstant(forOp.getStep());
   if (!lower || !upper || !step || *step <= 0 || !fitsSignedI16(*lower) ||
-      !fitsSignedI16(*upper) || !fitsSignedI16(*step))
+      !fitsSignedI16(*upper) || !fitsSignedI16(*step)) {
     return false;
-  if (*lower >= *upper)
+  }
+  if (*lower >= *upper) {
     return true;
+  }
 
   __int128 distance = static_cast<__int128>(*upper) - *lower;
   __int128 iterationCount = (distance + *step - 1) / *step;
@@ -145,25 +148,30 @@ std::optional<int64_t>
 getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
                                   PostUpdateAddressDomain domain) {
   auto type = dyn_cast<IntegerType>(value.getType());
-  if (!type || type.getWidth() != 16)
+  if (!type || type.getWidth() != 16) {
     return std::nullopt;
+  }
 
   if (value == forOp.getInductionVar()) {
-    if (!loopCounterFitsSignedI16(forOp))
+    if (!loopCounterFitsSignedI16(forOp)) {
       return std::nullopt;
+    }
     auto lower = getSignedConstant(forOp.getLowerBound());
     auto step = getSignedConstant(forOp.getStep());
-    if (!lower || !step)
+    if (!lower || !step) {
       return std::nullopt;
-    if (domain == PostUpdateAddressDomain::Unsigned && *lower < 0)
+    }
+    if (domain == PostUpdateAddressDomain::Unsigned && *lower < 0) {
       return std::nullopt;
+    }
     return *step;
   }
 
   auto iterArg = dyn_cast<BlockArgument>(value);
   if (!iterArg || iterArg.getOwner() != forOp.getBody() ||
-      iterArg.getArgNumber() == 0)
+      iterArg.getArgNumber() == 0) {
     return std::nullopt;
+  }
 
   unsigned index = iterArg.getArgNumber() - 1;
   auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
@@ -174,16 +182,19 @@ getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
     bool hasRequiredFlag = domain == PostUpdateAddressDomain::Signed
                                ? add.hasNoSignedWrap()
                                : add.hasNoUnsignedWrap();
-    if (!hasRequiredFlag)
+    if (!hasRequiredFlag) {
       return std::nullopt;
+    }
     Value step;
-    if (add.getLhs() == value)
+    if (add.getLhs() == value) {
       step = add.getRhs();
-    else if (add.getRhs() == value)
+    } else if (add.getRhs() == value) {
       step = add.getLhs();
+    }
     if (!step || !matchPattern(step, m_ConstantInt(&bits)) ||
-        bits.getBitWidth() > 64)
+        bits.getBitWidth() > 64) {
       return std::nullopt;
+    }
     return domain == PostUpdateAddressDomain::Signed
                ? bits.getSExtValue()
                : static_cast<int64_t>(bits.getZExtValue());
@@ -195,13 +206,16 @@ getCanonicalAddressRecurrenceStep(Value value, scf::ForOp forOp,
                                : sub.hasNoUnsignedWrap();
     if (!hasRequiredFlag || sub.getLhs() != value ||
         !matchPattern(sub.getRhs(), m_ConstantInt(&bits)) ||
-        bits.getBitWidth() > 64)
+        bits.getBitWidth() > 64) {
       return std::nullopt;
+    }
     uint64_t magnitude = domain == PostUpdateAddressDomain::Signed
                              ? static_cast<uint64_t>(bits.getSExtValue())
                              : bits.getZExtValue();
-    if (magnitude > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    if (magnitude >
+        static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
       return std::nullopt;
+    }
     return -static_cast<int64_t>(magnitude);
   }
 
@@ -403,10 +417,12 @@ getPostUpdateAddressUnitBytes(Operation *op, const PostUpdateOpInfo &info,
 bool satisfiesPostUpdateStrideConstraint(
     PostUpdateStrideConstraint constraint,
     std::optional<int64_t> constantStride) {
-  if (constraint == PostUpdateStrideConstraint::Dynamic)
+  if (constraint == PostUpdateStrideConstraint::Dynamic) {
     return true;
-  if (!constantStride)
+  }
+  if (!constantStride) {
     return false;
+  }
   return constraint == PostUpdateStrideConstraint::Constant ||
          (*constantStride >= -128 && *constantStride <= 127);
 }

@@ -8,6 +8,8 @@
 
 #include "VFSIMTSizePatcher.h"
 
+#include "PTO/Support/CodeConstants.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
@@ -48,11 +50,21 @@ using mlir::pto::VFSIMTSizePatchResult;
 
 constexpr uint16_t kHiIPUMachine = 0x1029;
 constexpr uint64_t kInstructionBytes = 4;
+constexpr uint64_t kVFSIMTCallSequenceBytes = 24;
+constexpr uint64_t kMOVIOffsetFromVFSIMTBytes = 20;
+constexpr uint64_t kFirstMOVKOffsetFromVFSIMTBytes = 16;
+constexpr uint64_t kSecondMOVKOffsetFromVFSIMTBytes = 12;
+constexpr uint64_t kSHLIOffsetFromVFSIMTBytes = 8;
+constexpr uint64_t kADDOffsetFromVFSIMTBytes = 4;
 constexpr uint64_t kInvalidVFSIMTSize = 0xffff;
 constexpr unsigned kVFSIMTSizeShift = 37;
 constexpr uint64_t kVFSIMTSizeMask = UINT64_C(0xffff) << kVFSIMTSizeShift;
 constexpr unsigned kVFSIMTRegisterShift = 16;
 constexpr unsigned kScalarDestinationShift = 17;
+constexpr unsigned kADDSourceRegisterShift = 7;
+constexpr unsigned kADDTargetRegisterShift = 12;
+constexpr unsigned kMOVKChunkBitWidth = 16;
+constexpr unsigned kRelativeWordOffsetBitWidth = 48;
 constexpr uint64_t kScalarRegisterMask = UINT64_C(0x1f);
 constexpr uint64_t kVFSIMTJoinOffsetMask = UINT64_C(0x3ff);
 constexpr uint64_t kVFSIMTExitModeMask = UINT64_C(1) << 10;
@@ -99,7 +111,7 @@ struct PatchRecord {
 
 struct ObjectPatchAnalysis {
   std::unique_ptr<llvm::MemoryBuffer> buffer;
-  llvm::SmallVector<PatchRecord, 4> plan;
+  llvm::SmallVector<PatchRecord, mlir::pto::kValue4> plan;
 };
 
 static void emitError(llvm::raw_ostream &diagOS, const llvm::Twine &message) {
@@ -137,15 +149,16 @@ static std::string getSIMTEntrySymbolName(llvm::StringRef functionName) {
   return (functionName + "_simt_entry").str();
 }
 
-static FailureOr<llvm::SmallVector<SimtCallSite, 4>>
+static FailureOr<llvm::SmallVector<SimtCallSite, mlir::pto::kValue4>>
 collectManifest(llvm::Module &module, llvm::raw_ostream &diagOS) {
   // The LLVM module is the source of truth for allowed caller/callee pairs.
   // Refuse calls that cannot later be matched unambiguously to ELF symbols.
-  llvm::SmallVector<SimtCallSite, 4> manifest;
+  llvm::SmallVector<SimtCallSite, mlir::pto::kValue4> manifest;
   for (llvm::Function &caller : module) {
     if (caller.isDeclaration() ||
-        caller.getCallingConv() == llvm::CallingConv::SimtEntry)
+        caller.getCallingConv() == llvm::CallingConv::SimtEntry) {
       continue;
+    }
     for (llvm::BasicBlock &block : caller) {
       for (llvm::Instruction &instruction : block) {
         auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction);
@@ -280,8 +293,9 @@ decodeMOVKChunk(uint32_t instruction, unsigned chunk, unsigned targetRegister) {
   const uint32_t expected = chunk == 1 ? 0x07410000 : 0x07810000;
   if ((instruction & kMOVKFixedMask) != expected ||
       ((instruction >> kScalarDestinationShift) & kScalarRegisterMask) !=
-          targetRegister)
+          targetRegister) {
     return std::nullopt;
+  }
   return static_cast<uint16_t>(instruction);
 }
 
@@ -302,60 +316,73 @@ static std::optional<uint64_t> decodeTargetAddress(StringRef bytes,
   // targetRegister comes from the VF_SIMT encoding. The sequence computes:
   //   target PC = address of MOV PC + sign_extend(relativeWords) * 4.
   // Reject any other sequence instead of guessing its target.
-  if (instructionOffset < 24) {
+  if (instructionOffset < kVFSIMTCallSequenceBytes) {
     return std::nullopt;
   }
   // Follow the register named by VF_SIMT back through MOVI/MOVK/SHLI/ADD.
   const unsigned targetRegister =
       (instruction >> kVFSIMTRegisterShift) & kScalarRegisterMask;
   const uint64_t movPc = llvm::support::endian::read32le(
-      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset - 24));
+      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset -
+                                        kVFSIMTCallSequenceBytes));
   const uint64_t movi = llvm::support::endian::read32le(
-      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset - 20));
+      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset -
+                                        kMOVIOffsetFromVFSIMTBytes));
   const uint32_t movk1 = llvm::support::endian::read32le(
-      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset - 16));
+      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset -
+                                        kFirstMOVKOffsetFromVFSIMTBytes));
   const uint32_t movk2 = llvm::support::endian::read32le(
-      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset - 12));
+      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset -
+                                        kSecondMOVKOffsetFromVFSIMTBytes));
   const uint64_t shli = llvm::support::endian::read32le(
-      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset - 8));
+      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset -
+                                        kSHLIOffsetFromVFSIMTBytes));
   const uint64_t add = llvm::support::endian::read32le(
-      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset - 4));
-
+      reinterpret_cast<const uint8_t *>(bytes.data() + instructionOffset -
+                                        kADDOffsetFromVFSIMTBytes));
   if ((movPc & 0xffc1ffff) != 0x02000880 ||
       (movi & 0xffc10000) != 0x07000000 ||
       (shli & 0xffc1ffff) != 0x02c00202 ||
-      (add & 0xffc0007f) != 0x00000001)
+      (add & 0xffc0007f) != 0x00000001) {
     return std::nullopt;
+  }
   if (((movi >> kScalarDestinationShift) & kScalarRegisterMask) !=
           targetRegister ||
       ((shli >> kScalarDestinationShift) & kScalarRegisterMask) !=
           targetRegister ||
       ((add >> kScalarDestinationShift) & kScalarRegisterMask) !=
           targetRegister ||
-      ((add >> 12) & kScalarRegisterMask) != targetRegister)
+      ((add >> kADDTargetRegisterShift) & kScalarRegisterMask) !=
+          targetRegister) {
     return std::nullopt;
+  }
 
   const unsigned pcRegister =
       (movPc >> kScalarDestinationShift) & kScalarRegisterMask;
-  const unsigned addSourceRegister = (add >> 7) & kScalarRegisterMask;
+  const unsigned addSourceRegister =
+      (add >> kADDSourceRegisterShift) & kScalarRegisterMask;
   if (pcRegister != addSourceRegister) {
     return std::nullopt;
   }
 
   std::optional<uint16_t> upper1 = decodeMOVKChunk(movk1, 1, targetRegister);
-  std::optional<uint16_t> upper2 = decodeMOVKChunk(movk2, 2, targetRegister);
+  std::optional<uint16_t> upper2 = decodeMOVKChunk(movk2, mlir::pto::kValue2, targetRegister);
   if (!upper1 || !upper2) {
     return std::nullopt;
   }
 
   // MOVI and the optional MOVK instructions form a signed 48-bit word offset.
   const uint64_t encodedRelativeWords = (movi & 0xffff) |
-                                        (static_cast<uint64_t>(*upper1) << 16) |
-                                        (static_cast<uint64_t>(*upper2) << 32);
-  const int64_t relativeWords = llvm::SignExtend64<48>(encodedRelativeWords);
+                                        (static_cast<uint64_t>(*upper1)
+                                         << kMOVKChunkBitWidth) |
+                                        (static_cast<uint64_t>(*upper2)
+                                         << 2 * kMOVKChunkBitWidth);
+  const int64_t relativeWords =
+      llvm::SignExtend64<kRelativeWordOffsetBitWidth>(encodedRelativeWords);
   // MOV PC observes the PC of the first instruction in this materialization
   // sequence; SHLI converts the signed word offset to a byte offset.
-  const uint64_t pcAddress = callerAddress + instructionOffset - 24;
+  const uint64_t pcAddress =
+      callerAddress + instructionOffset - kVFSIMTCallSequenceBytes;
   const int64_t byteOffset = relativeWords * kInstructionBytes;
   if (byteOffset < 0) {
     const uint64_t magnitude = static_cast<uint64_t>(-byteOffset);
@@ -365,12 +392,13 @@ static std::optional<uint64_t> decodeTargetAddress(StringRef bytes,
     return pcAddress - magnitude;
   }
   if (static_cast<uint64_t>(byteOffset) >
-      std::numeric_limits<uint64_t>::max() - pcAddress)
+      std::numeric_limits<uint64_t>::max() - pcAddress) {
     return std::nullopt;
+  }
   return pcAddress + static_cast<uint64_t>(byteOffset);
 }
 
-static FailureOr<llvm::SmallVector<DecodedCallSite, 4>>
+static FailureOr<llvm::SmallVector<DecodedCallSite, mlir::pto::kValue4>>
 decodeCallSites(const ELFFunction &caller, StringRef objectBytes,
                 llvm::raw_ostream &diagOS) {
   // Restrict decoding to the caller symbol. Searching the whole text section
@@ -384,7 +412,7 @@ decodeCallSites(const ELFFunction &caller, StringRef objectBytes,
     return failure();
   }
   StringRef bytes = objectBytes.substr(fileOffset, caller.size);
-  llvm::SmallVector<DecodedCallSite, 4> callSites;
+  llvm::SmallVector<DecodedCallSite, mlir::pto::kValue4> callSites;
   for (uint64_t offset = 0; offset + sizeof(uint64_t) <= bytes.size();
        offset += kInstructionBytes) {
     uint64_t instruction = llvm::support::endian::read64le(
@@ -430,7 +458,7 @@ validateObjectHeader(const llvm::object::ELFObjectFileBase &object,
   return success();
 }
 
-static FailureOr<llvm::SmallVector<PatchRecord, 4>>
+static FailureOr<llvm::SmallVector<PatchRecord, mlir::pto::kValue4>>
 buildPatchPlan(llvm::ArrayRef<SimtCallSite> manifest,
                const llvm::StringMap<ELFFunction> &functions,
                StringRef objectBytes, llvm::raw_ostream &diagOS) {
@@ -442,7 +470,7 @@ buildPatchPlan(llvm::ArrayRef<SimtCallSite> manifest,
     callsByCaller[call.callerName].push_back(&call);
   }
 
-  llvm::SmallVector<PatchRecord, 4> plan;
+  llvm::SmallVector<PatchRecord, mlir::pto::kValue4> plan;
   for (auto &entry : callsByCaller) {
     auto callerIt = functions.find(entry.first);
     if (callerIt == functions.end()) {
@@ -460,7 +488,7 @@ buildPatchPlan(llvm::ArrayRef<SimtCallSite> manifest,
       const ELFFunction *callee = nullptr;
       bool observed = false;
     };
-    llvm::SmallVector<ResolvedCall, 4> resolvedCalls;
+    llvm::SmallVector<ResolvedCall, mlir::pto::kValue4> resolvedCalls;
     resolvedCalls.reserve(calls.size());
     for (const SimtCallSite *call : calls) {
       auto calleeIt = functions.find(call->calleeName);
@@ -488,8 +516,9 @@ buildPatchPlan(llvm::ArrayRef<SimtCallSite> manifest,
           llvm::find_if(resolvedCalls, [&](const ResolvedCall &item) {
             return item.callee->name == callee.name;
           });
-      if (existing == resolvedCalls.end())
+      if (existing == resolvedCalls.end()) {
         resolvedCalls.push_back({call, &callee, false});
+      }
     }
 
     for (const DecodedCallSite &decodedCall : *decoded) {
@@ -623,8 +652,9 @@ analyzeObject(llvm::ArrayRef<SimtCallSite> manifest, StringRef objectPath,
   }
   auto plan = buildPatchPlan(manifest, *functions, buffer->getBuffer(), diagOS);
   if (failed(plan) ||
-      failed(validateNoRelocationOverlap(*object, *plan, diagOS)))
+      failed(validateNoRelocationOverlap(*object, *plan, diagOS))) {
     return failure();
+  }
   return ObjectPatchAnalysis{std::move(buffer), std::move(*plan)};
 }
 
@@ -775,8 +805,9 @@ FailureOr<VFSIMTSizePatchResult> mlir::pto::verifyAndPatchVFSIMTSize(
     return failure();
   }
   if (failed(validatePatchedBytes(analysis->buffer->getBuffer(), patchedBytes,
-                                  analysis->plan, diagOS)))
+                                  analysis->plan, diagOS))) {
     return failure();
+  }
   if (failed(writePatchedObject(patchedObjectPath, patchedBytes, diagOS))) {
     return failure();
   }

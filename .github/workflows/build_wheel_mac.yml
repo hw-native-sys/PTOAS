@@ -43,8 +43,8 @@ concurrency:
 
 env:
   LLVM_REPO: https://github.com/vpto-dev/llvm-project.git
-  LLVM_REF: feature-vpto-llvm21
-  LLVM_CACHE_FLAVOR: llvm21-vpto-wheel-static-pic-utils-v3
+  LLVM_REF: feature-vpto
+  LLVM_CACHE_FLAVOR: llvm19-vpto-wheel-static-pic-utils-v3
 
 jobs:
   build_wheel:
@@ -94,7 +94,7 @@ jobs:
         run: |
           # LLVM/MLIR Python bindings are not yet compatible with pybind11 3.x
           # (see pybind11 static_assert on def_property + keep_alive).
-          pip install --no-cache-dir numpy 'pybind11<3' nanobind 'scikit-build-core>=0.12.2,<2' delocate
+          pip install --no-cache-dir numpy 'pybind11<3' 'scikit-build-core>=0.12.2,<2' delocate
 
       - name: Resolve PTOAS distribution version
         run: |
@@ -210,7 +210,6 @@ jobs:
             -DPython3_EXECUTABLE=$(which python) \
             -DPython_EXECUTABLE=$(which python) \
             -Dpybind11_DIR="$(python -m pybind11 --cmakedir)" \
-            -Dnanobind_DIR="$(python -m nanobind --cmake_dir)" \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_TARGETS_TO_BUILD="host" \
             -DLLVM_INSTALL_UTILS=ON \
@@ -395,6 +394,7 @@ jobs:
           test -f "$TEST_DIR/extracted/ptoas/mlir/ir.py"
           test -f "$TEST_DIR/extracted/ptodsl/__init__.py"
           test -d "$TEST_DIR/extracted/ptoas/_runtime/share/ptoas/TileOps"
+          test -d "$TEST_DIR/extracted/ptoas/_runtime/share/ptoas/SoftOps"
           test "$(cat "$TEST_DIR/extracted/.ptoas-python-version")" = "3.11"
           compgen -G "$TEST_DIR/extracted/ptoas/_core*.so" >/dev/null
           compgen -G "$TEST_DIR/extracted/ptoas/mlir/_mlir_libs/libPTOASCompiler*" >/dev/null

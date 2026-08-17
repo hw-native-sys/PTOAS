@@ -36,6 +36,8 @@ from ptoas.mlir.ir import (
     VectorType,
 )
 
+from ._context import make_context
+
 # ── Address-space name → AddressSpace enum ───────────────────────────────────
 _ADDR_SPACE = {
     "ub":  _pto.AddressSpace.VEC,  # UB == unified buffer == VEC in PTO
@@ -78,6 +80,10 @@ class _DType:
         if kind == "integer":
             return _materialize_integer_literal(target_type, value)
         raise TypeError(f"unsupported eager constructor target type {target_type}")
+
+    def __ptodsl_cache_signature__(self):
+        with make_context():
+            return ("dtype", str(self.resolve()))
 
     def __repr__(self):
         return f"<pto.dtype {self._factory}>"
@@ -321,7 +327,17 @@ def _classify_storage_dtype(type_obj):
         return "compute"
     if Float8E4M3FNType.isinstance(type_obj) or Float8E5M2Type.isinstance(type_obj):
         return "storage_only"
-    if any(_isinstance_pto_type(type_obj, name) for name in ("F8E8M0Type", "HiF8Type", "HiF8x2Type", "F4E1M2x2Type", "F4E2M1x2Type")):
+    if any(
+        _isinstance_pto_type(type_obj, name)
+        for name in (
+            "BF16x2Type",
+            "F8E8M0Type",
+            "HiF8Type",
+            "HiF8x2Type",
+            "F4E1M2x2Type",
+            "F4E2M1x2Type",
+        )
+    ):
         return "storage_only"
     if VectorType.isinstance(type_obj):
         vec_elem = VectorType(type_obj).element_type
@@ -546,6 +562,11 @@ hif8x2 = _DType(lambda: _pto.HiF8x2Type.get())
 i8x2   = _DType(lambda: VectorType.get([2], IntegerType.get_signless(8)))
 i16x2  = _DType(lambda: VectorType.get([2], IntegerType.get_signless(16)))
 i32x2  = _DType(lambda: VectorType.get([2], IntegerType.get_signless(32)))
+
+# ``pto.bf16x2`` is the existing builtin/SIMT vector carrier.  VMI uses a
+# distinct packed carrier type so that its logical lane count remains the
+# number of bf16 pairs rather than the number of scalar bf16 lanes.
+_vmi_bf16x2 = _DType(lambda: _pto.BF16x2Type.get())
 
 
 # ── Type constructor functions ────────────────────────────────────────────────

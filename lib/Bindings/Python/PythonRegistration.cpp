@@ -13,9 +13,9 @@
 #include "mlir-c/Dialect/MemRef.h"
 #include "mlir-c/Dialect/SCF.h"
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"
+#include "mlir/Bindings/Python/PybindAdaptors.h"
 
-NB_MODULE(_site_initialize_0, module) {
+PYBIND11_MODULE(_site_initialize_0, module) {
   module.doc() = "PTOAS MLIR dialect registration";
   module.def("register_dialects", [](MlirDialectRegistry registry) {
     mlirDialectHandleInsertDialect(mlirGetDialectHandle__arith__(), registry);

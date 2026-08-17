@@ -19,9 +19,9 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_store_tail(
+// CHECK: %[[C36:.*]] = arith.constant 36 : i32
 // CHECK: %[[FULL_MASK:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // CHECK: pto.vsts %arg0, %arg2[%arg3], %[[FULL_MASK]]
-// CHECK: %[[C36:.*]] = arith.constant 36 : i32
 // CHECK: %[[TAIL_MASK:.*]], %{{.*}} = pto.plt_b32 %[[C36]] : i32 -> !pto.mask<b32>, i32
 // CHECK: pto.vsts %arg1, %arg2[{{.*}}], %[[TAIL_MASK]]
 // CHECK-NOT: pto.vmi.

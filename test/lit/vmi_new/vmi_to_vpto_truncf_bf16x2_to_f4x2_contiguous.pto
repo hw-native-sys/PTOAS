@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// Phase-1 bf16x2 -> f4x2 narrowing, contiguous path:
+//   vinterpret_cast 128xbf16 -> 64xbf16x2 (physical noop pairing),
+//   vcvt 64xbf16x2 -> 64xf4E1M2x2 (32->8, c()->ls(4), single vcvt{P0}, no sat).
+// The physical pto.vcvt consumes the bf16x2 source viewed as raw bf16 lanes.
+
+module {
+  func.func @bf16x2_to_f4x2_contiguous(
+      %src: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index) {
+    %pair = pto.vmi.vinterpret_cast %src
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %r = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @bf16x2_to_f4x2_contiguous(
+// ASSIGN-SAME: %[[INPUT:.*]]: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[PAIR:.*]] = pto.vmi.bitcast %[[INPUT]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[R:.*]] = pto.vmi.truncf %[[PAIR]]
+// ASSIGN-SAME: !pto.vmi.vreg<64x!pto.bf16x2, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64x!pto.f4E1M2x2, #pto.vmi.layout<contiguous, lane_stride = 4>>
+
+// LOWER-LABEL: func.func @bf16x2_to_f4x2_contiguous(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER-NOT: pto.vor
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast

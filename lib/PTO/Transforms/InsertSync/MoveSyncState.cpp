@@ -158,9 +158,10 @@ void MoveSyncState::MoveForSync() {
           continue;
         }
         // 遍历循环体内的所有指令
-        for (unsigned i = forCompound->beginId + 1; i < forCompound->endId; i++)
+        for (unsigned i = forCompound->beginId + 1; i < forCompound->endId; i++) {
           MoveOutSync(syncIR_[i].get(),
                       {forCompound->beginId, forCompound->endId});
+        }
       }
     }
   }

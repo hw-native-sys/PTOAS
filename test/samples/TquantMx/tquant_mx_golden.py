@@ -7,7 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""CI/remote-validation golden generator for the TquantMx (MXFP8, OCP) sample.
+"""Golden generator for the axis1 MXFP8 plus ND-to-ZZ sample.
 
 Uses validation_runtime helpers so the buffer names (v1, v2, ...) and output
 names match what generate_testcase.py produces.  This is the CI/remote path;
@@ -35,10 +35,11 @@ from validation_runtime import default_buffers, load_case_meta, rng, write_buffe
 
 
 M = 16
-K = 32
+K = 64
 GROUP_SIZE = 32
 EMAX = 8  # e4m3 max exponent
-GROUP_COUNT = (M * K) // GROUP_SIZE
+GROUP_COLS = K // GROUP_SIZE
+GROUP_COUNT = M * GROUP_COLS
 
 
 def fp32_to_fp8_element(data_abs_max, emax=EMAX):
@@ -106,6 +107,15 @@ def pack_output_buffer(meta, name, values):
     return packed
 
 
+def nd_to_zz(exp):
+    """Pack [M, N/32] exponents as [row_block, col_pair, row, pair_lane]."""
+    rows, cols = exp.shape
+    padded_rows = ((rows + 15) // 16) * 16
+    padded = np.zeros((padded_rows, cols), dtype=np.uint8)
+    padded[:rows, :] = exp
+    return padded.reshape(padded_rows // 16, 16, cols // 2, 2).transpose(0, 2, 1, 3).reshape(-1)
+
+
 def main():
     meta = load_case_meta()
     generator = rng()
@@ -118,11 +128,12 @@ def main():
     output_names = meta.outputs
 
     src_name = input_names[0] if input_names else "v1"
-    # Outputs are ordered by tstore appearance: dst, exp, max, scaling.
+    # Outputs are ordered by tstore appearance: dst, exp, max, scaling, exp_zz.
     dst_name = output_names[0] if len(output_names) > 0 else "v2"
     exp_name = output_names[1] if len(output_names) > 1 else "v3"
     max_name = output_names[2] if len(output_names) > 2 else "v4"
     scaling_name = output_names[3] if len(output_names) > 3 else "v5"
+    exp_zz_name = output_names[4] if len(output_names) > 4 else "v6"
 
     # Generate source: f32 [M, K] with values in [-10, 10].
     src = generator.uniform(-10, 10, size=M * K).astype(np.float32).reshape(M, K)
@@ -136,7 +147,7 @@ def main():
 
     # Compute golden: per-group absmax -> e8m0 -> scaling -> fp8.
     src_abs = np.abs(src)
-    group_max = np.max(src_abs.reshape(-1, GROUP_SIZE), axis=1)  # [groups]
+    group_max = np.max(src_abs.reshape(M, GROUP_COLS, GROUP_SIZE), axis=2)
 
     e8m0s = []
     scalings = []
@@ -151,16 +162,15 @@ def main():
     golden_outputs = {}
 
     # dst: fp8 e4m3fn packed as int8, [M*K] elements.
-    scaling_broadcast = np.repeat(scaling_per_group, GROUP_SIZE).reshape(M, K).astype(np.float32)
+    scaling_broadcast = np.repeat(scaling_per_group.reshape(M, GROUP_COLS), GROUP_SIZE, axis=1).astype(np.float32)
     scaled = src.astype(np.float64) * scaling_broadcast.astype(np.float64)
     scaled = np.clip(scaled, -448.0, 448.0).astype(np.float32)
     dst_bytes = fp32_to_fp8e4m3fn_bytes(scaled)
     golden_outputs[dst_name] = dst_bytes.reshape(-1)
 
-    # The logical MX aux outputs have 16 groups, but the lowered A5 TSTORE path
-    # uses 1x32 Vec-backed buffers. Pad the physical golden buffers to the
-    # generated element counts while keeping only the first 16 elements semantic.
-    # exp: ui8 [groups] = e8m0 per group.
+    # Canonical axis1 auxiliary outputs are [M, N/32].  The output buffers are
+    # therefore exactly the logical group count; no legacy-flat padding is used.
+    # exp: ui8 [M, N/32] = e8m0 per group.
     golden_outputs[exp_name] = pack_output_buffer(meta, exp_name, e8m0.reshape(GROUP_COUNT))
 
     # max: f32 [groups] = per-group absmax.
@@ -171,6 +181,10 @@ def main():
     # scaling: f32 [groups] = per-group reciprocal scale.
     golden_outputs[scaling_name] = pack_output_buffer(
         meta, scaling_name, scaling_per_group.reshape(GROUP_COUNT)
+    )
+
+    golden_outputs[exp_zz_name] = pack_output_buffer(
+        meta, exp_zz_name, nd_to_zz(e8m0.reshape(M, GROUP_COLS))
     )
 
     write_golden(meta, golden_outputs)

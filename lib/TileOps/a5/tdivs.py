@@ -17,11 +17,13 @@ from ._elementwise import (
     traversal_metadata,
 )
 from .div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
+from SoftOps import div_i32_soft
 
 
 _DTYPES = [
     ("f16", "f16", "f16"),
     ("f32", "f32", "f32"),
+    ("i32", "i32", "i32"),
 ]
 
 
@@ -34,6 +36,8 @@ def _scalar_tile_tile(operand_kinds=(), **_):
 
 
 def _div(lhs, rhs, dtype, mask, precision_type):
+    if str(dtype) == "i32":
+        return div_i32_soft(lhs, rhs, mask)
     if precision_type == "high_precision":
         if str(dtype) == "f32":
             return _div_ieee754_f32_impl(lhs, rhs, mask)

@@ -414,5 +414,14 @@ def F4E2M1x2Type : TypeDef<PTO_Dialect, "F4E2M1x2", [
       "tile_buf shape counts pairs; each pair occupies 1 byte.";
 }
 
+// ---- !pto.bf16x2 ---- Corresponding type name: bf16x2_t (4 bytes)
+def BF16x2Type : TypeDef<PTO_Dialect, "BF16x2", [
+    DeclareTypeInterfaceMethods<DataLayoutTypeInterface,
+      ["getTypeSizeInBits", "getABIAlignment", "getPreferredAlignment"]>
+]> {
+  let mnemonic = "bf16x2";
+  let summary = "Packed pair of BF16 values (4 bytes).";
+}
+
 include "PTO/IR/VMITypeDefs.td"
 include "PTO/IR/VPTOTypeDefs.td"

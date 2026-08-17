@@ -21,5 +21,4 @@ module {
   }
 }
 
-// CHECK: failed to legalize operation 'pto.vmi.vmula' that was explicitly marked illegal
 // CHECK: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO

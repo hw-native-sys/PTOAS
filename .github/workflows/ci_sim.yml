@@ -109,7 +109,7 @@ jobs:
       }}
     env:
       LLVM_REPO: https://github.com/vpto-dev/llvm-project.git
-      LLVM_REF: feature-vpto-llvm21
+      LLVM_REF: feature-vpto
       PTOAS_VENV: ${{ github.workspace }}/.work/ptoas-sim-venv
       VPTO_SIM_WORKSPACE: ${{ github.workspace }}/.work/vpto-sim-ci
       TILELIB_ST_WORKSPACE: ${{ github.workspace }}/.work/tilelib-st-ci
@@ -211,7 +211,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "LLVM_ROOT=${RUNNER_TOOL_CACHE}/llvm-project" >> "${GITHUB_ENV}"
-          echo "LLVM_DIR=${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert" >> "${GITHUB_ENV}"
+          echo "LLVM_DIR=${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert-llvm19" >> "${GITHUB_ENV}"
 
       - name: Resolve PTODSL build directories
         shell: bash
@@ -233,7 +233,7 @@ jobs:
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
-          echo "key=llvm-build-${sha}-assert-v2" >> "${GITHUB_OUTPUT}"
+          echo "key=llvm-build-${sha}-llvm19-assert-shared-mlirpy-v3" >> "${GITHUB_OUTPUT}"
 
       - name: Restore LLVM build cache
         id: llvm-cache
@@ -265,7 +265,7 @@ jobs:
           "${PTOAS_VENV}/bin/python" -m pip install --upgrade pip
           "${PTOAS_VENV}/bin/pip" install \
             'scikit-build-core>=0.12.2,<2' 'pybind11<3' \
-            nanobind numpy ml-dtypes
+            numpy ml-dtypes
 
       - name: Prepare LLVM source
         shell: bash
@@ -307,7 +307,6 @@ jobs:
             -DPython3_EXECUTABLE="${PTOAS_VENV}/bin/python" \
             -DPython_EXECUTABLE="${PTOAS_VENV}/bin/python" \
             -Dpybind11_DIR="$("${PTOAS_VENV}/bin/python" -m pybind11 --cmakedir)" \
-            -Dnanobind_DIR="$("${PTOAS_VENV}/bin/python" -m nanobind --cmake_dir)" \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_TARGETS_TO_BUILD="host"
 
@@ -684,7 +683,7 @@ jobs:
 
           probe_ptodsl_runtime_python "${PTODSL_PYTHON}"
 
-          PTO_DSL_ST_LLVM_DIR="${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert-${PYTHON_TAG}"
+          PTO_DSL_ST_LLVM_DIR="${RUNNER_TOOL_CACHE}/llvm-project/llvm/build-assert-llvm19-${PYTHON_TAG}"
           PTO_DSL_ST_BIN_DIR="$(dirname "${PTODSL_PYTHON}")"
           echo "PTO_DSL_ST_BASE_PYTHON=${SELECTED_BASE_PYTHON}" >> "${GITHUB_ENV}"
           echo "PTO_DSL_ST_PYTHON_BIN=${PTODSL_PYTHON}" >> "${GITHUB_ENV}"
@@ -712,7 +711,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.PTO_DSL_ST_LLVM_DIR }}
-          key: llvm-build-${{ steps.llvm-cache-key.outputs.sha }}-assert-${{ env.PTO_DSL_ST_PYTHON_TAG }}-v2
+          key: llvm-build-${{ steps.llvm-cache-key.outputs.sha }}-llvm19-assert-shared-mlirpy-${{ env.PTO_DSL_ST_PYTHON_TAG }}-v3
 
       - name: Build PTODSL LLVM/MLIR
         if: steps.ptodsl-llvm-cache.outputs.cache-hit != 'true'
@@ -773,7 +772,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.PTO_DSL_ST_LLVM_DIR }}
-          key: llvm-build-${{ steps.llvm-cache-key.outputs.sha }}-assert-${{ env.PTO_DSL_ST_PYTHON_TAG }}-v2
+          key: llvm-build-${{ steps.llvm-cache-key.outputs.sha }}-llvm19-assert-shared-mlirpy-${{ env.PTO_DSL_ST_PYTHON_TAG }}-v3
 
       - name: Install PTODSL PTOAS editable
         shell: bash

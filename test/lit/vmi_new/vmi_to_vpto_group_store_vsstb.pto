@@ -51,12 +51,10 @@ module {
 // CHECK: pto.vsstb %arg0, %[[BASE16]], %[[BS64]], %[[RS0]], %[[ALL16]] : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
 
 // CHECK-LABEL: func.func @group_store_one_block_f32_two_parts(
-// CHECK: %[[ROW_STRIDE:.*]] = arith.constant 256 : index
+// CHECK: %[[PART_DELTA:.*]] = arith.constant 2048 : index
 // CHECK: %[[BS32:.*]] = arith.constant 32 : i16
 // CHECK: %[[RS0_2:.*]] = arith.constant 0 : i16
 // CHECK: pto.vsstb %arg0, %{{.*}}, %[[BS32]], %[[RS0_2]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
-// CHECK: %[[GROUP8:.*]] = arith.constant 8 : index
-// CHECK: %[[PART_DELTA:.*]] = arith.muli %[[ROW_STRIDE]], %[[GROUP8]] : index
 // CHECK: %[[PART_OFFSET:.*]] = arith.addi %arg3, %[[PART_DELTA]] : index
 // CHECK: %[[PART_BASE:.*]] = pto.addptr %arg2, %[[PART_OFFSET]] : <f32, ub> -> <f32, ub>
 // CHECK: pto.vsstb %arg1, %[[PART_BASE]], %[[BS32]], %[[RS0_2]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>

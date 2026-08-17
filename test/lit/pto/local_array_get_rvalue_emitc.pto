@@ -24,5 +24,7 @@ module {
 
 // CHECK-LABEL: local_array_get_rvalue
 // CHECK: int32_t [[A:[_A-Za-z][_A-Za-z0-9]*]][16];
-// CHECK: int32_t [[R:[_A-Za-z][_A-Za-z0-9]*]] = [[A]][{{[_A-Za-z][_A-Za-z0-9]*}}];
-// CHECK: [[A]][{{[_A-Za-z][_A-Za-z0-9]*}}] = {{.*}}[[R]]{{.*}};
+// CHECK: int32_t [[R:[_A-Za-z][_A-Za-z0-9]*]];
+// CHECK: [[R]] = [[A]][{{[_A-Za-z][_A-Za-z0-9]*}}];
+// CHECK: uint32_t {{[_A-Za-z][_A-Za-z0-9]*}} = (uint32_t) [[R]];
+// CHECK: [[A]][{{[_A-Za-z][_A-Za-z0-9]*}}] = {{.*}};

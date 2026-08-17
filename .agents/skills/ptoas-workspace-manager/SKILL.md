@@ -40,9 +40,11 @@ Use the canonical PTOAS remote, `https://github.com/hw-native-sys/PTOAS`
 (normally configured locally as `official`, with either HTTPS or SSH URL).
 Do not use a pull/rebase that could rewrite local commits.
 If `main` is checked out in another worktree, update that main worktree rather
-than switching the current checkout. If the main worktree is dirty, the fetch
-may proceed but the fast-forward update must stop and the workspace must not
-be created until the user resolves the dirty state.
+than switching the current checkout. If the main worktree has staged or
+unstaged modifications to tracked files, the fetch may proceed but the
+fast-forward update must stop and the workspace must not be created until the
+user resolves those modifications. Untracked files do not block the
+fast-forward update or workspace creation.
 
 This synchronization is required for every new workspace unless the user
 explicitly specifies the checkout base, for example `--base-ref release-branch`
@@ -137,11 +139,12 @@ feature name, workspace/build roots, `LLVM_BUILD_DIR`, and base Python from
 local context or explicit arguments. Determine whether the user explicitly
 provided a checkout base. If not, locate the main worktree, fetch its
 configured upstream `main`, fast-forward local `main`, and use `main` as the
-workspace's `--base-ref`; abort before `create` if the update cannot be done
-safely. If the user explicitly provided a base, use exactly that base and skip
-the main synchronization. Do not silently select a different LLVM build or
-Python ABI. Run `create`, then report the generated workspace path and
-`env.sh`.
+workspace's `--base-ref`; abort before `create` if tracked files have staged
+or unstaged modifications, or if the update cannot be done safely. Ignore
+untracked files for this pre-creation check. If the user explicitly provided
+a base, use exactly that base and skip the main synchronization. Do not
+silently select a different LLVM build or Python ABI. Run `create`, then
+report the generated workspace path and `env.sh`.
 
 When the user asks to clean up or destroy one, run `status` or a dry-run
 `destroy` first. Never bypass either gate and never recursively delete a

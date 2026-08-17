@@ -58,10 +58,8 @@ module {
 
 // CHECK-LABEL: AICORE void issue556_tpop_live_values_no_alias(
 // CHECK: Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[POP0:[_A-Za-z][_A-Za-z0-9]*]];
-// CHECK: Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[POP0_COPY:[_A-Za-z][_A-Za-z0-9]*]] = [[POP0]];
-// CHECK: TPOP<TPipe<0, Direction::DIR_V2C, 512, 8, 8, false>, Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_UP_DOWN>({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP0_COPY]]);
+// CHECK: TPOP<TPipe<0, Direction::DIR_V2C, 512, 8, 8, false>, Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_UP_DOWN>({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP0]]);
 // CHECK: Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[POP1:[_A-Za-z][_A-Za-z0-9]*]];
-// CHECK: Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[POP1_COPY:[_A-Za-z][_A-Za-z0-9]*]] = [[POP1]];
-// CHECK: TPOP<TPipe<0, Direction::DIR_V2C, 512, 8, 8, false>, Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_UP_DOWN>({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP1_COPY]]);
-// CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP0_COPY]]);
-// CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP1_COPY]]);
+// CHECK: TPOP<TPipe<0, Direction::DIR_V2C, 512, 8, 8, false>, Tile<TileType::Mat, half, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_UP_DOWN>({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP1]]);
+// CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP0]]);
+// CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, [[POP1]]);

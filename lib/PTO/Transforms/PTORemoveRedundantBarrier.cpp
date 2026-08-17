@@ -6,15 +6,16 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include <memory>
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include <memory>
+
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -190,7 +191,6 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
       for (auto it = block->begin(); it != block->end(); ++it) {
         Operation *op = &*it;
         Attribute pipe = getOpPipe(op);
-
         // === 1. 状态更新 ===
         if (pipe) {
             intraPipeDirtySet.insert(pipe);
@@ -200,7 +200,6 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
         // === 2. Barrier 消除 ===
         if (auto barrierOp = dyn_cast<pto::BarrierOp>(op)) {
             Attribute bPipe = barrierOp.getPipe();
-            
             // 规则 A: Dead Pipeline
             // 后面没活干了 -> 删除 (保护空气没有意义)
             if (!isPipelineActiveFuture(block, std::next(it), bPipe)) {
@@ -245,8 +244,7 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
         Attribute setSrc;
         Attribute setDst;
         if (getSetSyncPipes(op, setSrc, setDst)) {
-
-            // 规则 A: Dead Receiver (死信)
+          // 规则 A: Dead Receiver (死信)
             // 如果 dst 后面没有 Resource Op，发信号也没人用。
             // 注意：因为 isPipelineActiveFuture 忽略了 WaitOp，
             // 所以如果后面只有 Wait <Src, Dst> 而没有 Dst 的实质操作，这里也会判定为 Dead，

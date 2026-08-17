@@ -23,18 +23,20 @@
 //===------------- MemInfo.cpp ---- Graph Sync Solver ---------------------===//
 //===----------------------------------------------------------------------===//
 
-#include "PTO/Transforms/GraphSyncSolver/MemInfo.h"
+#include <cstdint>
+#include "../Utils.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
-#include "../Utils.h"
+#include "PTO/Support/CodeConstants.h"
+#include "PTO/Transforms/GraphSyncSolver/MemInfo.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
-#include <cstdint>
+
 
 using namespace mlir;
 using namespace pto::syncsolver;
@@ -43,29 +45,33 @@ namespace mlir::pto::syncsolver {
 
 static std::optional<int64_t> getTileBufferBitSize(pto::TileBufType type) {
   auto bitWidth = getPTOStorageElemBitWidth(type.getElementType());
-  if (bitWidth == 0)
+  if (bitWidth == 0) {
     return ShapedType::kDynamic;
+  }
 
   ArrayRef<int64_t> shape = type.getShape();
   if (type.getCompactModeI32() ==
       static_cast<int32_t>(pto::CompactMode::RowPlusOne)) {
-    if (shape.size() != 2 || llvm::is_contained(shape, ShapedType::kDynamic))
+    if (shape.size() != mlir::pto::kValue2 || llvm::is_contained(shape, ShapedType::kDynamic)) {
       return ShapedType::kDynamic;
+    }
 
     bool rowMajor = type.getBLayoutValueI32() ==
                     static_cast<int32_t>(pto::BLayout::RowMajor);
     int64_t major = rowMajor ? shape[0] : shape[1];
     int64_t minor = rowMajor ? shape[1] : shape[0];
-    if (major == 0 || minor == 0)
+    if (major == 0 || minor == 0) {
       return 0;
+    }
     return ((major - 1) * (minor + 1) + minor) *
            static_cast<int64_t>(bitWidth);
   }
 
   int64_t numElements = 1;
   for (int64_t dim : shape) {
-    if (dim == ShapedType::kDynamic)
+    if (dim == ShapedType::kDynamic) {
       return ShapedType::kDynamic;
+    }
     numElements *= dim;
   }
   return numElements * bitWidth;
@@ -108,16 +114,19 @@ llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs) {
 }
 
 static std::optional<pto::AddressSpace> getValueAddressSpace(Value value) {
-  if (!value)
+  if (!value) {
     return std::nullopt;
-  if (auto space = pto::getPTOAddressSpaceAttr(value.getType()))
+  }
+  if (auto space = pto::getPTOAddressSpaceAttr(value.getType())) {
     return space.getAddressSpace();
+  }
   if (auto memRefType = dyn_cast<BaseMemRefType>(value.getType());
       memRefType && !memRefType.getMemorySpace()) {
     return pto::AddressSpace::GM;
   }
-  if (isa<pto::TensorViewType, pto::PartitionTensorViewType>(value.getType()))
+  if (isa<pto::TensorViewType, pto::PartitionTensorViewType>(value.getType())) {
     return pto::AddressSpace::GM;
+  }
   return std::nullopt;
 }
 
@@ -132,8 +141,9 @@ static MemInfo getConservativeIntToPtrMemInfo(pto::IntToPtrOp intToPtr) {
 
 static std::optional<int64_t> getConstantI64(Value value) {
   IntegerAttr attr;
-  if (!value || !matchPattern(value, m_Constant(&attr)))
+  if (!value || !matchPattern(value, m_Constant(&attr))) {
     return std::nullopt;
+  }
   return attr.getValue().getSExtValue();
 }
 
@@ -142,27 +152,32 @@ static PointerLikeInfo getPointerLikeInfo(pto::AllocMultiTileOp alloc) {
   info.allocateSize = getBufferBitSize(alloc.getResult());
   auto slotType = alloc.getResult().getType().getSlotType();
   if (auto space = dyn_cast_or_null<pto::AddressSpaceAttr>(
-          slotType.getMemorySpace()))
+          slotType.getMemorySpace())) {
     info.addressSpace = space.getAddressSpace();
+  }
 
   if (auto planned = alloc->getAttrOfType<DenseI64ArrayAttr>(
           pto::kPtoMultiBufferAddrsAttrName)) {
-    for (int64_t address : planned.asArrayRef())
+    for (int64_t address : planned.asArrayRef()) {
       info.addresses.push_back(address * pto::kBitsToByte);
+    }
   } else if (auto base = getConstantI64(alloc.getAddr())) {
     int64_t slotBits = info.allocateSize.value_or(ShapedType::kDynamic);
-    for (uint32_t slot = 0; slot < alloc.getResult().getType().getCount(); ++slot)
+    for (uint32_t slot = 0; slot < alloc.getResult().getType().getCount(); ++slot) {
       info.addresses.push_back(*base * pto::kBitsToByte + slot * slotBits);
+    }
   }
-  if (auto loop = alloc->getParentOfType<LoopLikeOpInterface>())
+  if (auto loop = alloc->getParentOfType<LoopLikeOpInterface>()) {
     info.parentLoop = loop;
+  }
   return info;
 }
 
 static MemInfo getMemInfoForMultiTileGet(pto::MultiTileGetOp get) {
   auto alloc = get.getSource().getDefiningOp<pto::AllocMultiTileOp>();
-  if (!alloc)
+  if (!alloc) {
     return MemInfo(get.getResult(), isWorkSpaceFuncArgument(get.getResult()));
+  }
 
   PointerLikeInfo info = getPointerLikeInfo(alloc);
   IntegerAttr slotAttr;
@@ -174,8 +189,9 @@ static MemInfo getMemInfoForMultiTileGet(pto::MultiTileGetOp get) {
       info.addresses.assign(1, address);
     }
   }
-  if (auto loop = get->getParentOfType<LoopLikeOpInterface>())
+  if (auto loop = get->getParentOfType<LoopLikeOpInterface>()) {
     info.parentLoop = loop;
+  }
   return MemInfo(get.getResult(), info);
 }
 
@@ -184,10 +200,12 @@ MemInfo getMemInfo(Value val) {
     if (auto intToPtr = llvm::dyn_cast<pto::IntToPtrOp>(defOp)) {
       return getConservativeIntToPtrMemInfo(intToPtr);
     }
-    if (auto allocMulti = llvm::dyn_cast<pto::AllocMultiTileOp>(defOp))
+    if (auto allocMulti = llvm::dyn_cast<pto::AllocMultiTileOp>(defOp)) {
       return MemInfo(val, getPointerLikeInfo(allocMulti));
-    if (auto multiGet = llvm::dyn_cast<pto::MultiTileGetOp>(defOp))
+    }
+    if (auto multiGet = llvm::dyn_cast<pto::MultiTileGetOp>(defOp)) {
       return getMemInfoForMultiTileGet(multiGet);
+    }
   }
   return MemInfo(val, isWorkSpaceFuncArgument(val));
 }
@@ -223,9 +241,10 @@ bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
   auto &offsets2 = pointerLikeInfo2.addresses;
   auto sz1 = static_cast<int64_t>(offsets1.size());
   auto sz2 = static_cast<int64_t>(offsets2.size());
-  if (sz1 == 0 || sz2 == 0)
+  if (sz1 == 0 || sz2 == 0) {
     return pointerLikeInfo1.addressSpace == pto::AddressSpace::GM ||
            pointerLikeInfo2.addressSpace == pto::AddressSpace::GM;
+  }
 
   int64_t len1 = sz1;
   int64_t len2 = sz2;
@@ -295,12 +314,14 @@ bool MemInfo::checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
   };
 
   if (auto unknownSpace = getUnknownAddressSpace(memInfo1)) {
-    if (aliasesAddressSpace(memInfo2, *unknownSpace))
+    if (aliasesAddressSpace(memInfo2, *unknownSpace)) {
       return true;
+    }
   }
   if (auto unknownSpace = getUnknownAddressSpace(memInfo2)) {
-    if (aliasesAddressSpace(memInfo1, *unknownSpace))
+    if (aliasesAddressSpace(memInfo1, *unknownSpace)) {
       return true;
+    }
   }
 
   return memInfo1.value == memInfo2.value;

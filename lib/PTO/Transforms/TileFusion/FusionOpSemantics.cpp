@@ -8,6 +8,7 @@
 
 #include "PTO/Transforms/TileFusion/FusionOpSemantics.h"
 
+#include "PTO/Support/CodeConstants.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -37,8 +38,8 @@ static bool isTileFusionTileValue(Value value) {
   return isa<pto::TileBufType>(value.getType());
 }
 
-static SmallVector<Value, 2> collectNormalizedTileOutputs(Operation *op) {
-  SmallVector<Value, 2> outputs;
+static SmallVector<Value, mlir::pto::kValue2> collectNormalizedTileOutputs(Operation *op) {
+  SmallVector<Value, mlir::pto::kValue2> outputs;
 
   if (auto dpsIface = dyn_cast<pto::PTO_DpsInitOpInterface>(op)) {
     for (Value init : dpsIface.getDpsInits()) {
@@ -46,13 +47,15 @@ static SmallVector<Value, 2> collectNormalizedTileOutputs(Operation *op) {
         outputs.push_back(init);
       }
     }
-    if (!outputs.empty())
+    if (!outputs.empty()) {
       return outputs;
+    }
   }
 
   for (Value result : op->getResults()) {
-    if (isTileFusionTileValue(result))
+    if (isTileFusionTileValue(result)) {
       outputs.push_back(result);
+    }
   }
   return outputs;
 }
@@ -90,18 +93,21 @@ FailureOr<FusionOpSemantics> getFusionOpSemantics(Operation *op) {
 
   semantics.kind = FusionOpKind::Compute;
   semantics.tileOutputs = collectNormalizedTileOutputs(op);
-  if (semantics.tileOutputs.empty())
+  if (semantics.tileOutputs.empty()) {
     return failure();
+  }
 
-  SmallVector<unsigned, 4> dpsInitOperandNumbers;
+  SmallVector<unsigned, mlir::pto::kValue4> dpsInitOperandNumbers;
   if (dpsIface) {
-    for (OpOperand &dpsInit : dpsIface.getDpsInitsMutable())
+    for (OpOperand &dpsInit : dpsIface.getDpsInitsMutable()) {
       dpsInitOperandNumbers.push_back(dpsInit.getOperandNumber());
+    }
   }
 
   for (OpOperand &operand : op->getOpOperands()) {
-    if (llvm::is_contained(dpsInitOperandNumbers, operand.getOperandNumber()))
+    if (llvm::is_contained(dpsInitOperandNumbers, operand.getOperandNumber())) {
       continue;
+    }
 
     Value value = operand.get();
     if (isTileFusionTileValue(value)) {
@@ -113,8 +119,9 @@ FailureOr<FusionOpSemantics> getFusionOpSemantics(Operation *op) {
 
   if (semantics.tileInputs.empty()) {
     for (Value output : semantics.tileOutputs) {
-      if (!isa<pto::TileBufType>(output.getType()))
+      if (!isa<pto::TileBufType>(output.getType())) {
         return failure();
+      }
     }
   }
 

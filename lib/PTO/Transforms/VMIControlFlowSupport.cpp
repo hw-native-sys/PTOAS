@@ -19,35 +19,41 @@ using namespace mlir::pto;
 LogicalResult VMIControlFlowSupport::addForConstraints(
     scf::ForOp forOp, EquivalenceCallback addEquivalent) {
   scf::YieldOp yieldOp = nullptr;
-  if (Block *body = forOp.getBody())
+  if (Block *body = forOp.getBody()) {
     yieldOp = dyn_cast<scf::YieldOp>(body->getTerminator());
+  }
 
   for (auto [index, initArg] : llvm::enumerate(forOp.getInitArgs())) {
     Value anchor = initArg;
     if (index < forOp.getRegionIterArgs().size() &&
-        failed(addEquivalent(anchor, forOp.getRegionIterArgs()[index], forOp)))
+        failed(addEquivalent(anchor, forOp.getRegionIterArgs()[index], forOp))) {
       return failure();
+    }
     if (yieldOp && index < yieldOp.getNumOperands() &&
-        failed(addEquivalent(anchor, yieldOp.getOperand(index), forOp)))
+        failed(addEquivalent(anchor, yieldOp.getOperand(index), forOp))) {
       return failure();
+    }
     if (index < forOp.getNumResults() &&
-        failed(addEquivalent(anchor, forOp.getResult(index), forOp)))
+        failed(addEquivalent(anchor, forOp.getResult(index), forOp))) {
       return failure();
+    }
   }
   return success();
 }
 
 LogicalResult VMIControlFlowSupport::addWhileConstraints(
     scf::WhileOp whileOp, EquivalenceCallback addEquivalent) {
-  if (whileOp.getBefore().empty() || whileOp.getAfter().empty())
+  if (whileOp.getBefore().empty() || whileOp.getAfter().empty()) {
     return success();
+  }
 
   Block &beforeBlock = whileOp.getBefore().front();
   Block &afterBlock = whileOp.getAfter().front();
   auto conditionOp = dyn_cast<scf::ConditionOp>(beforeBlock.getTerminator());
   auto yieldOp = dyn_cast<scf::YieldOp>(afterBlock.getTerminator());
-  if (!conditionOp || !yieldOp)
+  if (!conditionOp || !yieldOp) {
     return success();
+  }
 
   // The before region carries the initial operands back through the after
   // region's yield.  The condition's forwarded values are a separate carry
@@ -56,21 +62,25 @@ LogicalResult VMIControlFlowSupport::addWhileConstraints(
   for (auto [index, init] : llvm::enumerate(whileOp.getInits())) {
     if (index < whileOp.getBeforeArguments().size() &&
         failed(addEquivalent(init, whileOp.getBeforeArguments()[index],
-                             whileOp)))
+                             whileOp))) {
       return failure();
+    }
     if (index < yieldOp.getNumOperands() &&
-        failed(addEquivalent(init, yieldOp.getOperand(index), whileOp)))
+        failed(addEquivalent(init, yieldOp.getOperand(index), whileOp))) {
       return failure();
+    }
   }
 
   for (auto [index, forwarded] : llvm::enumerate(conditionOp.getArgs())) {
     if (index < afterBlock.getNumArguments() &&
         failed(addEquivalent(forwarded, afterBlock.getArgument(index),
-                             whileOp)))
+                             whileOp))) {
       return failure();
+    }
     if (index < whileOp.getNumResults() &&
-        failed(addEquivalent(forwarded, whileOp.getResult(index), whileOp)))
+        failed(addEquivalent(forwarded, whileOp.getResult(index), whileOp))) {
       return failure();
+    }
   }
   return success();
 }

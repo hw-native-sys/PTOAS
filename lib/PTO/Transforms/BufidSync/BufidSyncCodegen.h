@@ -9,12 +9,13 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCCODEGEN_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCCODEGEN_H
 
+#include <optional>
 #include "BufidSyncAnalysis.h"
 #include "BufidSyncIdAlloc.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
-#include <optional>
+
 
 namespace mlir {
 namespace pto {

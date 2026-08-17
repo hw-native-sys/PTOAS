@@ -159,7 +159,6 @@ add_mlir_python_extension(PTOASPythonCore _core
   INSTALL_COMPONENT PTOAS_Python
   INSTALL_DIR ptoas
   OUTPUT_DIRECTORY "${PTOAS_BUILD_PYTHON_PACKAGE_DIR}"
-  PYTHON_BINDINGS_LIBRARY pybind11
   SOURCES
     NativeModule.cpp
   LINK_LIBS
@@ -191,6 +190,8 @@ add_mlir_python_sources_target(PTOASRuntimePythonSourcesStage
   SOURCES_TARGETS PTOASRuntimePythonSources
 )
 
+add_dependencies(PTOASRuntimePythonSourcesStage PTODSLPackageStage)
+
 declare_mlir_python_sources(PTOASTileOpsPythonSources
   ROOT_DIR "${CMAKE_SOURCE_DIR}/lib/TileOps"
   SOURCES_GLOB "*.py"
@@ -201,12 +202,23 @@ add_mlir_python_sources_target(PTOASTileOpsPythonSourcesStage
   SOURCES_TARGETS PTOASTileOpsPythonSources
 )
 
+declare_mlir_python_sources(PTOASSoftOpsPythonSources
+  ROOT_DIR "${CMAKE_SOURCE_DIR}/lib/SoftOps"
+  SOURCES_GLOB "*.py"
+)
+add_mlir_python_sources_target(PTOASSoftOpsPythonSourcesStage
+  OUTPUT_DIRECTORY
+  "${PTOAS_BUILD_PYTHON_PACKAGE_DIR}/_runtime/share/ptoas/SoftOps"
+  SOURCES_TARGETS PTOASSoftOpsPythonSources
+)
+
 add_custom_target(PTOASPythonPackage ALL)
 add_dependencies(PTOASPythonPackage
   PTOASPythonCore
   PTOAS_Python
   PTOASRuntimePythonSourcesStage
   PTOASTileOpsPythonSourcesStage
+  PTOASSoftOpsPythonSourcesStage
 )
 if(TARGET PTODSLPackage)
   add_dependencies(PTOASPythonPackage PTODSLPackage)
@@ -251,6 +263,14 @@ install(SCRIPT
 
 install(
   DIRECTORY "${CMAKE_SOURCE_DIR}/lib/TileOps"
+  DESTINATION "ptoas/_runtime/share/ptoas"
+  COMPONENT PTOAS_Python
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+)
+
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/lib/SoftOps"
   DESTINATION "ptoas/_runtime/share/ptoas"
   COMPONENT PTOAS_Python
   PATTERN "__pycache__" EXCLUDE

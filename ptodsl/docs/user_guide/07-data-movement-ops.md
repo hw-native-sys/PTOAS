@@ -944,17 +944,16 @@ Cube compute step; it does not issue those transfers itself.
 
 **Description**: Explicit-control L1-to-L0A/L0B loads. This overload preserves
 the authored fractal-block control fields and does not infer strides from a
-logical tile shape. It currently rejects FP4 packed source pointers because
-the compatibility wrapper cannot yet guarantee selection of the FP4-specific
-L1-to-L0 intrinsic on this path. For FP4 packed operands, use the structured
-shape-derived `mte_l1_l0a(..., m, k, ...)` or `mte_l1_l0b(..., k, n, ...)`
-form below.
+logical tile shape. PTODSL emits the same `mte_l1_l0a` / `mte_l1_l0b` wrapper
+IR as the structured overload; PTOAS selects packed-S4 staging for
+`f4e1m2x2` and `f4e2m1x2`, and the regular L1-to-L0 load for other supported
+element types.
 
 **Parameters**:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `src` | `PtrType` (L1/MAT) | L1 source pointer; parent-allocation matrix offsets are represented by the control fields below. FP4 packed source pointers are not supported by this explicit-control overload. |
+| `src` | `PtrType` (L1/MAT) | L1 source pointer; parent-allocation matrix offsets are represented by the control fields below. |
 | `dst` | `PtrType` (L0A/L0B) | L0 destination pointer; stage/version offsets belong in this pointer. |
 | `m_start`, `k_start` | `int` in `0..65535` | Source fractal-block coordinates at which the load begins. |
 | `m_step`, `k_step` | `int` in `1..255` | Number of fractal blocks transferred along the two source axes. |
@@ -965,7 +964,11 @@ form below.
 
 Use this overload when a source/destination subregion has layout control that
 cannot be reconstructed from a canonical `m`/`k`/`n` tile shape. The pointer
-order is always `src, dst`.
+order is always `src, dst`. For packed FP4 sources, `k_start` is a packed
+`f4x2` source coordinate (one byte, or two logical FP4 values), while `k_step`
+is a 32-byte S4 K-block (64 logical FP4 values). PTODSL preserves all six
+controls in the wrapper IR exactly; callers must not pre-scale the K controls
+to compensate for the structured form's shape conversion.
 
 ---
 

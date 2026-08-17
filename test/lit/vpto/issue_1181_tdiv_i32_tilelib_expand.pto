@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression companion for issue 1181. TileLib must select the exact A5 i32
+// software implementation. This is intentionally pto.tdiv, not pto.ub.vdiv.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @issue_1181_tdiv_i32() {
+    %lhs = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=64, v_row=4, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rhs = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=64, v_row=4, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=64, v_row=4, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tdiv ins(%lhs, %rhs :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=64, v_row=4, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=64, v_row=4, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=64, v_row=4, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @issue_1181_tdiv_i32
+// CHECK-NOT: pto.tdiv ins
+// CHECK: pto.vecscope
+// CHECK: pto.vlds
+// CHECK: pto.vbitcast
+// CHECK: pto.vcmp
+// CHECK: pto.vdiv
+// CHECK: pto.vcvt
+// CHECK: pto.vmull
+// CHECK: pto.vsel
+// CHECK-NOT: pto.vshr
+// CHECK-NOT: pto.vshl
+// CHECK: pto.vsts
+// CHECK-NOT: pto.ub.vdiv

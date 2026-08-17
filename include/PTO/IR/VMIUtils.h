@@ -60,8 +60,8 @@ FailureOr<bool> isPaddingLane(Type type, int64_t part, int64_t chunk,
 // ---------------------------------------------------------------------------
 
 struct VMIFpToSiContract {
-  bool requiresSat;
-  bool requiresPart;
+  bool requiresSat = false;
+  bool requiresPart = false;
 };
 
 /// Returns the FpToSi contract for the given src→dst element type pair,
@@ -75,8 +75,8 @@ lookupVMIFpToSiContract(Type srcElem, Type dstElem);
 // ---------------------------------------------------------------------------
 
 struct VMIFpToUiContract {
-  bool requiresSat;
-  bool requiresPart;
+  bool requiresSat = false;
+  bool requiresPart = false;
 };
 
 /// Returns the FpToUi contract for the given src→dst element type pair,
@@ -86,14 +86,15 @@ lookupVMIFpToUIContract(Type srcElem, Type dstElem);
 
 // ---------------------------------------------------------------------------
 // VMI FpToFp hardware contract (VMI-owned; may diverge from VPTO).
-// Only same-width fp->fp needs a pair whitelist here; widen/narrow fp->fp
-// reuse the extf/truncf layout framework and do not consult this table.
+// Enumerates same-width fp->fp whitelist pairs plus the fp->fp narrow paths
+// whose sat semantics differ from the truncf default (e.g. bf16x2->f4x2).
 // ---------------------------------------------------------------------------
 
 struct VMIFpToFpContract {
-  bool requiresRnd;
-  bool requiresSat;
-  bool requiresPart;
+  bool requiresRnd = false;
+  bool requiresSat = false;
+  bool requiresPart = false;
+  StringRef allowedRndModes = StringRef();
 };
 
 /// Returns the FpToFp contract for the given src->dst element type pair,

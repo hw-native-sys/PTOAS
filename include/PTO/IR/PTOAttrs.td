@@ -1264,6 +1264,17 @@ def PTO_QuantScaleAlgAttr
   let summary = "MX quantization scale algorithm attribute";
 }
 
+def PTO_MxGroupAxisEnum : PTO_I32Enum<
+  "MxGroupAxis", "MX quantization grouping axis", [
+    I32EnumAttrCase<"Axis0", 0, "axis0">,
+    I32EnumAttrCase<"Axis1", 1, "axis1">
+  ]>;
+
+def PTO_MxGroupAxisAttr
+    : EnumAttr<PTO_Dialect, PTO_MxGroupAxisEnum, "mx_group_axis"> {
+  let summary = "MX quantization grouping axis attribute";
+}
+
 def PTO_VecStoreModeEnum : PTO_I32Enum<
   "VecStoreMode", "PTO vector store mode", [
     I32EnumAttrCase<"ND", 0, "nd">,

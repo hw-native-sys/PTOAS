@@ -1,10 +1,12 @@
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=analyze %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHED
 
 module attributes {pto.target_arch = "a5"} {
   func.func @section_sugar_kernel(%arg0: !pto.ptr<i16, gm>)
       attributes {pto.kernel} {
     %c0 = arith.constant 0 : i64
     %c1 = arith.constant 1 : i64
+    %idx0 = arith.constant 0 : index
     %ub = pto.castptr %c0 : i64 -> !pto.ptr<i16, ub>
     %mat = pto.castptr %c0 : i64 -> !pto.ptr<i16, l1>
 
@@ -12,6 +14,11 @@ module attributes {pto.target_arch = "a5"} {
       pto.mte_gm_ub %arg0, %ub, %c0, %c1
         nburst(%c1, %c1, %c1)
         : !pto.ptr<i16, gm>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %vec = pto.vlds %ub[%idx0]
+        : !pto.ptr<i16, ub> -> !pto.vreg<128xi16>
+      pto.vsts %vec, %ub[%idx0], %mask
+        : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
     }
 
     pto.section.cube {
@@ -29,6 +36,7 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK-SAME: pto.kernel_kind = #pto.kernel_kind<vector>
 // CHECK: func.func @section_sugar_kernel
 // CHECK: pto.copy_gm_to_ubuf
+// CHECK: pto.vlds
 // CHECK-NOT: pto.section
 // CHECK-NOT: pto.copy_ubuf_to_cbuf
 // CHECK: module attributes {
@@ -37,3 +45,8 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: pto.copy_ubuf_to_cbuf
 // CHECK-NOT: pto.section
 // CHECK-NOT: pto.copy_gm_to_ubuf
+// CHECK-NOT: pto.vlds
+
+// SCHED-COUNT-1: vpto-scheduler: function=section_sugar_kernel
+// SCHED: op=pto.vlds
+// SCHED-NOT: op=pto.copy_ubuf_to_cbuf

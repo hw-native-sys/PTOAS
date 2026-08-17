@@ -1,0 +1,23 @@
+module attributes {pto.target_arch = "a5"} {
+  func.func @qr_proj_seed(%arg0: !pto.ptr<f32>, %arg1: index, %arg2: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c1024_index = arith.constant 1024 : index
+  %c1_index = arith.constant 1 : index
+  %c0_index = arith.constant 0 : index
+  %c16_index = arith.constant 16 : index
+  %c128_index = arith.constant 128 : index
+  %cst_6 = arith.constant 0.00000000000000000e+00 : f32
+  %qr_fp32_inline225_inline1284__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%arg2, %c1024_index], strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  scf.for %ts0_inline241_inline1255__idx_v0 = %c0_index to %arg2 step %c16_index {
+    scf.for %nseed0_inline240_inline1304__idx_v0 = %c0_index to %c1024_index step %c128_index {
+      %qr_seed_inline214_inline1258__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.texpands ins(%cst_6 : f32) outs(%qr_seed_inline214_inline1258__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      %0 = arith.maxsi %ts0_inline241_inline1255__idx_v0, %c0_index : index
+      %1 = arith.maxsi %nseed0_inline240_inline1304__idx_v0, %c0_index : index
+      %qr_fp32_inline225_inline1284__iter_v3_pview = pto.partition_view %qr_fp32_inline225_inline1284__ssa_v0_view, offsets = [%0, %1], sizes = [%c16_index, %c128_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+      pto.tstore ins(%qr_seed_inline214_inline1258__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%qr_fp32_inline225_inline1284__iter_v3_pview : !pto.partition_tensor_view<16x128xf32>)
+    }
+  }
+  return
+  }
+}

@@ -14,9 +14,9 @@
 
 ## 3.1 Binary Arithmetic
 
-### `pto.vmi.vadd` / `pto.vmi.vsub` / `pto.vmi.vmul`
+### `pto.vmi.vadd` / `pto.vmi.vsub`
 
-- **semantics:** Unified fp/int elementwise add / subtract / multiply.
+- **semantics:** Unified fp/int elementwise add / subtract.
 
   ```c
   for (int i = 0; i < N; i++)
@@ -50,9 +50,18 @@
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**
   ```
-  K × pto.vadd / pto.vsub / pto.vmul  (+ mask per reg, ppack/punpack if needed)
+  K × pto.vadd / pto.vsub  (+ mask per reg, ppack/punpack if needed)
   ```
   `#mi = K`, `dep = 1`, util = 100%.
+
+### `pto.vmi.vmul`
+
+- **semantics:** Unified floating-point/integer elementwise multiply.
+- **syntax:** Same operand, mask, result, and `pmode` model as
+  `pto.vmi.vadd` / `pto.vmi.vsub`.
+- **datatypes:** `i16`, `i32`, `f16`, `bf16`, `f32`. The A5 vector multiply
+  family has no 8-bit integer form.
+- **lowering to `pto.mi`:** `K × pto.vmul`.
 
 - **example:**
   ```mlir
@@ -146,12 +155,14 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vabs %src, %mask {pmode = "zero"} : !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **datatypes:** `si8`, `si16`, `si32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**
   ```
-  K × pto.vabs
+  K × pto.vabs (si8/si16/si32/f16/f32)
+  K × sign-bit clear (bf16)
   ```
-  `#mi = K`, `dep = 1`.
+  BF16 has no direct A5 vector-absolute instruction, so VMI implements it by
+  clearing each element's sign bit. `dep = 1`.
 
 ### `pto.vmi.vneg`
 
@@ -166,10 +177,10 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vneg %src, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **datatypes:** `i8`–`i32`, `f16`, `f32`
 - **lowering to `pto.mi`:**
   ```
-  K × pto.vneg (fp) or K × (vsub 0, src) (int)
+  K × pto.vneg
   ```
   `#mi = K`, `dep = 1`.
 
@@ -186,7 +197,7 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
   ```mlir
   %r = pto.vmi.vrelu %src, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **datatypes:** `si32`, `f16`, `f32`
 - **lowering to `pto.mi`:**
   ```
   K × pto.vrelu
@@ -314,9 +325,9 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
 Vec-scalar ops broadcast a scalar to all lanes (R6 implicit broadcast). The
 scalar type must match the vector element type.
 
-### `pto.vmi.vadds` / `pto.vmi.vmuls` / `pto.vmi.vmaxs` / `pto.vmi.vmins`
+### `pto.vmi.vadds` / `pto.vmi.vmaxs` / `pto.vmi.vmins`
 
-- **semantics:** Elementwise vector-scalar add / multiply / max / min.
+- **semantics:** Elementwise vector-scalar add / max / min.
 
   ```c
   for (int i = 0; i < L; i++)
@@ -344,10 +355,22 @@ scalar type must match the vector element type.
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**
   ```
-  K × pto.vadds / pto.vmuls / pto.vmaxs / pto.vmins
+  K × pto.vadds / pto.vmaxs / pto.vmins
   ```
   `#mi = K`, `dep = 1`. No extra reg for scalar.
 
+- **example:**
+  ```mlir
+  %shifted = pto.vmi.vadds %x, %bias, %mask
+      : !pto.vmi.vreg<64×f32>, f32, !pto.vmi.mask<64> -> !pto.vmi.vreg<64×f32>
+  ```
+
+### `pto.vmi.vmuls`
+
+- **semantics:** Elementwise vector-scalar multiply with the same scalar
+  broadcast, mask, and `pmode` model as the other vector-scalar operations.
+- **datatypes:** `i16`, `i32`, `f16`, `f32`.
+- **lowering to `pto.mi`:** `K × pto.vmuls`.
 - **example:**
   ```mlir
   %scaled = pto.vmi.vmuls %x, %scale, %mask
@@ -417,13 +440,13 @@ scalar type must match the vector element type.
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `cmp` | `eq`, `ne`, `lt`, `le`, `gt`, `ge` | *(required)* | Comparison mode (fp unordered / integer; integer signedness comes from the element type: `iN` vs `uiN`) |
+  | `cmp` | `eq`, `ne`, `lt`, `le`, `gt`, `ge` | *(required)* | Comparison mode (fp unordered / integer; integer signedness comes from the element type: `siN` vs `iN`/`uiN`) |
   | | `oeq`, `one`, `olt`, `ole`, `ogt`, `oge` | | FP ordered forms |
   | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior |
 
 - **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`, `f32`.
   Integer signedness is taken from the element type; signless `iN` is treated
-  as signed (equivalent to `siN`).
+  as unsigned (equivalent to `uiN`).
 - **lowering to `pto.mi`:**
   ```
   K × pto.vcmp {cmp_mode}
@@ -440,7 +463,7 @@ scalar type must match the vector element type.
       -> !pto.vmi.mask<128×b32>
   // → pto.as: 2 × pto.vcmp "lt" (EVEN/ODD), each with per-reg seed mask
 
-  // i32 signed greater-than-or-equal (signedness carried by the `i32` element type)
+  // i32 unsigned greater-than-or-equal (signless integers use unsigned semantics)
   %ge = pto.vmi.vcmp %a, %b, %seed {cmp = "ge"}
       : !pto.vmi.vreg<128×i32>, !pto.vmi.vreg<128×i32>, !pto.vmi.mask<128×b32>
       -> !pto.vmi.mask<128×b32>
@@ -488,7 +511,7 @@ scalar type must match the vector element type.
 - **attributes:** Same `cmp` / `pmode` as `vcmp`.
 - **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`, `f32`.
   Integer signedness is taken from the element type; signless `iN` is treated
-  as signed (equivalent to `siN`). The scalar operand's element type must
+  as unsigned (equivalent to `uiN`). The scalar operand's element type must
   match the vector's, so signedness is consistent on both operands.
 - **lowering to `pto.mi`:**
   ```

@@ -54,8 +54,9 @@ constexpr int kUsageExitCode = 2;
 static std::vector<std::string> collectArguments(int argc, char *argv[]) {
   std::vector<std::string> args;
   args.reserve(static_cast<size_t>(argc));
-  for (int i = 0; i < argc; ++i)
+  for (int i = 0; i < argc; ++i) {
     args.emplace_back(argv[i]);
+  }
   return args;
 }
 
@@ -63,23 +64,28 @@ static std::vector<std::string> collectArguments(int argc, char *argv[]) {
 
 static std::optional<CommandLineOptions>
 parseCommandLine(const std::vector<std::string> &args) {
-  if (args.size() < kCommandArgumentCount)
+  if (args.size() < kCommandArgumentCount) {
     return std::nullopt;
+  }
 
   CommandLineOptions options{args[kCommandArgumentIndex], "", ""};
-  if (options.cmd != "encode" && options.cmd != "decode")
+  if (options.cmd != "encode" && options.cmd != "decode") {
     return options;
-  if (args.size() < kFullCommandArgumentCount)
+  }
+  if (args.size() < kFullCommandArgumentCount) {
     return std::nullopt;
+  }
 
   options.input = args[kInputArgumentIndex];
   for (size_t i = kFirstOptionArgumentIndex; i < args.size(); ++i) {
     const std::string &arg = args[i];
-    if (arg == "-o" && i + kNextArgumentOffset < args.size())
+    if (arg == "-o" && i + kNextArgumentOffset < args.size()) {
       options.output = args[++i];
+    }
   }
-  if (options.output.empty())
+  if (options.output.empty()) {
     return std::nullopt;
+  }
   return options;
 }
 
@@ -126,10 +132,12 @@ int main(int argc, char **argv) {
   }
 
   try {
-    if (options->cmd == "encode")
+    if (options->cmd == "encode") {
       return runEncode(*options);
-    if (options->cmd == "decode")
+    }
+    if (options->cmd == "decode") {
       return runDecode(*options);
+    }
     usage();
     return kUsageExitCode;
   } catch (const std::exception& e) {

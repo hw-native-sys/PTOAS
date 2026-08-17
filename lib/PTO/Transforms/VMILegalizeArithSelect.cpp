@@ -68,13 +68,15 @@ struct VMILegalizeArithSelectPass
     SmallVector<arith::SelectOp> selects;
     module.walk([&](arith::SelectOp select) {
       if (isVMIValueType(select.getResult().getType()) &&
-          hasScalarI1Condition(select))
+          hasScalarI1Condition(select)) {
         selects.push_back(select);
+      }
     });
 
     for (arith::SelectOp select : llvm::reverse(selects)) {
-      if (select->getBlock() != nullptr)
+      if (select->getBlock() != nullptr) {
         rewriteSelectToIf(select);
+      }
     }
   }
 };

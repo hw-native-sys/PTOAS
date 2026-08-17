@@ -18,16 +18,13 @@ diff --git a/pyproject.toml b/pyproject.toml
  editable.mode = "redirect"
 +sdist.inclusion-mode = "manual"
  install.components = ["PTOAS_Python"]
-@@ -49,11 +50,6 @@ install.components = ["PTOAS_Python"]
- [tool.scikit-build.wheel.packages]
- ptodsl = "ptodsl/ptodsl"
- ptoas = "ptodsl/ptoas"
--
+@@ -53,3 +54,4 @@ TileOps = "lib/TileOps"
  [tool.scikit-build.cmake.define]
  PTOAS_RELEASE_VERSION_OVERRIDE = { env = "PTOAS_RELEASE_VERSION_OVERRIDE", default = "" }
--
++PTOAS_CLI_VERSION_LABEL = "vmi"
+
+@@ -56,4 +58,0 @@ PTOAS_RELEASE_VERSION_OVERRIDE = { env = "PTOAS_RELEASE_VERSION_OVERRIDE", default = "" }
 -[tool.scikit-build.metadata.version]
 -provider = "scikit_build_core.metadata.regex"
 -input = "CMakeLists.txt"
 -regex = 'project\s*\(\s*ptoas\s+VERSION\s+(?P<value>[0-9]+\.[0-9]+)\s*\)'
-+PTOAS_CLI_VERSION_LABEL = "vmi"

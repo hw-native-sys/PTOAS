@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -verify-diagnostics
+
+// The f4x2 -> bf16x2 widen is supported, but the bare f4x2 -> bf16 (16-bit)
+// widen is not: bf16x2 is the only legal bf16 carrier for f4 dequant. Reject
+// at the unified conversion boundary instead of allowing it to fail during
+// lowering.
+
+module {
+  func.func @widen_bare_bf16_unsupported(
+      %s: !pto.vmi.vreg<128x!pto.f4E1M2x2>) {
+    // expected-error@+1 {{'pto.vmi.vcvt' op unsupported packed fp-to-fp conversion element type pair}}
+    %r = pto.vmi.vcvt %s
+        : !pto.vmi.vreg<128x!pto.f4E1M2x2> -> !pto.vmi.vreg<128xbf16>
+    return
+  }
+}

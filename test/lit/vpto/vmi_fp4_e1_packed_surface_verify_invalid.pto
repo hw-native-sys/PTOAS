@@ -6,14 +6,19 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>&1 | FileCheck %s
+// Previously the packed FP4 pair types were rejected as VMI logical element
+// types ("packed FP4 ... not a supported VMI surface"). Since f4x2 is now a
+// first-class VMI element type (bf16x2 -> f4x2 vcvt), this is a positive test:
+// the vreg verifies OK and the function round-trips.
 
-module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @vmi_fp4_e1_packed_surface_invalid(
-      %arg0: !pto.vmi.vreg<256x!pto.f4E1M2x2>) attributes {pto.kernel} {
-    return
+// RUN: pto-test-opt %s -verify-diagnostics -split-input-file | FileCheck %s
+
+module {
+  func.func @vmi_fp4_e1_packed_surface(
+      %arg0: !pto.vmi.vreg<256x!pto.f4E1M2x2>) -> !pto.vmi.vreg<256x!pto.f4E1M2x2> {
+    return %arg0 : !pto.vmi.vreg<256x!pto.f4E1M2x2>
   }
 }
 
-// CHECK: error: '!pto.vmi.vreg<256x!pto.f4E1M2x2>' uses a packed FP4 physical pair type as a VMI logical element type
-// CHECK-SAME: packed FP4 input/output is not a supported VMI surface
+// CHECK-LABEL: func.func @vmi_fp4_e1_packed_surface
+// CHECK-NOT: error

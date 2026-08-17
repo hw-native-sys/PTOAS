@@ -6,10 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "ptoas.h"
 
 #include "PTOModule.h"
 #include "PTO/Transforms/TileLibService.h"
+#include "PTO/Transforms/SoftLibService.h"
 
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 #include "mlir/CAPI/IR.h"
@@ -59,9 +61,10 @@ public:
       py::tuple result = getCompilerRuntime().attr("materialize")(
           request.target, request.op, request.operandSpecsJson,
           request.contextAttrsJson, request.candidateId, contextOwner);
-      if (result.size() != 2)
+      if (result.size() != mlir::pto::kValue2) {
         throw py::value_error(
             "PTODSL materialize() must return (module, entry_symbol)");
+      }
 
       // MlirModule is a non-owning handle. Keep result[0] alive until the
       // complete source module has been cloned into C++ ownership.
@@ -87,7 +90,8 @@ public:
     }
   }
 
-private:
+  // Shared by the TileLib and SoftLib Python bridges.  The returned Python
+  // object owns only the capsule wrapper; the C++ pass owns the MLIR context.
   static py::module_ getCompilerRuntime() {
     // Python's sys.modules cache makes this a process-wide runtime module
     // without storing a py::object whose destructor could outlive CPython.
@@ -103,6 +107,38 @@ private:
   }
 };
 
+class PythonSoftLibService final : public mlir::pto::SoftLibService {
+public:
+  mlir::LogicalResult
+  materialize(const mlir::pto::SoftLibMaterializationRequest &request,
+              mlir::MLIRContext &context,
+              mlir::pto::SoftLibMaterializationCallback callback) override {
+    py::gil_scoped_acquire acquire;
+    try {
+      py::object contextOwner = PythonTileLibService::getPythonContext(context);
+      MlirContext pythonContext = py::cast<MlirContext>(contextOwner);
+      py::tuple result = py::module_::import("ptodsl.softlib._compiler_runtime")
+          .attr("materialize")(request.target, request.op,
+                                request.operandSpecsJson, contextOwner);
+      if (result.size() != 2)
+        throw py::value_error("SoftLib materialize() must return (module, entry_symbol)");
+      py::object moduleOwner = result[0];
+      MlirModule rawModule = py::cast<MlirModule>(moduleOwner);
+      if (!mlirContextEqual(mlirModuleGetContext(rawModule), pythonContext))
+        return mlir::failure();
+      return callback(unwrap(rawModule), py::cast<std::string>(result[1]));
+    } catch (const py::error_already_set &error) {
+      llvm::errs() << "SoftLib: PTODSL materialization raised Python exception:\n"
+                   << error.what() << "\n";
+      return mlir::failure();
+    } catch (const std::exception &error) {
+      llvm::errs() << "SoftLib: invalid PTODSL materialization result: "
+                   << error.what() << "\n";
+      return mlir::failure();
+    }
+  }
+};
+
 constexpr char kRuntimeRegistrationCapsuleName[] =
     "ptoas.TileLibRuntimeRegistration";
 
@@ -111,14 +147,18 @@ public:
   PythonTileLibRuntimeRegistration()
       : service(std::make_shared<PythonTileLibService>()) {
     mlir::pto::TileLibRuntime::install(service);
+    softService = std::make_shared<PythonSoftLibService>();
+    mlir::pto::SoftLibRuntime::install(softService);
   }
 
   ~PythonTileLibRuntimeRegistration() {
     mlir::pto::TileLibRuntime::uninstall(service.get());
+    mlir::pto::SoftLibRuntime::uninstall(softService.get());
   }
 
 private:
   std::shared_ptr<PythonTileLibService> service;
+  std::shared_ptr<PythonSoftLibService> softService;
 };
 
 void destroyRuntimeRegistration(PyObject *capsule) {

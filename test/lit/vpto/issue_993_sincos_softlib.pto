@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Guards late A5 PTODSL SoftLib materialization for SIMT sin/cos.
+// The operations are intentionally f32 scalar hooks, not native vector ops.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @issue_993_sincos(%x: f32, %dst: !pto.ptr<f32, ub>) attributes {pto.simt_entry} {
+    %zero = arith.constant 0 : index
+    %s = pto.sin %x : f32 -> f32
+    %c = pto.cos %x : f32 -> f32
+    pto.store %s, %dst[%zero] : !pto.ptr<f32, ub>, f32
+    pto.store %c, %dst[%zero] : !pto.ptr<f32, ub>, f32
+    return
+  }
+}
+
+// CHECK-LABEL: define linkonce_odr simt_entry void @issue_993_sincos
+// CHECK-COUNT-2: call float @llvm.hivm.round.f
+// CHECK-COUNT-12: call float @llvm.hivm.ffma.f32.rrr

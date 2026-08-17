@@ -139,7 +139,8 @@ def PTO_DevScalarValueType : AnyTypeOf<[I8, I16, I32, I64],
                                        "i8, i16, i32 or i64">;
 
 class PTO_MicroOp<string mnemonic, list<Trait> traits = []>
-    : PTO_Op<mnemonic, !listconcat(traits, [MicroOpInterface])>;
+    : PTO_Op<mnemonic, !listconcat(traits, [MicroOpInterface,
+                                            VPTOSchedulingOpInterface])>;
 
 class PTO_VectorMicroOp<string mnemonic, list<Trait> traits = []>
     : PTO_MicroOp<mnemonic,
@@ -376,7 +377,10 @@ def VecScopeOp : PTO_Op<"vecscope", [SingleBlock, NoTerminator,
     `pto.vecscope` marks a structured vector-scope interval without overloading
     a dummy carrier loop with scope metadata. Lowering and emission passes may
     use the region boundary to preserve loop shape while treating the enclosed
-    body as one VPTO vector interval.
+    body as one VPTO vector interval. Pipeline, system, cache, SIMT, and
+    cross-core synchronization operations delimit vector scopes and must remain
+    outside the region. `pto.mem_bar` is the exception: it orders vector memory
+    operations within the region.
   }];
 
   let regions = (region SizedRegion<1>:$body);
@@ -392,7 +396,7 @@ def StrictVecScopeOp : PTO_Op<"strict_vecscope", [SingleBlock, NoTerminator,
     `pto.strict_vecscope` is the strict form of `pto.vecscope`. Values used by
     the body must be passed explicitly through op operands and corresponding
     block arguments; implicit SSA capture from the surrounding scope is
-    rejected.
+    rejected. It has the same synchronization boundary rules as `pto.vecscope`.
   }];
 
   let arguments = (ins Variadic<AnyType>:$captures);
@@ -416,7 +420,7 @@ def PTO_MemBarOp : PTO_MicroOp<"mem_bar"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def DsbOp : PTO_MicroOp<"dsb"> {
+def DsbOp : PTO_Op<"dsb", [MicroOpInterface]> {
   let summary = "Issue a low-level DSB memory barrier";
   let description = [{
     Lowers to `llvm.hivm.DSB(i64)`. The memory domain maps directly to the CCE
@@ -431,7 +435,7 @@ def DsbOp : PTO_MicroOp<"dsb"> {
   }];
 }
 
-def DcciOp : PTO_MicroOp<"dcci"> {
+def DcciOp : PTO_Op<"dcci", [MicroOpInterface]> {
   let summary = "Issue a low-level DCCI cache maintenance operation";
   let description = [{
     Lowers to the `llvm.hivm.DCCI*` intrinsic family. The pointer address space
@@ -481,7 +485,8 @@ class PTO_BinaryI64PureOp<string mnemonic> : PTO_Op<mnemonic, [Pure]> {
   }];
 }
 
-class PTO_UnaryI64ConfigOp<string mnemonic> : PTO_Op<mnemonic> {
+class PTO_UnaryI64ConfigOp<string mnemonic, list<Trait> traits = []>
+    : PTO_Op<mnemonic, traits> {
   let arguments = (ins I64:$value);
   let results = (outs);
 
@@ -560,7 +565,7 @@ def PTO_SetMte2NzParaOp : PTO_UnaryI64ConfigOp<"set_mte2_nz_para">;
 def PTO_SetPadValOutToL1Op : PTO_UnaryI64ConfigOp<"set_pad_val_outtol1">;
 // Reading CTRL is ordered with respect to set_ctrl. It must not be modeled as
 // Pure, otherwise CSE can reuse a value read before an intervening write.
-def PTO_GetCtrlOp : PTO_Op<"get_ctrl"> {
+def PTO_GetCtrlOp : PTO_Op<"get_ctrl", [VPTOSchedulingOpInterface]> {
   let arguments = (ins);
   let results = (outs I64:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
@@ -573,7 +578,8 @@ def PTO_GetVms4SrOp : PTO_Op<"get_vms4_sr", [Pure]> {
     attr-dict `:` type($list0) `,` type($list1) `,` type($list2) `,` type($list3)
   }];
 }
-def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<"set_ctrl">;
+def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<
+    "set_ctrl", [VPTOSchedulingOpInterface]>;
 def PTO_SetStoreAtomicCfgOp : PTO_UnaryI64ConfigOp<"set_store_atomic_cfg">;
 def PTO_StoreVfSimtInfoOp : PTO_SimtOp<"store_vfsimt_info"> {
   let summary = "Configure SIMT VF launch dimensions";
@@ -917,8 +923,20 @@ class PTO_UnaryF16F32ScalarOp<string mnemonic>
   }];
 }
 
+class PTO_UnaryF32ScalarOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+  let arguments = (ins F32:$value);
+  let results = (outs F32:$result);
+
+  let assemblyFormat = [{
+    $value attr-dict `:` type($value) `->` type($result)
+  }];
+}
+
 def PTO_ExpOp : PTO_UnaryF16F32ScalarOp<"exp">;
 def PTO_LogOp : PTO_UnaryF16F32ScalarOp<"log">;
+def PTO_SinOp : PTO_UnaryF32ScalarOp<"sin">;
+def PTO_CosOp : PTO_UnaryF32ScalarOp<"cos">;
 def PTO_CeilOp : PTO_UnaryFloatScalarOp<"ceil">;
 def PTO_FloorOp : PTO_UnaryFloatScalarOp<"floor">;
 def PTO_RintOp : PTO_UnaryFloatScalarOp<"rint">;
@@ -985,7 +1003,9 @@ def PTO_ConvertOp : PTO_SimtOp<"convert", [Pure]> {
   }];
 }
 
-def PTO_SyncthreadsOp : PTO_SimtOp<"syncthreads", [
+def PTO_SyncthreadsOp : PTO_Op<"syncthreads", [
+    MicroOpInterface,
+    SimtOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Synchronize all workitems in a SIMT VF entry";
@@ -996,7 +1016,9 @@ def PTO_SyncthreadsOp : PTO_SimtOp<"syncthreads", [
   let assemblyFormat = [{ attr-dict }];
 }
 
-def PTO_ThreadfenceOp : PTO_SimtOp<"threadfence", [
+def PTO_ThreadfenceOp : PTO_Op<"threadfence", [
+    MicroOpInterface,
+    SimtOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Issue a SIMT workitem memory fence";
@@ -1007,7 +1029,9 @@ def PTO_ThreadfenceOp : PTO_SimtOp<"threadfence", [
   let assemblyFormat = [{ attr-dict }];
 }
 
-def PTO_ThreadfenceBlockOp : PTO_SimtOp<"threadfence_block", [
+def PTO_ThreadfenceBlockOp : PTO_Op<"threadfence_block", [
+    MicroOpInterface,
+    SimtOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Issue a SIMT block-scoped workitem memory fence";
@@ -1386,6 +1410,7 @@ def PTO_LoadCbufToCaS4Op : PTO_MteOp<"load_cbuf_to_ca_s4"> {
   );
 
   let results = (outs);
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     $source `,` $destination `,` $m_start `,` $k_start `,` $m_step `,`
@@ -1435,6 +1460,7 @@ def PTO_LoadCbufToCbS4Op : PTO_MteOp<"load_cbuf_to_cb_s4"> {
   );
 
   let results = (outs);
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     $source `,` $destination `,` $m_start `,` $k_start `,` $m_step `,`
@@ -3053,51 +3079,55 @@ def PTO_MteGmL1FracOp : PTO_MteOp<"mte_gm_l1_frac", [
 }
 
 def PTO_MteL1L0aOp : PTO_MteOp<"mte_l1_l0a", [
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
     PTO_BufferLikeType:$destination,
-    I64:$m,
-    I64:$k,
-    I64:$start_row,
-    I64:$start_col,
+    Optional<I64>:$m,
+    Optional<I64>:$k,
+    Optional<I64>:$start_row,
+    Optional<I64>:$start_col,
+    Optional<I64>:$m_start,
+    Optional<I64>:$k_start,
+    Optional<I64>:$m_step,
+    Optional<I64>:$k_step,
+    Optional<I64>:$src_stride,
+    Optional<I64>:$dst_stride,
     DefaultValuedAttr<BoolAttr, "false">:$transpose
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `,` $destination `,` $m `,` $k `,` $start_row `,` $start_col
-    attr-dict `:` type($source) `,` type($destination) `,` type($m) `,`
-    type($k) `,` type($start_row) `,` type($start_col)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MteL1L0bOp : PTO_MteOp<"mte_l1_l0b", [
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
     PTO_BufferLikeType:$destination,
-    I64:$k,
-    I64:$n,
-    I64:$start_row,
-    I64:$start_col,
+    Optional<I64>:$k,
+    Optional<I64>:$n,
+    Optional<I64>:$start_row,
+    Optional<I64>:$start_col,
+    Optional<I64>:$m_start,
+    Optional<I64>:$k_start,
+    Optional<I64>:$m_step,
+    Optional<I64>:$k_step,
+    Optional<I64>:$src_stride,
+    Optional<I64>:$dst_stride,
     DefaultValuedAttr<BoolAttr, "false">:$transpose
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `,` $destination `,` $k `,` $n `,` $start_row `,` $start_col
-    attr-dict `:` type($source) `,` type($destination) `,` type($k) `,`
-    type($n) `,` type($start_row) `,` type($start_col)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MteL1L0aMxOp : PTO_MteOp<"mte_l1_l0a_mx", [

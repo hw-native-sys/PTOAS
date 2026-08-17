@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
@@ -49,12 +50,12 @@ struct GroupSpanMember {
 struct GroupSpan {
   Block *block = nullptr;
   int64_t groupId = -1;
-  SmallVector<GroupSpanMember, 8> members;
+  SmallVector<GroupSpanMember, mlir::pto::kValue8> members;
 };
 
 struct GroupSpanInterface {
-  SmallVector<Value, 8> externallyVisibleValues;
-  SmallVector<Operation *, 8> localDefs;
+  SmallVector<Value, mlir::pto::kValue8> externallyVisibleValues;
+  SmallVector<Operation *, mlir::pto::kValue8> localDefs;
 };
 
 struct FusionBlockAnalysisIndex {
@@ -155,16 +156,20 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
 }
 
 static bool isNestedInOp(Operation *op, Operation *ancestor) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp())
-    if (cur == ancestor)
+  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
+    if (cur == ancestor) {
       return true;
+    }
+  }
   return false;
 }
 
 static bool isNestedInSpan(Operation *op, const DenseSet<Operation *> &spanOps) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp())
-    if (spanOps.contains(cur))
+  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
+    if (spanOps.contains(cur)) {
       return true;
+    }
+  }
   return false;
 }
 
@@ -176,9 +181,11 @@ static void appendUniqueValue(SmallVectorImpl<Value> &values,
 }
 
 static Operation *getTopLevelAncestorInBlock(Operation *op, Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp())
-    if (cur->getBlock() == block)
+  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
+    if (cur->getBlock() == block) {
       return cur;
+    }
+  }
   return nullptr;
 }
 
@@ -207,9 +214,11 @@ static bool hasReplaceableUseOutsideSpan(Value value,
 
 static bool hasAnyUseOutsideSpan(Value value,
                                  const DenseSet<Operation *> &spanOps) {
-  for (OpOperand &use : value.getUses())
-    if (!isNestedInSpan(use.getOwner(), spanOps))
+  for (OpOperand &use : value.getUses()) {
+    if (!isNestedInSpan(use.getOwner(), spanOps)) {
       return true;
+    }
+  }
   return false;
 }
 
@@ -253,12 +262,15 @@ writeInstanceEscapesSpan(const pto::FusionWriteInstanceLiveness &writeInstance,
                          const DenseSet<unsigned> &spanNodeIds) {
   if (writeInstance.hasExternalUsers || writeInstance.escapesBlock ||
       writeInstance.hasLocalBoundaryUsers ||
-      writeInstance.hasLocalHardBoundaryUsers)
+      writeInstance.hasLocalHardBoundaryUsers) {
     return true;
+  }
 
-  for (unsigned consumerNode : writeInstance.consumerNodes)
-    if (!spanNodeIds.contains(consumerNode))
+  for (unsigned consumerNode : writeInstance.consumerNodes) {
+    if (!spanNodeIds.contains(consumerNode)) {
       return true;
+    }
+  }
   return false;
 }
 
@@ -309,9 +321,11 @@ buildGroupSpanInterface(const GroupSpan &span,
   }
 
   for (const GroupSpanMember &member : span.members) {
-    for (Value result : member.op->getResults())
-      if (hasReplaceableUseOutsideSpan(result, spanOps, boundary))
+    for (Value result : member.op->getResults()) {
+      if (hasReplaceableUseOutsideSpan(result, spanOps, boundary)) {
         appendUniqueValue(iface.externallyVisibleValues, seenOutputs, result);
+      }
+    }
 
     if (auto dpsIface = dyn_cast<pto::PTO_DpsInitOpInterface>(member.op)) {
       unsigned tileOutputIndex = 0;
@@ -438,7 +452,7 @@ encapsulateGroupSpan(const GroupSpan &span,
     return failure();
   }
 
-  SmallVector<Type, 8> outputTypes;
+  SmallVector<Type, mlir::pto::kValue8> outputTypes;
   outputTypes.reserve(iface.externallyVisibleValues.size());
   for (Value output : iface.externallyVisibleValues) {
     outputTypes.push_back(output.getType());
@@ -472,7 +486,7 @@ encapsulateGroupSpan(const GroupSpan &span,
 
   clearSpanFusionMetadata(span);
 
-  SmallVector<Value, 8> yieldValues;
+  SmallVector<Value, mlir::pto::kValue8> yieldValues;
   yieldValues.reserve(iface.externallyVisibleValues.size());
   for (Value output : iface.externallyVisibleValues) {
     yieldValues.push_back(output);
@@ -492,23 +506,29 @@ encapsulateGroupSpan(const GroupSpan &span,
 static LogicalResult processRegion(Region &region,
                                    const PreFusionAnalysisIndex *analysisIndex) {
   for (Block &block : region.getBlocks()) {
-    SmallVector<Region *, 4> nestedRegions;
-    for (Operation &op : block)
-      for (Region &nestedRegion : op.getRegions())
+    SmallVector<Region *, mlir::pto::kValue4> nestedRegions;
+    for (Operation &op : block) {
+      for (Region &nestedRegion : op.getRegions()) {
         nestedRegions.push_back(&nestedRegion);
+      }
+    }
 
-    for (Region *nestedRegion : nestedRegions)
-      if (failed(processRegion(*nestedRegion, analysisIndex)))
+    for (Region *nestedRegion : nestedRegions) {
+      if (failed(processRegion(*nestedRegion, analysisIndex))) {
         return failure();
+      }
+    }
 
-    SmallVector<GroupSpan, 8> spans;
+    SmallVector<GroupSpan, mlir::pto::kValue8> spans;
     if (failed(collectGroupSpansInBlock(block, spans))) {
       return failure();
     }
 
-    for (const GroupSpan &span : spans)
-      if (failed(encapsulateGroupSpan(span, analysisIndex)))
+    for (const GroupSpan &span : spans) {
+      if (failed(encapsulateGroupSpan(span, analysisIndex))) {
         return failure();
+      }
+    }
   }
   return success();
 }

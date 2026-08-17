@@ -79,43 +79,54 @@ LogicalResult TileBufConfigAttr::verify(function_ref<InFlightDiagnostic()> emitE
                                        IntegerAttr sFractalSize,
                                        Attribute pad,
                                        Attribute compactMode) {
-  if (!bLayout || (!mlir::isa<BLayoutAttr>(bLayout) && !mlir::isa<IntegerAttr>(bLayout)))
+  if (!bLayout || (!mlir::isa<BLayoutAttr>(bLayout) && !mlir::isa<IntegerAttr>(bLayout))) {
     return emitError() << "blayout must be BLayoutAttr or i32 integer attr", failure();
-  if (!sLayout || (!mlir::isa<SLayoutAttr>(sLayout) && !mlir::isa<IntegerAttr>(sLayout)))
+  }
+  if (!sLayout || (!mlir::isa<SLayoutAttr>(sLayout) && !mlir::isa<IntegerAttr>(sLayout))) {
     return emitError() << "slayout must be SLayoutAttr or i32 integer attr", failure();
-  if (!pad || (!mlir::isa<PadValueAttr>(pad) && !mlir::isa<IntegerAttr>(pad)))
+  }
+  if (!pad || (!mlir::isa<PadValueAttr>(pad) && !mlir::isa<IntegerAttr>(pad))) {
     return emitError() << "pad must be PadValueAttr or i32 integer attr", failure();
+  }
   if (!compactMode ||
       (!mlir::isa<CompactModeAttr>(compactMode) &&
-       !mlir::isa<IntegerAttr>(compactMode)))
+       !mlir::isa<IntegerAttr>(compactMode))) {
     return emitError() << "compact_mode must be CompactModeAttr or i32 integer attr", failure();
+  }
 
-  if (!sFractalSize || !sFractalSize.getType().isInteger(kI32BitWidth))
+  if (!sFractalSize || !sFractalSize.getType().isInteger(kI32BitWidth)) {
     return emitError() << "s_fractal_size must be i32", failure();
+  }
 
   int32_t s = static_cast<int32_t>(sFractalSize.getInt());
-  if (s != kFractalMxSize && s != kFractalABSize && s != kFractalCSize)
+  if (s != kFractalMxSize && s != kFractalABSize && s != kFractalCSize) {
     return emitError() << "unsupported s_fractal_size: " << s
                        << ", must be one of {"
                        << kFractalMxSize << ", "
                        << kFractalABSize << ", "
-                       << kFractalCSize << "}", failure();
+                       << kFractalCSize << "}",
+           failure();
+  }
 
   int32_t blv = getLayoutInt(bLayout, -1);
-  if (blv != kBLayoutRowMajor && blv != kBLayoutColMajor)
+  if (blv != kBLayoutRowMajor && blv != kBLayoutColMajor) {
     return emitError() << "unsupported blayout value: " << blv, failure();
+  }
 
   int32_t slv = getLayoutInt(sLayout, -1);
-  if (slv < kSLayoutNoneBox || slv > kSLayoutColMajor)
+  if (slv < kSLayoutNoneBox || slv > kSLayoutColMajor) {
     return emitError() << "unsupported slayout value: " << slv, failure();
+  }
 
   int32_t pvv = getLayoutInt(pad, -1);
-  if (pvv < kPadValueNull || pvv > kPadValueMin)
+  if (pvv < kPadValueNull || pvv > kPadValueMin) {
     return emitError() << "unsupported pad value: " << pvv, failure();
+  }
 
   int32_t cmv = getLayoutInt(compactMode, -1);
-  if (cmv < kCompactModeNull || cmv > kCompactModeRowPlusOne)
+  if (cmv < kCompactModeNull || cmv > kCompactModeRowPlusOne) {
     return emitError() << "unsupported compact_mode value: " << cmv, failure();
+  }
 
   return success();
 }

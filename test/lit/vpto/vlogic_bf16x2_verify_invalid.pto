@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -verify-diagnostics -split-input-file
+
+module {
+  func.func @vand_bf16x2_invalid(
+      %lhs: !pto.vreg<64x!pto.bf16x2>,
+      %rhs: !pto.vreg<64x!pto.bf16x2>,
+      %mask: !pto.mask<b32>) {
+    // expected-error @+1 {{'pto.vand' op does not support bf16x2 vector elements; low-precision bitwise operations require an 8-bit payload type}}
+    %out = pto.vand %lhs, %rhs, %mask : !pto.vreg<64x!pto.bf16x2>, !pto.vreg<64x!pto.bf16x2>, !pto.mask<b32> -> !pto.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vor_bf16x2_invalid(
+      %lhs: !pto.vreg<64x!pto.bf16x2>,
+      %rhs: !pto.vreg<64x!pto.bf16x2>,
+      %mask: !pto.mask<b32>) {
+    // expected-error @+1 {{'pto.vor' op does not support bf16x2 vector elements; low-precision bitwise operations require an 8-bit payload type}}
+    %out = pto.vor %lhs, %rhs, %mask : !pto.vreg<64x!pto.bf16x2>, !pto.vreg<64x!pto.bf16x2>, !pto.mask<b32> -> !pto.vreg<64x!pto.bf16x2>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vxor_bf16x2_invalid(
+      %lhs: !pto.vreg<64x!pto.bf16x2>,
+      %rhs: !pto.vreg<64x!pto.bf16x2>,
+      %mask: !pto.mask<b32>) {
+    // expected-error @+1 {{'pto.vxor' op does not support bf16x2 vector elements; low-precision bitwise operations require an 8-bit payload type}}
+    %out = pto.vxor %lhs, %rhs, %mask : !pto.vreg<64x!pto.bf16x2>, !pto.vreg<64x!pto.bf16x2>, !pto.mask<b32> -> !pto.vreg<64x!pto.bf16x2>
+    return
+  }
+}

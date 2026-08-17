@@ -7,8 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @vmi_group_reduce_i32_maxi_store_kernel(%src_gm: !pto.ptr<i32, gm>,
-                                                    %dst_gm: !pto.ptr<i32, gm>) attributes {pto.kernel} {
+  func.func @vmi_group_reduce_i32_maxi_store_kernel(%src_gm: !pto.ptr<si32, gm>,
+                                                    %dst_gm: !pto.ptr<si32, gm>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c64 = arith.constant 64 : index
@@ -18,31 +18,31 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c256_i64 = arith.constant 256 : i64
     %c512_i64 = arith.constant 512 : i64
 
-    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<i32, ub>
-    %ub_dst = pto.castptr %c512_i64 : i64 -> !pto.ptr<i32, ub>
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<si32, ub>
+    %ub_dst = pto.castptr %c512_i64 : i64 -> !pto.ptr<si32, ub>
 
     pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
       nburst(%c1_i64, %c256_i64, %c256_i64)
-      : !pto.ptr<i32, gm>, !pto.ptr<i32, ub>, i64, i64, i64, i64, i64
+      : !pto.ptr<si32, gm>, !pto.ptr<si32, ub>, i64, i64, i64, i64, i64
 
     pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
     pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
     pto.vecscope {
       %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
-      %x = pto.vmi.vload %ub_src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<64xi32>
+      %x = pto.vmi.vload %ub_src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
       %sum = pto.vmi.vcmax %x, %mask {group = 8}
-          : !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
-          -> !pto.vmi.vreg<8xi32>
+          : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred>
+          -> !pto.vmi.vreg<8xsi32>
       pto.vmi.vstore %sum, %ub_dst[%c0], %c1 {group = 8}
-          : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+          : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.mte_ub_gm %ub_dst, %dst_gm, %c32_i64
       nburst(%c1_i64, %c32_i64, %c32_i64)
-      : !pto.ptr<i32, ub>, !pto.ptr<i32, gm>, i64, i64, i64, i64
+      : !pto.ptr<si32, ub>, !pto.ptr<si32, gm>, i64, i64, i64, i64
     pto.barrier #pto.pipe<PIPE_ALL>
     return
   }

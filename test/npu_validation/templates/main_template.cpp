@@ -47,17 +47,6 @@ typedef struct {
 } float4_e2m1x2_t;
 #endif
 
-#ifndef TMRGSORT_HPP
-namespace pto {
-struct MrgSortExecutedNumList {
-    uint16_t mrgSortList0;
-    uint16_t mrgSortList1;
-    uint16_t mrgSortList2;
-    uint16_t mrgSortList3;
-};
-} // namespace pto
-#endif
-
 #define ACL_CHECK(expr)                                                                          \
     do {                                                                                         \
         const aclError _ret = (expr);                                                            \

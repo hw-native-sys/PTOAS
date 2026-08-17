@@ -154,6 +154,14 @@ MlirType mlirPTOF4E2M1x2TypeGet(MlirContext ctx) {
   return wrap(mlir::pto::F4E2M1x2Type::get(unwrap(ctx)));
 }
 
+bool mlirPTOTypeIsABF16x2Type(MlirType type) {
+  return isa<mlir::pto::BF16x2Type>(unwrap(type));
+}
+
+MlirType mlirPTOBF16x2TypeGet(MlirContext ctx) {
+  return wrap(mlir::pto::BF16x2Type::get(unwrap(ctx)));
+}
+
 MlirAttribute mlirPTOPtrTypeGetMemorySpace(MlirType type) {
   auto t = cast<mlir::pto::PtrType>(unwrap(type));
   return wrap(t.getMemorySpace());
@@ -538,6 +546,21 @@ bool mlirPTOAttrIsAQuantScaleAlgAttr(MlirAttribute attr) {
 
 int32_t mlirPTOQuantScaleAlgAttrGetValue(MlirAttribute attr) {
   auto a = mlir::cast<mlir::pto::QuantScaleAlgAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
+MlirAttribute mlirPTOMxGroupAxisAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto v = static_cast<mlir::pto::MxGroupAxis>(value);
+  return wrap(mlir::pto::MxGroupAxisAttr::get(c, v));
+}
+
+bool mlirPTOAttrIsAMxGroupAxisAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::MxGroupAxisAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOMxGroupAxisAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::MxGroupAxisAttr>(unwrap(attr));
   return static_cast<int32_t>(a.getValue());
 }
 

@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not='part = "P1"' --implicit-check-not='part = "P3"' --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=unrealized_conversion_cast
+
+// The legal 32-to-8 layout row d2 -> ls2 uses the P0 and P2 packed quarters.
+
+module {
+  func.func @bf16x2_d2_to_f4x2_lane_stride2(
+      %src: !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 2>>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %off: index) {
+    %r = pto.vmi.vcvt %src {rounding = "A"}
+        : !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 2>>
+       -> !pto.vmi.vreg<128x!pto.f4E1M2x2>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<128x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @bf16x2_d2_to_f4x2_lane_stride2(
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128x!pto.f4E1M2x2, #pto.vmi.layout<contiguous, lane_stride = 2>>
+
+// LOWER-LABEL: func.func @bf16x2_d2_to_f4x2_lane_stride2(
+// LOWER-SAME: %[[P0:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// LOWER-SAME: %[[P2:[^,]+]]: !pto.vreg<64x!pto.bf16x2>
+// LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<!pto.f4E1M2x2, ub>
+// LOWER-SAME: %[[OFF:[^)]+]]: index)
+// LOWER: %[[P0_BF16:.*]] = pto.vbitcast %[[P0]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
+// LOWER: %[[R0:.*]] = pto.vcvt %[[P0_BF16]], {{.*}} {part = "P0", rnd = "A"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: %[[P2_BF16:.*]] = pto.vbitcast %[[P2]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
+// LOWER: %[[R2:.*]] = pto.vcvt %[[P2_BF16]], {{.*}} {part = "P2", rnd = "A"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
+// LOWER: %[[PACKED:.*]] = pto.vor %[[R0]], %[[R2]]
+// LOWER: pto.vsts %[[PACKED]], %[[DST]][%[[OFF]]], {{.*}} {dist = "PK_B16"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b16>

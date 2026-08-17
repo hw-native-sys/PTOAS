@@ -44,7 +44,7 @@ The current PTO SIMT surface supports these operation families:
 | Lane collectives | `pto.vote_all`, `pto.vote_any`, `pto.vote_uni`, `pto.vote_ballot`, `pto.shuffle_idx`, `pto.shuffle_up`, `pto.shuffle_down`, `pto.shuffle_bfly`, `pto.redux_add`, `pto.redux_max`, `pto.redux_min` |
 | Scalar memory | `pto.load`, `pto.store`, `pto.ldg`, `pto.stg` |
 | Atomic memory | `pto.atomic_exch`, `pto.atomic_add`, `pto.atomic_sub`, `pto.atomic_min`, `pto.atomic_max`, `pto.atomic_and`, `pto.atomic_or`, `pto.atomic_xor`, `pto.atomic_cas` |
-| Scalar math | `pto.prmt`, `pto.mulhi`, `pto.mul_i32toi64`, `pto.absf`, `pto.sqrt`, `pto.exp`, `pto.log`, `pto.pow`, `pto.ceil`, `pto.floor`, `pto.rint`, `pto.round`, `pto.fmin`, `pto.fmax`, `pto.fma` |
+| Scalar math | `pto.prmt`, `pto.mulhi`, `pto.mul_i32toi64`, `pto.absf`, `pto.sqrt`, `pto.exp`, `pto.log`, `pto.sin`, `pto.cos`, `pto.pow`, `pto.ceil`, `pto.floor`, `pto.rint`, `pto.round`, `pto.fmin`, `pto.fmax`, `pto.fma` |
 | Conversion | `pto.convert` |
 | Entry synchronization and state | `pto.syncthreads`, `pto.threadfence`, `pto.threadfence_block`, `pto.keep`, `pto.resume` |
 
@@ -827,6 +827,19 @@ else:
 - **constraints and limitations:** `T` is `f16`, `f32`, or `vector<2xf16>`.
   For real-number semantics, each element should be positive; non-positive
   inputs follow the target floating-point rules.
+
+### `pto.sin` / `pto.cos`
+
+- **syntax:** `%r = pto.sin %x : f32 -> f32` or `%r = pto.cos %x : f32 -> f32`
+- **semantics:** Return the sine or cosine of `%x`, where `%x` is expressed in
+  radians.
+- **inputs:** `%x` is an `f32` scalar in a `pto.simt_entry` function.
+- **outputs:** One `f32` scalar.
+- **constraints and limitations:** These operations are available on A5 and
+  use the PTOAS software implementation. The implementation is intended for
+  finite f32 inputs such as the angle range used by Box–Muller transforms;
+  accuracy decreases for very large-magnitude inputs, and exceptional inputs
+  follow the software implementation's floating-point behavior.
 
 ### `pto.pow`
 

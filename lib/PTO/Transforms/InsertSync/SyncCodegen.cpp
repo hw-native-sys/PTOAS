@@ -13,6 +13,7 @@
 
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOMultiBuffer.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -45,16 +46,21 @@ static pto::EventAttr getEventAttr(Builder &builder, int id) {
 
 static bool IsSameSyncSignature(const SyncOperation *existing,
                                 const SyncOperation *candidate) {
-  if (existing->GetType() != candidate->GetType())
+  if (existing->GetType() != candidate->GetType()) {
     return false;
-  if (existing->GetActualSrcPipe() != candidate->GetActualSrcPipe())
+  }
+  if (existing->GetActualSrcPipe() != candidate->GetActualSrcPipe()) {
     return false;
-  if (existing->GetActualDstPipe() != candidate->GetActualDstPipe())
+  }
+  if (existing->GetActualDstPipe() != candidate->GetActualDstPipe()) {
     return false;
-  if (existing->IsAutoSyncTailBarrier() != candidate->IsAutoSyncTailBarrier())
+  }
+  if (existing->IsAutoSyncTailBarrier() != candidate->IsAutoSyncTailBarrier()) {
     return false;
-  if (candidate->isSyncSetType() || candidate->isSyncWaitType())
+  }
+  if (candidate->isSyncSetType() || candidate->isSyncWaitType()) {
     return existing->eventIds == candidate->eventIds;
+  }
   return true;
 }
 
@@ -62,16 +68,20 @@ static bool IsSyncExist(const SyncOps &list, SyncOperation *newSync) {
   // Tombstone entries are soft-deleted and should never participate in
   // deduplication; otherwise they can shadow a later live sync with
   // the same signature.
-  if (newSync->uselessSync)
+  if (newSync->uselessSync) {
     return true;
+  }
 
   for (auto *existing : list) {
-    if (existing == newSync)
+    if (existing == newSync) {
       return true;
-    if (existing->uselessSync)
+    }
+    if (existing->uselessSync) {
       continue;
-    if (!IsSameSyncSignature(existing, newSync))
+    }
+    if (!IsSameSyncSignature(existing, newSync)) {
       continue;
+    }
     return true;
   }
   return false;
@@ -79,8 +89,9 @@ static bool IsSyncExist(const SyncOps &list, SyncOperation *newSync) {
 
 static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
   for (auto *sync : srcList) {
-    if (sync->uselessSync)
+    if (sync->uselessSync) {
       continue;
+    }
     if (!IsSyncExist(dstList, sync)) {
       dstList.push_back(sync);
     }
@@ -88,8 +99,9 @@ static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
 }
 
 static Operation *resolveSyncInsertAnchor(Operation *op, SyncOperation *sync) {
-  if (!sync->isCompensation)
+  if (!sync->isCompensation) {
     return op;
+  }
 
   if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
     if (!ifOp.elseBlock()) {
@@ -102,8 +114,9 @@ static Operation *resolveSyncInsertAnchor(Operation *op, SyncOperation *sync) {
     return ifOp.getElseRegion().front().getTerminator();
   }
 
-  if (op->hasTrait<OpTrait::IsTerminator>())
+  if (op->hasTrait<OpTrait::IsTerminator>()) {
     return op;
+  }
   return op->getBlock()->getTerminator();
 }
 
@@ -125,14 +138,16 @@ static void setSyncInsertionPoint(IRRewriter &rewriter, Operation *op,
 static bool hasNeighborBarrier(Block *block, Block::iterator ip,
                                pto::PipeAttr pipeAttr, bool insertBefore) {
   if (insertBefore) {
-    if (ip == block->begin())
+    if (ip == block->begin()) {
       return false;
+    }
     auto prevBarrier = dyn_cast<pto::BarrierOp>(&*std::prev(ip));
     return prevBarrier && prevBarrier.getPipe() == pipeAttr;
   }
 
-  if (ip == block->end())
+  if (ip == block->end()) {
     return false;
+  }
   auto nextBarrier = dyn_cast<pto::BarrierOp>(&*ip);
   return nextBarrier && nextBarrier.getPipe() == pipeAttr;
 }
@@ -221,7 +236,9 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *plac
   // 1. 处理 Virtual Else
   if (placeHolder->isVirtualElse) {
       auto ifOp = dyn_cast<scf::IfOp>(placeHolder->parentIfOp);
-      if (!ifOp) return;
+      if (!ifOp) {
+        return;
+      }
 
       // 如果还没有 else block，创建一个
       if (!ifOp.elseBlock()) {
@@ -256,7 +273,9 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *plac
   }
 
   // 执行常规的 Sync 插入
-  if (!placeHolder->elementOp) return;
+  if (!placeHolder->elementOp) {
+    return;
+  }
   auto &pipeBuild = op2InsertSync[placeHolder->elementOp];
   MergeSyncList(pipeBuild.pipeBefore, placeHolder->pipeBefore);
   MergeSyncList(pipeBuild.pipeAfter, placeHolder->pipeAfter);
@@ -264,8 +283,9 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *plac
 
 void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
                              SyncOperation *sync, bool beforeInsert) {
-  if (sync->uselessSync)
+  if (sync->uselessSync) {
     return;
+  }
 
   Operation *insertAnchorOp = resolveSyncInsertAnchor(op, sync);
   bool forceBefore = shouldInsertBefore(insertAnchorOp, beforeInsert, sync);
@@ -303,8 +323,9 @@ void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
   Block *block = rewriter.getInsertionBlock();
   Block::iterator ip = rewriter.getInsertionPoint();
   auto currentPipeAttr = getPipeAttr(rewriter, sync->GetActualSrcPipe());
-  if (hasNeighborBarrier(block, ip, currentPipeAttr, insertAtPos))
+  if (hasNeighborBarrier(block, ip, currentPipeAttr, insertAtPos)) {
     return;
+  }
 
   auto barrier = rewriter.create<pto::BarrierOp>(op->getLoc(), currentPipeAttr);
 
@@ -312,13 +333,15 @@ void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
 }
 
 void SyncCodegen::AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter) {
-  if (!pendingAutoSyncTailBarrier_)
+  if (!pendingAutoSyncTailBarrier_) {
     return;
+  }
 
   SmallVector<func::ReturnOp, kReturnOpInlineCapacity> returns;
   func_.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
-  if (returns.empty())
+  if (returns.empty()) {
     return;
+  }
 
   auto pipeAllAttr = getPipeAttr(rewriter, PipelineType::PIPE_ALL);
   for (auto ret : returns) {
@@ -371,7 +394,8 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
   // allocated event ids so the hardware sees event id `eventIds[slot % N]`.
   // For the common N == 2 case this collapses to a single arith.select.
   uint32_t n = sync->slotCount;
-  assert(n >= 2 && "multi-buffer codegen requires slotCount >= 2");
+  assert(n >= mlir::pto::kPtoMultiBufferMinNum &&
+         "multi-buffer codegen requires slotCount >= 2");
   assert(sync->eventIds.size() == n &&
          "multi-buffer codegen expects N event ids");
 
@@ -411,7 +435,9 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
   }
 
   auto parentLoop = op->getParentOfType<scf::ForOp>();
-  if (!parentLoop) return nullptr;
+  if (!parentLoop) {
+    return nullptr;
+  }
 
   Value counter;
   if (loop2BufferCounter.count(parentLoop)) {
