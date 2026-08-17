@@ -5,6 +5,8 @@ module {
     %c0 = arith.constant 0 : index
     %p = pto.load_scalar %table[%c0]
       : !pto.ptr<!pto.ptr<f32, gm>, gm> -> !pto.ptr<f32, gm>
+    %value = arith.constant 0.0 : f32
+    pto.store_scalar %value, %p[%c0] : !pto.ptr<f32, gm>, f32
     return
   }
 }
