@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <vector>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -521,7 +522,7 @@ static PTOAnalysisResult<PTOLoopEvolution> analyzeDynamicRecurrence(
         PTOAnalysisUnknownReason::TypeMismatch);
   }
 
-  SmallVector<std::optional<__int128>> states;
+  std::vector<std::optional<__int128>> states;
   states.reserve(loop.getInitArgs().size());
   for (Value initial : loop.getInitArgs()) {
     states.push_back(getMathematicalConstant(initial, isUnsigned));
@@ -543,7 +544,7 @@ static PTOAnalysisResult<PTOLoopEvolution> analyzeDynamicRecurrence(
   for (uint64_t iteration = 0; iteration < tripCount; ++iteration) {
     auto step = evaluateTypedExpr(decomposition->increment, loop, *induction,
                                   states, isUnsigned);
-    SmallVector<std::optional<__int128>> nextStates;
+    std::vector<std::optional<__int128>> nextStates;
     nextStates.reserve(states.size());
     for (Value yielded : yield.getOperands()) {
       nextStates.push_back(evaluateLoopValue(
