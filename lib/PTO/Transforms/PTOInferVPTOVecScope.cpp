@@ -99,7 +99,9 @@ static bool isForbiddenInsideInferredVectorScope(Operation *op) {
 }
 
 static bool isVectorScopeBoundaryOperation(Operation *op) {
-  return isa<pto::BarrierOp, pto::BarrierSyncOp>(op);
+  return isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp,
+             pto::WaitFlagDynOp, pto::BarrierOp, pto::BarrierSyncOp,
+             pto::MteOpInterface>(op);
 }
 
 static bool hasVecScopeTypedOperandOrResult(Operation *op) {

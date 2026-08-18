@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-resource-aware-cse %s | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  // CHECK-LABEL: func.func @vecscope_read_crosses_memory_write
+  // CHECK-COUNT-1: pto.plt_b32
+  // CHECK: memref.store
+  func.func @vecscope_read_crosses_memory_write(%dst: memref<1xi32>) -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %c0 = arith.constant 0 : index
+    %c7 = arith.constant 7 : i32
+    %mask0, %next0 = pto.plt_b32 %c7 : i32 -> !pto.mask<b32>, i32
+    memref.store %c7, %dst[%c0] : memref<1xi32>
+    %mask1, %next1 = pto.plt_b32 %c7 : i32 -> !pto.mask<b32>, i32
+    return %mask0, %mask1 : !pto.mask<b32>, !pto.mask<b32>
+  }
+
+  // CHECK-LABEL: func.func @vecscope_write_blocks
+  // CHECK-COUNT-2: pto.plt_b32
+  func.func @vecscope_write_blocks() -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %c7 = arith.constant 7 : i32
+    %mask0, %next0 = pto.plt_b32 %c7 : i32 -> !pto.mask<b32>, i32
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    %mask1, %next1 = pto.plt_b32 %c7 : i32 -> !pto.mask<b32>, i32
+    return %mask0, %mask1 : !pto.mask<b32>, !pto.mask<b32>
+  }
+
+  // CHECK-LABEL: func.func @ordinary_memory_write_still_blocks
+  // CHECK-COUNT-2: memref.load
+  func.func @ordinary_memory_write_still_blocks(%src: memref<1xi32>, %dst: memref<1xi32>) -> (i32, i32) {
+    %c0 = arith.constant 0 : index
+    %value0 = memref.load %src[%c0] : memref<1xi32>
+    memref.store %value0, %dst[%c0] : memref<1xi32>
+    %value1 = memref.load %src[%c0] : memref<1xi32>
+    return %value0, %value1 : i32, i32
+  }
+}

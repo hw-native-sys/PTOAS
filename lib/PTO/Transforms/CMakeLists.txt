@@ -81,6 +81,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOMaterializeSIMTPersistentFragment.cpp
   PTOOutlineSIMTSections.cpp
   PTOInferVPTOVecScope.cpp
+  PTOResourceAwareCSE.cpp
 
   InsertSync/PTOInsertSync.cpp
   PTOInjectBarrierAllSync.cpp

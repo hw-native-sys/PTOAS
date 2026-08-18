@@ -3074,7 +3074,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
       pto::createPTOUnrollSIMTForPass());
   kernelModulePM.addPass(createSCCPPass());
   kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
+  kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTOAnalyzeSIMTPersistentFragmentPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
@@ -3096,14 +3096,14 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTONarrowVPTOLoopCountersPass());
   kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
+  kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
   // SoftOps are materialized only after all VPTO optimization and layout
   // decisions.  The materializer creates a temporary func.call; inline it
   // immediately so the final legality check sees the actual VPTO sequence.
   kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
+  kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
   if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off) {
     pto::VPTOSchedulerOptions schedulerOptions;
     schedulerOptions.mode = vptoSchedulerMode == VPTOSchedulerCLIMode::Analyze
@@ -3112,7 +3112,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
     kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
   }
   kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
-  kernelModulePM.addPass(createCSEPass());
+  kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
@@ -3141,7 +3141,7 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
   if (enableA5VPTOPostLoweringFusionLifecycle) {
     kernelModulePM.addPass(pto::createPTOLowLevelLoopFusionPass());
     kernelModulePM.addPass(mlir::createCanonicalizerPass());
-    kernelModulePM.addPass(mlir::createCSEPass());
+    kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOFusionPredicateElisionPass());
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
@@ -3150,13 +3150,13 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOUnrollAfterLoopFusionPass());
       kernelModulePM.addPass(mlir::createCanonicalizerPass());
-      kernelModulePM.addPass(mlir::createCSEPass());
+      kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOFusionLoadStoreElisionPass());
     }
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOFlattenFusionRegionPass());
-    kernelModulePM.addPass(mlir::createCSEPass());
+    kernelModulePM.addPass(pto::createPTOResourceAwareCSEPass());
   }
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createFoldTileBufIntrinsicsPass("addr-only"));
@@ -3273,24 +3273,24 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createPTOValidateVMIIRPass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   pm.addPass(pto::createVMIPreAssignmentCombinePass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createVMIMaskGranularityAssignmentPass());
   pm.addPass(pto::createVMILayoutAssignmentPass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   pm.addPass(pto::createVMILayoutRematerializePass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   pm.addPass(pto::createVMILayoutFoldPass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   pm.addPass(pto::createVMILayoutSinkMaterializationPass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createPTOValidateVMILayoutIRPass());
   pm.addPass(pto::createVMIToVPTOPass());
@@ -3719,14 +3719,14 @@ int mlir::pto::compilePTOASModule(
     return 0;
   }
 
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   // PTODSL backend helpers already use the tile-native ABI.
   pm.addPass(pto::createPTOInlineBackendHelpersPass());
   if (effectiveBackend == PTOBackend::EmitC) {
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
   }
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
+  pm.addPass(pto::createPTOResourceAwareCSEPass());
   if (failed(applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline"))) {
     return 1;
   }

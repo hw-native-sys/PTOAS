@@ -23,6 +23,11 @@
 
 include "mlir/Pass/PassBase.td"
 
+def PTOResourceAwareCSE : Pass<"pto-resource-aware-cse"> {
+  let summary = "Eliminate common subexpressions using PTO resource boundaries";
+  let constructor = "mlir::pto::createPTOResourceAwareCSEPass()";
+}
+
 // Define PTOInsertSync Pass
 def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   let summary = "Insert synchronization flags for PTO dialect";
