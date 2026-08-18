@@ -116,7 +116,7 @@ static size_t plannerAlignBitsFromBytes(size_t alignBytes) {
 static LocalMemSpec getLocalMemSpec(Operation *op, AddressSpace as) {
   switch (as) {
   case AddressSpace::VEC:
-    return isTargetArchA5(op)
+    return (isTargetArchA5(op) || isTargetArchA6(op))
                ? LocalMemSpec{kA5VecLocalMemBits, kLocalMemAlignmentBytes}
                : LocalMemSpec{kA3VecLocalMemBits, kLocalMemAlignmentBytes};
   case AddressSpace::MAT:
