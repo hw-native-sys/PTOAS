@@ -8,8 +8,8 @@
 
 // RUN: pto-test-opt %s -vpto-soft-postupdate | FileCheck %s
 
-// A loop-varying integer-to-index address is accepted only when its source is
-// the canonical i16 address width and its complete recurrence cannot wrap.
+// A loop-varying integer-to-index address is accepted when its complete typed
+// recurrence, including the final backedge update, cannot wrap.
 // CHECK-LABEL: func.func @canonical_i16_no_wrap
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
@@ -21,11 +21,16 @@
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
 
-// A non-wrapping i32 recurrence is still rejected because it has not passed
-// through the separate address-normalization contract.
+// A non-wrapping i8 recurrence is accepted under the same typed proof.
+// CHECK-LABEL: func.func @i8_no_wrap
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}}[%c32] {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+
+// A non-wrapping i32 recurrence retains its source type semantics and is no
+// longer rejected merely because it was not normalized to i16.
 // CHECK-LABEL: func.func @noncanonical_i32_no_wrap
 // CHECK: scf.for
-// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+// CHECK: pto.vlds {{.*}}[%c32] {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 
 // i16 is the canonical width, but its type alone is not a no-wrap proof. The
 // original unsigned address sequence is 65504, 0, so this also stays normal.
@@ -33,13 +38,11 @@
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
 
-// A descending unsigned recurrence is in range, but sign-extending its
-// two's-complement i16 increment would not match index_castui materialization.
-// Keep it unchanged until address normalization supplies an explicit index
-// delta.
+// A descending unsigned recurrence has mathematical delta -1. The value cast
+// is unsigned, but its proven delta must not be zero-extended to 65535.
 // CHECK-LABEL: func.func @canonical_i16_unsigned_sub
 // CHECK: scf.for
-// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+// CHECK: pto.vlds {{.*}}[%c-1] {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 
 module {
   func.func @canonical_i16_no_wrap(%base: !pto.ptr<ui8, ub>) {
@@ -70,6 +73,25 @@ module {
     pto.vecscope {
       scf.for %iv = %c0 to %c2 step %c1
           iter_args(%addr8 = %cm32_i8) -> i8 {
+        %offset = arith.index_castui %addr8 : i8 to index
+        %value = pto.vlds %base[%offset]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %next = arith.addi %addr8, %c32_i8 : i8
+        scf.yield %next : i8
+      }
+    }
+    return
+  }
+
+  func.func @i8_no_wrap(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c0_i8 = arith.constant 0 : i8
+    %c32_i8 = arith.constant 32 : i8
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1
+          iter_args(%addr8 = %c0_i8) -> i8 {
         %offset = arith.index_castui %addr8 : i8 to index
         %value = pto.vlds %base[%offset]
           : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>

@@ -1247,22 +1247,36 @@ def VPTOSoftPostUpdate
     : Pass<"vpto-soft-postupdate", "ModuleOp"> {
   let summary = "Convert fixed-stride VPTO memory ops to post-update form";
   let description = [{
-    Identifies VPTO load/store operations (vlds, vsts, vsstb) whose effective
-    address advances by a fixed symbolic stride. Loop-carried accesses use
-    scf.for iter_args. Remaining arithmetic runs within each block, including
-    loop bodies, are rewritten only when a conservative structural
-    profitability check predicts address-computation savings. For an accepted
-    sequential run, all but the last operation form an updated_base pointer
-    chain, while the last operation uses the current pointer in normal
-    zero-offset form. Loop-varying integer addresses extended to `index` are
-    consumed only from the canonical i16 address domain, and only when a
-    direct constant recurrence proves that the source cannot wrap. Other
-    integer widths and unproven recurrences are left for a dedicated address
-    normalization pass. Loop-aware liveness removes software accumulator
-    recurrences made obsolete by new pointer chains while retaining
-    accumulators with observable uses.
+    Uses VPTOAddressSemanticsOpInterface and the function-scoped
+    PTOAddressAnalysis to identify eligible VPTO memory operations whose
+    effective address advances by an exactly representable symbolic stride.
+    Loop-carried accesses use scf.for iter_args. Typed i8, i16, i32, and index
+    recurrences are accepted only when their real signed/unsigned cast and
+    no-wrap semantics are proven; unsupported or inexact queries remain in
+    normal form. Remaining arithmetic runs within each block are rewritten
+    only when a conservative structural profitability check predicts address
+    computation savings. For an accepted sequential run, all but the last
+    operation form an updated_base pointer chain, while the last operation
+    uses the current pointer in normal zero-offset form. Loop-aware liveness
+    removes software accumulator recurrences made obsolete by new pointer
+    chains while retaining accumulators with observable uses.
   }];
   let constructor = "mlir::pto::createVPTOSoftPostUpdatePass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
+}
+
+def PTOPrintAddressAnalysis
+    : Pass<"pto-print-address-analysis", "func::FuncOp"> {
+  let summary = "Print cached PTO value-evolution and VPTO address facts";
+  let description = [{
+    Test/debug-only printer for PTOValueEvolutionAnalysis and
+    PTOAddressAnalysis. It owns no analysis logic and is not required by any
+    production pipeline.
+  }];
+  let constructor = "mlir::pto::createPTOPrintAddressAnalysisPass()";
   let dependentDialects = ["mlir::func::FuncDialect",
                            "mlir::pto::PTODialect",
                            "mlir::arith::ArithDialect",
