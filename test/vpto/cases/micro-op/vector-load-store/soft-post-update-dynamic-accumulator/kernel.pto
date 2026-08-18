@@ -20,6 +20,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
     %c64 = arith.constant 64 : index
     %c512 = arith.constant 512 : index
     %c800 = arith.constant 800 : index
@@ -60,7 +61,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
         pto.vsts %value, %ub_output[%offset], %mask
             : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-        %increment = arith.addi %iv, %c64 : index
+        %scaled_iv = arith.muli %iv, %c8 : index
+        %increment = arith.addi %scaled_iv, %c64 : index
         %next_offset = arith.addi %offset, %increment : index
         scf.yield %next_offset : index
       }
@@ -78,11 +80,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         scf.yield %next_offset : i32
       }
 
-      // No cast: the index induction variable is the memory offset itself.
+      // No cast: a scaled index induction variable is the memory offset. The
+      // scale keeps every vector access aligned to the ISA's 32-byte boundary.
       scf.for %iv = %c0 to %c4 step %c1 {
-        %value = pto.vlds %ub_input_index[%iv]
+        %offset = arith.muli %iv, %c8 : index
+        %value = pto.vlds %ub_input_index[%offset]
             : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %value, %ub_output_index[%iv], %mask
+        pto.vsts %value, %ub_output_index[%offset], %mask
             : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
       }
     }

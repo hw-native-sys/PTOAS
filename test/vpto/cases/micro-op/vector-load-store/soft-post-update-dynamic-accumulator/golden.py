@@ -19,13 +19,13 @@ def main() -> None:
     input_data = np.arange(ELEMENT_COUNT, dtype=np.float32) + np.float32(0.25)
     output = np.full((ELEMENT_COUNT,), SENTINEL, dtype=np.float32)
     golden = output.copy()
-    for offset in (0, 64, 129, 195):
+    for offset in (0, 64, 136, 216):
         end = offset + VECTOR_ELEMENTS
         golden[offset:end] = input_data[offset:end]
     for offset in (512, 576, 640, 704):
         end = offset + VECTOR_ELEMENTS
         golden[offset:end] = input_data[offset:end]
-    golden[800:867] = input_data[800:867]
+    golden[800:888] = input_data[800:888]
 
     input_data.tofile("input.bin")
     output.tofile("output.bin")
