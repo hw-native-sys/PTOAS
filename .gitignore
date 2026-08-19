@@ -99,3 +99,4 @@ test/samples/**/npu_validation/*
 .planning/
 .work/
 .local/
+dsv4-vmi-lowering-lab/

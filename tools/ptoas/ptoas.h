@@ -118,6 +118,7 @@ struct PTOASCompileResult {
     vptoStubSource.clear();
     vptoCubeModule.reset();
     vptoVectorModule.reset();
+    objectEmissionOptions = {};
     kind = PTOASCompileResultKind::Text;
   }
 
@@ -126,6 +127,7 @@ struct PTOASCompileResult {
   std::string vptoStubSource;
   EmittedLLVMModule vptoCubeModule;
   EmittedLLVMModule vptoVectorModule;
+  ObjectEmissionOptions objectEmissionOptions;
 };
 
 int compilePTOASModule(OwningOpRef<ModuleOp> &module,

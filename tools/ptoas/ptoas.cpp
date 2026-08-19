@@ -309,6 +309,51 @@ llvm::cl::opt<bool> emitAddPtrTrace(
     llvm::cl::desc("Emit addptr trace comments in generated C++ output"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> enableVMI(
+    "enable-vmi",
+    llvm::cl::desc("Enable the VMI fusion pipeline for A5 VPTO TileLib input"),
+    llvm::cl::init(false));
+
+llvm::cl::opt<bool> enableVMILoopFusion(
+    "enable-vmi-loop-fusion",
+    llvm::cl::desc("Enable VMI loop fusion inside fusion regions"),
+    llvm::cl::init(true));
+
+llvm::cl::opt<bool> enableVMILoadStoreElision(
+    "enable-vmi-load-store-elision",
+    llvm::cl::desc("Enable VMI load/store forwarding inside fusion regions"),
+    llvm::cl::init(true));
+
+llvm::cl::opt<bool> enableVecScopeMemBar(
+    "enable-vecscope-mem-bar",
+    llvm::cl::desc("Insert memory barriers for VPTO vecscope hazards"),
+    llvm::cl::init(true));
+
+llvm::cl::opt<bool> enableVecScopeMemBarAll(
+    "enable-vecscope-mem-bar-all",
+    llvm::cl::desc("Insert conservative barriers for all vecscope memory ops"),
+    llvm::cl::init(false));
+
+llvm::cl::opt<std::string> tileLibBackend(
+    "tile-lib-backend",
+    llvm::cl::desc("TileLib backend: ptodsl or tilelang"),
+    llvm::cl::init("ptodsl"));
+
+llvm::cl::opt<std::string> tileLibPythonExe(
+    "ptodsl-python-exe",
+    llvm::cl::desc("Python executable used by the PTODSL TileLib service"),
+    llvm::cl::init(PTOAS_DEFAULT_PTODSL_PYTHON_EXE));
+
+llvm::cl::opt<std::string> tileLibPackagePath(
+    "ptodsl-pkg-path",
+    llvm::cl::desc("PYTHONPATH root for the PTODSL TileLib package"),
+    llvm::cl::init(PTOAS_DEFAULT_PTODSL_PKG_PATH));
+
+llvm::cl::opt<std::string> daemonSocketPath(
+    "daemon-socket-path",
+    llvm::cl::desc("Existing TileLib daemon Unix socket; empty uses subprocess mode"),
+    llvm::cl::init(""));
+
 llvm::cl::opt<bool> mlir::pto::emitMlirIR(
     "emit-pto-ir",
     llvm::cl::desc("Emit PTO IR after lowering instead of C++"),

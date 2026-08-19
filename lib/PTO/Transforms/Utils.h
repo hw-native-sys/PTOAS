@@ -20,12 +20,14 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 
 #include <cassert>
+#include <memory>
 #include <optional>
 #include <queue>
 #include <set>
@@ -79,6 +81,12 @@ namespace pto {
   AccPushEpilogueAttr getPipeInitAccPushEpilogue(Operation *initOp);
   std::optional<int32_t> getFrontendPipeIdFromInit(Operation *initOp);
   std::optional<int32_t> getFrontendPipeIdFromHandle(Value pipeHandle);
+  Type normalizePTOAddressSpaceForLLVM(Type type, Builder &builder);
+  void normalizePTOAddressSpacesForLLVM(ModuleOp module);
+  std::unique_ptr<Pass> createNormalizePTOAddressSpacesForLLVMPass();
+  void legalizeIndexUnrealizedCasts(ModuleOp module);
+  void cleanupPTOArtifactsAfterLLVMLowering(ModuleOp module);
+  LogicalResult lowerA5UnifiedL2LPipeOpsForLLVM(ModuleOp module);
 }
 }
 #endif
