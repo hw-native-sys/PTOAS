@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+// Loop-carried RAW hazard: in a single scf.for, a store at iteration i and a
+// load at iteration i+1 access overlapping (here identical) addresses. The
+// store also overlaps the next iteration's store, so RAW and WAW share the
+// latch cut and collapse to `pto.mem_bar "VV_ALL"`.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vecscope_membar_loop_carried() {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0_i64 = arith.constant 0 : i64
+    %ub = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // iv goes 0..64 step 1. store at [iv], load at [iv] next iter -> RAW.
+      scf.for %iv = %c0 to %c64 step %c1 {
+        %vec = pto.vlds %ub[%iv] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %vec, %ub[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        scf.yield
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vecscope_membar_loop_carried
+// CHECK: pto.vecscope
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VV_ALL"

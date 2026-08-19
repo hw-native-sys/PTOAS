@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+// A store to one absolute UB address and a load from a provably disjoint
+// absolute UB address (different roots, non-overlapping byte ranges) must NOT
+// insert a barrier for the RAW (store -> load) pair.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vecscope_membar_noalias_skip() {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    // Two disjoint absolute UB regions: [0, 256) and [1024, 1280) in bytes.
+    %ub0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
+    %ub1 = pto.castptr %c1024_i64 : i64 -> !pto.ptr<f32, ub>
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %vec0 = pto.vlds %ub1[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    // store to ub0[0] (bytes [0,256)), then load from ub1[0] (bytes
+    // [1024,1280)). Disjoint absolute ranges -> NoAlias -> no RAW barrier.
+    pto.vsts %vec0, %ub0[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    %vec1 = pto.vlds %ub1[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    // store vec1 to ub0[64] (bytes [256,512)); disjoint from ub0[0] and from
+    // ub1[0]. Keeps vec1 alive and introduces no WAW against the first store.
+    pto.vsts %vec1, %ub0[%c64], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vecscope_membar_noalias_skip
+// CHECK: pto.vecscope
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vlds

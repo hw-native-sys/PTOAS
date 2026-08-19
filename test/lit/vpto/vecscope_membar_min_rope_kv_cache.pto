@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --emit-vpto --enable-vecscope-mem-bar --enable-op-fusion=false %s -o - 2>/dev/null | FileCheck %s
+
+!t1f = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!t1b = !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @min_rope_kv_cache(%k_cache : !pto.ptr<bf16>, %k_proj : !pto.ptr<f32>, %cos_lo : !pto.ptr<f32>, %sin_lo : !pto.ptr<f32>, %cos_hi : !pto.ptr<f32>, %sin_hi : !pto.ptr<f32>, %arg10 : index, %arg11 : index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c768_i64 = arith.constant 768 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c1280_i64 = arith.constant 1280 : i64
+    %c1536_i64 = arith.constant 1536 : i64
+    %c1792_i64 = arith.constant 1792 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+    %c32768_index = arith.constant 32768 : index
+    %c4096_index = arith.constant 4096 : index
+    %c0_index = arith.constant 0 : index
+    %c1_index = arith.constant 1 : index
+    %c8_index = arith.constant 8 : index
+    %c64_index = arith.constant 64 : index
+    %c128_index = arith.constant 128 : index
+    %c524288_index = arith.constant 524288 : index
+    %c16_index = arith.constant 16 : index
+    %c1024_index = arith.constant 1024 : index
+
+    %k_cache_v = pto.make_tensor_view %k_cache, shape = [%c524288_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %k_proj_v  = pto.make_tensor_view %k_proj,  shape = [%c16_index, %c1024_index],   strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %cos_lo_v  = pto.make_tensor_view %cos_lo,  shape = [%c1_index, %c64_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %sin_lo_v  = pto.make_tensor_view %sin_lo,  shape = [%c1_index, %c64_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %cos_hi_v  = pto.make_tensor_view %cos_hi,  shape = [%c1_index, %c64_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %sin_hi_v  = pto.make_tensor_view %sin_hi,  shape = [%c1_index, %c64_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+
+    %cos_lo_pv = pto.partition_view %cos_lo_v, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    %cos_lo_t  = pto.alloc_tile addr = %c0_i64   valid_row = %c1_index valid_col = %c64_index : !t1f
+    pto.tload ins(%cos_lo_pv : !pto.partition_tensor_view<1x64xf32>) outs(%cos_lo_t : !t1f)
+    %sin_lo_pv = pto.partition_view %sin_lo_v, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    %sin_lo_t  = pto.alloc_tile addr = %c256_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+    pto.tload ins(%sin_lo_pv : !pto.partition_tensor_view<1x64xf32>) outs(%sin_lo_t : !t1f)
+    %cos_hi_pv = pto.partition_view %cos_hi_v, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    %cos_hi_t  = pto.alloc_tile addr = %c512_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+    pto.tload ins(%cos_hi_pv : !pto.partition_tensor_view<1x64xf32>) outs(%cos_hi_t : !t1f)
+    %sin_hi_pv = pto.partition_view %sin_hi_v, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    %sin_hi_t  = pto.alloc_tile addr = %c768_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+    pto.tload ins(%sin_hi_pv : !pto.partition_tensor_view<1x64xf32>) outs(%sin_hi_t : !t1f)
+
+    scf.for %ki = %c0_index to %c8_index step %c1_index {
+      %off = arith.muli %ki, %c128_index : index
+      %k_lo_pv = pto.partition_view %k_proj_v, offsets = [%arg10, %off], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+      %k_lo_t  = pto.alloc_tile addr = %c1024_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tload ins(%k_lo_pv : !pto.partition_tensor_view<1x64xf32>) outs(%k_lo_t : !t1f)
+      %off64 = arith.addi %off, %c64_index : index
+      %k_hi_pv = pto.partition_view %k_proj_v, offsets = [%arg10, %off64], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+      %k_hi_t  = pto.alloc_tile addr = %c1280_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tload ins(%k_hi_pv : !pto.partition_tensor_view<1x64xf32>) outs(%k_hi_t : !t1f)
+      %t_t   = pto.alloc_tile addr = %c1536_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tcolexpandmul ins(%k_lo_t, %cos_lo_t : !t1f, !t1f) outs(%t_t : !t1f)
+      %u_t   = pto.alloc_tile addr = %c1792_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tcolexpandmul ins(%k_hi_t, %sin_lo_t : !t1f, !t1f) outs(%u_t : !t1f)
+      %rot_lo_t = pto.alloc_tile addr = %c1536_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tsub ins(%t_t, %u_t : !t1f, !t1f) outs(%rot_lo_t : !t1f)
+      %a_t   = pto.alloc_tile addr = %c1280_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tcolexpandmul ins(%k_hi_t, %cos_hi_t : !t1f, !t1f) outs(%a_t : !t1f)
+      %b_t   = pto.alloc_tile addr = %c1024_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tcolexpandmul ins(%k_lo_t, %sin_hi_t : !t1f, !t1f) outs(%b_t : !t1f)
+      %rot_hi_t = pto.alloc_tile addr = %c1024_i64 valid_row = %c1_index valid_col = %c64_index : !t1f
+      pto.tsub ins(%a_t, %b_t : !t1f, !t1f) outs(%rot_hi_t : !t1f)
+      %base = arith.addi %arg11, %off : index
+      %o0 = pto.partition_view %k_cache_v, offsets = [%base, %c0_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      %lo_b = pto.alloc_tile addr = %c2048_i64 valid_row = %c1_index valid_col = %c64_index : !t1b
+      pto.tcvt ins(%rot_lo_t {rmode = #pto<round_mode ROUND>} : !t1f) outs(%lo_b : !t1b)
+      pto.tstore ins(%lo_b : !t1b) outs(%o0 : !pto.partition_tensor_view<1x64xbf16>)
+      %o1 = pto.partition_view %k_cache_v, offsets = [%base, %c64_index], sizes = [%c1_index, %c64_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
+      %hi_b = pto.alloc_tile addr = %c2048_i64 valid_row = %c1_index valid_col = %c64_index : !t1b
+      pto.tcvt ins(%rot_hi_t {rmode = #pto<round_mode ROUND>} : !t1f) outs(%hi_b : !t1b)
+      pto.tstore ins(%hi_b : !t1b) outs(%o1 : !pto.partition_tensor_view<1x64xbf16>)
+    }
+    return
+  }
+}
+
+
+// Real regression reproducer: the three RAW cuts require three VST_VLD
+// barriers, while no VLD_VST barrier is needed. The first two barriers also
+// cover the intervening WAW cases, so they remain VST_VLD cuts.
+
+// CHECK-LABEL: func.func @min_rope_kv_cache
+// CHECK: pto.vecscope
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
