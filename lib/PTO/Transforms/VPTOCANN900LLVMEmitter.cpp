@@ -10,6 +10,7 @@
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
 
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
+#include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -2272,25 +2273,6 @@ static FailureOr<Value> packVbitsortConfig(Operation *anchor, Value repeatTimes)
     return failure();
   return builder
       .create<arith::ShLIOp>(loc, repeatI64, getI64Constant(builder, loc, 56))
-      .getResult();
-}
-
-static FailureOr<Value> convertElementOffsetToBytes(Operation *anchor, Value offset,
-                                                    Type elementType) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-
-  Value offsetI32 = castIntegerLikeTo(anchor, offset, builder.getI32Type());
-  if (!offsetI32)
-    return failure();
-
-  unsigned bitWidth = pto::getPTOStorageElemBitWidth(elementType);
-  if (bitWidth == 0 || bitWidth % 8 != 0)
-    return failure();
-
-  Value scale = builder.create<arith::ConstantOp>(
-      anchor->getLoc(), builder.getI32IntegerAttr(bitWidth / 8));
-  return builder.create<arith::MulIOp>(anchor->getLoc(), offsetI32, scale)
       .getResult();
 }
 
@@ -7065,18 +7047,21 @@ public:
     Type elementType = getElementTypeFromVectorLike(ptoResultType);
     if (!elementType)
       return rewriter.notifyMatchFailure(op, "unsupported vlds element type");
-    auto offsetBytes = convertElementOffsetToBytes(op, adaptor.getOffset(), elementType);
-    auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
+    bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
+    auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
+        op, adaptor.getSource(), adaptor.getOffset(), elementType,
+        usePostIntrinsic, rewriter);
     auto dist =
         parseLoadDistImmediate(op.getDist().value_or("NORM"), elementType);
-    if (failed(offsetBytes) || !basePtr || !dist)
+    bool invalidAddress = failed(loweredOffset) || !dist;
+    if (invalidAddress) {
       return rewriter.notifyMatchFailure(op, "failed to materialize vlds operands");
+    }
 
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)))
       return rewriter.notifyMatchFailure(op, "failed to convert vlds result types");
 
-    bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     if (usePostIntrinsic) {
       if (resultTypes.size() != 2 || resultTypes[1] != adaptor.getSource().getType())
         return rewriter.notifyMatchFailure(op,
@@ -7099,9 +7084,12 @@ public:
 
     Value distValue = getI32Constant(rewriter, op.getLoc(), *dist);
     Value postValue = getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
-    SmallVector<Value> args{adaptor.getSource(), *offsetBytes, distValue, postValue};
+    SmallVector<Value> args{loweredOffset->base,
+                            loweredOffset->intrinsicOffset, distValue,
+                            postValue};
     auto funcType = rewriter.getFunctionType(
-        TypeRange{adaptor.getSource().getType(), (*offsetBytes).getType(),
+        TypeRange{loweredOffset->base.getType(),
+                  loweredOffset->intrinsicOffset.getType(),
                   distValue.getType(), postValue.getType()},
         callResultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
@@ -7110,10 +7098,14 @@ public:
     Value loaded = castFromPayloadABI(
         op.getLoc(), call.getResult(0), ptoResultType, resultTypes[0],
         rewriter);
-    if (usePostIntrinsic)
-      rewriter.replaceOp(op, ValueRange{loaded, call.getResult(1)});
-    else
+    if (usePostIntrinsic) {
+      Value updatedBase = loweredOffset->updatedBase
+                              ? loweredOffset->updatedBase
+                              : call.getResult(1);
+      rewriter.replaceOp(op, ValueRange{loaded, updatedBase});
+    } else {
       rewriter.replaceOp(op, ValueRange{loaded});
+    }
     return success();
   }
 
@@ -7135,16 +7127,17 @@ public:
     if (!elementType)
       return rewriter.notifyMatchFailure(op, "unsupported vldsx2 element type");
 
-    auto offsetBytes =
-        convertElementOffsetToBytes(op, adaptor.getOffset(), elementType);
-    auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getSource().getType());
+    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
+        op, adaptor.getSource(), adaptor.getOffset(), elementType,
+        usePostIntrinsic, rewriter);
     auto dist = parseLoadX2DistImmediate(op.getDist(), elementType);
-    if (failed(offsetBytes) || !basePtr || !dist) {
+    bool invalidAddress = failed(loweredOffset) || !dist;
+    if (invalidAddress) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to materialize vldsx2 operands");
     }
 
-    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
@@ -7169,10 +7162,12 @@ public:
     Value distValue = getI32Constant(rewriter, op.getLoc(), *dist);
     Value postValue =
         getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
-    SmallVector<Value> args{adaptor.getSource(), *offsetBytes, distValue,
+    SmallVector<Value> args{loweredOffset->base,
+                            loweredOffset->intrinsicOffset, distValue,
                             postValue};
     auto funcType = rewriter.getFunctionType(
-        TypeRange{adaptor.getSource().getType(), (*offsetBytes).getType(),
+        TypeRange{loweredOffset->base.getType(),
+                  loweredOffset->intrinsicOffset.getType(),
                   distValue.getType(), postValue.getType()},
         callResultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
@@ -7184,10 +7179,14 @@ public:
     Value high = castFromPayloadABI(
         op.getLoc(), call.getResult(1), op.getHigh().getType(), resultTypes[1],
         rewriter);
-    if (usePostIntrinsic)
-      rewriter.replaceOp(op, ValueRange{low, high, call.getResult(2)});
-    else
+    if (usePostIntrinsic) {
+      Value updatedBase = loweredOffset->updatedBase
+                              ? loweredOffset->updatedBase
+                              : call.getResult(2);
+      rewriter.replaceOp(op, ValueRange{low, high, updatedBase});
+    } else {
       rewriter.replaceOp(op, ValueRange{low, high});
+    }
     return success();
   }
 
@@ -7348,14 +7347,19 @@ public:
     intrinsicResultTypes.push_back(adaptor.getSource().getType());
 
     SmallVector<Value> args{adaptor.getSource(), adaptor.getAlign()};
+    Value explicitUpdatedBase;
     if (usePostIntrinsic) {
       Type elementType = getElementTypeFromVectorLike(op.getResult().getType());
-      auto incrementBytes =
-          convertElementOffsetToBytes(op, adaptor.getIncrement(), elementType);
-      if (failed(incrementBytes))
+      auto loweredIncrement = lowerVPTOElementOffsetForIntrinsic(
+          op, adaptor.getSource(), adaptor.getIncrement(), elementType,
+          /*isPostUpdate=*/true, rewriter);
+      if (failed(loweredIncrement)) {
         return rewriter.notifyMatchFailure(op,
                                            "failed to convert vldus increment");
-      args.push_back(*incrementBytes);
+      }
+      args.front() = loweredIncrement->base;
+      args.push_back(loweredIncrement->intrinsicOffset);
+      explicitUpdatedBase = loweredIncrement->updatedBase;
     }
     SmallVector<Type> argTypes;
     for (Value arg : args)
@@ -7368,8 +7372,10 @@ public:
         op.getLoc(), call.getResult(0), op.getResult().getType(),
         resultTypes[0], rewriter);
     SmallVector<Value> replacements{loaded, call.getResult(1)};
-    if (usePostIntrinsic)
-      replacements.push_back(call.getResult(2));
+    if (usePostIntrinsic) {
+      replacements.push_back(explicitUpdatedBase ? explicitUpdatedBase
+                                                 : call.getResult(2));
+    }
     rewriter.replaceOp(op, replacements);
     return success();
   }
@@ -7476,13 +7482,16 @@ public:
       offsetElementType = ptrType.getElementType();
     else if (auto memrefType = dyn_cast<BaseMemRefType>(op.getDestination().getType()))
       offsetElementType = memrefType.getElementType();
-    auto offsetBytes =
-        convertElementOffsetToBytes(op, adaptor.getOffset(), offsetElementType);
-    auto basePtr = dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
+    bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
+    auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
+        op, adaptor.getDestination(), adaptor.getOffset(), offsetElementType,
+        usePostIntrinsic, rewriter);
     auto dist =
         parseStoreDistImmediate(op.getDist().value_or(""), elementType);
-    if (failed(offsetBytes) || !basePtr || !dist)
+    bool invalidAddress = failed(loweredOffset) || !dist;
+    if (invalidAddress) {
       return rewriter.notifyMatchFailure(op, "failed to materialize vsts operands");
+    }
 
     FailureOr<StringRef> calleeName =
         op.getUpdatedBase()
@@ -7495,7 +7504,6 @@ public:
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)))
       return rewriter.notifyMatchFailure(op, "failed to convert vsts result types");
-    bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     if (usePostIntrinsic) {
       if (resultTypes.size() != 1 ||
           resultTypes[0] != adaptor.getDestination().getType())
@@ -7519,20 +7527,25 @@ public:
     StringRef distToken = op.getDist().value_or("");
     if (isOnePointStoreDist(distToken))
       mask = rewriter.create<LLVM::UndefOp>(op.getLoc(), mask.getType());
-    SmallVector<Value> args{value, adaptor.getDestination(), *offsetBytes,
-                            distValue, zero, mask};
+    SmallVector<Value> args{value, loweredOffset->base,
+                            loweredOffset->intrinsicOffset, distValue, zero,
+                            mask};
     auto funcType = rewriter.getFunctionType(
-        TypeRange{value.getType(), adaptor.getDestination().getType(),
+        TypeRange{value.getType(), loweredOffset->base.getType(),
                   rewriter.getI32Type(), rewriter.getI32Type(),
                   rewriter.getI32Type(), mask.getType()},
         resultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    if (usePostIntrinsic)
-      rewriter.replaceOp(op, call.getResults());
-    else
+    if (usePostIntrinsic) {
+      Value updatedBase = loweredOffset->updatedBase
+                              ? loweredOffset->updatedBase
+                              : call.getResult(0);
+      rewriter.replaceOp(op, updatedBase);
+    } else {
       rewriter.eraseOp(op);
+    }
     return success();
   }
 
@@ -7613,12 +7626,12 @@ public:
     if (!elementType)
       return rewriter.notifyMatchFailure(op, "unsupported vstsx2 element type");
 
-    auto offsetBytes =
-        convertElementOffsetToBytes(op, adaptor.getOffset(), elementType);
-    auto basePtr =
-        dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
+    auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
+        op, adaptor.getDestination(), adaptor.getOffset(), elementType,
+        /*isPostUpdate=*/false, rewriter);
     auto dist = parseStoreX2DistImmediate(op.getDist(), elementType);
-    if (failed(offsetBytes) || !basePtr || !dist) {
+    bool invalidAddress = failed(loweredOffset) || !dist;
+    if (invalidAddress) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to materialize vstsx2 operands");
     }
@@ -7634,11 +7647,13 @@ public:
         op.getLoc(), adaptor.getLow(), op.getLow().getType(), rewriter);
     Value high = castToPayloadABI(
         op.getLoc(), adaptor.getHigh(), op.getHigh().getType(), rewriter);
-    SmallVector<Value> args{low, high, adaptor.getDestination(), *offsetBytes,
-                            distValue, zeroValue, adaptor.getMask()};
+    SmallVector<Value> args{low, high, loweredOffset->base,
+                            loweredOffset->intrinsicOffset, distValue,
+                            zeroValue, adaptor.getMask()};
     auto funcType = rewriter.getFunctionType(
         TypeRange{low.getType(), high.getType(),
-                  adaptor.getDestination().getType(), (*offsetBytes).getType(),
+                  loweredOffset->base.getType(),
+                  loweredOffset->intrinsicOffset.getType(),
                   distValue.getType(), zeroValue.getType(),
                   adaptor.getMask().getType()},
         TypeRange{});
@@ -7707,16 +7722,19 @@ public:
     if (!elementType)
       return rewriter.notifyMatchFailure(op, "unsupported vstus element type");
 
-    auto offsetBytes = convertElementOffsetToBytes(op, adaptor.getOffset(), elementType);
-    if (failed(offsetBytes))
+    bool usePostIntrinsic = static_cast<bool>(op.getBaseOut());
+    auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
+        op, adaptor.getBase(), adaptor.getOffset(), elementType,
+        usePostIntrinsic, rewriter);
+    if (failed(loweredOffset)) {
       return rewriter.notifyMatchFailure(op, "failed to convert vstus offset");
+    }
 
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)))
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vstus result types");
-    bool usePostIntrinsic = static_cast<bool>(op.getBaseOut());
     auto baseType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getBase().getType());
     if (!baseType || resultTypes.size() != (usePostIntrinsic ? 2U : 1U) ||
         adaptor.getAlignIn().getType() != resultTypes[0] ||
@@ -7734,16 +7752,23 @@ public:
       return rewriter.notifyMatchFailure(op, "unsupported vstus signature");
     Value value = castToPayloadABI(
         op.getLoc(), adaptor.getValue(), op.getValue().getType(), rewriter);
-    SmallVector<Value> args{value, adaptor.getBase(), *offsetBytes,
+    SmallVector<Value> args{value, loweredOffset->base,
+                            loweredOffset->intrinsicOffset,
                             adaptor.getAlignIn()};
     auto funcType = rewriter.getFunctionType(
-        TypeRange{value.getType(), adaptor.getBase().getType(),
-                  (*offsetBytes).getType(), adaptor.getAlignIn().getType()},
+        TypeRange{value.getType(), loweredOffset->base.getType(),
+                  loweredOffset->intrinsicOffset.getType(),
+                  adaptor.getAlignIn().getType()},
         resultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
+    if (usePostIntrinsic && loweredOffset->updatedBase) {
+      rewriter.replaceOp(
+          op, ValueRange{call.getResult(0), loweredOffset->updatedBase});
+    } else {
+      rewriter.replaceOp(op, call.getResults());
+    }
     return success();
   }
 
@@ -7844,12 +7869,14 @@ public:
                                          "unexpected converted vstas operand types");
     }
 
-    auto offsetBytes =
-        convertElementOffsetToBytes(op, adaptor.getOffset(), dstType.getElementType());
-    if (failed(offsetBytes))
-      return rewriter.notifyMatchFailure(op, "failed to convert vstas offset");
-
     bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
+        op, adaptor.getDestination(), adaptor.getOffset(),
+        dstType.getElementType(), usePostIntrinsic, rewriter);
+    if (failed(loweredOffset)) {
+      return rewriter.notifyMatchFailure(op, "failed to convert vstas offset");
+    }
+
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
@@ -7861,19 +7888,24 @@ public:
         buildVstasCallee(op.getContext(), usePostIntrinsic);
     Value postValue =
         getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
-    SmallVector<Value> args{adaptor.getValue(), adaptor.getDestination(), *offsetBytes,
-                            postValue};
+    SmallVector<Value> args{adaptor.getValue(), loweredOffset->base,
+                            loweredOffset->intrinsicOffset, postValue};
     auto funcType = rewriter.getFunctionType(
-        TypeRange{adaptor.getValue().getType(), adaptor.getDestination().getType(),
-                  (*offsetBytes).getType(), postValue.getType()},
+        TypeRange{adaptor.getValue().getType(), loweredOffset->base.getType(),
+                  loweredOffset->intrinsicOffset.getType(),
+                  postValue.getType()},
         resultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    if (usePostIntrinsic)
-      rewriter.replaceOp(op, call.getResults());
-    else
+    if (usePostIntrinsic) {
+      Value updatedBase = loweredOffset->updatedBase
+                              ? loweredOffset->updatedBase
+                              : call.getResult(0);
+      rewriter.replaceOp(op, updatedBase);
+    } else {
       rewriter.eraseOp(op);
+    }
     return success();
   }
 
@@ -8527,12 +8559,15 @@ public:
       return rewriter.notifyMatchFailure(
           op, "unsupported predicate-store dist immediate");
 
-    Value offset = castIntegerLikeTo(op, adaptor.getOffset(), rewriter.getI32Type());
-    if (!offset)
-      return rewriter.notifyMatchFailure(
-          op, "failed to convert predicate-store offset to i32");
-
     bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    auto loweredOffset = lowerVPTOPredicateOffsetForIntrinsic(
+        op, adaptor.getDestination(), adaptor.getOffset(), usePostIntrinsic,
+        rewriter);
+    if (failed(loweredOffset)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to preserve predicate-store index offset");
+    }
+
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       resultTypes)) ||
@@ -8544,8 +8579,8 @@ public:
         getPredicateStoreCallee<StoreOp>(op.getContext(), usePostIntrinsic);
     SmallVector<Value> args;
     args.push_back(adaptor.getValue());
-    args.push_back(adaptor.getDestination());
-    args.push_back(offset);
+    args.push_back(loweredOffset->base);
+    args.push_back(loweredOffset->intrinsicOffset);
     args.push_back(rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*dist)));
     args.push_back(rewriter.create<arith::ConstantOp>(
@@ -8558,10 +8593,15 @@ public:
     auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    if (usePostIntrinsic)
-      rewriter.replaceOp(op, call.getResults());
-    else
+    if (usePostIntrinsic) {
+      if (loweredOffset->updatedBase) {
+        rewriter.replaceOp(op, loweredOffset->updatedBase);
+      } else {
+        rewriter.replaceOp(op, call.getResults());
+      }
+    } else {
       rewriter.eraseOp(op);
+    }
     return success();
   }
 
@@ -8598,16 +8638,19 @@ public:
       return rewriter.notifyMatchFailure(
           op, "unsupported predicate-load dist immediate");
 
-    Value offset = castIntegerLikeTo(op, adaptor.getOffset(), rewriter.getI32Type());
-    if (!offset)
+    auto loweredOffset = lowerVPTOPredicateOffsetForIntrinsic(
+        op, adaptor.getSource(), adaptor.getOffset(), usePostIntrinsic,
+        rewriter);
+    if (failed(loweredOffset)) {
       return rewriter.notifyMatchFailure(
-          op, "failed to convert predicate-load offset to i32");
+          op, "failed to preserve predicate-load index offset");
+    }
 
     StringRef calleeName =
         getPredicateLoadCallee<LoadOp>(op.getContext(), usePostIntrinsic);
     SmallVector<Value> args;
-    args.push_back(adaptor.getSource());
-    args.push_back(offset);
+    args.push_back(loweredOffset->base);
+    args.push_back(loweredOffset->intrinsicOffset);
     args.push_back(rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*dist)));
     args.push_back(rewriter.create<arith::ConstantOp>(
@@ -8620,7 +8663,12 @@ public:
     auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
+    if (loweredOffset->updatedBase) {
+      rewriter.replaceOp(
+          op, ValueRange{call.getResult(0), loweredOffset->updatedBase});
+    } else {
+      rewriter.replaceOp(op, call.getResults());
+    }
     return success();
   }
 

@@ -45,11 +45,11 @@ static constexpr int64_t kSignedI8Min = -128;
 static constexpr int64_t kSignedI8Max = 127;
 
 // What one unit of an op's strideOperand means, in address terms.  This is a
-// property of the op's lowering, not of the pass: `Element` ops run their
-// offset through convertElementOffsetToBytes, `Block` ops pass a packed
-// control word straight to the intrinsic, `Alignment` ops use an op-specific
-// hardware alignment table, and `Byte` ops pass a raw byte offset. See
-// `strideUnitBytes` for the conversion.
+// property of the op's lowering, not of the pass: `Element` ops lower their
+// logical index offset to bytes at the target ABI boundary, `Block` ops pass a
+// packed control word straight to the intrinsic, `Alignment` ops use an
+// op-specific hardware alignment table, and `Byte` ops pass a raw byte offset.
+// See `strideUnitBytes` for the conversion.
 using StrideUnit = pto::VPTOAddressUnit;
 
 enum class StrideConstraint {
@@ -442,24 +442,6 @@ static bool canScaleInitialOffsetAtLoopEntry(
   return initial && *initial % (elemBytes / unitBytes) == 0;
 }
 
-// Reproduce the index-to-i32 truncation performed by vlds/vsts lowering before
-// using an Element-class offset in pto.addptr.  A direct index -> i32 -> index
-// round trip is canonicalized away by arith, so route through i64 + trunci to
-// keep the narrowing explicit.  The final signed index_cast preserves negative
-// offsets in the same way as the existing lowering.
-static Value truncateElementOffsetToI32(Value offset, Location loc,
-                                        OpBuilder &builder) {
-  if (!offset.getType().isIndex()) {
-    return offset;
-  }
-  Value offsetI64 =
-      builder.create<arith::IndexCastOp>(loc, builder.getI64Type(), offset);
-  Value offsetI32 =
-      builder.create<arith::TruncIOp>(loc, builder.getI32Type(), offsetI64);
-  return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
-                                            offsetI32);
-}
-
 // pto.addptr always consumes an index offset. Block offsets retain their
 // existing unsigned interpretation; every other supported address unit is
 // signed, including sprsti's signed 8-bit word offset.
@@ -493,10 +475,7 @@ static Value createInitialPtr(Value base, Value strideOperand,
     return nullptr;
   }
 
-  Value scaledOffset =
-      strideUnit == StrideUnit::Element
-          ? truncateElementOffsetToI32(strideOperand, loc, builder)
-          : strideOperand;
+  Value scaledOffset = strideOperand;
   if (unitBytes != elemBytes) {
     if (unitBytes % elemBytes == 0) {
       Value soIndex = strideOperand;

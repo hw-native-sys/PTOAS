@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 \
+// RUN:   --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto \
+// RUN:   --pto-arch=a5 --emit-vpto-llvm-ir %s -o - 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=LLVM
+
+// LLVM-LABEL: define void @normal_full_predicate_index_offsets_mix_aiv
+// LLVM-NOT: trunc i64
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 {{.*}}
+// LLVM: call <256 x i1> @llvm.hivm.plds.b8
+// LLVM-SAME: i32 0,
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 2147483648
+// LLVM: call void @llvm.hivm.psts.b8
+// LLVM-SAME: i32 0,
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 -68719476768
+// LLVM: call <256 x i1> @llvm.hivm.pldi.b8
+// LLVM-SAME: i32 0,
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 68719476736
+// LLVM: call void @llvm.hivm.psti.b8
+// LLVM-SAME: i32 0,
+
+// LLVM-LABEL: define void @post_update_full_predicate_index_offsets_mix_aiv(
+// LLVM-SAME: ptr addrspace(6) %[[SOURCE:[0-9]+]],
+// LLVM-SAME: ptr addrspace(6) %[[DESTINATION:[0-9]+]],
+// LLVM-SAME: i64 %[[DYNAMIC:[0-9]+]])
+// LLVM-NOT: trunc i64
+// LLVM: %[[PLDS_UPDATED:[0-9]+]] = getelementptr i8,
+// LLVM-SAME: ptr addrspace(6) %[[SOURCE]], i64 %[[DYNAMIC]]
+// LLVM: %[[PLDS_CALL:[0-9]+]] = call { <256 x i1>, ptr addrspace(6) }
+// LLVM-SAME: @llvm.hivm.plds.post.b8(ptr addrspace(6) %[[SOURCE]], i32 0,
+// LLVM: %[[PLDS_MASK:[0-9]+]] = extractvalue
+// LLVM-SAME: { <256 x i1>, ptr addrspace(6) } %[[PLDS_CALL]], 0
+// LLVM: %[[PSTS_UPDATED:[0-9]+]] = getelementptr i8,
+// LLVM-SAME: ptr addrspace(6) %[[DESTINATION]], i64 2147483648
+// LLVM: call ptr addrspace(6) @llvm.hivm.psts.post.b8(
+// LLVM-SAME: <256 x i1> %[[PLDS_MASK]],
+// LLVM-SAME: ptr addrspace(6) %[[DESTINATION]], i32 0,
+// LLVM: %[[PLDI_UPDATED:[0-9]+]] = getelementptr i8,
+// LLVM-SAME: ptr addrspace(6) %[[PLDS_UPDATED]], i64 -68719476768
+// LLVM: %[[PLDI_CALL:[0-9]+]] = call { <256 x i1>, ptr addrspace(6) }
+// LLVM-SAME: @llvm.hivm.pldi.post.b8(ptr addrspace(6) %[[PLDS_UPDATED]], i32 0,
+// LLVM: %[[PLDI_MASK:[0-9]+]] = extractvalue
+// LLVM-SAME: { <256 x i1>, ptr addrspace(6) } %[[PLDI_CALL]], 0
+// LLVM: %[[PSTI_UPDATED:[0-9]+]] = getelementptr i8,
+// LLVM-SAME: ptr addrspace(6) %[[PSTS_UPDATED]], i64 68719476736
+// LLVM: call ptr addrspace(6) @llvm.hivm.psti.post.b8(
+// LLVM-SAME: <256 x i1> %[[PLDI_MASK]],
+// LLVM-SAME: ptr addrspace(6) %[[PSTS_UPDATED]], i32 0,
+// LLVM: %[[FOLLOWUP_MASK:[0-9]+]] = call <256 x i1> @llvm.hivm.plds.b8(
+// LLVM-SAME: ptr addrspace(6) %[[PLDI_UPDATED]], i32 0,
+// LLVM: call void @llvm.hivm.psts.b8(<256 x i1> %[[FOLLOWUP_MASK]],
+// LLVM-SAME: ptr addrspace(6) %[[PSTI_UPDATED]], i32 0,
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @normal_full_predicate_index_offsets(
+      %source: !pto.ptr<ui8, ub>, %destination: !pto.ptr<ui8, ub>,
+      %dynamic: index) attributes {pto.kernel} {
+    %c2147483648 = arith.constant 2147483648 : index
+    %cm2147483649 = arith.constant -2147483649 : index
+    pto.vecscope {
+      %dynamic_mask = pto.plds %source[%dynamic], "NORM"
+          : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
+      pto.psts %dynamic_mask, %destination[%c2147483648], "NORM"
+          : !pto.mask<b8>, !pto.ptr<ui8, ub>, index
+      %immediate_mask = pto.pldi %source[%cm2147483649], "NORM"
+          : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
+      pto.psti %immediate_mask, %destination[%c2147483648], "NORM"
+          : !pto.mask<b8>, !pto.ptr<ui8, ub>, index
+    }
+    return
+  }
+
+  func.func @post_update_full_predicate_index_offsets(
+      %source: !pto.ptr<ui8, ub>, %destination: !pto.ptr<ui8, ub>,
+      %dynamic: index) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c2147483648 = arith.constant 2147483648 : index
+    %cm2147483649 = arith.constant -2147483649 : index
+    pto.vecscope {
+      %dynamic_mask, %next_source = pto.plds %source[%dynamic], "NORM"
+          : !pto.ptr<ui8, ub>, index
+            -> !pto.mask<b8>, !pto.ptr<ui8, ub>
+      %next_destination =
+          pto.psts %dynamic_mask, %destination[%c2147483648], "NORM"
+          : !pto.mask<b8>, !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
+      %immediate_mask, %next_immediate_source =
+          pto.pldi %next_source[%cm2147483649], "NORM"
+          : !pto.ptr<ui8, ub>, index
+            -> !pto.mask<b8>, !pto.ptr<ui8, ub>
+      %next_immediate_destination =
+          pto.psti %immediate_mask, %next_destination[%c2147483648], "NORM"
+          : !pto.mask<b8>, !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
+      %followup_mask = pto.plds %next_immediate_source[%c0], "NORM"
+          : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
+      pto.psts %followup_mask, %next_immediate_destination[%c0], "NORM"
+          : !pto.mask<b8>, !pto.ptr<ui8, ub>, index
+    }
+    return
+  }
+}

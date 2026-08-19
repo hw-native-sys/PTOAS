@@ -231,6 +231,17 @@ unit 到 byte 的换算由公共 helper 根据 access 与目标信息计算：
 这里的 `Alignment` 是指令 offset 的计量单位，不代表 analysis 已经证明了地址对齐。
 “known alignment” 是未来可在同一 AddressExpr 上增加的独立查询。
 
+VPTO 的逻辑 current-access offset 使用 `index` 类型，并按上述 unit 参与地址计算。
+目标 intrinsic 的 i32 offset 参数只是 ABI/编码限制，不构成第二套 VPTO 地址语义。
+lowering 只有在完整的 byte offset 可证明能以 i32 表示时，才能直接使用该参数；否则
+必须以完整 pointer-width index 调整 base，并向 intrinsic 传递可表示的 residual offset。
+post-update 形式同样必须从完整 index 计算 updated base。任何路径都不得通过静默截断
+高位来改变 VPTO IR 表示的地址，因而 normal 与 post-update lowering 对同一逻辑地址
+保持一致。该规则同样适用于 `plds/pldi/psts/psti`：`plds/psts` 的 index 以 byte
+计量，`pldi/psti` 的 index 以目标 alignment 计量；当逻辑 index 无法由 intrinsic
+的 i32 参数表示时，lowering 必须按对应 unit 的完整字节数调整 base，并传入零
+residual offset。
+
 ### 6.3 与现有接口的关系
 
 现有 `VPTOSchedulingOpInterface` 描述 scheduler 需要的 operation-local 语义；
