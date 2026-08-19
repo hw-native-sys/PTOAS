@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar-all --enable-vecscope-mem-bar=false %s -o - 2>/dev/null | FileCheck %s --check-prefix=ALL
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s --check-prefix=DEFAULT
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vecscope_membar_all() {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %ub0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
+    %ub1 = pto.castptr %c256_i64 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v0 = pto.vlds %ub0[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v0, %ub0[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.mem_bar "VST_VLD"
+      %v1 = pto.vlds %ub0[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v1, %ub1[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// ALL-LABEL: func.func @vecscope_membar_all
+// The debug mode places one VV_ALL immediately before every vector UB access,
+// including the access already preceded by a directed barrier.
+// ALL: pto.mem_bar "VV_ALL"
+// ALL-NEXT: pto.vlds
+// ALL: pto.mem_bar "VV_ALL"
+// ALL-NEXT: pto.vsts
+// ALL: pto.mem_bar "VST_VLD"
+// ALL-NEXT: pto.mem_bar "VV_ALL"
+// ALL-NEXT: pto.vlds
+// ALL: pto.mem_bar "VV_ALL"
+// ALL-NEXT: pto.vsts
+
+// DEFAULT-LABEL: func.func @vecscope_membar_all
+// DEFAULT: pto.vsts
+// DEFAULT-NEXT: pto.mem_bar "VST_VLD"
+// DEFAULT-NEXT: pto.vlds

@@ -300,6 +300,29 @@ pto.dsb "ALL"
 
 Without proper barriers, loads may see stale data or stores may be reordered incorrectly.
 
+For normal compilation, use `--enable-vecscope-mem-bar`, which inserts only the
+barriers required by the regular hazard analysis. For synchronization debugging,
+`ptoas` also accepts the independent `--enable-vecscope-mem-bar-all` option:
+
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `--enable-vecscope-mem-bar` | enabled | Insert barriers for hazards proven by the dependence analysis. |
+| `--enable-vecscope-mem-bar-all` | disabled | Insert `pto.mem_bar "VV_ALL"` before every UB-backed vector memory operation. |
+
+The `--enable-vecscope-mem-bar-all` mode does not perform dependence analysis,
+coverage checks, barrier merging, or redundancy elimination. It inserts one
+independent `VV_ALL` before each qualifying operation in `pto.vecscope` and
+`pto.strict_vecscope`, including operations with dynamic bounds or addresses that
+the normal analysis cannot model. Existing barriers are retained and do not suppress
+the debug barriers.
+
+The options can be combined. If both are enabled, the normal hazard-based barriers
+are inserted first and the independent per-access `VV_ALL` barriers are inserted in
+addition to them. To test the conservative mode by itself, use
+`--enable-vecscope-mem-bar-all --enable-vecscope-mem-bar=false`. This mode is intended
+only to diagnose synchronization-related accuracy issues. It is not intended as a
+normal production setting and can have substantial performance and code-size cost.
+
 #### Execution Scopes (__VEC_SCOPE__)
 
 `__VEC_SCOPE__` is the IR-level representation of a Vector Function (VF) launch. In the PTO architecture, it defines the hardware interface between the Scalar Unit and the Vector Thread.
