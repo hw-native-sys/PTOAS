@@ -209,25 +209,38 @@ def PTOMaterializeImplicitTmp
 }
 
 def PlanMemory : Pass<"pto-plan-memory", "ModuleOp"> {
- let summary = "Plan memory for PTO Ops";
+  let summary = "Plan memory for PTO Ops";
   let constructor = "mlir::pto::createPlanMemoryPass()";
-
+  let dependentDialects = ["pto::PTODialect", ];
   let options = [
-    Option<"memMode", "mem-mode", "std::string", "\"local\"",
-           "Planning mode. Supported value today: local">,
-    Option<"orderBySize", "order-by-size", "bool", "false",
-           "Plan larger buffers first inside one AddressSpace before applying "
-           "SPEC_LEVEL_0 first-fit reuse">
-  ];
-
-  let dependentDialects = [
-    "mlir::pto::PTODialect",
-    "mlir::memref::MemRefDialect",
-    "mlir::arith::ArithDialect",
-    "mlir::func::FuncDialect",
-    "mlir::scf::SCFDialect"
+    Option<"memMode", "mem-plan-mode", "pto::MemPlanMode",
+           "pto::MemPlanMode::LOCAL_MEM_PLAN",
+           "plan mem mode (default is LOCAL_MEM_PLAN)",
+           [{::llvm::cl::values(
+               clEnumValN(pto::MemPlanMode::LOCAL_MEM_PLAN, "local-mem-plan",
+                          "plan mem mode is for memref.alloc"),
+               clEnumValN(
+                   pto::MemPlanMode::GLOBAL_WORKSPACE_PLAN,
+                   "global-work-space-plan",
+                   "plan mem mode is for memref_ext.alloc_workspace"))}]>,
+    Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
+           /*default=*/"false",
+           "Enable global workspace reuse ,default : false">,
+    Option<"enablePrintMemoryAllocatedSize", "enable-print-memory-allocated-size", "bool",
+           /*default=*/"false",
+           "Enable print memory allocated size, default : false">,
+    Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
+           /*default=*/"false",
+           "restrict memory inplace as isa, default : false">,
+    Option<"orderBySize", "order-by-size", "bool",
+           /*default=*/"false",
+           "Process buffers largest-first (first-fit-decreasing order) during "
+           "local memory planning instead of the default DMA-first order. "
+           "Decreasing-size order packs heterogeneous-size buffers tighter "
+           "(matches XLA/TVM/SOMAS). default : false">,
   ];
 }
+
 
 def PTOLoweringSyncToPipe : Pass<"pto-lowering-sync-to-pipe", "func::FuncOp"> {
   let summary = "Lower high-level sync ops to low-level pipe ops";
@@ -295,7 +308,11 @@ def FusionPlan : Pass<"pto-fusion-plan", "func::FuncOp"> {
            "bool", /*default=*/"false",
            "Print VfSimulator unroll candidate timings for accepted fusion "
            "groups. This is a debug dump only and does not enable or disable "
-           "the VfSimulator planner.">
+           "the VfSimulator planner.">,
+    Option<"strategy", "fusion-strategy",
+           "std::string", /*default=*/"\"conservative-dag-greedy\"",
+           "Fusion strategy: 'conservative-dag-greedy' (default) or "
+           "'vmi-ub-disjoint' (VMI path).">
   ];
 }
 
@@ -549,26 +566,39 @@ def InsertTemplateAttributes
     : Pass<"pto-insert-template-attributes", "ModuleOp"> {
   let summary = "Attach legal PTODSL template candidates to tile operations";
   let description = [{
-    Queries the process-wide PTODSL TileLib runtime for legal template
-    candidates and stores the compact candidate list on each tile operation as
-    the `candidates` attribute. Each candidate contains only id, name,
-    loop_depth, postupdate, and tail metadata.
+    Queries the PTODSL TileLib daemon for legal template candidates and stores
+    the compact candidate list on each tile operation as the `candidates`
+    attribute. Each candidate contains id, name, loop_depth, postupdate, tail,
+    and tags metadata.
   }];
   let constructor = "mlir::pto::createInsertTemplateAttributesPass()";
   let dependentDialects = [
     "mlir::pto::PTODialect",
     "mlir::func::FuncDialect"
   ];
+  let options = [
+    Option<"pythonExe", "python-exe", "std::string",
+           /*default=*/"\"python3\"",
+           "Python executable for TileLib metadata invocation">,
+    Option<"daemonSocketPath", "daemon-socket-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the PTODSL TileLib daemon Unix socket">,
+    Option<"tileLibPkgPath", "tile-lib-pkg-path", "std::string",
+           /*default=*/"\"\"",
+           "PYTHONPATH root for PTODSL">,
+    Option<"daemonHelperModule", "daemon-helper-module", "std::string",
+           /*default=*/"\"ptodsl.tilelib.serving.helper\"",
+           "Python module used for daemon metadata RPC calls">
+  ];
 }
 
+
 def ExpandTileOp : Pass<"pto-expand-tile-op", "ModuleOp"> {
-  let summary = "Expand tile ops into calls to TileLib template functions";
+  let summary = "Expand tile ops using the selected TileLib implementation";
   let description = [{
-    Expands tile-level operations (pto.tadd, pto.tsub, etc.) by asking the
-    process-wide PTODSL TileLib runtime to instantiate template libraries in
-    the current operation's MLIRContext. The generated template functions use
-    tile_buf parameters and contain vector-level implementations (pto.vecscope,
-    pto.vlds, pto.vadd, pto.vsts, etc.).
+    Expands tile-level operations (pto.tadd, pto.tsub, etc.) by invoking the
+    selected Python TileLib backend. For PTODSL, this pass consumes the result
+    recorded by SelectTemplateCandidate and does not apply selection policy.
 
     Each tile op is replaced by a func.call to the generated template function,
     with tile_buf operands passed directly (no type bridging).
@@ -586,7 +616,31 @@ def ExpandTileOp : Pass<"pto-expand-tile-op", "ModuleOp"> {
     "mlir::scf::SCFDialect",
     "mlir::vector::VectorDialect"
   ];
+  let options = [
+    Option<"tilelangPath", "tilelang-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to directory of .py tilelang DSL template files">,
+    Option<"tilelangPkgPath", "tilelang-pkg-path", "std::string",
+           /*default=*/"\"\"",
+           "PYTHONPATH for tilelang_dsl package (added to env)">,
+    Option<"pythonExe", "python-exe", "std::string",
+           /*default=*/"\"python3\"",
+           "Python executable for TileLib invocation">,
+    Option<"daemonSocketPath", "daemon-socket-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to Unix domain socket for daemon RPC">,
+    Option<"tileLibBackend", "tile-lib-backend", "std::string",
+           /*default=*/"\"ptodsl\"",
+           "TileLib backend: ptodsl or tilelang">,
+    Option<"tileLibPkgPath", "tile-lib-pkg-path", "std::string",
+           /*default=*/"\"\"",
+           "PYTHONPATH root for the selected TileLib backend">,
+    Option<"daemonHelperModule", "daemon-helper-module", "std::string",
+           /*default=*/"\"ptodsl.tilelib.serving.helper\"",
+           "Python module used for daemon helper RPC calls">
+  ];
 }
+
 
 def FoldTileBufIntrinsics : Pass<"pto-fold-tile-buf-intrinsics", "mlir::func::FuncOp"> {
   let summary = "Fold structured-view intrinsics after template inlining";
@@ -1609,6 +1663,143 @@ def VPTOMaskSimplify
     emission. Non-uniform masks are intentionally left unchanged.
   }];
   let constructor = "mlir::pto::createVPTOMaskSimplifyPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+// VMI-specific passes from rebuild branch.
+
+def PTOMaterializeTileHandles : Pass<"pto-materialize-tile-handles", "ModuleOp"> {
+  let summary = "Materialize tile_buf handles from planned memrefs before EmitC";
+  let description = [{
+    Re-wraps local memref values used by tile operations into explicit
+    pto.materialize_tile ops. This keeps PlanMemory and InjectSync in memref IR
+    while making the tile handle boundary visible to EmitC lowering.
+  }];
+
+  let constructor = "mlir::pto::createPTOMaterializeTileHandlesPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
+def PTOViewToMemref : Pass<"pto-view-to-memref", "ModuleOp"> {
+  let summary = "Lower PTO views to memref with Metadata Binding";
+  let description = [{
+    Lowers PTO view-based tile operations to plain memref values. This pass
+    is the bridge from PTO tile IR to the bufferized memref IR consumed by
+    downstream EmitC/codegen.
+  }];
+
+  let constructor = "mlir::pto::createPTOViewToMemrefPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
+def PTOVmiLoadStoreElision : Pass<"pto-vmi-load-store-elision", "func::FuncOp"> {
+  let summary = "Forward and elide fusion-region-local VMI loads/stores";
+  let description = [{
+    Within a pto.fusion_region, forwards VMI loads to their last store when
+    the store fully covers the load region and no intervening side-effecting
+    op invalidates the dependency. Eliminates redundant VMI load/store pairs
+    that were introduced by template expansion.
+  }];
+
+  let constructor = "mlir::pto::createPTOVmiLoadStoreElisionPass()";
+
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def PTOVmiLoopFusion : Pass<"pto-vmi-loop-fusion", "ModuleOp"> {
+  let summary = "Fuse same-header scf.for loops inside each pto.fusion_region";
+  let description = [{
+    Identifies scf.for loops with identical iteration domains inside the
+    same pto.fusion_region and fuses them into a single loop body, preserving
+    all SSA dependencies. This is the VMI loop fusion pass that complements
+    the legacy tile-level fusion.
+  }];
+
+  let constructor = "mlir::pto::createPTOVmiLoopFusionPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::scf::SCFDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
+def SelectTemplateCandidate
+    : Pass<"pto-select-template-candidate", "ModuleOp"> {
+  let summary = "Select one implementation from each tile operation's candidates";
+  let description = [{
+    Applies candidate-selection policy before fusion planning. Hard-boundary
+    operations and candidates never select VMI implementations. For the
+    remaining operations, `prefer-vmi` selects a fusion-eligible VMI
+    implementation when its shape capability and candidate resource contract
+    fit the configured vector-byte budget, then falls back to an ordinary
+    PTODSL implementation.
+    `ordinary-only` excludes VMI implementations. The selected implementation
+    and any VMI fusion boundary are recorded for ExpandTileOp to consume.
+  }];
+  let constructor = "mlir::pto::createSelectTemplateCandidatePass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+  let options = [
+    Option<"selectionPolicy", "selection-policy", "std::string",
+           /*default=*/"\"prefer-vmi\"",
+           "Candidate policy: prefer-vmi or ordinary-only">,
+    Option<"maxCandidateVectorBytes", "max-candidate-vector-bytes", "int64_t",
+           /*default=*/"6144",
+           "Maximum estimated peak vector bytes for one VMI candidate; zero disables the resource guard">,
+    Option<"emitResourceRemarks", "emit-resource-remarks", "bool",
+           /*default=*/"false",
+           "Emit candidate resource selection and fallback remarks">
+  ];
+}
+
+def PTOInsertVecScopeMemBar : Pass<"pto-insert-vecscope-membar", "func::FuncOp"> {
+  let summary = "Insert vecscope memory barriers for vector-scope regions";
+  let description = [{
+    Analyzes vector-scope regions and inserts memory barriers at the
+    boundaries where memory footprint ordering is required.
+  }];
+
+  let constructor = "mlir::pto::createPTOInsertVecScopeMemBarPass()";
+
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def PTOInsertVecScopeMemBarAll : Pass<"pto-insert-vecscope-membar-all", "func::FuncOp"> {
+  let summary = "Insert all vecscope memory barriers (conservative mode)";
+  let description = [{
+    Inserts memory barriers at all vecscope boundaries, regardless of
+    footprint analysis. This is the conservative fallback.
+  }];
+
+  let constructor = "mlir::pto::createPTOInsertVecScopeMemBarAllPass()";
+
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def VPTONormalizeEquivalentVcvt : Pass<"pto-vpto-normalize-equiv-vcvt", "func::FuncOp"> {
+  let summary = "Normalize equivalent vcvt chains";
+  let description = [{
+    Removes redundant vcvt operations that produce equivalent type
+    conversions, simplifying the VPTO IR before emission.
+  }];
+
+  let constructor = "mlir::pto::createVPTONormalizeEquivalentVcvtPass()";
+
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 

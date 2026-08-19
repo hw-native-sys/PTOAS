@@ -23,10 +23,10 @@
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Pass/Pass.h"
 #include "PTO/IR/PTODialect.h"
-#include "PTO/Transforms/TileLibService.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "PTO/Transforms/MemPlanMode.h"
 
 namespace mlir {
 namespace pto {
@@ -41,7 +41,6 @@ std::unique_ptr<Pass> createPTOInferValidatePipeInitPass();
 std::unique_ptr<Pass> createPTOResolveReservedBuffersPass();
 std::unique_ptr<Pass> createPTOWrapFunctionsInSectionsPass();
 std::unique_ptr<Pass> createPTONormalizeUncoveredTileSectionsPass();
-std::unique_ptr<Pass> createPTOValidatePhysicalSectionBoundariesPass();
 std::unique_ptr<Pass> createPTOMaterializeTileOpSectionsPass();
 std::unique_ptr<Pass> createVPTOSplitCVModulePass();
 std::unique_ptr<Pass> createVPTONormalizeContainerPass();
@@ -69,15 +68,17 @@ std::unique_ptr<Pass> createConvertToPTOOpPass();
 /// PTO Ops.
 std::unique_ptr<Pass> createInferPTOMemScopePass();
 
+/// Create a pass to plan memory.
 std::unique_ptr<Pass>
-createPlanMemoryPass(const PlanMemoryOptions &options = {});
+createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 std::unique_ptr<Pass>
 createPlanMemoryModernPass(const PlanMemoryOptions &options);
+
 std::unique_ptr<Pass> createPTORemoveRedundantBarrierPass();
+std::unique_ptr<Pass> createPTOViewToMemrefPass();
 std::unique_ptr<Pass> createPTOValidateIntToPtrUsesPass();
 std::unique_ptr<Pass> createPTORematerializeFixpipeVectorQuantPass();
-std::unique_ptr<Pass>
-createPTOMaterializeImplicitTmpPass(bool requireExplicitTmp = false);
+std::unique_ptr<Pass> createPTOMaterializeTileHandlesPass();
 std::unique_ptr<Pass> createPTOResolveBufferSelectPass();
 std::unique_ptr<Pass> createInferPTOLayoutPass();
 std::unique_ptr<Pass> createPTOA5NormalizeTMovPass();
@@ -98,10 +99,9 @@ std::unique_ptr<Pass> createPTOUnrollLoopsPass();
 std::unique_ptr<Pass> createPTOUnrollSIMTForPass();
 std::unique_ptr<Pass> createPTOConvertSCFToCFWithLoopHintsPass();
 std::unique_ptr<Pass> createPTONarrowVPTOLoopCountersPass();
-std::unique_ptr<Pass> createPTOAnalyzeSIMTPersistentFragmentPass();
-std::unique_ptr<Pass> createPTOMaterializeSIMTPersistentFragmentPass();
-std::unique_ptr<Pass> createPTOOutlineSIMTSectionsPass();
 std::unique_ptr<Pass> createPTOInferVPTOVecScopePass();
+std::unique_ptr<Pass> createPTOInsertVecScopeMemBarPass();
+std::unique_ptr<Pass> createPTOInsertVecScopeMemBarAllPass();
 std::unique_ptr<Pass> createVPTOExpandWrapperOpsPass();
 std::unique_ptr<Pass> createVPTOSoftPostUpdatePass();
 std::unique_ptr<Pass> createVPTOGuardedLICMPass();
@@ -116,11 +116,7 @@ std::unique_ptr<Pass> createPTOUnrollAfterLoopFusionPass();
 std::unique_ptr<Pass> createPTOFlattenFusionRegionPass();
 std::unique_ptr<Pass> createVPTOPtrNormalizePass();
 std::unique_ptr<Pass> createVPTOPtrCastCleanupPass();
-std::unique_ptr<Pass> createVPTOCombineReductionsPass();
-std::unique_ptr<Pass> createVPTOOptimizeVcvtPass();
-std::unique_ptr<Pass> createVPTOMaskSimplifyPass();
-std::unique_ptr<Pass>
-createVPTOSchedulerPass(const VPTOSchedulerOptions &options = {});
+std::unique_ptr<Pass> createVPTONormalizeEquivalentVcvtPass();
 LogicalResult validateVPTOAuthoringIR(ModuleOp module,
                                       llvm::raw_ostream *diagOS = nullptr);
 LogicalResult validateVPTOEmissionIR(ModuleOp module,
@@ -145,21 +141,42 @@ std::unique_ptr<Pass> createVMILegalizeArithSelectPass();
 std::unique_ptr<Pass> createVMILowerUnifiedToLegacyPass();
 std::unique_ptr<Pass> createVMINormalizeSignlessIntToUnsignedPass();
 std::unique_ptr<Pass> createVMIToVPTOPass();
-std::unique_ptr<Pass> createPTOExpandSoftLibPass();
 std::unique_ptr<Pass> createInsertTemplateAttributesPass();
+std::unique_ptr<Pass> createInsertTemplateAttributesPass(
+    const InsertTemplateAttributesOptions &options);
+std::unique_ptr<Pass> createSelectTemplateCandidatePass();
+std::unique_ptr<Pass> createSelectTemplateCandidatePass(
+    const SelectTemplateCandidateOptions &options);
 std::unique_ptr<Pass> createExpandTileOpPass();
+std::unique_ptr<Pass> createExpandTileOpPass(const ExpandTileOpOptions &options);
 std::unique_ptr<Pass> createFoldTileBufIntrinsicsPass();
 std::unique_ptr<Pass> createFoldTileBufIntrinsicsPass(llvm::StringRef foldMode);
 std::unique_ptr<Pass> createPTOCanonicalizeIRPass();
 std::unique_ptr<Pass> createLowerPTOToUBufOpsPass();
 std::unique_ptr<Pass>
 createPTOInlineLibCallPass(const PTOInlineLibCallOptions &options = {});
+std::unique_ptr<Pass> createPTOVmiLoopFusionPass();
+std::unique_ptr<Pass> createPTOVmiLoadStoreElisionPass();
 std::unique_ptr<Pass> createPTOInlineBackendHelpersPass(
     const PTOInlineBackendHelpersOptions &options = {});
+void registerPTOViewToMemrefPass();
 
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
+
+// Passes from main that need declarations before registration section.
+std::unique_ptr<Pass> createPTOAnalyzeSIMTPersistentFragmentPass();
+std::unique_ptr<Pass> createPTOExpandSoftLibPass();
+std::unique_ptr<Pass> createPTOMaterializeImplicitTmpPass(bool enableStackRotation = false);
+std::unique_ptr<Pass> createPTOMaterializeSIMTPersistentFragmentPass();
+std::unique_ptr<Pass> createPTOOutlineSIMTSectionsPass();
+std::unique_ptr<Pass> createPTOUnrollAfterLoopFusionPass();
+std::unique_ptr<Pass> createPTOValidatePhysicalSectionBoundariesPass();
+std::unique_ptr<Pass> createVPTOCombineReductionsPass();
+std::unique_ptr<Pass> createVPTOMaskSimplifyPass();
+std::unique_ptr<Pass> createVPTOOptimizeVcvtPass();
+std::unique_ptr<Pass> createVPTOSchedulerPass(const VPTOSchedulerOptions &options = {});
 
 #undef GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION

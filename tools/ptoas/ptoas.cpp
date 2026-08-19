@@ -14,6 +14,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "VPTOHostStubEmission.h"
+#include "TilelangDaemon.h"
 #include "PTO/Transforms/CppPostprocess.h"
 #include "mlir/AsmParser/AsmParserState.h"
 #include "mlir/IR/MLIRContext.h"
@@ -31,6 +32,7 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -49,14 +51,15 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/FileSystem.h" // [Fix] Required for OF_None
-#include "llvm/Support/Path.h"
 #include "ptobc/ptobc_decode.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+// LLVM 19 does not ship InlinerInterfaceImpl.h; mainline replaced this with a
+// local PTOASFuncInlinerInterface. Remove for now.
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
+#include "mlir/Dialect/EmitC/Transforms/Passes.h"
 #include "mlir/Dialect/EmitC/Transforms/Transforms.h"
-#include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/InliningUtils.h"
@@ -80,7 +83,7 @@
 #include <thread>
 #include <chrono>
 #include <unistd.h>
-#include <csignal>
+#include <signal.h>
 #include <sys/types.h>
 
 extern "C" {
@@ -109,10 +112,10 @@ constexpr size_t kMarkerRewriteTernaryArgCount = 3;
 using StringRefVector =
     llvm::SmallVector<llvm::StringRef, kStringRefInlineCapacity>;
 
-/// LLVM 19's Func inliner interface accepts every call and callable, including
-/// operations carrying the standard `no_inline` attribute. Keep the upstream
-/// terminator handling while honoring the attribute used for PTO SIMT entry
-/// functions.
+/// A custom Func-dialect inliner interface that honors the `no_inline`
+/// attribute on either the call site or the callable, overriding the
+/// upstream FuncInlinerInterface which always returns true. The upstream
+/// LLVM 19 InlinerExtension.cpp does not check `no_inline`.
 struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
   using DialectInlinerInterface::DialectInlinerInterface;
 
@@ -144,7 +147,10 @@ struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
 
   void handleTerminator(Operation *op, ValueRange valuesToRepl) const final {
     auto returnOp = cast<func::ReturnOp>(op);
-    assert(returnOp.getNumOperands() == valuesToRepl.size());
+    if (returnOp.getNumOperands() != valuesToRepl.size()) {
+      llvm_unreachable("inliner return terminator operand count must match "
+                      "the replacement value range");
+    }
     for (const auto &it : llvm::enumerate(returnOp.getOperands()))
       valuesToRepl[it.index()].replaceAllUsesWith(it.value());
   }
@@ -172,97 +178,10 @@ struct ApplySIMTEntryNoInlinePass final
   }
 };
 
-/// LLVM 21 runs the EmitC expression patterns without the greedy driver's
-/// generic operation folding. LLVM 19 cannot disable that folding, which can
-/// erase an expression while the EmitC pattern is rewriting it. Apply the
-/// same EmitC rewrite directly so PTOAS retains LLVM 21 expression semantics.
-///
-/// LLVM 19's C++ emitter also loses the enclosing precedence after it adds
-/// parentheses around a nested expression. Keep conditional expressions as
-/// explicit temporaries when another C expression consumes them so a ternary
-/// can never be flattened into an arithmetic expression with changed meaning.
-struct FormEmitCExpressionsCompatPass final
-    : public PassWrapper<FormEmitCExpressionsCompatPass,
-                         OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FormEmitCExpressionsCompatPass)
-
-  static bool containsConditionalOperator(emitc::ExpressionOp expression) {
-    for (Operation &op : expression.getBody()->without_terminator()) {
-      if (isa<emitc::ConditionalOp>(op)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  static bool foldExpression(emitc::ExpressionOp expression,
-                             IRRewriter &rewriter) {
-    bool changed = false;
-    for (Operation &op : llvm::make_early_inc_range(
-             expression.getBody()->without_terminator())) {
-      auto apply = dyn_cast<emitc::ApplyOp>(op);
-      if (apply && apply.getApplicableOperator() == "&")
-        continue;
-
-      for (OpOperand &operand : llvm::make_early_inc_range(op.getOpOperands())) {
-        auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
-        if (!producer || !producer.getResult().hasOneUse() ||
-            producer.hasSideEffects())
-          continue;
-
-        if (producer.getDoNotInline()) {
-          continue;
-        }
-
-        if (containsConditionalOperator(producer)) {
-          producer.setDoNotInline(true);
-          changed = true;
-          continue;
-        }
-
-        rewriter.setInsertionPoint(&op);
-        IRMapping mapper;
-        for (Operation &toClone : producer.getBody()->without_terminator()) {
-          Operation *clone = rewriter.clone(toClone, mapper);
-          mapper.map(&toClone, clone);
-        }
-
-        Operation *clonedRoot = mapper.lookup(producer.getRootOp());
-        assert(clonedRoot && clonedRoot->getNumResults() == 1 &&
-               "expected a cloned single-result EmitC expression root");
-        rewriter.replaceOp(producer, clonedRoot->getResults());
-        changed = true;
-      }
-    }
-    return changed;
-  }
-
-  void runOnOperation() final {
-    ModuleOp module = getOperation();
-    OpBuilder builder(&getContext());
-    module.walk([&](Operation *op) {
-      if (op->hasTrait<OpTrait::emitc::CExpression>() &&
-          !op->getParentOfType<emitc::ExpressionOp>() &&
-          op->getNumResults() == 1)
-        emitc::createExpression(op, builder);
-    });
-
-    IRRewriter rewriter(&getContext());
-    bool changed;
-    do {
-      changed = false;
-      module.walk<WalkOrder::PostOrder>([&](emitc::ExpressionOp expression) {
-        changed |= foldExpression(expression, rewriter);
-      });
-    } while (changed);
-  }
-};
-
 static std::string normalizeArch(llvm::StringRef arch) {
   std::string normalized = arch.str();
-  for (char &c : normalized) {
+  for (char &c : normalized)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
   return normalized;
 }
 
@@ -278,50 +197,41 @@ static bool isSupportedPTOASTargetArch(llvm::StringRef arch) {
 
 static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module) {
   auto attr = module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
-  if (!attr) {
+  if (!attr)
     return std::nullopt;
-  }
   std::string arch = normalizeArch(attr.getValue());
-  if (!isSupportedPTOASTargetArch(arch)) {
+  if (!isSupportedPTOASTargetArch(arch))
     return std::nullopt;
-  }
   return arch;
 }
 
 static std::string resolveEffectiveTargetArch(ModuleOp module,
                                               llvm::StringRef fallbackArch) {
-  if (std::optional<std::string> arch = getModuleTargetArchAttr(module)) {
+  if (std::optional<std::string> arch = getModuleTargetArchAttr(module))
     return *arch;
-  }
 
   std::optional<std::string> childArch;
   for (ModuleOp child : module.getOps<ModuleOp>()) {
     std::optional<std::string> arch = getModuleTargetArchAttr(child);
-    if (!arch) {
+    if (!arch)
       continue;
-    }
     if (!childArch) {
       childArch = std::move(arch);
       continue;
     }
-    if (*childArch != *arch) {
+    if (*childArch != *arch)
       return normalizeArch(fallbackArch);
-    }
   }
-  if (childArch) {
+  if (childArch)
     return *childArch;
-  }
 
   std::string fallback = normalizeArch(fallbackArch);
-  if (!isSupportedPTOASTargetArch(fallback)) {
+  if (!isSupportedPTOASTargetArch(fallback))
     return "a3";
-  }
   return fallback;
 }
 
 } // namespace
-
-int main(int argc, char **argv);
 
 void mlir::pto::registerPTOASDialects(DialectRegistry &registry) {
   registerPTOASFuncInlinerExtension(registry);
@@ -355,8 +265,10 @@ void mlir::pto::registerPTOASPassesAndCLOptions() {
   mlir::registerTransformsPasses();
 
   mlir::pto::registerPTOPasses();
+  mlir::pto::registerPTOViewToMemrefPass();
   mlir::pto::registerPTOInlineLibCall();
   mlir::pto::registerFoldTileBufIntrinsics();
+  mlir::pto::registerExpandTileOp();
   mlir::pto::registerLowerPTOToUBufOps();
   mlir::registerPassManagerCLOptions();
 }
@@ -372,12 +284,21 @@ void mlir::pto::loadPTOASDialects(MLIRContext &context) {
   context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
 }
 
+static bool hasCLIOption(int argc, char **argv, llvm::StringRef option) {
+  const std::string optionWithValue = (option + "=").str();
+  for (int i = 1; i < argc; ++i) {
+    llvm::StringRef arg(argv[i]);
+    if (arg == option || arg.starts_with(optionWithValue))
+      return true;
+  }
+  return false;
+}
+
 static LogicalResult applyConfiguredPassManagerCLOptions(
     PassManager &pm, llvm::StringRef pipelineName,
     llvm::raw_ostream &diagOS = llvm::errs()) {
-  if (succeeded(mlir::applyPassManagerCLOptions(pm))) {
+  if (succeeded(mlir::applyPassManagerCLOptions(pm)))
     return success();
-  }
   diagOS << "Error: failed to apply MLIR pass manager command-line options for "
          << pipelineName << ".\n";
   return failure();
@@ -399,9 +320,8 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 
   llvm::DenseMap<Operation *, unsigned> indegree;
   llvm::DenseMap<Operation *, SmallVector<Operation *>> outgoing;
-  for (auto func : definitions) {
+  for (auto func : definitions)
     indegree[func.getOperation()] = 0;
-  }
 
   for (auto caller : definitions) {
     Operation *callerOp = caller.getOperation();
@@ -409,21 +329,18 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
     bool hasCycle = false;
     caller.walk([&](emitc::CallOp call) {
       auto calleeAttr = call.getCalleeAttr();
-      if (!calleeAttr) {
+      if (!calleeAttr)
         return;
-      }
       auto it = definitionsByName.find(calleeAttr.getLeafReference());
-      if (it == definitionsByName.end()) {
+      if (it == definitionsByName.end())
         return;
-      }
       Operation *calleeOp = it->second.getOperation();
       if (calleeOp == callerOp) {
         hasCycle = true;
         return;
       }
-      if (!seenCallees.insert(calleeOp).second) {
+      if (!seenCallees.insert(calleeOp).second)
         return;
-      }
       outgoing[calleeOp].push_back(callerOp);
       ++indegree[callerOp];
     });
@@ -436,9 +353,8 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 
   SmallVector<Operation *> ready;
   for (auto func : definitions) {
-    if (indegree[func.getOperation()] == 0) {
+    if (indegree[func.getOperation()] == 0)
       ready.push_back(func.getOperation());
-    }
   }
 
   SmallVector<emitc::FuncOp> sortedDefinitions;
@@ -450,9 +366,8 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 
     for (Operation *user : outgoing[next]) {
       unsigned &userIndegree = indegree[user];
-      if (--userIndegree == 0) {
+      if (--userIndegree == 0)
         ready.push_back(user);
-      }
     }
   }
 
@@ -461,9 +376,8 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
            << "cyclic function call graph is not supported for EmitC C++ emission";
   }
 
-  if (declarations.empty() && definitions.size() <= 1) {
+  if (declarations.empty() && definitions.size() <= 1)
     return success();
-  }
 
   SmallVector<emitc::FuncOp> desiredOrder;
   desiredOrder.append(declarations.begin(), declarations.end());
@@ -477,16 +391,14 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
       break;
     }
   }
-  if (!anchor) {
+  if (!anchor)
     return success();
-  }
 
   auto advanceAnchor = [&]() {
     while (anchor) {
       anchor = anchor->getNextNode();
-      if (!anchor || isa<emitc::FuncOp>(anchor)) {
+      if (!anchor || isa<emitc::FuncOp>(anchor))
         return;
-      }
     }
   };
 
@@ -495,12 +407,10 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
       advanceAnchor();
       continue;
     }
-    if (anchor) {
+    if (anchor)
       func->moveBefore(anchor);
-    }
-    else {
+    else
       func->moveBefore(&body, body.end());
-    }
   }
 
   return success();
@@ -509,17 +419,18 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 // --------------------------------------------------------------------------
 // Command Line Options
 // --------------------------------------------------------------------------
-enum class VPTOSchedulerCLIMode { Off, Analyze, On };
-
-static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
-    "vpto-scheduler",
-    llvm::cl::desc("VPTO scheduler mode"),
+llvm::cl::opt<mlir::pto::VFSIMTSizeFixMode> mlir::pto::vptoFixVFSIMTSize(
+    "vpto-fix-vfsimt-size",
+    llvm::cl::desc("Validate or repair VF_SIMT code sizes in VPTO vector objects"),
+    llvm::cl::value_desc("auto|off|verify"),
     llvm::cl::values(
-        clEnumValN(VPTOSchedulerCLIMode::Off, "off", "Disable scheduling"),
-        clEnumValN(VPTOSchedulerCLIMode::Analyze, "analyze",
-                   "Report scheduling analysis without changing IR"),
-        clEnumValN(VPTOSchedulerCLIMode::On, "on", "Run scheduler in on mode")),
-    llvm::cl::init(VPTOSchedulerCLIMode::Off));
+        clEnumValN(mlir::pto::VFSIMTSizeFixMode::Auto, "auto",
+                   "Repair the known invalid 0xffff size (default)"),
+        clEnumValN(mlir::pto::VFSIMTSizeFixMode::Off, "off",
+                   "Skip VF_SIMT size validation and repair"),
+        clEnumValN(mlir::pto::VFSIMTSizeFixMode::Verify, "verify",
+                   "Validate VF_SIMT sizes without repairing them")),
+    llvm::cl::init(mlir::pto::VFSIMTSizeFixMode::Auto));
 
 static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
@@ -527,10 +438,9 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
 
 static llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
-    llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "
-                   "before applying the basic SPEC_LEVEL_0 reuse strategy. "
-                   "Defaults to true when --plan-memory-impl=modern is "
-                   "explicitly selected"),
+    llvm::cl::desc("PlanMemory: allocate buffers largest-first "
+                   "(first-fit-decreasing) instead of the default DMA-first "
+                   "order"),
     llvm::cl::init(false));
 
 static llvm::cl::opt<std::string> planMemoryImpl(
@@ -582,6 +492,188 @@ static llvm::cl::opt<bool> enableVexpdifFusion(
     llvm::cl::desc("Enable vsub + vexp fusion into vexpdif"),
     llvm::cl::init(true));
 
+#ifndef PTOAS_DEFAULT_TILELANG_PATH
+#define PTOAS_DEFAULT_TILELANG_PATH ""
+#endif
+#ifndef PTOAS_DEFAULT_TILELANG_PKG_PATH
+#define PTOAS_DEFAULT_TILELANG_PKG_PATH ""
+#endif
+#ifndef PTOAS_DEFAULT_PTODSL_PKG_PATH
+#define PTOAS_DEFAULT_PTODSL_PKG_PATH ""
+#endif
+#ifndef PTOAS_DEFAULT_PTODSL_PYTHON_EXE
+#define PTOAS_DEFAULT_PTODSL_PYTHON_EXE "python3"
+#endif
+#ifndef PTOAS_DEFAULT_TILEOPS_PKG_PATH
+#define PTOAS_DEFAULT_TILEOPS_PKG_PATH ""
+#endif
+
+static llvm::cl::opt<std::string> tilelangPath(
+    "tilelang-path",
+    llvm::cl::desc("Path to directory of .py tilelang DSL template files "
+                   "(default: <source>/lib/TileOps, baked in at build time)"),
+    llvm::cl::init(PTOAS_DEFAULT_TILELANG_PATH));
+
+static llvm::cl::opt<std::string> tilelangPkgPath(
+    "tilelang-pkg-path",
+    llvm::cl::desc("PYTHONPATH for tilelang_dsl package "
+                   "(default: <source>/tilelang-dsl/python, baked in at build time)"),
+    llvm::cl::init(PTOAS_DEFAULT_TILELANG_PKG_PATH));
+
+static llvm::cl::opt<std::string> ptodslPkgPath(
+    "ptodsl-pkg-path",
+    llvm::cl::desc("PYTHONPATH for the ptodsl package "
+                   "(default: <source>/ptodsl, baked in at build time)"),
+    llvm::cl::init(PTOAS_DEFAULT_PTODSL_PKG_PATH));
+
+static llvm::cl::opt<std::string> ptodslPythonExe(
+    "ptodsl-python-exe",
+    llvm::cl::desc("Python executable matching the PTODSL PTO bindings"),
+    llvm::cl::init(PTOAS_DEFAULT_PTODSL_PYTHON_EXE));
+
+static llvm::cl::opt<bool> enableVMI(
+    "enable-vmi",
+    llvm::cl::desc("Enable the VMI fusion pipeline when combined with an "
+                   "explicit --enable-op-fusion on A5 VPTO level2/level3"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> enableVMILoopFusion(
+    "enable-vmi-loop-fusion",
+    llvm::cl::desc("Enable VMI loop fusion inside the VMI fusion pipeline"),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<bool> enableVMILoadStoreElision(
+    "enable-vmi-load-store-elision",
+    llvm::cl::desc(
+        "Enable VMI load/store elision inside the VMI fusion pipeline"),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<bool> disableBishengVFFusion(
+    "disable-bisheng-vf-fusion",
+    llvm::cl::desc("Disable Bisheng VF, loop-fusion, and load/store "
+                   "elimination for VPTO device compilation"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> daemonSocketPath(
+    "daemon-socket-path",
+    llvm::cl::desc("Path to Unix domain socket for daemon RPC "
+                   "(default: /tmp/tilelib_daemon_{pid}.sock)"),
+    llvm::cl::init(""));
+
+enum class TileLibBackend {
+  TileLang,
+  PTODSL,
+};
+
+static llvm::cl::opt<TileLibBackend> tileLibBackend(
+    "tile-lib-backend",
+    llvm::cl::desc("TileLib backend used by ExpandTileOp"),
+    llvm::cl::values(
+        clEnumValN(TileLibBackend::TileLang, "tilelang",
+                   "Use the legacy TileLang DSL TileLib"),
+        clEnumValN(TileLibBackend::PTODSL, "ptodsl",
+                   "Use the PTODSL TileLib daemon")),
+    llvm::cl::init(TileLibBackend::PTODSL));
+
+static std::string resolveTileLibPythonExe() {
+  const char *pythonExe = ::getenv("PTOAS_PYTHON_EXE");
+  if (pythonExe && pythonExe[0] != '\0')
+    return pythonExe;
+  return "python3";
+}
+
+static pto::ExpandTileOpOptions resolveExpandTileOpOptions(int argc,
+                                                           char **argv) {
+  pto::ExpandTileOpOptions expandOpts;
+  expandOpts.tilelangPath = tilelangPath;
+  expandOpts.tilelangPkgPath = tilelangPkgPath;
+  expandOpts.pythonExe = resolveTileLibPythonExe();
+  const bool usePTODSLTileLib = tileLibBackend != TileLibBackend::TileLang;
+  std::string resolvedPtodslPkgPath = ptodslPkgPath;
+
+  if (!hasCLIOption(argc, argv, "--ptodsl-pkg-path")) {
+    const char *envPtodslRoot = ::getenv("PTODSL_PYTHON_ROOT");
+    if (envPtodslRoot && envPtodslRoot[0] != '\0')
+      resolvedPtodslPkgPath = envPtodslRoot;
+  }
+
+  if (usePTODSLTileLib) {
+    // The Python TileLib process must use the MLIR bindings paired with this
+    // compiler. The wrapper derives this relocatably from the active _core.
+    if (const char *runtimeRoot = ::getenv("PTOAS_PYTHON_PACKAGE_ROOT");
+        runtimeRoot && runtimeRoot[0] != '\0')
+      resolvedPtodslPkgPath =
+          std::string(runtimeRoot) + ":" + resolvedPtodslPkgPath;
+    llvm::StringRef tileOpsRoot(PTOAS_DEFAULT_TILEOPS_PKG_PATH);
+    if (!tileOpsRoot.empty()) {
+      resolvedPtodslPkgPath += ":" + tileOpsRoot.str();
+    }
+    // The PTODSL backend is package-based and must not depend on legacy
+    // TileLang template or package paths.
+    expandOpts.tilelangPath.clear();
+    expandOpts.tilelangPkgPath.clear();
+  }
+
+  expandOpts.tileLibBackend = usePTODSLTileLib ? "ptodsl" : "tilelang";
+  expandOpts.daemonHelperModule =
+      usePTODSLTileLib ? "ptodsl.tilelib.serving.helper"
+                       : "tilelang_dsl.daemon_helper";
+  expandOpts.tileLibPkgPath =
+      usePTODSLTileLib ? resolvedPtodslPkgPath
+                       : std::string(expandOpts.tilelangPkgPath);
+  if (usePTODSLTileLib)
+    expandOpts.pythonExe = ptodslPythonExe;
+
+  // Daemon mode is default (no CLI option needed)
+  // Automatically start daemon for instance caching
+  if (usePTODSLTileLib || !expandOpts.tilelangPath.empty()) {
+    std::string socket = daemonSocketPath;
+    if (socket.empty())
+      socket = ptoas::DaemonManager::generateSocketPath();
+
+    // Register cleanup handler (daemon will be stopped on PTOAS exit)
+    ptoas::registerDaemonCleanup();
+
+    const std::string daemonModule =
+        usePTODSLTileLib ? "ptodsl.tilelib.serving.daemon"
+                         : "tilelang_dsl.daemon";
+    const std::string templateDir =
+        usePTODSLTileLib ? "" : std::string(expandOpts.tilelangPath);
+
+    // Try to start daemon automatically
+    if (ptoas::DaemonManager::start(socket, daemonModule, expandOpts.pythonExe,
+                                    expandOpts.tileLibPkgPath, templateDir)) {
+      expandOpts.daemonSocketPath = socket;
+      llvm::errs() << "Info: " << expandOpts.tileLibBackend
+                   << " TileLib daemon started successfully\n";
+    } else {
+      expandOpts.daemonSocketPath = "";
+      if (usePTODSLTileLib) {
+        llvm::errs()
+            << "Error: Failed to start the PTODSL TileLib daemon; no TileLang "
+               "fallback will be used\n";
+      } else {
+        llvm::errs() << "Warning: Failed to start daemon, using legacy "
+                        "TileLang subprocess mode\n";
+      }
+    }
+  }
+
+  return expandOpts;
+}
+
+
+static pto::InsertTemplateAttributesOptions
+buildInsertTemplateAttributesOptions(
+    const pto::ExpandTileOpOptions &expandOptions) {
+  pto::InsertTemplateAttributesOptions options;
+  options.pythonExe = expandOptions.pythonExe;
+  options.daemonSocketPath = expandOptions.daemonSocketPath;
+  options.tileLibPkgPath = expandOptions.tileLibPkgPath;
+  options.daemonHelperModule = expandOptions.daemonHelperModule;
+  return options;
+}
+
 static llvm::cl::opt<llvm::cl::boolOrDefault> enableOpFusion(
     "enable-op-fusion",
     llvm::cl::desc("Control A5 tile fusion on level2/level3. Disabled by "
@@ -596,14 +688,6 @@ static llvm::cl::opt<bool> enableUnrollAfterLoopFusion(
                    "by pto.fusion.row/col_unroll_factor. VPTO backend only; "
                    "requires --pto-arch=a5 and --enable-op-fusion."),
     llvm::cl::init(false));
-
-static llvm::cl::opt<bool> enableShapeInference(
-    "enable-shape-inference",
-    llvm::cl::desc("Enable shape inference (ShapeConstraintSolver) for A5 tile "
-                  "fusion. On by default: uses the ShapeConstraintSolver for "
-                  "iteration-domain inference; pass --enable-shape-inference=false "
-                  "to fall back to static/direct-bound inference."),
-    llvm::cl::init(true));
 
 static llvm::cl::opt<bool> enableVfSimCostmodelOptimization(
     "enable-vfsim-costmodel-optimization",
@@ -621,6 +705,26 @@ static llvm::cl::opt<bool> dumpVfSimUnrollTest(
                    "the VfSimulator planner."),
     llvm::cl::init(false));
 
+enum class VPTOSchedulerCLIMode { Off, Analyze, On };
+
+static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
+    "vpto-scheduler",
+    llvm::cl::desc("VPTO scheduler mode"),
+    llvm::cl::values(
+        clEnumValN(VPTOSchedulerCLIMode::Off, "off", "Disable scheduling"),
+        clEnumValN(VPTOSchedulerCLIMode::Analyze, "analyze",
+                   "Report scheduling analysis without changing IR"),
+        clEnumValN(VPTOSchedulerCLIMode::On, "on", "Run scheduler in on mode")),
+    llvm::cl::init(VPTOSchedulerCLIMode::Off));
+
+static llvm::cl::opt<bool> enableShapeInference(
+    "enable-shape-inference",
+    llvm::cl::desc("Enable shape inference (ShapeConstraintSolver) for A5 tile "
+                  "fusion. On by default: uses the ShapeConstraintSolver for "
+                  "iteration-domain inference; pass --enable-shape-inference=false "
+                  "to fall back to static/direct-bound inference."),
+    llvm::cl::init(true));
+
 static llvm::cl::opt<bool> disableInferLayout(
     "disable-infer-layout",
     llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
@@ -630,6 +734,18 @@ static llvm::cl::opt<bool> enableSoftPostUpdate(
     "enable-vpto-soft-postupdate",
     llvm::cl::desc("Enable VPTO soft post-update optimization (default: true)"),
     llvm::cl::init(true));
+
+static llvm::cl::opt<bool> enableVecScopeMemBar(
+    "enable-vecscope-mem-bar",
+    llvm::cl::desc("Insert pto.mem_bar for VPTO vecscope memory hazards "
+                   "(default: on)"),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<bool> enableVecScopeMemBarAll(
+    "enable-vecscope-mem-bar-all",
+    llvm::cl::desc("Insert VV_ALL before every UB-backed vector memory "
+                   "operation in vecscope debug mode (default: off)"),
+    llvm::cl::init(false));
 
 static llvm::cl::opt<bool> emitAddPtrTrace(
     "emit-addptr-trace",
@@ -700,19 +816,6 @@ llvm::cl::opt<std::string> mlir::pto::cannOutputVersion(
     llvm::cl::desc("Override the CANN version used for lowering and public ABI output selection; examples: 9.0.0, 9.0.0-beta.1"),
     llvm::cl::value_desc("version"), llvm::cl::init(""));
 
-llvm::cl::opt<mlir::pto::VFSIMTSizeFixMode> mlir::pto::vptoFixVFSIMTSize(
-    "vpto-fix-vfsimt-size",
-    llvm::cl::desc("Validate or repair VF_SIMT code sizes in VPTO vector objects"),
-    llvm::cl::value_desc("auto|off|verify"),
-    llvm::cl::values(
-        clEnumValN(mlir::pto::VFSIMTSizeFixMode::Auto, "auto",
-                   "Repair the known invalid 0xffff size (default)"),
-        clEnumValN(mlir::pto::VFSIMTSizeFixMode::Off, "off",
-                   "Skip VF_SIMT size validation and repair"),
-        clEnumValN(mlir::pto::VFSIMTSizeFixMode::Verify, "verify",
-                   "Validate VF_SIMT sizes without repairing them")),
-    llvm::cl::init(mlir::pto::VFSIMTSizeFixMode::Auto));
-
 enum class PTOBuildLevel {
   Level1,
   Level2,
@@ -721,26 +824,6 @@ enum class PTOBuildLevel {
 
 static PTOBuildLevel defaultBuildLevel() {
   return PTOBuildLevel::Level2;
-}
-
-static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
-  std::string s = levelStr.str();
-  for (char &c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  if (s == "level1") {
-    out = PTOBuildLevel::Level1;
-    return true;
-  }
-  if (s == "level2") {
-    out = PTOBuildLevel::Level2;
-    return true;
-  }
-  if (s == "level3") {
-    out = PTOBuildLevel::Level3;
-    return true;
-  }
-  return false;
 }
 
 struct ReserveBufferMemSpec {
@@ -773,7 +856,6 @@ static LogicalResult validateReserveBufferBase(pto::ReserveBufferOp op,
   if (!baseAttr) {
     return op.emitError("expects explicit 'base'");
   }
-
   int64_t signedBase = baseAttr.getInt();
   if (signedBase < 0) {
     return op.emitError("expects 'base' to be non-negative when present");
@@ -795,7 +877,6 @@ static LogicalResult validateReserveBufferBase(pto::ReserveBufferOp op,
            << " capacity: base " << base << " + size " << size
            << " > " << spec.capacityBytes << " bytes";
   }
-
   return success();
 }
 
@@ -813,7 +894,6 @@ static bool validateReserveBufferLevelRules(ModuleOp module,
         }
         return;
       }
-
       if (op.getBaseAttr()) {
         (void)validateReserveBufferBase(op, arch);
       }
@@ -823,19 +903,38 @@ static bool validateReserveBufferLevelRules(ModuleOp module,
       failed = true;
       return;
     }
-
-    if (op.getAutoAlloc() || !op.getBaseAttr()) {
+    const bool hasInvalidLevel3Reservation =
+        op.getAutoAlloc() || !op.getBaseAttr();
+    if (hasInvalidLevel3Reservation) {
       op.emitError("pto.reserve_buffer requires 'auto = false' and explicit "
                    "'base' when --pto-level=level3");
       failed = true;
       return;
     }
-
     if (mlir::failed(validateReserveBufferBase(op, arch))) {
       failed = true;
     }
   });
   return !failed;
+}
+
+static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
+  std::string s = levelStr.str();
+  for (char &c : s)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (s == "level1") {
+    out = PTOBuildLevel::Level1;
+    return true;
+  }
+  if (s == "level2") {
+    out = PTOBuildLevel::Level2;
+    return true;
+  }
+  if (s == "level3") {
+    out = PTOBuildLevel::Level3;
+    return true;
+  }
+  return false;
 }
 
 static constexpr llvm::StringLiteral kAutoSyncTailPolicyBarrierAll =
@@ -845,9 +944,8 @@ static constexpr llvm::StringLiteral kAutoSyncTailPolicyMte3ToSEvent0 =
 
 static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normalized) {
   std::string s = hintStr.str();
-  for (char &c : s) {
+  for (char &c : s)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
   if (s == "barrier-all" || s == "barrier_all" || s == "default") {
     normalized = kAutoSyncTailPolicyBarrierAll.str();
     return true;
@@ -863,9 +961,8 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
 
 static LogicalResult emitSharedPreBackendSeamIR(ModuleOp module,
                                                 llvm::StringRef outputPath) {
-  if (outputPath.empty()) {
+  if (outputPath.empty())
     return success();
-  }
 
   if (outputPath == "-") {
     module->print(llvm::outs());
@@ -896,9 +993,8 @@ static void printSharedPreBackendSeamIR(ModuleOp module) {
 static bool hasUnexpandedTileOps(ModuleOp module) {
   bool found = false;
   module.walk([&](Operation *op) {
-    if (found) {
+    if (found)
       return;
-    }
     if (isa<pto::OpPipeInterface>(op)) {
       found = true;
       return;
@@ -930,22 +1026,18 @@ static bool isCppIdentifierChar(char c) {
 }
 
 static std::optional<std::string> getTextualNameFromSMRange(llvm::SMRange range) {
-  if (!range.Start.isValid() || !range.End.isValid()) {
+  if (!range.Start.isValid() || !range.End.isValid())
     return std::nullopt;
-  }
   const char *begin = range.Start.getPointer();
   const char *end = range.End.getPointer();
-  if (!begin || !end || end < begin) {
+  if (!begin || !end || end < begin)
     return std::nullopt;
-  }
   llvm::StringRef name(begin, static_cast<size_t>(end - begin));
-  if (name.empty()) {
+  if (name.empty())
     return std::nullopt;
-  }
   name = name.trim();
-  if (name.consume_front("%") && name.empty()) {
+  if (name.consume_front("%") && name.empty())
     return std::nullopt;
-  }
   return name.str();
 }
 
@@ -953,30 +1045,26 @@ static SmallVector<std::string, 4>
 expandTextualResultGroupHints(const AsmParserState::OperationDefinition &opDef,
                               unsigned groupIndex) {
   SmallVector<std::string, 4> hints;
-  if (groupIndex >= opDef.resultGroups.size()) {
+  if (groupIndex >= opDef.resultGroups.size())
     return hints;
-  }
   const auto &group = opDef.resultGroups[groupIndex];
   std::optional<std::string> baseName =
       getTextualNameFromSMRange(group.definition.loc);
-  if (!baseName) {
+  if (!baseName)
     return hints;
-  }
 
   unsigned resultStart = group.startIndex;
   unsigned resultEnd = groupIndex + 1 == opDef.resultGroups.size()
                            ? opDef.op->getNumResults()
                            : opDef.resultGroups[groupIndex + 1].startIndex;
-  if (resultStart >= resultEnd) {
+  if (resultStart >= resultEnd)
     return hints;
-  }
   if (resultEnd - resultStart == 1) {
     hints.push_back(*baseName);
     return hints;
   }
-  for (unsigned idx = resultStart; idx < resultEnd; ++idx) {
+  for (unsigned idx = resultStart; idx < resultEnd; ++idx)
     hints.push_back(*baseName + "#" + std::to_string(idx - resultStart));
-  }
   return hints;
 }
 
@@ -985,29 +1073,24 @@ static std::string sanitizeCppIdentifier(llvm::StringRef name) {
   sanitized.reserve(name.size() + 4);
 
   auto appendUnderscore = [&]() {
-    if (sanitized.empty() || sanitized.back() != '_') {
+    if (sanitized.empty() || sanitized.back() != '_')
       sanitized.push_back('_');
-    }
   };
 
   for (char c : name) {
-    if (isCppIdentifierChar(c)) {
+    if (isCppIdentifierChar(c))
       sanitized.push_back(c);
-    }
-    else {
+    else
       appendUnderscore();
-    }
   }
 
-  while (!sanitized.empty() && sanitized.back() == '_') {
+  while (!sanitized.empty() && sanitized.back() == '_')
     sanitized.pop_back();
-  }
 
   if (sanitized.empty())
     return {};
-  if (!isCppIdentifierStart(sanitized.front())) {
+  if (!isCppIdentifierStart(sanitized.front()))
     sanitized.insert(sanitized.begin(), '_');
-  }
   return sanitized;
 }
 
@@ -1015,9 +1098,8 @@ static void appendLocationNameHints(Location loc,
                                     SmallVectorImpl<std::string> &hints) {
   if (auto nameLoc = dyn_cast<NameLoc>(loc)) {
     std::string sanitized = sanitizeCppIdentifier(nameLoc.getName().getValue());
-    if (!sanitized.empty()) {
+    if (!sanitized.empty())
       hints.push_back(std::move(sanitized));
-    }
     return;
   }
 
@@ -1025,25 +1107,21 @@ static void appendLocationNameHints(Location loc,
     if (Attribute metadata = fusedLoc.getMetadata()) {
       if (auto strAttr = dyn_cast<StringAttr>(metadata)) {
         std::string sanitized = sanitizeCppIdentifier(strAttr.getValue());
-        if (!sanitized.empty()) {
+        if (!sanitized.empty())
           hints.push_back(std::move(sanitized));
-        }
         return;
       }
       if (auto arrayAttr = dyn_cast<ArrayAttr>(metadata)) {
         for (Attribute attr : arrayAttr) {
           auto strAttr = dyn_cast<StringAttr>(attr);
-          if (!strAttr) {
+          if (!strAttr)
             continue;
-          }
           std::string sanitized = sanitizeCppIdentifier(strAttr.getValue());
-          if (!sanitized.empty()) {
+          if (!sanitized.empty())
             hints.push_back(std::move(sanitized));
-          }
         }
-        if (!hints.empty()) {
+        if (!hints.empty())
           return;
-        }
       }
     }
 
@@ -1055,9 +1133,8 @@ static void appendLocationNameHints(Location loc,
 
   if (auto callSiteLoc = dyn_cast<CallSiteLoc>(loc)) {
     appendLocationNameHints(callSiteLoc.getCallee(), hints);
-    if (hints.empty()) {
+    if (hints.empty())
       appendLocationNameHints(callSiteLoc.getCaller(), hints);
-    }
   }
 }
 
@@ -1076,9 +1153,8 @@ static void appendRawLocationProvenance(Location loc,
                                         SmallVectorImpl<std::string> &hints) {
   if (auto nameLoc = dyn_cast<NameLoc>(loc)) {
     std::string raw = nameLoc.getName().getValue().str();
-    if (!raw.empty()) {
+    if (!raw.empty())
       hints.push_back(std::move(raw));
-    }
     return;
   }
 
@@ -1086,25 +1162,21 @@ static void appendRawLocationProvenance(Location loc,
     if (Attribute metadata = fusedLoc.getMetadata()) {
       if (auto strAttr = dyn_cast<StringAttr>(metadata)) {
         std::string raw = strAttr.getValue().str();
-        if (!raw.empty()) {
+        if (!raw.empty())
           hints.push_back(std::move(raw));
-        }
         return;
       }
       if (auto arrayAttr = dyn_cast<ArrayAttr>(metadata)) {
         for (Attribute attr : arrayAttr) {
           auto strAttr = dyn_cast<StringAttr>(attr);
-          if (!strAttr) {
+          if (!strAttr)
             continue;
-          }
           std::string raw = strAttr.getValue().str();
-          if (!raw.empty()) {
+          if (!raw.empty())
             hints.push_back(std::move(raw));
-          }
         }
-        if (!hints.empty()) {
+        if (!hints.empty())
           return;
-        }
       }
     }
 
@@ -1116,9 +1188,8 @@ static void appendRawLocationProvenance(Location loc,
 
   if (auto callSiteLoc = dyn_cast<CallSiteLoc>(loc)) {
     appendRawLocationProvenance(callSiteLoc.getCallee(), hints);
-    if (hints.empty()) {
+    if (hints.empty())
       appendRawLocationProvenance(callSiteLoc.getCaller(), hints);
-    }
   }
 }
 
@@ -1127,30 +1198,25 @@ static void appendRawLocationProvenance(Location loc,
 // but without sanitization.
 static SmallVector<std::string, 4> getRawResultProvenance(Operation *op) {
   SmallVector<std::string, 4> hints;
-  if (!op || op->getNumResults() == 0) {
+  if (!op || op->getNumResults() == 0)
     return hints;
-  }
   appendRawLocationProvenance(op->getLoc(), hints);
-  if (hints.empty()) {
+  if (hints.empty())
     return hints;
-  }
   hints.erase(std::remove_if(hints.begin(), hints.end(),
                               [](const std::string &name) {
                                 return name.empty();
                               }),
               hints.end());
-  if (hints.empty()) {
+  if (hints.empty())
     return hints;
-  }
   if (op->getNumResults() == 1) {
-    if (hints.size() > 1) {
+    if (hints.size() > 1)
       hints.resize(1);
-    }
     return hints;
   }
-  if (hints.size() > op->getNumResults()) {
+  if (hints.size() > op->getNumResults())
     hints.resize(op->getNumResults());
-  }
   return hints;
 }
 
@@ -1167,9 +1233,8 @@ static SmallVector<std::string, 4> getRawLocationProvenance(Location loc) {
 
 static Location getIndexedRawProvenanceLoc(Location fallbackLoc, unsigned index) {
   SmallVector<std::string, 4> hints = getRawLocationProvenance(fallbackLoc);
-  if (index >= hints.size()) {
+  if (index >= hints.size())
     return fallbackLoc;
-  }
   return NameLoc::get(StringAttr::get(fallbackLoc.getContext(), hints[index]),
                       fallbackLoc);
 }
@@ -1180,24 +1245,20 @@ static Location attachLocationNameHints(Location baseLoc,
   SmallVector<Attribute, 4> attrs;
   attrs.reserve(hints.size());
   for (llvm::StringRef hint : hints) {
-    if (!hint.empty()) {
+    if (!hint.empty())
       attrs.push_back(StringAttr::get(context, hint));
-    }
   }
-  if (attrs.empty()) {
+  if (attrs.empty())
     return baseLoc;
-  }
-  if (attrs.size() == 1) {
+  if (attrs.size() == 1)
     return NameLoc::get(cast<StringAttr>(attrs.front()), baseLoc);
-  }
   return FusedLoc::get(ArrayRef<Location>{baseLoc}, ArrayAttr::get(context, attrs),
                        context);
 }
 
 static void applyValueNameHints(Value value, llvm::ArrayRef<std::string> hints) {
-  if (!value || hints.empty() || hasLocationNameHints(value.getLoc())) {
+  if (!value || hints.empty() || hasLocationNameHints(value.getLoc()))
     return;
-  }
   value.setLoc(attachLocationNameHints(value.getLoc(), hints, value.getContext()));
 }
 
@@ -1212,9 +1273,8 @@ static void applyOperationResultNameHints(Operation *op,
   for (size_t i = 0, e = std::min<size_t>(op->getNumResults(), hints.size());
        i < e; ++i)
     limitedHints.push_back(hints[i]);
-  if (limitedHints.empty()) {
+  if (limitedHints.empty())
     return;
-  }
 
   op->setLoc(attachLocationNameHints(op->getLoc(), limitedHints, op->getContext()));
 }
@@ -1224,9 +1284,8 @@ static void splitDerivedSingleResultProvenanceLocsInRegion(Region &region);
 static void splitDerivedSingleResultProvenanceLocsInBlock(Block &block) {
   SmallVector<Operation *, 16> ops;
   ops.reserve(block.getOperations().size());
-  for (Operation &op : block) {
+  for (Operation &op : block)
     ops.push_back(&op);
-  }
 
   for (size_t i = 0; i < ops.size();) {
     Operation *op = ops[i];
@@ -1250,62 +1309,52 @@ static void splitDerivedSingleResultProvenanceLocsInBlock(Block &block) {
     size_t runSize = runEnd - i;
     if (runSize == hints.size()) {
       Location sharedLoc = op->getLoc();
-      for (size_t j = 0; j < runSize; ++j) {
+      for (size_t j = 0; j < runSize; ++j)
         ops[i + j]->setLoc(getIndexedRawProvenanceLoc(sharedLoc, j));
-      }
     }
 
     i = runEnd;
   }
 
   for (Operation &op : block) {
-    for (Region &region : op.getRegions()) {
+    for (Region &region : op.getRegions())
       splitDerivedSingleResultProvenanceLocsInRegion(region);
-    }
   }
 }
 
 static void splitDerivedSingleResultProvenanceLocsInRegion(Region &region) {
-  for (Block &block : region) {
+  for (Block &block : region)
     splitDerivedSingleResultProvenanceLocsInBlock(block);
-  }
 }
 
 static void splitDerivedSingleResultProvenanceLocs(Operation *root) {
-  if (!root) {
+  if (!root)
     return;
-  }
-  for (Region &region : root->getRegions()) {
+  for (Region &region : root->getRegions())
     splitDerivedSingleResultProvenanceLocsInRegion(region);
-  }
 }
 
 static void narrowUnusedMultiResultProvenanceLocs(Operation *root) {
-  if (!root) {
+  if (!root)
     return;
-  }
 
   root->walk([&](Operation *op) {
-    if (op->getNumResults() <= 1) {
+    if (op->getNumResults() <= 1)
       return;
-    }
 
     SmallVector<std::string, 4> hints = getRawLocationProvenance(op->getLoc());
-    if (hints.size() != op->getNumResults()) {
+    if (hints.size() != op->getNumResults())
       return;
-    }
 
     SmallVector<std::string, 4> liveHints;
     liveHints.reserve(hints.size());
     for (auto [index, result] : llvm::enumerate(op->getResults())) {
-      if (!result.use_empty()) {
+      if (!result.use_empty())
         liveHints.push_back(hints[index]);
-      }
     }
 
-    if (liveHints.empty() || liveHints.size() == hints.size()) {
+    if (liveHints.empty() || liveHints.size() == hints.size())
       return;
-    }
 
     op->setLoc(attachLocationNameHints(op->getLoc(), liveHints,
                                        op->getContext()));
@@ -1330,11 +1379,38 @@ static std::unique_ptr<Pass> createNarrowUnusedMultiResultProvenancePass() {
 }
 
 namespace {
+struct SerialFrontendPipeLoweringPass
+    : public PassWrapper<SerialFrontendPipeLoweringPass,
+                         OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      SerialFrontendPipeLoweringPass)
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<func::FuncDialect, pto::PTODialect>();
+  }
+
+  void runOnOperation() override {
+    OpPassManager functionPM(func::FuncOp::getOperationName());
+    functionPM.addPass(pto::createPTOAssignDefaultFrontendPipeIdPass());
+    functionPM.addPass(pto::createPTOLowerFrontendPipeOpsPass());
+
+    // Fixpipe frontend verifiers resolve peer contracts by inspecting sibling
+    // functions. Running this function pipeline through a regular nested pass
+    // adaptor allows one function to be verified while another function is
+    // still mutating its pipe ops. Keep these two small passes serial so every
+    // verifier observes either the complete frontend or complete lowered form.
+    for (func::FuncOp funcOp : getOperation().getOps<func::FuncOp>()) {
+      if (failed(runPipeline(functionPM, funcOp))) {
+        signalPassFailure();
+        return;
+      }
+    }
+  }
+};
+} // namespace
+
 static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module) {
   SmallVector<func::FuncOp> functions;
-  // Object compilation promotes backend children to top-level compile units.
-  // Preserve recursive traversal only for user-visible IR modes, which retain
-  // the authored container shape for debugging.
   if (emitMlirIR) {
     module.walk([&](func::FuncOp funcOp) { functions.push_back(funcOp); });
   } else {
@@ -1346,11 +1422,9 @@ static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module)
 struct SerialAutoSyncPass
     : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
-
   enum class Mode { InsertSync, Bufid, BarrierAll, GraphSolver };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
-                     int64_t graphEventIdMax)
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t graphEventIdMax)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         graphEventIdMax(graphEventIdMax) {}
 
@@ -1376,9 +1450,7 @@ struct SerialAutoSyncPass
       break;
     }
     }
-
-    for (func::FuncOp funcOp :
-         collectSharedPipelineFunctions(getOperation())) {
+    for (func::FuncOp funcOp : collectSharedPipelineFunctions(getOperation())) {
       if (failed(runPipeline(functionPM, funcOp))) {
         signalPassFailure();
         return;
@@ -1391,39 +1463,6 @@ private:
   bool enableBufidDebug;
   int64_t graphEventIdMax;
 };
-} // namespace
-
-namespace {
-struct SerialFrontendPipeLoweringPass
-    : public PassWrapper<SerialFrontendPipeLoweringPass,
-                         OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      SerialFrontendPipeLoweringPass)
-
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<func::FuncDialect, pto::PTODialect>();
-  }
-
-  void runOnOperation() override {
-    OpPassManager functionPM(func::FuncOp::getOperationName());
-    functionPM.addPass(pto::createPTOAssignDefaultFrontendPipeIdPass());
-    functionPM.addPass(pto::createPTOLowerFrontendPipeOpsPass());
-
-    // Fixpipe frontend verifiers resolve peer contracts by inspecting sibling
-    // functions. Running this function pipeline through a regular nested pass
-    // adaptor allows one function to be verified while another function is
-    // still mutating its pipe ops. Keep these two small passes serial so every
-    // verifier observes either the complete frontend or complete lowered form.
-    for (func::FuncOp funcOp :
-         collectSharedPipelineFunctions(getOperation())) {
-      if (failed(runPipeline(functionPM, funcOp))) {
-        signalPassFailure();
-        return;
-      }
-    }
-  }
-};
-} // namespace
 
 static std::unique_ptr<Pass> createSerialFrontendPipeLoweringPass() {
   return std::make_unique<SerialFrontendPipeLoweringPass>();
@@ -1434,44 +1473,37 @@ static void collectNonEntryBlocksInSourceOrder(
   for (Region &region : op->getRegions()) {
     bool isEntryBlock = true;
     for (Block &block : region) {
-      if (!isEntryBlock && block.getNumArguments() != 0) {
+      if (!isEntryBlock && block.getNumArguments() != 0)
         blocks.push_back(&block);
-      }
       isEntryBlock = false;
-      for (Operation &nestedOp : block) {
+      for (Operation &nestedOp : block)
         collectNonEntryBlocksInSourceOrder(&nestedOp, blocks);
-      }
     }
   }
 }
 
 void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
                                               const AsmParserState &parserState) {
-  if (!module) {
+  if (!module)
     return;
-  }
 
   for (const AsmParserState::BlockDefinition &blockDef : parserState.getBlockDefs()) {
-    if (!blockDef.block) {
+    if (!blockDef.block)
       continue;
-    }
     for (auto [argIndex, argDef] : llvm::enumerate(blockDef.arguments)) {
-      if (argIndex >= blockDef.block->getNumArguments()) {
+      if (argIndex >= blockDef.block->getNumArguments())
         break;
-      }
       std::optional<std::string> hint = getTextualNameFromSMRange(argDef.loc);
-      if (!hint) {
+      if (!hint)
         continue;
-      }
       applyValueNameHints(blockDef.block->getArgument(argIndex),
                           llvm::ArrayRef<std::string>{*hint});
     }
   }
 
   for (const AsmParserState::OperationDefinition &opDef : parserState.getOpDefs()) {
-    if (!opDef.op || opDef.op->getNumResults() == 0) {
+    if (!opDef.op || opDef.op->getNumResults() == 0)
       continue;
-    }
 
     SmallVector<std::string, 4> hints;
     hints.reserve(opDef.op->getNumResults());
@@ -1481,9 +1513,8 @@ void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
           expandTextualResultGroupHints(opDef, groupIndex);
       hints.append(groupHints.begin(), groupHints.end());
     }
-    if (hints.empty()) {
+    if (hints.empty())
       continue;
-    }
     applyOperationResultNameHints(opDef.op, hints);
   }
 }
@@ -1493,9 +1524,8 @@ static FunctionBlockArgHintMap collectFunctionBlockArgNameHints(ModuleOp module)
   for (func::FuncOp func : module.getOps<func::FuncOp>()) {
     SmallVector<Block *, 8> nonEntryBlocks;
     collectNonEntryBlocksInSourceOrder(func.getOperation(), nonEntryBlocks);
-    if (nonEntryBlocks.empty()) {
+    if (nonEntryBlocks.empty())
       continue;
-    }
 
     SmallVector<SmallVector<std::string, 4>, 4> blockHints;
     blockHints.reserve(nonEntryBlocks.size());
@@ -1510,14 +1540,12 @@ static FunctionBlockArgHintMap collectFunctionBlockArgNameHints(ModuleOp module)
         }
         argHints.push_back(std::move(hints.front()));
       }
-      if (hasAllHints) {
+      if (hasAllHints)
         blockHints.push_back(std::move(argHints));
-      }
     }
 
-    if (!blockHints.empty()) {
+    if (!blockHints.empty())
       hintsByFunction[func.getSymNameAttr()] = std::move(blockHints);
-    }
   }
   return hintsByFunction;
 }
@@ -1526,15 +1554,13 @@ static void applyFunctionBlockArgNameHintsToEmitC(
     ModuleOp module, const FunctionBlockArgHintMap &blockArgHints) {
   for (emitc::FuncOp func : module.getOps<emitc::FuncOp>()) {
     auto it = blockArgHints.find(func.getSymNameAttr());
-    if (it == blockArgHints.end() || it->second.empty()) {
+    if (it == blockArgHints.end() || it->second.empty())
       continue;
-    }
 
     SmallVector<Block *, 8> nonEntryBlocks;
     collectNonEntryBlocksInSourceOrder(func.getOperation(), nonEntryBlocks);
-    if (nonEntryBlocks.size() != it->second.size()) {
+    if (nonEntryBlocks.size() != it->second.size())
       continue;
-    }
 
     bool shapeMatches = true;
     for (auto [blockIndex, block] : llvm::enumerate(nonEntryBlocks)) {
@@ -1543,9 +1569,8 @@ static void applyFunctionBlockArgNameHintsToEmitC(
         break;
       }
     }
-    if (!shapeMatches) {
+    if (!shapeMatches)
       continue;
-    }
 
     for (auto [blockIndex, block] : llvm::enumerate(nonEntryBlocks)) {
       const auto &argHints = it->second[blockIndex];
@@ -1557,13 +1582,11 @@ static void applyFunctionBlockArgNameHintsToEmitC(
 
 static SmallVector<std::string, 4> getValueNameHints(Value value) {
   SmallVector<std::string, 4> hints;
-  if (!value) {
+  if (!value)
     return hints;
-  }
   appendLocationNameHints(value.getLoc(), hints);
-  if (hints.size() > 1) {
+  if (hints.size() > 1)
     hints.resize(1);
-  }
   return hints;
 }
 
@@ -1609,9 +1632,8 @@ collectExpressionProvenance(emitc::ExpressionOp expr) {
   SmallVector<std::string, 8> provenance;
   auto appendUnique = [&](llvm::ArrayRef<std::string> names) {
     for (const std::string &name : names) {
-      if (name.empty()) {
+      if (name.empty())
         continue;
-      }
       if (std::find(provenance.begin(), provenance.end(), name) !=
           provenance.end())
         continue;
@@ -1620,12 +1642,10 @@ collectExpressionProvenance(emitc::ExpressionOp expr) {
   };
 
   expr.walk<WalkOrder::PreOrder>([&](Operation *nested) {
-    if (nested == expr.getOperation()) {
+    if (nested == expr.getOperation())
       return WalkResult::advance();
-    }
-    if (nested->getNumResults() == 0 || isa<emitc::VerbatimOp>(nested)) {
+    if (nested->getNumResults() == 0 || isa<emitc::VerbatimOp>(nested))
       return WalkResult::advance();
-    }
     appendUnique(getRawResultProvenance(nested));
     return WalkResult::advance();
   });
@@ -1641,30 +1661,26 @@ static void annotateEmitCProvenanceHints(ModuleOp module) {
 
   llvm::SmallVector<ProvenanceMarker, 32> opsToAnnotate;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (op->getNumResults() == 0 || isa<emitc::VerbatimOp>(op)) {
+    if (op->getNumResults() == 0 || isa<emitc::VerbatimOp>(op))
       return WalkResult::advance();
-    }
 
     if (auto expr = dyn_cast<emitc::ExpressionOp>(op)) {
       SmallVector<std::string, 8> provenance = collectExpressionProvenance(expr);
-      if (provenance.empty()) {
+      if (provenance.empty())
         return WalkResult::skip();
-      }
       opsToAnnotate.push_back(
           ProvenanceMarker{op, SmallVector<std::string, 8>(provenance)});
       return WalkResult::skip();
     }
 
-    if (op->getParentOfType<emitc::ExpressionOp>()) {
+    if (op->getParentOfType<emitc::ExpressionOp>())
       return WalkResult::advance();
-    }
     // Only carry raw provenance into the C++ post-pass. Semantic renaming is
     // intentionally deferred until naming can happen inside the emitter's own
     // symbol table instead of via post-hoc C++ text rewriting.
     SmallVector<std::string, 4> provenance = getRawResultProvenance(op);
-    if (provenance.empty()) {
+    if (provenance.empty())
       return WalkResult::advance();
-    }
     opsToAnnotate.push_back(ProvenanceMarker{
         op, SmallVector<std::string, 8>(provenance.begin(), provenance.end())});
     return WalkResult::advance();
@@ -1730,9 +1746,8 @@ static bool parseMarkerArgs(llvm::StringRef argsRef,
       continue;
     }
     if (c == ')') {
-      if (parenDepth > 0) {
+      if (parenDepth > 0)
         --parenDepth;
-      }
       continue;
     }
     if (c == ',' && parenDepth == 0) {
@@ -1740,9 +1755,8 @@ static bool parseMarkerArgs(llvm::StringRef argsRef,
       partBegin = i + 1;
     }
   }
-  if (partBegin > argsRef.size()) {
+  if (partBegin > argsRef.size())
     return false;
-  }
   args.push_back(argsRef.drop_front(partBegin).trim());
   return true;
 }
@@ -1752,9 +1766,8 @@ findNextMarkerCall(const std::string &cpp, llvm::StringRef marker,
                    size_t searchPos) {
   ParsedMarkerCall call;
   call.markerPos = cpp.find(marker.str(), searchPos);
-  if (call.markerPos == std::string::npos) {
+  if (call.markerPos == std::string::npos)
     return std::nullopt;
-  }
 
   size_t lparenPos = call.markerPos + marker.size();
   if (lparenPos >= cpp.size() || cpp[lparenPos] != '(')
@@ -1768,23 +1781,20 @@ findNextMarkerCall(const std::string &cpp, llvm::StringRef marker,
       ++parenDepth;
       continue;
     }
-    if (c != ')') {
+    if (c != ')')
       continue;
-    }
     if (parenDepth == 0) {
       call.rparenPos = i;
       break;
     }
     --parenDepth;
   }
-  if (call.rparenPos == std::string::npos) {
+  if (call.rparenPos == std::string::npos)
     return call;
-  }
 
   llvm::StringRef argsRef(cpp.data() + argsBegin, call.rparenPos - argsBegin);
-  if (!parseMarkerArgs(argsRef, call.args)) {
+  if (!parseMarkerArgs(argsRef, call.args))
     call.args.clear();
-  }
   return call;
 }
 
@@ -1819,9 +1829,8 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       unsigned expectedNumArgs) {
   return rewriteMarkerCalls(
       cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
-        if (call.args.size() != expectedNumArgs) {
+        if (call.args.size() != expectedNumArgs)
           return std::nullopt;
-        }
 
         std::string replacement;
         replacement.reserve(marker.size() + kMarkerCallReserveExtra);
@@ -1829,9 +1838,8 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
         replacement.push_back('.');
         replacement.append(memberName.str());
         replacement.push_back('(');
-        if (expectedNumArgs >= kMarkerRewriteMinArgCount) {
+        if (expectedNumArgs >= kMarkerRewriteMinArgCount)
           replacement.append(call.args[1].str());
-        }
         if (expectedNumArgs == kMarkerRewriteTernaryArgCount) {
           replacement.append(", ");
           replacement.append(call.args[2].str());
@@ -1859,12 +1867,10 @@ static bool rewriteMarkerCallToField(std::string &cpp, llvm::StringRef marker,
                                      size_t expectedNumArgs) {
   return rewriteMarkerCalls(
       cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
-        if (call.args.size() != expectedNumArgs) {
+        if (call.args.size() != expectedNumArgs)
           return std::nullopt;
-        }
-        if (call.args.empty()) {
+        if (call.args.empty())
           return std::nullopt;
-        }
         std::string replacement;
         replacement.reserve(call.args.front().size() + fieldName.size() + 1);
         replacement.append(call.args.front().str());
@@ -1897,6 +1903,91 @@ static void rewriteAsyncEventMarkers(std::string &cpp) {
 }
 
 // --------------------------------------------------------------------------
+// EmitC expression formation: controlled alternative to the upstream
+// FormExpressions pass. The upstream pass aggressively folds arbitrary
+// expression chains (including dynamic partition_view data-pointer IR),
+// triggering the "Yielded value not defined within expression" assertion.
+// This compat pass mirrors the LLVM-21-era behaviour: only single-result
+// ops carrying the CExpression trait are wrapped, then single-use
+// side-effect-free producers are inlined back out.
+// --------------------------------------------------------------------------
+struct FormEmitCExpressionsCompatPass final
+    : public PassWrapper<FormEmitCExpressionsCompatPass,
+                         OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FormEmitCExpressionsCompatPass)
+
+  static bool containsConditionalOperator(emitc::ExpressionOp expression) {
+    for (Operation &op : expression.getBody()->without_terminator()) {
+      if (isa<emitc::ConditionalOp>(op)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool foldExpression(emitc::ExpressionOp expression,
+                             IRRewriter &rewriter) {
+    bool changed = false;
+    for (Operation &op : llvm::make_early_inc_range(
+             expression.getBody()->without_terminator())) {
+      auto apply = dyn_cast<emitc::ApplyOp>(op);
+      if (apply && apply.getApplicableOperator() == "&")
+        continue;
+
+      for (OpOperand &operand : llvm::make_early_inc_range(op.getOpOperands())) {
+        auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
+        if (!producer || !producer.getResult().hasOneUse() ||
+            producer.hasSideEffects())
+          continue;
+
+        // Keep conditional (ternary) expressions materialized as their own
+        // statement: C++ emitter precedence makes a flattened ternary inside
+        // an arithmetic expression evaluate with a different meaning.
+        if (containsConditionalOperator(producer)) {
+          continue;
+        }
+
+        rewriter.setInsertionPoint(&op);
+        IRMapping mapper;
+        for (Operation &toClone : producer.getBody()->without_terminator()) {
+          Operation *clone = rewriter.clone(toClone, mapper);
+          mapper.map(&toClone, clone);
+        }
+
+        Operation *clonedRoot = mapper.lookup(producer.getRootOp());
+        if (!clonedRoot || clonedRoot->getNumResults() != 1) {
+          llvm_unreachable("expected a cloned single-result EmitC "
+                           "expression root");
+        }
+        rewriter.replaceOp(producer, clonedRoot->getResults());
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    OpBuilder builder(&getContext());
+    module.walk([&](Operation *op) {
+      if (op->hasTrait<OpTrait::emitc::CExpression>() &&
+          !op->getParentOfType<emitc::ExpressionOp>() &&
+          op->getNumResults() == 1)
+        emitc::createExpression(op, builder);
+    });
+
+    IRRewriter rewriter(&getContext());
+    bool changed;
+    do {
+      changed = false;
+      module.walk<WalkOrder::PostOrder>([&](emitc::ExpressionOp expression) {
+        changed |= foldExpression(expression, rewriter);
+      });
+    } while (changed);
+  }
+};
+
+// --------------------------------------------------------------------------
 // EmitC cleanup: drop trivial emitc.expression ops.
 // After FormExpressions + CSE, EmitC expressions can become invalid in two
 // ways:
@@ -1911,25 +2002,21 @@ static void dropEmptyEmitCExpressions(Operation *rootOp) {
       toErase;
   rootOp->walk([&](emitc::ExpressionOp expr) {
     Block *body = expr.getBody();
-    if (!body) {
+    if (!body)
       return;
-    }
     auto yield = dyn_cast<emitc::YieldOp>(body->getTerminator());
-    if (!yield || yield.getNumOperands() != 1) {
+    if (!yield || yield.getNumOperands() != 1)
       return;
-    }
     Value yielded = yield.getOperand(0);
     Operation *defOp = yielded.getDefiningOp();
     bool yieldedFromOutside = !defOp || defOp->getBlock() != body;
-    if (!yieldedFromOutside && expr.getRootOp()) {
+    if (!yieldedFromOutside && expr.getRootOp())
       return;
-    }
     expr.getResult().replaceAllUsesWith(yielded);
     toErase.push_back(expr);
   });
-  for (emitc::ExpressionOp expr : llvm::reverse(toErase)) {
+  for (emitc::ExpressionOp expr : llvm::reverse(toErase))
     expr.erase();
-  }
 }
 
 static void appendEmitCIntegerAttrLiteral(std::string &storage,
@@ -1963,9 +2050,8 @@ static std::string getEmitCIntegerAttrLiteral(IntegerAttr attr) {
 static std::optional<std::string>
 getEmitCDenseIntElementsAttrLiteral(DenseIntElementsAttr attr) {
   auto tensorTy = dyn_cast<TensorType>(attr.getType());
-  if (!tensorTy) {
+  if (!tensorTy)
     return std::nullopt;
-  }
 
   Type elementType = tensorTy.getElementType();
   bool isUnsigned = false;
@@ -1979,9 +2065,8 @@ getEmitCDenseIntElementsAttrLiteral(DenseIntElementsAttr attr) {
   literal.push_back('{');
   bool first = true;
   for (const APInt &value : attr) {
-    if (!first) {
+    if (!first)
       literal.append(", ");
-    }
     first = false;
     appendEmitCIntegerAttrLiteral(literal, value, isUnsigned);
   }
@@ -1991,9 +2076,8 @@ getEmitCDenseIntElementsAttrLiteral(DenseIntElementsAttr attr) {
 
 static Attribute normalizeEmitCPrintedAttrForCppEmission(MLIRContext *ctx,
                                                          Attribute attr) {
-  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr))
     return emitc::OpaqueAttr::get(ctx, getEmitCIntegerAttrLiteral(intAttr));
-  }
 
   if (auto denseAttr = dyn_cast<DenseIntElementsAttr>(attr)) {
     if (std::optional<std::string> literal =
@@ -2011,9 +2095,8 @@ static Attribute normalizeEmitCPrintedAttrForCppEmission(MLIRContext *ctx,
       changed |= normalizedElement != element;
       normalized.push_back(normalizedElement);
     }
-    if (changed) {
+    if (changed)
       return ArrayAttr::get(ctx, normalized);
-    }
   }
 
   return attr;
@@ -2081,9 +2164,8 @@ static void normalizeEmitCIntegerAttrsForCppEmission(Operation *rootOp) {
       Attribute value = constant.getValue();
       Attribute normalized =
           normalizeEmitCPrintedAttrForCppEmission(ctx, value);
-      if (normalized != value) {
+      if (normalized != value)
         constant.getProperties().setValue(normalized);
-      }
       return;
     }
 
@@ -2091,38 +2173,33 @@ static void normalizeEmitCIntegerAttrsForCppEmission(Operation *rootOp) {
       Attribute value = variable.getValue();
       Attribute normalized =
           normalizeEmitCPrintedAttrForCppEmission(ctx, value);
-      if (normalized != value) {
+      if (normalized != value)
         variable.getProperties().setValue(normalized);
-      }
       return;
     }
 
     if (auto global = dyn_cast<emitc::GlobalOp>(op)) {
       std::optional<Attribute> initialValue = global.getInitialValue();
-      if (!initialValue) {
+      if (!initialValue)
         return;
-      }
       Attribute normalized =
           normalizeEmitCPrintedAttrForCppEmission(ctx, *initialValue);
-      if (normalized != *initialValue) {
+      if (normalized != *initialValue)
         global.getProperties().setInitialValue(normalized);
-      }
       return;
     }
 
     if (auto call = dyn_cast<emitc::CallOpaqueOp>(op)) {
       if (std::optional<ArrayAttr> args = call.getArgs()) {
         ArrayAttr normalized = normalizeEmitCCallArgsForCppEmission(ctx, *args);
-        if (normalized != *args) {
+        if (normalized != *args)
           call.getProperties().setArgs(normalized);
-        }
       }
       if (std::optional<ArrayAttr> templateArgs = call.getTemplateArgs()) {
         ArrayAttr normalized =
             normalizeEmitCTemplateArgsForCppEmission(ctx, *templateArgs);
-        if (normalized != *templateArgs) {
+        if (normalized != *templateArgs)
           call.getProperties().setTemplateArgs(normalized);
-        }
       }
       return;
     }
@@ -2131,20 +2208,16 @@ static void normalizeEmitCIntegerAttrsForCppEmission(Operation *rootOp) {
 
 static Attribute getDefaultEmitCVariableInitAttr(OpBuilder &builder, Type type) {
   if (auto intTy = dyn_cast<IntegerType>(type)) {
-    if (intTy.getWidth() == 0) {
+    if (intTy.getWidth() == 0)
       return emitc::OpaqueAttr::get(builder.getContext(), "0");
-    }
     return builder.getIntegerAttr(intTy, 0);
   }
-  if (isa<IndexType>(type)) {
+  if (isa<IndexType>(type))
     return builder.getIndexAttr(0);
-  }
-  if (auto floatTy = dyn_cast<FloatType>(type)) {
+  if (auto floatTy = dyn_cast<FloatType>(type))
     return builder.getFloatAttr(floatTy, 0.0);
-  }
-  if (isa<emitc::OpaqueType, emitc::PointerType>(type)) {
+  if (isa<emitc::OpaqueType, emitc::PointerType>(type))
     return emitc::OpaqueAttr::get(builder.getContext(), "");
-  }
   return Attribute{};
 }
 
@@ -2159,9 +2232,8 @@ static Type getEmitCVariableStorageType(Type valueType) {
 static void materializeControlFlowOperands(Operation *rootOp) {
   llvm::SmallVector<Operation *, kBranchInlineCapacity> branches;
   rootOp->walk([&](Operation *op) {
-    if (isa<cf::BranchOp, cf::CondBranchOp>(op)) {
+    if (isa<cf::BranchOp, cf::CondBranchOp>(op))
       branches.push_back(op);
-    }
   });
 
   OpBuilder builder(rootOp->getContext());
@@ -2170,15 +2242,13 @@ static void materializeControlFlowOperands(Operation *rootOp) {
     for (OpOperand &operand : op->getOpOperands()) {
       Value value = operand.get();
       auto expr = dyn_cast_or_null<emitc::ExpressionOp>(value.getDefiningOp());
-      if (!expr) {
+      if (!expr)
         continue;
-      }
 
       Attribute initAttr =
           getDefaultEmitCVariableInitAttr(builder, value.getType());
-      if (!initAttr) {
+      if (!initAttr)
         continue;
-      }
 
       Value tmp = builder
                       .create<emitc::VariableOp>(
@@ -2196,40 +2266,14 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
                                          bool isStore) {
   return rewriteMarkerCalls(
       cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
-        if (call.args.size() != expectedNumArgs) {
+        if (call.args.size() != expectedNumArgs)
           return std::nullopt;
-        }
-        std::string replacement;
-        replacement.reserve(call.args[0].size() + call.args[1].size() + 8 +
-                            (isStore ? call.args[2].size() : 0));
-        replacement.push_back('(');
-        replacement.append(call.args[0].str());
-        replacement.push_back(')');
-        replacement.push_back('[');
-        replacement.append(call.args[1].str());
-        replacement.push_back(']');
         if (isStore) {
-          replacement.append(" = ");
-          replacement.append(call.args[2].str());
-        }
-        return replacement;
-      });
-}
-
-static void rewriteGlobalTensorMetadataMarkers(std::string &cpp) {
-  auto rewrite = [&](llvm::StringRef marker, llvm::StringRef method) {
-    (void)rewriteMarkerCalls(
-        cpp, marker,
-        [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
-          if (call.args.size() != 2)
-            return std::nullopt;
-          return ("(" + call.args[0] + ")." + method +
-                  "(static_cast<int>(" + call.args[1] + "))")
+          return (call.args[0] + "[" + call.args[1] + "] = " + call.args[2])
               .str();
-        });
-  };
-  rewrite("PTOAS__GLOBAL_TENSOR_GET_SHAPE", "GetShape");
-  rewrite("PTOAS__GLOBAL_TENSOR_GET_STRIDE", "GetStride");
+        }
+        return (call.args[0] + "[" + call.args[1] + "]").str();
+      });
 }
 
 static void rewriteMarkerCallsToSubscripts(
@@ -2255,18 +2299,16 @@ static void rewritePtrScalarMarkers(std::string &cpp) {
 
 static std::string getLineIndent(llvm::StringRef line) {
   size_t firstNonSpace = line.find_first_not_of(" \t");
-  if (firstNonSpace == llvm::StringRef::npos) {
+  if (firstNonSpace == llvm::StringRef::npos)
     return line.str();
-  }
   return line.take_front(firstNonSpace).str();
 }
 
 static bool isAICOREFunctionStart(llvm::StringRef trimmed) {
   if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//"))
     return false;
-  if (!trimmed.contains("AICORE")) {
+  if (!trimmed.contains("AICORE"))
     return false;
-  }
   return trimmed.contains("(");
 }
 
@@ -2298,9 +2340,8 @@ static bool stripScalarGMFlushMarkersFromLine(std::string &line) {
   size_t searchPos = 0;
   while (true) {
     auto call = findNextMarkerCall(line, kMarker, searchPos);
-    if (!call) {
+    if (!call)
       break;
-    }
     if (call->rparenPos == std::string::npos) {
       searchPos = call->markerPos + kMarker.size();
       continue;
@@ -2315,9 +2356,8 @@ static bool stripScalarGMFlushMarkersFromLine(std::string &line) {
     while (eraseEnd < line.size() &&
            (line[eraseEnd] == ' ' || line[eraseEnd] == '\t'))
       ++eraseEnd;
-    if (eraseEnd < line.size() && line[eraseEnd] == ';') {
+    if (eraseEnd < line.size() && line[eraseEnd] == ';')
       ++eraseEnd;
-    }
     while (eraseEnd < line.size() &&
            (line[eraseEnd] == ' ' || line[eraseEnd] == '\t'))
       ++eraseEnd;
@@ -2333,9 +2373,8 @@ static bool previousSignificantLineIsTailFlushPoint(
     llvm::ArrayRef<std::string> lines, size_t index) {
   for (size_t i = index; i > 0; --i) {
     llvm::StringRef prev = llvm::StringRef(lines[i - 1]).trim();
-    if (prev.empty()) {
+    if (prev.empty())
       continue;
-    }
     return prev.starts_with("#endif // __DAV_") ||
            prev.starts_with("ptoas_auto_sync_tail(");
   }
@@ -2346,9 +2385,8 @@ static bool previousSignificantLineIsExitOrTailFlushPoint(
     llvm::ArrayRef<std::string> lines, size_t index) {
   for (size_t i = index; i > 0; --i) {
     llvm::StringRef prev = llvm::StringRef(lines[i - 1]).trim();
-    if (prev.empty()) {
+    if (prev.empty())
       continue;
-    }
     return prev.starts_with("return") ||
            prev.starts_with("#endif // __DAV_") ||
            prev.starts_with("ptoas_auto_sync_tail(");
@@ -2377,9 +2415,8 @@ static std::string rewriteScalarGMStoreFlushMarkersInFunction(
     unchanged.reserve(kRewriteOutputReserveExtra);
     for (size_t i = 0; i < lines.size(); ++i) {
       unchanged.append(lines[i]);
-      if (i + 1 < lines.size() || hasTrailingNewline) {
+      if (i + 1 < lines.size() || hasTrailingNewline)
         unchanged.push_back('\n');
-      }
     }
     return unchanged;
   }
@@ -2390,9 +2427,8 @@ static std::string rewriteScalarGMStoreFlushMarkersInFunction(
   size_t fallbackIndex = lines.size();
   for (size_t i = lines.size(); i > 0; --i) {
     llvm::StringRef trimmed = llvm::StringRef(lines[i - 1]).trim();
-    if (trimmed.empty()) {
+    if (trimmed.empty())
       continue;
-    }
     if (trimmed.starts_with("}"))
       fallbackIndex = i - 1;
     break;
@@ -2416,14 +2452,12 @@ static std::string rewriteScalarGMStoreFlushMarkersInFunction(
       inserted = true;
     }
     out.append(lines[i]);
-    if (i + 1 < lines.size() || hasTrailingNewline) {
+    if (i + 1 < lines.size() || hasTrailingNewline)
       out.push_back('\n');
-    }
   }
 
-  if (!inserted) {
+  if (!inserted)
     appendScalarGMFlush(out, "  ");
-  }
   return out;
 }
 
@@ -2453,32 +2487,27 @@ static void rewriteScalarGMStoreFlushMarkers(std::string &cpp) {
     ref = split.second;
 
     llvm::StringRef trimmed = llvm::StringRef(line).trim();
-    if (!inFunction && isAICOREFunctionStart(trimmed)) {
+    if (!inFunction && isAICOREFunctionStart(trimmed))
       inFunction = true;
-    }
 
     if (!inFunction) {
       out.append(line);
-      if (hadNewline) {
+      if (hadNewline)
         out.push_back('\n');
-      }
       continue;
     }
 
     functionLines.push_back(std::move(line));
     int delta = countBraceDelta(functionLines.back());
-    if (delta != 0) {
+    if (delta != 0)
       sawFunctionBrace = true;
-    }
     braceDepth += delta;
-    if (sawFunctionBrace && braceDepth == 0) {
+    if (sawFunctionBrace && braceDepth == 0)
       flushFunction(hadNewline);
-    }
   }
 
-  if (!functionLines.empty()) {
+  if (!functionLines.empty())
     flushFunction(false);
-  }
   cpp.swap(out);
 }
 
@@ -2488,6 +2517,22 @@ static void rewriteEventIdArrayMarkers(std::string &cpp) {
       {"PTOAS__EVENTID_ARRAY_STORE", 3, true},
   };
   rewriteMarkerCallsToSubscripts(cpp, kEventIdMarkerRewrites);
+}
+
+static void rewriteGlobalTensorMetadataMarkers(std::string &cpp) {
+  auto rewrite = [&](llvm::StringRef marker, llvm::StringRef method) {
+    (void)rewriteMarkerCalls(
+        cpp, marker,
+        [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+          if (call.args.size() != 2)
+            return std::nullopt;
+          return ("(" + call.args[0] + ")." + method +
+                  "(static_cast<int>(" + call.args[1] + "))")
+              .str();
+        });
+  };
+  rewrite("PTOAS__GLOBAL_TENSOR_GET_SHAPE", "GetShape");
+  rewrite("PTOAS__GLOBAL_TENSOR_GET_STRIDE", "GetStride");
 }
 
 static bool isPreprocessorDirectiveLine(llvm::StringRef trimmedLine) {
@@ -2500,9 +2545,8 @@ static bool isPreprocessorDirectiveLine(llvm::StringRef trimmedLine) {
 // Trim only those malformed suffixes here so bisheng can compile the emitted
 // source until the upstream printer behavior is fixed.
 static void rewriteMalformedVerbatimSemicolons(std::string &cpp) {
-  if (cpp.empty()) {
+  if (cpp.empty())
     return;
-  }
 
   llvm::StringRef input(cpp);
   std::string rewritten;
@@ -2525,9 +2569,8 @@ static void rewriteMalformedVerbatimSemicolons(std::string &cpp) {
     } else {
       if (isPreprocessorDirectiveLine(trimmed) && trimmed.ends_with(";")) {
         size_t semicolonPos = current.find_last_of(';');
-        if (semicolonPos != std::string::npos) {
+        if (semicolonPos != std::string::npos)
           current.erase(semicolonPos, 1);
-        }
       } else if (!trimmed.empty() && !trimmed.starts_with("//") &&
                  !trimmed.starts_with("/*") && trimmed.ends_with(";;")) {
         size_t semicolonPos = current.find_last_of(';');
@@ -2579,12 +2622,10 @@ static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
     size_t replaceEnd = call->rparenPos;
     if (!showTrace) {
       size_t i = call->rparenPos + 1;
-      while (i < cpp.size() && std::isspace(static_cast<unsigned char>(cpp[i]))) {
+      while (i < cpp.size() && std::isspace(static_cast<unsigned char>(cpp[i])))
         ++i;
-      }
-      if (i < cpp.size() && cpp[i] == ';') {
+      if (i < cpp.size() && cpp[i] == ';')
         replaceEnd = i;
-      }
     }
 
     cpp.replace(call->markerPos, (replaceEnd - call->markerPos) + 1,
@@ -2605,13 +2646,11 @@ static bool isGeneratedGlobalTensorDecl(llvm::StringRef trimmed,
 
   decl = trimmed.drop_back().rtrim();
   size_t lastWs = decl.find_last_of(" \t");
-  if (lastWs == llvm::StringRef::npos) {
+  if (lastWs == llvm::StringRef::npos)
     return false;
-  }
   varName = decl.drop_front(lastWs + 1);
-  if (!varName.starts_with("v") || varName.size() <= 1) {
+  if (!varName.starts_with("v") || varName.size() <= 1)
     return false;
-  }
   return llvm::all_of(varName.drop_front(1),
                       [](char c) { return std::isdigit(c); });
 }
@@ -2640,9 +2679,8 @@ static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
     llvm::StringRef varName;
     if (isGeneratedGlobalTensorDecl(trimmed, decl, varName)) {
       size_t indentLen = line.find_first_not_of(" \t");
-      if (indentLen == std::string::npos) {
+      if (indentLen == std::string::npos)
         indentLen = 0;
-      }
       llvm::StringRef indent = line.take_front(indentLen);
 
       out.append(indent.str());
@@ -2651,12 +2689,10 @@ static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
       rewritten = true;
     }
 
-    if (!rewritten) {
+    if (!rewritten)
       out.append(line.str());
-    }
-    if (!rest.empty()) {
+    if (!rest.empty())
       out.push_back('\n');
-    }
     ref = rest;
   }
 
@@ -2667,15 +2703,12 @@ static std::optional<llvm::SmallVector<std::string, 4>>
 parseNameHintMarker(llvm::StringRef markerBody) {
   auto decodeHintMarkerToken = [](llvm::StringRef token) {
     auto hexValue = [](char c) -> int {
-      if (c >= '0' && c <= '9') {
+      if (c >= '0' && c <= '9')
         return c - '0';
-      }
-      if (c >= 'a' && c <= 'f') {
+      if (c >= 'a' && c <= 'f')
         return c - 'a' + 10;
-      }
-      if (c >= 'A' && c <= 'F') {
+      if (c >= 'A' && c <= 'F')
         return c - 'A' + 10;
-      }
       return -1;
     };
 
@@ -2700,9 +2733,8 @@ parseNameHintMarker(llvm::StringRef markerBody) {
 
   llvm::SmallVector<std::string, 4> hints;
   markerBody = markerBody.trim();
-  if (markerBody.empty()) {
+  if (markerBody.empty())
     return std::nullopt;
-  }
 
   size_t start = 0;
   while (start <= markerBody.size()) {
@@ -2710,18 +2742,15 @@ parseNameHintMarker(llvm::StringRef markerBody) {
     llvm::StringRef token = markerBody.slice(
         start, comma == llvm::StringRef::npos ? markerBody.size() : comma);
     token = token.trim();
-    if (!token.empty()) {
+    if (!token.empty())
       hints.push_back(decodeHintMarkerToken(token));
-    }
-    if (comma == llvm::StringRef::npos) {
+    if (comma == llvm::StringRef::npos)
       break;
-    }
     start = comma + 1;
   }
 
-  if (hints.empty()) {
+  if (hints.empty())
     return std::nullopt;
-  }
   return hints;
 }
 
@@ -2817,9 +2846,8 @@ static void emitProvenanceComments(std::string &segment) {
     if (names && !names->empty()) {
       out.append("// pto: ");
       for (size_t idx = 0; idx < names->size(); ++idx) {
-        if (idx != 0) {
+        if (idx != 0)
           out.append(", ");
-        }
         out.push_back('%');
         out.append(sanitizeCommentText((*names)[idx]));
       }
@@ -2853,17 +2881,15 @@ struct ConstantDeclCandidate {
 } // namespace
 
 static bool isGeneratedValueName(llvm::StringRef name) {
-  if (!name.consume_front("v") || name.empty()) {
+  if (!name.consume_front("v") || name.empty())
     return false;
-  }
   return llvm::all_of(name, [](char c) { return std::isdigit(c); });
 }
 
 static bool isConstFoldableScalarType(llvm::StringRef type) {
   type = type.trim();
-  if (type.starts_with("const ") || type.starts_with("constexpr ")) {
+  if (type.starts_with("const ") || type.starts_with("constexpr "))
     return false;
-  }
   return llvm::StringSwitch<bool>(type)
       .Cases("bool", "float", "double", "half", "bfloat16_t", true)
       .Cases("int8_t", "uint8_t", "int16_t", "uint16_t", true)
@@ -2873,12 +2899,10 @@ static bool isConstFoldableScalarType(llvm::StringRef type) {
 
 static bool isLiteralInitializer(llvm::StringRef rhs) {
   rhs = rhs.trim();
-  if (rhs.empty()) {
+  if (rhs.empty())
     return false;
-  }
-  if (rhs == "true" || rhs == "false" || rhs == "nullptr") {
+  if (rhs == "true" || rhs == "false" || rhs == "nullptr")
     return true;
-  }
 
   static const llvm::Regex kIntLiteral(
       R"(^[+-]?(0[xX][0-9A-Fa-f]+|[0-9]+)[uUlL]*$)");
@@ -2898,12 +2922,10 @@ static std::string normalizeConstInitializer(llvm::StringRef type,
   type = type.trim();
   rhs = rhs.trim();
   if (type == "bool") {
-    if (rhs == "0" || rhs == "false") {
+    if (rhs == "0" || rhs == "false")
       return "false";
-    }
-    if (rhs == "1" || rhs == "-1" || rhs == "true") {
+    if (rhs == "1" || rhs == "-1" || rhs == "true")
       return "true";
-    }
   }
   return rhs.str();
 }
@@ -2933,28 +2955,24 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
   }
 
   size_t lastWs = lhs.find_last_of(" \t");
-  if (lastWs == llvm::StringRef::npos) {
+  if (lastWs == llvm::StringRef::npos)
     return false;
-  }
 
   llvm::StringRef type = lhs.take_front(lastWs).rtrim();
   llvm::StringRef name = lhs.drop_front(lastWs + 1).trim();
-  if (!isGeneratedValueName(name) || !isConstFoldableScalarType(type)) {
+  if (!isGeneratedValueName(name) || !isConstFoldableScalarType(type))
     return false;
-  }
 
   size_t indentLen = line.find_first_not_of(" \t");
-  if (indentLen == llvm::StringRef::npos) {
+  if (indentLen == llvm::StringRef::npos)
     indentLen = 0;
-  }
   candidate.indent = line.take_front(indentLen).str();
   candidate.type = type.str();
   valueName = name.str();
 
   if (!rhs.empty()) {
-    if (!isLiteralInitializer(rhs)) {
+    if (!isLiteralInitializer(rhs))
       return false;
-    }
     candidate.hasInitializer = true;
     candidate.initializer = normalizeConstInitializer(type, rhs);
   }
@@ -2972,15 +2990,13 @@ static bool parseGeneratedValueAssignment(llvm::StringRef line,
 
   llvm::StringRef body = trimmed.drop_back().rtrim();
   size_t eqPos = body.find('=');
-  if (eqPos == llvm::StringRef::npos) {
+  if (eqPos == llvm::StringRef::npos)
     return false;
-  }
 
   llvm::StringRef lhs = body.take_front(eqPos).rtrim();
   rhs = body.drop_front(eqPos + 1).trim();
-  if (!isGeneratedValueName(lhs)) {
+  if (!isGeneratedValueName(lhs))
     return false;
-  }
   valueName = lhs;
   return true;
 }
@@ -3007,14 +3023,12 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
 
       llvm::StringRef assignedName;
       llvm::StringRef rhs;
-      if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs)) {
+      if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs))
         continue;
-      }
 
       auto it = candidates.find(assignedName);
-      if (it == candidates.end()) {
+      if (it == candidates.end())
         continue;
-      }
 
       ConstantDeclCandidate &info = it->second;
       ++info.assignmentCount;
@@ -3028,17 +3042,14 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
 
       std::string initializer;
       if (info.hasInitializer) {
-        if (info.assignmentCount != 0) {
+        if (info.assignmentCount != 0)
           continue;
-        }
         initializer = info.initializer;
       } else {
-        if (info.assignmentCount != 1) {
+        if (info.assignmentCount != 1)
           continue;
-        }
-        if (!isLiteralInitializer(info.assignmentRhs)) {
+        if (!isLiteralInitializer(info.assignmentRhs))
           continue;
-        }
         initializer = normalizeConstInitializer(
             info.type, llvm::StringRef(info.assignmentRhs));
         eraseLine[info.assignmentLine] = true;
@@ -3060,24 +3071,20 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
         --braceDepth;
     }
 
-    if (depthBefore == 0 && braceDepth > 0) {
+    if (depthBefore == 0 && braceDepth > 0)
       segmentStart = i;
-    }
-    if (depthBefore > 0 && braceDepth == 0) {
+    if (depthBefore > 0 && braceDepth == 0)
       rewriteSegment(segmentStart, i);
-    }
   }
 
   std::string out;
   out.reserve(cpp.size());
   for (size_t i = 0; i < lines.size(); ++i) {
-    if (eraseLine[i]) {
+    if (eraseLine[i])
       continue;
-    }
     out.append(lines[i]);
-    if (i + 1 != lines.size()) {
+    if (i + 1 != lines.size())
       out.push_back('\n');
-    }
   }
   cpp.swap(out);
 }
@@ -3088,7 +3095,10 @@ static bool shouldDeclareVariablesAtTop(ModuleOp module) {
          llvm::any_of(module.getOps<emitc::FuncOp>(), hasMultiBlockFunc);
 }
 
-static void appendVMISemanticPipeline(OpPassManager &pm);
+static void appendVMISemanticPipeline(OpPassManager &pm,
+                                      bool enableFusionOptimizations,
+                                      bool enableLoopFusion,
+                                      bool enableLoadStoreElision);
 
 static void prepareVPTOForEmission(PassManager &pm) {
   auto &kernelModulePM = pm.nest<ModuleOp>();
@@ -3104,6 +3114,23 @@ static void prepareVPTOForEmission(PassManager &pm) {
       pto::createPTOUnrollLoopsPass());
   kernelModulePM.addPass(createSCCPPass());
   kernelModulePM.addPass(createCanonicalizerPass());
+  // Expand software-library vector operations before inferring scopes so the
+  // generated pset/vsel sequence is enclosed by the same scope as the source
+  // operation.  The local pipeline infers scopes early for MemBar legality.
+  kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
+  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+  kernelModulePM.addPass(createCanonicalizerPass());
+  kernelModulePM.addPass(createCSEPass());
+  // Complete inference for direct VPTO input and VPTO operations introduced
+  // after the early VMI inference. Existing pto.vecscope regions are skipped.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOInferVPTOVecScopePass());
+  if (enableVecScopeMemBar)
+    kernelModulePM.addNestedPass<func::FuncOp>(
+        pto::createPTOInsertVecScopeMemBarPass());
+  if (enableVecScopeMemBarAll)
+    kernelModulePM.addNestedPass<func::FuncOp>(
+        pto::createPTOInsertVecScopeMemBarAllPass());
   kernelModulePM.addPass(createCSEPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTOAnalyzeSIMTPersistentFragmentPass());
@@ -3114,11 +3141,11 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(pto::createVPTOPtrCastCleanupPass());
   kernelModulePM.addPass(pto::createVPTOOptimizeVcvtPass());
   kernelModulePM.addPass(pto::createVPTOMaskSimplifyPass());
+  kernelModulePM.addPass(pto::createVPTONormalizeEquivalentVcvtPass());
   kernelModulePM.addPass(createReconcileUnrealizedCastsPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       createVPTOExpandWrapperOpsPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOInferVPTOVecScopePass());
+  kernelModulePM.addPass(createCSEPass());
   if (enableSoftPostUpdate) {
     kernelModulePM.addPass(pto::createVPTOSoftPostUpdatePass());
   }
@@ -3129,13 +3156,6 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(createLoopInvariantCodeMotionPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTONarrowVPTOLoopCountersPass());
-  kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
-  // SoftOps are materialized only after all VPTO optimization and layout
-  // decisions.  The materializer creates a temporary func.call; inline it
-  // immediately so the final legality check sees the actual VPTO sequence.
-  kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
-  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
   // Reconstruct the optimized reduction tree before scheduling so the
@@ -3152,14 +3172,14 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
-static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
+static void
+lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module,
+                      const pto::ExpandTileOpOptions &expandOpts,
+                      bool enableLegacyFusionLifecycle) {
   auto &kernelModulePM = pm.nest<ModuleOp>();
   auto moduleArchAttr =
       module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
   const bool isA2A3 = moduleArchAttr && isA2A3Arch(moduleArchAttr.getValue());
-  const bool enableA5VPTOPostLoweringFusionLifecycle =
-      enableOpFusion && moduleArchAttr && moduleArchAttr.getValue() == "a5";
-
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createLowerPTOToUBufOpsPass());
   if (isA2A3) {
@@ -3169,13 +3189,19 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
     return;
   }
 
-  kernelModulePM.addPass(pto::createExpandTileOpPass());
+  kernelModulePM.addPass(pto::createExpandTileOpPass(expandOpts));
 
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createFoldTileBufIntrinsicsPass("shape-only"));
-  if (enableA5VPTOPostLoweringFusionLifecycle) {
+  if (enableLegacyFusionLifecycle) {
     kernelModulePM.addPass(pto::createPTOLowLevelLoopFusionPass());
+    // Establish vector-scope boundaries after structural loop fusion. The
+    // remaining fusion-local optimizations then operate inside those scopes,
+    // and generic canonicalization/CSE cannot reuse vector values across
+    // synchronization or MTE boundaries.
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOInferVPTOVecScopePass());
     kernelModulePM.addPass(mlir::createCanonicalizerPass());
     kernelModulePM.addPass(mlir::createCSEPass());
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
@@ -3218,15 +3244,15 @@ buildVPTOEmissionOptions(const pto::CANNVersion &cannVersion,
   options.targetTriple = "hiipu64-hisilicon-cce";
   options.cannVersion = cannVersion;
   std::string arch = normalizeArch(targetArch);
-  if (isA2A3Arch(arch)) {
+  if (isA2A3Arch(arch))
     options.march = "dav-c220-vec";
-  }
   return options;
 }
 
 static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
                                  bool emitHostStub,
-                                 const pto::CANNVersion &cannVersion) {
+                                 const pto::CANNVersion &cannVersion,
+                                 bool useVMIFusionPipeline) {
   if (emitVPTO) {
     result.kind = PTOASCompileResultKind::Text;
     llvm::raw_string_ostream os(result.textOutput);
@@ -3270,12 +3296,18 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
   }
 
   result.vptoStubSource = std::move(stubSource);
+  result.objectEmissionOptions.disableBishengVFFusion =
+      useVMIFusionPipeline || disableBishengVFFusion;
   result.kind = PTOASCompileResultKind::VPTOObject;
   return 0;
 }
 
 static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
-                                            bool hasTileOpsToExpand) {
+                                            bool hasTileOpsToExpand,
+                                            const pto::ExpandTileOpOptions
+                                                *expandOptions,
+                                            bool useVMIFusionPipeline,
+                                            bool enableLegacyFusionLifecycle) {
   PassManager pm(module->getContext());
   pm.enableVerifier();
   if (!hasTileOpsToExpand) {
@@ -3284,7 +3316,13 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   pm.addPass(pto::createVPTOSplitCVModulePass());
   pm.addPass(pto::createVPTONormalizeContainerPass());
   if (hasTileOpsToExpand) {
-    lowerPTOToVPTOBackend(pm, module.get());
+    if (!expandOptions) {
+      llvm::errs() << "Error: tile expansion requires resolved TileLib "
+                      "options.\n";
+      return failure();
+    }
+    lowerPTOToVPTOBackend(pm, module.get(), *expandOptions,
+                          enableLegacyFusionLifecycle);
   }
   auto &kernelModulePM = pm.nest<ModuleOp>();
   // Inline legal direct calls before VMI layout assignment so private helper
@@ -3294,7 +3332,21 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   // the pipeline can use MLIR's standard Func inliner implementation.
   kernelModulePM.addPass(std::make_unique<ApplySIMTEntryNoInlinePass>());
   kernelModulePM.addPass(createInlinerPass());
-  appendVMISemanticPipeline(kernelModulePM);
+  // VMI semantic/layout/lowering is mandatory for direct VMI input whenever
+  // VMI is enabled or already present. Loop fusion and load/store forwarding
+  // remain opt-in.
+  bool containsVMI = false;
+  module->walk([&](Operation *op) {
+    if (op->getName().getStringRef().starts_with("pto.vmi.")) {
+      containsVMI = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (enableVMI || containsVMI)
+    appendVMISemanticPipeline(kernelModulePM, useVMIFusionPipeline,
+                              enableVMILoopFusion,
+                              enableVMILoadStoreElision);
   prepareVPTOForEmission(pm);
   if (failed(applyConfiguredPassManagerCLOptions(
           pm, "VPTO unified emission pipeline")))
@@ -3306,14 +3358,38 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   return success();
 }
 
-static void appendVMISemanticPipeline(OpPassManager &pm) {
-  // Materialize unsigned carriers for sign-sensitive VMI ops before any
-  // verifier, layout, or lowering pass sees signless integer element types.
+static void appendVMISemanticPipeline(OpPassManager &pm,
+                                      bool enableFusionOptimizations,
+                                      bool enableLoopFusion,
+                                      bool enableLoadStoreElision) {
+  if (enableFusionOptimizations) {
+    // Optimize fusion regions while loads and stores are still unified VMI ops.
+    if (enableLoopFusion) {
+      pm.addPass(pto::createPTOVmiLoopFusionPass());
+      // Infer vector scopes immediately after VMI loop fusion so subsequent
+      // canonicalization and forwarding cannot merge values across the
+      // newly fused loop boundary.
+      pm.addNestedPass<func::FuncOp>(
+          pto::createPTOInferVPTOVecScopePass());
+      pm.addPass(createCanonicalizerPass());
+      pm.addPass(createCSEPass());
+    }
+    if (enableLoadStoreElision) {
+      pm.addNestedPass<func::FuncOp>(
+          pto::createPTOVmiLoadStoreElisionPass());
+      pm.addPass(createCanonicalizerPass());
+      pm.addPass(createCSEPass());
+    }
+  }
+  // Normalize signless integer element types after the VMI fusion decisions
+  // have been made. Fusion operates on the surface VMI contract and should
+  // not depend on the later physical type normalization.
   pm.addNestedPass<func::FuncOp>(
       pto::createVMINormalizeSignlessIntToUnsignedPass());
-  // Expand unified VMI ops before layout assignment so grouped vci becomes
-  // the contiguous-only legacy group_iota producer. Layout assignment can
-  // then materialize any consumer-requested non-contiguous use explicitly.
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
+  // Expand unified VMI ops to legacy ops before layout assignment,
+  // so downstream passes only see legacy ops.
   pm.addPass(pto::createVMILowerUnifiedToLegacyPass());
   pm.addPass(createCanonicalizerPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());
@@ -3340,7 +3416,18 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   pm.addPass(createCSEPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createPTOValidateVMILayoutIRPass());
+  pm.addNestedPass<func::FuncOp>(
+      pto::createPTOFlattenFusionRegionPass());
   pm.addPass(pto::createVMIToVPTOPass());
+  // VMIToVPTO lowers VMI ops into VPTO vector ops and re-materializes
+  // tile_buf_addr intrinsics on the resulting tile handles. Fold them now
+  // (addr-only) so VPTOLLVMEmitter's type converter never sees a
+  // tile_buf_addr with a !pto.ptr result — that path only handles MemRef
+  // sources and would otherwise produce an illegal !llvm.ptr result.
+  pm.addNestedPass<func::FuncOp>(
+      pto::createFoldTileBufIntrinsicsPass("addr-only"));
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
 }
 
 /// Reject statically invalid scf.for steps at the PTOAS input boundary.
@@ -3373,8 +3460,9 @@ int mlir::pto::compilePTOASModule(
   if (failed(pto::validateStructProvenance(*module))) {
     return 1;
   }
-
   std::string arch = resolveEffectiveTargetArch(*module, context.getArch());
+  int argc = context.getArgc();
+  char **argv = context.getArgv();
 
   // Name-hint provenance: textual .pto inputs had their SSA/arg/block-arg names
   // attached to op Locations by the driver right after parsing. Collect the
@@ -3402,10 +3490,6 @@ int mlir::pto::compilePTOASModule(
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
     return 1;
   }
-  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
-    llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
-    return 1;
-  }
 
   module->getOperation()->setAttr("pto.target_arch",
                                   mlir::StringAttr::get(module->getContext(), arch));
@@ -3427,6 +3511,10 @@ int mlir::pto::compilePTOASModule(
                     "--pto-level=level2 or level3 is required.\n";
   }
 
+  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
+    llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
+    return 1;
+  }
   if (enableUnrollAfterLoopFusion && !(opFusionEnabled && arch == "a5")) {
     llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
                     "--pto-arch=a5 and --enable-op-fusion.\n";
@@ -3451,6 +3539,14 @@ int mlir::pto::compilePTOASModule(
       enableA5FusionPath && effectiveBackend == PTOBackend::EmitC;
   const bool enableA5VPTOFusionPath =
       enableA5FusionPath && effectiveBackend == PTOBackend::VPTO;
+  // Preserve the existing VPTO pipeline unless both experimental controls
+  // were explicitly requested. A5 op fusion is opt-in only; explicit
+  // --enable-op-fusion=true is required to select VMI candidates or replace
+  // the legacy fusion lifecycle.
+  const bool useVMIFusionPipeline =
+      enableVMI && requestedEnableOpFusion && enableA5VPTOFusionPath;
+  const bool enableLegacyVPTOFusionLifecycle =
+      enableA5VPTOFusionPath && !useVMIFusionPipeline;
 
   if (enableVfSimCostmodelOptimization &&
       !(enableA5EmitCFusionPath || enableA5VPTOFusionPath)) {
@@ -3478,9 +3574,8 @@ int mlir::pto::compilePTOASModule(
   module->walk([&](mlir::func::FuncOp func) {
     auto hintAttr =
         func->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint");
-    if (!hintAttr) {
+    if (!hintAttr)
       return;
-    }
 
     std::string normalizedHint;
     if (!parseAutoSyncTailHint(hintAttr.getValue(), normalizedHint)) {
@@ -3494,9 +3589,8 @@ int mlir::pto::compilePTOASModule(
     func->setAttr("pto.auto_sync_tail_hint",
                   mlir::StringAttr::get(module->getContext(), normalizedHint));
   });
-  if (invalidAutoSyncTailHint) {
+  if (invalidAutoSyncTailHint)
     return 1;
-  }
 
   bool hasTAssign = false;
   module->walk([&](pto::TAssignOp) { hasTAssign = true; });
@@ -3554,7 +3648,9 @@ int mlir::pto::compilePTOASModule(
   if (effectiveLevel == PTOBuildLevel::Level3) {
     // In level3 the caller owns local memory and PTOPlanMemory is skipped, so
     // every allocation must carry an explicit physical address. For
-    // multi-buffer, `addr` is the base of the contiguous N-slot region.
+    // multi-buffer, `addr` is the base of the contiguous N-slot region; the
+    // alloc lowering fans it out into the multi-address `pto.pointer_cast`
+    // PlanMemory would otherwise produce.
     bool missing = false;
     module->walk([&](pto::AllocTileOp op) {
       if (!op.getAddr()) {
@@ -3569,9 +3665,8 @@ int mlir::pto::compilePTOASModule(
         missing = true;
       }
     });
-    if (missing) {
+    if (missing)
       return 1;
-    }
   } else {
     bool hasAddr = false;
     module->walk([&](pto::AllocTileOp op) {
@@ -3588,9 +3683,8 @@ int mlir::pto::compilePTOASModule(
         hasAddr = true;
       }
     });
-    if (hasAddr) {
+    if (hasAddr)
       return 1;
-    }
   }
 
   if (!validateReserveBufferLevelRules(*module, effectiveLevel)) {
@@ -3611,6 +3705,10 @@ int mlir::pto::compilePTOASModule(
   }
 
   const bool hasTileOpsToExpand = hasUnexpandedTileOps(*module);
+  std::optional<pto::ExpandTileOpOptions> expandOptions;
+  if (effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand &&
+      tileLibBackend != TileLibBackend::TileLang)
+    expandOptions = resolveExpandTileOpOptions(argc, argv);
 
   if (effectiveBackend == PTOBackend::VPTO && !hasTileOpsToExpand) {
     if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
@@ -3618,19 +3716,20 @@ int mlir::pto::compilePTOASModule(
                       "skipping the shared PTO-to-VPTO lowering pipeline.\n";
       return 1;
     }
-    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
+    if (failed(runVPTOBackendPipeline(
+            module, hasTileOpsToExpand, /*expandOptions=*/nullptr,
+            useVMIFusionPipeline, enableLegacyVPTOFusionLifecycle)))
       return 1;
-    }
     return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
-                                 context.getCANNVersionOrDefault());
+                                 context.getCANNVersionOrDefault(),
+                                 useVMIFusionPipeline);
   }
 
   // Main PassManager
   PassManager pm(module->getContext());
 
-  if (failed(applyPassManagerCLOptions(pm))) {
+  if (failed(applyPassManagerCLOptions(pm)))
     return 1;
-  }
 
   // Rank-2 → rank-5 view canonicalization is currently gated on the VPTO
   // backend to limit blast radius.  A3/A5 EmitC codegen already pads strides
@@ -3638,31 +3737,42 @@ int mlir::pto::compilePTOASModule(
   // does not need the canonicalization pass at the IR level.  When VPTO
   // validation is complete and the pass is proven stable, the gate can be
   // lifted to make it unconditional for all backends.
-  if (effectiveBackend == PTOBackend::VPTO) {
+  if (effectiveBackend == PTOBackend::VPTO)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
-  }
   pm.addPass(createSerialFrontendPipeLoweringPass());
   //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
-  if (!disableInferLayout) {
+  if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
-  }
   // PTOViewToMemref is generic view lowering required by both backends; keep it
   // outside the local-memory planning gate so default A2/A3 EmitC still lowers
   // pto.make_tensor_view before backend legalization.
   const bool isA2A3 = isA2A3Arch(arch);
-  if (!isA2A3) {
+  if (!isA2A3)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
-  }
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOValidateIntToPtrUsesPass());
 
   // PTODSL legality discovery happens on tile-native PTO IR before fusion.
   // Fusion may later filter the ordered `candidates` array; ExpandTileOp
   // consumes the first candidate that remains.
-  if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand) {
-    pm.addPass(pto::createInsertTemplateAttributesPass());
+  if (!isA2A3 && expandOptions &&
+      expandOptions->tileLibBackend == "ptodsl") {
+    auto insertOptions =
+        buildInsertTemplateAttributesOptions(*expandOptions);
+    pm.addPass(
+        pto::createInsertTemplateAttributesPass(insertOptions));
+
+    // The VMI planner must see the selected implementation and its fallback
+    // boundary before it forms tile-native fusion regions. Keep the legacy
+    // path's ordinary selection in its historical position below so existing
+    // MI fusion behavior is unchanged.
+    if (useVMIFusionPipeline) {
+      pto::SelectTemplateCandidateOptions selectOptions;
+      selectOptions.selectionPolicy = "prefer-vmi";
+      pm.addPass(pto::createSelectTemplateCandidatePass(selectOptions));
+    }
   }
 
   // Keep frontend fusion on tile-native PTO IR and annotate last_use directly
@@ -3678,6 +3788,8 @@ int mlir::pto::compilePTOASModule(
   fusionPlanOpts.enableVfSimCostmodelOptimization =
       enableVfSimCostmodelOptimization;
   fusionPlanOpts.dumpVfSimUnrollTest = dumpVfSimUnrollTest;
+  if (useVMIFusionPipeline)
+    fusionPlanOpts.strategy = "vmi-ub-disjoint";
   if (!isA2A3 && enableA5EmitCFusionPath) {
     pm.addNestedPass<mlir::func::FuncOp>(
         pto::createFusionPlanPass(fusionPlanOpts));
@@ -3689,7 +3801,14 @@ int mlir::pto::compilePTOASModule(
     pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionRegionGenPass());
   }
+  if (!isA2A3 && expandOptions &&
+      expandOptions->tileLibBackend == "ptodsl" && !useVMIFusionPipeline) {
+    pto::SelectTemplateCandidateOptions selectOptions;
+    selectOptions.selectionPolicy = "ordinary-only";
+    pm.addPass(pto::createSelectTemplateCandidatePass(selectOptions));
+  }
 
+  pm.addPass(pto::createPTOViewToMemrefPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOMaterializeImplicitTmpPass(
           effectiveLevel == PTOBuildLevel::Level3));
@@ -3703,18 +3822,20 @@ int mlir::pto::compilePTOASModule(
   }
 
   if (effectiveLevel != PTOBuildLevel::Level3) {
-    pto::PlanMemoryOptions planMemoryOptions;
-    planMemoryOptions.memMode = "local";
+    PlanMemoryOptions planMemoryOption;
+    planMemoryOption.memMode = MemPlanMode::LOCAL_MEM_PLAN;
+    planMemoryOption.enableGlobalReuse = false;
+    planMemoryOption.enablePrintMemoryAllocatedSize = false;
     bool effectivePlanMemoryOrderBySize = planMemoryOrderBySize;
     if (planMemoryImpl == "modern" &&
         planMemoryOrderBySize.getNumOccurrences() == 0) {
       effectivePlanMemoryOrderBySize = true;
     }
-    planMemoryOptions.orderBySize = effectivePlanMemoryOrderBySize;
+    planMemoryOption.orderBySize = effectivePlanMemoryOrderBySize;
     if (planMemoryImpl == "legacy") {
-      pm.addPass(pto::createPlanMemoryPass(planMemoryOptions));
+      pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
     } else {
-      pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
+      pm.addPass(pto::createPlanMemoryModernPass(planMemoryOption));
     }
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
@@ -3723,15 +3844,16 @@ int mlir::pto::compilePTOASModule(
   // Conditionally add one automatic synchronization mode. Barrier-all is a
   // conservative standalone pass; InsertSync and GraphSyncSolver are set/wait
   // solvers. Sync runs BEFORE PTOResolveBufferSelect so it sees per-use
-  // `pto.multi_tile_get` operations and keeps their slot identity for alias
-  // and event-id analysis.
+  // `pto.slot_marker` ops and can keep multi-buffer slot identity (const slot
+  // K vs slot K' or dynamic slot) for the alias / event-id analysis.
   // solvers, while BufidSync is A5-only get_buf/rls_buf synchronization.
   if (enableInsertSync) {
-    if (emitMlirIR)
+    if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false, 0));
-    else
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+    } else {
+      pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
+    }
   }
   else if (enableBufidSync) {
     if (emitMlirIR) {
@@ -3740,15 +3862,17 @@ int mlir::pto::compilePTOASModule(
     } else {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidSyncDebug;
-      pm.addNestedPass<func::FuncOp>(pto::createPTOBufidSyncPass(options));
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pto::createPTOBufidSyncPass(options));
     }
   } else if (enableInjectBarrierAllSync) {
-    if (emitMlirIR)
+    if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::BarrierAll, false, 0));
-    else
-      pm.addNestedPass<func::FuncOp>(
+    } else {
+      pm.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOInjectBarrierAllSyncPass());
+    }
   } else if (enableGraphSyncSolver) {
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
@@ -3757,17 +3881,17 @@ int mlir::pto::compilePTOASModule(
     } else {
       PTOGraphSyncSolverOptions options;
       options.eventIdNumMax = graphSyncSolverEventIdMax;
-      pm.addNestedPass<func::FuncOp>(
+      pm.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOGraphSyncSolverPass(options));
     }
   }
 
-  // Materialize each `pto.multi_tile_get` as an addressed `pto.alloc_tile`;
-  // dynamic selections use an `arith.select` chain over planned addresses.
+  // Materialize per-slot single-address `pto.pointer_cast` (constant slot)
+  // or an `arith.select` chain (dynamic slot). The multi-address cast
+  // produced by PlanMemory survives as the alloc anchor.
   pm.addPass(pto::createPTOResolveBufferSelectPass());
-  if (effectiveBackend == PTOBackend::EmitC) {
+  if (effectiveBackend == PTOBackend::EmitC)
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
-  }
 
   module->getOperation()->setAttr(
       "pto.target_arch",
@@ -3785,17 +3909,20 @@ int mlir::pto::compilePTOASModule(
     return 0;
   }
 
+  // Reintroduce tile-native handles once on the shared mainline so both
+  // backends consume the same post-planning seam IR.
+  pm.addPass(pto::createPTOMaterializeTileHandlesPass());
   pm.addPass(createCSEPass());
-  // PTODSL backend helpers already use the tile-native ABI.
+  // Inline PTODSL backend helpers only after the shared mainline has
+  // materialized tile-native handles, so helper arguments are restored to the
+  // tile_buf ABI before qk.as_ptr()-style bridges are cloned into callers.
   pm.addPass(pto::createPTOInlineBackendHelpersPass());
-  if (effectiveBackend == PTOBackend::EmitC) {
+  if (effectiveBackend == PTOBackend::EmitC)
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
-  }
   pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
-  if (failed(applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline"))) {
+  if (failed(applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline")))
     return 1;
-  }
 
   if (effectiveBackend == PTOBackend::VPTO) {
     if (failed(pm.run(*module))) {
@@ -3803,22 +3930,29 @@ int mlir::pto::compilePTOASModule(
       return 1;
     }
 
-    if (ptoPrintSeamIR) {
+    if (ptoPrintSeamIR)
       printSharedPreBackendSeamIR(*module);
-    }
+    // The PTODSL daemon is needed before the main pipeline for metadata.
+    // Legacy TileLang can still be resolved lazily immediately before
+    // ExpandTileOp, preserving the prior --emit-pto-ir behavior.
+    if (hasTileOpsToExpand && !expandOptions)
+      expandOptions = resolveExpandTileOpOptions(argc, argv);
+
     if (ptoPrintSeamIR) {
       module->print(llvm::errs());
       llvm::errs() << "\n";
     }
-    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
+    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile)))
       return 1;
-    }
 
-    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
+    if (failed(runVPTOBackendPipeline(
+            module, hasTileOpsToExpand,
+            expandOptions ? &*expandOptions : nullptr,
+            useVMIFusionPipeline, enableLegacyVPTOFusionLifecycle)))
       return 1;
-    }
     return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
-                                 context.getCANNVersionOrDefault());
+                                 context.getCANNVersionOrDefault(),
+                                 useVMIFusionPipeline);
   }
 
   if (failed(pm.run(*module))) {
@@ -3826,12 +3960,10 @@ int mlir::pto::compilePTOASModule(
     return 1;
   }
 
-  if (ptoPrintSeamIR) {
+  if (ptoPrintSeamIR)
     printSharedPreBackendSeamIR(*module);
-  }
-  if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
+  if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile)))
     return 1;
-  }
 
   narrowUnusedMultiResultProvenanceLocs(module.get());
   splitDerivedSingleResultProvenanceLocs(module.get());
@@ -3894,4 +4026,10 @@ int mlir::pto::compilePTOASModule(
   result.kind = PTOASCompileResultKind::Text;
   result.textOutput = std::move(cppOutput);
   return 0;
+}
+
+// ptoas_entrypoint: C-callable entry for Python runtime launcher.
+// This is loaded via ctypes from libPTOASCompiler.so.
+extern "C" int ptoas_entrypoint(int argc, char **argv) {
+  return mlir::pto::runPTOAS(argc, argv);
 }

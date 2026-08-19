@@ -16,6 +16,7 @@ set(PTOAS_RUNTIME_SOURCES
   driver.cpp
   VPTOHostStubEmission.cpp
   ObjectEmission.cpp
+  TilelangDaemon.cpp
 )
 
 add_library(PTOASVFSIMTSizePatcher STATIC
@@ -66,6 +67,11 @@ endforeach()
 function(ptoas_configure_runtime_compile_target target_name)
   target_compile_definitions(${target_name} PRIVATE
     PTOAS_RELEASE_VERSION="${PTOAS_CLI_VERSION}"
+    PTOAS_DEFAULT_TILELANG_PATH="${CMAKE_SOURCE_DIR}/lib/TileOps"
+    PTOAS_DEFAULT_TILELANG_PKG_PATH="${CMAKE_SOURCE_DIR}/tilelang-dsl/python"
+    PTOAS_DEFAULT_PTODSL_PKG_PATH="${CMAKE_SOURCE_DIR}/ptodsl"
+    PTOAS_DEFAULT_TILEOPS_PKG_PATH="${CMAKE_SOURCE_DIR}/lib"
+    PTOAS_DEFAULT_PTODSL_PYTHON_EXE="${Python3_EXECUTABLE}"
     ${ARGN}
   )
   add_dependencies(${target_name}
