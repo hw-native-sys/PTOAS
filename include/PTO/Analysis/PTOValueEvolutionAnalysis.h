@@ -48,7 +48,6 @@ enum class PTOAnalysisUnknownReason {
   InexactUnitConversion,
   DifferentBase,
   TypeMismatch,
-  ZeroDelta,
 };
 
 llvm::StringRef stringifyPTOAnalysisUnknownReason(
@@ -81,9 +80,14 @@ enum class PTOCastKind {
 struct PTOTypedExpr;
 using PTOTypedExprRef = std::shared_ptr<const PTOTypedExpr>;
 
-/// A typed finite-width scalar expression.  Arithmetic nodes keep the result
+/// A typed finite-width scalar expression. Arithmetic nodes keep the result
 /// type from the source IR; synthetic scale constants may have a null type and
 /// adapt only when a consumer proves an exact target representation.
+///
+/// A non-null `sourceValue` marks a node as the expression for that exact SSA
+/// value. Consumers must preserve that finite-width operation boundary rather
+/// than reassociate through the node. Nodes without a source value are
+/// synthetic expressions assembled from already-proven components.
 struct PTOTypedExpr {
   enum class Kind { Constant, Opaque, Add, Sub, Mul, Cast };
 
@@ -92,6 +96,7 @@ struct PTOTypedExpr {
   APInt constant = APInt(1, 0);
   Value opaque;
   PTOCastKind castKind = PTOCastKind::IndexCast;
+  Value sourceValue;
   Operation *sourceOperation = nullptr;
   PTOTypedExprRef lhs;
   PTOTypedExprRef rhs;
@@ -110,14 +115,15 @@ struct PTOLinearExpr {
 PTOTypedExprRef makePTOConstantExpr(int64_t value, Type type = {});
 PTOTypedExprRef makePTOOpaqueExpr(Value value);
 PTOTypedExprRef makePTOAddExpr(PTOTypedExprRef lhs, PTOTypedExprRef rhs,
-                               Type type = {});
+                               Type type = {}, Value sourceValue = {});
 PTOTypedExprRef makePTOSubExpr(PTOTypedExprRef lhs, PTOTypedExprRef rhs,
-                               Type type = {});
+                               Type type = {}, Value sourceValue = {});
 PTOTypedExprRef makePTOMulExpr(PTOTypedExprRef lhs, PTOTypedExprRef rhs,
-                               Type type = {});
+                               Type type = {}, Value sourceValue = {});
 PTOTypedExprRef makePTOCastExpr(PTOCastKind kind, PTOTypedExprRef input,
                                 Type resultType,
-                                Operation *sourceOperation = nullptr);
+                                Operation *sourceOperation = nullptr,
+                                Value sourceValue = {});
 
 std::optional<int64_t> foldPTOConstant(const PTOTypedExprRef &expr);
 std::optional<PTOLinearExpr> normalizePTOLinearExpr(
@@ -162,8 +168,28 @@ public:
   PTOValueEvolutionAnalysis(func::FuncOp func, AnalysisManager &);
 
   PTOTypedExprRef getExpr(Value value);
+
+  /// Returns the evolution of a source SSA value under its actual typed,
+  /// finite-width semantics, including range, cast, and no-wrap proofs.
   PTOAnalysisResult<PTOLoopEvolution> getEvolution(Value value,
                                                    scf::ForOp loop);
+
+  /// Returns the evolution of a synthetic expression by composing proven
+  /// child evolutions. If `expression` is source-backed, this is exactly the
+  /// corresponding getEvolution(Value, loop) query and never a stronger
+  /// recursive fallback.
+  PTOAnalysisResult<PTOLoopEvolution>
+  getEvolution(const PTOTypedExprRef &expression, scf::ForOp loop);
+
+  /// Returns a point-value expression suitable for exact address-difference
+  /// algebra. A matching no-wrap flag on the original SSA operation is the
+  /// primary proof for source-backed arithmetic; without one, operand ranges
+  /// must prove that the result fits. Casts are expanded only when their
+  /// proven source range fits the result type. Unproven source operations
+  /// remain opaque SSA atoms.
+  PTOAnalysisResult<PTOTypedExprRef>
+  getPointExpression(const PTOTypedExprRef &expression);
+
   PTOAnalysisResult<PTOFiniteRange> getRange(Value value, scf::ForOp loop);
   PTOAnalysisResult<bool> preservesValue(Operation *castOp,
                                          scf::ForOp loop);
@@ -174,6 +200,13 @@ private:
 
   PTOAnalysisResult<PTOLoopEvolution>
   getEvolutionImpl(Value value, scf::ForOp loop, Interpretation interpretation);
+  PTOAnalysisResult<PTOLoopEvolution>
+  getSyntheticEvolutionImpl(const PTOTypedExprRef &expression,
+                            scf::ForOp loop,
+                            Interpretation interpretation,
+                            bool sourceProvesNoWrap = false);
+  PTOAnalysisResult<PTOTypedExprRef>
+  getPointExpressionImpl(const PTOTypedExprRef &expression);
 
   func::FuncOp func;
   DenseMap<Value, PTOTypedExprRef> expressionCache;

@@ -13,7 +13,8 @@
 // head, its pure definition is cloned before the first access.
 // CHECK-LABEL: func.func @late_pure_symbolic_leaf
 // CHECK: pto.vecscope
-// CHECK: [[STEP:%[a-zA-Z0-9_]+]] = arith.select
+// CHECK: [[STEP_I32:%[a-zA-Z0-9_]+]] = arith.select
+// CHECK: [[STEP:%[a-zA-Z0-9_]+]] = arith.index_cast [[STEP_I32]]
 // CHECK: %{{.*}}, [[L1:%[a-zA-Z0-9_]+]] = pto.vlds {{%.*}}[[[STEP]]]
 // CHECK: %{{.*}}, [[L2:%[a-zA-Z0-9_]+]] = pto.vlds [[L1]][[[STEP]]]
 // CHECK: %{{.*}} = pto.vlds [[L2]][%c0]
@@ -46,13 +47,14 @@
 // CHECK: {{^ *}}%{{[^, ]+}} = pto.vlds {{%.*}}[{{%.*}}]
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @late_pure_symbolic_leaf(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %cond: i1, %lhs: index, %rhs: index) attributes {pto.kernel} {
+  func.func @late_pure_symbolic_leaf(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %cond: i1, %lhs: i32, %rhs: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
       pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %step = arith.select %cond, %lhs, %rhs : index
+      %step_i32 = arith.select %cond, %lhs, %rhs : i32
+      %step = arith.index_cast %step_i32 : i32 to index
       %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
       pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
       %step2 = arith.addi %step, %step : index
@@ -62,8 +64,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @direct_symbolic_leaf_vsts(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %step: index) attributes {pto.kernel} {
+  func.func @direct_symbolic_leaf_vsts(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -75,10 +78,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @direct_symbolic_leaf_vsstb(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %step: i16) attributes {pto.kernel} {
+  func.func @direct_symbolic_leaf_vsstb(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %step_i8: i8) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c0_i16 = arith.constant 0 : i16
     %c1_i16 = arith.constant 1 : i16
+    %step = arith.extsi %step_i8 : i8 to i16
     %step2 = arith.addi %step, %step : i16
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>

@@ -55,8 +55,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @sequential_plds(
       %src: !pto.ptr<i8, ub>,
       %sink: !pto.ptr<i8, ub>,
-      %step: index) attributes {pto.kernel} {
+      %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %m0 = pto.plds %src[%c0], "NORM" : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
@@ -92,8 +93,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @sequential_psts(
       %mask: !pto.mask<b8>,
       %dst: !pto.ptr<i8, ub>,
-      %step: index) attributes {pto.kernel} {
+      %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       pto.psts %mask, %dst[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<i8, ub>, index

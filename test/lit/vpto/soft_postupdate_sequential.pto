@@ -28,10 +28,22 @@
 
 // The run step may be a loop-invariant affine value instead of a constant.
 // CHECK-LABEL: func.func @sequential_affine_step
-// CHECK-SAME: ({{.*}}, [[STEP:%[a-zA-Z0-9_]+]]: index
+// CHECK: [[STEP:%[a-zA-Z0-9_]+]] = arith.index_cast
 // CHECK: %{{.*}}, [[A1:%[a-zA-Z0-9_]+]] = pto.vlds {{%.*}}[[[STEP]]]
 // CHECK: %{{.*}}, [[A2:%[a-zA-Z0-9_]+]] = pto.vlds [[A1]][[[STEP]]]
 // CHECK: %{{.*}} = pto.vlds [[A2]][%c0]
+
+// The same source arithmetic without an operation-local no-wrap proof stays
+// opaque to point-value difference analysis.
+// CHECK-LABEL: func.func @sequential_unproven_affine_step
+// CHECK-COUNT-3: pto.vlds {{.*}} -> !pto.vreg<64xf32>{{$}}
+
+// An explicit source no-wrap flag is the primary proof and does not require
+// narrowing the otherwise full-range index operand.
+// CHECK-LABEL: func.func @sequential_explicit_no_wrap_step
+// CHECK: %{{.*}}, [[N1:%[a-zA-Z0-9_]+]] = pto.vlds {{%.*}}[[[NSTEP:%[a-zA-Z0-9_]+]]]
+// CHECK: %{{.*}}, [[N2:%[a-zA-Z0-9_]+]] = pto.vlds [[N1]][[[NSTEP]]]
+// CHECK: %{{.*}} = pto.vlds [[N2]][%c0]
 
 // Base and offset both vary, but a single dynamic addptr per later candidate
 // does not cover the new pointer-chain cost.
@@ -112,9 +124,40 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @sequential_affine_step(%src: !pto.ptr<f32, ub>, %step: index, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+  func.func @sequential_affine_step(%src: !pto.ptr<f32, ub>, %step_i32: i32, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
+    %step2 = arith.addi %step, %step : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v2 = pto.vlds %src[%step2] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @sequential_unproven_affine_step(%src: !pto.ptr<f32, ub>, %step: index, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %step2 = arith.addi %step, %step : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v2 = pto.vlds %src[%step2] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @sequential_explicit_no_wrap_step(%src: !pto.ptr<f32, ub>, %step: index, %sink: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %step2 = arith.addi %step, %step overflow<nsw> : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
@@ -153,10 +196,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @sequential_for_body(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step: index) attributes {pto.kernel} {
+  func.func @sequential_for_body(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c4 = arith.constant 4 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -172,8 +216,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @sequential_interleaved_buckets(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %load_step: index, %store_step: index) attributes {pto.kernel} {
+  func.func @sequential_interleaved_buckets(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %load_step_i32: i32, %store_step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %load_step = arith.index_cast %load_step_i32 : i32 to index
+    %store_step = arith.index_cast %store_step_i32 : i32 to index
     %load_step2 = arith.addi %load_step, %load_step : index
     %store_step2 = arith.addi %store_step, %store_step : index
     pto.vecscope {
@@ -188,8 +234,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @sequential_maximal_runs(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step0: index, %step1: index) attributes {pto.kernel} {
+  func.func @sequential_maximal_runs(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step0_i32: i32, %step1_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step0 = arith.index_cast %step0_i32 : i32 to index
+    %step1 = arith.index_cast %step1_i32 : i32 to index
     %step0_2 = arith.addi %step0, %step0 : index
     %step1_2 = arith.addi %step1, %step1 : index
     pto.vecscope {

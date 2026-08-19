@@ -14,8 +14,6 @@
 #include "PTO/Support/CodeConstants.h"
 #include "mlir/Pass/AnalysisManager.h"
 
-#include <functional>
-
 using namespace mlir;
 using namespace mlir::pto;
 
@@ -209,80 +207,12 @@ PTOAddressAnalysis::getDeltaBytes(const PTOAddressExpr &address,
   if (isZero(address.elementOffset)) {
     elementDelta = makePTOConstantExpr(0);
   } else {
-    // AddressExpr offsets can be composite expressions without a backing SSA
-    // value. Their loop delta is obtained by recursively evaluating leaves.
-    std::function<PTOAnalysisResult<PTOTypedExprRef>(const PTOTypedExprRef &)>
-        getExprDelta = [&](const PTOTypedExprRef &expr)
-        -> PTOAnalysisResult<PTOTypedExprRef> {
-      if (!expr) {
-        return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-            PTOAnalysisUnknownReason::UnsupportedOperation);
-      }
-      if (expr->kind == PTOTypedExpr::Kind::Constant) {
-        return PTOAnalysisResult<PTOTypedExprRef>::known(
-            makePTOConstantExpr(0, expr->type));
-      }
-      if (expr->kind == PTOTypedExpr::Kind::Opaque) {
-        auto evolution = valueEvolution.getEvolution(expr->opaque, loop);
-        if (!evolution) {
-          return PTOAnalysisResult<PTOTypedExprRef>::unknown(evolution.reason);
-        }
-        return PTOAnalysisResult<PTOTypedExprRef>::known(
-            evolution.value->step);
-      }
-      if (expr->kind == PTOTypedExpr::Kind::Cast) {
-        if (expr->sourceOperation &&
-            expr->sourceOperation->getNumResults() == 1) {
-          auto evolution = valueEvolution.getEvolution(
-              expr->sourceOperation->getResult(0), loop);
-          if (!evolution) {
-            return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-                evolution.reason);
-          }
-          // A value-preserving cast keeps the mathematical delta computed for
-          // the cast result. Recasting the input delta would turn a descending
-          // unsigned step such as -1 into its positive source-width bit
-          // pattern.
-          return PTOAnalysisResult<PTOTypedExprRef>::known(
-              evolution.value->step);
-        }
-        auto input = getExprDelta(expr->lhs);
-        if (!input) {
-          return input;
-        }
-        return PTOAnalysisResult<PTOTypedExprRef>::known(
-            makePTOCastExpr(expr->castKind, *input.value, expr->type,
-                            expr->sourceOperation));
-      }
-      auto lhs = getExprDelta(expr->lhs);
-      auto rhs = getExprDelta(expr->rhs);
-      if (!lhs || !rhs) {
-        return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-            !lhs ? lhs.reason : rhs.reason);
-      }
-      if (expr->kind == PTOTypedExpr::Kind::Add) {
-        return PTOAnalysisResult<PTOTypedExprRef>::known(
-            makePTOAddExpr(*lhs.value, *rhs.value, expr->type));
-      }
-      if (expr->kind == PTOTypedExpr::Kind::Sub) {
-        return PTOAnalysisResult<PTOTypedExprRef>::known(
-            makePTOSubExpr(*lhs.value, *rhs.value, expr->type));
-      }
-      bool lhsInvariant = isZero(*lhs.value);
-      bool rhsInvariant = isZero(*rhs.value);
-      if (lhsInvariant == rhsInvariant) {
-        return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-            PTOAnalysisUnknownReason::NonAffineRecurrence);
-      }
-      return PTOAnalysisResult<PTOTypedExprRef>::known(
-          lhsInvariant ? makePTOMulExpr(expr->lhs, *rhs.value, expr->type)
-                       : makePTOMulExpr(*lhs.value, expr->rhs, expr->type));
-    };
-    auto delta = getExprDelta(address.elementOffset);
-    if (!delta) {
-      return delta;
+    auto evolution =
+        valueEvolution.getEvolution(address.elementOffset, loop);
+    if (!evolution) {
+      return PTOAnalysisResult<PTOTypedExprRef>::unknown(evolution.reason);
     }
-    elementDelta = *delta.value;
+    elementDelta = evolution.value->step;
   }
 
   if (!rootDelta) {
@@ -321,8 +251,8 @@ PTOAddressAnalysis::getDeltaBytes(const PTOAddressExpr &address,
       makePTOAddExpr(*pointerBytes.value, offsetBytes,
                      offsetBytes ? offsetBytes->type : Type());
   if (isZero(result)) {
-    return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-        PTOAnalysisUnknownReason::ZeroDelta);
+    return PTOAnalysisResult<PTOTypedExprRef>::known(
+        makePTOConstantExpr(0, result ? result->type : Type()));
   }
   return PTOAnalysisResult<PTOTypedExprRef>::known(std::move(result));
 }
@@ -352,8 +282,15 @@ PTOAddressAnalysis::getPointerDifference(const PTOAddressExpr &from,
     return PTOAnalysisResult<PTOTypedExprRef>::unknown(
         PTOAnalysisUnknownReason::DifferentBase);
   }
-  return PTOAnalysisResult<PTOTypedExprRef>::known(makePTOSubExpr(
-      to.elementOffset, from.elementOffset, to.elementOffset->type));
+  auto fromOffset = valueEvolution.getPointExpression(from.elementOffset);
+  auto toOffset = valueEvolution.getPointExpression(to.elementOffset);
+  if (!fromOffset || !toOffset) {
+    return PTOAnalysisResult<PTOTypedExprRef>::unknown(
+        !fromOffset ? fromOffset.reason : toOffset.reason);
+  }
+  return PTOAnalysisResult<PTOTypedExprRef>::known(
+      makePTOSubExpr(*toOffset.value, *fromOffset.value,
+                     (*toOffset.value)->type));
 }
 
 PTOAnalysisResult<PTOTypedExprRef>
@@ -375,7 +312,12 @@ PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
       return PTOAnalysisResult<PTOTypedExprRef>::unknown(
           PTOAnalysisUnknownReason::UnknownUnitSize);
     }
-    auto scaled = scaleExpression(from.offset->value,
+    auto pointValue =
+        valueEvolution.getPointExpression(from.offset->value);
+    if (!pointValue) {
+      return pointValue;
+    }
+    auto scaled = scaleExpression(*pointValue.value,
                                   *from.offset->unitBytes, 1);
     if (!scaled) {
       return scaled;
@@ -389,8 +331,12 @@ PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
       return PTOAnalysisResult<PTOTypedExprRef>::unknown(
           PTOAnalysisUnknownReason::UnknownUnitSize);
     }
+    auto pointValue = valueEvolution.getPointExpression(to.offset->value);
+    if (!pointValue) {
+      return pointValue;
+    }
     auto scaled =
-        scaleExpression(to.offset->value, *to.offset->unitBytes, 1);
+        scaleExpression(*pointValue.value, *to.offset->unitBytes, 1);
     if (!scaled) {
       return scaled;
     }
@@ -404,8 +350,8 @@ PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
       makePTOAddExpr(*pointerBytes.value, offsetDifference,
                      offsetDifference ? offsetDifference->type : Type());
   if (isZero(result)) {
-    return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-        PTOAnalysisUnknownReason::ZeroDelta);
+    return PTOAnalysisResult<PTOTypedExprRef>::known(
+        makePTOConstantExpr(0, result ? result->type : Type()));
   }
   return PTOAnalysisResult<PTOTypedExprRef>::known(std::move(result));
 }

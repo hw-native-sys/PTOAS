@@ -52,6 +52,25 @@
 // CHECK: scf.for
 // CHECK: pto.vlds {{.*}}[%c-1] {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
 
+// A loop-invariant effective address has Known(0) delta, but zero stride is a
+// consumer-level rejection and must not produce a post-update operation.
+// CHECK-LABEL: func.func @constant_address_zero_stride
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+
+// Source-backed add/sub/mul expressions that may wrap keep the exact
+// ValueEvolution failure and cannot be rederived from their leaves.
+// CHECK-LABEL: func.func @wrapping_addptr_arithmetic
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>{{$}}
+
+// A scaled index IV whose complete loop range is no-wrap remains eligible.
+// CHECK-LABEL: func.func @safe_scaled_addptr
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} -> !pto.vreg<256xui8>, !pto.ptr<ui8, ub>
+
 module {
   func.func @canonical_i16_no_wrap(%base: !pto.ptr<ui8, ub>) {
     %c0 = arith.constant 0 : index
@@ -183,6 +202,64 @@ module {
             : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
         %next = arith.subi %offset_i8, %c1_i8 : i8
         scf.yield %next : i8
+      }
+    }
+    return
+  }
+
+  func.func @constant_address_zero_stride(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1 {
+        %value = pto.vlds %base[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      }
+    }
+    return
+  }
+
+  func.func @wrapping_addptr_arithmetic(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %cmax = arith.constant 9223372036854775807 : index
+    %cmin = arith.constant -9223372036854775808 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1 {
+        %wrapping_add = arith.addi %iv, %cmax : index
+        %add_address = pto.addptr %base, %wrapping_add
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %add_value = pto.vlds %add_address[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %wrapping_sub = arith.subi %cmin, %iv : index
+        %sub_address = pto.addptr %base, %wrapping_sub
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %sub_value = pto.vlds %sub_address[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        %wrapping_mul = arith.muli %iv, %cmax : index
+        %mul_address = pto.addptr %base, %wrapping_mul
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %mul_value = pto.vlds %mul_address[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      }
+    }
+    return
+  }
+
+  func.func @safe_scaled_addptr(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c32 = arith.constant 32 : index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c2 step %c1 {
+        %scaled = arith.muli %iv, %c32 : index
+        %address = pto.addptr %base, %scaled
+            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+        %value = pto.vlds %address[%c0]
+            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
       }
     }
     return

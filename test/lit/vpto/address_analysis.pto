@@ -75,6 +75,19 @@
 // CHECK: type=i64 evolution=initial=-1 step=1 trip-count=3 range=signed[-1,2] no-wrap=true
 // CHECK: type=i64 evolution=initial=0 step=1 trip-count=3 range=signed[0,3] no-wrap=true
 
+// CHECK-LABEL: address-analysis @constant_address_zero_delta
+// CHECK: op=pto.vlds {{.*}} delta-bytes=0 unit1=0 unit2=0 unit4=0 unit32=0 self-difference-bytes=0
+
+// CHECK-LABEL: address-analysis @source_arithmetic_addptr
+// CHECK: type=index evolution=unknown(possible-wrap)
+// CHECK: op=pto.vlds {{.*}} delta-bytes=unknown(possible-wrap) self-difference-bytes=0
+// CHECK: type=index evolution=unknown(possible-wrap)
+// CHECK: op=pto.vlds {{.*}} delta-bytes=unknown(possible-wrap) self-difference-bytes=0
+// CHECK: type=index evolution=unknown(possible-wrap)
+// CHECK: op=pto.vlds {{.*}} delta-bytes=unknown(possible-wrap) self-difference-bytes=0
+// CHECK: type=index evolution=initial=0 step=32 trip-count=2 range=signed[0,64] no-wrap=true
+// CHECK: op=pto.vlds {{.*}} delta-bytes=32 unit1=32{{.*}}self-difference-bytes=0
+
 module attributes {pto.target_arch = "a5"} {
   func.func @direct_index(%src: !pto.ptr<f32, ub>,
                           %dst: !pto.ptr<f32, ub>,
@@ -337,6 +350,49 @@ module attributes {pto.target_arch = "a5"} {
       %safe_add_i64 = arith.index_cast %safe_add : index to i64
       %safe_sub_i64 = arith.index_cast %safe_sub : index to i64
       %safe_mul_i64 = arith.index_cast %safe_mul : index to i64
+    }
+    return
+  }
+
+  func.func @constant_address_zero_delta(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    scf.for %iv = %c0 to %c2 step %c1 {
+      %value = pto.vlds %base[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+    }
+    return
+  }
+
+  func.func @source_arithmetic_addptr(%base: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c32 = arith.constant 32 : index
+    %cmax = arith.constant 9223372036854775807 : index
+    %cmin = arith.constant -9223372036854775808 : index
+    scf.for %iv = %c0 to %c2 step %c1 {
+      %wrapping_add = arith.addi %iv, %cmax : index
+      %add_address = pto.addptr %base, %wrapping_add
+          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+      %add_value = pto.vlds %add_address[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %wrapping_sub = arith.subi %cmin, %iv : index
+      %sub_address = pto.addptr %base, %wrapping_sub
+          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+      %sub_value = pto.vlds %sub_address[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %wrapping_mul = arith.muli %iv, %cmax : index
+      %mul_address = pto.addptr %base, %wrapping_mul
+          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+      %mul_value = pto.vlds %mul_address[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %safe_mul = arith.muli %iv, %c32 : index
+      %safe_address = pto.addptr %base, %safe_mul
+          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+      %safe_value = pto.vlds %safe_address[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
     }
     return
   }

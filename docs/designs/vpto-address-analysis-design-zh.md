@@ -256,6 +256,7 @@ public:
   ProofResult preservesValue(Operation *cast,
                              const IterationDomain &domain = {});
   EvolutionResult getEvolution(Value value, scf::ForOp loop);
+  AnalysisResult<TypedExpr> getPointExpression(const TypedExpr &expression);
   ProofResult doesNotWrap(Value value, scf::ForOp loop);
 };
 ```
@@ -277,6 +278,12 @@ TypedExpr := Constant(APInt, Type)
 
 `Opaque` 是保守边界，不是错误。无法继续分解的 SSA value 仍可作为 loop-invariant
 symbol 参与仿射 step，例如 `%base + %iv * %invariant_stride`。
+
+每个由 SSA `Value` 构建的 Add/Sub/Mul/Cast 节点都保留其 backing value。对这种
+source-backed 节点，expression evolution 必须等同于
+`getEvolution(Value, loop)`：复用同一套 range、cast 和 no-wrap transfer，失败后
+不得再展开叶子得到更强结论。没有 backing value 的 synthetic 节点只组合已经证明
+安全的子 evolution；如果实际有限位宽语义无法证明，则保守返回 Unknown。
 
 表达式节点必须记录真实 source/result type。不能先把所有整数提升为无限精度整数，
 再假定算术恒不回绕；有限位宽语义是 range、cast 和 recurrence 证明的一部分。
@@ -370,6 +377,8 @@ public:
   AnalysisResult<SmallVector<AddressExpr>> getAddresses(Operation *op);
   AnalysisResult<TypedExpr> getDeltaBytes(const AddressExpr &address,
                                           scf::ForOp loop);
+  AnalysisResult<TypedExpr> getDifferenceBytes(const AddressExpr &from,
+                                               const AddressExpr &to);
   AnalysisResult<TypedExpr> convertDeltaToUnit(const TypedExpr &deltaBytes,
                                                int64_t targetUnitBytes);
 };
@@ -413,6 +422,15 @@ strideInUnit = deltaBytes / unitBytes
 
 除法必须可精确证明；不能通过截断或向下取整产生 stride。分析返回符号 TypedExpr，
 不在查询期间创建 `arith` 或 `pto.addptr` op。
+
+`getDifferenceBytes` 是两个地址在同一点的差值查询，没有 loop domain。它可以消去
+相同的 SSA point value，也可以通过 ValueEvolution 的 point-expression 查询展开由
+原始 SSA operation 的 no-wrap flag 证明安全的 Add/Sub/Mul；没有匹配 flag 时，再由
+operand point range 证明结果是否落在类型范围内。对完整输入域保值的 widening cast
+也可以展开。两种证明都没有的 source-backed 节点仍保持 opaque，不能借用不存在的
+loop range 做重关联。精确结果为零时，两个公共 delta 查询都返回 Known(0)，包括单位
+换算后的零。是否接受 zero stride 属于 consumer 策略；SoftPostUpdate 的 loop 与
+sequential 路径分别显式拒绝零步长。
 
 对于 offset 直接为 `index` IV 的情况，`delta(offset)` 直接来自 loop evolution；没有
 cast 并不会绕过分析。对于 `i32 -> index`，分析先根据 i32 recurrence 的范围和

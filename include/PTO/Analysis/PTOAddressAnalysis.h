@@ -71,6 +71,10 @@ public:
   getDeltaInUnit(const PTOAddressExpr &address, scf::ForOp loop,
                  int64_t targetUnitBytes);
 
+  /// Returns the point-value byte difference between two addresses. This
+  /// query has no loop domain, so source-backed finite-width arithmetic is
+  /// reassociated only when ValueEvolution finds an operation-local no-wrap or
+  /// value-preservation proof. Unproven source operations stay opaque.
   PTOAnalysisResult<PTOTypedExprRef>
   getDifferenceBytes(const PTOAddressExpr &from,
                      const PTOAddressExpr &to);

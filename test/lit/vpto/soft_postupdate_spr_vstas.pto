@@ -53,8 +53,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
   func.func @sequential_sprsts(
       %dst: !pto.ptr<ui32, ub>,
-      %step: i32) attributes {pto.kernel} {
+      %step_i16: i16) attributes {pto.kernel} {
     %c0 = arith.constant 0 : i32
+    %step = arith.extsi %step_i16 : i16 to i32
     %step2 = arith.addi %step, %step : i32
     pto.vecscope {
       pto.sprsts "AR", %dst[%c0] : !pto.ptr<ui32, ub>, i32
@@ -102,8 +103,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
   func.func @sequential_vstas(
       %dst: !pto.ptr<f32, ub>,
-      %step: i32) attributes {pto.kernel} {
+      %step_i16: i16) attributes {pto.kernel} {
     %c0 = arith.constant 0 : i32
+    %step = arith.extsi %step_i16 : i16 to i32
     %step2 = arith.addi %step, %step : i32
     pto.vecscope {
       %align0 = pto.init_align : !pto.align

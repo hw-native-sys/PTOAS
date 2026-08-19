@@ -276,6 +276,11 @@ static StrideExprRef importTypedExpr(const pto::PTOTypedExprRef &expression) {
   if (!expression) {
     return nullptr;
   }
+  if (expression->sourceValue) {
+    auto constant = pto::foldPTOConstant(expression);
+    return constant ? makeConst(*constant)
+                    : makeLeaf(expression->sourceValue);
+  }
   switch (expression->kind) {
   case pto::PTOTypedExpr::Kind::Constant: {
     auto constant = pto::foldPTOConstant(expression);
@@ -1477,7 +1482,12 @@ static bool isStepMaterializationCostNeutral(
   SequentialCandidate *first = run.candidates.front();
   DenseSet<Operation *> clonedOps;
   pto::PTOTypedExprRef atom = run.stepForm.terms.front().atom;
-  if (atom->kind == pto::PTOTypedExpr::Kind::Cast) {
+  if (atom->sourceValue) {
+    if (!collectLatePureDefinitions(atom->sourceValue, first->op, dominance,
+                                    clonedOps)) {
+      return false;
+    }
+  } else if (atom->kind == pto::PTOTypedExpr::Kind::Cast) {
     if (!atom->sourceOperation) {
       return false;
     }
@@ -1819,6 +1829,10 @@ private:
       auto delta = addressAnalysis.getDeltaInUnit(
           address, forOp, *advanceUnitBytes);
       if (!delta) {
+        continue;
+      }
+      if (auto linear = pto::normalizePTOLinearExpr(*delta.value);
+          linear && pto::isZeroPTOLinearExpr(*linear)) {
         continue;
       }
       StrideExprRef total = importTypedExpr(*delta.value);

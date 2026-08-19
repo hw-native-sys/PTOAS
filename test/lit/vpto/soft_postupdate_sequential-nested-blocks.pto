@@ -25,8 +25,9 @@
 // CHECK: %{{.*}} = pto.vlds [[F2]][%c0]
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @sequential_scf_if(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %cond: i1, %step: index) attributes {pto.kernel} {
+  func.func @sequential_scf_if(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %cond: i1, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -42,10 +43,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @loop_partial_then_sequential(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step: index) attributes {pto.kernel} {
+  func.func @loop_partial_then_sequential(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c4 = arith.constant 4 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
