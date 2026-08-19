@@ -28,3 +28,30 @@ template_tcolmin = register_column_reduction(
         ("f32", "f32"),
     ],
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    canonical_vmi_template,
+    col_reduce_vmi_constraint,
+    emit_col_reduce_vmi,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tcolmin",
+    name="vmi_tcolmin",
+    # Float-only: see vmi_tcolmax — the elementwise vmin lowering rewrites
+    # signed-int vmin to `pto.vmi.minf` (float-only), so int tcolmin fails at
+    # VMI lowering. Int tcolmin conservatively falls back to the ordinary
+    # PTODSL path until the vmin→mini lowering is fixed (C++ side, out of
+    # ADR-0003 scope).
+    dtypes=(
+        ("f32", "f32"),
+        ("f16", "f16"),
+        ("bf16", "bf16"),
+    ),
+    constraints=(col_reduce_vmi_constraint,),
+)
+def vmi_tcolmin(src: pto.Tile, dst: pto.Tile):
+    emit_col_reduce_vmi(src, dst, kind="min", split=4)

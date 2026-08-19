@@ -25,3 +25,33 @@ template_tcolsum = register_column_reduction(
         ("f32", "f32"),
     ],
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    canonical_vmi_template,
+    col_reduce_vmi_constraint,
+    emit_col_reduce_vmi,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tcolsum",
+    name="vmi_tcolsum",
+    # Signed-int + float: the elementwise vadd lowering handles signed int
+    # correctly, so tcolsum supports i8/i16/i32 in addition to f16/bf16/f32.
+    # Unsigned int fails the VMI vreg-type validation (`unsupported VMI
+    # tile-type`); unsigned tcolsum conservatively falls back to the ordinary
+    # PTODSL path.
+    dtypes=(
+        ("f32", "f32"),
+        ("f16", "f16"),
+        ("bf16", "bf16"),
+        ("i8", "i8"),
+        ("i16", "i16"),
+        ("i32", "i32"),
+    ),
+    constraints=(col_reduce_vmi_constraint,),
+)
+def vmi_tcolsum(src: pto.Tile, dst: pto.Tile):
+    emit_col_reduce_vmi(src, dst, kind="add")

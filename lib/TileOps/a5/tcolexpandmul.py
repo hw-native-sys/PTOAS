@@ -18,3 +18,22 @@ template_tcolexpandmul = register_column_expand_binary(
     vector_op=pto.vmul,
     dtypes=NUMERIC_SIGNATURES,
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    canonical_vmi_template,
+    col_expand_binary_vmi_constraint,
+    emit_col_expand_binary_vmi,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tcolexpandmul",
+    name="vmi_tcolexpandmul",
+    dtypes=(("f32", "f32", "f32"),),
+    min_row_bytes=128,
+    constraints=(col_expand_binary_vmi_constraint,),
+)
+def vmi_tcolexpandmul(src: pto.Tile, col_values: pto.Tile, dst: pto.Tile):
+    emit_col_expand_binary_vmi(src, col_values, dst, binop="mul")

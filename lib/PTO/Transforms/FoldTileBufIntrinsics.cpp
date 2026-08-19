@@ -223,8 +223,22 @@ static bool isSCFTileCarrier(Value value) {
          isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp());
 }
 
+static bool isRuntimeTileCarrier(Value value) {
+  if (isSCFTileCarrier(value)) {
+    return true;
+  }
+  return value.getDefiningOp<pto::DeclareTileOp>() != nullptr;
+}
+
 static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
                                                        Operation *user) {
+  // A tile_buf anchor may be a fusion_region result (possibly wrapped in
+  // bridging casts — e.g. when the producer carries a richer tile_buf type
+  // than the consumer declared, as for RowPlusOne ND2NZ where the alloc tile
+  // is compact=row_plus_one but a tstore template declared compact=normal).
+  // Unwrap casts first, then check for the fusion_region result so the
+  // region-yield→alloc recovery is not defeated by the bridging cast.
+  tileBuf = unwrapBridgingCasts(tileBuf);
   if (auto regionResult = dyn_cast<OpResult>(tileBuf)) {
     if (auto fusionRegion =
             dyn_cast<pto::FusionRegionOp>(regionResult.getOwner())) {
@@ -245,7 +259,6 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
     }
   }
 
-  tileBuf = unwrapBridgingCasts(tileBuf);
   if (auto alloc = tileBuf.getDefiningOp<pto::AllocTileOp>()) {
     auto tileTy = dyn_cast<pto::TileBufType>(alloc.getResult().getType());
     if (!tileTy) {
@@ -683,7 +696,8 @@ struct FoldTileBufIntrinsicsPass
     // ops on tile_buf function arguments — they have no materialized tile
     // handle anchor to fold against and will be removed by later DCE. Skip
     // them.
-    if (func->hasAttr("pto.tilelang.instance")) {
+    if (func->hasAttr("pto.tilelang.instance") ||
+        func->hasAttr("pto.tilelib.impl")) {
       return;
     }
 
@@ -791,8 +805,15 @@ struct FoldTileBufIntrinsicsPass
           if (auto resultPtrType =
                   dyn_cast<pto::PtrType>(addrOp.getDst().getType())) {
             builder.setInsertionPoint(addrOp);
-            Value replacement = builder.create<pto::CastPtrOp>(
+            auto replacement = builder.create<pto::CastPtrOp>(
                 addrOp.getLoc(), resultPtrType, addrOp.getSrc());
+            // Attach the source tile shape so downstream passes can recover
+            // the static storage size (pointer_cast used to carry this via
+            // MemRefType; castptr -> PtrType lost it).
+            if (auto tileTy = dyn_cast<pto::TileBufType>(addrOp.getSrc().getType()))
+              replacement->setAttr("pto.tile_shape",
+                  mlir::DenseI64ArrayAttr::get(builder.getContext(),
+                      SmallVector<int64_t>(tileTy.getShape())));
             addrOp.getDst().replaceAllUsesWith(replacement);
             addrOp.erase();
             continue;
@@ -807,7 +828,7 @@ struct FoldTileBufIntrinsicsPass
         // Keep tile_buf_addr attached to that handle; VPTO pointer
         // normalization converts it directly without choosing one branch's
         // allocation address here.
-        if (isSCFTileCarrier(addrOp.getSrc())) {
+        if (isRuntimeTileCarrier(addrOp.getSrc())) {
           continue;
         }
 
@@ -823,10 +844,33 @@ struct FoldTileBufIntrinsicsPass
           return signalPassFailure();
         }
 
+        // tile_buf_addr with a memref result: rebuild a memref from the
+        // alloc_tile's explicit addr operand via pto.pointer_cast.
+        if (auto resultMemrefType =
+                dyn_cast<MemRefType>(addrOp.getDst().getType())) {
+          if (!handleInfo->addr) {
+            addrOp.emitError("FoldTileBufIntrinsics: pto.alloc_tile used by "
+                             "tile_buf_addr must carry an addr operand on the "
+                             "VPTO path");
+            return signalPassFailure();
+          }
+
+          builder.setInsertionPoint(addrOp);
+          Value replacement = builder.create<pto::PointerCastOp>(
+              addrOp.getLoc(), resultMemrefType, ValueRange{handleInfo->addr},
+              handleInfo->validRow ? handleInfo->validRow : Value(),
+              handleInfo->validCol ? handleInfo->validCol : Value(),
+              handleInfo->config);
+          addrOp.getDst().replaceAllUsesWith(replacement);
+          addrOp.erase();
+          continue;
+        }
+
         auto resultPtrType = dyn_cast<pto::PtrType>(addrOp.getDst().getType());
         if (!resultPtrType) {
           addrOp.emitError("FoldTileBufIntrinsics: tile_buf_addr result must "
-                           "be !pto.ptr");
+                           "be memref or !pto.ptr, but got ")
+              << addrOp.getDst().getType();
           return signalPassFailure();
         }
 
@@ -838,8 +882,15 @@ struct FoldTileBufIntrinsicsPass
         }
 
         builder.setInsertionPoint(addrOp);
-        Value replacement = builder.create<pto::CastPtrOp>(
+        auto replacement = builder.create<pto::CastPtrOp>(
             addrOp.getLoc(), resultPtrType, handleInfo->addr);
+        // Attach the source tile shape so downstream passes (VmiMemoryLocation,
+        // PTOVmiLoopFusion, VmiLoadStoreElision) can recover the static storage
+        // size.  pointer_cast used to carry this via MemRefType; castptr ->
+        // PtrType lost it.
+        replacement->setAttr("pto.tile_shape",
+            mlir::DenseI64ArrayAttr::get(builder.getContext(),
+                SmallVector<int64_t>(tileTy.getShape())));
         addrOp.getDst().replaceAllUsesWith(replacement);
         addrOp.erase();
       }

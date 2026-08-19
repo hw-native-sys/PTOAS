@@ -39,8 +39,6 @@ def _row_reduction_layout(src_config, tmp_config, dst_config, dst_shape=(), oper
         return False
     if src_config.b_layout != "row_major" or src_config.s_layout != "none_box":
         return False
-    if tmp_config.b_layout != "row_major" or tmp_config.s_layout != "none_box":
-        return False
 
     dst_row_major = dst_config.b_layout == "row_major"
     dst_col_major_single_col = (

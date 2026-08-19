@@ -30,3 +30,29 @@ template_tabs_1d = register_unary(
     dtypes=_DTYPES,
     traversal="1d",
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    _abs as _vmi_abs,
+    canonical_vmi_template,
+    emit_elementwise_vmi,
+    f16,
+    f32,
+)
+
+
+# Note: bf16 is intentionally not in the VMI tabs candidate. The ordinary
+# template_tabs above only covers f16/f32 (bf16 vabs is not validated on A5);
+# bf16 tabs conservatively falls back to the ordinary PTODSL path per ADR-0003
+# (未验完保守回退). allowed_dtypes is pinned to (f32, f16) to match.
+@canonical_vmi_template(
+    target="a5",
+    op="tabs",
+    name="vmi_tabs",
+    dtypes=(
+        ("f32", "f32"),
+        ("f16", "f16"),
+    ),
+)
+def vmi_tabs(src: pto.Tile, dst: pto.Tile):
+    emit_elementwise_vmi(dst, (src,), _vmi_abs, allowed_dtypes=(f32, f16))

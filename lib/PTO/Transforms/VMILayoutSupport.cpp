@@ -317,7 +317,8 @@ struct EnsureLayoutPattern {
 
 static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     // A one-element dense value and a one-group, one-slot value select the
-    // same sole physical carrier lane.
+    // same sole physical carrier lane.  Row-streaming reductions use this
+    // bridge when the compact result is consumed by group_broadcast/store.
     {bits<8, 16, 32, 64>(), N<1>(), c(), gs(1)},
     {bits<8, 16, 32, 64>(), N<1>(), gs(1), c()},
 
@@ -356,6 +357,11 @@ static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     {bits<8>(), anyN(), gs(8, 4), gs(8)},
     {bits<8>(), anyN(), gs(8, 2), gs(8, 4)},
     {bits<8>(), anyN(), gs(8, 4), gs(8, 2)},
+
+    // A full-width grouped row reduction produces one lane-zero value in
+    // every physical part. Pack those values into a compact contiguous f32
+    // carrier before indexed consumers such as scatter.
+    {bits<32>(), N<1, 2, 4, 8, 16, 32, 64>(), gs(1), c()},
 };
 
 struct EnsureMaskLayoutPattern {

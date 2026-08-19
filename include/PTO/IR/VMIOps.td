@@ -425,58 +425,64 @@ def VMICompressStoreOp : VMI_Op<"compress_store", [DeclareOpInterfaceMethods<Mem
 }
 
 def VMIReduceAddIOp : VMI_Op<"reduce_addi"> {
-  let summary = "VMI masked integer add reduction";
+  let summary = "VMI masked integer add reduction with a 1-lane vector init";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       VMI_VRegTypeConstraint:$init,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = "$source `,` $init `,` $mask attr-dict `:` type($source) `,` type($init) `,` type($mask) `->` type($result)";
 }
 
 def VMIReduceAddFOp : VMI_Op<"reduce_addf"> {
   let summary = "VMI masked floating-point add reduction with explicit reassociation permission";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       VMI_VRegTypeConstraint:$init,
                        VMI_MaskTypeConstraint:$mask,
                        OptionalAttr<UnitAttr>:$reassoc);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = "$source `,` $init `,` $mask attr-dict `:` type($source) `,` type($init) `,` type($mask) `->` type($result)";
 }
 
 def VMIReduceMaxFOp : VMI_Op<"reduce_maxf"> {
-  let summary = "VMI masked floating-point maximum reduction";
+  let summary = "VMI masked floating-point maximum reduction with a 1-lane vector init";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       VMI_VRegTypeConstraint:$init,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = "$source `,` $init `,` $mask attr-dict `:` type($source) `,` type($init) `,` type($mask) `->` type($result)";
 }
 
 def VMIReduceMinFOp : VMI_Op<"reduce_minf"> {
-  let summary = "VMI masked floating-point minimum reduction";
+  let summary = "VMI masked floating-point minimum reduction with a 1-lane vector init";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       VMI_VRegTypeConstraint:$init,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = "$source `,` $init `,` $mask attr-dict `:` type($source) `,` type($init) `,` type($mask) `->` type($result)";
 }
 
 def VMIReduceMaxIOp : VMI_Op<"reduce_maxi"> {
-  let summary = "VMI masked integer maximum reduction";
+  let summary = "VMI masked integer maximum reduction with a 1-lane vector init";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       VMI_VRegTypeConstraint:$init,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = "$source `,` $init `,` $mask attr-dict `:` type($source) `,` type($init) `,` type($mask) `->` type($result)";
 }
 
 def VMIReduceMinIOp : VMI_Op<"reduce_mini"> {
-  let summary = "VMI masked integer minimum reduction";
+  let summary = "VMI masked integer minimum reduction with a 1-lane vector init";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       VMI_VRegTypeConstraint:$init,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `,` $mask attr-dict `:` type($source) `,` type($mask) `->` type($result)";
+  let assemblyFormat = "$source `,` $init `,` $mask attr-dict `:` type($source) `,` type($init) `,` type($mask) `->` type($result)";
 }
 
 def VMIGroupReduceAddFOp : VMI_Op<"group_reduce_addf"> {
@@ -606,11 +612,13 @@ def VMIFPToUIOp : VMI_Op<"fptoui", [Pure]> {
 
 def VMISIToFPOp : VMI_Op<"sitofp", [Pure]> {
   let summary = "VMI signed integer to floating-point elementwise conversion";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   OptionalAttr<StrAttr>:$rounding);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
   let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 }
+
 
 def VMIExtSIOp : VMI_Op<"extsi", [Pure]> {
   let summary = "VMI signed integer elementwise extension";
@@ -771,13 +779,14 @@ def VMIStrideStoreOp : VMI_Op<"stride_store", [DeclareOpInterfaceMethods<MemoryE
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
                        Index:$offset, I16:$block_stride,
                        VMI_MaskTypeConstraint:$mask);
-  let results = (outs);
+  let results = (outs Optional<PtrOrMemRef>:$updated_base);
   let hasVerifier = 1;
   let assemblyFormat = [{
     $value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:`
-    type($value) `,` type($destination) `,` type($block_stride) `,` type($mask)
+    type($value) `,` type($destination) `,` type($block_stride) `,` type($mask) (`->` type($updated_base)^)?
   }];
 }
+
 
 def VMIScatterOp : VMI_Op<"scatter", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical masked indexed scatter";
@@ -1432,8 +1441,7 @@ def VMIvLoadOp : VMI_Op<"vload",
     Unified vector load.  dist-mode selects the memory-access pattern.
 
     dist-mode values:
-    - "continuous" (default): contiguous stride-1 load  → 1 result;
-      1/2/4/8-lane results alias group=1/2/4/8 with unit stride
+    - "continuous" (default): contiguous stride-1 load  → 1 result
     - "dintlv":             deinterleaved dual load      → 2 results (%lo, %hi)
     - "unpack":             widening unpack load         → 1 result
     - "brc":                broadcast load               → 1 result
@@ -1462,6 +1470,7 @@ def VMIvLoadOp : VMI_Op<"vload",
   let hasVerifier = 1;
 }
 
+
 def VMIvStoreOp : VMI_Op<"vstore",
     [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
      AttrSizedOperandSegments]> {
@@ -1471,8 +1480,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
     masked_store, stride_store, and group_store ops.
 
     dist-mode controls the memory access pattern:
-    - "continuous" (default): contiguous stride-1 store  → 1 value;
-      1/2/4/8-lane inputs alias group=1/2/4/8 with unit stride
+    - "continuous" (default): contiguous stride-1 store  → 1 value
     - "dintlv":             interleaved dual store        → 2 values (%lo, %hi)
 
     group mode (mutually exclusive with dist-mode):
@@ -1480,6 +1488,9 @@ def VMIvStoreOp : VMI_Op<"vstore",
 
     block-stride mode (mutually exclusive with dist-mode and group):
     - {block_stride = B}: block-strided masked store
+
+    The optional updated_base result is valid only in block-stride mode and
+    has the same type as destination. It represents post-update address state.
 
     pmode governs inactive lane behavior:
     - "zero" (default):  inactive lanes store 0
@@ -1498,10 +1509,11 @@ def VMIvStoreOp : VMI_Op<"vstore",
     OptionalAttr<I64Attr>:$group,
     OptionalAttr<StrAttr>:$pmode
   );
-  let results = (outs);
+  let results = (outs Optional<PtrOrMemRef>:$updated_base);
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
+
 
 def VMIVsstbOp : VMI_Op<"vsstb",
     [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {

@@ -28,3 +28,32 @@ template_tcolmax = register_column_reduction(
         ("f32", "f32"),
     ],
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    canonical_vmi_template,
+    col_reduce_vmi_constraint,
+    emit_col_reduce_vmi,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tcolmax",
+    name="vmi_tcolmax",
+    # Float-only: A5's elementwise vmax lowering rewrites signed-int vmax to
+    # `pto.vmi.maxf` (a float-only op), so int tcolmax fails at VMI lowering
+    # (`'pto.vmi.maxf' op requires floating-point-like VMI element type`). The
+    # row-reduce vcmax path has a correct int lowering, but the col-reduce
+    # elementwise merge does not. Int tcolmax conservatively falls back to the
+    # ordinary PTODSL path until the vmax→maxi lowering is fixed (C++ side,
+    # out of ADR-0003 scope).
+    dtypes=(
+        ("f32", "f32"),
+        ("f16", "f16"),
+        ("bf16", "bf16"),
+    ),
+    constraints=(col_reduce_vmi_constraint,),
+)
+def vmi_tcolmax(src: pto.Tile, dst: pto.Tile):
+    emit_col_reduce_vmi(src, dst, kind="max", split=4)

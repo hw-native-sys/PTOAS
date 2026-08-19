@@ -53,6 +53,12 @@ def launch(user_args: Sequence[str], *, wrapper: Path | None = None) -> int:
     wrapper = wrapper.resolve() if wrapper is not None else _resolve_wrapper_path()
 
     os.environ["PTOAS_BIN"] = str(wrapper)
+    # Native TileLib helpers run in child Python processes. Point them at the
+    # package tree that supplied this _core module so their MLIR bindings stay
+    # paired with the active compiler instead of an unrelated editable install.
+    os.environ["PTOAS_PYTHON_PACKAGE_ROOT"] = str(
+        Path(native_module.__file__).resolve().parent.parent
+    )
     argv = [str(wrapper)]
     argv.extend(user_args)
 

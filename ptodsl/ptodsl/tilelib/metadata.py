@@ -33,7 +33,6 @@ from .._types import (
     si32 as _si32,
     si64 as _si64,
     tile_buf_type as _tile_buf_type,
-    tensor_view_type_from_dims as _tensor_view_type_from_dims,
     ui8 as _ui8,
     ui16 as _ui16,
     ui32 as _ui32,
@@ -118,9 +117,8 @@ def _scalar_type_token(dtype: ScalarType) -> str:
 class TileSpec:
     """Concrete specialization of one tile operand.
 
-    Shape, valid shape, memory space, and the complete tile configuration are
-    carried for both constraint evaluation (selection) and the rendered entry
-    ``tile_buf`` type.
+    ``valid_shape``/``b_layout``/``s_layout``/``memory_space`` are carried for both
+    constraint evaluation (selection) and the rendered entry ``tile_buf`` type.
     """
 
     shape: tuple
@@ -129,9 +127,7 @@ class TileSpec:
     valid_shape: tuple | None = None
     b_layout: str = "row_major"
     s_layout: str = "none_box"
-    s_fractal_size: int = 512
     pad_value: str = "Null"
-    compact_mode: str | int = "null"
 
     def __post_init__(self):
         if len(self.shape) != 2:
@@ -149,9 +145,8 @@ class TileSpec:
             blayout=_layout_token(self.b_layout),
             address_space=self.memory_space,
             slayout=_layout_token(self.s_layout),
-            fractal_size=self.s_fractal_size,
+            fractal_size=512,
             pad=_pad_token(self.pad_value),
-            compact_mode=self.compact_mode,
         )
 
 
@@ -202,7 +197,7 @@ class ScalarSpec:
 
 @dataclass(frozen=True)
 class ViewSpec:
-    """Concrete specialization of one tensor-view TileOp operand."""
+    """Concrete specialization of one view/memref TileOp operand."""
 
     shape: tuple
     dtype: ScalarType
@@ -211,8 +206,11 @@ class ViewSpec:
     layout: str | None = None
 
     def mlir_type(self):
-        return _resolve(
-            _tensor_view_type_from_dims(self.shape, scalar_descriptor(self.dtype))
+        dims = "x".join("?" if dim is None else str(dim) for dim in self.shape)
+        addr_space = _memref_address_space_token(self.memory_space)
+        elem = _resolve(scalar_descriptor(self.dtype))
+        return Type.parse(
+            f"memref<{dims}x{elem}, #pto.address_space<{addr_space}>>"
         )
 
 
@@ -227,6 +225,21 @@ class VectorSpec:
         dims = "x".join(str(dim) for dim in self.shape)
         elem = _resolve(scalar_descriptor(self.dtype))
         return Type.parse(f"vector<{dims}x{elem}>")
+
+
+def _memref_address_space_token(value: str) -> str:
+    aliases = {
+        "ub": "vec",
+        "vec": "vec",
+        "gm": "gm",
+        "mat": "mat",
+        "left": "left",
+        "right": "right",
+        "acc": "acc",
+        "bias": "bias",
+        "scaling": "scaling",
+    }
+    return aliases.get(str(value), str(value))
 
 
 @dataclass(frozen=True)
@@ -255,6 +268,9 @@ class TemplateMetadata:
     op_engine: str = "other"
     op_class: str = "other"
     tags: tuple = ()
+    resource_scope: str | None = None
+    resource_vector_values: int | None = None
+    resource_chunk_streaming: bool = False
 
     @staticmethod
     def _normalize_iteration_axis(value):
@@ -287,7 +303,15 @@ class TemplateMetadata:
     def build(*, op, target, name, dtypes=(), layouts=(), memory_spaces=(),
               constraints=(), priority=0, fusible=False, loop_depth=None,
               id=None, Tail=None, is_post_update=False, iteration_axis="none",
-              op_engine="other", op_class="other", tags=()):
+              op_engine="other", op_class="other", tags=(),
+              resource_scope=None, resource_vector_values=None,
+              resource_chunk_streaming=False):
+        if resource_scope not in {None, "row", "tile"}:
+            raise ValueError(
+                "resource_scope must be None, 'row', or 'tile'"
+            )
+        if resource_vector_values is not None and resource_vector_values <= 0:
+            raise ValueError("resource_vector_values must be greater than zero")
         return TemplateMetadata(
             op=op,
             target=target,
@@ -306,6 +330,9 @@ class TemplateMetadata:
             op_engine=TemplateMetadata._normalize_op_engine(op_engine),
             op_class=TemplateMetadata._normalize_op_class(op_class),
             tags=tuple(tags),
+            resource_scope=resource_scope,
+            resource_vector_values=resource_vector_values,
+            resource_chunk_streaming=bool(resource_chunk_streaming),
         )
 
 

@@ -106,7 +106,7 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
             s_layout=config.get("s_layout", "none_box"),
             s_fractal_size=s_fractal_size,
             pad_value=spec.get("pad_value", config.get("pad_value", "Null")),
-            compact_mode=config.get("compact_mode", "null"),
+            compact_mode=config.get("compact_mode", "normal"),
         )
     return specs
 
@@ -177,6 +177,8 @@ def _legal_candidate_specs(
     """
     evaluated = []
     for descriptor in _registered_candidates(target, op):
+        if _registry._is_default_hidden(descriptor):
+            continue
         try:
             specs = _build_tile_specs(descriptor, operand_specs)
         except Exception as exc:

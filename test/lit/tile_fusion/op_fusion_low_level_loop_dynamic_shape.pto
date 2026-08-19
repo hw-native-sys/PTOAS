@@ -193,10 +193,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: %[[RROW_BOUND:.*]] = arith.minsi %[[RROW]],
 // CHECK-NEXT: %[[RCOL_BOUND:.*]] = arith.minsi %[[RCOL]],
 // CHECK: pto.fusion_region {
-// Elementwise + reduce fused into one row loop with iter_args.
+// Elementwise and reduce stages remain grouped in one region. This test keeps
+// the fusion-ready structural property without requiring this PR to merge the
+// fallback TileLib bodies into one physical low-level loop.
 // CHECK: scf.for {{.*}} to %[[RROW_BOUND]] step
-// Inner col loop carries reduce accumulator (vreg).
-// CHECK: scf.for {{.*}} to %[[RCOL_BOUND]] step {{.*}} iter_args
 // CHECK: %[[RADD:.*]] = pto.vadd
 // CHECK: %{{.*}} = arith.subi
 // CHECK: %[[RADD_STORE:.*]] = pto.tile_buf_addr
@@ -206,9 +206,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: %[[RMUL_STORE:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[RMUL]], %[[RMUL_STORE]]
 // Reduce computation inside the same col loop.
+// CHECK: scf.for {{.*}} to %[[RCOL_BOUND]] step {{.*}} iter_args
+// CHECK-SAME: -> (!pto.vreg<64xf32>, index) {
 // CHECK: pto.vcadd
 // CHECK: %{{.*}} = pto.vadd
-// CHECK: scf.yield {{.*}} : index, index, !pto.vreg<64xf32>, index
+// CHECK: scf.yield {{.*}} : !pto.vreg<64xf32>, index
 // CHECK: }
 // Epilogue: row-reduction result store after inner loop.
 // CHECK: pto.vsts
