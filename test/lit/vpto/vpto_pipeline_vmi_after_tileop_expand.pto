@@ -6,12 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op --mlir-print-ir-after=vmi-to-vpto --mlir-print-ir-after=vpto-ptr-normalize --mlir-print-ir-after=pto-infer-vpto-vecscope --mlir-print-ir-after=loop-invariant-code-motion 2>&1 | FileCheck %s
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op --mlir-print-ir-after=vmi-to-vpto --mlir-print-ir-after=vpto-ptr-normalize --mlir-print-ir-after=pto-infer-vpto-vecscope --mlir-print-ir-after=loop-invariant-code-motion 2>&1 | FileCheck %s
 
 // CHECK: IR Dump After ExpandTileOp
 // CHECK: IR Dump After VMIToVPTO
-// CHECK: IR Dump After VPTOPtrNormalize
 // CHECK: IR Dump After PTOInferVPTOVecScope
+// CHECK: IR Dump After VPTOPtrNormalize
 // CHECK: IR Dump After LoopInvariantCodeMotion
 
 module {

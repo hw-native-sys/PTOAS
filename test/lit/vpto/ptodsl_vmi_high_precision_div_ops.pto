@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Verify VMI TileLib candidate selection for tdiv/tdivs/trecip/trsqrt ops
+// with default (non-high-precision) mode. High-precision mode uses an
+// IEEE754 soft-div path that feeds signless i32/i16 to vabs, which the VMI
+// verifier rejects (requires explicitly signed integers) — that path needs
+// a separate library fix.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @ptodsl_vmi_high_precision_div_ops() {
+    %src0_f32 = pto.alloc_tile : !pto.tile_buf<vec, 2x64xf32>
+    %src1_f32 = pto.alloc_tile : !pto.tile_buf<vec, 2x64xf32>
+    %dst_f32 = pto.alloc_tile : !pto.tile_buf<vec, 2x64xf32>
+    %src0_f16 = pto.alloc_tile : !pto.tile_buf<vec, 2x128xf16>
+    %src1_f16 = pto.alloc_tile : !pto.tile_buf<vec, 2x128xf16>
+    %dst_f16 = pto.alloc_tile : !pto.tile_buf<vec, 2x128xf16>
+    %tmp_f32 = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf32>
+    %scalar = arith.constant 2.000000e+00 : f32
+
+    pto.tdiv
+      ins(%src0_f32, %src1_f32 : !pto.tile_buf<vec, 2x64xf32>, !pto.tile_buf<vec, 2x64xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    pto.tdiv
+      ins(%src0_f16, %src1_f16 : !pto.tile_buf<vec, 2x128xf16>, !pto.tile_buf<vec, 2x128xf16>)
+      outs(%dst_f16 : !pto.tile_buf<vec, 2x128xf16>)
+    pto.tdivs
+      ins(%src0_f32, %scalar : !pto.tile_buf<vec, 2x64xf32>, f32)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    pto.tdivs
+      ins(%scalar, %src0_f32 : f32, !pto.tile_buf<vec, 2x64xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    pto.trecip
+      ins(%src0_f32 : !pto.tile_buf<vec, 2x64xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    pto.trsqrt
+      ins(%src0_f32, %tmp_f32 : !pto.tile_buf<vec, 2x64xf32>, !pto.tile_buf<vec, 1x16xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    return
+  }
+}
+
+// EXPAND: call @__pto_ptodsl_vmi_{{.*}}__vmi_tdiv
+// EXPAND: call @__pto_ptodsl_vmi_{{.*}}__vmi_tdivs
+// EXPAND: call @__pto_ptodsl_vmi_{{.*}}__vmi_trecip
+// EXPAND: call @__pto_ptodsl_vmi_{{.*}}__vmi_trsqrt_with_tmp
+
+// INLINE: pto.vmi.vdiv
+// INLINE-NOT: __pto_ptodsl_vmi
+
+// FINAL: pto.vdiv
+// FINAL-NOT: __pto_ptodsl_vmi

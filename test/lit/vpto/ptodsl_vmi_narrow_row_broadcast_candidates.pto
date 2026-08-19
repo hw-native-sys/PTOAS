@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression test for VMI-LAYOUT-CONTRACT on narrow-row trowexpand broadcast.
+// The compact row state uses the same per-row BRC_B32 load as PTO-ISA's
+// TRowExpandBinOps implementation; it is not a grouped E2B load.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @narrow_row_broadcast() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xf32>
+    %state = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>
+    %mul = pto.alloc_tile : !pto.tile_buf<vec, 8x32xf32>
+    pto.trowexpandmul
+      ins(%src, %state : !pto.tile_buf<vec, 8x32xf32>,
+                         !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+      outs(%mul : !pto.tile_buf<vec, 8x32xf32>)
+    return
+  }
+}
+
+// INLINE-LABEL: func.func @narrow_row_broadcast
+// INLINE: pto.vmi.vload {{.*}} {dist_mode = "brc"}
+// INLINE: pto.vmi.vmul
+
+// FINAL-LABEL: func.func @narrow_row_broadcast
+// FINAL-NOT: pto.vmi.vload
+// FINAL-NOT: pto.vmi.vbrc
+// FINAL: pto.vlds {{.*}} {dist = "BRC_B32"}
+// FINAL: pto.vmul
+// FINAL: pto.vsts

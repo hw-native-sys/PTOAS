@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %S/../../samples/FlashAttention/flash_attention_softmax.pto -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %S/../../samples/FlashAttention/flash_attention_softmax.pto -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %S/../../samples/FlashAttention/flash_attention_softmax.pto -o - | FileCheck %s --check-prefix=FINAL --implicit-check-not=__pto_ptodsl_vmi
+
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tmuls
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tmaxs
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tmins
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tmul
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tadd
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tadds
+// EXPAND: call {{.*}}__pto_ptodsl_vmi_a5_tdivs
+
+// INLINE: IR Dump After PTOInlineLibCall
+// INLINE-LABEL: func.func @flash_attention_softmax_block
+// INLINE: pto.vmi.vmuls
+// INLINE: pto.vmi.vmaxs
+// INLINE: pto.vmi.vmins
+// INLINE: pto.vmi.vmul
+// INLINE: pto.vmi.vadd
+// INLINE: pto.vmi.vadds
+// INLINE: pto.vmi.vbrc
+// INLINE: pto.vmi.vdiv
+
+// FINAL-LABEL: func.func @flash_attention_softmax_block
+// FINAL: pto.vecscope
+// FINAL: pto.vmuls
+// FINAL: pto.vmaxs
+// FINAL: pto.vmins
+// FINAL: pto.vmul
+// FINAL: pto.vadd
+// FINAL: pto.vadds
+// FINAL: pto.vdiv

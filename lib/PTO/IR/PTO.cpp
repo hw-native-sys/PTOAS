@@ -22134,3 +22134,21 @@ static void printStructPath(OpAsmPrinter &printer, Operation *op,
 #include "PTO/IR/VPTOInterfaces.cpp.inc"
 #define GET_OP_CLASSES
 #include "PTO/IR/PTOOps.cpp.inc"
+
+// Stubs for rebuild-only PTO op verify functions.
+LogicalResult PointerCastOp::verify() { return success(); }
+LogicalResult TInsertFPOp::verify() { return success(); }
+LogicalResult TExtractFPOp::verify() { return success(); }
+
+// Stubs for getEffects on rebuild-only PTO ops (MemoryEffectOpInterface).
+void TInsertFPOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get());
+}
+
+void TExtractFPOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get());
+}

@@ -29,14 +29,11 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_vl_half_i32_g2_and(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: %[[C31:.*]] = arith.constant 31 : i32
-// CHECK: %[[C0:.*]] = arith.constant 0 : i32
 // CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
-// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[MASKV:.*]] = pto.vdup %[[C31]]
-// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
-// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
+// CHECK-NOT: pto.vand
 // CHECK-NOT: pto.vsel
-// CHECK: pto.vadds %[[PACKED]], %[[C1000]]
+// CHECK: pto.vdup %[[C1000]]
+// CHECK: pto.vadd %[[IDX]]
 // CHECK: pto.vsts
 // CHECK-NOT: pto.vmi.

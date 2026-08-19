@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=PIPE --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @ptodsl_vmi_tail_fallback() {
+    %c4 = arith.constant 4 : index
+    %c64 = arith.constant 64 : index
+    %lhs = pto.alloc_tile valid_row = %c4 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %rhs = pto.alloc_tile valid_row = %c4 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %dst = pto.alloc_tile valid_row = %c4 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    pto.tadd
+      ins(%lhs, %rhs
+          : !pto.tile_buf<vec, 8x64xf32, valid=?x?>,
+            !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+      outs(%dst : !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+    return
+  }
+
+  func.func @ptodsl_vmi_static_type_tail_fallback() {
+    %lhs = pto.alloc_tile : !pto.tile_buf<vec, 8x64xf32, valid=4x64>
+    %rhs = pto.alloc_tile : !pto.tile_buf<vec, 8x64xf32, valid=4x64>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x64xf32, valid=4x64>
+    pto.tadd
+      ins(%lhs, %rhs
+          : !pto.tile_buf<vec, 8x64xf32, valid=4x64>,
+            !pto.tile_buf<vec, 8x64xf32, valid=4x64>)
+      outs(%dst : !pto.tile_buf<vec, 8x64xf32, valid=4x64>)
+    return
+  }
+
+  func.func @ptodsl_vmi_dynamic_validshape_fallback(%valid_row: index,
+                                                    %valid_col: index) {
+    %lhs = pto.alloc_tile valid_row = %valid_row valid_col = %valid_col
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %rhs = pto.alloc_tile valid_row = %valid_row valid_col = %valid_col
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %dst = pto.alloc_tile valid_row = %valid_row valid_col = %valid_col
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    pto.set_validshape %lhs, %valid_row, %valid_col
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    pto.set_validshape %rhs, %valid_row, %valid_col
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    pto.set_validshape %dst, %valid_row, %valid_col
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    pto.tadd
+      ins(%lhs, %rhs
+          : !pto.tile_buf<vec, 8x64xf32, valid=?x?>,
+            !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+      outs(%dst : !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+    return
+  }
+}
+
+// PIPE: IR Dump After ExpandTileOp
+// PIPE: pto.vmi.fusion.boundary = "local"
+// PIPE-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// PIPE: pto.vmi.fusion.boundary = "local"
+// PIPE-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// PIPE-NOT: __pto_ptodsl_vmi_a5_tadd
+// PIPE: IR Dump After PTOInlineLibCall
+// PIPE: func.func @ptodsl_vmi_tail_fallback
+// PIPE: pto.vadd
+// PIPE: func.func @ptodsl_vmi_static_type_tail_fallback
+// PIPE: pto.vadd
+// PIPE: func.func @ptodsl_vmi_dynamic_validshape_fallback
+// PIPE: pto.vmi.fusion.boundary = "local"
+// PIPE-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// PIPE: pto.vadd

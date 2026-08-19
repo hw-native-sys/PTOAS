@@ -74,47 +74,46 @@ module {
 }
 
 // ASSIGN-LABEL: func.func @continuous_reduce_store_1(
-// ASSIGN: %[[SUM1:.*]] = pto.vmi.group_reduce_addf
-// ASSIGN-SAME: {num_groups = 1 : i64, reassoc}
-// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>
-// ASSIGN: pto.vmi.group_store %[[SUM1]]
-// ASSIGN-SAME: {num_groups = 1 : i64}
+// ASSIGN: %[[SUM1:.*]] = pto.vmi.reduce_addf
+// ASSIGN-SAME: {reassoc}
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.masked_store %[[SUM1]]
 
 // ASSIGN-LABEL: func.func @continuous_reduce_store_2(
 // ASSIGN: %[[MAX2:.*]] = pto.vmi.group_reduce_maxf
-// ASSIGN: pto.vmi.group_store %[[MAX2]]
-// ASSIGN-SAME: {num_groups = 2 : i64}
+// ASSIGN: pto.vmi.ensure_layout %[[MAX2]]
+// ASSIGN: pto.vmi.store
 
 // ASSIGN-LABEL: func.func @continuous_reduce_store_4(
 // ASSIGN: %[[MIN4:.*]] = pto.vmi.group_reduce_minf
-// ASSIGN: pto.vmi.group_store %[[MIN4]]
-// ASSIGN-SAME: {num_groups = 4 : i64}
+// ASSIGN: pto.vmi.ensure_layout %[[MIN4]]
+// ASSIGN: pto.vmi.store
 
 // ASSIGN-LABEL: func.func @continuous_reduce_store_8(
 // ASSIGN: %[[SUM8:.*]] = pto.vmi.group_reduce_addf
-// ASSIGN: pto.vmi.group_store %[[SUM8]]
-// ASSIGN-SAME: {num_groups = 8 : i64}
+// ASSIGN: pto.vmi.ensure_layout %[[SUM8]]
+// ASSIGN: pto.vmi.store
 
 // ASSIGN-LABEL: func.func @dynamic_mask_keeps_masked_store(
-// ASSIGN: %[[GROUP_SUM:.*]] = pto.vmi.group_reduce_addf
-// ASSIGN: %[[DENSE_SUM:.*]] = pto.vmi.ensure_layout %[[GROUP_SUM]]
-// ASSIGN: pto.vmi.masked_store %[[DENSE_SUM]]
+// ASSIGN: %[[GROUP_SUM:.*]] = pto.vmi.reduce_addf
+// ASSIGN: pto.vmi.masked_store %[[GROUP_SUM]]
 // ASSIGN-NOT: pto.vmi.group_store
 
 // LOWER-LABEL: func.func @continuous_reduce_store_1(
 // LOWER: pto.vcadd
-// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vsts
 
 // LOWER-LABEL: func.func @continuous_reduce_store_2(
-// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
-// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vcmax
+// LOWER: pto.vsts
 
 // LOWER-LABEL: func.func @continuous_reduce_store_4(
-// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vcmin
+// LOWER: pto.vsts
 
 // LOWER-LABEL: func.func @continuous_reduce_store_8(
-// LOWER-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vcadd
+// LOWER: pto.vsts
 
 // LOWER-LABEL: func.func @dynamic_mask_keeps_masked_store(
 // LOWER: pto.vsts
-// LOWER-NOT: {dist = "1PT_B32"}

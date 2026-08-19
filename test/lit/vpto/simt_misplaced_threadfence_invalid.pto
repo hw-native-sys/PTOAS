@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %s -o /dev/null 2>&1 | FileCheck %s
+
+// `pto.threadfence` is only legal inside a function marked with
+// `pto.simt_entry` (or inside a `pto.section.simt`). Placing it in the
+// non-simt_entry wrapper kernel must be rejected by the verifier rather
+// than lowered.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @wrapper(%dst: !pto.ptr<i32, ub>) attributes {pto.aicore} {
+    %dim_z = arith.constant 1 : i32
+    %dim_y = arith.constant 32 : i32
+    %dim_x = arith.constant 32 : i32
+    pto.store_vfsimt_info %dim_z, %dim_y, %dim_x : i32, i32, i32
+    pto.threadfence
+    return
+  }
+}
+
+// CHECK: error: 'pto.threadfence' op must appear inside a function marked with 'pto.simt_entry' or inside pto.section.simt

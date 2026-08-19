@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Verify VMI TileLib candidate selection for tcvt ops covering fp→fp widen,
+// fp→int, and fp→fp narrow conversions with various round/sat modes.
+// (int→fp conversions omitted: vmi_tcvt and ordinary templates both emit
+// signless i32/i16, but the VMI vcvt verifier requires explicitly signed
+// integers for int→fp — a structural gap to be fixed separately.)
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @local_convert_candidates() {
+    %bf16 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xbf16>
+    %f16 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf16>
+    %f32 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %f32_1 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %f32_2 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %f32_3 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %bf16_1 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xbf16>
+    %bf16_2 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xbf16>
+    %f16_2 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf16>
+
+    pto.tcvt ins(%bf16 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<vec, 8x128xbf16>)
+      outs(%f32 : !pto.tile_buf<vec, 8x128xf32>)
+    pto.tcvt ins(%f16 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<vec, 8x128xf16>)
+      outs(%f32_3 : !pto.tile_buf<vec, 8x128xf32>)
+    pto.tcvt ins(%f32_1 {rmode = #pto<round_mode RINT>} : !pto.tile_buf<vec, 8x128xf32>)
+      outs(%bf16_1 : !pto.tile_buf<vec, 8x128xbf16>)
+    pto.tcvt ins(%f32_2 {rmode = #pto<round_mode RINT>, satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<vec, 8x128xf32>)
+      outs(%bf16_2 : !pto.tile_buf<vec, 8x128xbf16>)
+    pto.tcvt ins(%f32_2 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<vec, 8x128xf32>)
+      outs(%f16_2 : !pto.tile_buf<vec, 8x128xf16>)
+    return
+  }
+}
+
+// EXPAND: call @__pto_ptodsl_vmi_{{.*}}tcvt{{.*}}vmi_tcvt
+// EXPAND-NOT: error:
+// EXPAND-NOT: no ordinary
+
+// INLINE: pto.vmi.vcvt
+// INLINE-NOT: __pto_ptodsl_vmi
+
+// FINAL: pto.vcvt
+// FINAL-NOT: __pto_ptodsl_vmi

@@ -153,6 +153,209 @@ def IntToPtrOp : PTO_Op<"inttoptr", [Pure]> {
   }];
 }
 
+def DeclareTileMemRefOp : PTO_Op<"declare_tile_memref"> {
+  let summary = "Internal memref placeholder for a tile whose address is assigned later";
+  let description = [{
+    Internal lowering op used by PTOViewToMemref. This op does not allocate
+    storage; it only provides a memref-typed SSA handle so later passes can
+    attach tile metadata through pto.bind_tile before the address is filled by
+    pipe operations such as pto.tpop.
+  }];
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($result))
+  }];
+}
+
+def MaterializeTileOp : PTO_Op<"materialize_tile", [
+    Pure,
+    AttrSizedOperandSegments
+  ]> {
+  let summary = "Materializes a tile buffer handle from a planned memref";
+  let description = [{
+    Bridges the memref-based memory-planning/sync IR back into tile-buffer
+    handle IR immediately before EmitC. The source remains the planned memref
+    address, while the result carries the tile type, valid dims, and config
+    expected by tile operations and C++ tile codegen.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Optional<Index>:$valid_row,
+    Optional<Index>:$valid_col,
+    TileBufConfigAttr:$config
+  );
+
+  let results = (outs TileBufType:$result);
+
+  let assemblyFormat = [{
+    $source (`,` $valid_row^ `,` $valid_col)? attr-dict `:` qualified(type($source)) `->` qualified(type($result))
+  }];
+}
+
+def SlotMarkerOp : PTO_Op<"slot_marker", [
+    Pure,
+    ViewLikeOpInterface,
+    AllTypesMatch<["source", "result"]>
+  ]> {
+  let summary = "Tag a memref view as referring to one slot of a multi_tile_buf";
+  let description = [{
+    Internal op materialized by `PTOViewToMemref` while lowering
+    `pto.multi_tile_get`. It carries the slot SSA index through the memref
+    layer so that PlanMemory, sync analysis (InsertSync / GraphSyncSolver),
+    and the buffer-select lowering pass can identify which physical slot
+    this memref reference touches.
+
+    The op is metadata-only (no data movement, no extra address arithmetic);
+    its result memref aliases the source memref byte-for-byte. Frontends do
+    not produce this op directly -- use `pto.multi_tile_get` instead.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Index:$slot
+  );
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    $source `[` $slot `]` attr-dict
+    `:` qualified(type($source)) `->` qualified(type($result))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getSource(); }
+  }];
+}
+
+def TExtractFPOp : PTO_TOp<"textract_fp", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Extract acc tile window into dst using fp/scaling tile (tilebuf, DPS)";
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$fp,
+    Index:$indexRow,
+    Index:$indexCol,
+    PTODpsType:$dst,
+    OptionalAttr<PTO_AccToVecModeAttr>:$accToVecMode,
+    DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $fp `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` qualified(type($fp)) `,` type($indexRow) `,` type($indexCol) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
+def TInsertFPOp : PTO_TOp<"tinsert_fp", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Insert acc tile window into dst using fp/scaling tile (tilebuf, DPS)";
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$fp,
+    Index:$indexRow,
+    Index:$indexCol,
+    PTODpsType:$dst,
+    OptionalAttr<PTO_AccToVecModeAttr>:$accToVecMode,
+    DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $fp `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` qualified(type($fp)) `,` type($indexRow) `,` type($indexCol) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_FIX; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
+def PointerCastOp : PTO_Op<"pointer_cast", [AttrSizedOperandSegments, Pure]> {
+  let summary = "Casts an integer address to a MemRef with optional valid dims";
+
+  let arguments = (ins
+    Variadic<I64>:$addrs,
+    Optional<Index>:$valid_row,
+    Optional<Index>:$valid_col,
+    OptionalAttr<TileBufConfigAttr>:$config
+  );
+
+  let results = (outs Res<AnyMemRef, "", [MemAlloc]>:$result);
+
+  let assemblyFormat = [{
+    `(` $addrs `)` ($valid_row^ `,` $valid_col)? attr-dict `:` qualified(type($result))
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Type":$result, "ValueRange":$addrs, "Value":$vRow, "Value":$vCol, "Attribute":$config), [{
+      $_state.addTypes(result);
+      $_state.addOperands(addrs);
+      if (vRow) $_state.addOperands(vRow);
+      if (vCol) $_state.addOperands(vCol);
+      if (config) $_state.addAttribute("config", config);
+
+      int32_t addrsSize = addrs.size();
+      int32_t vRowSize = vRow ? 1 : 0;
+      int32_t vColSize = vCol ? 1 : 0;
+      $_state.addAttribute("operandSegmentSizes",
+        $_builder.getDenseI32ArrayAttr({addrsSize, vRowSize, vColSize}));
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    ::mlir::LogicalResult verify();
+  }];
+}
+
+def BindTileOp : PTO_Op<"bind_tile", [
+    Pure,
+    AttrSizedOperandSegments
+  ]> {
+  let summary = "Binds metadata and implicitly casts layout";
+  let description = [{
+    Wraps a memref with PTO metadata (valid dimensions and config).
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Optional<Index>:$valid_row,
+    Optional<Index>:$valid_col,
+    TileBufConfigAttr:$config
+  );
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    $source (`,` $valid_row^ `,` $valid_col)? attr-dict `:` qualified(type($source)) `->` qualified(type($result))
+  }];
+}
+
 def CastPtrOp : PTO_Op<"castptr", [Pure]> {
   let summary = "Cast between integer and !pto.ptr, or between !pto.ptr types";
   let description = [{

@@ -6,13 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-fold-tile-buf-intrinsics %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-fold-tile-buf-intrinsics %s -o /dev/null 2>&1 | FileCheck %s
 
 // CHECK-LABEL: func.func @dead_view_cleanup
 // CHECK-NOT: memref.reinterpret_cast %arg0
 // CHECK-NOT: pto.make_tensor_view
 // CHECK-NOT: pto.partition_view
-// CHECK: pto.vadd
+// CHECK: pto.vmi.vadd
 // CHECK: return
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

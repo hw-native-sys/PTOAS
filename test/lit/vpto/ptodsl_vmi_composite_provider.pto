@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=PIPE --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @ptodsl_vmi_composite_provider(
+      %lhs_ptr: !pto.ptr<f32>,
+      %rhs_ptr: !pto.ptr<f32>,
+      %dst_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+
+    %lhs_view = pto.make_tensor_view %lhs_ptr,
+      shape = [%c1, %c64], strides = [%c64, %c1]
+      : !pto.tensor_view<1x64xf32>
+    %rhs_view = pto.make_tensor_view %rhs_ptr,
+      shape = [%c1, %c64], strides = [%c64, %c1]
+      : !pto.tensor_view<1x64xf32>
+    %dst_view = pto.make_tensor_view %dst_ptr,
+      shape = [%c1, %c64], strides = [%c64, %c1]
+      : !pto.tensor_view<1x64xf32>
+
+    %lhs_part = pto.partition_view %lhs_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c64]
+      : !pto.tensor_view<1x64xf32>
+        -> !pto.partition_tensor_view<1x64xf32>
+    %rhs_part = pto.partition_view %rhs_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c64]
+      : !pto.tensor_view<1x64xf32>
+        -> !pto.partition_tensor_view<1x64xf32>
+    %dst_part = pto.partition_view %dst_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c64]
+      : !pto.tensor_view<1x64xf32>
+        -> !pto.partition_tensor_view<1x64xf32>
+
+    %lhs = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %rhs = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+
+    pto.tload
+      ins(%lhs_part : !pto.partition_tensor_view<1x64xf32>)
+      outs(%lhs : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tload
+      ins(%rhs_part : !pto.partition_tensor_view<1x64xf32>)
+      outs(%rhs : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tadd
+      ins(%lhs, %rhs
+          : !pto.tile_buf<vec, 1x64xf32>,
+            !pto.tile_buf<vec, 1x64xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tstore
+      ins(%dst : !pto.tile_buf<vec, 1x64xf32>)
+      outs(%dst_part : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+}
+
+// PIPE: IR Dump After ExpandTileOp
+// PIPE: call {{.*}}__pto_tilelang_a5_tload
+// PIPE: call {{.*}}__pto_ptodsl_vmi_a5_tadd
+// PIPE: call {{.*}}__pto_tilelang_a5_tstore
+// PIPE: func.func private {{.*}}__pto_tilelang_a5_tload
+// PIPE-SAME: pto.tilelang.instance
+// PIPE-SAME: pto.vmi.fusion.boundary = "hard"
+// PIPE-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_hard_boundary_fallback"
+// PIPE: func.func private {{.*}}__pto_ptodsl_vmi_a5_tadd
+// PIPE-SAME: pto.tilelib.impl = "vmi"
+// PIPE: func.func private {{.*}}__pto_tilelang_a5_tstore
+// PIPE-SAME: pto.tilelang.instance
+// PIPE-SAME: pto.vmi.fusion.boundary = "hard"
+// PIPE-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_hard_boundary_fallback"
+// PIPE: IR Dump After PTOInlineLibCall
+// PIPE: func.func @ptodsl_vmi_composite_provider
+// PIPE-NOT: pto.tload
+// PIPE: pto.vmi.vadd
+// PIPE-NOT: pto.tstore
+
+// FINAL-LABEL: func.func @ptodsl_vmi_composite_provider
+// FINAL: pto.copy_gm_to_ub
+// FINAL: pto.vecscope
+// FINAL: pto.vadd
+// FINAL: pto.copy_ubuf_to_gm

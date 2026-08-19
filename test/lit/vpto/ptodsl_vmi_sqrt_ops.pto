@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Verify VMI TileLib candidate selection for tsqrt/trsqrt ops, including the
+// 3-arg with-tmp trsqrt form (vmi_trsqrt_with_tmp).
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @ptodsl_vmi_sqrt_ops() {
+    %src_f32 = pto.alloc_tile : !pto.tile_buf<vec, 2x64xf32>
+    %dst_f32 = pto.alloc_tile : !pto.tile_buf<vec, 2x64xf32>
+    %src_f16 = pto.alloc_tile : !pto.tile_buf<vec, 2x128xf16>
+    %dst_f16 = pto.alloc_tile : !pto.tile_buf<vec, 2x128xf16>
+    %tmp_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf16>
+
+    pto.tsqrt
+      ins(%src_f32 : !pto.tile_buf<vec, 2x64xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    pto.tsqrt
+      ins(%src_f32 : !pto.tile_buf<vec, 2x64xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+      {precisionType = #pto<sqrt_precision high_precision>}
+    pto.tsqrt
+      ins(%src_f16 : !pto.tile_buf<vec, 2x128xf16>)
+      outs(%dst_f16 : !pto.tile_buf<vec, 2x128xf16>)
+      {precisionType = #pto<sqrt_precision high_precision>}
+    pto.trsqrt
+      ins(%src_f32 : !pto.tile_buf<vec, 2x64xf32>)
+      outs(%dst_f32 : !pto.tile_buf<vec, 2x64xf32>)
+    pto.trsqrt
+      ins(%src_f16, %tmp_f16
+          : !pto.tile_buf<vec, 2x128xf16>, !pto.tile_buf<vec, 1x16xf16>)
+      outs(%dst_f16 : !pto.tile_buf<vec, 2x128xf16>)
+    return
+  }
+}
+
+// EXPAND: func.call @__pto_ptodsl_vmi_{{.*}}__vmi_tsqrt
+// EXPAND: func.call @__pto_ptodsl_vmi_{{.*}}__vmi_trsqrt
+// EXPAND: func.call @__pto_ptodsl_vmi_{{.*}}__vmi_trsqrt_with_tmp
+
+// INLINE: pto.vmi.vsqrt
+// INLINE-NOT: __pto_ptodsl_vmi
+// INLINE-NOT: pto.vecscope
+
+// FINAL: pto.vsqrt
+// FINAL: pto.vdiv
+// FINAL-NOT: __pto_ptodsl_vmi

@@ -1,0 +1,146 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-select-template-candidate='selection-policy=prefer-vmi' %s | FileCheck %s --check-prefix=DEFAULT
+// RUN: pto-test-opt --pto-select-template-candidate='selection-policy=prefer-vmi max-candidate-vector-bytes=0' %s | FileCheck %s --check-prefix=DISABLED
+// RUN: pto-test-opt --pto-select-template-candidate='selection-policy=prefer-vmi emit-resource-remarks=true' %s 2>&1 | FileCheck %s --check-prefix=REMARK
+
+module {
+  func.func @safe_row_candidate() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x64xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x64xf32>)
+      {candidates = [
+        {id = 0 : i64, name = "template_tmov", tags = ["elementwise"]},
+        {id = 1000 : i64, name = "vmi_tmov",
+         resource_scope = "row", resource_vector_values = 1 : i64,
+         resource_chunk_streaming = false,
+         tags = ["vmi", "fusion_eligible"]}
+      ]}
+    return
+  }
+
+  func.func @wide_row_candidate() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x2048xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x2048xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x2048xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x2048xf32>)
+      {candidates = [
+        {id = 0 : i64, name = "template_tmov", tags = ["elementwise"]},
+        {id = 1000 : i64, name = "vmi_tmov",
+         resource_scope = "row", resource_vector_values = 1 : i64,
+         resource_chunk_streaming = false,
+         tags = ["vmi", "fusion_eligible"]}
+      ]}
+    return
+  }
+
+  func.func @later_safe_candidate() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x64xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x64xf32>)
+      {candidates = [
+        {id = 0 : i64, name = "template_tmov", tags = ["elementwise"]},
+        {id = 1000 : i64, name = "vmi_tmov_heavy",
+         resource_scope = "row", resource_vector_values = 32 : i64,
+         resource_chunk_streaming = false,
+         tags = ["vmi", "fusion_eligible"]},
+        {id = 1001 : i64, name = "vmi_tmov_light",
+         resource_scope = "row", resource_vector_values = 1 : i64,
+         resource_chunk_streaming = false,
+         tags = ["vmi", "fusion_eligible"]}
+      ]}
+    return
+  }
+
+  // Row reductions currently flatten the whole source tile into one wide VMI
+  // value, so the contract uses tile scope rather than row scope.
+  func.func @full_tile_candidate() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %workspace = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 32x1xf32, blayout=col_major>
+    pto.trowmax
+      ins(%src, %workspace : !pto.tile_buf<vec, 32x128xf32>,
+                             !pto.tile_buf<vec, 32x128xf32>)
+      outs(%dst : !pto.tile_buf<vec, 32x1xf32, blayout=col_major>)
+      {candidates = [
+        {id = 0 : i64, name = "template_trowmax", tags = ["reduction"]},
+        {id = 1000 : i64, name = "vmi_trowmax",
+         resource_scope = "tile", resource_vector_values = 1 : i64,
+         resource_chunk_streaming = false,
+         tags = ["vmi", "fusion_eligible"]}
+      ]}
+    return
+  }
+
+  func.func @missing_contract() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 16x64xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x64xf32>)
+      {candidates = [
+        {id = 0 : i64, name = "template_tmov", tags = ["elementwise"]},
+        {id = 1000 : i64, name = "vmi_tmov",
+         tags = ["vmi", "fusion_eligible"]}
+      ]}
+    return
+  }
+}
+
+// DEFAULT-LABEL: func.func @safe_row_candidate
+// DEFAULT: pto.tmov
+// DEFAULT-SAME: pto.tilelib.impl = "vmi"
+// DEFAULT-SAME: pto.vmi.resource.estimate_exact = true
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_bytes = 256 : i64
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_chunks = 1 : i64
+
+// DEFAULT-LABEL: func.func @wide_row_candidate
+// DEFAULT: pto.tmov
+// DEFAULT-SAME: pto.tilelib.impl = "ptodsl"
+// DEFAULT-SAME: pto.vmi.fusion.boundary = "local"
+// DEFAULT-SAME: pto.vmi.fusion.boundary_reason = "resource_pressure_fallback"
+// DEFAULT-SAME: pto.vmi.resource.estimate_exact = true
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_bytes = 8192 : i64
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_chunks = 32 : i64
+
+// DEFAULT-LABEL: func.func @later_safe_candidate
+// DEFAULT: pto.tmov
+// DEFAULT-SAME: pto.tilelib.impl = "vmi"
+// DEFAULT-SAME: pto.tilelib.selected_candidate = {{.*}}name = "vmi_tmov_light"
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_bytes = 256 : i64
+
+// DEFAULT-LABEL: func.func @full_tile_candidate
+// DEFAULT: pto.trowmax
+// DEFAULT-SAME: pto.tilelib.impl = "ptodsl"
+// DEFAULT-SAME: pto.vmi.fusion.boundary_reason = "resource_pressure_fallback"
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_bytes = 16384 : i64
+// DEFAULT-SAME: pto.vmi.resource.estimated_peak_vector_chunks = 64 : i64
+
+// DEFAULT-LABEL: func.func @missing_contract
+// DEFAULT: pto.tmov
+// DEFAULT-SAME: pto.tilelib.impl = "ptodsl"
+// DEFAULT-SAME: pto.vmi.fusion.boundary_reason = "resource_estimate_unknown"
+// DEFAULT-SAME: pto.vmi.resource.estimate_exact = false
+
+// DISABLED-LABEL: func.func @wide_row_candidate
+// DISABLED: pto.tmov
+// DISABLED-SAME: pto.tilelib.impl = "vmi"
+// DISABLED-NOT: pto.vmi.fusion.boundary_reason
+// DISABLED-LABEL: func.func @missing_contract
+// DISABLED: pto.tmov
+// DISABLED-SAME: pto.tilelib.impl = "vmi"
+// DISABLED-SAME: pto.vmi.resource.estimate_exact = false
+
+// REMARK: VMI candidate 'vmi_tmov' accepted with estimated peak 256 vector bytes (1 chunks)
+// REMARK: VMI candidate 'vmi_tmov' rejected: estimated peak 8192 vector bytes exceeds 6144
+// REMARK: VMI candidate 'vmi_tmov_heavy' rejected: estimated peak 8192 vector bytes exceeds 6144
+// REMARK: VMI candidate 'vmi_tmov_light' accepted with estimated peak 256 vector bytes (1 chunks)
+// REMARK: VMI candidate 'vmi_trowmax' rejected: estimated peak 16384 vector bytes exceeds 6144
+// REMARK: VMI candidate 'vmi_tmov' rejected: resource contract is missing or cannot be evaluated

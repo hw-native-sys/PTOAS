@@ -8,9 +8,6 @@
 
 // RUN: not ptoas %s 2>&1 | FileCheck %s
 
-// Planner-generated slot addresses are an internal contract. Users must not
-// bypass level validation or memory planning by attaching the attribute.
-
 module {
   func.func @reject_internal_addrs() {
     %multi = pto.alloc_multi_tile {

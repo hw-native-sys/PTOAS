@@ -260,6 +260,33 @@ class TileLibSelectTest(unittest.TestCase):
         self.assertEqual(chosen.metadata.op_class, "elementwise")
         self.assertEqual(chosen.metadata.tags, ("elementwise", "binary"))
 
+    def test_vmi_candidate_is_hidden_unless_explicitly_requested(self):
+        public_candidates = legal_candidates("pto.tadd", "a5", _f32_specs())
+        self.assertNotIn(
+            "vmi_tadd_block64",
+            [candidate.name for candidate in public_candidates],
+        )
+
+        all_candidates = legal_candidates(
+            "pto.tadd",
+            "a5",
+            _f32_specs(),
+            include_hidden=True,
+        )
+        self.assertIn(
+            "vmi_tadd_block64",
+            [candidate.name for candidate in all_candidates],
+        )
+
+        chosen = select(
+            "pto.tadd",
+            "a5",
+            _f32_specs(),
+            candidate_id="vmi_tadd_block64",
+        )
+        self.assertEqual(chosen.name, "vmi_tadd_block64")
+        self.assertIn("vmi", chosen.metadata.tags)
+
     def test_can_select_named_legal_candidate(self):
         chosen = select(
             "pto.tadd",

@@ -15,19 +15,20 @@
 
 // CHECK: pto.tadd
 // CHECK-SAME: candidates = [{
-// CHECK-SAME: id = 1 : i64
-// CHECK-SAME: loop_depth = 1 : i64
-// CHECK-SAME: name = "template_tadd_1d"
-// CHECK-SAME: postupdate = 0 : i64
-// CHECK-SAME: tail = 0 : i64
-// CHECK-SAME: }, {
 // CHECK-SAME: id = 0 : i64
 // CHECK-SAME: loop_depth = 2 : i64
 // CHECK-SAME: name = "template_tadd"
+// CHECK-SAME: postupdate = 0 : i64
+// CHECK-SAME: tags = ["elementwise", "binary"]
+// CHECK-SAME: tail = 0 : i64
+// CHECK-SAME: }, {
+// CHECK-SAME: id = 1000 : i64
+// CHECK-SAME: loop_depth = 1 : i64
+// CHECK-SAME: name = "vmi_tadd_block64"
 
 // EXPAND: func.func @candidate_order
-// EXPAND: call @{{.*}}__template_tadd_1d
-// EXPAND: func.func private @{{.*}}__template_tadd_1d
+// EXPAND: call @{{.*}}__template_tadd
+// EXPAND: func.func private @{{.*}}__template_tadd
 
 module attributes {pto.target_arch = "a5"} {
   func.func @candidate_order() {

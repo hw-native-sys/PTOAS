@@ -1,0 +1,242 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-fusion-region-gen 2>&1 | FileCheck %s --check-prefix=REGION
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-vmi-loop-fusion 2>&1 | FileCheck %s --check-prefix=FUSION
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-vmi-load-store-elision 2>&1 | FileCheck %s --check-prefix=ELIDE
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @local_elementwise_candidates(%scalar: f32, %scalar_i32: i32) {
+    %fill = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %fill_i32 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi32>
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %sub = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %abs = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %neg = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+
+    pto.texpands ins(%scalar : f32)
+      outs(%fill : !pto.tile_buf<vec, 8x512xf32>)
+    pto.texpands ins(%scalar_i32 : i32)
+      outs(%fill_i32 : !pto.tile_buf<vec, 1x128xi32>)
+    pto.tsubs ins(%src, %scalar : !pto.tile_buf<vec, 8x512xf32>, f32)
+      outs(%sub : !pto.tile_buf<vec, 8x512xf32>)
+    pto.tabs ins(%sub : !pto.tile_buf<vec, 8x512xf32>)
+      outs(%abs : !pto.tile_buf<vec, 8x512xf32>)
+    pto.tneg ins(%abs : !pto.tile_buf<vec, 8x512xf32>)
+      outs(%neg : !pto.tile_buf<vec, 8x512xf32>)
+    return
+  }
+
+  func.func @local_elementwise_native_chunks() {
+    %src0 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xf32>
+    %src1 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xf32>
+    %sum = pto.alloc_tile : !pto.tile_buf<vec, 1x256xf32>
+    %neg = pto.alloc_tile : !pto.tile_buf<vec, 1x256xf32>
+
+    pto.tadd ins(%src0, %src1 : !pto.tile_buf<vec, 1x256xf32>, !pto.tile_buf<vec, 1x256xf32>)
+      outs(%sum : !pto.tile_buf<vec, 1x256xf32>)
+    pto.tneg ins(%sum : !pto.tile_buf<vec, 1x256xf32>)
+      outs(%neg : !pto.tile_buf<vec, 1x256xf32>)
+    return
+  }
+
+  // ADR-0003 dtype coverage: verify the VMI tadd candidate is selected for
+  // each dtype the A5 tadd ODS accepts (f32/f16/bf16/i8/i16/i32/ui8/ui16/ui32).
+  // vmi_tadd_block64 declares the full NUMERIC_DTYPES set; a non-VMI fallback
+  // would emit a `template_tadd` libcall instead of `__vmi_tadd_block64`, so
+  // the EXPAND CHECKs below assert the vmi candidate fires per dtype.
+  func.func @local_elementwise_dtype_coverage() {
+    // f32 [1x64] (64 lanes/VREG)
+    %a_f32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %b_f32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %d_f32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tadd ins(%a_f32, %b_f32 : !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>)
+      outs(%d_f32 : !pto.tile_buf<vec, 1x64xf32>)
+    // f16 [1x128]
+    %a_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    %b_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    %d_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    pto.tadd ins(%a_f16, %b_f16 : !pto.tile_buf<vec, 1x128xf16>, !pto.tile_buf<vec, 1x128xf16>)
+      outs(%d_f16 : !pto.tile_buf<vec, 1x128xf16>)
+    // bf16 [1x128]
+    %a_bf16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xbf16>
+    %b_bf16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xbf16>
+    %d_bf16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xbf16>
+    pto.tadd ins(%a_bf16, %b_bf16 : !pto.tile_buf<vec, 1x128xbf16>, !pto.tile_buf<vec, 1x128xbf16>)
+      outs(%d_bf16 : !pto.tile_buf<vec, 1x128xbf16>)
+    // i32 [1x64]
+    %a_i32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xi32>
+    %b_i32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xi32>
+    %d_i32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xi32>
+    pto.tadd ins(%a_i32, %b_i32 : !pto.tile_buf<vec, 1x64xi32>, !pto.tile_buf<vec, 1x64xi32>)
+      outs(%d_i32 : !pto.tile_buf<vec, 1x64xi32>)
+    // i16 [1x128]
+    %a_i16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi16>
+    %b_i16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi16>
+    %d_i16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi16>
+    pto.tadd ins(%a_i16, %b_i16 : !pto.tile_buf<vec, 1x128xi16>, !pto.tile_buf<vec, 1x128xi16>)
+      outs(%d_i16 : !pto.tile_buf<vec, 1x128xi16>)
+    // i8 [1x256]
+    %a_i8 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xi8>
+    %b_i8 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xi8>
+    %d_i8 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xi8>
+    pto.tadd ins(%a_i8, %b_i8 : !pto.tile_buf<vec, 1x256xi8>, !pto.tile_buf<vec, 1x256xi8>)
+      outs(%d_i8 : !pto.tile_buf<vec, 1x256xi8>)
+    return
+  }
+
+  // ADR-0003 vector-scalar dtype coverage: verify the per-dtype vmi_tadds
+  // candidates fire (f32/f16/bf16/i8/i16/i32). These are per-dtype functions
+  // (texpand pattern) because the scalar parameter's dtype is bound to its
+  // annotation by the tracing layer. A non-VMI fallback would emit
+  // `template_tadds` instead, so the EXPAND CHECKs assert VMI selection.
+  func.func @local_vecscalar_dtype_coverage() {
+    %sf32 = arith.constant 1.0 : f32
+    %sf16 = arith.constant 1.0 : f16
+    %sbf16 = arith.constant 1.0 : bf16
+    %si8 = arith.constant 1 : i8
+    %si16 = arith.constant 1 : i16
+    %si32 = arith.constant 1 : i32
+    // f32 [1x64]
+    %a_f32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %d_f32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    pto.tadds ins(%a_f32, %sf32 : !pto.tile_buf<vec, 1x64xf32>, f32)
+      outs(%d_f32 : !pto.tile_buf<vec, 1x64xf32>)
+    // f16 [1x128]
+    %a_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    %d_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    pto.tadds ins(%a_f16, %sf16 : !pto.tile_buf<vec, 1x128xf16>, f16)
+      outs(%d_f16 : !pto.tile_buf<vec, 1x128xf16>)
+    // bf16 [1x128]
+    %a_bf16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xbf16>
+    %d_bf16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xbf16>
+    pto.tadds ins(%a_bf16, %sbf16 : !pto.tile_buf<vec, 1x128xbf16>, bf16)
+      outs(%d_bf16 : !pto.tile_buf<vec, 1x128xbf16>)
+    // i32 [1x64]
+    %a_i32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xi32>
+    %d_i32 = pto.alloc_tile : !pto.tile_buf<vec, 1x64xi32>
+    pto.tadds ins(%a_i32, %si32 : !pto.tile_buf<vec, 1x64xi32>, i32)
+      outs(%d_i32 : !pto.tile_buf<vec, 1x64xi32>)
+    // i16 [1x128]
+    %a_i16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi16>
+    %d_i16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi16>
+    pto.tadds ins(%a_i16, %si16 : !pto.tile_buf<vec, 1x128xi16>, i16)
+      outs(%d_i16 : !pto.tile_buf<vec, 1x128xi16>)
+    // i8 [1x256]
+    %a_i8 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xi8>
+    %d_i8 = pto.alloc_tile : !pto.tile_buf<vec, 1x256xi8>
+    pto.tadds ins(%a_i8, %si8 : !pto.tile_buf<vec, 1x256xi8>, i8)
+      outs(%d_i8 : !pto.tile_buf<vec, 1x256xi8>)
+    return
+  }
+}
+
+// EXPAND: call {{.*}}__vmi_texpands
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_texpands_i32
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_tsubs
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_tabs
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_tneg
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+
+// ADR-0003 dtype coverage: the vmi_tadd_block64 candidate must fire for every
+// dtype it declares (f32/f16/bf16/i8/i16/i32). Each EXPAND line matches the
+// per-dtype libcall — canonical_vmi_template embeds the dtype in the symbol
+// name as `tile_<dtype>_` and appends `__vmi_tadd_block64`. A non-VMI fallback
+// would emit `template_tadd` instead, so these CHECKs assert VMI selection.
+// EXPAND-LABEL: func.func @local_elementwise_dtype_coverage
+// EXPAND: call {{.*}}a5_tadd_tile_f32{{.*}}__vmi_tadd_block64
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}a5_tadd_tile_f16{{.*}}__vmi_tadd_block64
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}a5_tadd_tile_bf16{{.*}}__vmi_tadd_block64
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}a5_tadd_tile_i32{{.*}}__vmi_tadd_block64
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}a5_tadd_tile_i16{{.*}}__vmi_tadd_block64
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}a5_tadd_tile_i8{{.*}}__vmi_tadd_block64
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+
+// ADR-0003 vector-scalar dtype coverage: per-dtype vmi_tadds_<dtype> candidates
+// (texpand pattern — scalar dtype bound to annotation, one fn per dtype). The
+// `pto.tilelib.candidate = "vmi_tadds[_<dtype>]"` attr distinguishes each.
+// EXPAND-LABEL: func.func @local_vecscalar_dtype_coverage
+// EXPAND: call {{.*}}a5_tadds_tile_f32
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_tadds"
+// EXPAND: call {{.*}}a5_tadds_tile_f16
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_tadds_f16"
+// EXPAND: call {{.*}}a5_tadds_tile_bf16
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_tadds_bf16"
+// EXPAND: call {{.*}}a5_tadds_tile_i32
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_tadds_i32"
+// EXPAND: call {{.*}}a5_tadds_tile_i16
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_tadds_i16"
+// EXPAND: call {{.*}}a5_tadds_tile_i8
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_tadds_i8"
+
+// REGION-LABEL: func.func @local_elementwise_native_chunks
+// REGION: pto.fusion_region
+// REGION: pto.tadd
+// REGION: pto.tneg
+// REGION: pto.yield() : () -> ()
+// REGION-NOT: pto.fusion_region
+// REGION: return
+
+// INLINE-LABEL: func.func @local_elementwise_candidates
+// INLINE: pto.vmi.vbrc
+// INLINE: pto.vmi.vadds
+// INLINE: pto.vmi.vabs
+// INLINE: pto.vmi.vneg
+// INLINE-LABEL: func.func @local_elementwise_native_chunks
+// INLINE: scf.for
+// INLINE: !pto.vmi.vreg<64xf32>
+// INLINE-NOT: !pto.vmi.vreg<256xf32>
+// INLINE: pto.vmi.vadd
+// INLINE: scf.for
+// INLINE: pto.vmi.vneg
+// INLINE: return
+
+// FUSION-LABEL: func.func @local_elementwise_native_chunks
+// FUSION: pto.fusion_region
+// FUSION: scf.for
+// FUSION: pto.vmi.vadd
+// FUSION-NOT: scf.for
+// FUSION: pto.vmi.vneg
+// FUSION-NOT: scf.for
+// FUSION: return
+
+// ELIDE-LABEL: func.func @local_elementwise_native_chunks
+// ELIDE: pto.fusion_region
+// ELIDE: %[[SUM:.*]] = pto.vmi.vadd
+// ELIDE: pto.vmi.vneg %[[SUM]]
+// ELIDE: return
+
+// FINAL-LABEL: func.func @local_elementwise_candidates
+// FINAL-NOT: pto.vmi.vbrc
+// FINAL-NOT: pto.vmi.vload
+// FINAL-NOT: pto.vmi.vadds
+// FINAL-NOT: pto.vmi.vabs
+// FINAL-NOT: pto.vmi.vneg
+// FINAL-NOT: pto.vmi.vstore
+// FINAL: pto.vdup
+// FINAL: pto.vadds
+// FINAL: pto.vabs
+// FINAL: pto.vneg
+// FINAL-LABEL: func.func @local_elementwise_native_chunks
+// FINAL-NOT: pto.vmi.
+// FINAL: scf.for
+// FINAL: pto.vadd
+// FINAL: pto.vneg
+// FINAL: return

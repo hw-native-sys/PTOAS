@@ -42,6 +42,17 @@ config.test_exec_root = os.path.join(config.ptoir_obj_root, 'test/lit')
 config.ptoir_tools_dir = os.path.join(config.ptoir_obj_root, 'tools/ptoas')
 config.ptoir_test_tools_dir = os.path.join(config.ptoir_obj_root,
                                            'tools/pto-test-opt')
+config.substitutions.append(('%python_executable', config.python_executable))
+mlir_python_root = os.path.realpath(
+    os.path.join(
+        os.path.dirname(config.llvm_tools_dir),
+        'tools/mlir/python_packages/mlir_core'))
+config.substitutions.append(('%mlir_python_root', mlir_python_root))
+
+# PTODSL starts a Python daemon for TileLib metadata and template expansion.
+# Keep the environment available to legacy tests that invoke `ptoas` directly;
+# tests that need a different runtime can still override it in their RUN line.
+llvm_config.with_environment('MLIR_PYTHON_ROOT', mlir_python_root)
 
 config.substitutions.append(('%PATH%', config.environment['PATH']))
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))

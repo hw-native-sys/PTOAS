@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @local_broadcast_fallback() {
+    %tail_src = pto.alloc_tile : !pto.tile_buf<vec, 8x64xf32, valid=4x64>
+    %tail_state = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, valid=4x1, blayout=col_major>
+    %tail_dst = pto.alloc_tile : !pto.tile_buf<vec, 8x64xf32, valid=4x64>
+    %column_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    %expanded_f16 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf16>
+
+    pto.trowexpandmul
+      ins(%tail_src, %tail_state
+          : !pto.tile_buf<vec, 8x64xf32, valid=4x64>,
+            !pto.tile_buf<vec, 8x1xf32, valid=4x1, blayout=col_major>)
+      outs(%tail_dst : !pto.tile_buf<vec, 8x64xf32, valid=4x64>)
+    pto.tcolexpand
+      ins(%column_f16 : !pto.tile_buf<vec, 1x128xf16>)
+      outs(%expanded_f16 : !pto.tile_buf<vec, 8x128xf16>)
+    return
+  }
+}
+
+// EXPAND-LABEL: func.func @local_broadcast_fallback
+// EXPAND: pto.vmi.fusion.boundary = "local"
+// EXPAND-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// EXPAND: pto.vmi.fusion.boundary = "local"
+// EXPAND-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"

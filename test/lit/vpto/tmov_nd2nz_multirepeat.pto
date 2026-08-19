@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// Regression test for the multi-column-repeat ND->NZ path of the
+// template_tmov_nd2nz candidate (cols > lanes => repeatTimes > 1). Mirrors
+// pto-isa TMovNd2NzLoop: an outer scf.for over column-block groups (carrying
+// dst_ptr + a runtime `remained` count for the per-group predicate) + an inner
+// row scf.for with cfgVsstb (repeat_stride=1) + a trailing cfgVsstbLast beat
+// per group (repeat_stride_last, the large stride that repositions dst to the
+// next column-block group's head).
+//
+// Shape: bf16 [128, 192]. lanes = 128 (bf16), so cols=192 > 128 =>
+// repeatTimes = ceil(192/128) = 2, innerLoopNum = 128-1 = 127, virtualRow=128,
+// repeat_stride_last = (256*128 - 127*32)/32 = (32768-4064)/32 = 897.
+// block_stride = 128 (virtualRow * C0/BLOCK_BYTE = 128*32/32 for bf16).
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --tile-lib-backend=ptodsl %s -o - 2>/dev/null | FileCheck %s
+
+// Outer loop: scf.for 0 to 2 step 1, carrying dst_ptr (ptr<bf16,ub>) + remained (index, init %c192).
+// CHECK: scf.for %{{.*}} = %c0{{[^ ]*}} to %c2{{[^ ]*}} step %c1{{[^ ]*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %c192) -> (!pto.ptr<bf16, ub>, index) {{.*}}{
+
+// Inner row loop: scf.for 0 to 127 step 1, carrying dst_ptr.
+// CHECK: scf.for %{{.*}} = %c0{{[^ ]*}} to %c127{{[^ ]*}} step %c1{{[^ ]*}} iter_args(%{{.*}} = %{{.*}}) -> (!pto.ptr<bf16, ub>) {{.*}}{
+
+// Inner-loop beat: vsstb with block_stride %c128_i16, repeat_stride %c1_i16.
+// CHECK: pto.vsstb %{{.*}}, %{{.*}}, %c128_i16, %c1_i16, %{{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16> -> !pto.ptr<bf16, ub>
+
+// Trailing cfgVsstbLast beat: same block_stride, but repeat_stride %c897_i16
+// (the large stride that jumps dst to the next column-block group's head).
+// CHECK: pto.vsstb %{{.*}}, %{{.*}}, %c128_i16, %c897_i16, %{{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16> -> !pto.ptr<bf16, ub>
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @tmov_nd2nz_multirepeat() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=192, v_row=128, v_col=192,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %nz_buf = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=192, v_row=128, v_col=192,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+
+    pto.tmov ins(
+      %src
+        : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=192, v_row=128, v_col=192,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(
+        %nz_buf
+          : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=192, v_row=128, v_col=192,
+                          blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+}

@@ -3,15 +3,19 @@
 // IMPORTANT: Do NOT use --enable-tile-op-expand for ops with scalar operands.
 // TMAXS has a scalar operand (f32), so it uses the PTOToVPTO lowering path.
 //
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s
 
-// After PTOToVPTO lowering, pto.tmaxs should use vmaxs (vector max scalar).
+// The unified PTODSL backend lowers the scalar operand through a VMI candidate
+// and selects the native vector-scalar VPTO instruction for a full mask.
 // CHECK: func.func @TMAXS
 // CHECK-NOT: pto.tmaxs ins
 // CHECK: pto.vecscope
+// CHECK-NOT: pto.vdup
+// CHECK: scf.for
 // CHECK: pto.vlds
 // CHECK: pto.vmaxs
 // CHECK: pto.vsts
+// CHECK: pto.tilelib.candidate = "vmi_tmaxs"
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TMAXS() {

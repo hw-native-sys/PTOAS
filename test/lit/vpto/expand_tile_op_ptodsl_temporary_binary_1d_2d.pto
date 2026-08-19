@@ -17,13 +17,10 @@
 // META-LABEL: func.func @TPRELU_1D
 // META: pto.tprelu
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tprelu_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tprelu"
+// META-NOT: name = "template_tprelu_1d"
 
 // META-LABEL: func.func @TPRELU_TMP_2D
 // META: pto.tprelu
@@ -32,12 +29,6 @@
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tprelu"
 // META-NOT: name = "template_tprelu_1d"
-
-// SELECT-LABEL: func.func private @{{.*}}__template_tprelu_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vprelu
-// SELECT: return
 
 // SELECT-LABEL: func.func private @{{.*}}__template_tprelu(
 // SELECT: scf.for

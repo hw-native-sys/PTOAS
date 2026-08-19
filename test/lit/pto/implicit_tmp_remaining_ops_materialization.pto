@@ -7,7 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s
-// RUN: ptoas --pto-arch=a3 --pto-level=level2 --plan-memory-impl=modern --emit-pto-ir %s 2>&1 | FileCheck %s
 
 module {
   func.func @implicit_remaining_tmps(%executed : vector<4xi16>) {
@@ -32,11 +31,11 @@ module {
   }
 }
 
-// CHECK: pto.tprelu ins(%{{.*}}, %{{.*}}, %{{.*}}
-// CHECK: pto.trem ins(%{{.*}}, %{{.*}}, %{{.*}}
-// CHECK: pto.trems ins(%{{.*}}, %{{.*}}, %{{.*}}
-// CHECK: pto.tsel ins(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
-// CHECK: pto.tsels ins(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
-// CHECK: pto.ttrans ins(%{{.*}}, %{{.*}}
-// CHECK: pto.tcvt ins(%{{.*}}, %{{.*}}
-// CHECK: pto.tmrgsort ins(%{{.*}}, %{{.*}}, %{{.*}} {exhausted = false}
+// CHECK: pto.tprelu ins(%{{.*}}, %{{.*}} {{.*}} outs(
+// CHECK: pto.trem ins(%{{.*}}, %{{.*}} {{.*}} outs(
+// CHECK: pto.trems ins(%{{.*}}, %{{.*}} {{.*}} outs(
+// CHECK: pto.tsel ins(%{{.*}}, %{{.*}}, %{{.*}} {{.*}} outs(
+// CHECK: pto.tsels ins(%{{.*}}, %{{.*}}, %{{.*}} {{.*}} outs(
+// CHECK: pto.ttrans ins(%{{.*}} {{.*}} outs(
+// CHECK: pto.tcvt ins(%{{.*}} {{.*}} outs(
+// CHECK: pto.tmrgsort ins(%{{.*}}, %{{.*}} {{.*}} {exhausted = false} {{.*}} outs(

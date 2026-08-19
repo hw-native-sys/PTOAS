@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=PIPE --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @ptodsl_vmi_tileop_provider() {
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %a = pto.alloc_tile : !pto.tile_buf<vec, 32x64xf32>
+    %b = pto.alloc_tile : !pto.tile_buf<vec, 32x64xf32>
+    %c = pto.alloc_tile : !pto.tile_buf<vec, 32x64xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<vec, 32x64xf32>
+    %wa = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %wb = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %wc = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %va = pto.alloc_tile valid_row = %c8 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %vb = pto.alloc_tile valid_row = %c8 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %vc = pto.alloc_tile valid_row = %c8 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    pto.tadd
+      ins(%a, %b
+          : !pto.tile_buf<vec, 32x64xf32>,
+            !pto.tile_buf<vec, 32x64xf32>)
+      outs(%c : !pto.tile_buf<vec, 32x64xf32>)
+    pto.texp
+      ins(%c : !pto.tile_buf<vec, 32x64xf32>)
+      outs(%d : !pto.tile_buf<vec, 32x64xf32>)
+    pto.tadd
+      ins(%wa, %wb
+          : !pto.tile_buf<vec, 32x128xf32>,
+            !pto.tile_buf<vec, 32x128xf32>)
+      outs(%wc : !pto.tile_buf<vec, 32x128xf32>)
+    pto.tadd
+      ins(%va, %vb
+          : !pto.tile_buf<vec, 8x64xf32, valid=?x?>,
+            !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+      outs(%vc : !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+    return
+  }
+}
+
+// PIPE: IR Dump After ExpandTileOp
+// PIPE: call {{.*}}__pto_ptodsl_vmi_a5_tadd
+// PIPE: call {{.*}}__pto_ptodsl_vmi_a5_texp
+// PIPE: call {{.*}}__pto_ptodsl_vmi_a5_tadd
+// PIPE: func.func private {{.*}}__pto_ptodsl_vmi_a5_tadd
+// PIPE-SAME: pto.tilelib.impl = "vmi"
+// PIPE: pto.vmi.create_mask
+// PIPE: scf.for
+// PIPE: pto.vmi.vload
+// PIPE: pto.vmi.vadd
+// PIPE: pto.vmi.vstore
+// PIPE: func.func private {{.*}}__pto_ptodsl_vmi_a5_texp
+// PIPE: pto.vmi.vexp
+// The full 32x128 tile is streamed as native A5 chunks rather than a wide
+// 128-lane physical vector.
+// PIPE: !pto.vmi.vreg<64xf32>
+// PIPE: !pto.vmi.mask<64xpred>
+// PIPE: IR Dump After PTOInlineLibCall
+// PIPE: func.func @ptodsl_vmi_tileop_provider
+// PIPE: pto.vmi.create_mask
+// PIPE: scf.for
+// PIPE: pto.vmi.vadd
+// PIPE: pto.vmi.vexp
+
+// FINAL-LABEL: func.func @ptodsl_vmi_tileop_provider
+// FINAL: pto.vecscope
+// FINAL: scf.for
+// FINAL: pto.vlds
+// FINAL: pto.vadd
+// FINAL: pto.vsts
+// FINAL: pto.vexp

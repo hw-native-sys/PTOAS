@@ -5,9 +5,10 @@ module {
     %c0_i32 = arith.constant 0 : i32
     %addr = arith.constant 0 : i64
     %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    // CHECK: error: 'pto.tci' op requires explicit tmp when PlanMemory is skipped
     pto.tci ins(%c0_i32 : i32)
       outs(%tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
 }
+
+// CHECK: error: 'pto.tci' op requires explicit tmp when PlanMemory is skipped

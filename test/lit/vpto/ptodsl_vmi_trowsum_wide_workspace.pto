@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @ptodsl_vmi_trowsum_wide_workspace() {
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c1 = arith.constant 1 : index
+    %src = pto.alloc_tile
+      valid_row = %c8 valid_col = %c64
+      : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+    %workspace = pto.alloc_tile
+      valid_row = %c8 valid_col = %c128
+      : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+    %dst = pto.alloc_tile
+      valid_row = %c8 valid_col = %c1
+      : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+
+    pto.trowsum
+      ins(%src, %workspace
+          : !pto.tile_buf<vec, 8x64xf32, valid=?x?>,
+            !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      outs(%dst : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+    return
+  }
+}
+
+// EXPAND-LABEL: func.func @ptodsl_vmi_trowsum_wide_workspace
+// EXPAND: call {{.*}}__template_trowsum
+// EXPAND-SAME: pto.tilelib.candidate = "template_trowsum"
+// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
+// FINAL-LABEL: func.func @ptodsl_vmi_trowsum_wide_workspace
+// FINAL: pto.vcadd
+// FINAL: pto.vsts {{.*}} {dist = "1PT_B32"}
+// FINAL-NOT: pto.vscatter
+// FINAL-NOT: pto.vmi.v

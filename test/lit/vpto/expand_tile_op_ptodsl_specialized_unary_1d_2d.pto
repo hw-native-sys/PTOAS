@@ -16,14 +16,10 @@
 // META-LABEL: func.func @TLOG_HIGH_1D
 // META: pto.tlog
 // META-SAME: candidates = [{
-// META-SAME: id = 3 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tlog_high_precision_1d"
-// META-SAME: }, {
 // META-SAME: id = 1 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tlog_high_precision"
-// META-NOT: name = "template_tlog_1d"
+// META-NOT: name = "template_tlog_high_precision_1d"
 
 // META-LABEL: func.func @TLOG_HIGH_2D
 // META: pto.tlog
@@ -36,15 +32,13 @@
 // META-LABEL: func.func @TRECIP_1D
 // META: pto.trecip
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_trecip_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_trecip"
+// META-NOT: name = "template_trecip_1d"
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tlog_high_precision_1d(
+// SELECT-LABEL: func.func private @{{.*}}__template_tlog_high_precision(
+// SELECT: scf.for
 // SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.vcmps
@@ -55,14 +49,8 @@
 // SELECT: pto.vsel
 // SELECT: return
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tlog_high_precision(
+// SELECT-LABEL: func.func private @{{.*}}__template_trecip(
 // SELECT: scf.for
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vcmps
-// SELECT: return
-
-// SELECT-LABEL: func.func private @{{.*}}__template_trecip_1d(
 // SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.vbr

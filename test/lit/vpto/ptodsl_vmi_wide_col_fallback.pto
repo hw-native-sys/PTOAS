@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// Wide-column (cols > 256) regression guard for VMI candidates whose emit
+// paths are single-shot (no 256-lane chunking). _snap_lanes silently caps a
+// wide load at 256 lanes, so columns beyond 256 would be dropped. The
+// col-reduce (tcolmax/tcolsum) and col-expand-binary (tcolexpandadd/sub/mul/
+// div) constraints now reject cols > 256, forcing these ops to fall back to
+// the ordinary PTODSL template, which already chunks correctly via
+// pto.elements_per_vreg steps. See P1-2.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - 2>/dev/null | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @wide_col_reduce_and_expand() {
+    %src_8x512 = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %colmax_dst = pto.alloc_tile : !pto.tile_buf<vec, 1x512xf32>
+    %colsum_dst = pto.alloc_tile : !pto.tile_buf<vec, 1x512xf32>
+    %row_1x512 = pto.alloc_tile : !pto.tile_buf<vec, 1x512xf32>
+    %expandadd_dst = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %expandmul_dst = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %expanddiv_dst = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+
+    pto.tcolmax ins(%src_8x512 : !pto.tile_buf<vec, 8x512xf32>)
+               outs(%colmax_dst : !pto.tile_buf<vec, 1x512xf32>)
+    pto.tcolsum ins(%src_8x512 : !pto.tile_buf<vec, 8x512xf32>)
+               outs(%colsum_dst : !pto.tile_buf<vec, 1x512xf32>)
+    pto.tcolexpandadd
+      ins(%src_8x512, %row_1x512 : !pto.tile_buf<vec, 8x512xf32>,
+                               !pto.tile_buf<vec, 1x512xf32>)
+      outs(%expandadd_dst : !pto.tile_buf<vec, 8x512xf32>)
+    pto.tcolexpandmul
+      ins(%src_8x512, %row_1x512 : !pto.tile_buf<vec, 8x512xf32>,
+                               !pto.tile_buf<vec, 1x512xf32>)
+      outs(%expandmul_dst : !pto.tile_buf<vec, 8x512xf32>)
+    pto.tcolexpanddiv
+      ins(%src_8x512, %row_1x512 : !pto.tile_buf<vec, 8x512xf32>,
+                               !pto.tile_buf<vec, 1x512xf32>)
+      outs(%expanddiv_dst : !pto.tile_buf<vec, 8x512xf32>)
+    return
+  }
+}
+
+// Every wide-col op must fall back to the ordinary ptodsl template
+// (non_vmi_local_boundary_fallback), NOT select the vmi_* candidate.
+// EXPAND: call @__pto_{{.*}}tcolmax{{.*}}pto.tilelib.impl = "ptodsl"{{.*}}pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// EXPAND: call @__pto_{{.*}}tcolsum{{.*}}pto.tilelib.impl = "ptodsl"{{.*}}pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// EXPAND: call @__pto_{{.*}}tcolexpandadd{{.*}}pto.tilelib.impl = "ptodsl"{{.*}}pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// EXPAND: call @__pto_{{.*}}tcolexpandmul{{.*}}pto.tilelib.impl = "ptodsl"{{.*}}pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// EXPAND: call @__pto_{{.*}}tcolexpanddiv{{.*}}pto.tilelib.impl = "ptodsl"{{.*}}pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// EXPAND-NOT: pto.tilelib.impl = "vmi"
+
+// Final lowering must cover the full 512 columns per row (8 chunks of 64 lanes
+// for f32 = 512 lanes processed), proving no silent truncation. The ordinary
+// template emits an scf.for `0 .. 512 step 64` column loop with pto.vlds /
+// pto.vsts at 64 lanes per chunk — make both the wide step loop and the
+// 64-lane vector width explicit regression guarantees, so a future regression
+// to a single truncated 256-lane load would be caught here.
+// FINAL: scf.for {{.*}} to %c512{{[^ ]*}} step %c64{{[^ ]*}}
+// FINAL: pto.vlds {{.*}} -> !pto.vreg<64xf32>
+// FINAL: pto.vsts {{.*}} : !pto.vreg<64xf32>
+// FINAL-NOT: pto.vmi.vload

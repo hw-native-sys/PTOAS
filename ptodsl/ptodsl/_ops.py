@@ -5158,6 +5158,10 @@ def mte_store(
         loops,
         context="mte_store(...)",
     )
+    l2_cache_ctl = _coerce_i64(
+        _normalize_mte_store_l2_cache(l2_cache, context="mte_store l2_cache"),
+        context="mte_store l2_cache_ctl",
+    )
     _pto.MteUbGmOp(
         _require_pto_ptr_operand(source, context="mte_store(...)"),
         _require_pto_ptr_operand(destination, context="mte_store(...)"),
@@ -5168,10 +5172,7 @@ def mte_store(
         loop_counts,
         loop_src_strides,
         loop_dst_strides,
-        l2_cache_ctl=_coerce_i64(
-            _normalize_mte_store_l2_cache(l2_cache, context="mte_store(...) l2_cache"),
-            context="mte_store l2 cache control",
-        ),
+        l2_cache_ctl=l2_cache_ctl,
     )
 
 
@@ -5321,6 +5322,10 @@ def mte_ub_gm(
         loops,
         context="mte_ub_gm(...)",
     )
+    l2_cache_ctl = _coerce_i64(
+        _normalize_mte_store_l2_cache(l2_cache, context="mte_ub_gm l2_cache"),
+        context="mte_ub_gm l2_cache_ctl",
+    )
     _pto.MteUbGmOp(
         unwrap_surface_value(source),
         unwrap_surface_value(destination),
@@ -5331,10 +5336,7 @@ def mte_ub_gm(
         loop_counts,
         loop_src_strides,
         loop_dst_strides,
-        l2_cache_ctl=_coerce_i64(
-            _normalize_mte_store_l2_cache(l2_cache, context="mte_ub_gm(...) l2_cache"),
-            context="mte_ub_gm l2 cache control",
-        ),
+        l2_cache_ctl=l2_cache_ctl,
     )
 
 
