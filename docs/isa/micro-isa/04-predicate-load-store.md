@@ -9,11 +9,18 @@ In concrete examples, `G` should be chosen to match the consumer family. The
 examples below use `b32` when the loaded/stored mask is used with `f32`
 vector compares or selects.
 
-The predicate load/store ops documented on this page always use explicit
-`base[offset]` addressing. Scalar forms (`plds`, `psts`) express `%offset` in
-bytes. For immediate forms (`pldi`, `psti`), one `%offset` unit is an alignment
-unit selected by `DIST`. Here `VL` is the target vector length in bytes; on A5,
-`VL = 256 bytes`:
+The interpretation of `base[offset]` depends on whether the optional
+`%updated_base` result is present:
+
+- Without `%updated_base`, the op accesses `base + byte_advance`.
+- With `%updated_base`, the op accesses the current `base` and returns
+  `base + byte_advance` as `%updated_base` for a later access.
+
+Scalar forms (`plds`, `psts`) express `%offset` in bytes, so their
+`byte_advance` is `%offset`. For immediate forms (`pldi`, `psti`), one
+`%offset` unit is an alignment unit selected by `DIST`, so their
+`byte_advance` is `alignment_unit(DIST) * %offset`. Here `VL` is the target
+vector length in bytes; on A5, `VL = 256 bytes`:
 
 | op | `DIST` | one immediate offset unit | A5 value |
 |----|--------|---------------------------|----------|
@@ -42,10 +49,10 @@ unit selected by `DIST`. Here `VL` is the target vector length in bytes; on A5,
     bit out of every two bits.
 
 The loaded payload is a packed predicate image in UB. Consumer ops interpret
-the resulting `!pto.mask<G>` according to the mask granularity `G`.
-`pto.plds` only
-models the explicit `base[offset]` form.
-If requested, `%updated_base` is `%source` advanced by `%offset` bytes.
+the resulting `!pto.mask<G>` according to the mask granularity `G`. Without
+`%updated_base`, `pto.plds` reads from `%source + %offset` bytes. With
+`%updated_base`, it reads from the current `%source` and returns the address
+advanced by `%offset` bytes.
 
 **Example:**
 ```mlir
@@ -68,12 +75,13 @@ If requested, `%updated_base` is `%source` advanced by `%offset` bytes.
     bit out of every two bits.
 
 Like `pto.plds`, this op reads a packed predicate payload from UB and
-materializes it as `!pto.mask<G>`.
-If requested, `%updated_base` is `%source` advanced by the immediate
-`alignment_unit(DIST) * %offset` bytes.
+materializes it as `!pto.mask<G>`. Without `%updated_base`, it reads from
+`%source + alignment_unit(DIST) * %offset`. With `%updated_base`, it reads
+from the current `%source` and returns that advanced address.
 
-**Example:** on A5, `US` selects a 16-byte alignment unit, so `%c1` accesses
-`%source + 16 bytes` and returns that address as `%next`:
+**Example:** on A5, `US` selects a 16-byte alignment unit. Because this form
+returns `%next`, it loads from the current `%source` and returns `%source + 16
+bytes` as `%next`:
 
 ```mlir
 %mask, %next = pto.pldi %source[%c1], "US"
@@ -98,8 +106,9 @@ If requested, `%updated_base` is `%source` advanced by the immediate
     `VL/16`, keeping one bit out of every two bits.
 
 `pto.psts` stores the packed predicate payload represented by `!pto.mask<G>`.
-It only models the explicit `base[offset]` form.
-If requested, `%updated_base` is `%dest` advanced by `%offset` bytes.
+Without `%updated_base`, it writes to `%dest + %offset` bytes. With
+`%updated_base`, it writes to the current `%dest` and returns the address
+advanced by `%offset` bytes.
 
 **Example:**
 ```mlir
@@ -121,11 +130,13 @@ pto.psts %mask, %ub[%c0], "NORM" : !pto.mask<G>, !pto.ptr<T, ub>, index
     `VL/16`, keeping one bit out of every two bits.
 
 `pto.psti` and `pto.psts` store the packed predicate payload represented by
-`!pto.mask<G>`.
-If requested, `%updated_base` is `%dest` advanced by the immediate `%offset`
-multiplied by `alignment_unit(DIST)` bytes.
+`!pto.mask<G>`. Without `%updated_base`, `pto.psti` writes to the destination
+advanced by `alignment_unit(DIST) * %offset`. With `%updated_base`, it writes
+to the current `%dest` and returns that advanced address.
 
-**Example:** on A5, `PK` selects a 16-byte alignment unit:
+**Example:** on A5, `PK` selects a 16-byte alignment unit. Because this form
+returns `%next`, it stores to the current `%dest` and returns `%dest + 16
+bytes` as `%next`:
 
 ```mlir
 %next = pto.psti %mask, %dest[%c1], "PK"

@@ -14,18 +14,20 @@ include "mlir/IR/OpBase.td"
 def VPTOAddressSemanticsOpInterface
     : OpInterface<"VPTOAddressSemanticsOpInterface"> {
   let description = [{
-    Exposes the base, optional offset, and address unit for each current VPTO
-    memory access. Post-access advances and updated-base rules are deliberately
-    excluded from this interface.
+    Exposes the complete VPTO addressing contract. Current-access base,
+    optional offset, and unit are structurally separate from the optional
+    post-access advance operand, unit, target constraint, and updated-base
+    result. Consumers must not infer either contract from operand or result
+    positions.
   }];
   let cppNamespace = "::mlir::pto";
   let methods = [
     InterfaceMethod<
-      "Return normalized current-access address semantics.",
-      "::llvm::SmallVector<::mlir::pto::VPTOAddressAccess>",
-      "getVPTOAddressAccesses", (ins), [{}],
+      "Return normalized current-access and post-update address semantics.",
+      "::mlir::pto::VPTOAddressSemantics",
+      "getVPTOAddressSemantics", (ins), [{}],
       /*defaultImplementation=*/[{
-        return ::mlir::pto::getDefaultVPTOAddressAccesses(
+        return ::mlir::pto::getDefaultVPTOAddressSemantics(
             $_op.getOperation());
       }]>
   ];

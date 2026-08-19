@@ -115,16 +115,18 @@ PTOAddressAnalysis::getAddresses(Operation *operation) {
   }
 
   SmallVector<PTOAddressExpr> addresses;
-  for (const VPTOAddressAccess &access : semantics.getVPTOAddressAccesses()) {
-    auto elementBytes = getElementBytes(access.base);
+  VPTOAddressSemantics contract = semantics.getVPTOAddressSemantics();
+  for (const VPTOAddressAccess &access : contract.currentAccesses) {
+    Value base = access.baseOperand->get();
+    auto elementBytes = getElementBytes(base);
     if (!elementBytes) {
       return PTOAnalysisResult<SmallVector<PTOAddressExpr>>::unknown(
           PTOAnalysisUnknownReason::UnknownElementSize);
     }
 
     PTOAddressExpr address;
-    address.currentBase = access.base;
-    address.rootOrBase = access.base;
+    address.currentBase = base;
+    address.rootOrBase = base;
     address.elementBytes = *elementBytes;
     address.elementOffset = makePTOConstantExpr(0);
 
@@ -144,9 +146,10 @@ PTOAddressAnalysis::getAddresses(Operation *operation) {
     if (access.offset) {
       auto unitBytes =
           getUnitBytes(operation, access.offset->unit, *elementBytes);
+      Value offset = access.offset->operand->get();
       address.offset = PTOTypedAddressOffset{
-          access.offset->value, valueEvolution.getExpr(access.offset->value),
-          access.offset->unit, unitBytes};
+          offset, valueEvolution.getExpr(offset), access.offset->unit,
+          unitBytes};
     }
     addresses.push_back(std::move(address));
   }

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-//===- VPTOAddressSemantics.h - VPTO current-access contract ---*- C++ -*-===//
+//===- VPTOAddressSemantics.h - VPTO addressing contract --------*- C++ -*-===//
 
 #ifndef PTO_IR_VPTOADDRESSSEMANTICS_H
 #define PTO_IR_VPTOADDRESSSEMANTICS_H
@@ -26,23 +26,51 @@ enum class VPTOAddressUnit {
   Alignment,
 };
 
+/// Target encoding restriction on a post-access pointer advance.
+enum class VPTOAdvanceConstraint {
+  Dynamic,
+  Constant,
+  SignedI8,
+};
+
 struct VPTOAddressOffset {
-  Value value;
+  OpOperand *operand;
   VPTOAddressUnit unit = VPTOAddressUnit::Element;
 };
 
 struct VPTOAddressAccess {
-  Value base;
+  OpOperand *baseOperand;
   std::optional<VPTOAddressOffset> offset;
 };
 
-/// Default implementation used by operations carrying
-/// VPTOAddressSemanticsOpInterface.  It reports only the address of the current
-/// access; post-access advances are intentionally excluded.
-SmallVector<VPTOAddressAccess>
-getDefaultVPTOAddressAccesses(Operation *operation);
+/// Post-access advance semantics are separate from the current-access address.
+/// A null advanceOperand denotes an optional trailing operand that is absent in
+/// the normal form and is materialized when building the post-update form.
+/// updatedBase is null for a normal-form operation and names the ODS result for
+/// an operation that is already in post-update form.
+struct VPTOPostUpdateSemantics {
+  OpOperand *baseOperand;
+  OpOperand *advanceOperand;
+  VPTOAddressUnit advanceUnit = VPTOAddressUnit::Element;
+  VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic;
+  Value updatedBase;
+};
+
+/// Complete VPTO addressing contract. Current accesses describe where an
+/// operation reads or writes now. For an operation already in post-update form,
+/// the current access is the base alone because its offset denotes only the
+/// after-access advance. postUpdate independently describes that advance; its
+/// unit may differ intentionally from a normal form's current offset unit.
+struct VPTOAddressSemantics {
+  SmallVector<VPTOAddressAccess> currentAccesses;
+  std::optional<VPTOPostUpdateSemantics> postUpdate;
+};
+
+/// Default implementation used by VPTOAddressSemanticsOpInterface.
+VPTOAddressSemantics getDefaultVPTOAddressSemantics(Operation *operation);
 
 llvm::StringRef stringifyVPTOAddressUnit(VPTOAddressUnit unit);
+llvm::StringRef stringifyVPTOAdvanceConstraint(VPTOAdvanceConstraint value);
 
 } // namespace mlir::pto
 

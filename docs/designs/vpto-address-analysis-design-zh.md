@@ -11,7 +11,8 @@
 ```text
 VPTO op
   └── VPTOAddressSemanticsOpInterface
-        └── 当前访存使用的 base、offset 和 offset unit
+        ├── 当前访存使用的 typed base、optional offset 和 offset unit
+        └── post-update 的 typed base/advance、unit、constraint 和结果状态
 
 func::FuncOp
   ├── PTOValueEvolutionAnalysis
@@ -49,7 +50,7 @@ ValueEvolution、把 pointer root/`addptr` 组合留在 AddressAnalysis，但最
 
 ## 2. 背景与当前问题
 
-`VPTOSoftPostUpdate` 当前在 pass 内部同时完成了以下工作：
+历史上的 `VPTOSoftPostUpdate` 在 pass 内部同时完成了以下工作：
 
 - 用 `PostUpdateTable` 描述不同 VPTO memory op 的 base、offset 和 offset unit；
 - 将整数、`index`、`pto.addptr` 和简单算术分解为 `StrideExpr`；
@@ -87,7 +88,8 @@ ValueEvolution、把 pointer root/`addptr` 组合留在 AddressAnalysis，但最
    `pto.addptr`、`scf.for` IV 和 loop-carried recurrence。
 3. 对 range、cast safety、no-wrap、known step 和 effective address delta 给出
    明确的 `Known` 或带原因的 `Unknown`，而不是依赖固定 i16 形态。
-4. 让 `VPTOSoftPostUpdate` 只负责 post-update 指令约束、收益判断和 IR 改写。
+4. 让 `VPTOSoftPostUpdate` 从 op interface 读取 post-update 指令约束，只负责应用
+   constraint、收益判断和 IR 改写。
 5. 让非地址 consumer（例如 loop counter narrowing）可以只复用值与循环演化
    分析，而不依赖 VPTO memory op。
 6. 为 uniformity、lane stride、alignment 等未来明确的 consumer 查询保留同一
@@ -167,8 +169,8 @@ consumer 无需支付或依赖这一层。
 ### 6.1 VPTOAddressSemanticsOpInterface
 
 首期直接新增 `VPTOAddressSemanticsOpInterface`，由具有可分析地址的 VPTO op 实现。
-这是 op 自身的 IR 语义，适合与 ODS 定义放在一起维护；不再以 transform 内部的
-op name `StringMap` 作为通用地址描述来源。
+这是 op 自身的 IR 语义，适合与 ODS 定义放在一起维护。它同时是 current access
+与 post-update advance 的唯一事实来源；transform 不再按 op name 维护第二张表。
 
 概念接口如下，最终 C++ 名称可在实现阶段遵循现有 ODS interface 风格调整：
 
@@ -181,29 +183,44 @@ enum class VPTOAddressUnit {
 };
 
 struct VPTOAddressOffset {
-  Value value;
+  OpOperand *operand;
   VPTOAddressUnit unit;
 };
 
 struct VPTOAddressAccess {
-  Value base;
+  OpOperand *baseOperand;
   std::optional<VPTOAddressOffset> offset; // none 表示当前 access 为 base + 0
 };
 
-SmallVector<VPTOAddressAccess> getVPTOAddressAccesses();
+struct VPTOPostUpdateSemantics {
+  OpOperand *baseOperand;
+  OpOperand *advanceOperand; // 可选 trailing operand 不存在时为 null
+  VPTOAddressUnit advanceUnit;
+  VPTOAdvanceConstraint constraint;
+  Value updatedBase; // normal form 中为 null
+};
+
+struct VPTOAddressSemantics {
+  SmallVector<VPTOAddressAccess> currentAccesses;
+  std::optional<VPTOPostUpdateSemantics> postUpdate;
+};
+
+VPTOAddressSemantics getVPTOAddressSemantics();
 ```
 
-返回 access 列表而不是把 base/offset operand index 暴露给 analysis，原因是：
+接口返回 ODS 具名 accessor 对应的 `OpOperand *`/`Value`，而不是把物理 operand/result
+下标暴露给 consumer，原因是：
 
 - analysis 不应依赖可选 operand 导致的物理下标变化；
 - 一个 op 将来可以描述多个实际 memory access；
 - op 可以将特殊 assembly/operand 形式规范化为统一语义。
 
-接口只描述“当前这次访存访问哪个地址”，不描述 post-update 后指针如何更新，也不
-描述该访问是 read 还是 write。后两类信息分别属于 Post-Update consumer 和现有
-memory-effect/scheduling 语义。
+`currentAccesses` 只描述“当前这次访存访问哪个地址”；`postUpdate` 独立描述访问后
+如何更新 pointer。该访问是 read 还是 write 仍属于现有 memory-effect/scheduling
+语义，不在本接口重复维护。只实现 current access 而不支持 post-update 的 op 显式
+返回 `postUpdate = none`。
 
-例如：
+normal form 例如：
 
 ```text
 vlds/vsts:  {base, {offset, Element}}
@@ -212,10 +229,16 @@ vldus:      {source, none}
 vstus:      {base, none}
 ```
 
+已经带 `updatedBase` 的 post-update form 则统一将 current access 描述为
+`{base, none}`；同一个 offset 只出现在 `postUpdate.advanceOperand` 中。SoftPostUpdate
+会先把首次访问的完整地址物化为该 base，再把相邻访问间 stride 作为 advance，因此
+不能把 advance 再叠加到当前访问，否则会产生一拍偏移。
+
 对于 stateful op，作为状态输入的 align 或本次访问之后的 advance 不能误报为当前
-access offset。例如 `vstus` 的 offset 若表示 post-access advance，接口应报告
-`base + 0`；其 update operand 和 update unit 继续由 Post-Update consumer 处理。
-因此 unit 与 offset 组成一个整体；没有 current offset 时，不应随意赋予一个 unit。
+access offset。例如 `vstus` 的 current access 是 `base + 0`，而 `offset` 只出现在
+`postUpdate.advanceOperand` 中。current unit 与 advance unit 是两个独立字段，不要求
+相同；不同 unit 可能正是指令有意定义的语义。没有 current offset 时，不为它臆造
+unit。
 
 ### 6.2 地址单位
 
@@ -510,30 +533,22 @@ transform consumer 必须遵循以下顺序：
 
 | 现有逻辑 | 新归属 |
 |----------|--------|
-| `PostUpdateTable` 中 base/offset/unit 描述 | `VPTOAddressSemanticsOpInterface` |
+| current base/offset/unit | `VPTOAddressSemanticsOpInterface::currentAccesses` |
+| post-update base/advance/unit/constraint/result | `VPTOAddressSemanticsOpInterface::postUpdate` |
 | `StrideExpr`、`decomposeLinear` | `PTOValueEvolutionAnalysis` 的 TypedExpr/线性分解 |
 | `getIterArgIncrement`、IV delta | `PTOValueEvolutionAnalysis::getEvolution` |
 | `canonicalAddressRecurrenceDoesNotWrap` | range/no-wrap evaluator |
 | `castPreservesLoopDelta` | typed cast preservation + evolution propagation |
 | `computeDelta` | ValueEvolution/AddressAnalysis 查询 |
 | `combineStride`、element/unit 换算 | `getDeltaBytes` + `convertDeltaToUnit` |
-| `StrideConstraint`、post result 数量、op 构造 | `VPTOSoftPostUpdate` |
+| normal/post-update op 构造 | 消费 interface 的 typed operand/result contract |
 | profitability、pointer chain/rewrite plan | `VPTOSoftPostUpdate` |
 
-`PostUpdateOpInfo` 可以继续存在，但只保存 Post-Update 特有信息，例如：
-
-- 是否已有 updated base/result；
-- post-update 形式的结果和构造规则；
-- post-update advance operand 及其 update unit；
-- `Constant`、`SignedI8` 等目标指令 stride constraint；
-- 改写机制和收益判断。
-
-它不再保存通用的 current-access `baseOperandIdx`、`strideOperandIdx` 和
-`strideUnit`。如果某个 stateful post-update op 具有独立的 advance operand/unit，
-这些字段以明确的 `postUpdateAdvance` 语义保留在 consumer 中。现有
-`strideIsInitialOffset` 应被消除：current access offset 来自 AddressSemantics，
-post-access advance 来自 Post-Update 描述，不能再由一个含义不稳定的 stride
-operand 字段和布尔开关混合表达。
+`PostUpdateOpInfo`、`PostUpdateTable`、裸 `advanceOperandIdx` 与按结果数量判断
+post-update form 的规则全部删除。`Constant`、`SignedI8`、`Dynamic` constraint 也由
+op interface 返回。SoftPostUpdate 只保留通用的 legality、profitability、pointer
+chain 与 rewrite plan；构造 normal/post-update 形式时直接替换 interface 返回的
+typed operand，并从具名 updated-base accessor 取得结果。
 
 ## 11. 扩展查询边界
 

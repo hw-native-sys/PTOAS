@@ -33,6 +33,58 @@ static void printValue(llvm::raw_ostream &os, Value value) {
   value.printAsOperand(os, OpPrintingFlags());
 }
 
+static void printAddressSemantics(llvm::raw_ostream &os,
+                                  Operation *operation) {
+  auto interface =
+      dyn_cast<pto::VPTOAddressSemanticsOpInterface>(operation);
+  if (!interface) {
+    return;
+  }
+
+  pto::VPTOAddressSemantics semantics =
+      interface.getVPTOAddressSemantics();
+  os << "  semantics op=" << operation->getName() << " current=[";
+  llvm::interleaveComma(
+      semantics.currentAccesses, os,
+      [&os](const pto::VPTOAddressAccess &access) {
+        os << "base=";
+        printValue(os, access.baseOperand->get());
+        os << " offset=";
+        if (!access.offset) {
+          os << "none";
+          return;
+        }
+        os << pto::stringifyVPTOAddressUnit(access.offset->unit) << ":";
+        printValue(os, access.offset->operand->get());
+      });
+  os << "] post-update=";
+  if (!semantics.postUpdate) {
+    os << "none\n";
+    return;
+  }
+
+  const pto::VPTOPostUpdateSemantics &postUpdate =
+      *semantics.postUpdate;
+  os << "{base=";
+  printValue(os, postUpdate.baseOperand->get());
+  os << " advance="
+     << pto::stringifyVPTOAddressUnit(postUpdate.advanceUnit) << ":";
+  if (postUpdate.advanceOperand) {
+    printValue(os, postUpdate.advanceOperand->get());
+  } else {
+    os << "none";
+  }
+  os << " constraint="
+     << pto::stringifyVPTOAdvanceConstraint(postUpdate.constraint)
+     << " updated-base=";
+  if (postUpdate.updatedBase) {
+    printValue(os, postUpdate.updatedBase);
+  } else {
+    os << "none";
+  }
+  os << "}\n";
+}
+
 static void printEvolution(llvm::raw_ostream &os,
                            pto::PTOValueEvolutionAnalysis &analysis,
                            Value value, scf::ForOp loop) {
@@ -97,6 +149,9 @@ struct PTOPrintAddressAnalysisPass
     llvm::raw_svector_ostream os(storage);
 
     os << "address-analysis @" << function.getSymName() << "\n";
+    function.walk([&os](Operation *operation) {
+      printAddressSemantics(os, operation);
+    });
     function.walk([&](scf::ForOp loop) {
       os << " loop\n";
       printEvolution(os, valueAnalysis, loop.getInductionVar(), loop);

@@ -51,51 +51,8 @@ static constexpr int64_t kSignedI8Max = 127;
 // op-specific hardware alignment table, and `Byte` ops pass a raw byte offset.
 // See `strideUnitBytes` for the conversion.
 using StrideUnit = pto::VPTOAddressUnit;
-
-enum class StrideConstraint {
-  Dynamic,
-  Constant,
-  SignedI8,
-};
-
-// Per-op post-update construction and target-encoding contract. Current
-// access base/offset/unit semantics come exclusively from
-// VPTOAddressSemanticsOpInterface.
-struct PostUpdateOpInfo {
-  std::optional<unsigned> advanceOperandIdx;
-  StrideUnit advanceUnit;
-  unsigned minResultsForPost; // numResults > this means already post-update
-  StrideConstraint strideConstraint = StrideConstraint::Dynamic;
-};
-
-using PostUpdateTable = llvm::StringMap<PostUpdateOpInfo>;
-
-static const PostUpdateTable &getPostUpdateTable() {
-  static const PostUpdateTable table = [] {
-    PostUpdateTable t;
-    //                        advanceOp  advanceUnit          minResults
-    t["pto.vlds"] = {1, StrideUnit::Element, 1};
-    t["pto.vldsx2"] = {1, StrideUnit::Element, 2};
-    t["pto.vldus"] = {std::nullopt, StrideUnit::Element, 2};
-    t["pto.plds"] = {1, StrideUnit::Byte, 1};
-    t["pto.pldi"] = {1, StrideUnit::Alignment, 1,
-                     StrideConstraint::Constant};
-    t["pto.vsts"] = {2, StrideUnit::Element, 0};
-    t["pto.vstus"] = {1, StrideUnit::Element, 1};
-    t["pto.psts"] = {2, StrideUnit::Byte, 0};
-    t["pto.psti"] = {2, StrideUnit::Alignment, 0,
-                     StrideConstraint::Constant};
-    t["pto.sprsts"] = {1, StrideUnit::Byte, 0};
-    t["pto.sprsti"] = {1, StrideUnit::Alignment, 0,
-                       StrideConstraint::SignedI8};
-    t["pto.vstas"] = {2, StrideUnit::Element, 0};
-    t["pto.vsldb"] = {2, StrideUnit::Block, 1};
-    t["pto.vsstb"] = {3, StrideUnit::Block, 0};
-    return t;
-  }();
-  return table;
-}
-// op attributes, so an unknown table entry conservatively rejects the op.
+// Alignment size is op-specific and comes from the operation's attributes;
+// an unknown alignment conservatively rejects the candidate.
 static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
                                               int64_t elemBytes) {
   switch (unit) {
@@ -111,23 +68,13 @@ static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
   llvm_unreachable("unhandled StrideUnit");
 }
 
-static const PostUpdateOpInfo *getPostUpdateInfo(Operation *op) {
-  auto it = getPostUpdateTable().find(op->getName().getStringRef());
-  if (it == getPostUpdateTable().end()) {
-    return nullptr;
+static std::optional<pto::VPTOPostUpdateSemantics>
+getPostUpdateSemantics(Operation *op) {
+  auto interface = dyn_cast<pto::VPTOAddressSemanticsOpInterface>(op);
+  if (!interface) {
+    return std::nullopt;
   }
-  return &it->second;
-}
-
-// Extract base and stride operand from a candidate op using table info.
-static Value getAdvanceOperand(Operation *op, const PostUpdateOpInfo &info) {
-  return info.advanceOperandIdx ? op->getOperand(*info.advanceOperandIdx)
-                                : Value();
-}
-
-// Check if op already has an updated_base result.
-static bool isAlreadyPostUpdate(Operation *op, const PostUpdateOpInfo &info) {
-  return op->getNumResults() > info.minResultsForPost;
+  return interface.getVPTOAddressSemantics().postUpdate;
 }
 
 // Check if op is directly inside the scf.for body (not nested in scf.if etc).
@@ -679,15 +626,15 @@ static bool constantsFitType(const StrideExprRef &e, Type wantType) {
 }
 
 static bool satisfiesStrideConstraint(const StrideExprRef &stride,
-                                      StrideConstraint constraint) {
-  if (constraint == StrideConstraint::Dynamic) {
+                                      pto::VPTOAdvanceConstraint constraint) {
+  if (constraint == pto::VPTOAdvanceConstraint::Dynamic) {
     return true;
   }
   std::optional<int64_t> constant = foldConst(stride);
   if (!constant) {
     return false;
   }
-  return constraint == StrideConstraint::Constant ||
+  return constraint == pto::VPTOAdvanceConstraint::Constant ||
          (*constant >= kSignedI8Min && *constant <= kSignedI8Max);
 }
 
@@ -921,22 +868,22 @@ static IterArgGroupKey getGroupKey(const PostUpdateRewrite &rw) {
 // Build the post-update form of an op while preserving every operand,
 // attribute, and original result. The updated base is always appended last.
 static Operation *createPostUpdateOp(Operation *op,
-                                     const PostUpdateOpInfo &info,
-                                     Value oldBase, Value base, Value stride,
+                                     const pto::VPTOPostUpdateSemantics &info,
+                                     Value base, Value stride,
                                      OpBuilder &builder) {
   OperationState state(op->getLoc(), op->getName());
-  for (auto [i, operand] : llvm::enumerate(op->getOperands())) {
-    if (operand == oldBase) {
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (&operand == info.baseOperand) {
       state.addOperands(base);
     }
-    else if (info.advanceOperandIdx && i == *info.advanceOperandIdx) {
+    else if (&operand == info.advanceOperand) {
       state.addOperands(stride);
     }
     else {
-      state.addOperands(operand);
+      state.addOperands(operand.get());
     }
   }
-  if (!info.advanceOperandIdx) {
+  if (!info.advanceOperand) {
     state.addOperands(stride);
   }
   state.addTypes(op->getResultTypes());
@@ -947,19 +894,20 @@ static Operation *createPostUpdateOp(Operation *op,
 
 // Build the normal form of an op while preserving every operand, attribute,
 // and original result. Unlike createPostUpdateOp, no updated base is appended.
-static Operation *createNormalOp(Operation *op, const PostUpdateOpInfo &info,
-                                 Value oldBase, Value base, Value zeroStride,
+static Operation *createNormalOp(Operation *op,
+                                 const pto::VPTOPostUpdateSemantics &info,
+                                 Value base, Value zeroStride,
                                  OpBuilder &builder) {
   OperationState state(op->getLoc(), op->getName());
-  for (auto [i, operand] : llvm::enumerate(op->getOperands())) {
-    if (operand == oldBase) {
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (&operand == info.baseOperand) {
       state.addOperands(base);
     }
-    else if (info.advanceOperandIdx && i == *info.advanceOperandIdx) {
+    else if (&operand == info.advanceOperand) {
       state.addOperands(zeroStride);
     }
     else {
-      state.addOperands(operand);
+      state.addOperands(operand.get());
     }
   }
   state.addTypes(op->getResultTypes());
@@ -1187,18 +1135,16 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
     unsigned gIdx = rwGroupIdx[rwIdx];
     Value ptr = newBody->getArgument(origIterArgCount + 1 + gIdx);
     Value strideNew = mapping.lookupOrDefault(rw.stride);
-    Value clonedBase = mapping.lookupOrDefault(rw.base);
 
     builder.setInsertionPoint(clonedOp);
 
-    const PostUpdateOpInfo *info = getPostUpdateInfo(clonedOp);
+    auto info = getPostUpdateSemantics(clonedOp);
     if (!info) {
       continue;
     }
 
     Operation *newOp =
-        createPostUpdateOp(clonedOp, *info, clonedBase, ptr, strideNew,
-                           builder);
+        createPostUpdateOp(clonedOp, *info, ptr, strideNew, builder);
 
     // Replace old results with new and update the mapping so that later
     // yield construction via mapping.lookupOrDefault sees the new results
@@ -1208,8 +1154,8 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
       mapping.map(rw.op->getResult(r), newOp->getResult(r));
     }
 
-    // updated_base is the last result.
-    groupYieldPtrs[gIdx] = newOp->getResult(newOp->getNumResults() - 1);
+    groupYieldPtrs[gIdx] =
+        getPostUpdateSemantics(newOp)->updatedBase;
     clonedOp->erase();
   }
 
@@ -1241,10 +1187,11 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
 
 struct SequentialCandidate {
   Operation *op;
-  const PostUpdateOpInfo *info;
+  OpOperand *advanceOperand;
+  pto::VPTOAdvanceConstraint constraint;
   Value base;
   Value currentOffset;
-  Value advanceOperand;
+  Value advanceValue;
   pto::PTOAddressExpr address;
   Value rootBase;
   int64_t elemBytes;
@@ -1254,7 +1201,7 @@ struct SequentialCandidate {
 };
 
 struct SequentialBucket {
-  StringRef opName;
+  OperationName opName;
   Value rootBase;
   SmallVector<SequentialCandidate> candidates;
 };
@@ -1313,13 +1260,13 @@ static bool validateSequentialRun(SequentialRun &run,
   }
 
   SequentialCandidate *first = run.candidates.front();
-  run.strideType = first->advanceOperand
-                       ? first->advanceOperand.getType()
+  run.strideType = first->advanceValue
+                       ? first->advanceValue.getType()
                        : IndexType::get(first->op->getContext());
   if (!canMaterializeAs(run.step, run.strideType) ||
       !constantsFitType(run.step, run.strideType) ||
       !satisfiesStrideConstraint(run.step,
-                                 first->info->strideConstraint) ||
+                                 first->constraint) ||
       !canScaleInitialOffset(first->currentOffset, first->elemBytes,
                              first->currentUnitBytes)) {
     return false;
@@ -1327,8 +1274,8 @@ static bool validateSequentialRun(SequentialRun &run,
 
   for (SequentialCandidate *candidate : run.candidates) {
     Type candidateStrideType =
-        candidate->advanceOperand
-            ? candidate->advanceOperand.getType()
+        candidate->advanceValue
+            ? candidate->advanceValue.getType()
             : IndexType::get(candidate->op->getContext());
     if (candidateStrideType != run.strideType) {
       return false;
@@ -1388,10 +1335,7 @@ static unsigned initialPointerCost(const SequentialRun &run) {
 
 static bool isRunStrideUse(OpOperand &use, const SequentialRun &run) {
   return llvm::any_of(run.candidates, [&use](SequentialCandidate *candidate) {
-    return candidate->info->advanceOperandIdx &&
-           use.getOwner() == candidate->op &&
-           use.getOperandNumber() ==
-               *candidate->info->advanceOperandIdx;
+    return candidate->advanceOperand == &use;
   });
 }
 
@@ -1569,8 +1513,8 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
 
   for (Operation &op : *block) {
     originalOps.push_back(&op);
-    const PostUpdateOpInfo *info = getPostUpdateInfo(&op);
-    if (!info || isAlreadyPostUpdate(&op, *info)) {
+    auto postUpdate = getPostUpdateSemantics(&op);
+    if (!postUpdate || postUpdate->updatedBase) {
       continue;
     }
 
@@ -1581,7 +1525,8 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     }
     pto::PTOAddressExpr address = addresses.value->front();
     int64_t elemBytes = address.elementBytes;
-    auto unitBytes = strideUnitBytes(&op, info->advanceUnit, elemBytes);
+    auto unitBytes =
+        strideUnitBytes(&op, postUpdate->advanceUnit, elemBytes);
     if (!unitBytes) {
       continue;
     }
@@ -1593,21 +1538,23 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
         address.offset && address.offset->unitBytes
             ? *address.offset->unitBytes
             : elemBytes;
-    auto bucketIt = llvm::find_if(buckets, [&op, &address](const SequentialBucket &bucket) {
-      return bucket.opName == op.getName().getStringRef() &&
-             bucket.rootBase == address.rootOrBase;
-    });
+    auto bucketIt = llvm::find_if(
+        buckets, [&op, &address](const SequentialBucket &bucket) {
+          return bucket.opName == op.getName() &&
+                 bucket.rootBase == address.rootOrBase;
+        });
     if (bucketIt == buckets.end()) {
-      buckets.push_back(
-          {op.getName().getStringRef(), address.rootOrBase, {}});
+      buckets.push_back({op.getName(), address.rootOrBase, {}});
       bucketIt = std::prev(buckets.end());
     }
     bucketIt->candidates.push_back({
         &op,
-        info,
+        postUpdate->advanceOperand,
+        postUpdate->constraint,
         address.currentBase,
         currentOffset,
-        getAdvanceOperand(&op, *info),
+        postUpdate->advanceOperand ? postUpdate->advanceOperand->get()
+                                   : Value(),
         std::move(address),
         addresses.value->front().rootOrBase,
         elemBytes,
@@ -1700,24 +1647,22 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
       continue;
     }
     SequentialRun &run = runs[it->second];
-    const PostUpdateOpInfo *info = getPostUpdateInfo(op);
+    auto postUpdate = getPostUpdateSemantics(op);
+    if (!postUpdate) {
+      continue;
+    }
     builder.setInsertionPoint(op);
     bool isLast = op == run.candidates.back()->op;
-    SequentialCandidate *candidate =
-        *llvm::find_if(run.candidates,
-                       [op](SequentialCandidate *item) {
-                         return item->op == op;
-                       });
     Operation *newOp =
-        isLast ? createNormalOp(op, *info, candidate->base, run.currentPtr,
+        isLast ? createNormalOp(op, *postUpdate, run.currentPtr,
                                 run.zeroStride, builder)
-               : createPostUpdateOp(op, *info, candidate->base,
-                                    run.currentPtr, run.strideValue, builder);
+               : createPostUpdateOp(op, *postUpdate, run.currentPtr,
+                                    run.strideValue, builder);
     for (unsigned result = 0; result < op->getNumResults(); ++result) {
       op->getResult(result).replaceAllUsesWith(newOp->getResult(result));
     }
     if (!isLast) {
-      run.currentPtr = newOp->getResult(newOp->getNumResults() - 1);
+      run.currentPtr = getPostUpdateSemantics(newOp)->updatedBase;
     }
     op->erase();
   }
@@ -1787,9 +1732,8 @@ private:
       OpBuilder &builder) {
     LoopPostUpdatePlan plan{forOp, {}};
     for (Operation &op : *forOp.getBody()) {
-      const PostUpdateOpInfo *info = getPostUpdateInfo(&op);
-      if (
-          !info || isAlreadyPostUpdate(&op, *info) ||
+      auto postUpdate = getPostUpdateSemantics(&op);
+      if (!postUpdate || postUpdate->updatedBase ||
           !isDirectlyInForBody(&op, forOp)) {
         continue;
       }
@@ -1801,7 +1745,8 @@ private:
       }
       const pto::PTOAddressExpr &address = addresses.value->front();
       auto advanceUnitBytes =
-          strideUnitBytes(&op, info->advanceUnit, address.elementBytes);
+          strideUnitBytes(&op, postUpdate->advanceUnit,
+                          address.elementBytes);
       if (!advanceUnitBytes) {
         continue;
       }
@@ -1826,7 +1771,9 @@ private:
       if (!exprType(total, exprResultType)) {
         continue;
       }
-      Value advanceOperand = getAdvanceOperand(&op, *info);
+      Value advanceOperand = postUpdate->advanceOperand
+                                 ? postUpdate->advanceOperand->get()
+                                 : Value();
       Type strideType = advanceOperand ? advanceOperand.getType()
                                        : builder.getIndexType();
       if (exprResultType && exprResultType != strideType) {
@@ -1837,7 +1784,7 @@ private:
       if (!constantsFitType(total, strideType)) {
         continue;
       }
-      if (!satisfiesStrideConstraint(total, info->strideConstraint)) {
+      if (!satisfiesStrideConstraint(total, postUpdate->constraint)) {
         continue;
       }
 
