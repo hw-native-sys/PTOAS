@@ -1,4 +1,4 @@
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>/dev/null | FileCheck %s
 
 // CHECK-LABEL: func.func @vmi_sitofp_kernel
 // CHECK: pto.vcvt {{.*}} {rnd = "R"} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xf32>

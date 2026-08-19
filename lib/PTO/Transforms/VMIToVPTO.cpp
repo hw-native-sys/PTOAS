@@ -3957,6 +3957,56 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
   return results;
 }
 
+FailureOr<SmallVector<Value>> materializeGroupSlotsToContiguous(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
+  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  if (sourceParts.empty() || resultTypes.size() != 1)
+    return fail("group-slots to contiguous materialization requires one "
+                "non-empty result carrier");
+  if (pto::getPTOStorageElemBitWidth(sourceVMIElementType) != 32)
+    return fail("group-slots to contiguous materialization requires 32-bit "
+                "elements");
+
+  auto resultType = dyn_cast<VRegType>(resultTypes.front());
+  if (!resultType || resultType.getElementCount() <
+                         static_cast<int64_t>(sourceParts.size()))
+    return fail("group-slots to contiguous materialization has an invalid "
+                "result carrier");
+  FailureOr<MaskType> maskType =
+      getMaskTypeForVReg(resultType, rewriter.getContext());
+  FailureOr<Value> allMask =
+      createAllTrueMaskForVReg(op->getLoc(), resultType, rewriter);
+  FailureOr<Value> zero = createZeroVector(op->getLoc(), resultType, rewriter);
+  if (failed(maskType) || failed(allMask) || failed(zero))
+    return fail("failed to create group-slots packing helpers");
+
+  Value packed = *zero;
+  for (auto [index, source] : llvm::enumerate(sourceParts)) {
+    if (source.getType() != resultType)
+      return fail("group-slots to contiguous materialization requires "
+                  "uniform physical carrier types");
+    Value splat = rewriter
+                      .create<VdupOp>(op->getLoc(), resultType, source,
+                                      *allMask, rewriter.getStringAttr("LOWEST"))
+                      .getResult();
+    SmallVector<int8_t> laneBits(resultType.getElementCount(), 0);
+    laneBits[index] = 1;
+    FailureOr<Value> laneMask = materializeConstantMaskChunk(
+        op->getLoc(), *maskType, laneBits, rewriter);
+    if (failed(laneMask))
+      return fail("failed to create group-slots packing lane mask");
+    packed = rewriter
+                 .create<VselOp>(op->getLoc(), resultType, splat, packed,
+                                 *laneMask)
+                 .getResult();
+  }
+  return SmallVector<Value>{packed};
+}
+
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -3987,6 +4037,12 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
                                             rewriter)))
       return failure();
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+  }
+
+  if (sourceLayout.isGroupSlots() && sourceLayout.getSlots() == 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
+    return materializeGroupSlotsToContiguous(
+        op, sourceParts, resultTypes, sourceVMIElementType, rewriter);
   }
 
   if (sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
@@ -9151,10 +9207,16 @@ struct OneToNVMIStrideStoreOpPattern
                      .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
                                        *destination, *offset)
                      .getResult();
-    rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{},
-                             valueParts.front(), base, *blockStride,
-                             *repeatStride, maskParts.front());
-    rewriter.eraseOp(op);
+    Type updatedBaseType =
+        op.getUpdatedBase() ? op.getUpdatedBase().getType() : Type{};
+    auto vsstb = rewriter.create<VsstbOp>(op->getLoc(), updatedBaseType,
+                                          valueParts.front(), base,
+                                          *blockStride, *repeatStride,
+                                          maskParts.front());
+    if (op.getUpdatedBase())
+      rewriter.replaceOp(op, vsstb.getUpdatedBase());
+    else
+      rewriter.eraseOp(op);
     return success();
   }
 };

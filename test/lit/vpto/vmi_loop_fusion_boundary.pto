@@ -1,0 +1,196 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// Boundary-condition regression test for PTOVmiLoopFusion's stuck/fuse
+// judgment. Two same-header scf.for separated by a between-op:
+//   LOOP_STUCK - the between vstore takes for1's result (cannot hoist) and
+//               writes a UB read by for2 (cannot sink) -> stuck -> two for's
+//               stay separate (NOT fused).
+//   LOOP_FUSE  - the between op is a loop-invariant pointer_cast (no UB
+//               dependency, no member-result operand) -> hoists above the
+//               fused for -> two for's fuse into one scf.for.
+// The fa softmax sample exercises the happy path only; these cover the
+// planner's judgment boundaries with hand-written IR.
+
+// RUN: pto-test-opt %s -pto-vmi-loop-fusion \
+// RUN:   | FileCheck %s --check-prefix=LOOP
+
+module {
+  // LOOP_STUCK: between vstore takes for1's result (cannot hoist) and writes a
+  // UB read by for2 (cannot sink) -> stuck -> two for's stay separate.
+  // LOOP-LABEL: func.func @loop_stuck
+  // LOOP: pto.fusion_region {
+  // LOOP: scf.for
+  // LOOP: pto.vmi.vstore {{.*}}, %{{.*}}[%c0], %{{.*}}
+  // LOOP: scf.for
+  func.func @loop_stuck() -> () {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c64 = arith.constant 64 : index
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %init = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    pto.fusion_region {
+      %f1 = scf.for %arg4 = %c0 to %c128 step %c1 iter_args(%arg5 = %init) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %arg4, %c64 : index
+        %row = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        %acc = pto.vmi.vmax %arg5, %row, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.vmi.vstore %f1, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %f2 = scf.for %arg4 = %c0 to %c128 step %c1 iter_args(%arg5 = %init) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %arg4, %c64 : index
+        %row = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        %acc = pto.vmi.vmax %arg5, %row, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%f2) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return
+  }
+
+  // LOOP_FUSE: between op is a loop-invariant pointer_cast (no member-result
+  // operand, no UB write) -> hoists above the fused for -> two for's fuse into
+  // one.
+  // LOOP-LABEL: func.func @loop_fuse_hoistable
+  // LOOP: pto.fusion_region {
+  // LOOP: %[[HOIST:.*]] = pto.pointer_cast
+  // LOOP: scf.for
+  // LOOP-NOT: scf.for
+  func.func @loop_fuse_hoistable() -> () {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c64 = arith.constant 64 : index
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %init = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    pto.fusion_region {
+      %f1 = scf.for %arg4 = %c0 to %c128 step %c1 iter_args(%arg5 = %init) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %arg4, %c64 : index
+        %row = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        %acc = pto.vmi.vmax %arg5, %row, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %hoist = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+      %f2 = scf.for %arg4 = %c0 to %c128 step %c1 iter_args(%arg5 = %init) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %arg4, %c64 : index
+        %row = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        %acc = pto.vmi.vmax %arg5, %row, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%f2) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return
+  }
+
+  // TileLib candidate and VMI fusion provenance describe where each loop came
+  // from; they are not part of the scf.for execution semantics. Distinct
+  // provenance must therefore not prevent otherwise-legal loop fusion, and a
+  // synthesized fused loop must not inherit either source candidate label.
+  // LOOP-LABEL: func.func @loop_fuse_distinct_provenance
+  // LOOP: pto.fusion_region {
+  // LOOP: scf.for
+  // LOOP-NOT: pto.tilelib.candidate
+  // LOOP-NOT: scf.for
+  func.func @loop_fuse_distinct_provenance() -> () {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %result = pto.fusion_region {
+      scf.for %i = %c0 to %c128 step %c1 {
+      } {pto.tilelib.candidate = "vmi_tsub", pto.tilelib.impl = "vmi", pto.vmi.fusion.principal_loop, pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.tileop = "tsub"}
+      scf.for %i = %c0 to %c128 step %c1 {
+      } {pto.tilelib.candidate = "vmi_texp", pto.tilelib.impl = "vmi", pto.vmi.fusion.principal_loop, pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.tileop = "texp"}
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  // Distinct constant offsets in a bound are distinct iteration domains.
+  // LOOP-LABEL: func.func @different_bound_offsets
+  // LOOP-COUNT-2: scf.for
+  // LOOP-NOT: scf.for
+  func.func @different_bound_offsets(%n: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %n1 = arith.addi %n, %c1 : index
+    %n2 = arith.addi %n, %c2 : index
+    %unused = pto.fusion_region {
+      scf.for %i = %c0 to %n1 step %c1 {} {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      scf.for %i = %c0 to %n2 step %c1 {} {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  // Direct member-result threading is not supported by the concatenating
+  // iter-arg builder and must keep the loops separate.
+  // LOOP-LABEL: func.func @member_result_dependency
+  // LOOP-COUNT-2: scf.for
+  // LOOP-NOT: scf.for
+  func.func @member_result_dependency() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    pto.fusion_region {
+      %a = scf.for %i = %c0 to %c4 step %c1 iter_args(%x = %c0) -> index {
+        scf.yield %i : index
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %i = %c0 to %c4 step %c1 iter_args(%x = %a) -> index {
+        scf.yield %x : index
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func private @unknown_effect()
+
+  // Calls are not in the relocation closed set, even without SSA edges.
+  // LOOP-LABEL: func.func @unknown_between_effect
+  // LOOP: scf.for
+  // LOOP: func.call @unknown_effect
+  // LOOP: scf.for
+  // LOOP-NOT: scf.for
+  func.func @unknown_between_effect() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %unused = pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {} {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      func.call @unknown_effect() : () -> ()
+      scf.for %i = %c0 to %c4 step %c1 {} {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  // Provenance is mandatory: ordinary or hand-written loops in a loose
+  // fusion region are not assumed to be TileLib VMI principal loops.
+  // LOOP-LABEL: func.func @unmarked_loops_are_ignored
+  // LOOP-COUNT-2: scf.for
+  // LOOP-NOT: scf.for
+  func.func @unmarked_loops_are_ignored() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %unused = pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {}
+      scf.for %i = %c0 to %c4 step %c1 {}
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+}

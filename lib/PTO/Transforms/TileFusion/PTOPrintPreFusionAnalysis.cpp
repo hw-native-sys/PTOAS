@@ -36,10 +36,14 @@ static StringRef stringifyComputeFamily(pto::FusionComputeFamily family) {
     return "scalar_expand";
   case pto::FusionComputeFamily::RowBroadcastBinary:
     return "row_broadcast_binary";
+  case pto::FusionComputeFamily::ColBroadcastBinary:
+    return "col_broadcast_binary";
   case pto::FusionComputeFamily::ReduceRow:
     return "reduce_row";
   case pto::FusionComputeFamily::ReduceCol:
     return "reduce_col";
+  case pto::FusionComputeFamily::Convert:
+    return "convert";
   case pto::FusionComputeFamily::Unknown:
     return "unknown";
   }

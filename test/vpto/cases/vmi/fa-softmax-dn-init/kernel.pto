@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use it in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of software repository for the full text of the License.
+
+// FlashAttention streaming softmax (tile-level), DN init variant.
+// Corresponds to pto-isa/kernels/manual/a5/flash_atten/pto_macro_fa_dn_softmax.hpp
+//   softmax_opt_fa_dn_init_impl<HEAD_SIZE=64, CAUSAL_MASK=false>
+//
+// Input  : X            [128, 64] f32   (one QK tile, S0 x S1)
+// Output : x_exp        [128, 64] bf16  (exp(scale * (X - new_global_max)), cast f32->bf16)
+//          new_global_max [1, 64] f32  (per-column running max, col-wise reduce)
+//          new_global_sum [1, 64] f32  (per-column sum of exp, col-wise reduce)
+//
+// Pipeline (matches the hpp init branch, col-wise reduction):
+//   TCOLMAX  new_global_max <- input_x
+//   TCOLEXPANDSUB input_x <- input_x - new_global_max
+//   TMULS   input_x <- input_x * scale
+//   TEXP    input_x <- exp(input_x)
+//   TCOLSUM new_global_sum <- input_x  (binary tmp)
+//   TCVT    x_exp <- cast(input_x)    (f32 -> f32, same extent)
+//
+// Note: this is the IR-level (PTO TileOp) input for one FA softmax tile.
+// The streaming `not_init` variant and CAUSAL_MASK branch are omitted here
+// to keep the minimal input self-contained; they share the same TileOps.
+//
+// RUN: ptoas --pto-arch=a5 --pto-level=2 %s -o /dev/null
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @fa_dn_softmax_128x64(%scores: !pto.ptr<f32, gm>,
+                                  %x_exp: !pto.ptr<bf16, gm>,
+                                  %global_max: !pto.ptr<f32, gm>,
+                                  %global_sum: !pto.ptr<f32, gm>,
+                                  %nz_out: !pto.ptr<bf16, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c64 = arith.constant 64 : index
+    // NZ fractal shape/strides for bf16 [128,64]: c0=16, n0=16, C1=4, N1=8.
+    // GM view is [1, C1, N1, n0, c0] with strides matching pto-isa DstStride
+    // <C1*rows*c0, rows*c0, n0*c0, c0, 1> = <8192, 2048, 256, 16, 1>, so the
+    // flattened GM buffer is the NZ fractal order (compared bit-exact against
+    // nd_to_nz golden, mirroring pto-isa tests/.../tmov_nd2nz/gen_data.py).
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c256 = arith.constant 256 : index
+    %c2048 = arith.constant 2048 : index
+    %c8192 = arith.constant 8192 : index
+    // scale = 1 / sqrt(HEAD_SIZE) = 1 / sqrt(64) = 0.125
+    %scale = arith.constant 1.250000e-01 : f32
+
+    // --- GM tensor views: [128, 64] f32 (scores/max/sum), [128, 64] bf16 (x_exp out) ---
+    %scores_tv = pto.make_tensor_view %scores, shape = [%c128, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
+    %xexp_tv   = pto.make_tensor_view %x_exp,  shape = [%c128, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xbf16>
+    %gmax_tv   = pto.make_tensor_view %global_max, shape = [%c1, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
+    %gsum_tv   = pto.make_tensor_view %global_sum, shape = [%c1, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
+
+    // --- Partition views (full tile) ---
+    %scores_pt = pto.partition_view %scores_tv, offsets = [%c0, %c0], sizes = [%c128, %c64] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<128x64xf32>
+    %xexp_pt   = pto.partition_view %xexp_tv,   offsets = [%c0, %c0], sizes = [%c128, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<128x64xbf16>
+    %gmax_pt   = pto.partition_view %gmax_tv,   offsets = [%c0, %c0], sizes = [%c1,   %c64] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    %gsum_pt   = pto.partition_view %gsum_tv,   offsets = [%c0, %c0], sizes = [%c1,   %c64] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x64xf32>
+    // --- NZ fractal GM view for nz_out (direct ND2NZ verification) ---
+    %nz_tv5    = pto.make_tensor_view %nz_out, shape = [%c1, %c4, %c8, %c16, %c16], strides = [%c8192, %c2048, %c256, %c16, %c1] : !pto.tensor_view<?x?x?x?x?xbf16>
+    %nz_pt5    = pto.partition_view %nz_tv5,    offsets = [%c0, %c0, %c0, %c0, %c0], sizes = [%c1, %c4, %c8, %c16, %c16] : !pto.tensor_view<?x?x?x?x?xbf16> -> !pto.partition_tensor_view<1x4x8x16x16xbf16>
+
+    // --- UB tile buffers (f32, 128x64 for data, 1x64 for per-column reduce; bf16 out) ---
+    %input_x = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %new_global_max = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %new_global_sum = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %x_exp_buf = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %nz_buf = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+
+    // --- Load X from GM to UB ---
+    pto.tload ins(%scores_pt : !pto.partition_tensor_view<128x64xf32>) outs(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    // Sync: GM->UB (MTE2) must complete before vector (V) reads input_x.
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    // --- TCOLMAX: new_global_max[j] = max_i X[i,j]  (col-wise, A5 requires non-zero src) ---
+    pto.tcolmax ins(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%new_global_max : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%new_global_max, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%new_global_max : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    // --- TCOLEXPANDSUB: input_x <- input_x - broadcast(new_global_max) ---
+    pto.tcolexpandsub ins(%input_x, %new_global_max : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    // --- TMULS: input_x <- input_x * scale ---
+    pto.tmuls ins(%input_x, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    // --- TEXP: input_x <- exp(input_x) ---
+    pto.texp ins(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    // --- TCOLSUM: new_global_sum[j] = sum_i exp(x)[i,j]  (non-binary, single-pass fold) ---
+    pto.tcolsum ins(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%new_global_sum : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    // --- TCVT: x_exp <- cast(input_x), f32 -> bf16 (matches hpp RoundMode::CAST_ROUND) ---
+    pto.tcvt ins(%input_x : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%x_exp_buf : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    // --- TMOV ND -> NZ (bf16 [128,64] half-VL): rearrange x_exp into the NZ fractal buffer ---
+    pto.tmov ins(%x_exp_buf : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%nz_buf : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+
+    // --- Store results back to GM ---
+    // Sync: vector (V) compute must finish writing UB before MTE3 DMA reads UB->GM.
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.tstore ins(%x_exp_buf : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%xexp_pt : !pto.partition_tensor_view<128x64xbf16>)
+    pto.tstore ins(%nz_buf : !pto.tile_buf<loc=vec, dtype=bf16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%nz_pt5 : !pto.partition_tensor_view<1x4x8x16x16xbf16>)
+    pto.tstore ins(%new_global_max : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%gmax_pt : !pto.partition_tensor_view<1x64xf32>)
+    pto.tstore ins(%new_global_sum : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%gsum_pt : !pto.partition_tensor_view<1x64xf32>)
+
+    return
+  }
+}

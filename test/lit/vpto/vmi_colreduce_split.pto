@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression test for the vmi_tcolmax / vmi_tcolmin split=4 candidate and its
+// non-divisible fallback. The vmi ColReduce candidates default to split=4:
+// four independent VL-wide accumulators, scf.for step=4, four vload+merge per
+// iteration, then a 3-way merge tree outside the loop. When rows % 4 != 0 the
+// pass falls back to split=1 (step=1, one accumulator, one merge per row) so
+// the half-open scf.for never OOBs the tail rows.
+//
+// MAX4 / MIN4 — rows=16 (divisible by 4): split=4 active. step %c4, four
+//               iter_args, four in-loop v{max,min} + three merge v{max,min}.
+// MAX1 / MIN1 — rows=10 (NOT divisible by 4): fallback to split=1. step %c1,
+//               one iter_arg, one v{max,min} per row (10 of each).
+//
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --ptodsl-pkg-path %S/../../../ptodsl \
+// RUN:   --pto-level=level2 --emit-vpto %s -o /dev/null \
+// RUN:   --mlir-print-ir-after=pto-expand-tile-op 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MAX4
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --ptodsl-pkg-path %S/../../../ptodsl \
+// RUN:   --pto-level=level2 --emit-vpto %s -o /dev/null \
+// RUN:   --mlir-print-ir-after=pto-expand-tile-op 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MIN4
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --ptodsl-pkg-path %S/../../../ptodsl \
+// RUN:   --pto-level=level2 --emit-vpto %s -o /dev/null \
+// RUN:   --mlir-print-ir-after=pto-expand-tile-op 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MAX1
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --ptodsl-pkg-path %S/../../../ptodsl \
+// RUN:   --pto-level=level2 --emit-vpto %s -o /dev/null \
+// RUN:   --mlir-print-ir-after=pto-expand-tile-op 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MIN1
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TCOLMAX_16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolmax ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+  func.func @TCOLMIN_16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolmin ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+  // rows=10: NOT divisible by 4 -> split falls back to 1.
+  func.func @TCOLMAX_10() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=10, cols=64, v_row=10, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolmax ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=10, cols=64, v_row=10, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+  func.func @TCOLMIN_10() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=10, cols=64, v_row=10, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolmin ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=10, cols=64, v_row=10, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                               blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// MAX4 - rows=16 divisible by 4 -> split=4 active.
+// MAX4-LABEL: tcolmax_tile_f32_16_64
+// MAX4: step %c4
+// MAX4-COUNT-7: pto.vmi.vmax
+
+// MIN4 - rows=16 divisible by 4 -> split=4 active.
+// MIN4-LABEL: tcolmin_tile_f32_16_64
+// MIN4: step %c4
+// MIN4-COUNT-7: pto.vmi.vmin
+
+// MAX1 - rows=10 NOT divisible by 4 -> fallback to split=1 (step %c1, single
+// accumulator: exactly one vmax op in the loop body template, vs split=4's seven).
+// MAX1-LABEL: tcolmax_tile_f32_10_64
+// MAX1: step %c1
+// MAX1-COUNT-1: pto.vmi.vmax
+
+// MIN1 - rows=10 NOT divisible by 4 -> fallback to split=1 (step %c1, single
+// accumulator: exactly one vmin op in the loop body template, vs split=4's seven).
+// MIN1-LABEL: tcolmin_tile_f32_10_64
+// MIN1: step %c1
+// MIN1-COUNT-1: pto.vmi.vmin
