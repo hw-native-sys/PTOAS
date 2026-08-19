@@ -231,6 +231,21 @@ PTOAddressAnalysis::getDeltaBytes(const PTOAddressExpr &address,
             evolution.value->step);
       }
       if (expr->kind == PTOTypedExpr::Kind::Cast) {
+        if (expr->sourceOperation &&
+            expr->sourceOperation->getNumResults() == 1) {
+          auto evolution = valueEvolution.getEvolution(
+              expr->sourceOperation->getResult(0), loop);
+          if (!evolution) {
+            return PTOAnalysisResult<PTOTypedExprRef>::unknown(
+                evolution.reason);
+          }
+          // A value-preserving cast keeps the mathematical delta computed for
+          // the cast result. Recasting the input delta would turn a descending
+          // unsigned step such as -1 into its positive source-width bit
+          // pattern.
+          return PTOAnalysisResult<PTOTypedExprRef>::known(
+              evolution.value->step);
+        }
         auto input = getExprDelta(expr->lhs);
         if (!input) {
           return input;
