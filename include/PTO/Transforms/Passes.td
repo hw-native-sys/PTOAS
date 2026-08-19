@@ -1017,19 +1017,22 @@ def PTOOutlineSIMTSections
 def PTOInferVPTOVecScope
     : Pass<"pto-infer-vpto-vecscope", "func::FuncOp"> {
   let summary =
-      "Infer missing pto.vecscope regions for VPTO vector operation clusters";
+      "Infer missing pto.vecscope regions for VMI or VPTO vector operation clusters";
   let description = [{
-    Runs near the VPTO emission boundary after VMI physicalization and the
-    existing pre-emission canonicalization, pointer normalization, and
-    wrapper-op expansion, but before VMI LICM and final cleanup. The pass
-    greedily clusters contiguous VPTO vector operations into `pto.vecscope`
-    regions while preserving explicit vector-scope carriers and treating
-    DMA/copy/sync, unresolved calls, terminators, and forbidden operations as
-    boundaries.
+    Greedily clusters contiguous VMI or VPTO vector operations into
+    `pto.vecscope` regions while preserving explicit vector-scope carriers and
+    treating MTE/synchronization operations, unresolved calls, terminators,
+    and forbidden operations as boundaries.
+
+    The standard VMI pipeline first runs this pass immediately after VMI loop
+    fusion, before canonicalization, CSE, load/store forwarding, and physical
+    type normalization. A second idempotent run near the VPTO emission
+    boundary handles direct VPTO input and VPTO operations introduced after
+    the early VMI inference.
 
     The inferred `pto.vecscope` form remains resultless. Values whose type is
-    `!pto.vreg`, `!pto.mask`, or `!pto.align` must not escape the inferred
-    scope.
+    `!pto.vmi.vreg`, `!pto.vmi.mask`, `!pto.vreg`, `!pto.mask`, or
+    `!pto.align` must not escape the inferred scope.
   }];
   let constructor = "mlir::pto::createPTOInferVPTOVecScopePass()";
   let dependentDialects = ["mlir::func::FuncDialect",
