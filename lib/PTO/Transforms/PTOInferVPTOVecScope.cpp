@@ -8,7 +8,7 @@
 
 //===- PTOInferVPTOVecScope.cpp ------------------------------------------===//
 //
-// VPTO automatic vecscope inference.
+// VMI/VPTO automatic vecscope inference.
 //
 //===----------------------------------------------------------------------===//
 
@@ -79,7 +79,8 @@ static LogicalResult inferVecScopesInRegion(Region &region,
                                             MLIRContext *context);
 
 static bool isVecScopeType(Type type) {
-  return isa<pto::VRegType, pto::MaskType, pto::AlignType>(type);
+  return isa<pto::VRegType, pto::MaskType, pto::AlignType,
+             pto::VMIVRegType, pto::VMIMaskType>(type);
 }
 
 static bool isPTOOperation(Operation *op) {
@@ -99,7 +100,9 @@ static bool isForbiddenInsideInferredVectorScope(Operation *op) {
 }
 
 static bool isVectorScopeBoundaryOperation(Operation *op) {
-  return isa<pto::BarrierOp, pto::BarrierSyncOp>(op);
+  return isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp,
+             pto::WaitFlagDynOp, pto::BarrierOp, pto::BarrierSyncOp,
+             pto::MteOpInterface>(op);
 }
 
 static bool hasVecScopeTypedOperandOrResult(Operation *op) {
@@ -565,7 +568,7 @@ emitEscapingVectorScopeValueError(const EscapingMovedValue &escapingValue) {
 
   InFlightDiagnostic diag = producer->emitOpError()
                             << "cannot infer resultless pto.vecscope because "
-                               "VPTO vector-scope data cannot have external "
+                               "VMI/VPTO vector-scope data cannot have external "
                                "users";
   if (escapingValue.value) {
     diag << "; escaping value type is " << escapingValue.value.getType();
