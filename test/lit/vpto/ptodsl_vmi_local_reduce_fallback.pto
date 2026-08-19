@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=FALLBACK
+
+module {
+  func.func @partial_rowsum() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xf32, valid=8x16>
+    %workspace = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>
+    pto.trowsum
+      ins(%src, %workspace : !pto.tile_buf<vec, 8x32xf32, valid=8x16>, !pto.tile_buf<vec, 8x128xf32>)
+      outs(%dst : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+    return
+  }
+
+  func.func @dynamic_rowsum(%valid_col: index) {
+    %c8 = arith.constant 8 : index
+    %src = pto.alloc_tile valid_row = %c8 valid_col = %valid_col : !pto.tile_buf<vec, 8x32xf32, valid=?x?>
+    %workspace = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>
+    pto.trowsum
+      ins(%src, %workspace : !pto.tile_buf<vec, 8x32xf32, valid=?x?>, !pto.tile_buf<vec, 8x128xf32>)
+      outs(%dst : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+    return
+  }
+
+  func.func @padded_rowsum() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xf32, pad=1>
+    %workspace = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>
+    pto.trowsum
+      ins(%src, %workspace : !pto.tile_buf<vec, 8x32xf32, pad=1>, !pto.tile_buf<vec, 8x128xf32>)
+      outs(%dst : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+    return
+  }
+
+  func.func @shape_narrowing_subview_rowmax() {
+    %c0 = arith.constant 0 : index
+    %parent = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %src = pto.subview %parent[%c0, %c0] sizes [8, 128]
+      : !pto.tile_buf<vec, 8x512xf32> -> !pto.tile_buf<vec, 8x128xf32>
+    %workspace = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>
+    pto.trowmax
+      ins(%src, %workspace : !pto.tile_buf<vec, 8x128xf32>, !pto.tile_buf<vec, 8x128xf32>)
+      outs(%dst : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+    return
+  }
+}
+
+// FALLBACK-LABEL: func.func @partial_rowsum
+// FALLBACK: call {{.*}}__template_trowsum
+// FALLBACK-SAME: pto.tilelib.impl = "ptodsl"
+// FALLBACK-SAME: pto.vmi.fusion.boundary = "local"
+// FALLBACK-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// FALLBACK-LABEL: func.func @dynamic_rowsum
+// FALLBACK: call {{.*}}__template_trowsum
+// FALLBACK-SAME: pto.tilelib.impl = "ptodsl"
+// FALLBACK-SAME: pto.vmi.fusion.boundary = "local"
+// FALLBACK-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// FALLBACK-LABEL: func.func @padded_rowsum
+// FALLBACK: call {{.*}}__template_trowsum
+// FALLBACK-SAME: pto.tilelib.impl = "ptodsl"
+// FALLBACK-SAME: pto.vmi.fusion.boundary = "local"
+// FALLBACK-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// FALLBACK-LABEL: func.func @shape_narrowing_subview_rowmax
+// FALLBACK: call {{.*}}__template_trowmax
+// FALLBACK-SAME: pto.tilelib.impl = "ptodsl"
+// FALLBACK-SAME: pto.vmi.fusion.boundary = "local"
+// FALLBACK-SAME: pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"

@@ -36,6 +36,16 @@ static bool hasKernelKindChildModule(ModuleOp module) {
                       [](ModuleOp child) { return hasKernelKind(child); });
 }
 
+/// Returns true when at least one top-level function in \p module carries a
+/// per-func `pto.kernel_kind` attribute. This is the "sugar" input form where
+/// each kernel function declares its own kind instead of living under a
+/// kind-tagged child module.
+static bool hasKernelKindTopLevelFunc(ModuleOp module) {
+  return llvm::any_of(module.getOps<func::FuncOp>(), [](func::FuncOp funcOp) {
+    return funcOp->hasAttr(FunctionKernelKindAttr::name);
+  });
+}
+
 static bool hasCVSections(ModuleOp module);
 
 static bool isVPTOBackendModule(ModuleOp module) {
@@ -327,6 +337,105 @@ static LogicalResult materializeExplicitKernelKindSections(ModuleOp module) {
   return success();
 }
 
+/// Group top-level functions carrying a per-func `pto.kernel_kind` attribute
+/// into one child kernel submodule per distinct kind. The "sugar" input form
+/// puts `pto.kernel_kind` directly on each kernel function instead of on a
+/// surrounding kind-tagged child module. This step rewrites it into the
+/// canonical container form so that `vpto-normalize-container` and the
+/// downstream VPTO emitter only ever see kind-tagged child modules.
+///
+/// For each distinct kind, a child module is created carrying that
+/// `pto.kernel_kind`. Every top-level function is cloned into each child
+/// module, then functions whose per-func `pto.kernel_kind` does not match the
+/// child's kind are erased. Functions without any `pto.kernel_kind` (helper
+/// functions) are duplicated into every child module, matching the design in
+/// docs/designs/vpto-section-sugar.md constraint 5. The per-func
+/// `pto.kernel_kind` attribute is intentionally kept on the cloned functions:
+/// although the child module already carries the kind, verifiers such as
+/// getEnclosingFunctionKernelKind only read the enclosing func::FuncOp, so
+/// stripping it would reject legitimate pipe ops after the split.
+static LogicalResult splitPerFuncKernelKind(ModuleOp module) {
+  if (!hasKernelKindTopLevelFunc(module)) {
+    return success();
+  }
+
+  // Collect the distinct kernel kinds requested by top-level functions.
+  SmallVector<FunctionKernelKind, 2> kinds;
+  for (func::FuncOp funcOp : module.getOps<func::FuncOp>()) {
+    auto kindAttr = funcOp->getAttrOfType<FunctionKernelKindAttr>(
+        FunctionKernelKindAttr::name);
+    if (!kindAttr) {
+      continue;
+    }
+    FunctionKernelKind kind = kindAttr.getKernelKind();
+    if (llvm::find(kinds, kind) == kinds.end()) {
+      kinds.push_back(kind);
+    }
+  }
+  if (kinds.empty()) {
+    return success();
+  }
+
+  // Preserve outer module attributes (e.g. pto.target_arch, pto.backend) and
+  // drop the per-func kernel_kind tags from the source once we have cloned the
+  // variants. Build the child modules inside the existing outer module body.
+  //
+  // All clones are produced from the original module state BEFORE any child
+  // module is inserted. Otherwise each successive clone would also pick up the
+  // child modules inserted by earlier iterations, causing nested duplication.
+  SmallVector<ModuleOp> clones;
+  clones.reserve(kinds.size());
+  for (FunctionKernelKind kind : kinds) {
+    auto cloned = cast<ModuleOp>(module->clone());
+    cloned->setAttr(FunctionKernelKindAttr::name,
+                    FunctionKernelKindAttr::get(cloned.getContext(), kind));
+
+    SmallVector<func::FuncOp> eraseFuncs;
+    for (func::FuncOp funcOp : cloned.getOps<func::FuncOp>()) {
+      auto funcKindAttr = funcOp->getAttrOfType<FunctionKernelKindAttr>(
+          FunctionKernelKindAttr::name);
+      if (!funcKindAttr) {
+        // Helper function: keep a copy in every kernel submodule.
+        continue;
+      }
+      if (funcKindAttr.getKernelKind() != kind) {
+        eraseFuncs.push_back(funcOp);
+        continue;
+      }
+      // Keep the per-func pto.kernel_kind tag on the cloned function. The
+      // child module also carries the kind, but several verifiers (see
+      // getEnclosingFunctionKernelKind in PTO.cpp) only consult the enclosing
+      // func::FuncOp, never the parent ModuleOp. Stripping the tag here would
+      // make legitimate pipe ops (tpush/tpop/aic_initialize_pipe/...) be
+      // rejected as "not inside a kernel_kind function" after the split.
+    }
+    for (func::FuncOp funcOp : eraseFuncs) {
+      funcOp.erase();
+    }
+    clones.push_back(cloned);
+  }
+
+  // Remove the original top-level functions now that each has been cloned into
+  // its matching kernel submodule.
+  SmallVector<Operation *> originalTopLevel;
+  for (Operation &op : module.getBodyRegion().front().getOperations()) {
+    if (isa<func::FuncOp>(op)) {
+      originalTopLevel.push_back(&op);
+    }
+  }
+  for (Operation *op : originalTopLevel) {
+    op->erase();
+  }
+
+  // Now that the original functions are gone, insert the kind-tagged child
+  // modules into the outer container body.
+  OpBuilder builder(module.getBody(), module.getBody()->end());
+  for (ModuleOp cloned : clones) {
+    builder.insert(cloned);
+  }
+  return success();
+}
+
 static LogicalResult splitCVModule(ModuleOp module) {
   flattenSingleUnpartitionedChild(module);
   if (hasKernelKind(module)) {
@@ -342,6 +451,12 @@ static LogicalResult splitCVModule(ModuleOp module) {
       }
     }
     return success();
+  }
+  // Per-func `pto.kernel_kind` sugar: each kernel function declares its own
+  // kind. Group functions into kind-tagged child submodules before the
+  // section-sugar path, which handles a different (section-based) input form.
+  if (hasKernelKindTopLevelFunc(module)) {
+    return splitPerFuncKernelKind(module);
   }
   if (!hasCVSections(module)) {
     return success();

@@ -30,13 +30,14 @@ module {
 }
 
 // A3-LABEL: func.func @trowexpand_mode1_add_materializes_tmp
-// A3: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 1x2048xf32>
-// A3: pto.trowexpandadd ins(%{{.*}}, %{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x1xf32{{.*}}>, !pto.tile_buf<vec, 1x2048xf32>)
+// A3: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x1xf32{{.*}}>) outs(%{{.*}})
+// A3-NOT: !pto.tile_buf<vec, 1x2048xf32>
 // A3-LABEL: func.func @trowexpand_mode2_add_keeps_no_tmp
-// A3: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x8xf32>)
+// A3: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x8xf32>) outs(%{{.*}})
 // A3-NOT: !pto.tile_buf<vec, 1x2048xf32>
 
 // A5-LABEL: func.func @trowexpand_mode1_add_materializes_tmp
-// A5: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x1xf32{{.*}}>)
+// A5: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x1xf32{{.*}}>) outs(%{{.*}})
 // A5-LABEL: func.func @trowexpand_mode2_add_keeps_no_tmp
+// A5: pto.trowexpandadd ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x16xf32>, !pto.tile_buf<vec, 8x8xf32>) outs(%{{.*}})
 // A5-NOT: !pto.tile_buf<vec, 1x2048xf32>

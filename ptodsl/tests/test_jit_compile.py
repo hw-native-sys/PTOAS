@@ -5664,8 +5664,14 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(default_text, "default host_vec_copy specialization")
     expect_parse_roundtrip_and_verify(block64_text, "BLOCK=64 host_vec_copy specialization")
     expect_parse_roundtrip_and_verify(explicit_text, "explicit host_vec_copy specialization")
-    expect("!pto.tile_buf<vec, 1x128xf32>" in default_text, "default specialization MLIR missing BLOCK=128 tile")
-    expect("!pto.tile_buf<vec, 1x64xf32>" in block64_text, "BLOCK=64 specialization MLIR missing specialized tile")
+    expect(
+        re.search(r"!pto\.tile_buf<vec, 1x128xf32(?:,[^>]*)?>", default_text) is not None,
+        "default specialization MLIR missing BLOCK=128 tile",
+    )
+    expect(
+        re.search(r"!pto\.tile_buf<vec, 1x64xf32(?:,[^>]*)?>", block64_text) is not None,
+        "BLOCK=64 specialization MLIR missing specialized tile",
+    )
     expect("pto.entry" in default_text, "default @pto.jit entry child should carry the explicit entry marker")
     expect("pto.entry" in explicit_text, "explicit @pto.jit entry child should carry the explicit entry marker")
     expect(default_text.count("module") == 2, "default @pto.jit should wrap an unspecified-kind kernel in a backend child module")
@@ -6334,7 +6340,7 @@ def main() -> None:
     expect("descending = true" in tile_ci_text, "pto.tile.ci(descending=True) should preserve the descending attribute in MLIR")
     expect(
         re.search(
-            r"pto\.alloc_tile valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
+            r"pto\.alloc_tile valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?[^>]*>",
             runtime_metadata_text,
         ) is not None,
         "alloc_tile(valid_shape=[rows, cols]) should lower runtime metadata through valid_row/valid_col operands",
@@ -6381,7 +6387,7 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(authored_addr_tile_text, "authored alloc_tile addr specialization")
     expect(
         re.search(
-            r"pto\.alloc_tile addr = %c0_i64 valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
+            r"pto\.alloc_tile addr = %c0_i64 valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?[^>]*>",
             authored_addr_tile_text,
         ) is not None,
         "alloc_tile(shape=..., dtype=..., addr=int, valid_shape=...) should coerce Python ints to i64 operands",
@@ -6402,7 +6408,7 @@ def main() -> None:
     )
     expect(
         re.search(
-            r"pto\.alloc_tile addr = %[a-zA-Z0-9_]+ valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
+            r"pto\.alloc_tile addr = %[a-zA-Z0-9_]+ valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?[^>]*>",
             dynamic_addr_tile_text,
         ) is not None,
         "alloc_tile(shape=..., dtype=..., addr=runtime value, valid_shape=...) should accept dynamic i64-like operands",
@@ -6412,7 +6418,7 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(tile_valid_shape_text, "tile valid-shape update specialization")
     expect(
         re.search(
-            r"pto\.set_validshape %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
+            r"pto\.set_validshape %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?[^>]*>",
             tile_valid_shape_text,
         ) is not None,
         "tile.valid_shape = [rows, cols] should lower to pto.set_validshape on a dynamic-valid tile",
@@ -6422,7 +6428,7 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(tile_valid_shape_1d_text, "1D tile valid-shape update specialization")
     expect(
         re.search(
-            r"pto\.set_validshape %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
+            r"pto\.set_validshape %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?[^>]*>",
             tile_valid_shape_1d_text,
         ) is not None,
         "tile.valid_shape = [length] should lower to pto.set_validshape on a rank-1 dynamic-valid tile",
@@ -6896,11 +6902,11 @@ def main() -> None:
     expect("iter_args(" in carry_text, "carry loop should lower named state through scf.for iter_args")
     expect("scf.yield" in carry_text, "carry loop should lower loop.update(...) to scf.yield")
     expect(
-        carry_text.count("!pto.tile_buf<vec, 1x32xf32>") >= 3,
+        len(re.findall(r"!pto\.tile_buf<vec, 1x32xf32(?:,[^>]*)?>", carry_text)) >= 3,
         "carry loop MLIR should materialize the specialized carried tile types",
     )
     expect(
-        re.search(r"outs\(%[^\s]+#2 : !pto\.tile_buf<vec, 1x32xf32>\)", carry_text) is not None,
+        re.search(r"outs\(%[^\s]+#2 : !pto\.tile_buf<vec, 1x32xf32[^>]*>\)", carry_text) is not None,
         "loop.final(\"o\") should materialize the third scf.for result as the final carried state",
     )
 
@@ -8705,8 +8711,14 @@ def main() -> None:
     expect("pto.mad_mx" in public_surface_text, "mad_mx(...) should lower to pto.mad_mx")
     expect("pto.mad_mx_acc" in public_surface_text, "mad_mx_acc(...) should lower to pto.mad_mx_acc")
     expect("pto.mad_mx_bias" in public_surface_text, "mad_mx_bias(...) should lower to pto.mad_mx_bias")
-    expect("!pto.tile_buf<vec, 128x64xf8E4M3FN>" in low_precision_storage_text, "low-precision tile allocation should preserve float8 element types in MLIR")
-    expect("!pto.tile_buf<vec, 64x64x!pto.hif8>" in low_precision_storage_text, "low-precision tile allocation should preserve HiF8 element types in MLIR")
+    expect(
+        re.search(r"!pto\.tile_buf<vec, 128x64xf8E4M3FN(?:,[^>]*)?>", low_precision_storage_text) is not None,
+        "low-precision tile allocation should preserve float8 element types in MLIR",
+    )
+    expect(
+        re.search(r"!pto\.tile_buf<vec, 64x64x!pto\.hif8(?:,[^>]*)?>", low_precision_storage_text) is not None,
+        "low-precision tile allocation should preserve HiF8 element types in MLIR",
+    )
     expect("pto.vlds" in pointer_vlds_text, "vlds(ptr, offset) should still lower to pto.vlds")
     expect("!pto.vreg<64xf32>" in pointer_vlds_text, "vlds(ptr, offset) should infer the result vreg type from the pointer element type")
     expect('dist = "BRC_B32"' in pointer_vlds_text, 'vlds(ptr, offset, dist="BRC_B32") should lower the authored load distribution')

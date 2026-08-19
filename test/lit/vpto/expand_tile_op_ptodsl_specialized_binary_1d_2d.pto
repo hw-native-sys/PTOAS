@@ -16,13 +16,10 @@
 // META-LABEL: func.func @TDIV_HIGH_1D
 // META: pto.tdiv
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tdiv_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tdiv"
+// META-NOT: name = "template_tdiv_1d"
 
 // META-LABEL: func.func @TDIV_HIGH_2D
 // META: pto.tdiv
@@ -35,13 +32,10 @@
 // META-LABEL: func.func @TFMOD_1D
 // META: pto.tfmod
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tfmod_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tfmod"
+// META-NOT: name = "template_tfmod_1d"
 
 // META-LABEL: func.func @TFMOD_2D
 // META: pto.tfmod
@@ -51,27 +45,14 @@
 // META-SAME: name = "template_tfmod"
 // META-NOT: name = "template_tfmod_1d"
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tdiv_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vdiv
-// SELECT: pto.vbitcast
-// SELECT: pto.vcmp
-// SELECT: pto.vsel
-// SELECT: return
-
 // SELECT-LABEL: func.func private @{{.*}}__template_tdiv(
 // SELECT: scf.for
 // SELECT: scf.for
 // SELECT-NOT: scf.for
+// SELECT: pto.vbitcast
+// SELECT: pto.vcmp
+// SELECT: pto.vsel
 // SELECT: pto.vdiv
-// SELECT: return
-
-// SELECT-LABEL: func.func private @{{.*}}__template_tfmod_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vdiv
-// SELECT: pto.vtrc
 // SELECT: pto.vmul
 // SELECT: pto.vsub
 // SELECT: return

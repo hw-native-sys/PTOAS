@@ -21,7 +21,7 @@
 // CHECK: pto.vecscope
 // CHECK: pto.castptr
 // CHECK: pto.vlds
-// CHECK: pto.vdup
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
 // CHECK: pto.vexpdif
 // CHECK: pto.vsts
 

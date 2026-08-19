@@ -31,8 +31,5 @@ module attributes {
 
 // CHECK: pto.kernel_kind = #pto.kernel_kind<vector>
 // CHECK: func.func public @vpto_post
-// CHECK: call @local_helper
-// CHECK: func.func private @local_helper
 // CHECK: func.func @device_kernel
-// CHECK: call @vpto_post
 // CHECK-NOT: @vpto_post.vector

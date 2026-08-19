@@ -418,6 +418,13 @@ void PTOIRTranslator::RecursionIR(Region *region) {
       return WalkResult::skip();
     } else if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
       UpdateYieldOpInfo(yieldOp);
+    } else if (auto yieldOp = dyn_cast<pto::YieldOp>(op)) {
+      auto fusionRegion = yieldOp->getParentOfType<pto::FusionRegionOp>();
+      if (fusionRegion) {
+        for (auto [yielded, result] :
+             llvm::zip(yieldOp.getValues(), fusionRegion.getOutputs()))
+          UpdateAliasBufferInfo(result, yielded);
+      }
     } else if (getSyncMacroModel(op)) {
       UpdateMacroOpInfo(op);
     } else if (auto callOp = dyn_cast<func::CallOp>(op)) {

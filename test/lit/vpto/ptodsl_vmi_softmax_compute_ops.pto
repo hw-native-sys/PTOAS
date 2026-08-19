@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// This is a static Softmax compute-op coverage harness, not a complete
+// normalized or dynamic Online Softmax kernel.
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @ptodsl_vmi_softmax_compute_ops() {
+    %scale = arith.constant 1.250000e-01 : f32
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 64x64xf32>
+    %data = pto.alloc_tile : !pto.tile_buf<vec, 64x64xf32>
+    %workspace = pto.alloc_tile : !pto.tile_buf<vec, 64x64xf32>
+    %packed = pto.alloc_tile : !pto.tile_buf<vec, 64x64xf16>
+    %row0 = pto.alloc_tile : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>
+    %row1 = pto.alloc_tile : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>
+    %row2 = pto.alloc_tile : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>
+
+    pto.trowmax
+      ins(%src, %workspace
+          : !pto.tile_buf<vec, 64x64xf32>,
+            !pto.tile_buf<vec, 64x64xf32>)
+      outs(%row0 : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>)
+    pto.trowexpandsub
+      ins(%src, %row0
+          : !pto.tile_buf<vec, 64x64xf32>,
+            !pto.tile_buf<vec, 64x1xf32, blayout=col_major>)
+      outs(%data : !pto.tile_buf<vec, 64x64xf32>)
+    pto.tmuls
+      ins(%data, %scale : !pto.tile_buf<vec, 64x64xf32>, f32)
+      outs(%data : !pto.tile_buf<vec, 64x64xf32>)
+    pto.texp
+      ins(%data : !pto.tile_buf<vec, 64x64xf32>)
+      outs(%data : !pto.tile_buf<vec, 64x64xf32>)
+    pto.trowsum
+      ins(%data, %workspace
+          : !pto.tile_buf<vec, 64x64xf32>,
+            !pto.tile_buf<vec, 64x64xf32>)
+      outs(%row1 : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>)
+    pto.tcvt
+      ins(%data {
+        rmode = #pto<round_mode CAST_RINT>,
+        satmode = #pto<saturation_mode OFF>
+      } : !pto.tile_buf<vec, 64x64xf32>)
+      outs(%packed : !pto.tile_buf<vec, 64x64xf16>)
+
+    %row0_r = pto.treshape %row0
+      : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>
+        -> !pto.tile_buf<vec, 1x64xf32>
+    %row1_r = pto.treshape %row1
+      : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>
+        -> !pto.tile_buf<vec, 1x64xf32>
+    %row2_r = pto.treshape %row2
+      : !pto.tile_buf<vec, 64x1xf32, blayout=col_major>
+        -> !pto.tile_buf<vec, 1x64xf32>
+
+    pto.tsub
+      ins(%row0_r, %row1_r
+          : !pto.tile_buf<vec, 1x64xf32>,
+            !pto.tile_buf<vec, 1x64xf32>)
+      outs(%row2_r : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tmax
+      ins(%row2_r, %row0_r
+          : !pto.tile_buf<vec, 1x64xf32>,
+            !pto.tile_buf<vec, 1x64xf32>)
+      outs(%row2_r : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tmul
+      ins(%row2_r, %row1_r
+          : !pto.tile_buf<vec, 1x64xf32>,
+            !pto.tile_buf<vec, 1x64xf32>)
+      outs(%row2_r : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tadd
+      ins(%row2_r, %row1_r
+          : !pto.tile_buf<vec, 1x64xf32>,
+            !pto.tile_buf<vec, 1x64xf32>)
+      outs(%row2_r : !pto.tile_buf<vec, 1x64xf32>)
+    pto.tmov
+      ins(%row2_r : !pto.tile_buf<vec, 1x64xf32>)
+      outs(%row0_r : !pto.tile_buf<vec, 1x64xf32>)
+    return
+  }
+}
+
+// Row reductions stream one 256B row per principal-loop iteration instead of
+// materializing the complete 64x64 tile as one logical VMI value.
+// EXPAND-DAG: call {{.*}}__template_trowmax
+// EXPAND-DAG: pto.tilelib.candidate = "template_trowmax"
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_trowexpandsub
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tmuls
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_texp
+// EXPAND-DAG: call {{.*}}__template_trowsum
+// EXPAND-DAG: pto.tilelib.candidate = "template_trowsum"
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tcvt
+// EXPAND-DAG: pto.tilelib.impl = "vmi"
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tsub
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tmax
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tmul
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tadd
+// EXPAND-DAG: call {{.*}}__pto_ptodsl_vmi_a5_tmov
+
+// INLINE: IR Dump After PTOInlineLibCall
+// INLINE-LABEL: func.func @ptodsl_vmi_softmax_compute_ops
+// INLINE: pto.vmi.vsub
+// INLINE: pto.vmi.vmuls
+// INLINE: pto.vmi.vexp
+// INLINE: pto.vmi.vcvt
+// INLINE: pto.vmi.vmax
+
+// FINAL-LABEL: func.func @ptodsl_vmi_softmax_compute_ops
+// FINAL: pto.vecscope
+// FINAL: pto.vmax
+// FINAL: pto.vsub
+// FINAL: pto.vmuls
+// FINAL: pto.vexp
+// FINAL: pto.vcvt
+// FINAL: pto.vcadd

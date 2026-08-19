@@ -17,13 +17,10 @@
 
 // META-LABEL: func.func @TCMP_1D
 // META: pto.tcmp
-// META-SAME: candidates = [{id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tcmp_1d"
-// META-SAME: }, {
-// META-SAME: id = 0 : i64
+// META-SAME: candidates = [{id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcmp"
+// META-NOT: name = "template_tcmp_1d"
 
 // META-LABEL: func.func @TCMP_2D
 // META: pto.tcmp
@@ -34,13 +31,10 @@
 
 // META-LABEL: func.func @TCMPS_1D
 // META: pto.tcmps
-// META-SAME: candidates = [{id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tcmps_1d"
-// META-SAME: }, {
-// META-SAME: id = 0 : i64
+// META-SAME: candidates = [{id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcmps"
+// META-NOT: name = "template_tcmps_1d"
 
 // META-LABEL: func.func @TCMPS_2D
 // META: pto.tcmps
@@ -48,14 +42,6 @@
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcmps"
 // META-NOT: name = "template_tcmps_1d"
-
-// SELECT-LABEL: func.func private @{{.*}}__template_tcmp_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vcmp
-// SELECT: pto.pdintlv_b8
-// SELECT: pto.psts
-// SELECT: return
 
 // SELECT-LABEL: func.func private @{{.*}}__template_tcmp(
 // SELECT: scf.for
@@ -65,7 +51,8 @@
 // SELECT: pto.psts
 // SELECT: return
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tcmps_1d(
+// SELECT-LABEL: func.func private @{{.*}}__template_tcmps(
+// SELECT: scf.for
 // SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.vcmps
@@ -78,6 +65,7 @@
 // SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.vcmps
+// SELECT: pto.pdintlv_b8
 // SELECT: pto.psts
 // SELECT: return
 

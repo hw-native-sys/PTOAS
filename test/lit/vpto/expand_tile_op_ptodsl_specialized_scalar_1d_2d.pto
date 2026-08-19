@@ -15,35 +15,26 @@
 // META-LABEL: func.func @TDIVS_TILE_1D
 // META: pto.tdivs
 // META-SAME: candidates = [{
-// META-SAME: id = 2 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tdivs_tile_scalar_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tdivs_tile_scalar"
+// META-NOT: name = "template_tdivs_tile_scalar_1d"
 
 // META-LABEL: func.func @TDIVS_SCALAR_1D
 // META: pto.tdivs
 // META-SAME: candidates = [{
-// META-SAME: id = 3 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tdivs_scalar_tile_1d"
-// META-SAME: }, {
 // META-SAME: id = 1 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tdivs_scalar_tile"
+// META-NOT: name = "template_tdivs_scalar_tile_1d"
 
 // META-LABEL: func.func @TREMS_1D
 // META: pto.trems
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_trems_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_trems"
+// META-NOT: name = "template_trems_1d"
 
 // META-LABEL: func.func @TREMS_TMP_2D
 // META: pto.trems
@@ -53,7 +44,8 @@
 // META-SAME: name = "template_trems"
 // META-NOT: name = "template_trems_1d"
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tdivs_tile_scalar_1d(
+// SELECT-LABEL: func.func private @{{.*}}__template_tdivs_tile_scalar(
+// SELECT: scf.for
 // SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.vbr
@@ -61,20 +53,12 @@
 // SELECT: pto.vbitcast
 // SELECT: return
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tdivs_scalar_tile_1d(
+// SELECT-LABEL: func.func private @{{.*}}__template_tdivs_scalar_tile(
+// SELECT: scf.for
 // SELECT: scf.for
 // SELECT-NOT: scf.for
 // SELECT: pto.vbr
 // SELECT: pto.vdiv
-// SELECT: return
-
-// SELECT-LABEL: func.func private @{{.*}}__template_trems_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vdiv
-// SELECT: pto.vtrc
-// SELECT: pto.vmuls
-// SELECT: pto.vsub
 // SELECT: return
 
 // SELECT-LABEL: func.func private @{{.*}}__template_trems(

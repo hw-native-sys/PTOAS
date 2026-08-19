@@ -1812,7 +1812,9 @@ struct PlanMemoryModernPass
 
   PlanMemoryModernPass() = default;
   explicit PlanMemoryModernPass(const PlanMemoryOptions &options)
-      : memMode(options.memMode), orderBySize(options.orderBySize) {}
+      : orderBySize(options.orderBySize) {
+    (void)options;
+  }
 
   StringRef getArgument() const final { return "pto-plan-memory"; }
   StringRef getDescription() const final {
@@ -1841,7 +1843,7 @@ struct PlanMemoryModernPass
 
     for (func::FuncOp funcOp : funcs) {
       if (failed(
-              runModernPlanMemory(funcOp, memMode, orderBySize))) {
+              runModernPlanMemory(funcOp, "local", orderBySize))) {
         signalPassFailure();
         return;
       }
@@ -1849,7 +1851,6 @@ struct PlanMemoryModernPass
   }
 
 private:
-  std::string memMode = "local";
   bool orderBySize = false;
 };
 } // namespace

@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// VMI broadcast candidates for row-expand (mul/div) and col-expand. The
+// 8x256 / 1x256 shapes are within the 256-lane VMI vreg limit, so the VMI
+// candidates are selected and lowered to pto.vmi.vmul/vdiv. The 8x448
+// subregion exceeds 256 columns, so its row-expand falls back to the
+// ordinary ptodsl template (which chunks correctly). See P1-2: the VMI
+// emit paths for row-expand / col-expand / row-reduce-streaming do not yet
+// chunk wide tiles, so their constraints reject cols > 256.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE --implicit-check-not=__pto_ptodsl_vmi --implicit-check-not=pto.vecscope
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @local_broadcast_candidates() {
+    %c0 = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x256xf32>
+    %state = pto.alloc_tile : !pto.tile_buf<vec, 8x1xf32, blayout=col_major>
+    %column = pto.alloc_tile : !pto.tile_buf<vec, 1x256xf32>
+    %mul = pto.alloc_tile : !pto.tile_buf<vec, 8x256xf32>
+    %div = pto.alloc_tile : !pto.tile_buf<vec, 8x256xf32>
+    %expanded = pto.alloc_tile : !pto.tile_buf<vec, 8x256xf32>
+    %storage = pto.alloc_tile : !pto.tile_buf<vec, 8x512xf32>
+    %storage_subregion = pto.subview %storage[%c0, %c0] sizes [8, 448]
+      : !pto.tile_buf<vec, 8x512xf32> -> !pto.tile_buf<vec, 8x448xf32, valid=8x448>
+    %subregion_mul = pto.alloc_tile : !pto.tile_buf<vec, 8x448xf32>
+
+    pto.trowexpandmul
+      ins(%src, %state : !pto.tile_buf<vec, 8x256xf32>,
+                         !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+      outs(%mul : !pto.tile_buf<vec, 8x256xf32>)
+    pto.trowexpanddiv
+      ins(%mul, %state : !pto.tile_buf<vec, 8x256xf32>,
+                         !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+      outs(%div : !pto.tile_buf<vec, 8x256xf32>)
+    pto.tcolexpand
+      ins(%column : !pto.tile_buf<vec, 1x256xf32>)
+      outs(%expanded : !pto.tile_buf<vec, 8x256xf32>)
+    pto.trowexpandmul
+      ins(%storage_subregion, %state
+          : !pto.tile_buf<vec, 8x448xf32, valid=8x448>,
+            !pto.tile_buf<vec, 8x1xf32, blayout=col_major>)
+      outs(%subregion_mul : !pto.tile_buf<vec, 8x448xf32>)
+    return
+  }
+}
+
+// EXPAND: call @__pto_{{.*}}trowexpandmul{{.*}}pto.tilelib.impl = "vmi"
+// EXPAND: call @__pto_{{.*}}trowexpanddiv{{.*}}pto.tilelib.impl = "vmi"
+// EXPAND: call @__pto_{{.*}}tcolexpand{{.*}}pto.tilelib.impl = "vmi"
+// EXPAND: call @__pto_{{.*}}trowexpandmul{{.*}}pto.tilelib.impl = "ptodsl"{{.*}}pto.vmi.fusion.boundary = "local"{{.*}}pto.vmi.fusion.boundary_reason = "non_vmi_local_boundary_fallback"
+// 512-column row-expand must fall back to the ordinary ptodsl template
+// (VMI emit path does not chunk >256-col tiles; constraint rejects them).
+// EXPAND-NOT: call @__pto_{{.*}}trowexpandmul{{.*}}8_512{{.*}}impl = "vmi"
+
+// INLINE: pto.vmi.vmul
+// INLINE: pto.vmi.vdiv
+
+// FINAL: pto.vmul
+// FINAL: pto.vdiv
+// FINAL: pto.vlds {{.*}}BRC

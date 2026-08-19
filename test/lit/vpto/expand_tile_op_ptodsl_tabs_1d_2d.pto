@@ -16,13 +16,10 @@
 // META-LABEL: func.func @TABS_1D
 // META: pto.tabs
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tabs_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tabs"
+// META-NOT: name = "template_tabs_1d"
 
 // META-LABEL: func.func @TABS_2D
 // META: pto.tabs
@@ -31,11 +28,6 @@
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tabs"
 // META-NOT: name = "template_tabs_1d"
-
-// SELECT-LABEL: func.func private @{{.*}}__template_tabs_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: return
 
 // SELECT-LABEL: func.func private @{{.*}}__template_tabs(
 // SELECT: scf.for

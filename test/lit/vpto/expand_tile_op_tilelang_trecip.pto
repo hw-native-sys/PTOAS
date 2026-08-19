@@ -10,7 +10,7 @@
 //
 // Pipeline: ExpandTileOp -> InlineLibCall -> FoldTileBufIntrinsics
 //
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
 
 // After the full tile-op-expand path on the VPTO backend, the original
 // pto.trecip should be lowered to vector-style VPTO IR.
@@ -18,11 +18,12 @@
 // CHECK-NOT: pto.trecip ins
 // CHECK: pto.vecscope
 // CHECK: pto.castptr
-// CHECK: pto.vbr
+// CHECK: pto.vdup
 // CHECK: scf.for
 // CHECK: pto.vlds
 // CHECK: pto.vdiv
 // CHECK: pto.vsts
+// CHECK: pto.tilelib.candidate = "vmi_trecip"
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TRECIP() {

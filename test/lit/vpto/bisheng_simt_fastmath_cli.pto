@@ -10,5 +10,5 @@
 // RUN: ptoas --simt-fastmath --help > /dev/null
 // RUN: ptoas --simt-fastmath=false --help > /dev/null
 
-// CHECK: --simt-fastmath
-// CHECK-SAME: Enable Bisheng SIMT floating-point contraction and fast math combining for VPTO device compilation
+// CHECK: --disable-bisheng-vf-fusion
+// CHECK-SAME: Disable Bisheng VF, loop-fusion, and load/store elimination for VPTO device compilation

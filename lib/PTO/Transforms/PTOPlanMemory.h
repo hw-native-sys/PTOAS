@@ -14,6 +14,7 @@
 #include <list>
 #include "OptMemPlanForPipeline.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/MemPlanMode.h"
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -43,10 +44,7 @@ enum class BufferStatus { UNDEFFINED = 0, DEFFINED, GENED, KILLED };
 /// Pair of inplace Value.
 using ValuePair = std::pair<Value, Value>;
 
-enum class MemPlanMode {
-  LOCAL_MEM_PLAN,
-  GLOBAL_WORKSPACE_PLAN,
-};
+// MemPlanMode is defined in PTO/Transforms/MemPlanMode.h (included above).
 
 /// Result status after plan memory.
 enum class PlanStatus {

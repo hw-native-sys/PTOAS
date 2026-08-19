@@ -1,0 +1,82 @@
+// Functional check: tpop'd tile + tneg must lower into a pto.vneg that
+// reads the received runtime tile handle directly.
+//
+// P1-1 note: the pipe-op verifier error previously masked by
+// `( ... || true ) | FileCheck` is now fixed (splitPerFuncKernelKind keeps
+// the per-func pto.kernel_kind tag, so tpush/tpop survive the split). The
+// RUN line is restored to a real functional check below.
+//
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --tile-lib-backend=ptodsl --enable-op-fusion=false --emit-vpto %s -o - 2>/dev/null | FileCheck %s
+
+module {
+  func.func @cube_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %v2c_local = pto.reserve_buffer {
+      name = "v2c_fifo",
+      size = 4096,
+      location = #pto.address_space<mat>,
+      auto = false,
+      base = 0
+    } -> i32
+    %c2v_import = pto.import_reserved_buffer {
+      name = "c2v_fifo",
+      peer_func = @vector_kernel
+    } -> i32
+    pto.aic_initialize_pipe {id = 0, dir_mask = 3, slot_size = 1024}
+      (c2v_consumer_buf = %c2v_import : i32,
+       v2c_consumer_buf = %v2c_local : i32)
+
+    %c0_i64 = arith.constant 0 : i64
+    %acc_tile = pto.alloc_tile addr = %c0_i64
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tpush_to_aiv(%acc_tile
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      {id = 0, split = 0}
+    return
+  }
+
+  func.func @vector_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c2v_local = pto.reserve_buffer {
+      name = "c2v_fifo",
+      size = 4096,
+      location = #pto.address_space<vec>,
+      auto = false,
+      base = 0
+    } -> i32
+    %v2c_import = pto.import_reserved_buffer {
+      name = "v2c_fifo",
+      peer_func = @cube_kernel
+    } -> i32
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 3, slot_size = 1024}
+      (c2v_consumer_buf = %c2v_local : i32,
+       v2c_consumer_buf = %v2c_import : i32)
+
+    %recv_tile = pto.tpop_from_aic {id = 0, split = 0}
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %c0_i64 = arith.constant 0 : i64
+    %neg_tile = pto.alloc_tile addr = %c0_i64
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tneg ins(%recv_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%neg_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tfree_from_aic {id = 0, split = 0}
+    return
+  }
+}
+
+// Functional check: tpop'd tile + tneg must fold into a pto.vneg that
+// reads the received tile directly (no residual tneg / tile_buf_addr).
+// This was previously masked by a `( ... || true ) | FileCheck` wrapper that
+// accepted the split-regression verifier error as the "expected" output.
+
+// CHECK-LABEL: func.func @vector_kernel
+// CHECK-NOT: pto.tneg ins
+// Runtime tpop tiles intentionally retain tile_buf_addr: their address is
+// assigned by the pipe at runtime and cannot be statically folded.
+// CHECK: pto.vneg

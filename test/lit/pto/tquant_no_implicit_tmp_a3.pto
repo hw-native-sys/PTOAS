@@ -6,11 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// TQUANT with a dynamic-valid-shape src and no explicit tmp cannot have its
-// implicit tmp materialized (the tmp type is derived from the static src
-// shape). The implicit-tmp pass must reject it with a clear diagnostic
-// instead of silently dropping the tmp.
-
+// TQUANT with a dynamic-valid-shape src cannot materialize an implicit tmp.
 // RUN: not ptoas --pto-arch=a3 %s -emit-pto-ir 2>&1 | FileCheck %s
 
 module {

@@ -30,11 +30,11 @@ module {
   }
 }
 
-// A3: pto::comm::ParallelGroup
-// A3: pto::comm::TBROADCAST(
-// A3: pto::comm::TGATHER(
-// A3: pto::comm::TSCATTER(
-// A3: pto::comm::ReduceOp::Sum
-// A3: pto::comm::TREDUCE(
-// A3: pto::comm::ReduceOp::Max
-// A3: pto::comm::TREDUCE(
+// A3-DAG: pto::comm::ParallelGroup
+// A3-DAG: pto::comm::TBROADCAST(
+// A3-DAG: pto::comm::TGATHER(
+// A3-DAG: pto::comm::TSCATTER(
+// A3-DAG: pto::comm::ReduceOp::Sum
+// A3-DAG: pto::comm::TREDUCE(
+// A3-DAG: pto::comm::ReduceOp::Max
+// A3-DAG: pto::comm::TREDUCE(

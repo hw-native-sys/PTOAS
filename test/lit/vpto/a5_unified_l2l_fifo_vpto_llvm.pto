@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: mkdir -p %T && ( ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto-llvm-ir %s -o %t --mlir-print-ir-after-all 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @fifo_acc_to_vec() attributes {
+      pto.kernel,
+      pto.kernel_kind = #pto.kernel_kind<cube>
+  } {
+    %local = arith.constant 4096 : i32
+    %tile_addr = arith.constant 0 : i64
+    %c16 = arith.constant 16 : index
+    %pipe = pto.initialize_l2l_pipe {
+      dir_mask = 1,
+      slot_size = 1024,
+      slot_num = 4,
+      flag_base = 8,
+      nosplit = true
+    } (%local : i32) -> !pto.pipe
+    %tile = pto.alloc_tile addr = %tile_addr valid_row = %c16 valid_col = %c16
+      : !pto.tile_buf<acc, 16x16xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>
+    pto.tpush(%tile, %pipe
+      : !pto.tile_buf<acc, 16x16xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>, !pto.pipe) {split = 0}
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @fifo_acc_to_vec_mix_aic
+// CHECK: pto.initialize_l2l_pipe
+// CHECK: pto.alloc_tile
+// CHECK: pto.tpush
+// CHECK: VPTO LLVM emission failed

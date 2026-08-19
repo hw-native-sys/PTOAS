@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The fake toolchain records the final Bisheng argv. Ordinary VPTO object
+// emission must not inherit VMI-only VF disabling flags; the explicit VMI
+// pipeline must pass them and force auto-sync off with the rest of Bisheng VF.
+// RUN: rm -rf %t.toolchain && mkdir -p %t.toolchain/bin %t.toolchain/tools/bisheng_compiler/bin %t.toolchain/include %t.toolchain/pkg_inc
+// RUN: cp %S/../resources/fake_bisheng.sh %t.toolchain/bin/bisheng
+// RUN: cp %S/../resources/fake_bisheng.sh %t.toolchain/tools/bisheng_compiler/bin/bisheng
+// RUN: cp %S/../resources/fake_ld_lld.sh %t.toolchain/bin/ld.lld
+// RUN: cp %S/../resources/fake_ld_lld.sh %t.toolchain/bin/cce-ld
+// RUN: chmod +x %t.toolchain/bin/bisheng %t.toolchain/tools/bisheng_compiler/bin/bisheng %t.toolchain/bin/ld.lld %t.toolchain/bin/cce-ld
+// RUN: touch %t.toolchain/include/__clang_cce_runtime_wrapper.h
+// RUN: env ASCEND_HOME_PATH=%t.toolchain FAKE_BISHENG_LOG=%t.normal.log ptoas --pto-arch=a5 --pto-backend=vpto --cann-output-version=9.0.0 %s -o %t.normal.o
+// RUN: env ASCEND_HOME_PATH=%t.toolchain FAKE_BISHENG_LOG=%t.disabled.log ptoas --disable-bisheng-vf-fusion --pto-arch=a5 --pto-backend=vpto --cann-output-version=9.0.0 --bisheng-vf-auto-sync=global %s -o %t.disabled.o
+// RUN: env ASCEND_HOME_PATH=%t.toolchain FAKE_BISHENG_LOG=%t.vmi.log ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --cann-output-version=9.0.0 --bisheng-vf-auto-sync=global %s -o %t.vmi.o
+// RUN: FileCheck %s --check-prefix=NORMAL < %t.normal.log
+// RUN: FileCheck %s --check-prefix=DISABLED < %t.disabled.log
+// RUN: FileCheck %s --check-prefix=VMI < %t.vmi.log
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @bisheng_vf_object_argv() attributes {pto.kernel} {
+    return
+  }
+}
+
+// NORMAL-NOT: -cce-vf-enable-vf-fusion=false
+// NORMAL-NOT: -cce-vf-enable-loop-fusion=false
+// DISABLED: -cce-vf-auto-sync=off
+// DISABLED: -cce-vf-enable-vf-fusion=false
+// DISABLED: -cce-vf-enable-loop-fusion=false
+// DISABLED-NOT: -cce-vf-auto-sync=global
+// VMI: -cce-vf-auto-sync=off
+// VMI: -cce-vf-enable-vf-fusion=false
+// VMI: -cce-vf-enable-loop-fusion=false
+// VMI-NOT: -cce-vf-auto-sync=global

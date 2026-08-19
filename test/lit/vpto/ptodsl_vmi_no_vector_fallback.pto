@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=PIPE --implicit-check-not=__pto_ptodsl_vmi
+
+module {
+  func.func @ptodsl_vmi_no_vector_fallback() {
+    %lhs = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %rhs = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x64xf32>
+    %lhs_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    %rhs_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    %dst_f16 = pto.alloc_tile : !pto.tile_buf<vec, 1x128xf16>
+    pto.tmin
+      ins(%lhs, %rhs
+          : !pto.tile_buf<vec, 1x64xf32>,
+            !pto.tile_buf<vec, 1x64xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x64xf32>)
+    // tmin has no VMI candidate (see lib/TileOps/a5/tmin.py), so both f32 and
+    // f16 forms fall back to the ordinary PTODSL template. This is the
+    // "no-vector VMI fallback" case exercised by --implicit-check-not above.
+    // (tadd f16 used to fall back too, but ADR-0003 PR1 added a vmi_tadd_block64
+    // f16 candidate, so tadd f16 no longer belongs in this fallback test.)
+    pto.tmin
+      ins(%lhs_f16, %rhs_f16
+          : !pto.tile_buf<vec, 1x128xf16>,
+            !pto.tile_buf<vec, 1x128xf16>)
+      outs(%dst_f16 : !pto.tile_buf<vec, 1x128xf16>)
+    return
+  }
+}
+
+// PIPE: IR Dump After ExpandTileOp
+// PIPE: pto.vmi.fusion.boundary = "local"
+// PIPE: IR Dump After PTOInlineLibCall
+// PIPE: func.func @ptodsl_vmi_no_vector_fallback
+// PIPE: pto.vmi.fusion.boundary = "local"
+// PIPE: pto.vmin
+// PIPE: pto.vmin

@@ -12,6 +12,8 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTOPlanMemory.h"
 
+#pragma GCC diagnostic ignored "-Wunused-function"
+
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "Utils.h"
@@ -2787,11 +2789,7 @@ void PlanMemoryPass::runOnOperation() {
   });
 
   for (func::FuncOp funcOp : funcs) {
-    auto parsedMode = parseLegacyMemPlanMode(funcOp, this->memMode);
-    if (failed(parsedMode)) {
-      return signalPassFailure();
-    }
-    MemPlanMode mode = *parsedMode;
+    MemPlanMode mode = this->memMode;
     ReserveBufferPlans reservePlans;
     if (mode == MemPlanMode::LOCAL_MEM_PLAN &&
         failed(analyzeReserveBufferPlans(funcOp, reservePlans))) {

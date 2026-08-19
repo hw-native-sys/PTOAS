@@ -10,10 +10,12 @@
 // RUN: ptoas --bisheng-vf-auto-sync=off --help > /dev/null
 // RUN: ptoas --bisheng-vf-auto-sync=fused --help > /dev/null
 // RUN: ptoas --bisheng-vf-auto-sync=global --help > /dev/null
+// RUN: ptoas --disable-bisheng-vf-fusion --help > /dev/null
 // RUN: not ptoas --bisheng-vf-auto-sync=invalid %s -o %t 2>&1 | FileCheck %s --check-prefix=INVALID
 
 // HELP: --bisheng-vf-auto-sync=<value>
 // HELP-SAME: Explicit Bisheng VF auto-sync mode for VPTO device compilation; omit to use the toolchain default
+// HELP: --disable-bisheng-vf-fusion
 // INVALID: for the --bisheng-vf-auto-sync option: Cannot find option named 'invalid'!
 
 module {

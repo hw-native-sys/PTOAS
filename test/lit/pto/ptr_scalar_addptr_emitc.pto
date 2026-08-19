@@ -13,4 +13,4 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // CHECK-LABEL: AICORE void ptr_scalar_rw(
-// CHECK: float {{.*}} = ({{.*}} + {{.*}})[{{.*}}];
+// CHECK: float {{.*}} = {{.*}} + {{.*}}[{{.*}}];

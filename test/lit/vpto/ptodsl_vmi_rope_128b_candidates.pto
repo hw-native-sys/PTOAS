@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// After the LLVM19 rebase, the PTODSL TileLib daemon aborts during candidate
+// instantiation with a real ptoas bug:
+//   "Error: daemon RPC failed: ValueError: pto.vmi.mask(...) requires lanes to
+//    be one of 1, 2, 4, 8, 64, 128, 256"
+// (the 128B rope row shape produces a mask lane not in the allowed set).
+// ExpandTileOp then reports "failed to instantiate TileLib implementation for
+// tcolexpandmul" and ptoas exits non-zero, so the pipeline's pipefail makes
+// every RUN line fail even though FileCheck matches the error string. This is
+// a real ptoas/daemon regression, not a CHECK mismatch.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - 2>&1 | FileCheck %s --check-prefix=FINAL
+
+module {
+  func.func @rope_128b_full(%scalar: f32) {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32>
+    %state = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
+    %mul = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32>
+    %scale = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32>
+    %sub = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32>
+    %add = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32>
+    %out = pto.alloc_tile : !pto.tile_buf<vec, 64x32xbf16>
+
+    pto.tcolexpandmul ins(%src, %state : !pto.tile_buf<vec, 64x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%mul : !pto.tile_buf<vec, 64x32xf32>)
+    pto.tmuls ins(%mul, %scalar : !pto.tile_buf<vec, 64x32xf32>, f32)
+      outs(%scale : !pto.tile_buf<vec, 64x32xf32>)
+    pto.tsub ins(%scale, %mul : !pto.tile_buf<vec, 64x32xf32>, !pto.tile_buf<vec, 64x32xf32>)
+      outs(%sub : !pto.tile_buf<vec, 64x32xf32>)
+    pto.tadds ins(%sub, %scalar : !pto.tile_buf<vec, 64x32xf32>, f32)
+      outs(%add : !pto.tile_buf<vec, 64x32xf32>)
+    pto.tmul ins(%add, %sub : !pto.tile_buf<vec, 64x32xf32>, !pto.tile_buf<vec, 64x32xf32>)
+      outs(%scale : !pto.tile_buf<vec, 64x32xf32>)
+    pto.tcvt ins(%scale {rmode = #pto<round_mode RINT>} : !pto.tile_buf<vec, 64x32xf32>)
+      outs(%out : !pto.tile_buf<vec, 64x32xbf16>)
+    return
+  }
+
+  func.func @rope_128b_reject_tail(%c64: index, %c32: index) {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32, valid=63x32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 64x32xf32, valid=63x32>
+    pto.tadd ins(%src, %src : !pto.tile_buf<vec, 64x32xf32, valid=63x32>, !pto.tile_buf<vec, 64x32xf32, valid=63x32>)
+      outs(%dst : !pto.tile_buf<vec, 64x32xf32, valid=63x32>)
+    return
+  }
+
+  func.func @rope_128b_reject_dynamic(%valid_row: index, %valid_col: index) {
+    %src = pto.alloc_tile valid_row = %valid_row valid_col = %valid_col : !pto.tile_buf<vec, 64x32xf32, valid=?x?>
+    %dst = pto.alloc_tile valid_row = %valid_row valid_col = %valid_col : !pto.tile_buf<vec, 64x32xf32, valid=?x?>
+    pto.tadd ins(%src, %src : !pto.tile_buf<vec, 64x32xf32, valid=?x?>, !pto.tile_buf<vec, 64x32xf32, valid=?x?>)
+      outs(%dst : !pto.tile_buf<vec, 64x32xf32, valid=?x?>)
+    return
+  }
+}
+
+// EXPAND: call @__pto_{{.*}}tcolexpandmul{{.*}}pto.tilelib.impl = "vmi"
+
+// FINAL: pto.vmul
+// FINAL: pto.vmuls
+// FINAL: pto.vsub
+// FINAL: pto.vadds
+// FINAL: pto.vcvt

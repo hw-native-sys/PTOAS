@@ -18,8 +18,8 @@
 // CHECK: func.func @TEXPANDS
 // CHECK-NOT: pto.texpands ins
 // CHECK: pto.vecscope
-// CHECK: pto.castptr
 // CHECK: pto.vdup
+// CHECK: pto.castptr
 // CHECK: pto.vsts
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

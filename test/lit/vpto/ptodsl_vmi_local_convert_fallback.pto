@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Verify tcvt candidate selection for edge cases: tail-row (valid < shape),
+// f16→si8 (explicitly signed integer dest), and sub-vector-length shapes.
+// The signless i8 dest was never supported — only si8/ui8 variants exist.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+module {
+  func.func @local_convert_fallback() {
+    %tail_src = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf32, valid=4x128>
+    %tail_dst = pto.alloc_tile : !pto.tile_buf<vec, 8x128xbf16, valid=4x128>
+    %f16 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xf16>
+    %si8 = pto.alloc_tile : !pto.tile_buf<vec, 8x128xsi8>
+    %subvl_src = pto.alloc_tile : !pto.tile_buf<vec, 8x64xf32>
+    %subvl_dst = pto.alloc_tile : !pto.tile_buf<vec, 8x64xbf16>
+
+    pto.tcvt ins(%tail_src {rmode = #pto<round_mode RINT>} : !pto.tile_buf<vec, 8x128xf32, valid=4x128>)
+      outs(%tail_dst : !pto.tile_buf<vec, 8x128xbf16, valid=4x128>)
+    pto.tcvt ins(%f16 {rmode = #pto<round_mode TRUNC>} : !pto.tile_buf<vec, 8x128xf16>)
+      outs(%si8 : !pto.tile_buf<vec, 8x128xsi8>)
+    pto.tcvt ins(%subvl_src {rmode = #pto<round_mode RINT>} : !pto.tile_buf<vec, 8x64xf32>)
+      outs(%subvl_dst : !pto.tile_buf<vec, 8x64xbf16>)
+    return
+  }
+}
+
+// EXPAND: call @__pto_{{.*}}tcvt{{.*}}template_tcvt_f32_to_bf16
+// EXPAND: call @__pto_{{.*}}tcvt{{.*}}template_tcvt_f16_to_si8
+// EXPAND: call @__pto_ptodsl_vmi_{{.*}}tcvt{{.*}}vmi_tcvt
+// EXPAND-NOT: no legal template
+// EXPAND-NOT: error:

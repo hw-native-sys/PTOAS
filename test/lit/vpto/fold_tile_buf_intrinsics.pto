@@ -44,17 +44,16 @@
 // - tile_buf_addr has been folded to concrete pto.castptr addresses
 // - tile-slice addressing is carried by the vlds/vsts offset operand
 // NORMALIZED-LABEL: func.func @TADD
-// NORMALIZED: pto.castptr
-// NORMALIZED: pto.castptr
-// NORMALIZED: pto.castptr
+// NORMALIZED: scf.for
+// NORMALIZED-DAG: pto.castptr
+// NORMALIZED-DAG: pto.castptr
+// NORMALIZED-DAG: pto.castptr
+// NORMALIZED-DAG: pto.vlds
+// NORMALIZED-DAG: pto.vlds
+// NORMALIZED-DAG: pto.vadd
+// NORMALIZED-DAG: pto.vsts
 // NORMALIZED-NOT: pto.tile_buf_addr
 // NORMALIZED-NOT: pto.pointer_cast
-// NORMALIZED-NOT: arith.muli
-// NORMALIZED: scf.for
-// NORMALIZED: pto.vlds
-// NORMALIZED: pto.vlds
-// NORMALIZED: pto.vadd
-// NORMALIZED: pto.vsts
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TADD() {

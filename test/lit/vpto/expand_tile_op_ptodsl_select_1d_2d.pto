@@ -15,13 +15,10 @@
 // META-LABEL: func.func @TSEL_1D
 // META: pto.tsel
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tsel_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tsel"
+// META-NOT: name = "template_tsel_1d"
 
 // META-LABEL: func.func @TSEL_2D
 // META: pto.tsel
@@ -34,13 +31,10 @@
 // META-LABEL: func.func @TSELS_1D
 // META: pto.tsels
 // META-SAME: candidates = [{
-// META-SAME: id = 1 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tsels_1d"
-// META-SAME: }, {
 // META-SAME: id = 0 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tsels"
+// META-NOT: name = "template_tsels_1d"
 
 // META-LABEL: func.func @TSELS_2D
 // META: pto.tsels
@@ -50,15 +44,6 @@
 // META-SAME: name = "template_tsels"
 // META-NOT: name = "template_tsels_1d"
 
-// SELECT-LABEL: func.func private @{{.*}}__template_tsel_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.plds
-// SELECT: pto.pintlv_b16
-// SELECT: pto.vsel
-// SELECT: pto.vsts
-// SELECT: return
-
 // SELECT-LABEL: func.func private @{{.*}}__template_tsel(
 // SELECT: scf.for
 // SELECT: scf.for
@@ -66,16 +51,6 @@
 // SELECT-NOT: scf.for
 // SELECT: pto.plds
 // SELECT: pto.vsel
-// SELECT: return
-
-// SELECT-LABEL: func.func private @{{.*}}__template_tsels_1d(
-// SELECT: pto.vdup
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.plds
-// SELECT: pto.pintlv_b16
-// SELECT: pto.vsel
-// SELECT: pto.vsts
 // SELECT: return
 
 // SELECT-LABEL: func.func private @{{.*}}__template_tsels(

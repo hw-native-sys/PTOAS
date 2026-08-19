@@ -1,0 +1,23 @@
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mixed_aic() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    return
+  }
+
+  func.func @mixed_aiv() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    return
+  }
+}
+
+// CHECK-LABEL: module attributes
+// CHECK-SAME: pto.backend = "vpto"
+// CHECK-SAME: pto.target_arch = "a5"
+// CHECK: module attributes
+// CHECK-SAME: pto.kernel_kind = #pto.kernel_kind<cube>
+// CHECK: func.func @mixed_aic
+// CHECK-NOT: func.func @mixed_aiv
+// CHECK: module attributes
+// CHECK-SAME: pto.kernel_kind = #pto.kernel_kind<vector>
+// CHECK-NOT: func.func @mixed_aic
+// CHECK: func.func @mixed_aiv

@@ -21,7 +21,7 @@ module {
   }
 }
 
-// MATERIALIZE: error: unregistered operation 'pto.materialize_tile' found in dialect ('pto')
+// MATERIALIZE: error: 'pto.materialize_tile' op expected 1 or more operands, but found 0
 
 //--- declare.pto
 module {
@@ -31,7 +31,7 @@ module {
   }
 }
 
-// DECLARE: error: unregistered operation 'pto.declare_tile_memref' found in dialect ('pto')
+// DECLARE: error: 'pto.declare_tile_memref' op result #0 must be memref of any type values, but got 'i32'
 
 //--- slot.pto
 module {
@@ -41,7 +41,7 @@ module {
   }
 }
 
-// SLOT: error: unregistered operation 'pto.slot_marker' found in dialect ('pto')
+// SLOT: error: 'pto.slot_marker' op expected 2 operands, but found 0
 
 //--- bind.pto
 module {
@@ -51,7 +51,7 @@ module {
   }
 }
 
-// BIND: error: unregistered operation 'pto.bind_tile' found in dialect ('pto')
+// BIND: error: 'pto.bind_tile' op expected 1 or more operands, but found 0
 
 //--- pointer-cast.pto
 module {
@@ -61,4 +61,4 @@ module {
   }
 }
 
-// POINTER-CAST: error: unregistered operation 'pto.pointer_cast' found in dialect ('pto')
+// POINTER-CAST: error: 'pto.pointer_cast' op result #0 must be memref of any type values, but got 'i32'

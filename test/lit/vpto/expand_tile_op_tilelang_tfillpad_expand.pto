@@ -19,9 +19,9 @@
 // CHECK-NOT: pto.tfillpad ins
 // CHECK: pto.vecscope
 // CHECK: pto.castptr
-// CHECK-DAG: pto.vdup
-// CHECK-DAG: pto.vlds
-// CHECK-DAG: pto.vsts
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.vdup
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TFILLPAD_EXPAND() {

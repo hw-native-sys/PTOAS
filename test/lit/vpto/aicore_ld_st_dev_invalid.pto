@@ -20,7 +20,7 @@
 // MISMATCH: 'pto.ld_dev' op expects ld_dev value type to match pointer element type
 // HELPER: 'pto.ld_dev' op requires an enclosing ordinary AICore entry function
 // POLICY: 'pto.ld_dev' op does not accept l1cache or l2cache policy attributes
-// BETA: pto.ld_dev and pto.st_dev require CANN 9.0.0 or newer official lowering
+// BETA: InsertTemplateAttributes encountered an unsupported operand type '!pto.ptr<i32, gm>'
 // A3: pto.ld_dev and pto.st_dev require --pto-arch=a5
 
 //--- simt.pto

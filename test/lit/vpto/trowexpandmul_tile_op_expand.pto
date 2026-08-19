@@ -20,7 +20,7 @@
 // CHECK-NOT: pto.trowexpandmul ins
 // CHECK: pto.vecscope
 // CHECK: pto.vlds
-// CHECK: pto.vdup
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
 // CHECK: pto.vmul
 // CHECK: pto.vsts
 

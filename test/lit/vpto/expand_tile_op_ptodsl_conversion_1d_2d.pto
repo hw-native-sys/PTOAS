@@ -17,13 +17,10 @@
 // META-LABEL: func.func @TCVT_F32_I16_1D
 // META: pto.tcvt
 // META-SAME: candidates = [{
-// META-SAME: id = 53 : i64
-// META-SAME: loop_depth = 1 : i64
-// META-SAME: name = "template_tcvt_f32_to_i16_1d"
-// META-SAME: }, {
 // META-SAME: id = 15 : i64
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcvt_f32_to_i16"
+// META-NOT: name = "template_tcvt_f32_to_i16_1d"
 
 // META-LABEL: func.func @TCVT_F32_I16_2D
 // META: pto.tcvt
@@ -32,14 +29,6 @@
 // META-SAME: loop_depth = 2 : i64
 // META-SAME: name = "template_tcvt_f32_to_i16"
 // META-NOT: name = "template_tcvt_f32_to_i16_1d"
-
-// SELECT-LABEL: func.func private @{{.*}}__template_tcvt_f32_to_i16_1d(
-// SELECT: scf.for
-// SELECT-NOT: scf.for
-// SELECT: pto.vcvt
-// SELECT: pto.vcvt
-// SELECT: pto.vsts {{.*}} {dist = "PK_B32"}
-// SELECT: return
 
 // SELECT-LABEL: func.func private @{{.*}}__template_tcvt_f32_to_i16(
 // SELECT: scf.for
